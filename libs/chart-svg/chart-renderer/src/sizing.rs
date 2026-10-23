@@ -503,6 +503,7 @@ fn rendered_vega_height(
         board_style: Some(ctx.board_style.clone()),
         language: None,
         datasets: Some(datasets.clone()),
+        geometries: None,
         // This IS production's own "static estimate, before any layout
         // decision" measurement (`layout_sizing.py`'s `item.height == 0`
         // branch) — the FIRST of two call sites `Payload::measuring`
@@ -580,6 +581,7 @@ fn spark_bar_natural_height(
         board_style: Some(ctx.board_style.clone()),
         language: None,
         datasets: None,
+        geometries: None,
         // spark_bar has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
         filter_variables: Default::default(),
@@ -701,6 +703,7 @@ fn get_table_height_from_data(
         board_style: Some(ctx.board_style.clone()),
         language: None,
         datasets: None,
+        geometries: None,
         // table has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
         filter_variables: Default::default(),
@@ -787,6 +790,7 @@ pub fn resolve_chart_item_height(
             board_style: Some(ctx.board_style.clone()),
             language: None,
             datasets: None,
+            geometries: None,
             // callout has no rail-concat law `measuring` gates — inert here.
             variables: Default::default(),
             filter_variables: Default::default(),
@@ -797,7 +801,14 @@ pub fn resolve_chart_item_height(
             is_placeholder: false,
             authored_height: None,
         };
-        let (_, natural_height) = crate::families::callout::render(&payload, ctx.fonts)
+        let natural_height = crate::families::callout::bind(&payload)
+            .and_then(|bound| {
+                crate::families::callout::height_for_width(
+                    &bound,
+                    payload.width,
+                    &measure::Measure { fonts: ctx.fonts },
+                )
+            })
             .map_err(|e| format!("chart refused during sizing: {e}"))?;
         return Ok(natural_height);
     }
@@ -919,7 +930,7 @@ pub struct SizingCtx<'a> {
     pub board_style: &'a crate::BoardStyle,
     pub chart_bg: &'a str,
     pub fonts_dir: Option<String>,
-    pub fonts: &'a crate::text::FontBook,
+    pub fonts: &'a measure::FontBook,
     /// A nested `type: board` item's own total content height at a given
     /// candidate width — `render/sizing.py::get_item_content_height`'s board
     /// branch (`nested_board_sizing_context` + a recursive `calculate_

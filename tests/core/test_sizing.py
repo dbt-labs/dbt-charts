@@ -11,7 +11,6 @@ import importlib as _importlib
 import pytest
 from pydantic import TypeAdapter
 
-from dbt_charts.core.compile.models.board.normalized import NO_TITLE_SHIFT
 from dbt_charts.core.constants.estimates import SPARK_BAR_TITLE_HEIGHT_PX
 
 # The direct import `import dbt_charts.core.render.converters.chart` fails because
@@ -2761,63 +2760,6 @@ rows:
         assert isinstance(sized_board, Board)
         assert isinstance(render_cache, dict)
 
-    def test_render_cache_populated_for_vega_chart(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """After data-aware layout, cache has (svg, actual_height) for each Vega chart.
-
-        When the rendered SVG is taller than the static estimate, the actual height wins.
-        """
-        from unittest.mock import patch
-
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-
-        board, executor = self._compile_bar(local_project)
-        with patch.object(
-            _converters_chart, "render_vega_spec", return_value=self._MOCK_SVG_2000
-        ):
-            sized_board, render_cache = calculate_data_aware_layout(
-                board, executor, {}, pre_resolved={}
-            )
-
-        bar_item = sized_board.layout.items[0]
-        assert bar_item.chart is not None
-        cache_entry = next(
-            (v for k, v in render_cache.items() if k[0] == bar_item.chart.id), None
-        )
-        assert cache_entry is not None, (
-            f"bar chart '{bar_item.chart.id}' missing from render cache"
-        )
-        cached_svg, cached_height = cache_entry
-        assert isinstance(cached_svg, str)
-        assert cached_height == 2000.0
-
-    def test_render_cache_uses_static_estimate_as_floor(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """When the rendered SVG is shorter than the static estimate, the estimate wins."""
-        from unittest.mock import patch
-
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-
-        board, executor = self._compile_bar(local_project)
-        with patch.object(
-            _converters_chart, "render_vega_spec", return_value=self._MOCK_SVG_300
-        ):
-            sized_board, render_cache = calculate_data_aware_layout(
-                board, executor, {}, pre_resolved={}
-            )
-
-        bar_item = sized_board.layout.items[0]
-        assert bar_item.chart is not None
-        cache_entry = next(
-            (v for k, v in render_cache.items() if k[0] == bar_item.chart.id), None
-        )
-        assert cache_entry is not None
-        _, cached_height = cache_entry
-        # 300 < static estimate; cached height must equal the static estimate (floor)
-        assert cached_height > 300.0
-
     def test_render_cache_not_populated_for_table_chart(
         self, local_project: Callable[..., FilesystemProject]
     ):
@@ -2863,31 +2805,6 @@ rows:
             "Table chart must NOT be in render cache"
         )
 
-    def test_render_first_height_used_for_item_sizing(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """Item height uses actual rendered height when it exceeds the static estimate."""
-        from unittest.mock import patch
-
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-
-        MOCK_SVG_2000 = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="2000"><g/></svg>'
-        board, executor = self._compile_bar(local_project)
-
-        with patch.object(
-            _converters_chart, "render_vega_spec", return_value=MOCK_SVG_2000
-        ):
-            sized_board, _ = calculate_data_aware_layout(
-                board, executor, {}, pre_resolved={}
-            )
-
-        bar_item = sized_board.layout.items[0]
-        # Vega charts: item height = actual SVG height (card_pad is Vega-internal)
-        expected = 2000.0
-        assert abs(bar_item.height - expected) < 1.0, (
-            f"Item height {bar_item.height} should equal SVG height {expected} (no 2*card_pad inflation)"
-        )
-
 
 # ===========================================================================
 # Render-first path honors resolved layout slot height
@@ -2931,155 +2848,6 @@ charts:
             )
 
         return mock_render
-
-    def test_explicit_wrapper_height_re_renders_at_resolved_chart_slot(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """Explicit wrapper height yields a cache entry at the chart's final slot height.
-
-        Before the fix: sizing renders at the aspect-ratio estimate and the cache key
-        does not match the chart's final layout height, so the render pass misses and
-        re-renders with height=None. After the fix: a post-layout pass re-renders at
-        the chart item's resolved slot height and stores that exact cache entry.
-        """
-        import importlib as _importlib
-        from unittest.mock import patch
-
-        _conv = _importlib.import_module("dbt_charts.core.render.converters.chart")
-
-        from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-
-        yaml_content = (
-            self._VALUES_QUERY
-            + """
-rows:
-  - height: 600
-    rows:
-      - bar1
-"""
-        )
-        result = compile(yaml_content)
-        assert result.success, f"Compile failed: {result.errors}"
-
-        executor = Executor(
-            result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
-
-        with patch.object(
-            _conv, "render_vega_spec", side_effect=self._echo_height_render()
-        ):
-            sized_board, render_cache = calculate_data_aware_layout(
-                result.board, executor, {}, pre_resolved={}
-            )
-
-        # The bar chart is inside the nested board (wrapper item).
-        wrapper_item = sized_board.layout.items[0]
-        assert wrapper_item.board is not None
-        bar_item = wrapper_item.board.layout.items[0]
-        assert bar_item.chart is not None
-
-        # An authored wrapper height is a ceiling, not an exact allocation:
-        # the bar's own content resolves
-        # well under 600, so the wrapper shrinks to match the nested chart's
-        # resolved slot height rather than keeping the raw authored value.
-        assert bar_item.height > 0.0
-        assert bar_item.height < 600.0
-        assert abs(wrapper_item.height - bar_item.height) < 2.0
-
-        # The render cache must have an entry at the slot height so the renderer hits.
-        chart_id = bar_item.chart.id
-        cache_entry = render_cache.get(
-            (chart_id, bar_item.width, bar_item.height, NO_TITLE_SHIFT)
-        )
-        assert cache_entry is not None, (
-            f"Expected render cache entry at key ({chart_id!r}, {bar_item.width}, "
-            f"{bar_item.height}) — renderer will miss without it"
-        )
-        _cached_svg, cached_height = cache_entry
-        assert abs(cached_height - bar_item.height) < 2.0, (
-            f"Cached SVG height should match the final slot height, got {cached_height:.1f} vs {bar_item.height:.1f}"
-        )
-
-    def test_no_slot_height_uses_aspect_ratio_estimate(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """Board without a wrapper height still uses the aspect-ratio static_estimate.
-
-        The fallback path (item.height == 0) must be preserved so boards without an
-        explicit slot height still get sensible aspect-ratio-based sizing.
-        """
-        import importlib as _importlib
-        from unittest.mock import patch
-
-        _conv = _importlib.import_module("dbt_charts.core.render.converters.chart")
-
-        from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.adapters import build_adapter_registry
-        from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-        from dbt_charts.core.render.sizing import get_chart_content_height
-
-        yaml_content = (
-            self._VALUES_QUERY
-            + """
-rows:
-  - bar1
-"""
-        )
-        result = compile(yaml_content)
-        assert result.success
-
-        executor = Executor(
-            result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
-
-        captured_heights: list[float] = []
-
-        def capturing_render(spec, fmt, width, height, is_placeholder, **kwargs):
-            captured_heights.append(float(height) if height is not None else 0.0)
-            w = int(width) if width else 400
-            h = int(height) if height else 400
-            return (
-                f'<svg xmlns="http://www.w3.org/2000/svg" '
-                f'width="{w}" height="{h}"><g/></svg>'
-            )
-
-        with patch.object(_conv, "render_vega_spec", side_effect=capturing_render):
-            sized_board, _ = calculate_data_aware_layout(
-                result.board, executor, {}, pre_resolved={}
-            )
-
-        assert captured_heights, "render_vega_spec was never called"
-
-        # Compute the expected static_estimate (aspect-ratio path, includes 2*card_pad).
-        content_width = max(
-            float(get_theme_style().frame.max_width)
-            - 2 * float(get_theme_style().frame.margin),
-            0.0,
-        )
-        card_pad = float(get_theme_style().frame.card_padding)
-        bar_item = sized_board.layout.items[0]
-        assert bar_item.chart is not None
-        static_content_h = get_chart_content_height(
-            bar_item.chart,
-            width=content_width,
-            resolved_style=result.board.resolved_style,
-        )
-        expected_estimate = static_content_h + 2 * card_pad
-
-        first_render_height = captured_heights[0]
-        assert abs(first_render_height - expected_estimate) < 2.0, (
-            f"Expected render_chart_to_svg called with aspect-ratio estimate "
-            f"≈{expected_estimate:.1f}, got {first_render_height:.1f} — "
-            f"the fallback path (no slot height) must be preserved"
-        )
 
 
 # ===========================================================================
@@ -3142,73 +2910,6 @@ cols:
             )
 
         return call_count, mock_render
-
-    def test_cols_items_height_aligned_to_tallest_rendered(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """After sizing, both cols items have height = max(actual) + 2*card_pad."""
-        from unittest.mock import patch
-
-        from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-
-        result = compile(self._COLS_YAML)
-        assert result.success
-        executor = Executor(
-            result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
-        _, mock_render = self._height_mock()
-
-        with patch.object(
-            _converters_chart, "render_vega_spec", side_effect=mock_render
-        ):
-            sized_board, _ = calculate_data_aware_layout(
-                result.board, executor, {}, pre_resolved={}
-            )
-
-        items = sized_board.layout.items
-        assert len(items) == 2
-
-        assert items[0].height == items[1].height, (
-            f"Cols items must be aligned: {items[0].height} != {items[1].height}"
-        )
-        # Vega charts: item height = actual SVG height (card_pad is Vega-internal)
-        expected = 2000.0
-        assert abs(items[0].height - expected) < 1.0, (
-            f"Expected height {expected}, got {items[0].height}"
-        )
-
-    def test_tallest_item_not_re_rendered(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """The tallest cols item keeps its cached SVG; only shorter items re-render."""
-        from unittest.mock import patch
-
-        from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
-
-        result = compile(self._COLS_YAML)
-        assert result.success
-        executor = Executor(
-            result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
-        call_count, mock_render = self._height_mock()
-
-        with patch.object(
-            _converters_chart, "render_vega_spec", side_effect=mock_render
-        ):
-            calculate_data_aware_layout(result.board, executor, {}, pre_resolved={})
-
-        # 2 initial renders + 1 re-render of shorter item = 3 (tallest NOT re-rendered)
-        assert call_count[0] == 3, (
-            f"Expected 3 vl-convert calls (2 initial + 1 re-render), got {call_count[0]}"
-        )
 
 
 # ===========================================================================

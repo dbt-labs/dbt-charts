@@ -242,8 +242,7 @@ path = "dbt_charts.core.numeric"
 layer = "core"
 # Leaf node — the generic d3-style "nice step" tick primitive (nice_tick_values),
 # zero dbt charts-specific types. compile/resolve/chart/_domain.py bakes real axis
-# ticks with it; render/chart/emitters/_measured_label_padding.py uses it only to
-# estimate the widest plausible foreign-rendered label width.
+# ticks with it.
 depends_on = []
 
 [[modules]]

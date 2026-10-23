@@ -110,12 +110,12 @@ impl Expr {
         }
     }
 
-    /// The text one tick paints: its lines joined by [`crate::text::LINE_SEP`], which a painter measures by the
+    /// The text one tick paints: its lines joined by [`measure::LINE_SEP`], which a painter measures by the
     /// widest line and the SVG finishes as a `tspan` each.
     pub fn eval(&self, tick: &Tick) -> Res<String> {
-        let sep = crate::text::LINE_SEP.to_string();
+        let sep = measure::LINE_SEP.to_string();
         // A line holding the separator itself paints the noncharacter beside it, which looks the same.
-        Ok(self.eval_lines(tick)?.iter().map(|l| l.replace(crate::text::LINE_SEP, "\u{FDD1}")).collect::<Vec<_>>().join(&sep))
+        Ok(self.eval_lines(tick)?.iter().map(|l| l.replace(measure::LINE_SEP, "\u{FDD1}")).collect::<Vec<_>>().join(&sep))
     }
 
     /// The text a band axis paints for its band `raw`, which is both `datum.value` and the default `datum.label`.

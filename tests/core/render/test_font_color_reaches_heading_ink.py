@@ -22,7 +22,7 @@ from dbt_charts.core.render import render
 
 _HEADING_FILL_RE = re.compile(r"\.md-[0-9a-f]{8}-heading\s*\{[^}]*fill:\s*([^;\s}]+)")
 _CHART_TITLE_FILL_RE = re.compile(
-    r'role-title-text.*?<text[^>]*\bfill="([^"]+)"', re.DOTALL
+    r'<text[^>]*\bfill="([^"]+)"[^>]*data-authored-kind="title"'
 )
 
 

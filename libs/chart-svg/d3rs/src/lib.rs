@@ -19,6 +19,7 @@ pub mod predefined_formats;
 pub mod py_float;
 pub mod sankey;
 pub mod sankey_circular;
+pub mod scale;
 pub mod shape;
 pub mod ticks;
 pub mod topojson;

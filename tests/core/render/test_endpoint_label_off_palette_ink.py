@@ -43,7 +43,7 @@ style:
 
 def _label_ink(svg: str, series: str) -> str:
     match = re.search(
-        rf'aria-label="source: {series}"[^>]*\sfill="(#[0-9a-f]{{6}})"', svg
+        rf'<text[^>]*\sfill="(#[0-9a-f]{{6}})"[^>]*aria-label="source: {series}"', svg
     )
     assert match, f"no endpoint label for {series}"
     return match.group(1)

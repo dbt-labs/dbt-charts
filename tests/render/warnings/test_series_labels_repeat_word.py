@@ -30,7 +30,6 @@ def _ctx(chart: Any, rows: list[dict[str, Any]]) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
     )
 
 

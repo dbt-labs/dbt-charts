@@ -52,7 +52,6 @@ def _ctx(
     return WarningContext(
         board_spec=board,
         chart_results={chart_id: chart_rows},
-        vega_specs={},
         text_truncations={chart_id: truncations},
     )
 
@@ -103,7 +102,6 @@ def test_chart_title_detector_silent_when_no_truncations() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={"c3": rows},
-        vega_specs={},
     )
     assert chart_title_truncated.detect(ctx) == []
 

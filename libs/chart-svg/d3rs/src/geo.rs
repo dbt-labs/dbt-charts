@@ -23,12 +23,12 @@ use stream::{geo_stream, GeoStream};
 
 /// d3-array's `Adder`: Shewchuk's exact running sum.
 #[derive(Default, Clone)]
-struct Adder {
+pub(crate) struct Adder {
     partials: Vec<f64>,
 }
 
 impl Adder {
-    fn add(&mut self, mut x: f64) {
+    pub(crate) fn add(&mut self, mut x: f64) {
         let mut kept = Vec::with_capacity(self.partials.len() + 1);
         for &y in self.partials.iter().take(32) {
             let hi = x + y;
@@ -42,7 +42,7 @@ impl Adder {
         self.partials = kept;
     }
 
-    fn value(&self) -> f64 {
+    pub(crate) fn value(&self) -> f64 {
         let p = &self.partials;
         let mut n = p.len();
         let (mut hi, mut lo) = (0.0, 0.0);

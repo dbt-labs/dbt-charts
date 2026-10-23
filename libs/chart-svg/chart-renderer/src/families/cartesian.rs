@@ -790,7 +790,7 @@ pub(crate) fn rail_pane_width(
     font_family: &str,
     font_size: f64,
     font_weight: &str,
-    fonts: &crate::text::FontBook,
+    fonts: &measure::FontBook,
     chart_w: f64,
 ) -> Result<f64, String> {
     let widest = series.iter().try_fold(0.0_f64, |acc, s| {
@@ -849,7 +849,7 @@ pub(crate) fn warn_rail_labels_cut(
     font_family: &str,
     font_size: f64,
     font_weight: &str,
-    fonts: &crate::text::FontBook,
+    fonts: &measure::FontBook,
     chart_w: f64,
 ) -> Result<(), String> {
     let cap = rail_cap(chart_w);
@@ -1038,7 +1038,7 @@ mod recascade_tests {
 #[cfg(test)]
 mod rail_weight_tests {
     use super::rail_pane_width;
-    use crate::text::FontBook;
+    use measure::FontBook;
 
     fn fonts() -> FontBook {
         FontBook::load_dir(concat!(

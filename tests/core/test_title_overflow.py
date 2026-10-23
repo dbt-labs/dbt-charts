@@ -11,7 +11,6 @@ from dbt_charts.core.render.chart.title_overflow import (
     fix_title_alignment,
     prepare_title_text,
 )
-from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
@@ -220,46 +219,6 @@ class TestTitleLimitWithCardPadding:
             query=SqlQuery(sql="SELECT 1", source="test_db"),
         )
         return resolve(compiled, self._data, chart_style_context=_BOARD_CTX)
-
-    def test_card_padding_drives_title_limit(self):
-        """When the render function receives a card_padding, the title limit must
-        equal width - left_pad - right_pad using that padding, not the default spec
-        padding {left:20, right:5}. Otherwise, pre-wrapped text can overflow the visible
-        card area when card_padding overrides the default spec padding at finalize time.
-        """
-
-        card_padding = 16
-        width = 575
-        spec = render_resolved_chart(
-            self._make_chart(),
-            self._data,
-            _BOARD_RS,
-            width=width,
-            padding={
-                "left": card_padding,
-                "right": card_padding,
-                "top": card_padding,
-                "bottom": card_padding,
-            },
-        ).payload
-        expected_limit = width - 2 * card_padding
-        assert spec["title"]["limit"] == expected_limit, (
-            f"title limit {spec['title']['limit']} must match width - 2*card_padding = "
-            f"{expected_limit}, not the default spec padding {{left:20, right:5}}"
-        )
-
-    def test_asymmetric_card_padding_drives_title_limit(self):
-        """Asymmetric padding: limit must use left + right, not double one side."""
-
-        width = 600
-        spec = render_resolved_chart(
-            self._make_chart(),
-            self._data,
-            _BOARD_RS,
-            width=width,
-            padding={"left": 24, "right": 8, "top": 8, "bottom": 8},
-        ).payload
-        assert spec["title"]["limit"] == width - 24 - 8
 
 
 class TestSubtitleOverflowPreprocessing:

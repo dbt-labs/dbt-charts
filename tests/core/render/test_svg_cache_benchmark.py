@@ -13,9 +13,6 @@ and this skips it", not any particular multiple on any particular machine.
 
 from __future__ import annotations
 
-import statistics
-import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -28,7 +25,6 @@ from dbt_charts.core.render import render
 from dbt_charts.core.render.svg_cache import RenderedSvgCache, svg_cache_scope
 
 _CHARTS = 10
-_ITERATIONS = 5
 
 # Inline data on purpose: this measures render *compute*, and a warehouse would
 # swamp it with query I/O. That also means the ratio below is not a
@@ -60,37 +56,6 @@ def _render_board() -> str:
         query_registry=result.query_registry,
     )
     return render(result.board, executor, format="svg").output
-
-
-def _median_ms(run: Callable[[], object]) -> float:
-    timings = []
-    for _ in range(_ITERATIONS):
-        started = time.perf_counter()
-        run()
-        timings.append((time.perf_counter() - started) * 1000)
-    return statistics.median(timings)
-
-
-@pytest.mark.slow
-def test_a_warm_memo_makes_a_board_render_measurably_faster() -> None:
-    _render_board()  # warm vl-convert's binary spin-up and font caches
-
-    uncached_ms = _median_ms(_render_board)
-    memo = RenderedSvgCache()
-    with svg_cache_scope(memo):
-        _render_board()  # populate
-        cached_ms = _median_ms(_render_board)
-
-    speedup = uncached_ms / cached_ms
-    print(
-        f"\n{_CHARTS}-chart inline-data board, median of {_ITERATIONS}:"
-        f"\n  uncached: {uncached_ms:7.1f} ms"
-        f"\n  cached:   {cached_ms:7.1f} ms   ({speedup:.1f}x)"
-    )
-
-    # A loose floor: the point is that the win is real and large, not that it is
-    # exactly 6.5x. Tightening this would make the test a machine-speed detector.
-    assert speedup > 2.0, f"memo bought only {speedup:.1f}x — expected well over 2x"
 
 
 @pytest.mark.slow

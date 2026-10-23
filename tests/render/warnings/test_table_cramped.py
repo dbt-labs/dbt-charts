@@ -43,7 +43,8 @@ def _table_ctx() -> tuple[str, WarningContext]:
     )
     board = make_test_resolved_board(charts={chart.id: chart}, width=_BOARD_WIDTH)
     return chart.id, WarningContext(
-        board_spec=board, chart_results={chart.id: []}, vega_specs={}
+        board_spec=board,
+        chart_results={chart.id: []},
     )
 
 

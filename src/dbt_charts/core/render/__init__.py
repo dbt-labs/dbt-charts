@@ -25,10 +25,7 @@ Supported Formats:
 """
 
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.render.chart import (
-    generate_vega_lite_spec,
-    slug_to_text,
-)
+from dbt_charts.core.render.chart import slug_to_text
 from dbt_charts.core.render.controls import (
     controls_runtime_source,
     controls_stylesheet,
@@ -67,8 +64,6 @@ __all__ = [
     "render_variables_strip_svg",
     "controls_runtime_source",
     "controls_stylesheet",
-    # Vega-Lite
-    "generate_vega_lite_spec",
     "slug_to_text",
     # Terminal rendering
     "render_board_terminal",

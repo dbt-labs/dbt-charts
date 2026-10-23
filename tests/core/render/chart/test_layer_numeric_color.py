@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-import vl_convert
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve import resolve
@@ -42,82 +41,6 @@ _LAYERS: dict[str, dict[str, Any]] = {
 }
 
 
-def _color_encodings(node: Any, field: str) -> list[dict[str, Any]]:
-    found: list[dict[str, Any]] = []
-    if isinstance(node, dict):
-        color = node.get("color")
-        if isinstance(color, dict) and color.get("field") == field:
-            found.append(color)
-        for value in node.values():
-            found.extend(_color_encodings(value, field))
-    elif isinstance(node, list):
-        for item in node:
-            found.extend(_color_encodings(item, field))
-    return found
-
-
-@pytest.mark.parametrize("layer", sorted(_LAYERS))
-@pytest.mark.parametrize("base", sorted(_BASES))
-def test_a_numeric_layer_color_builds_its_own_scale(
-    make_chart: Any, capfd: pytest.CaptureFixture[str], base: str, layer: str
-) -> None:
-    if layer == "bar-ranged" and base != "bar-ranged":
-        pytest.skip("a ranged layer needs a ranged base")
-    chart = make_chart(
-        **{"x": "x", "y": "y", **_BASES[base]},
-        layers=[{**_LAYERS[layer], "color": "num"}],
-    )
-    ctx = resolve_chart_style_context(get_theme_style("stark"))
-    resolved = resolve(chart, _ROWS, chart_style_context=ctx)
-    spec = render_resolved_chart(resolved, _ROWS, _STYLE, width=400).payload
-
-    encodings = _color_encodings(spec, "num")
-    assert encodings
-    assert all("scale" not in enc for enc in encodings), encodings
-    assert spec["resolve"]["scale"]["color"] == "independent"
-
-    capfd.readouterr()
-    vl_convert.vegalite_to_svg(spec)
-    assert "TypeError" not in capfd.readouterr().err
-
-
-def test_layers_on_the_shared_scale_draw_no_legend_beside_a_numeric_layer(
-    make_chart: Any,
-) -> None:
-    chart = make_chart(
-        x="x",
-        y="y",
-        layers=[
-            {"type": "scatter", "y": "z", "color": "grp"},
-            {"type": "line", "y": "z", "color": "num"},
-        ],
-    )
-    ctx = resolve_chart_style_context(get_theme_style("stark"))
-    resolved = resolve(chart, _ROWS, chart_style_context=ctx)
-    spec = render_resolved_chart(resolved, _ROWS, _STYLE, width=400).payload
-
-    def legends(node: Any) -> list[Any]:
-        found: list[Any] = []
-        if isinstance(node, dict):
-            color = node.get("color")
-            if (
-                isinstance(color, dict)
-                and "scale" in color
-                and "domain" in color["scale"]
-            ):
-                found.append(color.get("legend"))
-            for value in node.values():
-                found.extend(legends(value))
-        elif isinstance(node, list):
-            for item in node:
-                found.extend(legends(item))
-        return found
-
-    shared = legends(spec)
-    assert len(shared) == 2
-    assert sum(legend is not None for legend in shared) == 1
-
-
 def test_an_all_null_layer_color_is_refused_by_name(make_chart: Any) -> None:
     rows = [{**row, "num": None} for row in _ROWS]
     chart = make_chart(
@@ -132,19 +55,3 @@ def test_an_all_null_layer_color_is_refused_by_name(make_chart: Any) -> None:
         render_resolved_chart(resolved, rows, _STYLE, width=400)
     assert err.value.code is not None
     assert err.value.code.code == "ERR-LAYER-COLOR-ALL-NULL"
-
-
-def test_a_null_among_numeric_layer_colors_keeps_the_own_scale(
-    make_chart: Any,
-) -> None:
-    rows = [{**row, "num": None if row["x"] == "S" else row["num"]} for row in _ROWS]
-    chart = make_chart(
-        chart_type="bar",
-        x="x",
-        y="y",
-        layers=[{"type": "line", "y": "z", "color": "num"}],
-    )
-    ctx = resolve_chart_style_context(get_theme_style("stark"))
-    resolved = resolve(chart, rows, chart_style_context=ctx)
-    spec = render_resolved_chart(resolved, rows, _STYLE, width=400).payload
-    assert spec["resolve"]["scale"]["color"] == "independent"

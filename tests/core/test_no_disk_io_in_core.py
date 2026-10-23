@@ -49,6 +49,10 @@ ALLOWED_OPEN: dict[str, str] = {
         "writes the ADBC driver cache dbt shares (machine-level, under the "
         "user cache dir); never project content, so it does not go through Project"
     ),
+    "core/render/geo/loader.py": (
+        "urllib OpenerDirector.open fetches a geo source URL over http(s); "
+        "a network request, never a file"
+    ),
 }
 
 

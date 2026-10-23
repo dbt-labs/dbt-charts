@@ -35,22 +35,38 @@ options:
 {% set axis = style.charts.axis %}
 {% set lab = axis.labels.font %}
 {% set gutter = 64 %}
-{% set pw = width - gutter - 4 %}
 {% set xh = height * 0.62 - 10 %}
 {% set my0 = height * 0.62 + 14 %}
 {% set mh = height - my0 - 20 %}
-{% set lo = [lnpl, vals | min] | min %}{% set hi = [unpl, vals | max] | max %}
-{% set pad = (hi - lo) * 0.06 %}{% set lo = lo - pad %}{% set hi = hi + pad %}
-{% set mhi = [url, ns.mr | max] | max * 1.08 %}
-{% macro px(i) %}{{ (4 + pw * i / (n - 1))|round(1) }}{% endmacro %}
-{% macro py(v) %}{{ (xh - xh * (v - lo) / (hi - lo))|round(1) }}{% endmacro %}
-{% macro my(v) %}{{ (my0 + mh - mh * v / mhi)|round(1) }}{% endmacro %}
+{% set y_scale = d3.scale_linear([[lnpl, vals | min] | min, [unpl, vals | max] | max], [xh, 8]) %}
+{% set mr_scale = d3.scale_linear([0, [url, ns.mr | max] | max], [my0 + mh, my0 + 8]) %}
+{# Left gutter: the widest tick label plus room to breathe. #}
+{% set tick_w = namespace(max=0) %}
+{% for scale, count in [(y_scale, 4), (mr_scale, 3)] %}
+  {% set fmt = scale.tick_format(count) %}
+  {% for t in scale.ticks(count) %}{% set tick_w.max = [tick_w.max, text_width(fmt(t), lab.size)] | max %}{% endfor %}
+{% endfor %}
+{% set lg = tick_w.max + 12 %}
+{% set pw = width - gutter - lg %}
+{% set x_scale = d3.scale_linear([0, n - 1], [lg, lg + pw]) %}
+{% macro px(i) %}{{ x_scale(i) | round(1) }}{% endmacro %}
+{% macro py(v) %}{{ y_scale(v) | round(1) }}{% endmacro %}
+{% macro my(v) %}{{ mr_scale(v) | round(1) }}{% endmacro %}
+{% macro grid(scale, count) %}
+  {% set fmt = scale.tick_format(count) %}
+  {% for t in scale.ticks(count) %}
+  <line x1="{{ lg }}" x2="{{ lg + pw }}" y1="{{ scale(t) | round(1) }}" y2="{{ scale(t) | round(1) }}" stroke="{{ axis.grid.color }}"/>
+  <text x="{{ lg - 6 }}" y="{{ scale(t) | round(1) }}" dy="0.35em" text-anchor="end" font-size="{{ lab.size }}" fill="{{ style.muted }}">{{ fmt(t) }}</text>
+  {% endfor %}
+{% endmacro %}
 {% macro limit(y, label, value, color, dash) %}
-  <line x1="4" x2="{{ 4 + pw }}" y1="{{ y }}" y2="{{ y }}" stroke="{{ color }}" stroke-width="1.25"{% if dash %} stroke-dasharray="5 4"{% endif %}/>
-  <text x="{{ 4 + pw + 6 }}" y="{{ y }}" dy="0.35em" font-size="{{ lab.size }}" fill="{{ color }}">{{ label }} {{ value | format(p.value_format) }}</text>
+  <line x1="{{ lg }}" x2="{{ lg + pw }}" y1="{{ y }}" y2="{{ y }}" stroke="{{ color }}" stroke-width="1.25"{% if dash %} stroke-dasharray="5 4"{% endif %}/>
+  <text x="{{ lg + pw + 6 }}" y="{{ y }}" dy="0.35em" font-size="{{ lab.size }}" fill="{{ color }}">{{ label }} {{ value | format(p.value_format) }}</text>
 {% endmacro %}
 {% set ink = style.charts.color.categorical.single_series_palette[0] %}
 <g font-family="{{ lab.family }}">
+  {{ grid(y_scale, 4) }}
+  {{ grid(mr_scale, 3) }}
   {{ limit(py(unpl), "UNPL", unpl, style.muted, true) }}
   {{ limit(py(mean), "Mean", mean, style.muted, false) }}
   {{ limit(py(lnpl), "LNPL", lnpl, style.muted, true) }}
@@ -62,7 +78,7 @@ options:
   {% set c = style.tones.negative if out else (style.tones.warning if in_run else ink) %}
   <circle cx="{{ px(i) }}" cy="{{ py(v) }}" r="{{ 4 if out or in_run else 2.5 }}" fill="{{ c }}" stroke="{{ style.background }}" stroke-width="1"><title>{{ rows[i][x_col] }}: {{ v | format(p.value_format) }}{{ " (outside limits)" if out else (" (run of " ~ p.run_length ~ "+)" if in_run else "") }}</title></circle>
 {% endfor %}
-  <text x="4" y="{{ my0 - 4 }}" font-size="{{ lab.size }}" fill="{{ style.muted }}">Moving range</text>
+  <text x="{{ lg }}" y="{{ my0 - 4 }}" font-size="{{ lab.size }}" fill="{{ style.muted }}">Moving range</text>
   {{ limit(my(url), "URL", url, style.muted, true) }}
   {{ limit(my(mrbar), "Avg", mrbar, style.muted, false) }}
   <polyline fill="none" stroke="{{ ink }}" stroke-width="1.25" points="{% for m in ns.mr %}{{ px(loop.index) }},{{ my(m) }} {% endfor %}"/>

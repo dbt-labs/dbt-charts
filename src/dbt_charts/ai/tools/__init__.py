@@ -17,6 +17,7 @@ from dbt_charts.agent_api import (
     attribute,
     boards as _boards,
     files as _files,
+    paging as _paging,
     query as _query,
     search as _search,
     skills as _skills,
@@ -133,7 +134,7 @@ def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
         path=parsed.path,
         text=parsed.text,
         tags=parsed.tags,
-        limit=_search.DEFAULT_SEARCH_LIMIT if parsed.limit is None else parsed.limit,
+        limit=_paging.DEFAULT_PAGE_LIMIT if parsed.limit is None else parsed.limit,
         cursor=parsed.cursor,
     ).model_dump(mode="json", exclude_none=True)
 
@@ -189,9 +190,11 @@ def _handle_list_diagnostic_codes(
     from dbt_charts.agent_api import diagnostics as _diag
 
     parsed = _diag.ListDiagnosticCodesArgs.model_validate(args)
-    return _diag.list_diagnostic_codes(level=parsed.level).model_dump(
-        mode="json", exclude_none=True
-    )
+    return _diag.list_diagnostic_codes(
+        level=parsed.level,
+        limit=_paging.DEFAULT_PAGE_LIMIT if parsed.limit is None else parsed.limit,
+        cursor=parsed.cursor,
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def _handle_get_diagnostic_code(

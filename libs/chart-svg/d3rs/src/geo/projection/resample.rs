@@ -119,10 +119,10 @@ impl<P: Fn(f64, f64) -> [f64; 2], S: GeoStream> Resample<P, S> {
         let dx2 = x2 - v0.x;
         let dy2 = y2 - v0.y;
         let dz = dy * dx2 - dx * dy2;
-        if dz * dz / d2 > self.delta2 // perpendicular projected distance
-            || ((dx * dx2 + dy * dy2) / d2 - 0.5).abs() > 0.3 // midpoint close to an end
+        // Split on perpendicular projected distance, midpoint close to an end, or angular distance.
+        if dz * dz / d2 > self.delta2
+            || ((dx * dx2 + dy * dy2) / d2 - 0.5).abs() > 0.3
             || v0.a * v1.a + v0.b * v1.b + v0.c * v1.c < cos_min_distance()
-        // angular distance
         {
             let mid = Vertex { x: x2, y: y2, lambda: lambda2, a: a / m, b: b / m, c };
             self.resample_line_to(v0, mid, depth);

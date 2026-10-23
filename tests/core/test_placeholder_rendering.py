@@ -17,69 +17,13 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
-    resolve_chart_style_context,
     resolve_style,
     resolve_style_and_context,
 )
 
-_BOARD_STYLE = resolve_chart_style_context(get_theme_style())
-
 
 class TestPlaceholderRendering:
     """Tests for rendering charts with placeholder data."""
-
-    def test_placeholder_chart_has_transparency(self, make_chart):
-        """Placeholder charts should render with reduced opacity."""
-        from dbt_charts.core.render.chart.vega_lite import render_chart
-
-        chart = make_chart("bar", query=None, query_name=None)
-        # Empty data - should trigger placeholder
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        svg = render_chart(
-            chart,
-            _rs,
-            _ctx,
-            data=[],
-            format="svg",
-            is_placeholder=True,
-        )
-
-        # Check for opacity styling
-        assert "opacity" in svg.lower() or "add data" in svg.lower()
-
-    def test_placeholder_chart_has_overlay_text(self, make_chart):
-        """Placeholder charts should have 'add data' overlay text."""
-        from dbt_charts.core.render.chart.vega_lite import render_chart
-
-        chart = make_chart("bar", query=None, query_name=None)
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        svg = render_chart(
-            chart,
-            _rs,
-            _ctx,
-            data=[],
-            format="svg",
-            is_placeholder=True,
-        )
-
-        # Should contain "add data" text
-        assert "add data" in svg.lower()
-
-    def test_placeholder_renders_chart_shape(self, make_chart):
-        """Placeholder should still show the chart type shape."""
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-        from dbt_charts.core.render.placeholder import generate_placeholder_data
-
-        chart = make_chart("bar", x="category", y="value", query=None, query_name=None)
-        placeholder_data = generate_placeholder_data("bar", chart)
-        _rc = resolve(chart, placeholder_data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, placeholder_data)
-
-        # Should have bar mark type (in layer[0] when zero-baseline rule is added)
-        bar_mark = spec.get("mark") or spec.get("layer", [{"mark": {}}])[0].get(
-            "mark", {}
-        )
-        assert bar_mark.get("type") == "bar"
 
     def test_line_chart_placeholder_renders(self, make_chart):
         """Line chart placeholder should render as line."""
@@ -135,34 +79,12 @@ class TestPlaceholderRendering:
 
         assert "<svg" in svg or svg.startswith("<svg")
 
-    def test_placeholder_styling_is_visually_distinct(self, make_chart):
-        """Placeholder styling should make it clear this is not real data."""
-        from dbt_charts.core.render.chart.vega_lite import render_chart
-
-        chart = make_chart("bar", query=None, query_name=None)
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        svg = render_chart(
-            chart,
-            _rs,
-            _ctx,
-            data=[],
-            format="svg",
-            is_placeholder=True,
-        )
-
-        # Should have overlay or transparency indication
-        # Check for opacity value < 1 or overlay rect/text
-        has_transparency = "opacity" in svg.lower() or "rgba" in svg.lower()
-        has_overlay = "add data" in svg.lower()
-        assert has_transparency or has_overlay
-
 
 class TestPlaceholderIntegration:
     """Integration tests for placeholder in the render pipeline."""
 
     def test_renderer_detects_no_query_state(self, make_chart):
         """Renderer should detect charts without queries and use placeholders."""
-        from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
@@ -193,7 +115,6 @@ class TestPlaceholderIntegration:
 
     def test_renderer_uses_real_data_when_available(self, make_chart):
         """Renderer should use real data when query returns results."""
-        from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.chart.rendering import render_chart_item
 
@@ -312,56 +233,6 @@ class TestPlaceholderWithRealVegaLiteOutput:
             svg_with_opacity, 400, 300, FontStyle(family="sans-serif"), _rs
         )
         assert "add data" in svg_with_overlay.lower()
-
-    def test_line_chart_placeholder_with_real_vegalite(self, make_chart):
-        """Test placeholder on real Vega-Lite line chart output."""
-        from dbt_charts.core.render.chart.vega_lite import render_chart
-        from dbt_charts.core.render.placeholder import generate_placeholder_data
-
-        chart = make_chart("line", x="month", y="value", query=None, query_name=None)
-        placeholder_data = generate_placeholder_data("line", chart)
-
-        # Render with is_placeholder=True to get full placeholder treatment
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        svg = render_chart(
-            chart,
-            _rs,
-            _ctx,
-            data=placeholder_data,
-            format="svg",
-            is_placeholder=True,
-        )
-
-        assert "<svg" in svg
-        assert "add data" in svg.lower()
-        assert "opacity" in svg.lower()
-
-    def test_scatter_chart_placeholder_with_real_vegalite(self, make_chart):
-        """Test placeholder on real Vega-Lite scatter chart output."""
-        from dbt_charts.core.render.chart.vega_lite import render_chart
-        from dbt_charts.core.render.placeholder import generate_placeholder_data
-
-        chart = make_chart("scatter", x="x", y="y", query=None, query_name=None)
-        placeholder_data = generate_placeholder_data("scatter", chart)
-
-        # Verify scatter data has correct fields
-        assert len(placeholder_data) >= 5
-        assert "x" in placeholder_data[0]
-        assert "y" in placeholder_data[0]
-
-        # Render with placeholder styling
-        _rs, _ctx = resolve_style_and_context(get_theme_style())
-        svg = render_chart(
-            chart,
-            _rs,
-            _ctx,
-            data=placeholder_data,
-            format="svg",
-            is_placeholder=True,
-        )
-
-        assert "<svg" in svg
-        assert "add data" in svg.lower()
 
     def test_pie_chart_placeholder_with_real_vegalite(self, make_chart):
         """Test placeholder on real Vega-Lite pie chart output."""

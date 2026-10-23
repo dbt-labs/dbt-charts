@@ -4,7 +4,7 @@
 //! The additional rendering passes (backdrop areas, semi-transparent fills)
 //! are gated by the draw_areas flag inside line::render_inner.
 
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::Payload;
 
 use crate::diagnostic::Diagnostic;

@@ -1,0 +1,98 @@
+{#---
+description: Scatter split into four quadrants by a crosshair at a center point, one dot per row, with one corner shaded, such as the cheaper-and-better quadrant of a cost against quality chart. The query supplies the center, typically an average over a window, repeated on every row.
+channels:
+  x:
+    description: Column holding each dot's horizontal measure.
+  y:
+    description: Column holding each dot's vertical measure.
+  color:
+    description: Column naming each dot's group; each group gets a color and a legend entry.
+options:
+  center_x:
+    type: column
+    description: Column holding the crosshair's x, the same on every row.
+  center_y:
+    type: column
+    description: Column holding the crosshair's y, the same on every row.
+  corner:
+    type: string
+    default: top_left
+    description: The quadrant to shade, top_left, top_right, bottom_left or bottom_right.
+  corner_label:
+    type: string
+    default: null
+    description: Text printed inside the shaded corner.
+  x_title:
+    type: string
+    default: null
+    description: Title under the x axis. Defaults to the x column's name.
+  y_title:
+    type: string
+    default: null
+    description: Title over the y axis. Defaults to the y column's name.
+---#}
+{% set p = options %}
+{% if not rows %}{{ raise_error("A quadrant chart needs at least one row.") }}{% endif %}
+{% if p.corner not in ["top_left", "top_right", "bottom_left", "bottom_right"] %}{{ raise_error("corner must be top_left, top_right, bottom_left or bottom_right, not " ~ p.corner ~ ".") }}{% endif %}
+{% for col in [p.center_x, p.center_y] %}
+  {% if rows | map(attribute=col) | unique | list | length != 1 %}{{ raise_error("The center column " ~ col ~ " must hold one value on every row; compute it over the whole result in the query.") }}{% endif %}
+{% endfor %}
+{% set cx = rows[0][p.center_x] %}
+{% set cy = rows[0][p.center_y] %}
+{% for r in rows %}
+  {% for col in [channels.x, channels.y] %}
+    {% if r[col] is not number or r[col] is boolean %}{{ raise_error("Every row needs a number in " ~ col ~ "; " ~ r[channels.color] ~ " has none.") }}{% endif %}
+  {% endfor %}
+{% endfor %}
+{% set xs = rows | map(attribute=channels.x) | list %}
+{% set ys = rows | map(attribute=channels.y) | list %}
+{% set axis = style.charts.axis %}
+{% set lab = axis.labels.font %}
+{% set line_h = lab.size + 8 %}
+{# Legend: swatches across the top, each entry as wide as its name, wrapping to a new line at the right edge. #}
+{% set lg = namespace(x=0, line=0, items=[]) %}
+{% for g in rows | map(attribute=channels.color) | unique | sort %}
+  {% set w = 14 + text_width(g | string, lab.size) %}
+  {% if lg.x > 0 and lg.x + w > width %}{% set lg.x = 0 %}{% set lg.line = lg.line + 1 %}{% endif %}
+  {% set lg.items = lg.items + [(g, lg.x, lg.line * line_h + lab.size / 2 + 2)] %}
+  {% set lg.x = lg.x + w + 16 %}
+{% endfor %}
+{% set T = (lg.line + 1) * line_h + lab.size + 12 %}
+{% set B = height - lab.size * 2 - 14 %}
+{% if B - T < 4 * line_h %}{{ raise_error("The legend's " ~ (lg.line + 1) ~ " lines leave no room for the plot; give the chart a taller style.aspect_ratio or shorter " ~ channels.color ~ " names.") }}{% endif %}
+{% set y = d3.scale_linear([[ys | min, cy] | min, [ys | max, cy] | max], [B, T]).nice(5) %}
+{% set gutter = namespace(w=0) %}
+{% for t in y.ticks(5) %}{% set gutter.w = [gutter.w, text_width(t | format(column=channels.y), lab.size)] | max %}{% endfor %}
+{% set L = gutter.w + 10 %}
+{% set R = width - 6 %}
+{% set x = d3.scale_linear([[xs | min, cx] | min, [xs | max, cx] | max], [L, R]).nice(5) %}
+{% set left = "left" in p.corner %}
+{% set top = "top" in p.corner %}
+{% set qx0, qx1 = (L, x(cx)) if left else (x(cx), R) %}
+{% set qy0, qy1 = (T, y(cy)) if top else (y(cy), B) %}
+<g font-family="{{ lab.family }}" font-size="{{ lab.size }}">
+  <rect x="{{ qx0 | round(2) }}" y="{{ qy0 | round(2) }}" width="{{ (qx1 - qx0) | round(2) }}" height="{{ (qy1 - qy0) | round(2) }}" fill="{{ style.tones.positive }}" fill-opacity="0.12"/>
+{% for t in y.ticks(5) %}
+  <line x1="{{ L }}" x2="{{ R }}" y1="{{ y(t) | round(2) }}" y2="{{ y(t) | round(2) }}" stroke="{{ axis.grid.color }}"/>
+  <text x="{{ L - 6 }}" y="{{ y(t) | round(2) }}" dy="0.35em" text-anchor="end" fill="{{ lab.color }}">{{ t | format(column=channels.y) }}</text>
+{% endfor %}
+{% for t in x.ticks(5) %}
+  <line x1="{{ x(t) | round(2) }}" x2="{{ x(t) | round(2) }}" y1="{{ T }}" y2="{{ B }}" stroke="{{ axis.grid.color }}"/>
+  <text x="{{ x(t) | round(2) }}" y="{{ B + lab.size + 4 }}" text-anchor="{{ 'start' if loop.first else ('end' if loop.last else 'middle') }}" fill="{{ lab.color }}">{{ t | format(column=channels.x) }}</text>
+{% endfor %}
+  <line x1="{{ x(cx) | round(2) }}" x2="{{ x(cx) | round(2) }}" y1="{{ T }}" y2="{{ B }}" stroke="{{ style.muted }}" stroke-dasharray="4 3"/>
+  <line x1="{{ L }}" x2="{{ R }}" y1="{{ y(cy) | round(2) }}" y2="{{ y(cy) | round(2) }}" stroke="{{ style.muted }}" stroke-dasharray="4 3"/>
+{% if p.corner_label %}
+  <text x="{{ (qx0 + 6) if left else (qx1 - 6) }}" y="{{ (qy0 + lab.size + 4) if top else (qy1 - 6) }}" text-anchor="{{ 'start' if left else 'end' }}" font-weight="600" fill="{{ style.tones.positive }}">{{ p.corner_label }}</text>
+{% endif %}
+{% for r in rows %}
+  <circle cx="{{ x(r[channels.x]) | round(2) }}" cy="{{ y(r[channels.y]) | round(2) }}" r="4.5" fill="{{ color_for(r[channels.color], channels.color) }}" fill-opacity="0.85" stroke="{{ style.background }}" stroke-width="1"><title>{{ r[channels.color] }}: {{ r[channels.x] | format(column=channels.x) }}, {{ r[channels.y] | format(column=channels.y) }}</title></circle>
+{% endfor %}
+  <circle cx="{{ x(cx) | round(2) }}" cy="{{ y(cy) | round(2) }}" r="6" fill="none" stroke="{{ style.font.color }}" stroke-width="1.5"><title>Center: {{ cx | format(column=channels.x) }}, {{ cy | format(column=channels.y) }}</title></circle>
+  <text x="{{ L }}" y="{{ T - 8 }}" fill="{{ lab.color }}">{{ p.y_title or channels.y }}</text>
+  <text x="{{ R }}" y="{{ height - 2 }}" text-anchor="end" fill="{{ lab.color }}">{{ p.x_title or channels.x }}</text>
+{% for g, gx, gy in lg.items %}
+  <circle cx="{{ gx + 5 }}" cy="{{ gy }}" r="5" fill="{{ color_for(g, channels.color) }}"/>
+  <text x="{{ gx + 14 }}" y="{{ gy }}" dy="0.35em" fill="{{ style.font.color }}">{{ g }}</text>
+{% endfor %}
+</g>

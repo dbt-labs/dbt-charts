@@ -5,10 +5,10 @@
 use std::fmt::Write as _;
 
 use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
-use crate::svg::{vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::Payload;
-use crate::measure::baseline_shift;
+use measure::baseline_shift;
 
 /// Vega's default `range.symbol` — the named range a Vega-Lite shape scale
 /// takes (`vega-lite compile/scale/range.ts:341`;
@@ -174,7 +174,7 @@ const LABEL_SIZE: f64 = 10.0;
 const TITLE_PADDING: f64 = 5.0;
 const LABEL_OFFSET: f64 = 4.0;
 /// Vega's legend `symbolSize` (`config.js:198`): the glyph radius is 5.
-const SYMBOL_RADIUS: f64 = 5.0;
+pub(crate) const SYMBOL_RADIUS: f64 = 5.0;
 /// `symbolStrokeWidth` (`config.js:200`).
 const SYMBOL_STROKE_WIDTH: f64 = 1.5;
 /// Vega's `black` (`config.js:11`).

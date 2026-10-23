@@ -276,6 +276,17 @@ fn test_simple_table() {
 }
 
 #[test]
+fn a_ragged_body_row_is_clamped_to_the_header_width() {
+    let doc = parse("| A | B |\n|---|---|\n| 1 | 2 | 3 |\n| 4 |");
+    let AnyBlock::Table(t) = &doc[0] else {
+        panic!("expected table")
+    };
+    let widths: Vec<usize> = t.rows.iter().map(|r| r.cells.len()).collect();
+    assert_eq!(widths, [2, 2]);
+    assert!(t.rows[1].cells[1].spans.is_empty());
+}
+
+#[test]
 fn test_table_alignment() {
     let md = "| Left | Center | Right |\n| :--- | :---: | ---: |\n| L | C | R |";
     let doc = parse(md);

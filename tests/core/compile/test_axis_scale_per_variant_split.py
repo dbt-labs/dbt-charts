@@ -272,48 +272,6 @@ class TestScaleLogPowSymlogParamsStillEmit:
 
         return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
 
-    def test_log_scale_base_emits_in_vl_spec(self):
-        from dbt_charts.core.compile.models.chart.normalized import LineChart as NLine
-        from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
-        from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
-        from dbt_charts.core.render.chart.emitters.line import LineEmitter
-        from dbt_charts.core.render.chart.spec import RenderBox
-        from dbt_charts.core.render.chart.translate import translate_to_vl
-
-        board_style = self._default_board_style()
-        data = [
-            {"month": "Jan", "value": 10.0},
-            {"month": "Feb", "value": 100.0},
-            {"month": "Mar", "value": 1000.0},
-        ]
-        # Build a chart with type:log, base:2 on axis_y.scale.continuous
-        chart = NLine(
-            id="log_line",
-            type="line",
-            x="month",
-            y="value",
-            style=LineChartStylePatch.model_validate(
-                {
-                    "axis_y": {
-                        "scale": {"continuous": {"type": "log", "log": {"base": 2}}}
-                    }
-                }
-            ),
-        )
-        resolved = resolve(chart, data, board_style)
-        spec = LineEmitter().emit(
-            resolved, RenderBox(width=600.0, height=300.0), regroup((), data)
-        )
-        vl = translate_to_vl(spec)
-
-        # The y-scale must carry base=2 so Vega-Lite uses log base 2, not 10.
-        y_scale = vl["encoding"]["y"]["scale"]
-        assert y_scale.get("base") == 2, (
-            f"Expected scale.base=2 in emitted VL spec, got: {y_scale!r}"
-        )
-        assert y_scale.get("type") == "log"
-
 
 class TestAxisYLabelExprRoundTrips:
     """axis_y.labels.expr should still round-trip (expr stays on base AxisLabelStyle)."""

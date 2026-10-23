@@ -55,7 +55,7 @@ rows:
   - by_region
 """
 
-FURNITURE = ("role-axis-label", "role-axis-tick", "role-axis-grid", "role-legend")
+FURNITURE = ("role-axis", "role-axis-grid", "role-legend")
 
 
 def classes(svg: str) -> set[str]:
@@ -119,7 +119,9 @@ def test_thumbnail_format_is_the_cartoonized_svg() -> None:
 
 def test_a_real_board_loses_its_footer_legend_and_axis_furniture() -> None:
     svg = render_board("svg", FURNITURE_BOARD)
-    assert {"dbt-footer-link", "role-axis-label", "role-legend"} <= classes(svg)
+    assert {"dbt-footer-link", "role-axis", "role-axis-grid", "role-legend"} <= classes(
+        svg
+    )
     left = classes(render_board("thumbnail", FURNITURE_BOARD))
     assert not left & {"dbt-footer-link", *FURNITURE}
 

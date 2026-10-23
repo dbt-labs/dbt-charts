@@ -34,55 +34,13 @@ def additive_padding(card_pad: float, chart_padding: PaddingStyle) -> dict[str, 
     }
 
 
-def bump_padding_bottom(spec: dict[str, Any], add_px: float) -> None:
-    """Increase spec-level `padding.bottom` by add_px in place.
-
-    Assumes the spec already carries a 4-key padding dict. Other sides are left alone.
-    """
-    padding = dict(spec["padding"])
-    padding["bottom"] = float(padding.get("bottom", 0)) + add_px
-    spec["padding"] = padding
-
-
 def bump_padding_top(spec: dict[str, Any], add_px: float) -> None:
     """Increase spec-level `padding.top` by add_px in place.
 
-    Symmetric counterpart to ``bump_padding_bottom`` — used when a strip
-    is attached above the plot (``style.support_table.position: top``).
+    Symmetric counterpart to ``bump_padding_bottom``.
     """
     padding = dict(spec["padding"])
     padding["top"] = float(padding.get("top", 0)) + add_px
-    spec["padding"] = padding
-
-
-def bump_padding_left(
-    spec: dict[str, Any],  # type-state: explicit_any — VL fragment
-    add_px: float,
-) -> None:
-    """Increase spec-level `padding.left` by add_px in place.
-
-    Sibling of ``bump_padding_top``/``bump_padding_bottom`` — used when a
-    support_table value-column block is attached beside the plot
-    (``style.support_table.position: left``).
-    """
-    padding = dict(spec["padding"])
-    raw_left = padding.get("left", 0)  # type-state: silent_fallback — additive read
-    padding["left"] = float(raw_left) + add_px
-    spec["padding"] = padding
-
-
-def bump_padding_right(
-    spec: dict[str, Any],  # type-state: explicit_any — VL fragment
-    add_px: float,
-) -> None:
-    """Increase spec-level `padding.right` by add_px in place.
-
-    Symmetric counterpart to ``bump_padding_left`` — used for
-    ``style.support_table.position: right``.
-    """
-    padding = dict(spec["padding"])
-    raw_right = padding.get("right", 0)  # type-state: silent_fallback — additive read
-    padding["right"] = float(raw_right) + add_px
     spec["padding"] = padding
 
 

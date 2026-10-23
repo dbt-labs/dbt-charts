@@ -27,8 +27,8 @@ use crate::families::cartesian::BandScale;
 use crate::families::color_scale::{
     continuous_gradient_def, ContinuousColor, GradientAt, VerticalGradient,
 };
-use crate::node::Node;
-use crate::print::print;
+use scene::Node;
+use print::print;
 use crate::families::heatmap_facet::{
     date_dimension, first_appearance, AxisLabel, GradientLegend, GradientPaint, HeatmapXAxis,
 };
@@ -39,12 +39,12 @@ use crate::families::legend::{
     GRADIENT_STOP_TICKS, VEGA_GRADIENT_LENGTH_MAX, VEGA_GRADIENT_LENGTH_MIN,
 };
 use crate::frame::{ChartFrame, FrameTitle};
-use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
 use crate::families::temporal::{
     axis_time_format, fold_steep, infer_vega_type, rewrite_with_expr, ExprBands, resolve_vertical_temporal_labels, AuthoredTimeFormat, TemporalLabel,
     TimeUnit, VegaType,
 };
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
 use crate::Payload;
 
@@ -75,13 +75,21 @@ pub(crate) struct HeatmapResolved {
     pub(crate) background: String,
     pub(crate) x: String,
     pub(crate) y: String,
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub(crate) color: String,
+    /// Set by the multi-measure fold: each cell is described by Vega's default `field: value` pairs, the x
+    /// column and the measure the cell belongs to.
+    #[serde(default)]
+    pub(crate) wide_native_aria: bool,
     /// Chart-root `ResolvedChart.link`: a channel-placeholder template painted
     /// as an `<a>` around each cell.
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     link: Option<String>,
     #[serde(default)]
     link_open: crate::href::LinkOpen,
+    /// The host's board URL scheme, from the payload; rewrites each datum href.
+    #[serde(skip)]
+    link_context: Option<crate::href::LinkContext>,
     /// Authored axis titles (`x_label`/`y_label`); the field's own name
     /// stands in for an absent one (`resolve_xy_titles`).
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
@@ -157,7 +165,38 @@ pub(crate) struct ColorGradient {
     arm_mode: String,
 }
 
+fn null_as_empty<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// The column a colorless heatmap's cells share: one category, so every cell takes the
+/// palette's first color and no legend or hover value is drawn.
+pub(crate) const FLAT_COLOR: &str = "\u{0}flat";
+
+pub(crate) fn with_flat_column(rows: Vec<serde_json::Map<String, Value>>) -> Vec<serde_json::Map<String, Value>> {
+    rows.into_iter()
+        .map(|mut row| {
+            row.insert(FLAT_COLOR.to_string(), Value::String(String::new()));
+            row
+        })
+        .collect()
+}
+
 impl HeatmapResolved {
+    /// A heatmap authored with no `color:` paints every cell in one fill.
+    pub(crate) fn flatten_color(&mut self, rows: Vec<serde_json::Map<String, Value>>) -> Vec<serde_json::Map<String, Value>> {
+        if !self.color.is_empty() {
+            return rows;
+        }
+        self.color = FLAT_COLOR.to_string();
+        self.legend.visible = false;
+        with_flat_column(rows)
+    }
+
+    pub(crate) fn is_flat(&self) -> bool {
+        self.color == FLAT_COLOR
+    }
+
     /// The per-cell link; a date column prints through `timeFormat`.
     pub(crate) fn datum_link(&self, (x_date, y_date, color_date): (bool, bool, bool)) -> Option<crate::href::DatumLink<'_>> {
         use crate::href::{LinkField, LinkText};
@@ -168,6 +207,7 @@ impl HeatmapResolved {
             x: LinkField { name: &self.x, text: text(x_date) },
             y: Some(LinkField { name: &self.y, text: text(y_date) }),
             color: Some(&self.color).filter(|c| !c.is_empty()).map(|c| LinkField { name: c, text: text(color_date) }),
+            context: self.link_context.as_ref(),
         })
     }
 }
@@ -302,23 +342,71 @@ impl HeatmapResolved {
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("heatmap payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
+        r.link_context = payload.link_context.clone();
         Ok(r)
     }
 }
 
+/// A multi-measure heatmap (`y: [a, b]`) draws one rect layer per measure: x is the
+/// row's x, the y band is the measure's own VALUE, and the measure's label colors
+/// the cell on a shared categorical scale. The same cells fall out of a long fold
+/// whose y is the folded value and whose color is the folded label.
+fn fold_wide_y(payload: &Payload) -> Result<Option<Payload>, String> {
+    let Some(names) = payload.resolved.get("y").and_then(Value::as_array) else { return Ok(None) };
+    let measures: Vec<String> = names
+        .iter()
+        .map(|m| m.as_str().map(str::to_string).ok_or_else(|| format!("heatmap: y names the non-text measure {m}")))
+        .collect::<Result<_, _>>()?;
+    let field_labels: crate::common::FieldLabels = payload
+        .resolved
+        .get("field_labels")
+        .map(|labels| Deserialize::deserialize(labels).map_err(|e| format!("heatmap payload: field_labels: {e}")))
+        .transpose()?
+        .unwrap_or_default();
+    let labels = display_text::wide_measure_labels_for(&measures, &field_labels)?;
+    let mut rows = crate::common::unfold_wide_rows(&payload.rows, &measures, None);
+    for row in &mut rows {
+        let measure = row_str(row, crate::common::WIDE_KEY_FIELD);
+        row.insert(crate::common::WIDE_LABEL_FIELD.to_string(), Value::String(labels[&measure].clone()));
+    }
+    let mut resolved = payload.resolved.clone();
+    let fields = resolved.as_object_mut().ok_or("heatmap payload: resolved is not an object")?;
+    if fields.get("y_label").is_none_or(Value::is_null) {
+        fields.insert("y_label".into(), Value::String(crate::common::wide_measures_title(&measures, &field_labels)?));
+    }
+    fields.insert("wide_native_aria".into(), Value::Bool(true));
+    fields.insert("y".into(), Value::String(crate::common::WIDE_VALUE_FIELD.into()));
+    fields.insert("color".into(), Value::String(crate::common::WIDE_LABEL_FIELD.into()));
+    fields.insert(
+        "resolved_channels".into(),
+        serde_json::json!({"color": {
+            "channel": "color", "mode": "series", "data_field": crate::common::WIDE_LABEL_FIELD, "quantitative_data": false
+        }}),
+    );
+    Ok(Some(payload.with_inputs(resolved, rows)))
+}
+
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    let r = HeatmapResolved::from_payload(payload)?;
+    if let Some(folded) = fold_wide_y(payload)? {
+        return render(&folded, fonts);
+    }
+    let mut r = HeatmapResolved::from_payload(payload)?;
 
     // `_flag_quantitative_color` stamps every resolved color channel, so a
     // series color without the flag is a payload no resolver produced.
     let categorical = match r.resolved_channels.get("color") {
-        Some(ch) if ch.mode == "series" => !ch.quantitative_data.ok_or(
-            "heatmap: a series color channel carries no quantitative_data flag (resolver required)",
-        )?,
+        Some(ch) if ch.mode == "series" => {
+            ch.categorical
+                || !ch.quantitative_data.ok_or(
+                    "heatmap: a series color channel carries no quantitative_data flag (resolver required)",
+                )?
+        }
         _ => false,
     };
     let (rows, x_grain) = date_dimension(&payload.rows, &r.x, &r.style.axis_x, true)?;
     let (rows, y_grain) = date_dimension(&rows, &r.y, &r.style.axis_y, false)?;
+    let rows = r.flatten_color(rows);
+    let categorical = categorical || r.is_flat();
     // A date-like column types temporal: a time-scale gradient (`DateGradient`).
     let date_color = categorical && infer_vega_type(&rows, &r.color) == VegaType::Temporal;
     let categorical = categorical && !date_color;
@@ -866,7 +954,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         opacity: r.style.rect_mark.opacity.unwrap_or(1.0),
         stroke_attr: r.style.rect_mark.stroke_attr()?,
         stroke_reach: r.style.rect_mark.stroke_reach(),
-        tooltip: tooltip_value_title(&r, &rows)?.zip(r.style.tooltip_format.as_ref()),
+        tooltip: tooltip_value_title(&r)?.zip(r.style.tooltip_format.as_ref()).filter(|_| !r.wide_native_aria),
+        native_aria: r.wide_native_aria,
+        x_header: HeaderFmt::of(&rows, x_field, &r.style.axis_x)?,
+        y_header: HeaderFmt::of(&rows, y_field, &r.style.axis_y)?,
         link: r.datum_link((x_grain.is_some(), y_grain.is_some(), date_color)),
         mirror: mirror_active,
         ghost_titles: None,
@@ -905,7 +996,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             );
         }
         let label_x = plot_left + center;
-        let dy = crate::measure::baseline_shift(x_baseline, x_label_fs);
+        let dy = measure::baseline_shift(x_baseline, x_label_fs);
         let anchor = svg_text_anchor(x_align);
         if x_angle == 0.0 {
             let _ = write!(
@@ -930,7 +1021,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
 
     let x_title_y = x_label_row
         + x_sign * (x_label_reach + ax_x.title.padding.unwrap_or(10.0))
-        + crate::measure::baseline_shift(x_edge.baseline(), ax_x.title.font.size_or(11.0));
+        + measure::baseline_shift(x_edge.baseline(), ax_x.title.font.size_or(11.0));
     crate::common::emit_axis_title_at(&mut svg, &x_title_text, &ax_x.title, plot_left + plot_w / 2.0, x_title_y, None);
     if x_dates.is_none() {
         crate::contract::axis_group_close(&mut svg);
@@ -983,14 +1074,14 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             if y_angle != 0.0 {
                 emit_rotated_x_label(
                     &mut svg,
-                    (y_label_x, plot_top + center, y_angle, crate::measure::baseline_shift(edge.baseline, y_label_fs)),
+                    (y_label_x, plot_top + center, y_angle, measure::baseline_shift(edge.baseline, y_label_fs)),
                     (y_text_anchor, y_label_family, y_label_fs, &y_label_weight, y_label_color),
                     (row1, row2),
                     hidden,
                 );
                 continue;
             }
-            let row1_y = plot_top + center + crate::measure::baseline_shift("middle", y_label_fs);
+            let row1_y = plot_top + center + measure::baseline_shift("middle", y_label_fs);
             for (text, y) in [(row1, row1_y), (row2, row1_y + vega_fit::label_row_advance(y_label_fs))] {
                 if text.is_empty() {
                     continue;
@@ -1153,6 +1244,34 @@ pub(crate) enum CellFill<'a> {
     Dates { min: f64, max: f64 },
 }
 
+/// How a dimension's value heads the cell's tooltip: a date column prints its
+/// bucket (`header_tooltip_field`), anything else its raw text.
+pub(crate) struct HeaderFmt<'a> {
+    tu: Option<crate::families::temporal::TimeUnit>,
+    standard_date: bool,
+    format: Option<crate::families::temporal::AuthoredTimeFormat<'a>>,
+}
+
+impl<'a> HeaderFmt<'a> {
+    pub(crate) fn of(rows: &[serde_json::Map<String, Value>], field: &str, axis: &'a AxisStyle) -> Result<Self, String> {
+        let domain = first_appearance(rows, field);
+        let strs: Vec<&str> = domain.iter().map(String::as_str).collect();
+        let tu = crate::families::temporal::detect_time_unit(&strs);
+        Ok(Self {
+            tu,
+            standard_date: crate::families::temporal::x_values_are_standard_dates(&strs),
+            format: crate::families::temporal::AuthoredTimeFormat::parse(
+                "heatmap",
+                crate::families::temporal::grain_format(&axis.grain_formats, tu),
+            )?,
+        })
+    }
+
+    fn text(&self, cat: &str) -> Result<String, String> {
+        crate::contract::tooltip_header_text(cat, self.tu, self.standard_date, self.format)
+    }
+}
+
 /// What paints one heatmap cell, common to a single chart and to every panel
 /// of a facet composite.
 pub(crate) struct CellPaint<'a> {
@@ -1168,6 +1287,10 @@ pub(crate) struct CellPaint<'a> {
     /// The tooltip's value title and format, or `None` when the chart paints
     /// no tooltip.
     pub(crate) tooltip: Option<(String, &'a FormatSlot)>,
+    pub(crate) x_header: HeaderFmt<'a>,
+    pub(crate) y_header: HeaderFmt<'a>,
+    /// Vega's default description of a multi-measure cell: its x column and its measure, each `field: value`.
+    pub(crate) native_aria: bool,
     pub(crate) link: Option<crate::href::DatumLink<'a>>,
     /// `axis_y.mirror`: an invisible rule layer carries each cell's label back to the origin.
     pub(crate) mirror: bool,
@@ -1245,31 +1368,14 @@ fn y_date_labels(
 /// `legend_title_text`, it is never gated on `legend.title.visible` (the
 /// tooltip renders with content the legend itself may be hiding).
 ///
-/// `header_tooltip_field`'s own type inference would call an all-date-like
-/// x/y "temporal" and format it through `tooltip_header_date` (the full
-/// bucket, not the raw string) -- this port has no ported detection for that.
-/// Same posture as line/area's own unmodeled shapes (a wide-measures fold, a
-/// `chart.layers` combo, band-step): gated off silently rather than refused,
-/// since the cell geometry already renders correctly today and a new `Err`
-/// here would regress an already-passing pixel row for an ordinary shape (a
-/// month×category heatmap, say) that just happens to have a date-shaped axis.
-pub(crate) fn tooltip_value_title(
-    r: &HeatmapResolved,
-    rows: &[serde_json::Map<String, Value>],
-) -> Result<Option<String>, String> {
-    let tooltip_labels = r.style.tooltip_format.as_ref().is_some_and(|f| !f.spec.is_empty())
-        && [r.x.as_str(), r.y.as_str()].iter().all(|field| {
-            !rows
-                .iter()
-                .all(|row| crate::families::temporal::parse_iso_date(&row_str(row, field)).is_some())
-        });
-    if !tooltip_labels {
+pub(crate) fn tooltip_value_title(r: &HeatmapResolved) -> Result<Option<String>, String> {
+    if r.is_flat() || !r.style.tooltip_format.as_ref().is_some_and(|f| !f.spec.is_empty()) {
         return Ok(None);
     }
     // The theme cascade guarantees every resolved chart's
     // `legend.title.font` is populated (`core/AGENTS.md`'s "Theme YAML
-    // completeness") -- a caller reaching this with `tooltip_labels`
-    // true and no case is a genuine resolved-payload defect, not a
+    // completeness") -- a caller reaching this
+    // with no case is a genuine resolved-payload defect, not a
     // shape to default around (`pie.rs::pie_legend_title_case`'s same
     // argument).
     let case = r
@@ -1328,18 +1434,23 @@ pub(crate) fn paint_cells(
         let mut ghost_label = None;
         let aria = match &c.tooltip {
             Some((value_title, value_format)) => {
+                let (x_head, y_head) = (c.x_header.text(&xv)?, c.y_header.text(&yv)?);
                 let tt = crate::contract::HeatmapTooltip {
-                    x: &xv,
-                    y: &yv,
+                    x: &x_head,
+                    y: &y_head,
                     value_title,
                     value_format,
                     value: cv,
                 };
                 if let Some((x_title, y_title)) = c.ghost_titles {
                     let value_s = value_format.paint(cv).map_err(|e| format!("heatmap: tooltip value {e}"))?;
-                    ghost_label = Some(crate::contract::native_label(&[(x_title, xv.clone()), (y_title, yv.clone()), (value_title, value_s)]));
+                    ghost_label = Some(crate::contract::native_label(&[(x_title, x_head.clone()), (y_title, y_head.clone()), (value_title, value_s)]));
                 }
                 Some(crate::contract::heatmap_aria_label(&tt)?)
+            }
+            None if c.native_aria => {
+                let measure = row_str(row, crate::common::WIDE_KEY_FIELD);
+                Some(crate::contract::native_label(&[(c.x_field, xv.clone()), (measure.as_str(), yv.clone())]))
             }
             None => None,
         };
@@ -1632,8 +1743,7 @@ pub(crate) fn legend_labels(ticks: &[f64], spec: Option<&str>, scale: Option<&Co
         .map(|&v| match scale {
             Some(scale) if scale.pivot == Some(v) && !d3rs::ticks::d3_ticks(scale.lo, scale.hi, GRADIENT_NICE_TICK_COUNT).contains(&v) => {
                 let step = d3rs::ticks::d3_tick_step(scale.lo, scale.hi, GRADIENT_NICE_TICK_COUNT);
-                let precision = d3rs::format::precision_fixed(step);
-                crate::number_locale::d3_format(&format!(",.{precision}f"), v)
+                crate::number_locale::d3_format(&crate::number_locale::vega_tick_spec(step), v)
             }
             _ => format_legend_value(v, spec),
         })
@@ -1693,7 +1803,7 @@ mod tests {
         assert_eq!((hidden.stroke_attr().unwrap().as_str(), hidden.stroke_reach()), ("", 0.0));
     }
 
-    use crate::text::FontBook;
+    use measure::FontBook;
     use crate::Payload;
     use super::{GradientColors, GradientLegend, HeatmapResolved};
     use serde_json::{json, Value};
@@ -2424,14 +2534,10 @@ mod tests {
         assert!(err.contains("ERR-HEATMAP-COLOR-NO-VALUES") && err.contains("revenue"), "{err}");
     }
 
-    /// `header_tooltip_field`'s own type inference would call an
-    /// all-date-like x "temporal" and reformat it -- this port has no
-    /// ported detection for that, so it skips the tooltip wiring silently
-    /// (same posture as line/area's own unmodeled shapes) rather than
-    /// refusing the whole chart over a shape that renders correctly today.
-    /// No corpus row hits this.
+    /// A date x heads the cell's tooltip with its bucket, as every other cartesian family does.
     #[test]
-    fn a_date_like_x_skips_the_tooltip_rather_than_mislabel() {
+    fn a_date_like_x_heads_the_tooltip_with_its_bucket() {
+        let _en = crate::time_locale::en_us_scope();
         let j = heatmap_payload(|j| {
             j["rows"] = json!([
                 {"region": "2024-01-01", "category": "Accessories", "revenue": 100},
@@ -2439,8 +2545,8 @@ mod tests {
             ]);
         });
         let p: Payload = serde_json::from_value(j).unwrap();
-        let svg = render(&p, &test_fonts()).expect("renders despite the unmodeled date-like x");
-        assert!(!svg.contains("role-mark"), "no tooltip wiring for a date-like x: {svg}");
+        let svg = render(&p, &test_fonts()).expect("renders");
+        assert!(svg.contains("\u{2061}Jan 2024; \u{2061}Accessories; Revenue: 100"), "{svg}");
     }
 
     /// `axis_y.mirror` repeats the category labels on the right edge, and the
@@ -2535,7 +2641,7 @@ mod tests {
         assert_eq!((width, height), (plot_w.clamp(100.0, 200.0), 16.0), "{svg}");
         assert_eq!(y + 16.0 + 8.0 + 11.0, 432.0 - 16.0, "{svg}");
         let title = text_tag(&svg, "Revenue");
-        assert_eq!(attr(&title, "y"), y - 17.0 + crate::measure::baseline_shift("top", 12.0), "{svg}");
+        assert_eq!(attr(&title, "y"), y - 17.0 + measure::baseline_shift("top", 12.0), "{svg}");
         assert_eq!(gradient_bar(&two_ends("right")).2, 100.0);
     }
 

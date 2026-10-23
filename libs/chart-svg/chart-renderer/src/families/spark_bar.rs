@@ -3,6 +3,10 @@
 //! count column.
 //!
 //! Its layout constants not carried in the payload are engine constants owned here.
+//!
+//! The reference split onto the family contract (`chart-renderer/AGENTS.md`):
+//! `bind` reads the payload, `layout` makes every pixel decision and returns
+//! nodes, `render` prints them.
 
 use std::collections::BTreeSet;
 
@@ -12,10 +16,12 @@ use serde_json::{json, Value};
 use crate::codes;
 use crate::common::{tag_at, CellRow, CellTag, Font};
 use crate::diagnostic::{py_repr, warn, Diagnostic};
+use crate::layout::{IntrinsicWidth, Layout, Rect};
 use crate::svg::py_float_str;
-use crate::text::FontBook;
-use crate::xml::{Attrs, Xml};
-use crate::{Payload, SparkBarTitle};
+use measure::{FontBook, Measure};
+use print::print;
+use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
+use crate::{Payload, PlaceholderStyle, SparkBarTitle, TitleShift};
 
 // Engine constants for the "+ N more" row and the text rhythm.
 const MORE_ROWS_FONT_SIZE: f64 = 10.0;
@@ -24,6 +30,7 @@ const MORE_ROWS_BOTTOM_PADDING: f64 = 8.0;
 const TEXT_BASELINE_OFFSET: f64 = 4.0;
 const SIDE_PADDING: f64 = 4.0;
 const AVG_CHAR_WIDTH_PX: f64 = 7.0;
+const TABULAR_NUMS: &str = "font-variant-numeric: tabular-nums lining-nums;";
 
 #[derive(Deserialize)]
 struct Resolved {
@@ -45,6 +52,7 @@ struct StyleWrap {
 
 #[derive(Deserialize)]
 struct SparkBarStyle {
+    preferred_width: f64,
     min_width: f64,
     bar: BarStyle,
     label: SlotToggle,
@@ -228,13 +236,13 @@ fn format_count(v: &Value, tag: Option<&CellTag>) -> Result<String, String> {
 /// before branching on whether the chart is titled and reads its weight, size
 /// and family unconditionally (`spark_bar.py:417-423`), so an absent slot
 /// refuses even for an untitled chart. Size is the whole-pixel `int(size)`.
-struct TitleFont<'a> {
+struct TitleFont {
     size: i64,
     weight: String,
-    family: &'a str,
+    family: String,
 }
 
-fn title_font_of(title_font: Option<&Font>) -> Result<TitleFont<'_>, String> {
+fn title_font_of(title_font: Option<&Font>) -> Result<TitleFont, String> {
     let font = title_font.ok_or("spark_bar: style.title_font absent (theme required)")?;
     if font.weight.is_none() {
         return Err("spark_bar: style.title_font.weight absent (theme required)".into());
@@ -244,7 +252,7 @@ fn title_font_of(title_font: Option<&Font>) -> Result<TitleFont<'_>, String> {
         weight: font.weight_str(),
         family: font
             .family
-            .as_deref()
+            .clone()
             .ok_or("spark_bar: style.title_font.family absent (theme required)")?,
     })
 }
@@ -290,10 +298,49 @@ pub(crate) fn title_geometry(resolved: &Value, geometry: &SparkBarTitle) -> Resu
     Ok((baseline, height - baseline))
 }
 
-pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic> {
+/// A spark_bar after `bind`: everything its data and style decide, before any
+/// pixel does.
+pub struct Bound {
+    id: String,
+    title: Option<String>,
+    subtitle: Option<Subtitle>,
+    title_font: TitleFont,
+    title_geometry: SparkBarTitle,
+    style: SparkBarStyle,
+    text_color: String,
+    body_family: String,
+    font_size: f64,
+    muted: String,
+    rows: Vec<Row>,
+    more_count: usize,
+    max_value: f64,
+    signed: bool,
+    shift: TitleShift,
+    placeholder: Option<Placeholder>,
+}
+
+struct Placeholder {
+    style: PlaceholderStyle,
+    text: String,
+    weight: String,
+}
+
+struct Subtitle {
+    text: String,
+    size: f64,
+}
+
+struct Row {
+    label: String,
+    value: f64,
+    /// Formatted only when the count column paints.
+    count: Option<String>,
+}
+
+pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("spark_bar: resolved payload: {e}"))?;
-    let sc = &r.style.spark_bar;
+    let sc = r.style.spark_bar;
     let rows = &payload.rows;
     let tags = &payload.cell_text;
 
@@ -303,60 +350,34 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
     let text_color = sc
         .font
         .color
-        .as_deref()
+        .clone()
         .ok_or("spark_bar: style.spark_bar.font.color absent (theme required)")?;
     let body_family = sc
         .font
         .family
-        .as_deref()
+        .clone()
         .ok_or("spark_bar: style.spark_bar.font.family absent (theme required)")?;
     let font_size = sc
         .font
         .size
         .ok_or("spark_bar: style.spark_bar.font.size absent (theme required)")?;
-    let secondary_color = payload
+    let board_style = payload
         .board_style
         .as_ref()
-        .ok_or("spark_bar: board_style absent (theme required)")?
+        .ok_or("spark_bar: board_style absent (theme required)")?;
+    let muted = board_style
         .muted
-        .as_deref()
+        .clone()
         .ok_or("spark_bar: board_style.muted absent (theme required)")?;
-    let title_geometry_cfg = payload
-        .board_style
-        .as_ref()
-        .and_then(|b| b.spark_bar_title)
+    let title_geometry = board_style
+        .spark_bar_title
         .ok_or("spark_bar: payload carries no board_style.spark_bar_title (the title block's height and baseline)")?;
 
     let (x_field, y_field) = auto_detect_fields(rows, tags, r.x.clone(), r.y.clone());
     validate_value_field(&r.id, x_field.as_deref(), rows, tags)?;
 
     let visible = &rows[..rows.len().min(sc.max_bars)];
-    let num_bars = visible.len();
-    let row_height = sc.bar.height + sc.bar.padding;
-    // The envelope always carries the slot width (production's `width is
-    // None -> preferred_width` arm is unreachable through the harness); an
-    // explicit 0-width slot floors to min_width via the same max() as
-    // production, never to preferred_width.
-    let chart_width = payload.width.max(sc.min_width);
-
-    let title = r.title.as_deref();
-    let subtitle = r.subtitle.as_deref();
     let title_font = title_font_of(r.style.title_font.as_ref())?;
-    let title_size = title_font.size;
-    let (mut title_height, title_baseline) = title_block(title, subtitle, title_size, &title_geometry_cfg);
-    // `spark_bar.py:427-431`: the row's shifted title band is added to the card,
-    // so the bars keep their own room.
-    let shift = payload.title_shift;
-    title_height += shift.body_dy;
-    let mut chart_height = if payload.height > 0.0 {
-        payload.height + shift.body_dy
-    } else {
-        title_height + num_bars as f64 * row_height + sc.bar.padding
-    };
-
-    let left_padding = if sc.label.visible { sc.label.width } else { SIDE_PADDING };
-    let right_padding = if sc.count.visible { sc.count.width } else { SIDE_PADDING };
-    let bar_area_width = (chart_width - left_padding - right_padding).max(20.0);
 
     // Scale by the largest finite magnitude; a negative anywhere puts every bar
     // on a shared midline.
@@ -366,115 +387,66 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
             visible
                 .iter()
                 .enumerate()
-                .filter_map(|(i, row)| row.get(xf).and_then(|v| numeric_cell(v, tag_at(tags, i, xf))))
+                .filter_map(|(i, row)| {
+                    row.get(xf)
+                        .and_then(|v| numeric_cell(v, tag_at(tags, i, xf)))
+                })
                 .filter(|v| v.is_finite())
                 .collect()
         })
         .unwrap_or_default();
-    let signed_layout = finite_values.iter().any(|v| *v < 0.0);
+    let signed = finite_values.iter().any(|v| *v < 0.0);
     let mut max_value = finite_values.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
     if max_value == 0.0 {
         max_value = 1.0;
     }
 
-    let current_y = if title.is_some() { title_height } else { 0.0 };
-    let more_count = rows.len() - num_bars;
-    let more_y = current_y + num_bars as f64 * row_height + MORE_ROWS_OFFSET_Y;
-    // "+ N more" indicator when max_bars truncates and, matching production
-    // exactly, the indicator's own bottom edge REPLACES chart_height even when
-    // an explicit height was passed.
-    if more_count > 0 {
-        chart_height = more_y + MORE_ROWS_BOTTOM_PADDING;
-    }
-
-    let title_case = match title {
+    let title = match r.title {
         Some(title_text) => {
             // Board-level style.title.font.case, same transform the chart and
             // table renderers apply; an absent case refuses by name.
-            let case = payload
-                .board_style
-                .as_ref()
-                .and_then(|b| b.title_case.as_deref())
+            let case = board_style
+                .title_case
+                .as_deref()
                 .ok_or("spark_bar: board_style.title.font.case absent (theme required)")?;
             Some(if case != "none" {
-                display_text::case::apply_case(title_text, case)?
+                display_text::case::apply_case(&title_text, case)?
             } else {
-                title_text.to_string()
+                title_text
             })
         }
         None => None,
     };
-    let placeholder_style = if payload.is_placeholder {
-        Some(
-            payload
-                .board_style
-                .as_ref()
-                .and_then(|b| b.placeholder.as_ref())
-                .ok_or("spark_bar: a placeholder chart needs board_style.placeholder")?,
-        )
+    let placeholder = if payload.is_placeholder {
+        let style = board_style
+            .placeholder
+            .clone()
+            .ok_or("spark_bar: a placeholder chart needs board_style.placeholder")?;
+        let (text, weight) = style.overlay_label(sc.font.case.as_deref())?;
+        Some(Placeholder {
+            style,
+            text,
+            weight,
+        })
     } else {
         None
     };
-
-    let mut xml = Xml::new();
-    xml.open(
-        "svg",
-        Attrs::new()
-            .set("xmlns", "http://www.w3.org/2000/svg")
-            .set("width", py_float_str(chart_width))
-            .set("height", py_float_str(chart_height))
-            .set("viewBox", format!("0 0 {} {}", py_float_str(chart_width), py_float_str(chart_height))),
-    );
-    if let Some(style) = placeholder_style {
-        xml.open("g", Attrs::new().set("opacity", py_float_str(style.opacity)));
-    }
-    xml.text("\n");
-
-    if let Some(display) = &title_case {
-        let title_baseline_y = title_baseline + shift.title_dy;
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", "0")
-                .set("y", py_float_str(title_baseline_y))
-                .set("font-size", title_size.to_string())
-                .set("font-weight", title_font.weight.as_str())
-                .set("fill", text_color)
-                .set("font-family", title_font.family)
-                .set("data-authored-kind", "title"),
-            display,
-        );
-        if let Some(subtitle_text) = subtitle {
-            let sub_size = sc
-                .subtitle
-                .font
-                .size
-                .ok_or("spark_bar: style.spark_bar.subtitle.font.size absent (theme required)")?;
-            xml.leaf(
-                "text",
-                Attrs::new()
-                    .set("x", "0")
-                    .set("y", py_float_str(title_baseline_y + title_size as f64))
-                    .set("font-size", py_float_str(sub_size))
-                    .set("fill", secondary_color)
-                    .set("font-family", body_family)
-                    .set("data-authored-kind", "subtitle"),
-                subtitle_text,
-            );
+    let subtitle = match (&title, r.subtitle) {
+        (Some(_), Some(text)) => {
+            let size =
+                sc.subtitle.font.size.ok_or(
+                    "spark_bar: style.spark_bar.subtitle.font.size absent (theme required)",
+                )?;
+            Some(Subtitle { text, size })
         }
-    }
+        _ => None,
+    };
 
-    let mut truncated_labels = 0;
-    let bar_height = (sc.bar.height as i64).to_string();
-    let radius = py_float_str(sc.border.radius);
-    // `max(chart_width - ..., 20)`: the floor is the int 20, which prints bare.
-    let bar_area_width_attr =
-        if bar_area_width > 20.0 { py_float_str(bar_area_width) } else { "20".to_string() };
+    let mut bound_rows = Vec::with_capacity(visible.len());
     for (i, row) in visible.iter().enumerate() {
-        let row_y = current_y + i as f64 * row_height;
         let y_cell = y_field.as_deref().and_then(|yf| row.get(yf));
         let y_tag = y_field.as_deref().and_then(|yf| tag_at(tags, i, yf));
-        let label_value = match (y_cell, y_tag) {
+        let label = match (y_cell, y_tag) {
             // Python `str(value)` of a non-finite cell (`nan`, `NaN`, `-Infinity`).
             (Some(Value::Null), Some(tag)) => tag.text.clone(),
             (Some(Value::String(s)), _) => s.clone(),
@@ -483,20 +455,221 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
             // key hits the "" default.
             (Some(Value::Null), None) => "None".to_string(),
             // Python str(bool) capitalizes — production paints "True"/"False".
-            (Some(Value::Bool(b)), _) => if *b { "True".into() } else { "False".into() },
+            (Some(Value::Bool(b)), _) => {
+                if *b {
+                    "True".into()
+                } else {
+                    "False".into()
+                }
+            }
             (None, _) => {
-                if y_field.is_some() { String::new() } else { display_text::language::tr("spark.item", None, &[("n", &(i + 1).to_string())])? }
+                if y_field.is_some() {
+                    String::new()
+                } else {
+                    display_text::language::tr("spark.item", None, &[("n", &(i + 1).to_string())])?
+                }
             }
             (Some(other), _) => other.to_string(),
         };
         let count_cell = x_field.as_deref().and_then(|xf| row.get(xf));
         let count_tag = x_field.as_deref().and_then(|xf| tag_at(tags, i, xf));
-        let count_value = count_cell.and_then(|v| numeric_cell(v, count_tag)).unwrap_or(0.0);
-        let (fraction, is_negative) = signed_fraction(count_value, max_value, signed_layout);
-        let (bar_width, fill_x) = if signed_layout {
+        let value = count_cell
+            .and_then(|v| numeric_cell(v, count_tag))
+            .unwrap_or(0.0);
+        let count = if sc.count.visible {
+            Some(format_count(count_cell.unwrap_or(&Value::Null), count_tag)?)
+        } else {
+            None
+        };
+        bound_rows.push(Row {
+            label,
+            value,
+            count,
+        });
+    }
+
+    Ok(Bound {
+        id: r.id,
+        title,
+        subtitle,
+        title_font,
+        title_geometry,
+        style: sc,
+        text_color,
+        body_family,
+        font_size,
+        muted,
+        rows: bound_rows,
+        more_count: rows.len() - visible.len(),
+        max_value,
+        signed,
+        shift: payload.title_shift,
+        placeholder,
+    })
+}
+
+pub fn intrinsic(bound: &Bound, _measure: &Measure) -> Result<Option<IntrinsicWidth>, Diagnostic> {
+    Ok(Some(IntrinsicWidth {
+        min: bound.style.min_width,
+        preferred: bound.style.preferred_width,
+    }))
+}
+
+/// The vertical law shared by `height_for_width` and `layout`: where the bars
+/// start, where the "+ N more" row sits, and the height the content asks for.
+struct Vertical {
+    title_baseline: f64,
+    current_y: f64,
+    more_y: f64,
+    natural_height: f64,
+}
+
+fn vertical(bound: &Bound) -> Vertical {
+    let sc = &bound.style;
+    let row_height = sc.bar.height + sc.bar.padding;
+    let (title_height, title_baseline) = title_block(
+        bound.title.as_deref(),
+        bound.subtitle.as_ref().map(|s| s.text.as_str()),
+        bound.title_font.size,
+        &bound.title_geometry,
+    );
+    // `spark_bar.py:427-431`: the row's shifted title band is added to the card,
+    // so the bars keep their own room.
+    let title_height = title_height + bound.shift.body_dy;
+    let current_y = if bound.title.is_some() {
+        title_height
+    } else {
+        0.0
+    };
+    let bars_height = bound.rows.len() as f64 * row_height;
+    let more_y = current_y + bars_height + MORE_ROWS_OFFSET_Y;
+    // "+ N more" indicator when max_bars truncates and, matching production
+    // exactly, the indicator's own bottom edge REPLACES any explicit height.
+    let natural_height = if bound.more_count > 0 {
+        more_y + MORE_ROWS_BOTTOM_PADDING
+    } else {
+        title_height + bars_height + sc.bar.padding
+    };
+    Vertical {
+        title_baseline,
+        current_y,
+        more_y,
+        natural_height,
+    }
+}
+
+/// The height the content asks for. Spark_bar's rows are fixed-pitch, so it
+/// does not depend on `width`.
+pub fn height_for_width(bound: &Bound, _width: f64, _measure: &Measure) -> Result<f64, Diagnostic> {
+    Ok(vertical(bound).natural_height)
+}
+
+/// `cell` is the drawn box; only the "+ N more" row overrides its height.
+pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, Diagnostic> {
+    let sc = &bound.style;
+    let title = bound.title.as_deref();
+    let subtitle = bound.subtitle.as_ref();
+    let rows = &bound.rows;
+    let num_bars = rows.len();
+    let row_height = sc.bar.height + sc.bar.padding;
+    // The slot width is authoritative (production's `width is None ->
+    // preferred_width` arm is unreachable through the harness); an explicit
+    // 0-width slot floors to min_width via the same max() as production, never
+    // to preferred_width.
+    let chart_width = cell.width.max(sc.min_width);
+    let font_size = bound.font_size;
+    let title_size = bound.title_font.size;
+
+    let Vertical {
+        current_y,
+        more_y,
+        natural_height,
+        title_baseline,
+        ..
+    } = vertical(bound);
+    let shift = bound.shift;
+    let chart_height = if bound.more_count > 0 {
+        natural_height
+    } else {
+        cell.height
+    };
+
+    let left_padding = if sc.label.visible {
+        sc.label.width
+    } else {
+        SIDE_PADDING
+    };
+    let right_padding = if sc.count.visible {
+        sc.count.width
+    } else {
+        SIDE_PADDING
+    };
+    let bar_area_width = (chart_width - left_padding - right_padding).max(20.0);
+
+    let fixed1 = |v: f64| format!("{v:.1}");
+    let text = |x: String, y: String, attrs: Attrs, body: String| {
+        Node::Text(TextBlock {
+            attrs: Attrs::new().quick("x", x).quick("y", y).extend(attrs),
+            text: Chars::new(body, Escape::Quick),
+        })
+    };
+    let newline = || Node::Chars(Chars::new("\n", Escape::Quick));
+    let mut content = vec![newline()];
+
+    if let Some(display) = title {
+        let title_baseline_y = title_baseline + shift.title_dy;
+        content.push(text(
+            "0".into(),
+            py_float_str(title_baseline_y),
+            Attrs::new()
+                .quick("font-size", title_size.to_string())
+                .quick("font-weight", bound.title_font.weight.as_str())
+                .quick("fill", bound.text_color.as_str())
+                .quick("font-family", bound.title_font.family.as_str())
+                .quick("data-authored-kind", "title"),
+            display.to_string(),
+        ));
+        if let Some(subtitle) = subtitle {
+            content.push(text(
+                "0".into(),
+                py_float_str(title_baseline_y + title_size as f64),
+                Attrs::new()
+                    .quick("font-size", py_float_str(subtitle.size))
+                    .quick("fill", bound.muted.as_str())
+                    .quick("font-family", bound.body_family.as_str())
+                    .quick("data-authored-kind", "subtitle"),
+                subtitle.text.clone(),
+            ));
+        }
+    }
+
+    let mut truncated_labels = 0;
+    let bar_height = sc.bar.height as i64;
+    let radius = py_float_str(sc.border.radius);
+    // `max(chart_width - ..., 20)`: the floor is the int 20, which prints bare.
+    let track_width = if bar_area_width > 20.0 {
+        py_float_str(bar_area_width)
+    } else {
+        "20".to_string()
+    };
+    // Production hands the row renderer int(bar_height) — baselines derive from
+    // the truncated height, not the raw theme float.
+    let baseline_h = sc.bar.height.trunc();
+    for (i, row) in rows.iter().enumerate() {
+        let row_y = current_y + i as f64 * row_height;
+        let (fraction, is_negative) = signed_fraction(row.value, bound.max_value, bound.signed);
+        let (bar_width, fill_x) = if bound.signed {
             let half_width = bar_area_width / 2.0;
             let bar_width = fraction * half_width;
-            (bar_width, left_padding.trunc() + if is_negative { half_width - bar_width } else { half_width })
+            (
+                bar_width,
+                left_padding.trunc()
+                    + if is_negative {
+                        half_width - bar_width
+                    } else {
+                        half_width
+                    },
+            )
         } else {
             (fraction * bar_area_width, left_padding.trunc())
         };
@@ -504,100 +677,168 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
         // Char-count truncation (production divides label.width by the
         // avg_char_width_px engine constant — no font measurement here).
         let max_label_chars = (sc.label.width / AVG_CHAR_WIDTH_PX) as usize;
-        let display_label = if label_value.chars().count() > max_label_chars {
+        let display_label = if row.label.chars().count() > max_label_chars {
             truncated_labels += 1;
-            let cut: String = label_value.chars().take(max_label_chars.saturating_sub(2)).collect();
+            let cut: String = row
+                .label
+                .chars()
+                .take(max_label_chars.saturating_sub(2))
+                .collect();
             format!("{cut}...")
         } else {
-            label_value
+            row.label.clone()
         };
 
-        // Production hands the row renderer int(bar_height) — baselines
-        // derive from the truncated height, not the raw theme float.
-        let baseline_h = sc.bar.height.trunc();
+        let baseline_y = row_y + baseline_h / 2.0 + TEXT_BASELINE_OFFSET;
         if sc.label.visible {
-            let label_y = row_y + baseline_h / 2.0 + TEXT_BASELINE_OFFSET;
-            xml.leaf(
-                "text",
+            content.push(text(
+                "0".into(),
+                fixed1(baseline_y),
                 Attrs::new()
-                    .set("x", "0")
-                    .set("y", format!("{label_y:.1}"))
-                    .set("font-size", py_float_str(font_size))
-                    .set("fill", text_color)
-                    .set("font-family", body_family),
-                &display_label,
-            );
+                    .quick("font-size", py_float_str(font_size))
+                    .quick("fill", bound.text_color.as_str())
+                    .quick("font-family", bound.body_family.as_str()),
+                display_label,
+            ));
         }
 
-        let bar_x = left_padding as i64;
         let bar = |x: String, width: String, fill: &str| {
-            Attrs::new()
-                .set("x", x)
-                .set("y", format!("{row_y:.1}"))
-                .set("width", width)
-                .set("height", bar_height.clone())
-                .set("fill", fill.to_string())
-                .set("rx", radius.clone())
+            Node::Rect(
+                Attrs::new()
+                    .quick("x", x)
+                    .quick("y", fixed1(row_y))
+                    .quick("width", width)
+                    .quick("height", bar_height.to_string())
+                    .quick("fill", fill)
+                    .quick("rx", radius.as_str()),
+            )
         };
-        xml.empty("rect", bar(bar_x.to_string(), bar_area_width_attr.clone(), &sc.bar.background));
+        content.push(bar(
+            (left_padding as i64).to_string(),
+            track_width.clone(),
+            &sc.bar.background,
+        ));
         if bar_width > 0.0 {
-            xml.empty("rect", bar(format!("{fill_x:.1}"), format!("{bar_width:.1}"), &sc.bar.color));
+            content.push(bar(fixed1(fill_x), fixed1(bar_width), &sc.bar.color));
         }
 
-        if sc.count.visible {
-            let count_x = chart_width - SIDE_PADDING;
-            let count_y = row_y + baseline_h / 2.0 + TEXT_BASELINE_OFFSET;
-            xml.leaf(
-                "text",
+        if let Some(count) = &row.count {
+            content.push(text(
+                fixed1(chart_width - SIDE_PADDING),
+                fixed1(baseline_y),
                 Attrs::new()
-                    .set("x", format!("{count_x:.1}"))
-                    .set("y", format!("{count_y:.1}"))
-                    .set("font-size", py_float_str(font_size))
-                    .set("fill", text_color)
-                    .set("text-anchor", "end")
-                    .set("font-family", body_family)
-                    .set("style", "font-variant-numeric: tabular-nums lining-nums;"),
-                &format_count(count_cell.unwrap_or(&Value::Null), count_tag)?,
-            );
+                    .quick("font-size", py_float_str(font_size))
+                    .quick("fill", bound.text_color.as_str())
+                    .quick("text-anchor", "end")
+                    .quick("font-family", bound.body_family.as_str())
+                    .quick("style", TABULAR_NUMS),
+                count.clone(),
+            ));
         }
     }
 
-    if truncated_labels > 0 {
-        warn(Diagnostic::new(
+    let diagnostics = if truncated_labels > 0 {
+        vec![Diagnostic::new(
             &codes::WARN_SPARK_LABEL_TRUNCATED,
-            [("chart_id", json!(r.id)), ("truncation_count", json!(truncated_labels))],
+            [
+                ("chart_id", json!(bound.id)),
+                ("truncation_count", json!(truncated_labels)),
+            ],
+        )]
+    } else {
+        Vec::new()
+    };
+
+    if bound.more_count > 0 {
+        content.push(text(
+            py_float_str(chart_width / 2.0),
+            fixed1(more_y),
+            Attrs::new()
+                .quick("font-size", py_float_str(MORE_ROWS_FONT_SIZE))
+                .quick("fill", bound.muted.as_str())
+                .quick("text-anchor", "middle")
+                .quick("font-style", "italic")
+                .quick("font-family", bound.body_family.as_str())
+                .quick("style", TABULAR_NUMS),
+            format!("+{}", bound.more_count),
         ));
     }
+    content.push(newline());
 
-    if more_count > 0 {
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", py_float_str(chart_width / 2.0))
-                .set("y", format!("{more_y:.1}"))
-                .set("font-size", py_float_str(MORE_ROWS_FONT_SIZE))
-                .set("fill", secondary_color)
-                .set("text-anchor", "middle")
-                .set("font-style", "italic")
-                .set("font-family", body_family)
-                .set("style", "font-variant-numeric: tabular-nums lining-nums;"),
-            &format!("+{more_count}"),
-        );
-    }
+    let extent = Extent {
+        width: chart_width,
+        height: chart_height,
+    };
+    let (width_attr, height_attr) = (py_float_str(extent.width), py_float_str(extent.height));
+    let children = match &bound.placeholder {
+        Some(Placeholder {
+            style,
+            text,
+            weight,
+        }) => {
+            let overlay = style.overlay_node(
+                chart_width,
+                chart_height,
+                &bound.body_family,
+                text.clone(),
+                weight.clone(),
+            );
+            vec![
+                Node::group(
+                    Attrs::new().quick("opacity", py_float_str(style.opacity)),
+                    content,
+                ),
+                overlay,
+            ]
+        }
+        None => content,
+    };
+    let root = Node::Svg {
+        attrs: Attrs::new()
+            .quick("xmlns", "http://www.w3.org/2000/svg")
+            .quick("width", width_attr.as_str())
+            .quick("height", height_attr.as_str())
+            .quick("viewBox", format!("0 0 {width_attr} {height_attr}")),
+        extent,
+        children,
+    };
+    let data_box = Rect {
+        x: left_padding,
+        y: current_y,
+        width: bar_area_width,
+        height: num_bars as f64 * row_height,
+    };
+    Ok(Layout {
+        insets: Rect { x: 0.0, y: 0.0, width: extent.width, height: extent.height }.insets_of(&data_box),
+        data_box,
+        nodes: vec![root],
+        diagnostics,
+        title_pos: None,
+    })
+}
 
-    xml.text("\n");
-    if let Some(style) = placeholder_style {
-        xml.close("g");
-        let family = sc.font.family.as_deref().ok_or("spark_bar: style.spark_bar.font.family is unresolved")?;
-        style.overlay(&mut xml, chart_width, chart_height, family, sc.font.case.as_deref())?;
-    }
-    xml.close("svg");
-    Ok(xml.finish())
+pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+    let bound = bind(payload)?;
+    let measure = Measure { fonts };
+    let cell = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: payload.width,
+        height: if payload.height > 0.0 {
+            payload.height + bound.shift.body_dy
+        } else {
+            height_for_width(&bound, payload.width, &measure)?
+        },
+    };
+    let laid_out = layout(&bound, cell, &measure)?;
+    laid_out.diagnostics.into_iter().for_each(warn);
+    Ok(print(&laid_out.nodes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::Insets;
     use serde_json::json;
 
     fn base_payload(rows: Vec<Value>) -> Payload {
@@ -1020,5 +1261,83 @@ mod tests {
             svg.contains("y=\"30.0\" font-size=\"9.0\" fill=\"#626366\""),
             "subtitle at baseline 16 + title size 14, subtitle.font.size 9:\n{svg}"
         );
+    }
+
+    fn root_height(svg: &str) -> f64 {
+        let after = svg.split("<svg ").nth(1).and_then(|root| root.split("height=\"").nth(1));
+        after.and_then(|h| h.split('"').next()).expect("root height").parse().expect("number")
+    }
+
+    #[test]
+    fn intrinsic_width_is_the_styles_min_and_preferred() {
+        let bound = bind(&base_payload(vec![json!({"region": "West", "revenue": 1})])).unwrap();
+        let width = intrinsic(&bound, &Measure { fonts: &fonts() }).unwrap().unwrap();
+        assert_eq!((width.min, width.preferred), (150.0, 200.0));
+        assert!(width.min <= width.preferred);
+    }
+
+    // One law decides height and geometry: laying out a cell of the height asked
+    // for draws a root of exactly that height.
+    #[test]
+    fn layout_at_the_asked_height_draws_a_root_of_that_height() {
+        let fonts = fonts();
+        let measure = Measure { fonts: &fonts };
+        let titled = |p: &mut Payload| {
+            p.resolved["title"] = json!("revenue");
+            p.resolved["subtitle"] = json!("fiscal year");
+            p.title_shift = TitleShift { title_dy: 1.0, body_dy: 4.0 };
+        };
+        let many = (0..13).map(|i| json!({"region": format!("R{i}"), "revenue": 100 - i})).collect::<Vec<_>>();
+        for (rows, edit) in [
+            (vec![json!({"region": "West", "revenue": 10})], None),
+            (vec![json!({"region": "West", "revenue": 10})], Some(titled as fn(&mut Payload))),
+            (many, Some(titled as fn(&mut Payload))),
+        ] {
+            for width in [90.0, 168.0, 640.0] {
+                let mut payload = base_payload(rows.clone());
+                payload.height = 0.0;
+                payload.width = width;
+                edit.iter().for_each(|edit| edit(&mut payload));
+                let bound = bind(&payload).unwrap();
+                let height = height_for_width(&bound, width, &measure).unwrap();
+                let cell = Rect { x: 0.0, y: 0.0, width, height };
+                let laid_out = layout(&bound, cell, &measure).unwrap();
+                assert!(matches!(laid_out.nodes.as_slice(), [Node::Svg { extent, .. }] if extent.height == height));
+                assert_eq!(height, root_height(&render(&payload, &fonts).unwrap()));
+            }
+        }
+    }
+
+    // An explicit slot height is the drawn height, plus the row's body shift.
+    #[test]
+    fn an_explicit_height_is_drawn_with_the_body_shift() {
+        let mut p = base_payload(vec![json!({"region": "West", "revenue": 10})]);
+        p.title_shift = TitleShift { title_dy: 0.0, body_dy: 4.0 };
+        assert_eq!(root_height(&render(&p, &fonts()).unwrap()), 86.0);
+    }
+
+    // A placeholder whose overlay cannot print refuses at bind, like every other
+    // theme value, before any layout runs.
+    #[test]
+    fn an_unprintable_overlay_weight_refuses_at_bind() {
+        let mut p = base_payload(vec![json!({"region": "West", "revenue": 10})]);
+        p.is_placeholder = true;
+        p.board_style.as_mut().unwrap().placeholder.as_mut().unwrap().overlay.font.weight = json!(true);
+        let err = bind(&p).err().expect("refuses").to_string();
+        assert!(err.contains("placeholder font weight"), "{err}");
+    }
+
+    #[test]
+    fn layout_reports_its_data_box_insets_and_warnings_without_the_sink() {
+        let fonts = fonts();
+        let long = "a label far too long for the label column";
+        let bound = bind(&base_payload(vec![json!({"region": long, "revenue": 1}), json!({"region": "ok", "revenue": 3})])).unwrap();
+        let cell = Rect { x: 0.0, y: 0.0, width: 168.0, height: 82.0 };
+        let (laid_out, sunk) = crate::diagnostic::collect(|| layout(&bound, cell, &Measure { fonts: &fonts }).unwrap());
+        assert!(sunk.is_empty());
+        assert_eq!(laid_out.diagnostics.len(), 1);
+        assert_eq!(laid_out.diagnostics[0].code, "WARN-SPARK-LABEL-TRUNCATED");
+        assert_eq!(laid_out.data_box, Rect { x: 80.0, y: 0.0, width: 38.0, height: 40.0 });
+        assert_eq!(laid_out.insets, Insets { top: 0.0, right: 50.0, bottom: 42.0, left: 80.0 });
     }
 }

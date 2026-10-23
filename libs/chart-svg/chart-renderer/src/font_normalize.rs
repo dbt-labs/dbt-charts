@@ -12,7 +12,7 @@
 //! browser renders) is untouched.
 
 use crate::embed_fonts::xml_unescape_attr;
-use crate::svg::xml_escape_attr;
+use print::xml_escape_attr;
 use regex::{Captures, Regex};
 use std::collections::HashMap;
 use std::sync::LazyLock;

@@ -4,7 +4,7 @@
 //! axis; a family supplies only what Vega reads: the rendered title, the
 //! scale's type and final domain, and the axis's `format`.
 
-use d3rs::format::{format, format_float, format_span};
+use d3rs::format::{format, format_float, parse_parts, vega_tick_format};
 
 use super::table_dates::{strftime, Moment};
 use super::temporal::{
@@ -309,7 +309,12 @@ fn numeric_text(kind: NumericScale, domain: (f64, f64), spec: Option<&str>, valu
     if kind == NumericScale::Log {
         return format_float(locale, spec, *value);
     }
-    format_span(locale, spec, domain.0, domain.1, CAPTION_TICK_COUNT, *value)
+    // vega-format's `formatSpan` only derives from the tick step when the spec has no precision;
+    // d3-scale's `tickFormat` also fixes one SI prefix for an `s` spec that has one.
+    if let Some(spec) = spec.filter(|spec| parse_parts(spec).is_ok_and(|parts| parts.precision.is_some())) {
+        return format(locale, spec, *value);
+    }
+    vega_tick_format(locale, spec, domain.0, domain.1, CAPTION_TICK_COUNT, *value)
 }
 
 fn time_text(utc: bool, spec: Option<&str>, value: &f64) -> Result<String, String> {
@@ -407,6 +412,19 @@ mod tests {
             describe(numeric(NumericScale::Linear, 0.0, 0.5, Some(".0%")), None),
             "X-axis for a linear scale with values from 0% to 50%"
         );
+    }
+
+    /// An all-zero measure collapses the domain to `(0, 0)`, where Vega's bundled d3-format reads
+    /// `exponent(0)` as 0 (vl-convert's own captions).
+    #[test]
+    fn an_all_zero_domain_prints_whole_numbers_as_vega_does() {
+        for (format, zero) in [(None, "0"), (Some("s"), "0"), (Some("~s"), "0"), (Some("$s"), "$0"), (Some(".0%"), "0%")] {
+            assert_eq!(
+                describe(numeric(NumericScale::Linear, 0.0, 0.0, format), None),
+                format!("X-axis for a linear scale with values from {zero} to {zero}"),
+                "format {format:?}"
+            );
+        }
     }
 
     #[test]

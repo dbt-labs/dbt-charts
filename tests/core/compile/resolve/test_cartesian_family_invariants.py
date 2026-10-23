@@ -553,7 +553,6 @@ class TestAuthoredLegendPositionSurvivesTopLegendRoutes:
         ctx = WarningContext(
             board_spec=board,
             chart_results={resolved.id: _SERIES_DATA},
-            vega_specs={},
             layout_charts={resolved.id: resolved},
         )
         warnings = legend_position_width_fallback.detect(ctx)

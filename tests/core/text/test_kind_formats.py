@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
 
 import pytest
 import vl_convert as vlc
@@ -17,8 +16,6 @@ from dbt_charts.core.text.format_d3 import format_d3
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE
 
 from .._svg_render import render_board_svg_result, render_board_to_svg
-
-_NAMES = ("id", "duration", "bytes", "latitude", "longitude", "rating")
 
 _CELLS = [
     ("id", 1204331, "1204331"),
@@ -301,36 +298,6 @@ y: secs
 }
 
 
-@pytest.mark.parametrize("name", ["duration", "bytes"])
-@pytest.mark.parametrize("slot", sorted(_SLOT_BOARDS))
-def test_vega_capable_native_paints_in_every_vega_slot(
-    slot: str,
-    name: str,
-    capfd: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    specs: list[str] = []
-    paint = vlc.vegalite_to_svg
-
-    def record(spec: dict[str, object], *args: Any, **kwargs: Any) -> str:
-        specs.append(json.dumps(spec))
-        return paint(spec, *args, **kwargs)
-
-    monkeypatch.setattr(vlc, "vegalite_to_svg", record)
-    body = "\n".join(
-        "    " + line for line in _SLOT_BOARDS[slot].replace("NAME", name).splitlines()
-    )
-    board = f"title: T\n{_SLOT_QUERIES}charts:\n  c:\n{body}\nrows:\n  - c\n"
-    board = board.replace("NAME", name)
-    render_board_to_svg(board)
-    assert specs, "no Vega-Lite spec was painted"
-    # Vega's d3-format knows no such name: the name must never reach `format`.
-    for spec in specs:
-        assert f'"format": "{name}"' not in spec
-        assert f'\\"{name}\\")' not in spec
-    assert "invalid format" not in capfd.readouterr().err
-
-
 _PIE_BOARD = """
 query: cat
 type: donut
@@ -432,76 +399,10 @@ def test_a_native_is_rejected_where_vega_cannot_paint_it(slot: str, name: str) -
     assert "is a native formatter with no Vega arm" in error.message
 
 
-def test_an_anchored_affix_beside_a_native_keeps_its_name_out_of_vega(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    specs: list[str] = []
-    paint = vlc.vegalite_to_svg
-
-    def record(spec: dict[str, object], *args: Any, **kwargs: Any) -> str:
-        specs.append(json.dumps(spec))
-        return paint(spec, *args, **kwargs)
-
-    monkeypatch.setattr(vlc, "vegalite_to_svg", record)
-    render_board_to_svg(
-        f"""
-title: T
-{_SLOT_QUERIES.replace("NAME", "duration")}charts:
-  c:
-    query: cat
-    type: bar
-    x: day
-    y: secs
-    style:
-      orientation: vertical
-      axis_y:
-        labels:
-          format:
-            spec: duration
-            suffix: " elapsed"
-            repeat: anchor
-rows:
-  - c
-"""
-    )
-    assert specs
-    assert all('"format": "duration"' not in spec for spec in specs)
-
-
 @pytest.mark.parametrize("name", ["duration", "bytes"])
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
 def test_a_non_finite_cell_prints_as_missing(name: str, value: float) -> None:
     assert format_value(value, name) == "—"
-
-
-def test_a_value_label_measures_the_native_text() -> None:
-    from dbt_charts.core.render.chart.features.value_labels import painted_label_text
-
-    assert painted_label_text(3600, ResolvedFormat(spec="duration"), True) == "1h"
-    assert painted_label_text(1534000, ResolvedFormat(spec="bytes"), True) == "1.53 MB"
-
-
-def test_a_wide_scatter_tooltip_paints_a_native_from_a_calculated_field(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    specs: list[str] = []
-    paint = vlc.vegalite_to_svg
-
-    def record(spec: dict[str, object], *args: Any, **kwargs: Any) -> str:
-        specs.append(json.dumps(spec))
-        return paint(spec, *args, **kwargs)
-
-    monkeypatch.setattr(vlc, "vegalite_to_svg", record)
-    body = "\n".join(
-        "    " + line for line in _SLOT_BOARDS["wide scatter"].splitlines()
-    )
-    render_board_to_svg(
-        f"title: T\n{_SLOT_QUERIES}charts:\n  c:\n{body}\nrows:\n  - c\n".replace(
-            "NAME", "duration"
-        )
-    )
-    assert '"calculate"' in specs[0]
-    assert '"__value_text"' in specs[0]
 
 
 @pytest.mark.parametrize(

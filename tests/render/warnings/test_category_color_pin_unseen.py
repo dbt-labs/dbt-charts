@@ -36,7 +36,6 @@ def _ctx(**charts: ResolvedChart) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={chart_id: [] for chart_id in charts},
-        vega_specs={},
     )
 
 

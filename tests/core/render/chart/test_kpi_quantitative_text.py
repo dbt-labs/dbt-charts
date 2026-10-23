@@ -15,7 +15,6 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -28,7 +27,6 @@ from dbt_charts.core.compile.models.chart.authored import (
     KpiSupportConfig,
 )
 from dbt_charts.core.compile.models.chart.normalized import KpiChart
-from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -37,7 +35,6 @@ from dbt_charts.core.compile.resolve.style.board import (
     unset_auto_support_ink,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.render.errors import RenderError
 
 from ..._engine_render import render_kpi_svg
 
@@ -869,25 +866,6 @@ class TestKpiNewFieldsRoundTripThroughSerializers:
         assert "glyph_color" not in CHART_FIELDS
 
 
-class TestGenerateVegaLiteSpecRejectsKpi:
-    """KPI is custom-SVG, not Vega-Lite. ``generate_vega_lite_spec`` must
-    raise instead of producing a half-formed spec when called on a KPI."""
-
-    def test_kpi_raises_clear_error(self):
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        chart = KpiChart(
-            id="t",
-            query=_DUMMY_QUERY,
-            query_name="q",
-            type="kpi",
-            value="revenue",
-        )
-        _rc = resolve(chart, [{"revenue": 1_500_000}], chart_style_context=_BOARD_STYLE)
-        with pytest.raises(RenderError, match="does not render to a Vega-Lite spec"):
-            generate_vega_lite_spec(chart, [{"revenue": 1_500_000}])
-
-
 class TestKpiValueFontSizeCascade:
     """Regression: slot font sizes must round-trip from theme → rendered SVG."""
 
@@ -1387,44 +1365,6 @@ class TestKpiHref:
         chart, data = _resolved_kpi(value="revenue")
         svg = render_kpi_svg(chart, data, board_style=self._board())
         assert "<a " not in svg
-
-    @pytest.mark.skip(
-        reason="render_single deleted; Jinja link variables not threaded through V2 render_chart"
-    )
-    def test_link_jinja_variables_resolved_via_render_pipeline(self):
-        """link: Jinja template is resolved against variables before KPI render.
-
-        Tests the render_single.py path: link {{ region }} → "us" when
-        variables={"region": "us"} is threaded through render_chart_to_svg.
-        """
-        from unittest.mock import MagicMock
-
-        from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.chart.render_single import (
-            render_unresolved_chart_to_svg as render_chart_to_svg,
-        )
-
-        chart = KpiChart(
-            id="rev",
-            query=_DUMMY_QUERY,
-            query_name="q",
-            type="kpi",
-            value="revenue",
-            link="/region/{{ region }}",
-        )
-        mock_executor = MagicMock(
-            spec=Executor, board=SimpleNamespace(links=BoardLinks())
-        )
-        mock_executor.execute_chart.return_value = [{"revenue": 42}]
-        svg, _, _ = render_chart_to_svg(
-            chart,
-            mock_executor,
-            variables={"region": "us"},
-            resolved_style=self._board(),
-            vega_config={},
-            width=300,
-        )
-        assert '<a href="/region/us">' in svg
 
 
 # ---------------------------------------------------------------------------

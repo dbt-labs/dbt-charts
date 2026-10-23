@@ -13,7 +13,6 @@ Arc/pie tests: see test_vega_lite_arc.py
 Table/error handling tests: see test_vega_lite_table.py
 """
 
-import dataclasses
 import json
 from unittest.mock import MagicMock
 
@@ -30,25 +29,12 @@ from dbt_charts.core.compile.resolve.style.board import (
 
 _CHART_ADAPTER: _TypeAdapter[Chart] = _TypeAdapter(Chart)
 from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.render.chart.vega_lite import (
-    generate_vega_lite_spec,
-    render_chart,
-    render_resolved_chart,
-)
-from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.chart.vega_lite import render_chart
 from dbt_charts.core.render.utils import slug_to_text
 
-_BOARD_STYLE = resolve_style(get_theme_style())
+from ._engine_render import render_chart_svg
+
 _BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
-
-
-def _mark(spec: dict) -> dict:
-    """Get mark dict from single-spec or layered spec."""
-    m = spec.get("mark", {})
-    if isinstance(m, dict) and m:
-        return m
-    layers = spec.get("layer", [])
-    return layers[0].get("mark", {}) if layers else {}
 
 
 class TestSlugToText:
@@ -111,255 +97,6 @@ class TestSlugToText:
 class TestSingleChartPropertyValidation:
     """Tests for single-chart mark and encoding property validation."""
 
-    def test_simple_bar_chart(self, make_chart):
-        """Test generating simple bar chart."""
-        from dbt_charts.core.compile.models.style.authored import (
-            BarChartStylePatch,
-        )
-
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            style=BarChartStylePatch(orientation="vertical"),
-        )
-        data = [
-            {"month": "Jan", "revenue": 100},
-            {"month": "Feb", "revenue": 200},
-            {"month": "Mar", "revenue": 150},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Mark is now a dict with type and tooltip
-        assert _mark(spec)["type"] == "bar"
-        assert "x" in spec["encoding"]
-        assert "y" in spec["encoding"]
-        assert spec["encoding"]["x"]["field"] == "month"
-        assert spec["encoding"]["y"]["field"] == "revenue"
-        assert len(spec["data"]["values"]) == 3
-
-    def test_bar_chart_with_color(self, make_chart):
-        """Test bar chart with color encoding."""
-        chart = make_chart("bar", x="month", y="revenue", color="region")
-        data = [
-            {"month": "Jan", "revenue": 100, "region": "North"},
-            {"month": "Feb", "revenue": 200, "region": "South"},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        assert "color" in spec["encoding"]
-        assert spec["encoding"]["color"]["field"] == "region"
-
-    def test_standard_chart_without_theme_uses_default_scaffold_colors(
-        self, make_chart
-    ):
-        """Standard Vega-Lite charts should inherit the default theme by default."""
-        chart = make_chart("bar", x="month", y="revenue", color="region")
-        data = [
-            {"month": "Jan", "revenue": 100, "region": "North"},
-            {"month": "Feb", "revenue": 200, "region": "South"},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-        # Structural assertions only — no theme hex pins.
-        assert spec["background"] == get_theme_style(None).background
-        y_axis = spec.get("encoding", {}).get("y", {}).get("axis", {})
-        assert y_axis.get("gridColor")  # presence: axis config reaches encoding
-        assert y_axis.get("labelColor")
-        assert spec["config"]["title"]["color"]  # title stays at config
-        assert spec["config"]["range"]["category"]  # palette present
-
-    def test_chart_style_background_overrides_theme_background(self, make_chart):
-        """chart.style.background must appear at spec root, overriding the theme."""
-        from dbt_charts.core.compile.models.style.authored import (
-            BarChartStylePatch,
-        )
-
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            style=BarChartStylePatch(background="#123456"),
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-        spec = generate_vega_lite_spec(chart, data)
-        assert spec["background"] == "#123456"
-
-    def test_chart_style_title_case_override_applies(self, make_chart):
-        """chart.style.title.font.case must transform the emitted title text.
-
-        Chart-local title-case overrides are resolved onto the chart's own
-        merged style, not read back from the board-level bag.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            BarChartStylePatch,
-            ChartTitleStylePatch,
-        )
-
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            title="quarterly revenue",
-            style=BarChartStylePatch(
-                title=ChartTitleStylePatch(font={"case": "upper"})
-            ),
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-        spec = generate_vega_lite_spec(chart, data)
-        assert spec["title"]["text"] == "QUARTERLY REVENUE"
-
-    def test_standalone_and_board_render_match_for_chart_local_overrides(
-        self, make_chart
-    ):
-        """generate_vega_lite_spec() and the board render path must agree.
-
-        A chart authoring a chart-local background and title-case override
-        must emit the identical background/title whether rendered through
-        the standalone entry point or the board render path
-        (render_resolved_chart) — both consume the same resolved chart.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            BarChartStylePatch,
-            ChartTitleStylePatch,
-        )
-
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            title="quarterly revenue",
-            style=BarChartStylePatch(
-                background="#123456",
-                title=ChartTitleStylePatch(font={"case": "upper"}),
-            ),
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-
-        standalone_spec = generate_vega_lite_spec(chart, data, width=400)
-
-        resolved_chart = resolve(
-            chart,
-            data,
-            chart_style_context=_BOARD_CONTEXT,
-            width=400,
-        )
-        board_spec = render_resolved_chart(
-            resolved_chart, data, _BOARD_STYLE, width=400
-        ).payload
-
-        assert standalone_spec["background"] == "#123456"
-        assert standalone_spec["title"]["text"] == "QUARTERLY REVENUE"
-        assert board_spec["background"] == standalone_spec["background"]
-        assert board_spec["title"] == standalone_spec["title"]
-
-    def test_single_series_standard_chart_paints_mark_fill(self, make_chart):
-        """Single-series standard charts receive a default mark fill —
-        the theme's single_series_palette[0] (or palette[0] as fallback). The
-        precise value is theme-tunable; this asserts only that a fill is
-        emitted on the mark."""
-        chart = make_chart("bar", x="month", y="revenue")
-        data = [
-            {"month": "Jan", "revenue": 100},
-            {"month": "Feb", "revenue": 200},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-        assert _mark(spec).get("fill")
-
-    def test_chart_title_carries_resolved_font(self, make_chart):
-        """Resolved title_font (family, size, weight) is baked into spec.title,
-        not into config.title, so it is chart-specific and wins over theme config."""
-        chart = make_chart("bar", x="month", y="revenue", title="Revenue")
-        data = [{"month": "Jan", "revenue": 100}]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        title_block = spec["title"]
-        assert title_block["text"] == "Revenue"
-        assert "font" in title_block
-        assert "fontSize" in title_block
-        assert "fontWeight" in title_block
-        assert isinstance(title_block["fontSize"], int)
-        assert isinstance(title_block["fontWeight"], (int, str))
-
-    def test_chart_title_preprocessing_uses_precise_serif_wrap_behavior(
-        self, make_chart
-    ):
-        """Wrap-two mode (explicit opt-in — default is truncate after density
-        refactor) produces a multi-line title that ends with an ellipsis when
-        more words remain than fit. Asserts the wrap structure rather than
-        the exact character split so this stays robust to tier-size tweaks."""
-        from dbt_charts.core.compile.models.style.authored import (
-            BarChartStylePatch,
-            ChartTitleStylePatch,
-        )
-
-        title = (
-            "Wrap-two mode: this title should wrap to two lines and then end with "
-            "an ellipsis when the remaining words no longer fit in the allotted "
-            "title width"
-        )
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            title=title,
-            style=BarChartStylePatch(title=ChartTitleStylePatch(overflow="wrap-two")),
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-
-        spec = generate_vega_lite_spec(chart, data, width=576, height=416)
-
-        assert spec["title"]["limit"] == 576  # full width: the spec starts at {0,0,0,0}
-        # Structural assertions: two lines, second ends with ellipsis,
-        # joined content preserves the start of the original title.
-        text = spec["title"]["text"]
-        assert isinstance(text, list), f"wrap-two should yield list, got {text!r}"
-        assert len(text) == 2, f"wrap-two should be exactly 2 lines, got {text!r}"
-        assert text[1].endswith("…"), (
-            f"second line of wrap-two should ellipsize, got {text[1]!r}"
-        )
-        # Theme applies case: title to chart titles; "Wrap-two mode:" → "Wrap-Two Mode:"
-        assert text[0].startswith("Wrap-Two Mode:"), (
-            f"first line should start with the titlecased prefix, got {text[0]!r}"
-        )
-
-    def test_chart_subtitle_does_not_override_theme_font(self, make_chart):
-        """Vega-Lite title blocks should leave subtitle typography to theme/config."""
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            title="Revenue",
-            subtitle="Current quarter only",
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        assert spec["title"]["text"] == "Revenue"
-        assert spec["title"]["subtitle"] == "Current quarter only"
-        assert "subtitleFont" not in spec["title"]
-
-    def test_subtitle_without_title_still_emits_title_block(self, make_chart):
-        """Subtitle-only charts should still emit a Vega-Lite title block."""
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            title="",
-            subtitle="Current quarter only",
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        assert spec["title"]["text"] == ""
-        assert spec["title"]["subtitle"] == "Current quarter only"
-
     def test_bar_chart_errors_on_duplicate_categories(self, make_chart):
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
 
@@ -372,17 +109,7 @@ class TestSingleChartPropertyValidation:
         with pytest.raises(
             ChartDataError, match="requires pre-aggregated data with at most one row"
         ):
-            generate_vega_lite_spec(chart, data)
-
-    def test_bar_chart_allows_one_row_per_category_series(self, make_chart):
-        chart = make_chart("bar", x="product", y="revenue", color="region")
-        data = [
-            {"product": "Widget A", "region": "North", "revenue": 100},
-            {"product": "Widget A", "region": "South", "revenue": 150},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-        assert spec["encoding"]["color"]["field"] == "region"
+            render_chart_svg(chart, data)
 
     def test_bar_chart_errors_on_duplicate_category_series(self, make_chart):
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -396,61 +123,11 @@ class TestSingleChartPropertyValidation:
         with pytest.raises(
             ChartDataError, match="one row per plotted key \\(product, region\\)"
         ):
-            generate_vega_lite_spec(chart, data)
+            render_chart_svg(chart, data)
 
 
 class TestGenerateLineChart:
     """Tests for line chart generation."""
-
-    def test_simple_line_chart(self, make_chart):
-        """Line charts emit halo + foreground line and points by default."""
-        chart = make_chart("line", x="date", y="value")
-        data = [
-            {"date": "2024-01-01", "value": 10},
-            {"date": "2024-01-02", "value": 20},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        assert spec["encoding"]["x"]["field"] == "date"
-        assert spec["encoding"]["y"]["field"] == "value"
-        # 2 points at the default card width is well past the density-auto-on
-        # trigger (bake_point_companions), so points show by default: halo
-        # line + halo point + foreground line + foreground point + hover
-        # overlay. No zero-baseline rule: data is all-positive and the
-        # pipeline infers zero=False for line charts, so
-        # _domain_includes_zero returns False.
-        assert [lyr["mark"]["type"] for lyr in spec["layer"]] == [
-            "line",
-            "point",
-            "line",
-            "point",
-            "point",
-        ]
-
-    def test_chart_local_background_matches_halo_knockout_stroke(self, make_chart):
-        """A chart-local background override must repaint the halo/knockout
-        canvas color too, not just the spec root — otherwise the halo (painted
-        in "the canvas color" for knockout) disagrees with the actual canvas.
-        """
-        from dbt_charts.core.compile.models.style.authored import (
-            LineChartStylePatch,
-        )
-
-        chart = make_chart(
-            "line",
-            x="date",
-            y="value",
-            style=LineChartStylePatch(background="#0b0b0b"),
-        )
-        data = [
-            {"date": "2024-01-01", "value": 10},
-            {"date": "2024-01-02", "value": 20},
-        ]
-        spec = generate_vega_lite_spec(chart, data)
-        assert spec["background"] == "#0b0b0b"
-        halo_mark = spec["layer"][0]["mark"]
-        assert halo_mark["stroke"] == "#0b0b0b"
 
     def test_line_chart_errors_on_duplicate_x_without_series(self, make_chart):
         from dbt_charts.core.diagnostics.chart_data import ChartDataError
@@ -464,83 +141,15 @@ class TestGenerateLineChart:
         with pytest.raises(
             ChartDataError, match="Line chart 'test_line' requires pre-aggregated data"
         ):
-            generate_vega_lite_spec(chart, data)
+            render_chart_svg(chart, data)
 
 
 class TestGenerateScatterChart:
     """Tests for scatter chart generation."""
 
-    def test_simple_scatter(self, make_chart):
-        """Test generating scatter plot."""
-        chart = make_chart("scatter", x="x_value", y="y_value")
-        data = [
-            {"x_value": 1, "y_value": 4},
-            {"x_value": 2, "y_value": 5},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Mark is now a dict with type and tooltip
-        assert spec["mark"]["type"] == "point"
-
-    def test_scatter_with_size(self, make_chart):
-        """Test scatter with size encoding."""
-        chart = make_chart("scatter", x="x_value", y="y_value", size="magnitude")
-        data = [
-            {"x_value": 1, "y_value": 4, "magnitude": 10},
-            {"x_value": 2, "y_value": 5, "magnitude": 20},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        assert "size" in spec["encoding"]
-        assert spec["encoding"]["size"]["field"] == "magnitude"
-
-    def test_scatter_allows_categorical_y_for_dot_plot(self, make_chart):
-        """Scatter/point charts should infer nominal y for dot-plot layouts."""
-        chart = make_chart("scatter", x="response_hours", y="team")
-        data = [
-            {"response_hours": 1.8, "team": "Onboarding"},
-            {"response_hours": 2.4, "team": "Support"},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        assert spec["encoding"]["y"]["field"] == "team"
-        assert spec["encoding"]["y"]["type"] == "nominal"
-
-    def test_scatter_points_are_visible(self, make_chart):
-        """Scatter marks must have a positive size — the global marks.point.size is 0
-        (hides line-chart point overlays) so scatter needs its own theme override."""
-        chart = make_chart("scatter", x="x_value", y="y_value")
-        data = [
-            {"x_value": 1, "y_value": 4},
-            {"x_value": 2, "y_value": 5},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        mark = _mark(spec)
-        assert mark.get("size", 0) > 0, (
-            "scatter mark size must be positive; got 0 (invisible)"
-        )
-
 
 class TestGenerateAreaChart:
     """Tests for area chart generation."""
-
-    def test_simple_area(self, make_chart):
-        """Test generating area chart."""
-        chart = make_chart("area", x="date", y="value")
-        data = [
-            {"date": "2024-01-01", "value": 10},
-            {"date": "2024-01-02", "value": 20},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Area chart: mark sits in layer[0]; layer[-1] is the zero-baseline rule.
-        assert _mark(spec)["type"] == "area"
 
 
 class TestGenerateBarChart:
@@ -549,16 +158,6 @@ class TestGenerateBarChart:
 
 class TestGenerateTableChart:
     """Tests for table chart generation."""
-
-    def test_table_chart_rejected_by_generate_vega_lite_spec(self, make_chart):
-        """table renders as SVG; generate_vega_lite_spec rejects it with RenderError."""
-        chart = make_chart("table")
-        data = [
-            {"col1": "a", "col2": 1},
-            {"col1": "b", "col2": 2},
-        ]
-        with pytest.raises(RenderError, match="does not render to a Vega-Lite spec"):
-            generate_vega_lite_spec(chart, data)
 
 
 class TestRenderChart:
@@ -960,61 +559,9 @@ class TestRenderChart:
 class TestDataTypeNormalization:
     """Tests for data type normalization."""
 
-    def test_decimal_conversion(self, make_chart):
-        """Test that Decimal values are converted to float."""
-        from decimal import Decimal
-
-        chart = make_chart("bar", x="name", y="value")
-        data = [
-            {"name": "A", "value": Decimal("123.45")},
-            {"name": "B", "value": Decimal("678.90")},
-        ]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Values should be converted to float
-        values = spec["data"]["values"]
-        assert isinstance(values[0]["value"], float)
-        assert values[0]["value"] == 123.45
-
 
 class TestChartWithTitle:
     """Tests for chart titles."""
-
-    def test_chart_with_explicit_title(self, make_chart):
-        """Test chart with explicit title."""
-        chart = make_chart("bar", x="x", y="y", title="My Custom Title")
-        data = [{"x": 1, "y": 2}]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Title can be string or object with text field
-        title = spec["title"]
-        if isinstance(title, dict):
-            assert title["text"] == "My Custom Title"
-        else:
-            assert title == "My Custom Title"
-
-    def test_chart_title_from_id(self, make_chart):
-        """Test chart title generated from ID."""
-        # Theme applies case: title (Gruber algorithm) — "by" is a stopword.
-        chart = make_chart(
-            "bar",
-            id="revenue_by_month",
-            x="month",
-            y="revenue",
-            title="Revenue by Month",
-        )
-        data = [{"month": "Jan", "revenue": 100}]
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Title can be string or object with text field
-        title = spec["title"]
-        if isinstance(title, dict):
-            assert title["text"] == "Revenue by Month"
-        else:
-            assert title == "Revenue by Month"
 
 
 class TestFormatKpiParts:
@@ -1537,76 +1084,3 @@ class TestRenderKpiSvg:
         assert "999" in svg
         # Should NOT contain Vega-Lite text mark attributes
         assert '"type": "text"' not in svg
-
-
-class TestChartSpecDimensions:
-    """Vega-Lite specs must use the full allocated dimensions.
-
-    Axes, legends, and titles are placed inside the SVG by Vega-Lite's autosize
-    engine — we must not pre-shrink the spec with hardcoded offsets.
-    """
-
-    def test_histogram_uses_full_height(self, make_chart):
-        chart = make_chart("histogram", x="value", y=None)
-        data = [{"value": v} for v in [10, 20, 30, 25, 15]]
-        spec = generate_vega_lite_spec(chart, data, width=400, height=300)
-        assert spec.get("height") == 300, (
-            f"histogram spec height {spec.get('height')} != allocated 300 — "
-            "height_offset shrinks the chart unnecessarily"
-        )
-
-    def test_heatmap_uses_full_width(self, make_chart):
-        chart = make_chart("heatmap", x="day", y="hour", color="count")
-        data = [{"day": "Mon", "hour": "9am", "count": 5}]
-        spec = generate_vega_lite_spec(chart, data, width=400, height=300)
-        assert spec.get("width") == 400, (
-            f"heatmap spec width {spec.get('width')} != allocated 400 — "
-            "width_offset shrinks the chart unnecessarily"
-        )
-
-    def test_heatmap_uses_full_height(self, make_chart):
-        chart = make_chart("heatmap", x="day", y="hour", color="count")
-        data = [{"day": "Mon", "hour": "9am", "count": 5}]
-        spec = generate_vega_lite_spec(chart, data, width=400, height=300)
-        assert spec.get("height") == 300, (
-            f"heatmap spec height {spec.get('height')} != allocated 300 — "
-            "height_offset shrinks the chart unnecessarily"
-        )
-
-    def test_board_threaded_padding_right_survives_to_spec(self, make_chart):
-        """charts.padding.right propagates through render_standard_vega_spec.padding.
-
-        Regression: _finalize must not strip per-chart padding before emitting.
-        """
-        from dbt_charts.core.compile.config import (
-            get_theme_style,
-        )
-        from dbt_charts.core.compile.models.style.theme import PaddingStyle
-        from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.chart.spec_builders import additive_padding
-
-        resolved = resolve_style(get_theme_style())
-        chart_padding = PaddingStyle(left=0, right=20, top=0, bottom=0)
-        chart_defaults_override = dataclasses.replace(
-            resolved.chart_defaults, padding=chart_padding
-        )
-        resolved_override = dataclasses.replace(
-            resolved, chart_defaults=chart_defaults_override
-        )
-
-        card_pad = float(resolved_override.frame.card_padding)
-        threaded_padding = additive_padding(card_pad, chart_padding)
-
-        chart = make_chart("bar", x="month", y="revenue")
-        data = [{"month": "Jan", "revenue": 100}]
-        resolved_chart = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
-        spec = render_resolved_chart(
-            resolved_chart,
-            data,
-            resolved_override,
-            width=400,
-            height=200,
-            padding=threaded_padding,
-        ).payload
-        assert spec["padding"]["right"] == card_pad + 20.0
-        assert spec["padding"]["left"] == card_pad

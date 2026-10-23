@@ -127,30 +127,6 @@ class TestHconcatDfTargetSentinels:
         )
         return captured["artifact"].payload
 
-    def test_df_target_width_set_on_hconcat(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """V2 hconcat wrapper must carry $df_target_width = requested width."""
-        spec = self._render(monkeypatch, width=576.0)
-        assert "hconcat" in spec, "expected hconcat spec for multi-series line"
-        assert "$df_target_width" in spec, (
-            "$df_target_width missing from V2 hconcat wrapper; "
-            "_correct_concat_overshoot will not fire and SVG width will overshoot"
-        )
-        assert spec["$df_target_width"] == 576.0
-
-    def test_df_target_height_set_on_hconcat(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """V2 hconcat wrapper must carry $df_target_height = requested height."""
-        spec = self._render(monkeypatch, height=416.0)
-        assert "hconcat" in spec, "expected hconcat spec for multi-series line"
-        assert "$df_target_height" in spec, (
-            "$df_target_height missing from V2 hconcat wrapper; "
-            "_correct_concat_overshoot will not fire and SVG height will overshoot"
-        )
-        assert spec["$df_target_height"] == 416.0
-
     def test_df_target_sentinels_absent_for_simple_spec(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -247,46 +223,6 @@ class TestVconcatHeightSizing:
         )
         return captured["artifact"].payload
 
-    def test_vconcat_chart_pane_height_tracks_authored_height(
-        self, monkeypatch: pytest.MonkeyPatch, make_chart: Any
-    ) -> None:
-        """Chart pane (vconcat[1]) height must differ between 200 and 600."""
-        spec_200 = self._render(monkeypatch, make_chart, height=200.0)
-        spec_600 = self._render(monkeypatch, make_chart, height=600.0)
-
-        assert "vconcat" in spec_200, (
-            "expected vconcat spec for horizontal stacked bar + color"
-        )
-        assert "vconcat" in spec_600
-
-        # Pre-fix the authored height never reached the pane at all, so state
-        # that precondition before comparing — otherwise this fails as a bare
-        # KeyError and the diagnostic below never gets to speak.
-        for label, spec in (("200", spec_200), ("600", spec_600)):
-            assert "height" in spec["vconcat"][1], (
-                f"chart pane carries no height at all for the {label} request — "
-                f"the vconcat height branch is missing"
-            )
-
-        height_200 = spec_200["vconcat"][1]["height"]
-        height_600 = spec_600["vconcat"][1]["height"]
-        assert height_200 != height_600, (
-            f"chart pane height must track the authored height; got {height_200} "
-            f"for both the 200 and 600 requests"
-        )
-        assert height_600 > height_200
-
-    def test_vconcat_stamps_df_target_height(
-        self, monkeypatch: pytest.MonkeyPatch, make_chart: Any
-    ) -> None:
-        """vconcat wrapper must carry $df_target_height, mirroring the hconcat case."""
-        spec = self._render(monkeypatch, make_chart, height=416.0)
-        assert "vconcat" in spec
-        assert "$df_target_height" in spec, (
-            "$df_target_height missing from vconcat wrapper — the height branch "
-            "has no vconcat case"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Gap 3 — config.title.fontSize must be int, not float
@@ -297,7 +233,6 @@ class TestConfigTitleFontSizeIsInt:
     """V2 finalize_vl must emit integer fontSize/fontWeight in config.title."""
 
     def _finalize(self) -> dict[str, Any]:
-        from dbt_charts.core.compile.models.chart.normalized import BarChart
         from dbt_charts.core.compile.resolve import resolve
         from dbt_charts.core.render.chart.session import BoardRenderSession
 
@@ -314,28 +249,6 @@ class TestConfigTitleFontSizeIsInt:
                 _DEFAULT_BOX,
                 {chart.query_name: [{"month": "Jan", "revenue": 100}]},
             )
-        )
-
-    def test_title_font_size_is_int(self) -> None:
-        """config.title.fontSize must be int — not float — to avoid JSON noise."""
-        vl = self._finalize()
-        title_conf = vl.get("config", {}).get("title", {})
-        font_size = title_conf.get("fontSize")
-        if font_size is None:
-            return  # theme doesn't set fontSize; nothing to check
-        assert isinstance(font_size, int), (
-            f"config.title.fontSize should be int, got {type(font_size).__name__}: {font_size!r}"
-        )
-
-    def test_title_font_weight_is_int(self) -> None:
-        """config.title.fontWeight must be int — not float — to avoid JSON noise."""
-        vl = self._finalize()
-        title_conf = vl.get("config", {}).get("title", {})
-        font_weight = title_conf.get("fontWeight")
-        if font_weight is None:
-            return  # theme doesn't set fontWeight; nothing to check
-        assert isinstance(font_weight, int), (
-            f"config.title.fontWeight should be int, got {type(font_weight).__name__}: {font_weight!r}"
         )
 
 
@@ -372,70 +285,3 @@ class TestTitleLimit:
             padding=_PADDING_16,
         )
         return captured["artifact"].payload
-
-    def test_simple_spec_title_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Simple (non-hconcat) V2 spec: title.limit = width - padding_left - padding_right.
-
-        With width=576 and padding {left:16, right:16}, limit must be 544.
-        That matches the V1 reference value from chart-lab-import-review traces.
-        """
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-        query_registry = {"q": SqlQuery(sql="SELECT 1", source="test")}
-        chart = BarChart(
-            id="bar_limit_test",
-            query=query_registry["q"],
-            query_name="q",
-            type="bar",
-            x="category",
-            y="value",
-            title="Gap 6 title",
-        )
-        data = [{"category": "A", "value": 100}]
-        spec = self._render(monkeypatch, chart, data, width=576.0)
-
-        assert "hconcat" not in spec, "expected simple spec for single-series bar"
-        title_block = spec.get("title", {})
-        assert isinstance(title_block, dict), "spec.title must be a dict"
-        assert "limit" in title_block, (
-            "V2 simple spec must carry title.limit; "
-            "without it long titles overflow the slot"
-        )
-        assert title_block["limit"] == 544, (
-            f"limit should be int(576-16-16)=544, got {title_block['limit']!r}"
-        )
-
-    def test_hconcat_spec_title_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """hconcat V2 spec: title moves to hconcat[0]; wrap is deferred, not applied here.
-
-        pane[0].width at spec-build time is still the full column width — vl-
-        convert ignores autosize:fit on hconcat children, so the label pane
-        hasn't been reserved from it yet. Wrapping the title against that width
-        would overstate the room it actually has (the ordering bug documented
-        in ai_notes/charts/chart-chrome-vs-plot-dimensions-2026-07-20.md, case B#1).
-        render_vega_spec applies the wrap after correcting pane[0]'s width —
-        see test_line_endpoint_labels.py::test_hconcat_title_limit_shrinks_after_pane_correction.
-        """
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-
-        query_registry = {"q": SqlQuery(sql="SELECT 1", source="test")}
-        chart = LineChart(
-            id="line_limit_test",
-            query=query_registry["q"],
-            query_name="q",
-            type="line",
-            x="date",
-            y="value",
-            color="series",
-            title="Gap 6 multi title",
-        )
-        spec = self._render(monkeypatch, chart, _MULTI_SERIES_DATA, width=576.0)
-
-        assert "hconcat" in spec, "expected hconcat spec for multi-series line"
-        inner = spec["hconcat"][0]
-        title_block = inner.get("title", {})
-        assert isinstance(title_block, dict), "hconcat[0].title must be a dict"
-        assert "limit" not in title_block, (
-            "spec-build must not wrap the hconcat title yet — that happens in "
-            "render_vega_spec, after pane[0]'s width is corrected"
-        )

@@ -859,46 +859,6 @@ def test_a_cross_file_chart_reference_carries_no_handle(tmp_path: Path) -> None:
     assert 'data-authored-path="charts.borrowed"' not in svg
 
 
-def test_chart_title_and_subtitle_carry_their_own_leaf_kind() -> None:
-    """Vega's own ``role-title-text``/``role-title-subtitle`` classes are a
-    1:1 signal for the chart's ``title:``/``subtitle:`` keys — transcribed
-    into our vocabulary as a bare leaf kind, not read by Cloud directly.
-    Selectors.md's dbt-* carve-out covers classes we emit; these are
-    vl_convert's, so Cloud selects on the attribute instead."""
-    svg = render_board_to_svg(
-        """
-title: Authoring Handles
-queries:
-  q:
-    type: values
-    rows:
-      - {month: Jan, revenue: 100}
-charts:
-  revenue:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    title: Revenue
-    subtitle: by month
-rows:
-  - revenue
-"""
-    )
-
-    title_leaf = re.search(
-        r'class="mark-text role-title-text"[^>]*data-authored-kind="title"', svg
-    )
-    subtitle_leaf = re.search(
-        r'class="mark-text role-title-subtitle"[^>]*data-authored-kind="subtitle"',
-        svg,
-    )
-    assert title_leaf, "no leaf-kind tag on the chart's title text"
-    assert subtitle_leaf, "no leaf-kind tag on the chart's subtitle text"
-    assert "data-authored-path" not in title_leaf.group(0)
-    assert "data-authored-path" not in subtitle_leaf.group(0)
-
-
 @pytest.mark.parametrize("variant", ["stacked", "inline", "compact"])
 def test_kpi_label_carries_its_own_leaf_kind(variant: str) -> None:
     """A KPI's authored key is ``label:``, not ``title:`` — no signal existed

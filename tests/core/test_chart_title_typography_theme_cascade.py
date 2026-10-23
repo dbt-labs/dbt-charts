@@ -31,6 +31,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style,
 )
 
+from ._engine_render import render_chart_svg
+
 
 def _editorial_cream_charts():
     """Return the cream theme's ChartStyleContext."""
@@ -112,41 +114,6 @@ class TestVegaLiteTitleEditorialCream:
             query=SqlQuery(sql="SELECT 1", source="test_db"),
         )
 
-    def test_narrow_editorial_vega_chart_title_is_body_family(self):
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        spec = generate_vega_lite_spec(
-            self._make_chart(),
-            data=self._data,
-            width=390.0,
-            board_style=_editorial_cream_resolved(),
-            chart_style_context=_editorial_cream_charts(),
-        )
-        title_font = str(spec.get("title", {}).get("font", ""))
-        assert "Inter" in title_font, (
-            f"narrow editorial Vega chart title must include Inter, got {title_font!r}"
-        )
-        assert "Source Serif" not in title_font, (
-            f"narrow editorial Vega chart title must not be Source Serif 4, "
-            f"got {title_font!r}"
-        )
-
-    def test_wide_editorial_vega_chart_title_is_title_family(self):
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        spec = generate_vega_lite_spec(
-            self._make_chart(),
-            data=self._data,
-            width=1392.0,
-            board_style=_editorial_cream_resolved(),
-            chart_style_context=_editorial_cream_charts(),
-        )
-        title_font = str(spec.get("title", {}).get("font", ""))
-        assert "Source Serif" in title_font, (
-            f"wide editorial Vega chart title must be Source Serif 4, "
-            f"got {title_font!r}"
-        )
-
 
 class TestAuthoredTitleStyleWinsOverWidthAware:
     """Authored ``style.title.font.{size,weight}`` must still win over the
@@ -191,40 +158,6 @@ class TestAuthoredTitleStyleWinsOverWidthAware:
             ),
         )
 
-    def test_authored_title_font_size_wins_at_narrow_width(self):
-        """At a narrow width where the ramp would pick ~11px, an authored
-        ``style.title.font.size = 30`` must still produce fontSize=30 in the
-        emitted spec."""
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        spec = generate_vega_lite_spec(
-            self._make_chart(font_size=30),
-            self._data,
-            width=390.0,
-        )
-        title_size = spec.get("title", {}).get("fontSize")
-        assert title_size == 30, (
-            f"Authored title.font.size=30 must win over the width-aware ramp "
-            f"at narrow widths; got fontSize={title_size!r}"
-        )
-
-    def test_authored_title_font_weight_wins_at_medium_width(self):
-        """At a medium width an authored ``style.title.font.weight = 800``
-        must produce fontWeight=800 in the emitted spec, not the theme's
-        default weight."""
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        spec = generate_vega_lite_spec(
-            self._make_chart(font_weight=800),
-            self._data,
-            width=770.0,
-        )
-        title_weight = spec.get("title", {}).get("fontWeight")
-        assert title_weight == 800, (
-            f"Authored title.font.weight=800 must win over the width-aware "
-            f"default at medium widths; got fontWeight={title_weight!r}"
-        )
-
 
 class TestBoardTitleStyleWinsOverWidthAware:
     """A board-level ``style.charts.title.font`` value wins over the width ramp."""
@@ -234,7 +167,6 @@ class TestBoardTitleStyleWinsOverWidthAware:
     def _spec(self, font: dict[str, float | int | str], width: float):
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import StylePatch
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
         board_patch = StylePatch.model_validate({"charts": {"title": {"font": font}}})
         chart = BarChart(
@@ -245,7 +177,7 @@ class TestBoardTitleStyleWinsOverWidthAware:
             y="revenue",
             query=SqlQuery(sql="SELECT 1", source="test_db"),
         )
-        return generate_vega_lite_spec(
+        return render_chart_svg(
             chart,
             self._data,
             width=width,
@@ -254,14 +186,6 @@ class TestBoardTitleStyleWinsOverWidthAware:
                 get_theme_style(), board_patch
             ),
         )
-
-    def test_board_title_font_size_wins_at_narrow_width(self):
-        title = self._spec({"size": 30}, width=390.0)["title"]
-        assert title["fontSize"] == 30
-
-    def test_board_title_font_weight_wins_at_medium_width(self):
-        title = self._spec({"weight": 800}, width=770.0)["title"]
-        assert title["fontWeight"] == 800
 
 
 class TestTableTitleEditorialCream:

@@ -23,31 +23,63 @@ options:
 {% set label_col = channels.x %}
 {% set series_col = channels.y %}
 {% if not rows %}{{ raise_error("A rose needs at least one period.") }}{% endif %}
-{% set ns = namespace(panels=[], peak=0) %}
+{% set ns = namespace(panels=[], roots=[]) %}
 {% for r in rows %}
   {% set key = (r[p.panel] | string) if p.panel else "" %}
   {% if key not in ns.panels %}{% set ns.panels = ns.panels + [key] %}{% endif %}
-  {% for s in series_col %}{% set ns.peak = [ns.peak, r[s] | float] | max %}{% endfor %}
+{% endfor %}
+{% set label_floor = 0.55 %}
+{% set start = p.start_angle / 180 * math.pi %}
+{# Extents are in units of sqrt(value), so the scale k is solved after: up and down are how far wedges and labels reach above and below the center. #}
+{% set ext = namespace(up=0, down=0) %}
+{% for key in ns.panels %}
+  {% set pr = namespace(rows=[], peak=0) %}
+  {% for r in rows if not p.panel or (r[p.panel] | string) == key %}
+    {% set pr.rows = pr.rows + [r] %}
+    {% for s in series_col %}{% set pr.peak = [pr.peak, r[s] | float] | max %}{% endfor %}
+  {% endfor %}
+  {% set ns.roots = ns.roots + [pr.peak ** 0.5] %}
+  {% set step = 2 * math.pi / (pr.rows | length) %}
+  {% for r in pr.rows %}
+    {% set a0 = start + step * loop.index0 %}
+    {% set t = namespace(v=0) %}
+    {% for s in series_col %}{% set t.v = [t.v, r[s] | float] | max %}{% endfor %}
+    {% set top = t.v ** 0.5 %}
+    {% set lr = [top, label_floor * pr.peak ** 0.5] | max %}
+    {% set am = a0 + step / 2 %}
+    {% set a0m = a0 % (2 * math.pi) %}
+    {% set has_top = a0m + step > 2 * math.pi %}
+    {% set has_bottom = a0m <= math.pi < a0m + step %}
+    {% set ext.up = [ext.up, top if has_top else top * [math.cos(a0), math.cos(a0 + step)] | max, lr * math.cos(am)] | max %}
+    {% set ext.down = [ext.down, top if has_bottom else -top * [math.cos(a0), math.cos(a0 + step)] | min, -lr * math.cos(am)] | max %}
+  {% endfor %}
 {% endfor %}
 {% set size = style.font.size %}
 {% set small = style.charts.axis.labels.font.size %}
 {% set legend_h = size * 2.4 %}
 {% set caption_h = size * 2 if p.panel else 0 %}
 {% set n_panels = ns.panels | length %}
-{% set pw = width / n_panels %}
 {% set ph = height - legend_h - caption_h %}
 {% set label_room = small * 3.2 %}
-{% set r_max = [pw / 2, ph / 2] | min - label_room %}
-{% set k = r_max / (ns.peak ** 0.5) %}
+{% if ns.roots | max <= 0 %}{{ raise_error("A rose needs at least one positive value.") }}{% endif %}
+{# Panels share one scale but not one width: each takes room in proportion to its own rose, so a small rose does not strand the big one. #}
+{% set k = [(width - 2 * n_panels * label_room) / (2 * ns.roots | sum), (ph - 2 * label_room) / (ext.up + ext.down)] | min %}
+{% set gap = (width - 2 * k * ns.roots | sum - 2 * n_panels * label_room) / n_panels %}
+{% set cy = (ph - k * (ext.up + ext.down)) / 2 + k * ext.up %}
+{# Radius is the square root of the value, so area (not radius) is proportional to it. #}
+{% set radius = d3.scale_sqrt([0, (ns.roots | max) ** 2], [0, k * ns.roots | max]) %}
+{% set left = namespace(x=0) %}
 <g font-family="{{ style.font.family }}">
 {% for key in ns.panels %}
-  {% set cx = pw * loop.index0 + pw / 2 %}
-  {% set cy = ph / 2 %}
+  {% set r_max = k * ns.roots[loop.index0] %}
+  {% set slot = 2 * (r_max + label_room) + gap %}
+  {% set cx = left.x + slot / 2 %}
+  {% set left.x = left.x + slot %}
   {% set pr = namespace(rows=[]) %}
   {% for r in rows if not p.panel or (r[p.panel] | string) == key %}{% set pr.rows = pr.rows + [r] %}{% endfor %}
   {% set step = 2 * math.pi / (pr.rows | length) %}
   {% for r in pr.rows %}
-    {% set a0 = (p.start_angle / 180 * math.pi) + step * loop.index0 %}
+    {% set a0 = start + step * loop.index0 %}
     {% set a1 = a0 + step %}
     {% set wd = namespace(list=[]) %}
     {% for s in series_col %}{% set wd.list = wd.list + [{"name": s, "v": r[s] | float}] %}{% endfor %}
@@ -55,15 +87,15 @@ options:
     <g>
       <title>{{ r[label_col] }}{% for w in wedges %}; {{ w.name }} {{ w.v | format(p.value_format) }}{% endfor %}</title>
     {% for w in wedges | sort(attribute="v", reverse=true) %}
-      {% set rr = k * (w.v ** 0.5) %}
+      {% set rr = radius(w.v) %}
       {% if rr > 0.3 %}
-      <path d="M{{ cx|round(2) }},{{ cy|round(2) }}L{{ (cx + rr * math.sin(a0))|round(2) }},{{ (cy - rr * math.cos(a0))|round(2) }}A{{ rr|round(2) }},{{ rr|round(2) }} 0 0 1 {{ (cx + rr * math.sin(a1))|round(2) }},{{ (cy - rr * math.cos(a1))|round(2) }}Z" fill="{{ color_for(w.name, 'series') }}" stroke="{{ style.background }}" stroke-width="0.6"/>
+      <path transform="translate({{ cx|round(2) }},{{ cy|round(2) }})" d="{{ d3.arc(0, rr, a0, a1) }}" fill="{{ color_for(w.name, 'series') }}" stroke="{{ style.background }}" stroke-width="0.6"/>
       {% endif %}
     {% endfor %}
     </g>
     {% set am = (a0 + a1) / 2 %}
-    {% set top = k * ((wedges | map(attribute="v") | max) ** 0.5) %}
-    {% set lr = [top, r_max * 0.45] | max + small * 1.1 %}
+    {% set top = radius(wedges | map(attribute="v") | max) %}
+    {% set lr = [top, r_max * label_floor] | max + small * 1.1 %}
     <text x="{{ (cx + lr * math.sin(am))|round(1) }}" y="{{ (cy - lr * math.cos(am))|round(1) }}" dy="0.35em" text-anchor="middle" font-size="{{ small }}" fill="{{ style.muted }}">{{ r[label_col] }}</text>
   {% endfor %}
   {% if p.panel %}

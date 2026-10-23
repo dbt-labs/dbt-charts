@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dbt_charts.agent_api.boards import board_declaring_keys
+from dbt_charts.agent_api.paging import (
+    DEFAULT_PAGE_LIMIT,
+    MAX_PAGE_LIMIT,
+    cursor_offset,
+    paginate,
+)
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
@@ -27,10 +33,6 @@ from dbt_charts.core.project import (
     glob_to_regex,
     is_package_relpath,
 )
-
-# A typical account lists in one page; a compact listing hit is a few hundred bytes.
-MAX_SEARCH_LIMIT = 200
-DEFAULT_SEARCH_LIMIT = 100
 
 # A keyword search reads and parses at most this many board files per project,
 # however many boards mention the query.
@@ -55,39 +57,9 @@ _KIND_GLOBS: dict[str, tuple[str, ...]] = {
 _INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
 
 
-_T = TypeVar("_T")
-
 # A host's access model: the subset of these project-relative files its caller
 # may see.
 PathVisibility = Callable[[list[str]], Collection[str]]
-
-
-def cursor_offset(cursor: str | None) -> int:
-    """Decode a ``next`` cursor to the offset it resumes at; ``None`` is the start."""
-    if cursor is None:
-        return 0
-    if not cursor.isdecimal():
-        raise ValueError(
-            f"{cursor!r} is not a cursor: pass the 'next' value from the "
-            "previous search_files result unchanged"
-        )
-    return int(cursor)
-
-
-def paginate(
-    items: Sequence[_T], *, limit: int, cursor: str | None
-) -> tuple[list[_T], str | None]:
-    """One page of an already-sorted, already-filtered list, and the cursor to resume at.
-
-    The cursor is ``None`` on the last page. Every host pages through this one
-    function so a cursor means the same thing on the connector, in chat, and
-    over stdio.
-    """
-    if limit == 0:
-        return [], None  # a cursor here would resume at the same offset forever
-    start = cursor_offset(cursor)
-    end = start + limit
-    return list(items[start:end]), (str(end) if end < len(items) else None)
 
 
 def _agent_safe_summary(notes: str) -> str:
@@ -138,8 +110,8 @@ class SearchFilesArgs(BaseModel):
     limit: int | None = Field(
         default=None,
         description=(
-            f"Maximum results to return (default {DEFAULT_SEARCH_LIMIT}, "
-            f"max {MAX_SEARCH_LIMIT})"
+            f"Maximum results to return (default {DEFAULT_PAGE_LIMIT}, "
+            f"max {MAX_PAGE_LIMIT})"
         ),
     )
     cursor: str | None = Field(
@@ -243,17 +215,17 @@ def search_files(
     path: str | None = None,
     text: str | None = None,
     tags: list[str] | None = None,
-    limit: int = DEFAULT_SEARCH_LIMIT,
+    limit: int = DEFAULT_PAGE_LIMIT,
     cursor: str | None = None,
 ) -> SearchResult:
     """Search a project's boards, or its meta/model/config/other files.
 
     See ``SearchFilesArgs`` for what each ``kind`` searches. Pages of ``limit``
-    (default ``DEFAULT_SEARCH_LIMIT``, max ``MAX_SEARCH_LIMIT``) resume at
+    (default ``DEFAULT_PAGE_LIMIT``, max ``MAX_PAGE_LIMIT``) resume at
     ``cursor``. Hosts with a per-principal access model (Cloud) must not
     truncate before filtering — see ``search_file_hits``.
     """
-    limit = max(0, min(limit, MAX_SEARCH_LIMIT))
+    limit = max(0, min(limit, MAX_PAGE_LIMIT))
     if limit == 0:
         return SearchResult(success=True, errors=[], results=[])
     hits = search_file_hits(project, kind=kind, path=path, text=text, tags=tags)

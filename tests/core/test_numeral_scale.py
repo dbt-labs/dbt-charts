@@ -311,7 +311,7 @@ def test_column_shares_one_printed_unit_true_below_the_compaction_threshold():
     floor -- that refusal is orthogonal to whether a tier is shared, so this
     must still read True (regression: an earlier, narrower predicate treated
     every shared_scale_for_column refusal as "no shared position," silently
-    dropping the pad support_table_attachment.py already gave this exact
+    dropping the pad the engine's support-table strip already gave this exact
     column pre-fix).
     """
     assert column_shares_one_printed_unit(_si(1200, 3000, 5600)) is True

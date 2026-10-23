@@ -2,15 +2,19 @@
 //! transforms. A `Projection` wraps a raw (λ, φ) → (x, y) function with center, rotate, scale, translate,
 //! reflection, pre- and post-clipping and adaptive resampling, and builds d3's stream chain.
 //!
-//! `stream(sink)` builds a fresh chain on every call, and `preclip` and `postclip` take their stage
-//! constructor as a closure. An error d3 would throw from a stage reaches the caller through
-//! `GeoStream::error` of the returned stream.
-//! `RawProjection::invert` returns `None` where d3's is absent or returns `null`.
+//! `stream(sink)` builds a fresh chain per call; an error d3 would throw reaches the caller through
+//! `GeoStream::error`. `RawProjection::invert` returns `None` where d3's is absent or returns `null`.
 
+pub mod albers;
+pub mod albers_usa;
 pub mod azimuthal;
 pub mod azimuthal_equal_area;
 pub mod azimuthal_equidistant;
 pub mod conic;
+pub mod conic_conformal;
+pub mod conic_equal_area;
+pub mod conic_equidistant;
+pub mod cylindrical_equal_area;
 pub mod equal_earth;
 pub mod equirectangular;
 pub mod fit;

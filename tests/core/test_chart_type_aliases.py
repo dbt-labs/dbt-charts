@@ -7,14 +7,9 @@ Canonical names ('scatter', 'map') continue to work.
 
 import pytest
 
-from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.normalize.charts import normalize_chart
-from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-
-_BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 
 def _quick_registry():
@@ -36,17 +31,6 @@ class TestPointRaisesError:
             "c1", {"type": "scatter", "query": "q"}, registry, sources={}
         )
         assert chart.type == "scatter"
-
-    def test_scatter_renders_vl_point_mark(self, make_chart):
-        """Scatter chart type maps to VL mark type 'point'."""
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        chart = make_chart("scatter")
-        data = [{"x_field": 1, "y_field": 2}]
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        mark = spec.get("mark", {})
-        assert (mark.get("type") if isinstance(mark, dict) else mark) == "point"
 
 
 class TestChoroplethRaisesError:

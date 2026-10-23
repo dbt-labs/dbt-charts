@@ -13,11 +13,7 @@ from __future__ import annotations
 import dataclasses
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import BarChart
-from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-
-_BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 # ── axis_to_vl() mapping ──────────────────────────────────────────────────────
 
@@ -28,7 +24,6 @@ def _axis_with_label_field(field: str, value: object):
         reset_config,
     )
     from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
     reset_config()
     charts = resolve_chart_style_context(get_theme_style())
@@ -90,7 +85,6 @@ def test_default_theme_label_positioning_fields_cascade_to_vl() -> None:
         reset_config,
     )
     from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
     from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
 
     reset_config()
@@ -105,37 +99,3 @@ def test_default_theme_label_positioning_fields_cascade_to_vl() -> None:
 
 
 # ── Full-spec integration (chart-local override reaches encoding.*.axis) ───────
-
-
-def test_chart_local_label_bound_reaches_encoding() -> None:
-    """labels.bound: true in chart style produces labelBound in encoding.x.axis."""
-    from dbt_charts.core.compile.config import reset_config
-    from dbt_charts.core.compile.models.query.normalized import SqlQuery
-    from dbt_charts.core.compile.models.style.authored import (
-        AxisXStylePatch,
-        BarChartStylePatch,
-        DimensionLabelStylePatch,
-    )
-    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-    reset_config()
-    patch = BarChartStylePatch(
-        orientation="vertical",
-        axis_x=AxisXStylePatch(labels=DimensionLabelStylePatch(bound=True)),
-    )
-    chart = BarChart(
-        id="t",
-        type="bar",
-        x="product",
-        y="revenue",
-        query=SqlQuery(sql="SELECT 1", source="src"),
-        query_name="q",
-        style=patch,
-    )
-    data = [{"product": "A", "revenue": 100}]
-    _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-    spec = generate_vega_lite_spec(chart, data, width=400)
-    x_axis = spec.get("encoding", {}).get("x", {}).get("axis", {})
-    assert x_axis.get("labelBound") is True, (
-        f"expected labelBound in x.axis; got {x_axis}"
-    )

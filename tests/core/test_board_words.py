@@ -4,7 +4,6 @@ humanized names, letter case, theme text and placeholder data."""
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import re
 
@@ -16,11 +15,6 @@ from dbt_charts.core.compile.config import get_default_theme_name, get_theme_sty
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.render.chart.emitters._tooltip import (
-    span_duration_expr,
-    span_tooltip_rows,
-)
-from dbt_charts.core.render.chart.time_unit_detect import _message_expr
 from dbt_charts.core.render.controls import interactive_controls
 from dbt_charts.core.render.placeholder import generate_placeholder_data
 from dbt_charts.core.render.svg_cache import svg_cache_key
@@ -127,79 +121,6 @@ def test_the_controls_strip_carries_its_words_for_the_page() -> None:
 _MONTH_095 = 2498310 / 86400
 
 
-def test_a_duration_picks_its_word_by_the_printed_number_at_a_rounding_edge() -> None:
-    with language_scope("en"):
-        expr = span_duration_expr("e", "s", "month")
-    start = dt.datetime(2026, 1, 1)
-    end = start + dt.timedelta(seconds=2498310)
-    assert _vega_text(expr, s=start.isoformat(), e=end.isoformat()) == "0.9 months"
-
-
-@pytest.mark.parametrize(
-    ("language", "days", "text"),
-    [
-        ("en", 7 * 1.04, "1 week"),
-        ("en", 7 * 2.6, "2.6 weeks"),
-        ("ru", 7 * 1.0, "1 неделя"),
-        ("ru", 7 * 2.0, "2 недели"),
-        ("ru", 7 * 5.0, "5 недель"),
-        ("ru", 7 * 2.6, "2.6 недели"),
-        ("fr", 7 * 1.5, "1.5 semaine"),
-        ("ja", 7 * 2.0, "2 週間"),
-        ("en", 7 * 0.25, "0.3 weeks"),
-        ("fr", -7 * 1.0, "\u22121 semaine"),
-        ("ru", -7 * 2.0, "\u22122 недели"),
-    ],
-)
-def test_a_duration_picks_its_word_by_the_printed_number(
-    language: str, days: float, text: str
-) -> None:
-    with language_scope(language):
-        expr = span_duration_expr("e", "s", "week")
-    start = dt.datetime(2026, 1, 1)
-    end = start + dt.timedelta(days=days)
-    assert _vega_text(expr, s=start.isoformat(), e=end.isoformat()) == text
-
-
-def test_span_tooltip_rows_title_the_duration_in_the_board_language() -> None:
-    from dbt_charts.core.render.chart.emitters._tooltip import TooltipField
-
-    rows = [{"s": "2026-01-01", "e": "2026-03-01"}]
-    end, start = (
-        TooltipField("e", "End", kind="temporal"),
-        TooltipField("s", "Start", kind="temporal"),
-    )
-    with language_scope("de"):
-        fields, _ = span_tooltip_rows(end, start, frozenset(), rows)
-    assert "Dauer" in [field.title for field in fields]
-
-
-def test_time_axis_words_come_from_the_catalog() -> None:
-    with language_scope("ko"):
-        quarter = _message_expr("time.quarter", n="2")
-        year_first = _message_expr("time.year_quarter", n="2", year="'2024'")
-    assert _vega_text(quarter) == "2분기"
-    assert _vega_text(year_first) == "2024년 2분기"
-    with language_scope("ja"):
-        assert _vega_text(_message_expr("time.quarter_year", n="3", year="2024")) == (
-            "2024年第3四半期"
-        )
-
-
-def test_noon_and_midnight_are_catalog_words() -> None:
-    from dbt_charts.core.render.chart.time_unit_detect import (
-        default_subday_label_expr_for,
-    )
-
-    hourly = [f"2026-08-11T{hour:02d}:00:00" for hour in range(0, 24, 3)]
-    with language_scope("de"):
-        expr = default_subday_label_expr_for(
-            hourly, 12, narrow=False, tick_count=8, tick_count_ceiling=8
-        )
-    assert "Mitternacht" in expr and "Mittag" in expr
-    assert "Midnight" not in expr and "Noon" not in expr
-
-
 def test_unit_letters_and_words_come_from_the_catalog() -> None:
     native = PREDEFINED_NATIVE
     assert native[PredefinedNumberFormat.duration].python(3725) == ("1h 2m", "")
@@ -292,14 +213,6 @@ def test_the_footer_brand_has_no_gap_where_the_text_has_no_space() -> None:
     assert spaced - glued == pytest.approx(gap)
 
 
-def test_wide_measure_titles_join_with_the_languages_list_separator() -> None:
-    from dbt_charts.core.render.chart.emitters._cartesian import wide_measures_title
-
-    assert wide_measures_title(("rev", "cost"), {}) == "Rev, Cost"
-    with language_scope("ja"):
-        assert wide_measures_title(("rev", "cost"), {}) == "Rev、Cost"
-
-
 _DONUT = "type: pie\n{pad}query: q\n{pad}theta: val\n{pad}color: cat\n{pad}style:\n{pad}  inner_radius: 0.6\n"
 
 
@@ -318,25 +231,6 @@ def test_a_donut_total_label_reads_in_the_boards_language(layout: str) -> None:
         "  q:\n    type: values\n    rows:\n      - {val: 1, cat: A}\n" + layout
     )
     assert "Gesamt Val" in svg
-
-
-def test_time_axis_words_come_from_the_production_label_functions() -> None:
-    from dbt_charts.core.render.chart.time_unit_detect import (
-        _quarter_label,
-        cadence_label_text,
-        tooltip_header_date_expr,
-    )
-
-    may = dt.date(2024, 5, 10)
-    assert cadence_label_text(may, "yearquarter") == "Q2"
-    with language_scope("ja"):
-        assert cadence_label_text(may, "yearquarter") == "第2四半期"
-        quarter = _quarter_label(
-            "toDate(datum.v)", "utcFormat", "utcmonth", "utcdate", 1, "false", True
-        )
-        assert _vega_text(quarter, v="2024-05-10") == "第2四半期"
-        header = tooltip_header_date_expr("datum.v", "yearquarter")
-        assert _vega_text(header, v="2024-05-10") == "2024年第2四半期"
 
 
 @pytest.mark.parametrize(
@@ -361,40 +255,6 @@ def test_keyed_words_fill_their_placeholders_in_the_board_language() -> None:
         assert board_word("controls.field_label", label="x") == "x："
     with language_scope("de"):
         assert board_word("placard.image_error", message="m") == "Bildfehler: m"
-
-
-@pytest.mark.parametrize(
-    ("unit", "days", "text"),
-    [
-        ("week", 7 * 2.6, "٢٫٦ weeks"),
-        ("week", 7 * 1.04, "١ week"),
-        ("month", _MONTH_095, "٠٫٩ months"),
-    ],
-)
-def test_a_duration_reads_arabic_digits_back_to_pick_its_word(
-    unit: str, days: float, text: str
-) -> None:
-    from dbt_charts.core.text.format_d3 import (
-        EN_US_TIME,
-        HOUSE_EN_US,
-        house_locale,
-        locale_definition,
-        number_locale_definition,
-        regional_scope,
-    )
-
-    arabic = house_locale(
-        number_locale_definition("ar-EG"), HOUSE_EN_US.analytic, HOUSE_EN_US.narrative
-    )
-    with regional_scope(arabic, EN_US_TIME, 0):
-        expr = span_duration_expr("e", "s", unit)
-        locale = locale_definition(arabic)
-    start = dt.datetime(2026, 1, 1)
-    end = start + dt.timedelta(days=days)
-    assert (
-        _vega_text(expr, format_locale=locale, s=start.isoformat(), e=end.isoformat())
-        == text
-    )
 
 
 def _rendered_svg(board_yaml: str) -> str:

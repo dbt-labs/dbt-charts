@@ -18,12 +18,11 @@ structure of test_kpi_tone_migration.py.
 
 from __future__ import annotations
 
-import json
 import warnings
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
 from dbt_charts.core.compile.migrations import (
     IncompleteMigrationError,
@@ -38,7 +37,6 @@ from dbt_charts.core.compile.migrations.migrations import (
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.board.patch import BoardPatch
-from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     YamlSchemaCatalog,
     load_yaml_schema_catalog,
@@ -409,52 +407,6 @@ def test_bar_zero_auto_migrates_same_as_bool(
     chart = migrated["charts"]["revenue_bar"]
     assert "scale" not in chart.get("style", {})
     assert chart["style"]["axis_y"]["scale"]["continuous"]["zero"] == "auto"
-
-
-# Case (j): hand-authored axis_y.scale.continuous.zero: auto on scatter never emits "zero": "auto"
-def test_scatter_axis_y_scale_zero_auto_never_emits_auto_in_vl() -> None:
-    """build_resolved_scale normalizes zero="auto" to None before VL emission.
-
-    A hand-authored axis_y.scale.continuous.zero: auto on a scatter chart with
-    zero-crossing y data (so the heuristic abstains and leaves the authored value
-    intact) must never produce "zero": "auto" in the VL spec.
-
-    This is a scatter-specific regression test: bar/line/area each strip "zero" at
-    their own emitters independently of build_resolved_scale, so a test on those
-    families would pass on unfixed code and prove nothing.
-    """
-    from dbt_charts.core.compile.models.style.authored import (
-        AxisYStylePatch,
-        BaseScaleStylePatch,
-        ScaleContinuousStylePatch,
-        ScatterChartStylePatch,
-    )
-    from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-    chart_style = ScatterChartStylePatch(
-        axis_y=AxisYStylePatch(
-            scale=BaseScaleStylePatch(continuous=ScaleContinuousStylePatch(zero="auto"))
-        )
-    )
-    chart = TypeAdapter(Chart).validate_python(
-        {
-            "id": "scatter_auto",
-            "type": "scatter",
-            "x": "val_x",
-            "y": "val_y",
-            "style": chart_style,
-        }
-    )
-    # Zero-crossing y data: heuristic abstains (min<0), leaving authored "auto" intact.
-    data = [
-        {"val_x": 1.0, "val_y": -5.0},
-        {"val_x": 2.0, "val_y": 10.0},
-    ]
-    spec = generate_vega_lite_spec(chart, data)
-    spec_str = json.dumps(spec)
-    # No emitter should ever output the literal string "auto" as a zero value.
-    assert '"zero": "auto"' not in spec_str
-    assert '"zero":"auto"' not in spec_str.replace(" ", "")
 
 
 # Case (k): heatmap/histogram chart-level zero -> fail loud (never functional)

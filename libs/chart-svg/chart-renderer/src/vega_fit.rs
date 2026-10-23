@@ -150,7 +150,7 @@ pub fn vl_y_label_anchor(angle: f64, orient_left: bool) -> (&'static str, &'stat
 /// How far a `middle`-baselined text hangs above its anchor: the ink rise
 /// (`0.8 * font_size`, rounded) less Vega's baseline shift.
 pub fn middle_rise(font_size: f64) -> f64 {
-    (0.8 * font_size).round() - crate::measure::baseline_shift("middle", font_size)
+    (0.8 * font_size).round() - measure::baseline_shift("middle", font_size)
 }
 
 /// The advance between the rows of a stacked axis label (Vega's default
@@ -214,7 +214,7 @@ pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64, bend: Bend) -> (f64, 
 /// `y + baseline_shift − round(0.8·fs)` and spans one `fs` of height;
 /// horizontally it spans `width` from the anchor per `align`.
 pub fn text_ink(x: f64, y: f64, width: f64, font_size: f64, align: &str, baseline: &str) -> Bounds {
-    let dy = crate::measure::baseline_shift(baseline, font_size) - (0.8 * font_size).round();
+    let dy = measure::baseline_shift(baseline, font_size) - (0.8 * font_size).round();
     let dx = match align {
         "center" => -width / 2.0,
         "right" => -width,
@@ -317,7 +317,7 @@ pub fn category_label_layout(
     cats: &[String],
     chart_width: f64,
     usable_ratio: Option<f64>,
-    fonts: &crate::text::FontBook,
+    fonts: &measure::FontBook,
     font_size: f64,
 ) -> Result<CategoryLabels, String> {
     let flat = CategoryLabels { angle: 0.0, collision: None };
@@ -350,7 +350,7 @@ pub fn category_label_layout(
 pub fn category_label_widths(
     labels: &crate::common::AxisLabels,
     cats: &[String],
-    fonts: &crate::text::FontBook,
+    fonts: &measure::FontBook,
     font_size: f64,
     with_gap: bool,
 ) -> Result<Vec<f64>, String> {
@@ -773,8 +773,8 @@ pub fn pad_plot(
 mod tests {
     use super::*;
 
-    fn shipped_fonts() -> crate::text::FontBook {
-        crate::text::FontBook::load_dir(concat!(
+    fn shipped_fonts() -> measure::FontBook {
+        measure::FontBook::load_dir(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../src/dbt_charts/core/render/fonts"
         ))

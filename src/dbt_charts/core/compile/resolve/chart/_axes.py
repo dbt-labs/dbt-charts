@@ -194,7 +194,7 @@ def _bake_axis(
     """Resolve the merged axis's winning ``labels.format`` into a ``ResolvedFormat``.
 
     A categorical axis rejects an affix (a labelExpr would bypass
-    gate_label_format); the channel type is only known here.
+    the engine's label-format gate); the channel type is only known here.
     """
     winner = merged.labels.format
     if winner is None:
@@ -311,7 +311,7 @@ def _bake_cartesian_axes(
     # (DimensionTicksStyle.__constraints__) — no compile-pass check needed.
     # step-without-time_unit is not a model rule: a bare step is the
     # quantitative-axis cadence lever, so the check needs the resolved axis
-    # type and lives in render (apply_x_tick_cadence).
+    # type and lives in render (the engine's tick cadence).
     # Resolve any format alias (e.g. "currency_whole" → "$,.0f") at bake time
     # so axis_to_vl() emits valid d3-format strings, not internal alias names.
     # The spec itself is already guaranteed resolvable by
@@ -393,9 +393,14 @@ def _endpoint_label_rail_fires(
     color_ch = channels.get("color")
     return endpoint_labels_visible and (
         wide_measure_series
-        or (color_ch is not None and color_ch.mode == "series")
+        or (color_ch is not None and _names_series(color_ch))
         or (has_layers and color_ch is None)
     )
+
+
+def _names_series(channel: ResolvedStyleChannel) -> bool:
+    """A series color names its series; a numeric one is a continuous scale."""
+    return channel.mode == "series" and not channel.quantitative_data
 
 
 def _suppress_legend_for_endpoint_labels(
@@ -435,7 +440,7 @@ def _suppress_legend_for_endpoint_labels(
     if layered_rail_fires and color_ch is None:
         return True
     non_layered_rail_fires = wide_measure_series or (
-        color_ch is not None and color_ch.mode == "series"
+        color_ch is not None and _names_series(color_ch)
     )
     return non_layered_rail_fires and not has_layers
 

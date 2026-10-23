@@ -1,16 +1,12 @@
 """Render-time capture of an x-axis whose tick labels still collide after
 every enabled overlap strategy (skip/tilt) was tried.
 
-``resolve_axis_x_overlap`` (``emitters/_label_overlap.py``) already computes
-whether its final picked layout fits — that boolean was previously discarded
-at every "no strategies left" fallback return. This module is the seam that
-lets a warning detector see it, mirroring ``table_overflow.py``: the render
-code records the fact at the exact point it gives up, into a sink a detector
-reads via ``WarningContext.axis_label_collisions``.
+The engine reports the collision as ``WARN-AXIS-LABEL-COLLISION`` at the point its
+overlap strategies give up. This module is the seam that lets a warning detector
+see it, mirroring ``table_overflow.py``: ``engine.py`` records the fact into a
+sink a detector reads via ``WarningContext.axis_label_collisions``.
 
-Scoped to line/area/scatter (the callers of ``emitters/_cartesian.py``'s
-``resolve_cartesian_x``, the single choke point that has both the computed
-``AxisLabelLayout`` and the chart id) — bar and heatmap have their own
+Scoped to line/area/scatter — bar and heatmap have their own
 collision-adjacent warnings (``WARN_BAR_BAND_WIDTH_TOO_NARROW``,
 ``WARN_TOO_MANY_X_CATEGORIES``) and are not covered here.
 """
@@ -52,6 +48,13 @@ def collect_axis_label_collisions() -> Generator[dict[str, AxisLabelCollision]]:
         yield collected
     finally:
         _sinks.reset(token)
+
+
+def reset_axis_label_collision(chart_id: str) -> None:
+    """Forget an earlier render's collision: the last render wins."""
+    sinks = _sinks.get()
+    if sinks:
+        sinks[-1].pop(chart_id, None)
 
 
 def record_axis_label_collision(chart_id: str, collision: AxisLabelCollision) -> None:

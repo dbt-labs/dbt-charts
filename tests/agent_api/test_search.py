@@ -13,10 +13,9 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from dbt_charts.agent_api.paging import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from dbt_charts.agent_api.search import (
-    DEFAULT_SEARCH_LIMIT,
     MAX_PARSED_CANDIDATES,
-    MAX_SEARCH_LIMIT,
     MAX_SUMMARY_CHARS,
     BoardListing,
     BoardMatch,
@@ -24,7 +23,6 @@ from dbt_charts.agent_api.search import (
     FileHit,
     SearchFilesArgs,
     SearchResult,
-    paginate,
     search_boards_hits,
     search_files,
 )
@@ -179,7 +177,7 @@ def board_search(
     project: Project,
     *,
     tags: list[str] | None = None,
-    limit: int = DEFAULT_SEARCH_LIMIT,
+    limit: int = DEFAULT_PAGE_LIMIT,
     cursor: str | None = None,
 ) -> BoardSearch:
     page = search_files(project, text=query, tags=tags, limit=limit, cursor=cursor)
@@ -300,7 +298,7 @@ class TestSearchDashboardsContract:
         assert isinstance(result, SearchResult)
         assert result.success is True
         assert isinstance(result.errors, list)
-        assert 0 < len(result.results) <= DEFAULT_SEARCH_LIMIT
+        assert 0 < len(result.results) <= DEFAULT_PAGE_LIMIT
 
         for hit in _matches(result.results):
             assert isinstance(hit.title, str) and hit.title
@@ -360,15 +358,15 @@ class TestSearchDashboardsContract:
         """Limit is capped at a maximum value."""
         boards = tmp_path / "charts"
         boards.mkdir()
-        for i in range(MAX_SEARCH_LIMIT + 5):
+        for i in range(MAX_PAGE_LIMIT + 5):
             (boards / f"board_{i}.yml").write_text(f"title: Board {i}\nrows: []\n")
 
         result = board_search(
-            query="", project=local_project(tmp_path), limit=MAX_SEARCH_LIMIT * 10
+            query="", project=local_project(tmp_path), limit=MAX_PAGE_LIMIT * 10
         )
 
-        assert len(result.results) == MAX_SEARCH_LIMIT
-        assert result.next == str(MAX_SEARCH_LIMIT)
+        assert len(result.results) == MAX_PAGE_LIMIT
+        assert result.next == str(MAX_PAGE_LIMIT)
 
     def test_results_sorted_by_score_descending(self, corpus_dir: Project) -> None:
         """Results are sorted by match_score descending."""
@@ -673,15 +671,15 @@ class TestSearchDashboardsHits:
     ) -> None:
         boards = tmp_path / "charts"
         boards.mkdir()
-        for i in range(MAX_SEARCH_LIMIT + 5):
+        for i in range(MAX_PAGE_LIMIT + 5):
             (boards / f"board_{i}.yml").write_text(f"title: Board {i}\nrows: []\n")
         project = local_project(tmp_path)
 
         hits = search_boards_hits("", project)
-        capped = board_search(query="", project=project, limit=MAX_SEARCH_LIMIT + 5)
+        capped = board_search(query="", project=project, limit=MAX_PAGE_LIMIT + 5)
 
-        assert len(hits) == MAX_SEARCH_LIMIT + 5
-        assert len(capped.results) == MAX_SEARCH_LIMIT
+        assert len(hits) == MAX_PAGE_LIMIT + 5
+        assert len(capped.results) == MAX_PAGE_LIMIT
 
     def test_search_boards_is_exactly_hits_truncated_to_limit(
         self, corpus_dir: Project
@@ -738,9 +736,6 @@ class TestSearchPaging:
     def test_the_last_page_has_no_next(self, corpus_dir: Project) -> None:
         assert board_search("", corpus_dir, limit=5).next is None
         assert board_search("", corpus_dir, limit=4).next == "4"
-
-    def test_a_zero_limit_page_has_no_cursor_to_loop_on(self) -> None:
-        assert paginate([1, 2, 3], limit=0, cursor=None) == ([], None)
 
     def test_ranked_search_pages_too(self, corpus_dir: Project) -> None:
         everything = search_boards_hits("revenue", corpus_dir)

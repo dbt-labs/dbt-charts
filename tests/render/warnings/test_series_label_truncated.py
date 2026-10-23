@@ -39,7 +39,6 @@ def _ctx(truncations: dict[str, list[SeriesLabelTruncation]] | None = None):
     return WarningContext(
         board_spec=make_test_resolved_board(charts={resolved.id: resolved}),
         chart_results={resolved.id: rows},
-        vega_specs={},
         series_label_truncations=truncations or {},
     )
 

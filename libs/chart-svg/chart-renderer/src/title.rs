@@ -368,7 +368,7 @@ pub fn render_title_svg(
 /// heading` class rule's own fill (CSS specificity), so a bare `fill="..."`
 /// presentation attribute would be silently swallowed.
 pub fn paint_title_svg_fill(svg: &str, color: &str) -> String {
-    let color_escaped = crate::svg::xml_escape_attr(color);
+    let color_escaped = print::xml_escape_attr(color);
     inject_missing_style(&rewrite_existing_fill(svg, &color_escaped), &color_escaped)
 }
 
@@ -503,8 +503,8 @@ pub fn title_baseline_offset(
 pub fn authored_attrs(path: &str, kind: &str) -> String {
     format!(
         r#" data-authored-path="{}" data-authored-kind="{}""#,
-        crate::svg::xml_escape_attr(path),
-        crate::svg::xml_escape_attr(kind),
+        print::xml_escape_attr(path),
+        print::xml_escape_attr(kind),
     )
 }
 

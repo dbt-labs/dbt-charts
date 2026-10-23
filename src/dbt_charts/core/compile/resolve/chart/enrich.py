@@ -206,7 +206,7 @@ def _pick_scale(
     it feeds the same re-derived verdict into ``_bake_zero_flag``, which
     bakes ``scale.continuous.zero`` explicitly and does produce a
     ``domainMin`` floor at emit. The visible baseline itself comes from
-    ``BaselineFeature``'s render-time ``datum: 0`` rule.
+    the engine's ``datum: 0`` baseline rule.
 
     Non-optional-zero types (bar, area) with all-positive data: always
     extend to zero — both encode absolute magnitude (a bar's length, an

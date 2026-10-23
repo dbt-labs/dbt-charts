@@ -156,44 +156,6 @@ def test_pie_total_exceeds_inner_radius_uses_layout_height() -> None:
     )
 
 
-_ATTACHED_TABLE_DONUT_YAML = _DONUT_NARROW_SLOT_YAML.replace(
-    "Narrow donut with large total", "Attached-table donut with large total"
-)
-
-# Two data rows where one slice has < 2% share. That triggers hybrid (attached-
-# table) mode in classify_arc_render_mode (INVISIBLE_SLICE_SHARE default = 0.02).
-# Total = 1,000,000 → "1,000,000" (~86px at 18px) overflows a 150px wheel hole
-# (min(wheel_width, continuousHeight=300) × 0.9 × 0.6 ≤ 81px).
-_ATTACHED_TABLE_ROWS = [{"amount": 999_990}, {"amount": 10}]
-
-
-def test_pie_total_exceeds_inner_radius_fires_for_attached_table_donut() -> None:
-    """Donuts with a tiny slice enter hybrid (attached-table) mode, render as SVG,
-    and are absent from ctx.vega_specs. The detector must fire via chart.wheel_width
-    and the theme's continuousHeight (the Vega effective height when wheel renders
-    with height=None). The warning must identify donut_chart specifically."""
-    result = compile(_ATTACHED_TABLE_DONUT_YAML)
-    assert result.success and result.board is not None, result.errors
-    executor = _make_executor(result.board, result.query_registry, _ATTACHED_TABLE_ROWS)
-
-    render_result = render(result.board, executor, format="svg")
-
-    # Pin the chart id — the board also contains a filler donut (auto-total).
-    donut_warnings = [
-        w
-        for w in render_result.warnings
-        if w.code == "WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS" and w.chart == "donut_chart"
-    ]
-    assert donut_warnings, (
-        "donut_chart (hybrid/attached-table mode, absent from vega_specs) "
-        "must warn via the wheel_width + continuousHeight path"
-    )
-    # Pin the branch: the attached-table path pairs wheel_width with the
-    # theme's continuousHeight (300), so the message reports slot 150\u00d7300 —
-    # the VL path would report the 120px layout height instead.
-    assert "150\u00d7300px" in donut_warnings[0].message, donut_warnings[0].message
-
-
 _SHARED_CHART_TWO_WIDTHS_YAML = """
 title: Shared chart, no tabs
 charts:

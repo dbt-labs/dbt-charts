@@ -6,46 +6,78 @@ ERR-* and WARN-* codes instead of WARN-* only.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
+from pydantic import ValidationError
 
 from dbt_charts.agent_api.diagnostics import (
     REGISTRY,
     DiagnosticCodeDetail,
+    DiagnosticCodeSummary,
     GetDiagnosticCodeArgs,
+    ListDiagnosticCodesArgs,
     display_map,
     get_diagnostic_code,
     list_diagnostic_codes,
 )
+from dbt_charts.agent_api.paging import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+
+
+def _all_codes(
+    level: Literal["error", "warning"] | None = None,
+) -> list[DiagnosticCodeSummary]:
+    codes: list[DiagnosticCodeSummary] = []
+    cursor: str | None = None
+    while True:
+        result = list_diagnostic_codes(level=level, cursor=cursor)
+        codes.extend(result.codes)
+        if result.next is None:
+            return codes
+        cursor = result.next
 
 
 class TestListDiagnosticCodes:
     def test_sorted_alphabetically(self) -> None:
-        result = list_diagnostic_codes()
-        codes = [r.code for r in result.codes]
+        codes = [r.code for r in _all_codes()]
         assert codes == sorted(codes)
 
     def test_no_filter_includes_both_levels(self) -> None:
-        result = list_diagnostic_codes()
-        codes = [r.code for r in result.codes]
+        codes = [r.code for r in _all_codes()]
         assert "WARN-REDUNDANT-ENCODING" in codes
         assert "ERR-NO-LAYOUT" in codes
 
     def test_level_error_excludes_warnings(self) -> None:
-        result = list_diagnostic_codes(level="error")
-        codes = [r.code for r in result.codes]
+        codes = [r.code for r in _all_codes(level="error")]
         assert all(c.startswith("ERR-") for c in codes)
         assert "ERR-NO-LAYOUT" in codes
 
     def test_level_warning_excludes_errors(self) -> None:
-        result = list_diagnostic_codes(level="warning")
-        codes = [r.code for r in result.codes]
+        codes = [r.code for r in _all_codes(level="warning")]
         assert all(c.startswith("WARN-") for c in codes)
         assert "WARN-REDUNDANT-ENCODING" in codes
 
-    def test_summary_is_nonempty(self) -> None:
+    def test_default_page_is_capped(self) -> None:
         result = list_diagnostic_codes()
-        for entry in result.codes:
-            assert entry.summary, f"Empty summary for {entry.code!r}"
+        assert len(result.codes) == DEFAULT_PAGE_LIMIT
+        assert result.next is not None
+
+    def test_pages_cover_the_registry_once(self) -> None:
+        codes = [r.code for r in _all_codes()]
+        assert codes == sorted(dc.code for dc in REGISTRY.all())
+
+    def test_limit_is_clamped_to_the_max(self) -> None:
+        result = list_diagnostic_codes(limit=MAX_PAGE_LIMIT + 1)
+        assert len(result.codes) == MAX_PAGE_LIMIT
+
+    def test_cursor_resumes_after_the_previous_page(self) -> None:
+        first = list_diagnostic_codes(limit=2)
+        second = list_diagnostic_codes(limit=2, cursor=first.next)
+        assert second.codes[0].code > first.codes[-1].code
+
+    def test_args_reject_a_cursor_that_is_not_a_next_value(self) -> None:
+        with pytest.raises(ValidationError):
+            ListDiagnosticCodesArgs.model_validate({"cursor": "ERR-NO-LAYOUT"})
 
     def test_model_dump_shape(self) -> None:
         result = list_diagnostic_codes(level="warning")
@@ -57,8 +89,7 @@ class TestListDiagnosticCodes:
 
     def test_summary_is_user_facing_not_return_jargon(self) -> None:
         """Summary must come from the doc field, not implementation jargon."""
-        result = list_diagnostic_codes()
-        for entry in result.codes:
+        for entry in _all_codes():
             assert not entry.summary.startswith("Return "), (
                 f"Summary for {entry.code!r} looks like implementation jargon: "
                 f"{entry.summary!r}"
@@ -66,8 +97,7 @@ class TestListDiagnosticCodes:
 
     def test_no_summary_ends_in_a_dangling_abbreviation(self) -> None:
         """Regression: naive '.'-splitting used to cut summaries mid 'e.g.'."""
-        result = list_diagnostic_codes()
-        for entry in result.codes:
+        for entry in _all_codes():
             assert entry.summary.count("(") == entry.summary.count(")"), (
                 f"Summary for {entry.code!r} is truncated mid-parenthetical: "
                 f"{entry.summary!r}"
@@ -78,9 +108,9 @@ class TestListDiagnosticCodes:
             )
 
     def test_every_registered_code_has_a_nonempty_summary(self) -> None:
-        result = list_diagnostic_codes()
-        assert len(result.codes) > 0
-        for entry in result.codes:
+        codes = _all_codes()
+        assert len(codes) > 0
+        for entry in codes:
             assert entry.summary.strip(), f"Empty summary for {entry.code!r}"
 
     def test_every_summary_ends_in_terminal_punctuation(self) -> None:
@@ -91,8 +121,7 @@ class TestListDiagnosticCodes:
         so an accepted summary can no longer end mid-identifier — this asserts
         the visible half of that guarantee across every registered code.
         """
-        result = list_diagnostic_codes()
-        for entry in result.codes:
+        for entry in _all_codes():
             assert entry.summary.rstrip()[-1:] in (
                 ".",
                 "!",

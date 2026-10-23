@@ -64,7 +64,7 @@ pub struct ProsePlan {
 /// `markdown_style.py::_prose_char_ratio`: mean character width of real
 /// prose, as a fraction of font size, measured against the SAME font slot
 /// the renderer paints with (mdsvg's own HVAR-exact measurer, not chart-
-/// renderer's simpler `text::FontBook`).
+/// renderer's simpler `measure::FontBook`).
 fn prose_char_ratio(regular: &FontSlot) -> f64 {
     let measurer =
         mdsvg::fonts::cached_measurer(&regular.path, regular.font_number, regular.weight);
@@ -160,6 +160,7 @@ fn fit_tables(
         .iter()
         .map(|t| height(t, slot))
         .collect::<Result<Vec<_>, _>>()?;
+    let floor = renderer.table_min_content_width(tables)?;
     let text_width =
         |group: &[(f64, f64)]| group.iter().map(|b| b.1).fold(f64::INFINITY, f64::min) - 2.0 * pad;
 
@@ -170,9 +171,9 @@ fn fit_tables(
             if capped {
                 width = capped_measure(width, max_chars, char_px);
             }
-            let mut holds = true;
+            let mut holds = width >= floor;
             for (table, natural) in tables.iter().zip(&unwrapped) {
-                if height(table, width)? > *natural {
+                if !holds || height(table, width)? > *natural {
                     holds = false;
                     break;
                 }
@@ -346,7 +347,7 @@ fn column_divider_line(x: f64, height: f64, divider: &Divider) -> String {
     let sw_s = num_full(divider.width);
     format!(
         r#"<line x1="{x_snapped}" y1="0" x2="{x_snapped}" y2="{h_s}" stroke="{}" stroke-width="{sw_s}"{}/>"#,
-        mdsvg::utils::escape_xml(&divider.color),
+        print::xml_escape_attr(&divider.color),
         divider.dash_attr()
     )
 }

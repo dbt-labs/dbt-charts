@@ -4,7 +4,7 @@ Detection rule: fires when an axis title is pre-wrapped to ≤2 lines and the
 text had to be cut with an ellipsis — either because the authored title ran
 past two wrapped lines at the given extent, or because a single word was wider
 than the budget and got cut to fit. The truncation fact is recorded by the
-single wrap site (`wrap_axis_title` via `resolve_xy_titles`); no re-measurement
+single wrap site (the engine's axis-title wrap); no re-measurement
 occurs downstream.
 
 The warning path and message reference the AUTHORED field name ("x_label" /
@@ -17,26 +17,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
-from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
-from dbt_charts.core.compile.resolve.style.axis_cascade import (
-    AxisOverrides,
-    build_resolved_axis,
-)
-from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.diagnostics import WARN_AXIS_TITLE_TRUNCATED
-from dbt_charts.core.render.chart.emitters._cartesian import resolve_xy_titles
-from dbt_charts.core.render.chart.spec import RenderBox
 from dbt_charts.core.render.chart.text_truncation import (
     TextTruncation,
-    collect_text_truncations,
 )
 from dbt_charts.core.render.warnings import axis_title_truncated as detector
 from dbt_charts.core.render.warnings.base import WarningContext
 
 from ...core._board_utils import make_test_resolved_board, make_test_resolved_chart
-from ...core.conftest import fixture_chart_for_type
 
 # A title long enough to exceed two wrapped lines at a narrow extent.
 _VERY_LONG = (
@@ -45,36 +33,6 @@ _VERY_LONG = (
 )
 # A short title that fits in one line at normal extents.
 _SHORT = "Revenue"
-
-
-def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
-    chart_style_context = resolve_chart_style_context(
-        get_theme_style(get_default_theme_name())
-    )
-    baked = _bake_cartesian_axes(
-        chart_style_context,
-        fixture_chart_for_type("bar"),
-        "bar",
-        "ordinal",
-        "quantitative",
-        AxisOverrides(),
-    )
-    return (
-        build_resolved_axis(
-            baked.x.style,
-            format=baked.x.format,
-            band_position=baked.x.band_position,
-            chart_id="test",
-            formats=None,
-        ),
-        build_resolved_axis(
-            baked.y.style,
-            format=baked.y.format,
-            band_position=baked.y.band_position,
-            chart_id="test",
-            formats=None,
-        ),
-    )
 
 
 def _make_ctx(
@@ -87,59 +45,11 @@ def _make_ctx(
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
         text_truncations=text_truncations or {},
     )
 
 
 # ── truncation-fact threading ─────────────────────────────────────────────────
-
-
-def test_wrap_site_records_truncation_via_context_var() -> None:
-    """resolve_xy_titles records truncation into the open ContextVar sink.
-
-    This pins that the truncation fact comes from the single wrap call — no
-    downstream re-measurement: the detector reads the sink, not the spec.
-    The authored field name ("y_label") is recorded, not the VL channel ("y").
-    """
-    ax, ay = _axes()
-    with collect_text_truncations() as sinks:
-        # Very narrow box forces the long y title to be truncated.
-        resolve_xy_titles(
-            "month",
-            "observed",
-            None,
-            _VERY_LONG,
-            ax,
-            ay,
-            RenderBox(width=500, height=220),
-            "chart1",
-            field_labels={},
-        )
-    # Truncation was recorded for chart1 on the authored y_label field.
-    assert "chart1" in sinks
-    records = sinks["chart1"]
-    assert len(records) == 1
-    assert records[0].authored_field == "y_label"
-    assert records[0].authored_text == _VERY_LONG
-
-
-def test_wrap_site_does_not_record_when_title_fits() -> None:
-    """No truncation is recorded when the title wraps cleanly to ≤2 lines."""
-    ax, ay = _axes()
-    with collect_text_truncations() as sinks:
-        resolve_xy_titles(
-            "month",
-            "observed",
-            None,
-            _SHORT,
-            ax,
-            ay,
-            RenderBox(width=500, height=900),
-            "chart2",
-            field_labels={},
-        )
-    assert "chart2" not in sinks
 
 
 # ── detector output ───────────────────────────────────────────────────────────
@@ -244,60 +154,6 @@ def test_detector_produces_one_warning_per_truncated_axis() -> None:
 
 
 # ── horizontal bar: warning names authored field, not VL channel ──────────────
-
-
-def test_horizontal_bar_records_authored_field_not_vl_channel() -> None:
-    """Horizontal bar swaps channels, but the warning names the AUTHORED field.
-
-    authored y_label renders on VL x in a horizontal bar. The squiggle must land
-    on the authored y_label key — not on x_label — so resolve_xy_titles must be
-    told the authored field mapping at the call site.
-    """
-    ax, ay = _axes()
-    with collect_text_truncations() as sinks:
-        # Horizontal bar passes authored y_label as x_label (VL channel x = measure).
-        # x_authored_field="y_label" tells resolve_xy_titles the correct authored field.
-        resolve_xy_titles(
-            None,  # x_field in VL (measure, authored y space)
-            "category",  # y_field in VL (category, authored x space)
-            _VERY_LONG,  # x_label in VL = authored y_label
-            None,  # y_label in VL = authored x_label
-            ax,
-            ay,
-            RenderBox(width=200, height=600),
-            "hbar",
-            x_authored_field="y_label",
-            y_authored_field="x_label",
-            field_labels={},
-        )
-    assert "hbar" in sinks
-    records = sinks["hbar"]
-    assert len(records) == 1
-    # Authored field 'y_label' is recorded (not VL channel 'x').
-    assert records[0].authored_field == "y_label"
-    assert records[0].authored_text == _VERY_LONG
-
-
-def test_vertical_bar_records_authored_field_without_swap() -> None:
-    """Vertical bar: no channel swap — authored y_label records as y_label."""
-    ax, ay = _axes()
-    with collect_text_truncations() as sinks:
-        resolve_xy_titles(
-            "month",  # x_field in VL (authored x)
-            "observed",  # y_field in VL (authored y)
-            None,
-            _VERY_LONG,  # y_label (authored y_label)
-            ax,
-            ay,
-            RenderBox(width=500, height=220),
-            "vbar",
-            # defaults: x_authored_field="x_label", y_authored_field="y_label",
-            field_labels={},
-        )
-    assert "vbar" in sinks
-    records = sinks["vbar"]
-    assert len(records) == 1
-    assert records[0].authored_field == "y_label"
 
 
 # ── end-to-end wiring test (HIGH-3) ──────────────────────────────────────────
@@ -434,43 +290,3 @@ rows:
     )
     clean_codes = {w.code for w in clean_result.warnings}
     assert WARN_AXIS_TITLE_TRUNCATED.code not in clean_codes
-
-
-def test_wrap_site_records_truncation_for_a_single_over_wide_word() -> None:
-    """A lone word wider than its budget is cut, so the warning must fire.
-
-    The line count alone cannot carry this signal: a word cut to fit still
-    occupies one line, which is not *more* than ``max_lines``.
-    """
-    ax, ay = _axes()
-    with collect_text_truncations() as sinks:
-        resolve_xy_titles(
-            "month",
-            "observed",
-            None,
-            "commits",
-            ax,
-            ay,
-            RenderBox(width=500, height=110),
-            "chart3",
-            field_labels={},
-        )
-    assert sinks["chart3"][0].authored_text == "commits"
-
-
-def test_wrap_site_stays_silent_when_the_panel_budget_is_honest() -> None:
-    """The same title in a 7-row facet panel fits, so no warning is recorded."""
-    ax, ay = _axes()
-    with collect_text_truncations() as sinks:
-        resolve_xy_titles(
-            "month",
-            "observed",
-            None,
-            "commits",
-            ax,
-            ay,
-            RenderBox(width=500, height=110, panel_rows=7),
-            "chart4",
-            field_labels={},
-        )
-    assert "chart4" not in sinks

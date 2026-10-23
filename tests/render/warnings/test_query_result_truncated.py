@@ -39,7 +39,6 @@ def _make_ctx(
     return WarningContext(
         board_spec=board,
         chart_results={chart.id: rows},
-        vega_specs={chart.id: {"mark": chart.type}},
         chart_truncations=chart_truncations or {},
     )
 
@@ -88,7 +87,6 @@ def test_fires_for_unattributed_truncation_with_chart_none() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={chart.id: [{"x": 1}]},
-        vega_specs={chart.id: {"mark": "bar"}},
         unattributed_truncations={"upstream_q": truncation},
     )
     warnings = detector.detect(ctx)
@@ -113,7 +111,6 @@ def test_fires_for_both_attributed_and_unattributed_truncations() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={chart.id: [{"x": 1}] * 5},
-        vega_specs={chart.id: {"mark": "bar"}},
         chart_truncations={"c1": chart_trunc},
         unattributed_truncations={"upstream_q": board_trunc},
     )
@@ -135,7 +132,6 @@ def test_fires_only_for_truncated_chart_in_multi_chart_board() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={"c_truncated": [{"x": 1}] * 3, "c_clean": [{"x": 1}]},
-        vega_specs={"c_truncated": {"mark": "bar"}, "c_clean": {"mark": "bar"}},
         chart_truncations={"c_truncated": truncation},
     )
     warnings = detector.detect(ctx)

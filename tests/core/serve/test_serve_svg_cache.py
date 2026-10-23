@@ -53,41 +53,11 @@ def _ticking_clock() -> Callable[[], datetime]:
     return lambda: datetime(2001, 2, 3, 4, next(minutes), tzinfo=UTC)
 
 
-def _pinned_clock() -> datetime:
-    return datetime(2001, 2, 3, 4, 5, 6, tzinfo=UTC)
-
-
 def _project(tmp_path: Path, a: int) -> Path:
     (tmp_path / "charts").mkdir(exist_ok=True)
     (tmp_path / "charts" / "x.yml").write_text(_BOARD_YAML.format(a=a))
     (tmp_path / "dbt_charts.yml").write_text("# project config\n")
     return tmp_path
-
-
-def test_repeat_load_reuses_chart_svgs(tmp_path: Path, vl_calls: list[int]) -> None:
-    app = create_server(
-        FilesystemProject(_project(tmp_path, 1)), no_cache=True, clock=_pinned_clock
-    )
-    with TestClient(app) as client:
-        first = client.get("/x")
-        assert first.status_code == 200
-        assert "dbt-chart" in first.text
-        assert vl_calls
-        vl_calls.clear()
-        second = client.get("/x")
-    assert second.status_code == 200
-    assert vl_calls == []
-    assert second.text == first.text
-
-
-def test_changed_rows_render_again(tmp_path: Path, vl_calls: list[int]) -> None:
-    app = create_server(FilesystemProject(_project(tmp_path, 1)), no_cache=True)
-    with TestClient(app) as client:
-        client.get("/x")
-        vl_calls.clear()
-        _project(tmp_path, 7)
-        assert client.get("/x").status_code == 200
-    assert vl_calls
 
 
 def test_each_load_stamps_its_own_render_time(tmp_path: Path) -> None:

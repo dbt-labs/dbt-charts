@@ -291,26 +291,6 @@ def test_whole_board_render_reuses_every_chart_the_second_time() -> None:
     assert convert.call_count == 0
 
 
-_LINKED_BOARD = """
-title: Linked
-queries:
-  q1:
-    type: values
-    rows:
-      - {month: Jan, revenue: 100}
-      - {month: Feb, revenue: 150}
-charts:
-  c1:
-    query: q1
-    type: bar
-    x: month
-    y: revenue
-    link: /orders
-rows:
-  - c1
-"""
-
-
 def test_a_different_variable_value_is_not_a_cache_hit() -> None:
     """Variables never appear in the key — they don't need to. They change the
     spec (through the data they filter and the titles they interpolate), and the
@@ -348,27 +328,6 @@ rows:
 
 def _render_with_variables(variables: dict[str, Any]) -> str:
     return _render(_VARIABLE_BOARD, variables=variables)
-
-
-def test_a_different_link_context_is_not_a_cache_hit() -> None:
-    """Regression: the href rewrite runs after vl-convert, so two hosts (or two
-    branches on one host) rendering identical content must not share an entry —
-    a hit there would navigate a branch preview out of its own branch."""
-    cache = RenderedSvgCache()
-    with svg_cache_scope(cache):
-        main = _render_with_link_context(
-            LinkContext(root="/acme/sales/d", current_board_slug="board")
-        )
-        branch = _render_with_link_context(
-            LinkContext(root="/acme/sales/b/feat/d", current_board_slug="board")
-        )
-
-    assert 'href="/acme/sales/d/orders"' in main
-    assert 'href="/acme/sales/b/feat/d/orders"' in branch
-
-
-def _render_with_link_context(ctx: LinkContext) -> str:
-    return _render(_LINKED_BOARD, link_context=ctx)
 
 
 def _render(yaml_content: str, **options: Any) -> str:

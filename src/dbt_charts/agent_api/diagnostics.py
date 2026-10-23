@@ -12,8 +12,14 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from dbt_charts.agent_api.paging import (
+    DEFAULT_PAGE_LIMIT,
+    MAX_PAGE_LIMIT,
+    cursor_offset,
+    paginate,
+)
 from dbt_charts.core.diagnostics import (
     REGISTRY,
     DiagnosticCode,
@@ -46,13 +52,37 @@ __all__ = [
 
 
 class ListDiagnosticCodesArgs(BaseModel):
-    """List registered diagnostic codes, optionally filtered by level."""
+    """List registered diagnostic codes, optionally filtered by level.
+
+    Paged; errors precede warnings, so pass `level` to skip ahead. Follow
+    `next` until it is absent.
+    """
 
     level: Literal["error", "warning"] | None = Field(
         None, description="Restrict to 'error' or 'warning' codes; omit for both."
     )
+    limit: int | None = Field(
+        default=None,
+        description=(
+            f"Maximum codes to return (default {DEFAULT_PAGE_LIMIT}, "
+            f"max {MAX_PAGE_LIMIT})"
+        ),
+    )
+    cursor: str | None = Field(
+        default=None,
+        description=(
+            "Pass the previous result's `next` value, unchanged, to get the "
+            "following page."
+        ),
+    )
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("cursor")
+    @classmethod
+    def _cursor_is_a_next_value(cls, cursor: str | None) -> str | None:
+        cursor_offset(cursor)
+        return cursor
 
 
 class GetDiagnosticCodeArgs(BaseModel):
@@ -109,6 +139,10 @@ class DiagnosticCodesListResult(BaseModel):
     success: bool
     mode: Literal["diagnostic_list"]
     codes: list[DiagnosticCodeSummary]
+    next: str | None = Field(
+        default=None,
+        description="Cursor for the next page; absent on the last page.",
+    )
     errors: list[str] | None = None
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -179,14 +213,23 @@ def _summary_for(dc: DiagnosticCode) -> str:
 
 
 def list_diagnostic_codes(
-    *, level: Literal["error", "warning"] | None = None
+    *,
+    level: Literal["error", "warning"] | None = None,
+    limit: int = DEFAULT_PAGE_LIMIT,
+    cursor: str | None = None,
 ) -> DiagnosticCodesListResult:
-    """Return registered diagnostic codes, optionally filtered by level, sorted alphabetically."""
+    """One page of registered diagnostic codes, optionally filtered by level, sorted alphabetically."""
+    page, next_cursor = paginate(
+        REGISTRY.all(level=level),
+        limit=max(0, min(limit, MAX_PAGE_LIMIT)),
+        cursor=cursor,
+    )
     codes = [
-        DiagnosticCodeSummary(code=dc.code, summary=_summary_for(dc))
-        for dc in REGISTRY.all(level=level)
+        DiagnosticCodeSummary(code=dc.code, summary=_summary_for(dc)) for dc in page
     ]
-    return DiagnosticCodesListResult(success=True, mode="diagnostic_list", codes=codes)
+    return DiagnosticCodesListResult(
+        success=True, mode="diagnostic_list", codes=codes, next=next_cursor
+    )
 
 
 def get_diagnostic_code(code: str) -> DiagnosticCodeDetailResult:

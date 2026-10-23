@@ -406,7 +406,7 @@ mod tests {
     use crate::annotation::PlotRect;
     use crate::diagnostic::collect;
     use crate::families::temporal::date_text_day;
-    use crate::text::FontBook;
+    use measure::FontBook;
 
     const W: f64 = 40.0;
     const H: f64 = 12.0;

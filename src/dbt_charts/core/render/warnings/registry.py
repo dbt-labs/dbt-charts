@@ -11,17 +11,15 @@ Every detector is either GEOMETRY-dependent or DATA-dependent — pick a side
 when you add one, and add it to the matching list below rather than a third
 place:
 
-  GEOMETRY-dependent: reads ``ctx.vega_specs`` or another WarningContext field
+  GEOMETRY-dependent: reads ``ctx.geometry_warnings`` or another WarningContext field
     a render-at-a-real-width pass populates (``table_overflows``,
     ``authored_chart_heights``, ``series_label_truncations``,
     ``text_truncations``, ``static_paginations``,
     ``x_domain_paint_orders``). A chart that never
     laid out (an inactive tab, a collapsed `details:` section) has none of
-    these — the detector's own ``if chart_id not in ctx.vega_specs`` /
-    dict-membership guard is what keeps it silent for such a chart.
-    ``renderer.py``'s ``_collect_render_warnings`` only builds ``vega_specs``
-    for a chart with a real layout width, so this self-gating is sufficient;
-    no per-detector width check is needed here.
+    these, which keeps the detector silent for such a chart.
+    ``renderer.py``'s ``_collect_render_warnings`` only renders a chart with a
+    real layout width, so no per-detector width check is needed here.
 
   DATA-dependent: reads only ``ctx.chart_results`` / ``ctx.layer_results``
     (the queries' actual rows) and/or resolved chart config off
@@ -90,7 +88,7 @@ from dbt_charts.core.render.warnings.base import WarningContext
 
 logger = logging.getLogger(__name__)
 
-# Reads ctx.vega_specs or another render-at-a-real-width WarningContext
+# Reads ctx.geometry_warnings or another render-at-a-real-width WarningContext
 # field; silent for a chart that never laid out (see module docstring).
 _GEOMETRY_DETECTORS: list[ModuleType] = [
     axis_label_collision,

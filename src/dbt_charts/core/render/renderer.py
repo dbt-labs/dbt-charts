@@ -35,6 +35,7 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
     Layout,
+    TitleShift,
     VariableValues,
 )
 from dbt_charts.core.compile.models.board.resolved import (
@@ -63,11 +64,16 @@ from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import board_variables, daterange_presets
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.chart.axis_label_collision import (
+    AxisLabelCollision,
     collect_axis_label_collisions,
 )
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     collect_endpoint_label_gap_overflows,
+)
+from dbt_charts.core.render.chart.geometry_warnings import (
+    GeometryWarnings,
+    collect_geometry_warnings,
 )
 from dbt_charts.core.render.chart.pie_total_overflow import (
     PieTotalOverflow,
@@ -78,8 +84,10 @@ from dbt_charts.core.render.chart.plot_width_floor_record import (
     collect_plot_width_share_warnings,
 )
 from dbt_charts.core.render.chart.series_label_truncation import (
+    SeriesLabelTruncation,
     collect_series_label_truncations,
 )
+from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
     TableOverflow,
@@ -98,6 +106,7 @@ from dbt_charts.core.render.chart.text_truncation import (
     TextTruncation,
     collect_text_truncations,
 )
+from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.chart.x_domain_paint_order import (
     XDomainPaintOrder,
     collect_x_domain_paint_orders,
@@ -115,7 +124,7 @@ from dbt_charts.core.render.errors import (
     RenderError,
 )
 from dbt_charts.core.render.font_selection import collect_painted_italic_families
-from dbt_charts.core.render.layout_sizing import RenderCache
+from dbt_charts.core.render.layout_sizing import RenderCache, build_chart_datasets
 from dbt_charts.core.render.render_result import RenderResult
 from dbt_charts.core.render.restated_auto import (
     auto_restated_variable_warnings,
@@ -179,8 +188,9 @@ def _data_format_renderer(format: str) -> DataFormatRenderer:
 
 def _collect_active_layout_charts(
     board: ResolvedBoard, variables: VariableValues
-) -> dict[str, tuple["ResolvedChart", float, float]]:
-    """Map chart_id -> (the chart instance, its laid-out width and height) for
+) -> dict[str, tuple["ResolvedChart", float, float, TitleShift]]:
+    """Map chart_id -> (the chart instance, its laid-out width, height and title
+    shift) for
     the active-tab subtree.
 
     Reads each ``ResolvedLayoutItem`` directly rather than looking a chart id
@@ -200,7 +210,7 @@ def _collect_active_layout_charts(
     the active subtree keeps its narrowest placement — that is where
     crowding shows.
     """
-    charts: dict[str, tuple[ResolvedChart, float, float]] = {}
+    charts: dict[str, tuple[ResolvedChart, float, float, TitleShift]] = {}
 
     def _walk(layout: ResolvedLayout) -> None:
         items = layout.items
@@ -217,7 +227,12 @@ def _collect_active_layout_charts(
             if item.chart is not None and item.width:
                 existing = charts.get(item.chart.id)
                 if existing is None or item.width < existing[1]:
-                    charts[item.chart.id] = (item.chart, item.width, item.height)
+                    charts[item.chart.id] = (
+                        item.chart,
+                        item.width,
+                        item.height,
+                        item.title_shift,
+                    )
             if item.board is not None:
                 _walk(item.board.layout)
 
@@ -249,6 +264,9 @@ def _collect_render_warnings(
     plot_width_share_warnings: dict[str, PlotWidthShareWarning],
     pie_total_overflows: dict[str, PieTotalOverflow],
     contrast_warnings: list[ContrastRecord],
+    geometry_warnings: GeometryWarnings,
+    series_label_truncations: dict[str, list[SeriesLabelTruncation]],
+    axis_label_collisions: dict[str, AxisLabelCollision],
     source_board: Board,
     restated_check: bool,
 ) -> list[Diagnostic]:
@@ -296,6 +314,7 @@ def _collect_render_warnings(
     # is on-screen right now. See registry.py's module docstring for the
     # detector-kind split this gate exists to preserve.
     active_charts = _collect_active_layout_charts(board, variables)
+    card_padding = float(board.style.frame.card_padding)
 
     chart_results: dict[str, Rows] = {}
     for chart_id, chart in board.charts.items():
@@ -358,90 +377,72 @@ def _collect_render_warnings(
         if name not in chart_query_names
     }
 
-    from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
-
-    vega_specs: dict[str, dict[str, Any]] = {}
-    # Open a fresh sink so VL chart spec-generation here (for the detection
-    # pass) captures axis_title / chart_title truncations. This is distinct
-    # from the sizing-pass sink (``text_truncations`` param) — both are needed:
-    # sizing-pass covers the SVG render path (specs cached, not regenerated),
-    # and this detection-pass sink covers the json/data render path (sizing
-    # pass skips VL rendering). The two are merged below.
+    # A warning judged against an ancestor's authored height needs that height,
+    # which the sizing and painted renders do not carry: those charts render once
+    # more, with it, and that render replaces the chart's record from the earlier ones.
+    rerendered: list[str] = []
     with (
-        collect_series_label_truncations() as series_label_truncations,
-        collect_text_truncations() as _detection_truncations,
-        collect_plot_width_share_warnings() as _detection_plot_width_share_warnings,
-        collect_pie_total_overflows() as _detection_pie_total_overflows,
-        collect_axis_label_collisions() as axis_label_collisions,
+        collect_geometry_warnings() as rerendered_geometry,
+        collect_series_label_truncations() as rerendered_series_labels,
+        collect_axis_label_collisions() as rerendered_axis_collisions,
     ):
-        for chart_id, (chart, layout_width, _layout_height) in active_charts.items():
-            if chart.query_name not in pre_executed_query_names:
+        for chart_id, authored_height in authored_chart_heights.items():
+            if chart_id not in chart_results or chart_id not in active_charts:
                 continue
-            # Non-VL families (kpi, table, spark_bar, callout) never produce a
-            # vega_spec artifact — skip them to avoid an extra render pass.
+            chart, layout_width, layout_height, title_shift = active_charts[chart_id]
             if chart.chart_type in NON_ASPECT_RATIO_TYPES:
                 continue
-            data = chart_results.get(chart_id, [])
-            # Spec generation failure must not block the render — omit from vega_specs.
-            with contextlib.suppress(Exception):  # noqa: BLE001 — spec failure must not block render
-                artifact = render_resolved_chart(
+            # A render failure must not block the render: the main pass reports it.
+            with contextlib.suppress(Exception):  # noqa: BLE001 — render failure is reported by the main pass
+                render_resolved_chart(
                     chart,
-                    data,
+                    chart_results[chart_id],
                     board.style,
                     width=layout_width,
+                    height=layout_height,
+                    padding=additive_padding(card_padding, chart.layout_padding),
+                    datasets=build_chart_datasets(chart, executor, variables),
+                    title_shift=title_shift,
+                    authored_height=authored_height,
                 )
-                if artifact.kind == "vega_spec" and isinstance(artifact.payload, dict):
-                    vega_specs[chart_id] = artifact.payload
-
-    # Merge sizing-pass truncations with detection-pass truncations per
-    # (surface, authored_field), detection winning on a collision — the two
-    # passes can render the same chart at slightly different widths, so a
-    # whole-list overwrite could drop a record the other pass didn't produce.
-    merged_truncations = dict(text_truncations)
-    for chart_id, records in _detection_truncations.items():
-        existing = {
-            (r.surface, r.authored_field): r
-            for r in merged_truncations.setdefault(chart_id, [])
-        }
-        for r in records:
-            existing[(r.surface, r.authored_field)] = r
-        merged_truncations[chart_id] = list(existing.values())
+                rerendered.append(chart_id)
+    for chart_id in rerendered:
+        geometry_warnings.pop(chart_id, None)
+        series_label_truncations.pop(chart_id, None)
+        axis_label_collisions.pop(chart_id, None)
+    geometry_warnings.update(rerendered_geometry)
+    series_label_truncations.update(rerendered_series_labels)
+    axis_label_collisions.update(rerendered_axis_collisions)
 
     ctx = WarningContext(
         board_spec=board,
         chart_results=chart_results,
         layer_results=layer_results,
-        vega_specs=vega_specs,
+        geometry_warnings=geometry_warnings,
         table_overflows=table_overflows,
         table_crampings=table_crampings,
         static_paginations=static_paginations,
         table_page_squeezes=table_page_squeezes,
         authored_chart_heights=authored_chart_heights,
-        layout_chart_heights={
-            chart_id: height for chart_id, (_c, _w, height) in active_charts.items()
-        },
         layout_charts={
-            chart_id: chart for chart_id, (chart, _w, _h) in active_charts.items()
+            chart_id: chart for chart_id, (chart, *_) in active_charts.items()
         },
         series_label_truncations=series_label_truncations,
         axis_label_collisions=axis_label_collisions,
-        text_truncations=merged_truncations,
+        text_truncations=text_truncations,
         endpoint_label_gap_overflows=endpoint_label_gap_overflows,
         x_domain_paint_orders=x_domain_paint_orders,
         chart_truncations=chart_truncations,
         unattributed_truncations=unattributed_truncations,
-        plot_width_share_warnings={
-            **plot_width_share_warnings,
-            **_detection_plot_width_share_warnings,
-        },
-        pie_total_overflows={**pie_total_overflows, **_detection_pie_total_overflows},
+        plot_width_share_warnings=plot_width_share_warnings,
+        pie_total_overflows=pie_total_overflows,
         contrast_warnings=contrast_warnings,
     )
     warnings = run_all(ctx)
     if restated_check:
         warnings += auto_restated_warnings(
             source_board,
-            {chart_id: width for chart_id, (_c, width, _h) in active_charts.items()},
+            {chart_id: width for chart_id, (_c, width, *_) in active_charts.items()},
             executor,
             variables,
         )
@@ -684,9 +685,19 @@ def _render(
     _sizing_plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
     _sizing_pie_total_overflows: dict[str, PieTotalOverflow] = {}
 
+    # Every painted render of a chart records into these; the narrowest placement's set
+    # is kept and sizing probes record none (see `claim_placement`).
+    render_sinks = contextlib.ExitStack()
+    geometry_warnings = render_sinks.enter_context(collect_geometry_warnings())
+    series_label_truncations = render_sinks.enter_context(
+        collect_series_label_truncations()
+    )
+    axis_label_collisions = render_sinks.enter_context(collect_axis_label_collisions())
+
     def _reset_contexts() -> None:
         _set_link_context(None)
         _set_filter_variables_context(frozenset())
+        render_sinks.close()
 
     # Narrow first try: only build_resolved_board(). Failures here mean no render
     # work has started, so there is nothing to detect warnings against — return
@@ -808,6 +819,9 @@ def _render(
             plot_width_share_warnings,
             pie_total_overflows,
             contrast_warnings,
+            geometry_warnings,
+            series_label_truncations,
+            axis_label_collisions,
             board,
             restated_check,
         )

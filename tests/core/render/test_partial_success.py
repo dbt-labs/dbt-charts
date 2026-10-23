@@ -1203,7 +1203,6 @@ def test_warning_detector_tolerates_chart_missing_from_resolved_board() -> None:
         chart_results={
             "broken": [{"label": "a", "amount": 999}, {"label": "b", "amount": 1}]
         },
-        vega_specs={},
     )
     assert detect_pie_dominant_segment(context) == []
 

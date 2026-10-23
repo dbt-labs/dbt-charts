@@ -34,8 +34,9 @@ use crate::sizing::{
     calculate_rows_boxes, calculate_tabs_boxes, resolve_active_tab_index, ChartDefaultsDoc,
     ContainerBox, ItemAuthoring, ItemBox, LayoutItemInput,
 };
-use crate::svg::{attr_name, html_escape, num_full, py_float_str, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{attr_name, num_full, py_float_str};
+use print::{html_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::title;
 use crate::{render_fitted_natural, BoardStyle, Padding, Payload};
 
@@ -51,6 +52,10 @@ pub use row_shifts::{derive_title_shifts, RowShift};
 pub struct BoardPayload {
     pub resolved: Value,
     pub chart_datasets: sizing::ChartDatasets,
+    /// Every geo document the board's geo charts draw from, keyed by source
+    /// URL, parsed by Python; the engine reads no files.
+    #[serde(default)]
+    pub geometries: HashMap<String, Value>,
     pub background: Option<String>,
     pub fonts_dir: Option<String>,
     /// Production's own `portable_strftime` output for the data-freshness
@@ -628,17 +633,17 @@ struct TimestampDoc {
 /// `ink_carries_padding` handles that case on its own else branch, and the
 /// root-`<svg>`-stripping decision is `is_internal_svg`'s alone, not this
 /// function's. `histogram` genuinely paints marks, like `bar` — it is in
-/// neither set. `geoshape`/`point_map` still refuse at the family dispatch
-/// itself, so they never reach either branch.
+/// neither set, and neither is `geoshape`, which paints marks through the family
+/// dispatch. `point_map` refuses there, so it never reaches either branch.
 fn is_svg_family(chart_type: &str) -> bool {
     matches!(chart_type, "table" | "kpi" | "spark_bar")
 }
 
 /// `PAINTS_MARKS`' complement (`normalized/_base.py:217-229`), restricted
 /// to the types this composer's `render_chart_item` can actually reach —
-/// `geoshape`/`point_map` refuse at the family dispatch itself, so they
-/// never need naming here, same restriction `is_svg_family` above already
-/// takes. `chart_type not in PAINTS_MARKS` (`rendering.py:618`, never
+/// `geoshape` paints marks and `point_map` refuses at the family dispatch
+/// itself, so neither needs naming here, same restriction `is_svg_family`
+/// above already takes. `chart_type not in PAINTS_MARKS` (`rendering.py:618`, never
 /// `is_error_fallback` — the ChartDataError placard path this composer
 /// doesn't reach) decides whether a chart's own root `<svg>` gets stripped
 /// before it joins the board's `dbt-chart` wrapper `<g>` — a DIFFERENT
@@ -1022,7 +1027,7 @@ pub(crate) fn padded_authoring_content(
 /// `kpi`/`spark_bar` are the rest of `PAINTS_MARKS`'s complement, but never
 /// reach this function — `is_svg_family` intercepts them first, above this
 /// branch. Every OTHER type reaching here paints marks (bar/line/area/
-/// scatter/heatmap/pie/histogram; `geoshape`/`point_map` already refused at
+/// scatter/heatmap/pie/histogram/geoshape; `point_map` already refused at
 /// `render()` itself), so this function names only the two exceptions.
 fn ink_carries_padding(chart_json: &Value, chart_type: &str) -> bool {
     if chart_type == "pie" {
@@ -2038,6 +2043,7 @@ fn render_error_card_svg(
         board_style: None,
         language: None,
         datasets: None,
+        geometries: None,
         variables: Default::default(),
         filter_variables: Default::default(),
         interactive_controls: Default::default(),
@@ -2047,7 +2053,7 @@ fn render_error_card_svg(
         is_placeholder: false,
         authored_height: None,
     };
-    crate::families::callout::render(&placard, fonts).map(|(svg, _)| svg)
+    crate::families::callout::render(&placard, fonts).map_err(|e| e.to_string())
 }
 
 /// Wraps a `render_error_card_svg` output the same way `wrap_chart_svg`
@@ -2324,6 +2330,7 @@ fn render_chart_item(
         board_style: Some(payload.board_style.clone()),
         language: None,
         datasets: datasets.cloned(),
+        geometries: matches!(chart_type, "geoshape" | "point_map").then(|| payload.geometries.clone()),
         // The real paint: `slot_h` is the already-decided box height, not
         // a static estimate to grow from — see `Payload::measuring`. The
         // ONE exception is a cols-row chart `sizing::calculate_cols_boxes`
@@ -4426,7 +4433,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
     // Layout bg rect and per-chart card bg both paint `style.background`
     // (`_render_layout`'s literal parameter, `boards.py:1123`) — the same
     // field `_rust_payload` hands the per-chart sweep
-    // (`golden_sweep.py::_sweep_board`). There is no longer a second,
+    // (`the retired per-chart sweep`). There is no longer a second,
     // independently-authorable page-canvas source.
     let chrome = RenderChrome {
         bg: &board.style.background,
@@ -5374,6 +5381,7 @@ mod error_card_tests {
             serde_json::json!({"family": "Inter", "color": color, "size": size, "weight": "400"})
         };
         serde_json::json!({
+            "preferred_width": 300.0,
             "tone": "negative",
             "background": "#fee2e2",
             "border": {"width": 1.0, "color": "#c00000", "radius": 4.0},
@@ -5508,7 +5516,7 @@ mod py_max_zero_tests {
 #[cfg(test)]
 mod nested_box_sidecar_tests {
     use super::*;
-    use crate::text::FontBook;
+    use measure::FontBook;
 
     /// A minimal, fully-resolved board JSON (own `BoardDoc` shape) — reused
     /// for both the root board and the nested board under test, since a

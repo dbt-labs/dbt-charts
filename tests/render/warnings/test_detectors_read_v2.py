@@ -112,7 +112,6 @@ class TestRedundantEncodingReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"bar1": [{"cat": "A", "val": 10}]},
-            vega_specs={"bar1": {"mark": "bar"}},
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -134,7 +133,6 @@ class TestRedundantEncodingReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"bar1": [{"cat": "A", "val": 10}]},
-            vega_specs={"bar1": {"mark": "bar", "encoding": {"x": {}, "color": {}}}},
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -183,9 +181,6 @@ class TestTemporalSinglePointReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"line1": [{"month": "2024-01", "revenue": 100}]},
-            vega_specs={
-                "line1": {"encoding": {"x": {"type": "temporal", "field": "month"}}}
-            },
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -207,9 +202,6 @@ class TestTemporalSinglePointReadsV2:
                     {"month": "2024-01", "revenue": 100},
                     {"month": "2024-02", "revenue": 200},
                 ]
-            },
-            vega_specs={
-                "line1": {"encoding": {"x": {"type": "temporal", "field": "month"}}}
             },
         )
         warnings = detector.detect(ctx)
@@ -239,7 +231,6 @@ class TestYEncodingMostlyNullReadsV2:
                     {"cat": "D", "revenue": 100},
                 ]
             },
-            vega_specs={"bar1": {"mark": "bar"}},
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -263,7 +254,6 @@ class TestYEncodingMostlyNullReadsV2:
                     {"cat": "C", "revenue": None},
                 ]
             },
-            vega_specs={"bar1": {"mark": "bar"}},
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -286,13 +276,6 @@ class TestTooManyXCategoriesReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"bar1": rows},
-            vega_specs={
-                "bar1": {
-                    "encoding": {
-                        "x": {"type": "nominal", "field": "cat"},
-                    }
-                }
-            },
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -311,13 +294,6 @@ class TestTooManyXCategoriesReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"bar1": rows},
-            vega_specs={
-                "bar1": {
-                    "encoding": {
-                        "x": {"type": "nominal", "field": "cat"},
-                    }
-                }
-            },
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -340,7 +316,6 @@ class TestPieDominantSegmentReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"pie1": rows},
-            vega_specs={},
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}
@@ -363,7 +338,6 @@ class TestPieDominantSegmentReadsV2:
         ctx = WarningContext(
             board_spec=board,
             chart_results={"pie1": rows},
-            vega_specs={},
         )
         warnings = detector.detect(ctx)
         codes = {w.code for w in warnings}

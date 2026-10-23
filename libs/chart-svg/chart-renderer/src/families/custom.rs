@@ -15,7 +15,8 @@
 //! minijinja has no attribute reflection to escape from (see `compile/src/
 //! template/environment.rs`), so a template reaches exactly the names this
 //! module puts in its context: `rows`, `columns`, `channels`, `options`,
-//! `width`, `height`, `uid`, `style`, `variables`, `math`, the helpers
+//! `width`, `height`, `uid`, `style`, `variables`, `math`, `d3` (d3's scales,
+//! shapes and layouts over the `d3rs` ports; `custom_d3.rs`), the helpers
 //! `text_width`, `color_for`, `href`, `raise_error`, and the `format`
 //! filter. Every name is a reviewed decision; the `custom-chart` product
 //! skill and `apps/docs/docs/charts/custom.md` document the contract.
@@ -23,19 +24,21 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use minijinja::value::{Rest, Value, ValueKind};
+use minijinja::value::{Kwargs, Rest, Value, ValueKind};
 use minijinja::{context, AutoEscape, Environment, Error, ErrorKind, UndefinedBehavior};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value as Json};
 
 use crate::codes;
-use crate::common::{Font, TitleStyle};
+use crate::common::{format_kpi_parts, Font, FormatSlot, PartsOptions, TitleStyle};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::diagnostic::Diagnostic;
 use crate::href;
-use crate::svg::{num, vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::num;
+use print::{print_content, vega_escape_attr, xml_escape_attr};
+use scene::{Attrs, Chars, Child, Element, Escape};
+use measure::FontBook;
 use crate::Payload;
 
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
@@ -109,6 +112,8 @@ struct Resolved {
     channels: Map<String, Json>,
     options: Map<String, Json>,
     column_options: Vec<String>,
+    /// Every returned column's resolved format, for `format(column=...)`.
+    column_formats: BTreeMap<String, FormatSlot>,
     category_pins: BTreeMap<String, BTreeMap<String, String>>,
     palette: Vec<String>,
     background: String,
@@ -132,7 +137,7 @@ fn diagnostic(code: &crate::diagnostic::Code, chart_id: &str, reason: String) ->
 
 // ── Template context ────────────────────────────────────────────────────────
 
-fn invalid(message: impl Into<String>) -> Error {
+pub(super) fn invalid(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidOperation, message.into())
 }
 
@@ -152,7 +157,7 @@ fn py_str(value: &Value) -> String {
 }
 
 /// A finite or infinite number, never a bool (Python's `_is_number`).
-fn number(value: &Value) -> Option<f64> {
+pub(super) fn number(value: &Value) -> Option<f64> {
     if value.kind() != ValueKind::Number {
         return None;
     }
@@ -243,13 +248,54 @@ fn math_namespace() -> Value {
 }
 
 /// `labels_env.format_filter`: `{{ value | format('$,.0f') }}` through
-/// d3-format. `None` prints the null marker; a string passes through.
-fn format_filter(value: Value, spec: String) -> Result<String, Error> {
+/// d3-format, or `{{ value | format(column='revenue') }}` through the format
+/// the board resolved for that column (`Resolved::column_formats`), natives
+/// and affixes included. `None` prints the null marker; a string passes
+/// through.
+fn format_filter(
+    column_formats: &BTreeMap<String, FormatSlot>,
+    sub_unit_specs: &BTreeMap<String, String>,
+    value: Value,
+    spec: Option<String>,
+    kwargs: Kwargs,
+) -> Result<String, Error> {
+    let column: Option<String> = kwargs.get("column")?;
+    kwargs.assert_all_used()?;
+    let slot = match (&spec, &column) {
+        (Some(_), Some(_)) => {
+            return Err(invalid(
+                "format: takes a d3 spec or column=, not both",
+            ))
+        }
+        (None, None) => return Err(invalid("format: needs a d3 spec or column=")),
+        (_, Some(column)) if column_formats.is_empty() => {
+            return Err(invalid(format!(
+                "format: column '{column}' has no format: the query returned no rows"
+            )))
+        }
+        (_, Some(column)) => Some(column_formats.get(column).ok_or_else(|| {
+            let returned = column_formats
+                .keys()
+                .map(|c| format!("'{c}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            invalid(format!(
+                "format: column '{column}' is not in the query's columns [{returned}]"
+            ))
+        })?),
+        _ => None,
+    };
     match value.kind() {
         ValueKind::None | ValueKind::Undefined => Ok(super::table::NULL_DISPLAY.to_string()),
-        ValueKind::String => Ok(value.as_str().expect("string kind").to_string()),
+        ValueKind::String if column.is_none() => {
+            Ok(value.as_str().expect("string kind").to_string())
+        }
         ValueKind::Number => {
             let n = number(&value).expect("number kind");
+            if let Some(slot) = slot {
+                return paint_column(slot, sub_unit_specs, n);
+            }
+            let spec = spec.expect("a spec or a column was checked above");
             if spec.is_empty() {
                 return Ok(value.to_string());
             }
@@ -258,23 +304,53 @@ fn format_filter(value: Value, spec: String) -> Result<String, Error> {
                 .map(Into::into)
         }
         kind => Err(invalid(format!(
-            "format: cannot format a {kind} with {spec:?}"
+            "format: cannot format a {kind} with {}",
+            column.map_or_else(
+                || format!("{spec:?}"),
+                |c| format!("column '{c}'; column= formats numbers only")
+            )
         ))),
     }
 }
 
-fn environment() -> Environment<'static> {
+/// `n` printed the way a KPI prints it through `slot`: the sign leads the
+/// affixes, and the magnitude word keeps its gap.
+fn paint_column(
+    slot: &FormatSlot,
+    sub_unit_specs: &BTreeMap<String, String>,
+    n: f64,
+) -> Result<String, Error> {
+    let options = PartsOptions {
+        sign_in_prefix: true,
+        keep_affix_gaps: true,
+        sub_unit_specs: Some(sub_unit_specs),
+        ..PartsOptions::default()
+    };
+    let lanes = format_kpi_parts(n, &slot.parts(), &options)
+        .map_err(|e| invalid(format!("format: {e}")))?;
+    Ok(format!("{}{}{}", lanes.prefix, lanes.number, lanes.measured_suffix))
+}
+
+fn environment(
+    column_formats: Arc<BTreeMap<String, FormatSlot>>,
+    sub_unit_specs: Arc<BTreeMap<String, String>>,
+) -> Environment<'static> {
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
     env.set_auto_escape_callback(|_| AutoEscape::Html);
     env.set_fuel(Some(FUEL));
-    env.add_filter("format", format_filter);
+    env.add_filter(
+        "format",
+        move |value: Value, spec: Option<String>, kwargs: Kwargs| {
+            format_filter(&column_formats, &sub_unit_specs, value, spec, kwargs)
+        },
+    );
     env
 }
 
 /// Compile-time syntax gate, in the engine that renders the template.
 pub fn check_template(source: &str) -> Result<(), String> {
-    environment()
+    environment(Arc::default(), Arc::default())
         .template_from_str(source)
         .map(drop)
         .map_err(|e| {
@@ -534,12 +610,16 @@ fn render_template(r: &Resolved, job: &Job, fonts: &FontBook) -> Result<String, 
         style => Value::from_serialize(&r.style.tree),
         variables => Value::from_serialize(&job.variables),
         math => math_namespace(),
+        d3 => super::custom_d3::d3_namespace(),
         text_width => text_width,
         color_for => color_for,
         href => href_fn,
         raise_error => raise_error,
     };
-    let env = environment();
+    let env = environment(
+        Arc::new(r.column_formats.clone()),
+        Arc::new(job.sub_unit_specs.clone()),
+    );
     let mut out = CappedOutput {
         buf: Vec::new(),
         cap: usize::try_from(budget).unwrap_or(usize::MAX),
@@ -659,9 +739,9 @@ fn javascript_re() -> &'static Regex {
     })
 }
 
-/// `content` re-serialized from its checked tree, or the first violation.
+/// `content` as its checked tree, or the first violation.
 /// `content` is what goes inside the root `<svg>`: any number of siblings.
-pub(crate) fn checked_svg_content(content: &str) -> Result<String, String> {
+pub(crate) fn checked_svg_content(content: &str) -> Result<Vec<Child>, String> {
     if let Some(markup) = markup_re().captures(content) {
         if let Some(declaration) = markup.name("declaration") {
             return Err(format!(
@@ -732,21 +812,21 @@ fn nesting_past(content: &str, limit: usize) -> Option<usize> {
     None
 }
 
-fn serialize_children(parent: roxmltree::Node<'_, '_>, depth: usize) -> Result<String, String> {
-    let mut out = String::new();
+fn serialize_children(parent: roxmltree::Node<'_, '_>, depth: usize) -> Result<Vec<Child>, String> {
+    let mut children = Vec::new();
     for child in parent.children() {
         if child.is_element() {
-            out.push_str(&serialize(child, depth + 1)?);
+            children.push(Child::Element(serialize(child, depth + 1)?));
         } else if child.is_text() {
-            out.push_str(&xml_escape(child.text().unwrap_or("")));
+            children.push(Child::Text(Chars::new(child.text().unwrap_or(""), Escape::Attr)));
         } else {
             return Err("a comment or processing instruction is not allowed".to_string());
         }
     }
-    Ok(out)
+    Ok(children)
 }
 
-fn serialize(element: roxmltree::Node<'_, '_>, depth: usize) -> Result<String, String> {
+fn serialize(element: roxmltree::Node<'_, '_>, depth: usize) -> Result<Element, String> {
     let name = element.tag_name().name();
     if element.tag_name().namespace() != Some(SVG_NS) || !ALLOWED_ELEMENTS.contains(&name) {
         return Err(format!("<{name}> is not an allowed element"));
@@ -754,7 +834,7 @@ fn serialize(element: roxmltree::Node<'_, '_>, depth: usize) -> Result<String, S
     if depth > MAX_DEPTH {
         return Err(format!("<{name}> is nested deeper than {MAX_DEPTH} levels"));
     }
-    let mut attrs = String::new();
+    let mut attrs = Attrs::new();
     let mut seen: Vec<&str> = Vec::new();
     for attribute in element.attributes() {
         let out_name = checked_attribute(
@@ -768,16 +848,12 @@ fn serialize(element: roxmltree::Node<'_, '_>, depth: usize) -> Result<String, S
             return Err(format!("attribute {out_name:?} appears twice on <{name}>"));
         }
         seen.push(out_name);
-        attrs.push_str(&format!(
-            " {out_name}=\"{}\"",
-            xml_escape_attr(attribute.value())
-        ));
+        attrs = attrs.set(out_name.to_string(), attribute.value());
     }
-    let inner = serialize_children(element, depth)?;
-    Ok(if inner.is_empty() {
-        format!("<{name}{attrs}/>")
-    } else {
-        format!("<{name}{attrs}>{inner}</{name}>")
+    Ok(Element {
+        tag: name.to_string(),
+        attrs,
+        children: serialize_children(element, depth)?,
     })
 }
 
@@ -862,6 +938,8 @@ struct Job {
     height: f64,
     /// What the board's output budget has left for this chart.
     budget: u64,
+    /// The board's plain-digit siblings of its adaptive money and number formats.
+    sub_unit_specs: BTreeMap<String, String>,
 }
 
 /// The fonts the resolved custom chart always carries (title, subtitle and the
@@ -910,7 +988,13 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         .as_ref()
         .and_then(|b| b.font.clone())
         .ok_or("custom: board_style.font absent")?;
+    let sub_unit_specs = payload
+        .board_style
+        .as_ref()
+        .and_then(|b| b.sub_unit_specs.clone())
+        .ok_or("custom: payload carries no board_style.sub_unit_specs")?;
     let job = Job {
+        sub_unit_specs,
         rows: payload.rows.clone(),
         variables: payload.variables.clone(),
         link_context: payload.link_context.clone(),
@@ -923,8 +1007,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     };
     let content = render_template(&r, &job, fonts)
         .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
-    let content = checked_svg_content(&content)
-        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_SVG, &r.id, reason))?;
+    let content = print_content(
+        &checked_svg_content(&content)
+            .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_SVG, &r.id, reason))?,
+    );
     // The id is the box itself: equal ids always name equal shapes.
     let clip_id = format!("custom-clip-{}-{}", num(m.plot_w), num(m.plot_h));
     let mut svg = String::new();
@@ -976,6 +1062,7 @@ mod tests {
             "channels": {"x": "rep"},
             "options": {"fill": "#ff0000"},
             "column_options": [],
+            "column_formats": {"rep": ",.0f", "n": ",.1f"},
             "category_pins": {"rep": {"Ana": "#123456"}},
             "palette": ["#111111", "#222222"],
             "style": {
@@ -1002,6 +1089,7 @@ mod tests {
                 "font": FAMILY,
                 "format_locale": crate::number_locale::en_us_wire(),
                 "time_locale": crate::time_locale::en_us_wire(),
+                "sub_unit_specs": {"currency": "$,.2f", "number": ",.2f"},
             },
             "variables": {"region": "North"},
             "link_context": null,
@@ -1121,6 +1209,259 @@ mod tests {
                 .contains("text_width(): weight must be"),
             "{err:?}"
         );
+    }
+
+    fn template_svg(template: &str) -> String {
+        render(&payload(template, |_| {}), &test_fonts()).unwrap()
+    }
+
+    fn template_error(template: &str) -> String {
+        let err = render(&payload(template, |_| {}), &test_fonts()).unwrap_err();
+        assert_eq!(err.code, "ERR-CUSTOM-RENDER", "{err:?}");
+        err.params["reason"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn d3_scale_linear_maps_inverts_and_exposes_its_ends() {
+        let svg = template_svg(
+            "{% set x = d3.scale_linear([3, 97], [0, 200]) %}<text>{{ x(50) }} {{ x(3) }} {{ x(120) | format('.3f') }} {{ x.invert(100) }} {{ x.domain }} {{ x.range }}</text>",
+        );
+        assert!(svg.contains("<text>100.0 0.0 248.936 50.0 [3.0, 97.0] [0.0, 200.0]</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_scale_linear_nice_returns_a_new_scale() {
+        let svg = template_svg(
+            "{% set x = d3.scale_linear([3, 97], [0, 1]) %}<text>{{ x.nice().domain }} {{ x.domain }} {{ d3.scale_linear([97, 3], [0, 1]).nice().domain }} {{ d3.scale_linear([-1.7, 23.4], [0, 1]).nice(4).domain }}</text>",
+        );
+        assert!(svg.contains("<text>[0.0, 100.0] [3.0, 97.0] [100.0, 0.0] [-10.0, 30.0]</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_scale_linear_ticks_are_d3s() {
+        let svg = template_svg(
+            "<text>{{ d3.scale_linear([0, 1], [0, 1]).ticks(5) }} {{ d3.scale_linear([100, 0], [0, 1]).ticks(5) }} {{ d3.scale_linear([0, 97], [0, 1]).ticks() | length }}</text>",
+        );
+        assert!(
+            svg.contains("<text>[0.0, 0.2, 0.4, 0.6, 0.8, 1.0] [100.0, 80.0, 60.0, 40.0, 20.0, 0.0] 10</text>"),
+            "{svg}"
+        );
+    }
+
+    #[test]
+    fn d3_tick_format_prints_through_the_board_locale() {
+        let svg = template_svg(
+            "{% set x = d3.scale_linear([0, 1], [0, 1]) %}<text>{% for t in x.ticks(5) %}{{ x.tick_format(5)(t) }} {% endfor %}| {{ d3.scale_linear([0, 1234567], [0, 1]).tick_format(5, 's')(800000) }} {{ x.tick_format(5, '%')(0.4) }} {{ d3.scale_linear([1000, 5000], [0, 1]).tick_format(4, ',.0f')(3000) }}</text>",
+        );
+        assert!(svg.contains("<text>0.0 0.2 0.4 0.6 0.8 1.0 | 0.8M 40% 3,000</text>"), "{svg}");
+        let p = payload("{{ d3.scale_linear([0, 1000], [0, 1]).tick_format(5, ',.1f')(1234.5) }}", |_| {});
+        let svg = crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
+            render(&p, &test_fonts()).unwrap()
+        });
+        assert!(svg.contains("1.234,5"), "{svg}");
+    }
+
+    #[test]
+    fn d3_scale_sqrt_maps_through_the_root_and_nices_the_domain() {
+        let svg = template_svg(
+            "{% set r = d3.scale_sqrt([0, 100], [0, 50]) %}<text>{{ r(25) }} {{ r(50) | format('.4f') }} {{ r.invert(25) }} {{ d3.scale_sqrt([0, 87], [0, 1]).nice().domain }} {{ d3.scale_sqrt([0, 87], [0, 1]).ticks(4) }}</text>",
+        );
+        assert!(
+            svg.contains("<text>25.0 35.3553 25.0 [0.0, 90.0] [0.0, 20.0, 40.0, 60.0, 80.0]</text>"),
+            "{svg}"
+        );
+    }
+
+    #[test]
+    fn d3_scale_band_matches_d3() {
+        let svg = template_svg(
+            "{% set b = d3.scale_band(['a', 'b', 'c', 'd'], [0, 100], padding_inner=0.2, padding_outer=0.1) %}<text>{{ b('a') }} {{ b('d') }} {{ b.bandwidth() }} {{ b.step() }} {{ b.domain }}</text>\
+             <text>{{ d3.scale_band(['a', 'b'], [100, 0], padding=0.5)('a') | format('.3f') }}</text>\
+             <text>{% for n in ['a', 'b', 'c'] %}{{ d3.scale_band(['a', 'b', 'c'], [0, 100], padding_inner=0.5, padding_outer=0.5, align=0)(n) | format('.3f') }} {% endfor %}</text>\
+             <text>{{ d3.scale_band(['x', 'y', 'x'], [0, 40]).domain }} {{ d3.scale_band(['x', 'y', 'x'], [0, 40])('y') }}</text>",
+        );
+        assert!(svg.contains("<text>2.5 77.5 20.0 25.0 [\"a\", \"b\", \"c\", \"d\"]</text>"), "{svg}");
+        assert!(svg.contains("<text>60.000</text>"), "{svg}");
+        assert!(svg.contains("<text>0.000 28.571 57.143 </text>"), "{svg}");
+        assert!(svg.contains("<text>[\"x\", \"y\"] 20.0</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_paths_match_d3_shape() {
+        let svg = template_svg(
+            "<path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10]]) }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], curve='monotone_x') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10]], 'step') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], 'step_before') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], 'step_after') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], 'monotone_y') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], 'basis') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], 'natural') }}\"/>\
+             <path d=\"{{ d3.line([[0, 0], [10, 20], [30, 10], [40, 40]], 'cardinal') }}\"/>\
+             <path d=\"{{ d3.area([[0, 0], [10, 20], [30, 10]], 50) }}\"/>",
+        );
+        for d in [
+            "M0,0L10,20L30,10",
+            "M0,0C3.333,10,6.667,20,10,20C16.667,20,23.333,10,30,10C33.333,10,36.667,25,40,40",
+            "M0,0L5,0L5,20L20,20L20,10L30,10",
+            "M0,0L0,20L10,20L10,10L30,10L30,40L40,40",
+            "M0,0L10,0L10,20L30,20L30,10L40,10L40,40",
+            "M0,0C5,6.667,10,13.333,10,20C10,16.667,30,13.333,30,10C30,20,35,30,40,40",
+            "M0,0L1.667,3.333C3.333,6.667,6.667,13.333,11.667,15C16.667,16.667,23.333,13.333,28.333,16.667C33.333,20,36.667,30,38.333,35L40,40",
+            "M0,0C2.222,10.222,4.444,20.444,10,20C15.556,19.556,24.444,8.444,30,10C35.556,11.556,37.778,25.778,40,40",
+            "M0,0C0,0,5,18.333,10,20C15,21.667,25,6.667,30,10C35,13.333,40,40,40,40",
+            "M0,0L10,20L30,10L30,50L10,50L0,50Z",
+        ] {
+            assert!(svg.contains(&format!("<path d=\"{d}\"/>")), "{d}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_arc_matches_d3_shape() {
+        let svg = template_svg(
+            "<path d=\"{{ d3.arc(0, 10, 0, math.pi / 2) }}\"/>\
+             <path d=\"{{ d3.arc(5, 10, 0, math.pi, pad_angle=0.1) }}\"/>\
+             <path d=\"{{ d3.arc(inner_radius=5, outer_radius=10, start_angle=0, end_angle=math.pi / 2, corner_radius=2) }}\"/>",
+        );
+        for d in [
+            "M0,-10A10,10,0,0,1,10,0L0,0Z",
+            "M0.559,-9.984A10,10,0,0,1,0.559,9.984L0.559,4.969A5,5,0,0,0,0.559,-4.969Z",
+            "M0,-7.746A2,2,0,0,1,2.5,-9.682A10,10,0,0,1,9.682,-2.5A2,2,0,0,1,7.746,0L6.708,0A2,2,0,0,1,4.792,-1.429A5,5,0,0,0,1.429,-4.792A2,2,0,0,1,0,-6.708Z",
+        ] {
+            assert!(svg.contains(&format!("<path d=\"{d}\"/>")), "{d}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_pie_keeps_data_order() {
+        let svg = template_svg(
+            "{% for s in d3.pie([1, 2, 1]) %}<text>{{ s.index }} {{ s.value }} {{ s.start_angle | format('.4f') }} {{ s.end_angle | format('.4f') }} {{ s.pad_angle }}</text>{% endfor %}\
+             {% for s in d3.pie([3, 1], start_angle=-(math.pi) / 2, end_angle=math.pi / 2, pad_angle=0.05) %}<text>{{ s.start_angle | format('.4f') }} {{ s.end_angle | format('.4f') }} {{ s.pad_angle }}</text>{% endfor %}",
+        );
+        for t in [
+            "<text>0 1.0 0.0000 1.5708 0.0</text>",
+            "<text>1 2.0 1.5708 4.7124 0.0</text>",
+            "<text>2 1.0 4.7124 6.2832 0.0</text>",
+            "<text>\u{2212}1.5708 0.7604 0.05</text>",
+            "<text>0.7604 1.5708 0.05</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_misuse_is_an_error_naming_the_call() {
+        for (template, needle) in [
+            ("{{ d3.scale_linear([], [0, 1]) }}", "d3.scale_linear(): domain must be two numbers"),
+            ("{{ d3.scale_linear([1, 1], [0, 1]) }}", "d3.scale_linear(): domain must not be zero-width"),
+            ("{{ d3.scale_linear([0, 1], [5, 5]) }}", "d3.scale_linear(): range must not be zero-width"),
+            ("{{ d3.scale_linear([0, 1e999], [0, 1]) }}", "d3.scale_linear(): domain must be a finite number"),
+            ("{{ d3.scale_linear(['a', 'b'], [0, 1]) }}", "d3.scale_linear(): domain must be a finite number"),
+            ("{{ d3.scale_linear([0, 1]) }}", "d3.scale_linear(): missing argument 'range'"),
+            ("{{ d3.scale_linear([0, 1], [0, 1], 3) }}", "d3.scale_linear(): takes at most 2 arguments"),
+            ("{{ d3.scale_linear([0, 1], [0, 1])('a') }}", "d3.scale_linear(): value must be a finite number"),
+            ("{{ d3.scale_linear([0, 1], [0, 1]).ticks(0) }}", "d3.scale_linear().ticks(): count must be a whole number from 1 to 10000"),
+            ("{{ d3.scale_linear([0, 1], [0, 1]).tick_format(5, '?') }}", "d3.scale_linear().tick_format():"),
+            ("{{ d3.scale_linear([0, 1], [0, 1]).ticks(foo=1) }}", "unknown keyword argument 'foo'"),
+            ("{{ d3.scale_linear([0, 1], [0, 1]).wobble() }}", "no method \"wobble\""),
+            ("{{ d3.scale_sqrt([2, 2], [0, 1]) }}", "d3.scale_sqrt(): domain must not be zero-width"),
+            ("{{ d3.scale_band([], [0, 1]) }}", "d3.scale_band(): domain must not be empty"),
+            ("{{ d3.scale_band(['a'], [0, 0]) }}", "d3.scale_band(): range must not be zero-width"),
+            ("{{ d3.scale_band(['a'], [0, 1])('b') }}", "d3.scale_band(): \"b\" is not in the domain"),
+            ("{{ d3.scale_band(['a'], [0, 1], padding=0.1, padding_inner=0.2) }}", "d3.scale_band(): padding sets both"),
+            ("{{ d3.scale_band(['a'], [0, 1], padding_inner=2) }}", "d3.scale_band(): padding_inner and align must be between 0 and 1"),
+            ("{{ d3.scale_band([[1]], [0, 1]) }}", "d3.scale_band(): domain values must be strings or numbers"),
+            ("{{ d3.line([[0, 0], [1]]) }}", "d3.line(): points[1] must be an [x, y] pair"),
+            ("{{ d3.line([[0, 'a']]) }}", "d3.line(): points[0][1] must be a finite number"),
+            ("{{ d3.line([[0, 0]], 'bumpy') }}", "d3.line(): unknown curve \"bumpy\""),
+            ("{{ d3.area([[0, 0]]) }}", "d3.area(): missing argument 'y0'"),
+            ("{{ d3.arc(0, 10, 0) }}", "d3.arc(): missing argument 'end_angle'"),
+            ("{{ d3.arc(-1, 10, 0, 1) }}", "d3.arc(): inner_radius must not be negative"),
+            ("{{ d3.arc(0, none, 0, 1) }}", "d3.arc(): outer_radius must be a finite number"),
+            ("{{ d3.scale_linear([-1e308, 1e308], [0, 1]) }}", "d3.scale_linear(): domain is too wide: its span overflows"),
+            ("{{ d3.scale_linear([0, 1], [0, 1]).ticks(10001) }}", "d3.scale_linear().ticks(): count must be a whole number from 1 to 10000"),
+            ("{{ d3.scale_band(['a'], [0, 1], padding=1.5) }}", "d3.scale_band(): padding must be between 0 and 1"),
+            ("{{ d3.pie([1, -2]) }}", "d3.pie(): values[1] must not be negative"),
+            ("{{ d3.pie(3) }}", "d3.pie(): values must be a list"),
+        ] {
+            let reason = template_error(template);
+            assert!(reason.contains(needle), "{template}: {reason}");
+        }
+    }
+
+    fn labels(template: &str, formats: Json) -> String {
+        let p = payload(template, |r| r["column_formats"] = formats);
+        render(&p, &test_fonts()).unwrap()
+    }
+
+    #[test]
+    fn format_column_prints_the_resolved_column_format() {
+        let svg = labels(
+            "{% for r in rows %}<text>{{ r.n | format(column='n') }}</text>{% endfor %}\
+             <text>{{ 2048 | format(column='b') }}</text>\
+             <text>{{ -5 | format(column='eur') }}</text>\
+             <text>{{ 1234567 | format(column='money') }}</text>\
+             <text>{{ none | format(column='n') }}</text>",
+            json!({
+                "n": ",.1f",
+                "b": {"spec": "bytes", "raw": "bytes"},
+                "eur": {"spec": ",.0f", "prefix": "EUR ", "suffix": " net"},
+                "money": {"spec": "$,.2s", "raw": "currency"},
+            }),
+        );
+        let texts: Vec<&str> = svg
+            .split("<text>")
+            .skip(1)
+            .map(|t| t.split("</text>").next().unwrap())
+            .collect();
+        assert_eq!(texts[..2], ["1.5", "2.0"], "{svg}");
+        assert_eq!(texts[2], "2.05 kB", "{svg}");
+        assert_eq!(texts[3], "EUR \u{2212}5 net", "{svg}");
+        assert_eq!(texts[4], "$1.2M", "{svg}");
+        assert_eq!(texts[5], super::super::table::NULL_DISPLAY, "{svg}");
+    }
+
+    #[test]
+    fn format_column_misuse_names_the_problem() {
+        for (template, needle) in [
+            ("{{ 1 | format(column='nope') }}", "column 'nope' is not in the query's columns ['n', 'rep']"),
+            ("{{ 1 | format(',.0f', column='n') }}", "a d3 spec or column=, not both"),
+            ("{{ 1 | format() }}", "needs a d3 spec or column="),
+            ("{{ 1 | format(colum='n') }}", "unknown keyword argument"),
+        ] {
+            let reason = template_error(template);
+            assert!(reason.contains(needle), "{template}: {reason}");
+        }
+    }
+
+    /// The resolver reads the returned columns off the first row, so with no
+    /// rows there is no column to resolve a format for.
+    #[test]
+    fn format_column_with_no_rows_says_the_query_returned_none() {
+        let mut p = payload("{{ 0 | format(column='n') }}", |r| r["column_formats"] = json!({}));
+        p.rows.clear();
+        let err = render(&p, &test_fonts()).unwrap_err();
+        assert!(err.contains("format: column 'n' has no format: the query returned no rows"), "{err}");
+    }
+
+    #[test]
+    fn format_column_uses_the_boards_small_value_siblings() {
+        let mut p = payload(
+            "<text>{{ 0.25 | format(column='money') }}</text>",
+            |r| r["column_formats"] = json!({"money": {"spec": "$,.2s", "raw": "currency"}}),
+        );
+        p.board_style.as_mut().unwrap().sub_unit_specs =
+            Some(BTreeMap::from([("currency".to_string(), "$,.3f".to_string())]));
+        let svg = render(&p, &test_fonts()).unwrap();
+        assert!(svg.contains("<text>$0.250</text>"), "{svg}");
+    }
+
+    #[test]
+    fn format_column_on_text_names_the_column() {
+        let reason = template_error("{{ 'abc' | format(column='n') }}");
+        assert!(reason.contains("column 'n'") && reason.contains("number"), "{reason}");
+        let ok = labels("{{ 'abc' | format(',.0f') }}", json!({}));
+        assert!(ok.contains("abc"), "{ok}");
     }
 
     #[test]
@@ -1485,11 +1826,11 @@ mod tests {
             checked_svg_content(content).unwrap_or_else(|e| panic!("{content}: {e}"));
         }
         assert_eq!(
-            checked_svg_content("<use xlink:href=\"#s\" ></use>").unwrap(),
+            print_content(&checked_svg_content("<use xlink:href=\"#s\" ></use>").unwrap()),
             "<use href=\"#s\"/>"
         );
         assert_eq!(
-            checked_svg_content("<text a=\"&lt;&quot;\">x &gt; y</text>").unwrap(),
+            print_content(&checked_svg_content("<text a=\"&lt;&quot;\">x &gt; y</text>").unwrap()),
             "<text a=\"&lt;&quot;\">x &gt; y</text>"
         );
     }

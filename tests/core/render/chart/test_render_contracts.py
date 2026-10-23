@@ -23,25 +23,7 @@ from dbt_charts.core.compile.models.style.theme import PaddingStyle
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 from dbt_charts.core.render.chart.emitter import ChartEmitter
 from dbt_charts.core.render.chart.feature import FeaturePipeline
-from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
-from dbt_charts.core.render.chart.features.bar_hover_band import BarHoverBandFeature
-from dbt_charts.core.render.chart.features.baseline import BaselineFeature
-from dbt_charts.core.render.chart.features.click_interactivity import (
-    ClickInteractivityFeature,
-)
-from dbt_charts.core.render.chart.features.endpoint_labels import EndpointLabelFeature
-from dbt_charts.core.render.chart.features.facet import FacetFeature
-from dbt_charts.core.render.chart.features.mirror_axis import MirrorAxisFeature
-from dbt_charts.core.render.chart.features.native_tooltip import (
-    NativeTooltipAffixFeature,
-)
-from dbt_charts.core.render.chart.features.structured_tooltip import (
-    StructuredTooltipFeature,
-)
-from dbt_charts.core.render.chart.features.value_labels import ValueLabelFeature
-from dbt_charts.core.render.chart.features.zero_value_label import ZeroValueLabelFeature
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
-from dbt_charts.core.render.chart.translate import assemble_final_vl, translate_to_vl
 
 _DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 
@@ -54,13 +36,6 @@ def _default_legend():
     return resolve_style(
         get_theme_style(get_default_theme_name())
     ).chart_defaults.legend
-
-
-def _default_title():
-    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-
-    return resolve_style(get_theme_style(get_default_theme_name())).chart_defaults.title
 
 
 def _default_resolved_table_style():
@@ -264,27 +239,6 @@ def test_feature_pipeline_applies_in_list_order(
     assert call_log == ["c", "a", "b"]
 
 
-def test_default_features_pins_concrete_production_order() -> None:
-    """DEFAULT_FEATURES is the sole ordering authority — pin its concrete order.
-
-    FeaturePipeline no longer sorts, so a mistaken reorder of DEFAULT_FEATURES
-    would otherwise only surface as a visual golden diff. This makes it a
-    fast, direct test failure instead.
-    """
-    assert [type(f) for f in DEFAULT_FEATURES] == [
-        ZeroValueLabelFeature,
-        BarHoverBandFeature,
-        BaselineFeature,
-        EndpointLabelFeature,
-        ValueLabelFeature,
-        ClickInteractivityFeature,
-        StructuredTooltipFeature,
-        NativeTooltipAffixFeature,
-        MirrorAxisFeature,
-        FacetFeature,
-    ]
-
-
 def test_feature_pipeline_skips_non_applicable(bar_style: ResolvedBarStyle) -> None:
     call_log: list[str] = []
     f_skip = _FakeFeature(_applies=False, call_log=call_log, tag="skip")
@@ -324,34 +278,6 @@ def test_emitter_protocol_satisfied_structurally() -> None:
 # ---------------------------------------------------------------------------
 # assemble_final_vl / translate_to_vl
 # ---------------------------------------------------------------------------
-
-
-def test_translate_bar_is_implemented() -> None:
-    """translate_to_vl (structural helper) dispatches for known marks."""
-    spec = ChartSpec(mark="bar", encoding={}, layers=[], config={})
-    result = translate_to_vl(spec)
-    assert isinstance(result, dict)
-    assert "$schema" in result
-
-
-def test_assemble_final_vl_is_implemented() -> None:
-    """assemble_final_vl (public API) returns a config-merged VL dict."""
-    from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-
-    board_style = resolve_style(get_theme_style())
-    spec = ChartSpec(
-        mark="bar",
-        encoding={},
-        layers=[],
-        config={},
-        background=board_style.background,
-        title_style=board_style.chart_defaults.title,
-    )
-    result = assemble_final_vl(spec, board_style)
-    assert isinstance(result, dict)
-    assert "$schema" in result
-    assert "config" in result
 
 
 # ---------------------------------------------------------------------------

@@ -7,10 +7,7 @@ effective style applies after the per-chart-family cascade
 
 Strip height depends on ``series_count``, which is derived from query rows
 (the size of the color domain), so ``support_table_strip_height`` is a render
-concern — see ``dbt_charts.core.render.chart.support_table_attachment``. Data-aware
-validation against the query output (``validate_support_table_against_data``)
-and the Vega-Lite layer emission itself (``attach_support_table`` and its
-helpers) live there too.
+concern — the engine's ``support_table_strip.rs`` measures and draws it.
 """
 
 from __future__ import annotations

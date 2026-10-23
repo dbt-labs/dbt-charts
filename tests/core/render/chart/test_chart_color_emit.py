@@ -29,32 +29,6 @@ _BOARD_STYLE, _BOARD_CONTEXT = resolve_style_and_context(get_theme_style())
 _DUMMY_QUERY = SqlQuery(sql="SELECT 1", source="test")
 
 
-def _color_enc(spec: dict) -> dict | None:
-    """Find color encoding in a VL spec, checking top-level then layers."""
-    top = spec.get("encoding", {})
-    if "color" in top:
-        return top["color"]
-    for layer in spec.get("layer", []):
-        layer_enc = layer.get("encoding", {})
-        if "color" in layer_enc:
-            return layer_enc["color"]
-    return None
-
-
-def _bar_mark(spec: dict) -> dict | str | None:
-    """Get the bar mark from a VL spec (handles layered bar charts)."""
-    mark = spec.get("mark")
-    if mark is not None:
-        return mark
-    for layer in spec.get("layer", []):
-        lm = layer.get("mark")
-        if lm is not None and (
-            lm == "bar" or (isinstance(lm, dict) and lm.get("type") == "bar")
-        ):
-            return lm
-    return None
-
-
 _BAR_DATA = [
     {"category": "A", "arr": 2_000_000},
     {"category": "B", "arr": 500_000},
@@ -78,78 +52,6 @@ def _bar_chart(**kwargs: Any) -> Chart:
 # ============================================================================
 
 
-def test_color_gradient_bar_chart():
-    """color: field + style.color.scale.palette → VL quantitative color encoding with scale.range."""
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-    chart = _bar_chart(
-        color="arr",
-        style=BarChartStylePatch.model_validate(
-            {"color": {"gradient": {"palette": ["#ffffff", "#0000ff"]}}}
-        ),
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    color_enc = spec.get("encoding", {}).get("color")
-    assert color_enc is not None, "Expected color encoding"
-    assert color_enc.get("field") == "arr"
-    assert color_enc.get("type") == "quantitative"
-    scale = color_enc.get("scale", {})
-    assert "range" in scale
-    assert scale["range"] == ["#ffffff", "#0000ff"]
-
-
-def test_color_gradient_named_scheme_bar_chart():
-    """color: field + style.color.scale.palette: <named scheme string> → VL
-    scale.scheme, not scale.range of the scheme name's individual characters.
-
-    Regression for _channels.py's ``channel_to_encoding`` gradient branch,
-    which called ``list(ch.scale.palette)`` unconditionally — a string
-    palette like "blues" became ``["b", "l", "u", "e", "s"]``.
-    """
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-    chart = _bar_chart(
-        color="arr",
-        style=BarChartStylePatch.model_validate(
-            {"color": {"gradient": {"palette": "blues"}}}
-        ),
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    color_enc = spec.get("encoding", {}).get("color")
-    assert color_enc is not None, "Expected color encoding"
-    scale = color_enc.get("scale", {})
-    assert scale.get("scheme") == "blues"
-    assert "range" not in scale
-
-
-def test_color_gradient_dbt_charts_named_palette_resolves_to_stops():
-    """color: field + style.color.scale.palette: <dbt charts named palette> →
-    VL scale.range of resolved hex stops, not scale.scheme with the raw
-    dbt charts name — Vega doesn't recognize a dbt charts name as a scheme, so
-    forwarding it as one is a silent no-op: Vega logs an unrecognized-scheme
-    warning and paints with its own default coloring instead of the palette
-    the author asked for.
-    """
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
-
-    chart = _bar_chart(
-        color="arr",
-        style=BarChartStylePatch.model_validate(
-            {"color": {"gradient": {"palette": "dbt-seq-blue"}}}
-        ),
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    color_enc = spec.get("encoding", {}).get("color")
-    assert color_enc is not None, "Expected color encoding"
-    scale = color_enc.get("scale", {})
-    assert scale.get("range") == resolve_palette("dbt-seq-blue")
-    assert "scheme" not in scale
-
-
 # ============================================================================
 # §8h: literal chart.style.color (already works, regression guard)
 # ============================================================================
@@ -167,35 +69,12 @@ def test_literal_style_color_passes_through():
     assert resolved.resolved_channels == {}
 
 
-def test_chart_local_named_palette_overrides_theme_palette_mark_fill():
-    """``style.palette: <name>`` resolves and supplies palette[0] for single-series mark fill.
-
-    Regression test for the cascade plumbing: the chart-local named-palette
-    override must reach ``effective.palette`` so the single-series bar fill
-    picks up the override's stop[0], not the theme palette's stop[0].
-    """
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-    from dbt_charts.core.compile.resolve.style.palette import palette as resolve_palette
-
-    chart = _bar_chart(
-        style=BarChartStylePatch.model_validate(
-            {"color": {"categorical": {"palette": "dbt-seq-rust"}}}
-        )
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    expected_stop_0 = resolve_palette("dbt-seq-rust")[0]
-    mark = _bar_mark(spec)
-    assert isinstance(mark, dict), "Expected mark dict with fill"
-    assert mark.get("fill") == expected_stop_0
-
-
 def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
-    """``style.palette`` on a colorless heatmap reaches ``config.rect.fill``.
+    """``style.palette`` on a colorless heatmap reaches `the rect fill`.
 
     Regression for removing the assemble-time re-patch (translate.py's
     path/rect/symbol/shape/trail loop): the heatmap emitter now bakes
-    ``config.rect.fill`` directly from its own already-resolved effective
+    `the rect fill` directly from its own already-resolved effective
     palette instead of relying on a post-merge correction.
     """
     from dbt_charts.core.compile.models.chart.normalized import HeatmapChart
@@ -218,29 +97,10 @@ def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
         {"col": "B", "row": "2"},
     ]
     resolved = resolve(chart, data, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
+    svg = render_resolved_chart(resolved, data, _BOARD_STYLE).payload
     expected_stop_0 = resolve_palette("dbt-seq-rust")[0]
-    assert spec["config"]["rect"]["fill"] == expected_stop_0
-
-
-def test_literal_style_color_overrides_palette_mark_fill():
-    """``style.color: "#hex"`` statically colors the bars (no data channel).
-
-    style.color replaces palette[0] as mark.fill when no data color channel
-    is present.  When a data color channel IS present, has_color_encoding=True
-    suppresses mark.fill entirely so the encoding wins.
-    """
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-    chart = _bar_chart(
-        style=BarChartStylePatch.model_validate({"color": {"static": "#7B7B7B"}})
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    # style.color overrides palette[0] → mark.fill is the style color
-    mark = _bar_mark(spec)
-    assert isinstance(mark, dict), "Expected mark dict with fill"
-    assert mark["fill"] == "#7B7B7B"
+    assert isinstance(svg, str)
+    assert svg.count(f'fill="{expected_stop_0}" opacity="1"') == len(data)
 
 
 # ============================================================================
@@ -334,42 +194,6 @@ def test_table_conditional_formatting_preserved_on_source_chart():
 # ============================================================================
 # Gradient domain: only set when both min and max are authored
 # ============================================================================
-
-
-def test_gradient_domain_skipped_when_only_min_set():
-    """Gradient with only min set should not emit domain (VL scans data for max)."""
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-    chart = _bar_chart(
-        color="arr",
-        style=BarChartStylePatch.model_validate(
-            {"color": {"gradient": {"palette": ["#fff", "#000"], "min": 0}}}
-        ),
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    scale = spec["encoding"]["color"].get("scale", {})
-    assert "domain" not in scale
-
-
-def test_gradient_domain_set_when_both_min_and_max():
-    """Gradient with both min and max should emit domain = [min, max]."""
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-
-    chart = _bar_chart(
-        color="arr",
-        style=BarChartStylePatch.model_validate(
-            {
-                "color": {
-                    "gradient": {"palette": ["#fff", "#000"], "min": 0, "max": 5000000}
-                }
-            }
-        ),
-    )
-    resolved = resolve(chart, _BAR_DATA, chart_style_context=_BOARD_CONTEXT)
-    spec = render_resolved_chart(resolved, _BAR_DATA, _BOARD_STYLE).payload
-    scale = spec["encoding"]["color"].get("scale", {})
-    assert scale.get("domain") == [0, 5_000_000]
 
 
 # ============================================================================

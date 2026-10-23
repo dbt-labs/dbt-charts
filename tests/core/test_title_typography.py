@@ -706,58 +706,6 @@ class TestVegaLiteTitleTypography:
             query=SqlQuery(sql="SELECT 1", source="test_db"),
         )
 
-    def test_narrow_vega_chart_title_config_uses_inter_variable(self):
-        """Regression: narrow chart title font in the Vega spec must be 'Inter Variable'
-        (the name vl-convert registers InterVariable.ttf under), not plain 'Inter'.
-
-        Using 'Inter' causes vl-convert to fall back to a system sans-serif because
-        the registered font family name is 'Inter Variable', not 'Inter'.  The font
-        measurer already uses InterVariable.ttf via get_font_measurer('Inter'), so the
-        Vega spec must use the same name to match measurement to rendering.
-        """
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        spec = generate_vega_lite_spec(self._make_chart(), self._data, width=300.0)
-        title_font = spec.get("config", {}).get("title", {}).get("font")
-        assert title_font is not None and "Inter" in title_font, (
-            f"Expected title font to include 'Inter', got {title_font!r}"
-        )
-
-    def test_wide_vega_chart_title_config_uses_title_family(self):
-        """Wide chart title font in the Vega spec is style.title.font.family."""
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        title_family = (
-            resolve_style(get_theme_style()).title.font.family.split(",")[0].strip()
-        )
-        spec = generate_vega_lite_spec(self._make_chart(), self._data, width=1152.0)
-        title_font = spec.get("config", {}).get("title", {}).get("font")
-        assert title_family in str(title_font)
-
-    def test_explicit_style_font_overrides_width_default(self):
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.compile.models.style.authored import (
-            BarChartStylePatch,
-            ChartTitleStylePatch,
-        )
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        chart = BarChart(
-            id="bar_test",
-            type="bar",
-            title="Revenue",
-            x="month",
-            y="revenue",
-            query=SqlQuery(sql="SELECT 1", source="test_db"),
-            style=BarChartStylePatch(
-                title=ChartTitleStylePatch(font={"family": "Helvetica"})
-            ),
-        )
-        spec = generate_vega_lite_spec(chart, self._data, width=1152.0)
-        title_font = spec.get("config", {}).get("title", {}).get("font")
-        # Explicit style should win over width-aware default
-        assert title_font == "Helvetica"
-
 
 # ---------------------------------------------------------------------------
 # board_title_markdown

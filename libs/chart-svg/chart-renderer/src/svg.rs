@@ -1,69 +1,4 @@
-//! Tiny SVG emission helpers shared by all families.
-
-use std::borrow::Cow;
-
-/// `s` with each character `escape` maps replaced by its reference, in one
-/// pass; borrowed when nothing needs escaping.
-fn escape_with(s: &str, escape: impl Fn(char) -> Option<&'static str>) -> Cow<'_, str> {
-    let Some(first) = s.find(|c| escape(c).is_some()) else {
-        return Cow::Borrowed(s);
-    };
-    let mut out = String::with_capacity(s.len() + 16);
-    out.push_str(&s[..first]);
-    for c in s[first..].chars() {
-        match escape(c) {
-            Some(reference) => out.push_str(reference),
-            None => out.push(c),
-        }
-    }
-    Cow::Owned(out)
-}
-
-fn xml_reference(c: char) -> Option<&'static str> {
-    match c {
-        '&' => Some("&amp;"),
-        '<' => Some("&lt;"),
-        '>' => Some("&gt;"),
-        _ => None,
-    }
-}
-
-pub fn xml_escape(s: &str) -> Cow<'_, str> {
-    escape_with(s, xml_reference)
-}
-
-/// Text content escaped the way production's bare `html.escape(text)` does:
-/// `xml_escape` plus both quote characters, and no whitespace references — a
-/// text node keeps its literal newline, an attribute value does not.
-pub fn html_escape(s: &str) -> Cow<'_, str> {
-    escape_with(s, |c| match c {
-        '"' => Some("&quot;"),
-        '\'' => Some("&#x27;"),
-        _ => xml_reference(c),
-    })
-}
-
-/// The one attribute-value escaper — `mdsvg::utils::escape_xml`, production's
-/// `svg_utils.escape_attr` (`html.escape(s, quote=True)`, then newline, CR,
-/// and tab as numeric character references). Every authored string that
-/// lands in an attribute value goes through it; text content never needs the
-/// quotes escaped, so it uses `xml_escape`.
-pub use mdsvg::utils::escape_xml as xml_escape_attr;
-
-/// An attribute value as Vega's SVG serializer writes it (vega-scenegraph
-/// `src/util/markup.js`, `attrText`): `&`, `<`, `>`, and `"` escaped, tab,
-/// newline, and CR as hex references, `'` left bare. A Vega-drawn chart body's
-/// `font-family` keeps its single-quoted stack byte-for-byte; every other
-/// attribute value, and every Python-drawn one, uses `xml_escape_attr`.
-pub fn vega_escape_attr(s: &str) -> Cow<'_, str> {
-    escape_with(s, |c| match c {
-        '"' => Some("&quot;"),
-        '\t' => Some("&#x9;"),
-        '\n' => Some("&#xA;"),
-        '\r' => Some("&#xD;"),
-        _ => xml_reference(c),
-    })
-}
+//! Tiny SVG emission helpers shared by all families. Escaping is `print`'s.
 
 /// Return `name` when it can follow `data-var-`/`data-dbt-` as an attribute
 /// name, mirroring production's `svg_utils.attr_name`: a name with whitespace,
@@ -146,24 +81,6 @@ mod tests {
     fn num_full_still_drops_it_format_svg_numeric_style() {
         assert_eq!(num_full(372.0), "372");
         assert_eq!(num_full(0.06657894736842104), "0.06657894736842104");
-    }
-
-    #[test]
-    fn attribute_escape_is_production_escape_attr() {
-        assert_eq!(
-            xml_escape_attr("x\" onmouseover=\"alert(1)"),
-            "x&quot; onmouseover=&quot;alert(1)"
-        );
-        assert_eq!(xml_escape_attr("'A' <b> & c"), "&#x27;A&#x27; &lt;b&gt; &amp; c");
-        assert_eq!(xml_escape_attr("a\nb\rc\td"), "a&#10;b&#13;c&#9;d");
-    }
-
-    #[test]
-    fn vega_attribute_escape_is_vega_scenegraph_attr_text() {
-        assert_eq!(
-            vega_escape_attr("'A' \"b\" <c> & d\te\nf\rg"),
-            "'A' &quot;b&quot; &lt;c&gt; &amp; d&#x9;e&#xA;f&#xD;g"
-        );
     }
 
     #[test]

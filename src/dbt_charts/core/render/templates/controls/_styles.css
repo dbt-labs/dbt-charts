@@ -553,3 +553,39 @@
 .dbt-details-toggle {
   cursor: pointer;
 }
+
+{# ── The chart toolbar the hover runtime draws at a chart's top-right ─────── #}
+
+{# Hidden until the chart is hovered or a button has focus; a pinned button
+   (one with something to say) and an open one stay visible. No hover means
+   no way to reveal, so a touch device sees every button. Ink and tint are
+   the board theme's tooltip colors, set by the runtime on the toolbar. #}
+.dbt-chart-button {
+  cursor: pointer;
+  outline: none;
+  pointer-events: all;
+  color: var(--dbt-toolbar-ink);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.dbt-chart:hover .dbt-chart-button,
+.dbt-chart-toolbar:focus-within .dbt-chart-button,
+.dbt-chart-button[data-pinned],
+.dbt-chart-button[aria-expanded="true"] {
+  opacity: 1;
+}
+@media (hover: none) {
+  .dbt-chart-button {
+    opacity: 1;
+  }
+}
+.dbt-chart-button:hover > rect,
+.dbt-chart-button:focus-visible > rect,
+.dbt-chart-button[aria-expanded="true"] > rect {
+  fill: var(--dbt-toolbar-bg);
+  stroke: var(--dbt-toolbar-ink);
+}
+{# SVG draws no focus outline, so the frame thickens instead. #}
+.dbt-chart-button:focus-visible > rect {
+  stroke-width: 2px;
+}

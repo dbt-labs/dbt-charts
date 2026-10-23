@@ -72,7 +72,7 @@ def test_resolver_bakes_known_geo_source_fields() -> None:
         None,
     )
 
-    assert resolved.geo_url == "https://vega.github.io/vega-datasets/data/us-10m.json"
+    assert resolved.geo_url == "bundled:us-10m.json"
     assert resolved.geo_format_type == "topojson"
     assert resolved.geo_feature == "states"
     assert resolved.geo_join_key == "id"

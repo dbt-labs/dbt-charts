@@ -557,9 +557,9 @@ def _support_table_geometry(
     plus ``x_labeled`` (the caller's own ``bool(normalized.x_label)``,
     truthy not ``is not None``, resolving the axis cascade's
     ``auto`` title) —
-    the same values ``render/chart/support_table_attachment.py`` used to
-    recompute at render time by reaching into ``compile/support_table.py`` with
-    a full ``ChartStyleContext``. Baking them here closes that reach-back:
+    the values the engine's support-table strip would otherwise recompute at
+    render time by reaching into ``compile/support_table.py`` with a full
+    ``ChartStyleContext``. Baking them here closes that reach-back:
     render reads ``resolved.effective_support_table_style``/
     ``.support_table_axis_offset`` directly, never the cascade context.
 

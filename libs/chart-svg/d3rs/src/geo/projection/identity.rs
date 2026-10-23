@@ -1,7 +1,5 @@
-//! d3-geo 3.1.1 `src/projection/identity.js`: the planar projection Vega registers as `identity`. It scales,
-//! reflects, rotates (`angle`) and translates coordinates that are already planar, optionally clipped to
-//! `clipExtent`. It has no sphere, so no rotation, center, pre-clip or resampling, and is not a
-//! `projectionMutator` projection; it shares [`Fit`] with [`super::Projection`].
+//! d3-geo 3.1.1 `src/projection/identity.js`: `geoIdentity`, the planar projection Vega registers as `identity`.
+//! It has no sphere, so no rotation, center, pre-clip or resampling; it shares [`Fit`] with [`super::Projection`].
 
 use super::fit::Fit;
 use crate::geo::clip::rectangle::clip_rectangle;

@@ -296,7 +296,6 @@ def build_resolved_board(
     *,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
-    slot_resolved: dict[str, ResolvedChart] | EllipsisType = ...,
 ) -> tuple[ResolvedBoard, RenderCache]:
     with regional_scope(
         board.regional.format_locale,
@@ -311,7 +310,6 @@ def build_resolved_board(
             render_first,
             resolve_errors=resolve_errors,
             authored_slot_heights=authored_slot_heights,
-            slot_resolved=slot_resolved,
         )
 
 
@@ -323,7 +321,6 @@ def _build_resolved_board(
     *,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType,
     authored_slot_heights: dict[str, float] | EllipsisType,
-    slot_resolved: dict[str, ResolvedChart] | EllipsisType,
 ) -> tuple[ResolvedBoard, RenderCache]:
     """Build a data-resolved ResolvedBoard using the chart resolver.
 
@@ -351,10 +348,6 @@ def _build_resolved_board(
             chart_id -> the real px slot height assigned to every chart under
             an authored ancestor. See
             ``layout_sizing._snapshot_authored_slot_heights``.
-        slot_resolved: When given, populated in place with chart_id -> the
-            chart as first resolved at its slot width, for every chart whose
-            support_table width correction re-resolved it at the shrunk width.
-            The returned board holds only the shrunk-width resolve.
 
     Returns:
         (ResolvedBoard with data-resolved ResolvedChart members,
@@ -397,7 +390,6 @@ def _build_resolved_board(
             resolved_variants=chart_variants,
             resolve_errors=chart_failures,
             authored_slot_heights=authored_slot_heights,
-            slot_resolved=slot_resolved,
         )
 
     frame = board.resolved_style.frame

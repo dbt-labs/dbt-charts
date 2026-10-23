@@ -186,18 +186,16 @@ def test_root_dimensions_survive() -> None:
 def test_chart_furniture_is_removed_and_marks_stay() -> None:
     body = (
         '<g class="mark-rect role-mark marks"><path d="M0,0h5v5h-5Z" fill="#4f89c0"/></g>'
-        '<g class="mark-text role-axis-label"><text x="0" y="9" font-size="11">1</text></g>'
-        '<g class="mark-rule role-axis-tick"><line x1="0" x2="0" y1="0" y2="5"/></g>'
+        '<g class="mark-group role-axis"><text x="0" y="9" font-size="11">1</text>'
+        '<line x1="0" x2="0" y1="0" y2="5"/><line x1="0" x2="9" y1="0" y2="0"/></g>'
         '<g class="mark-rule role-axis-grid"><line x1="0" x2="9" y1="0" y2="0"/></g>'
-        '<g class="mark-group role-axis-domain"><line x1="0" x2="9" y1="0" y2="0"/></g>'
         '<g class="mark-group role-legend"><rect width="9" height="9"/></g>'
         f'<a class="dbt-footer-link"><text x="0" y="0" font-size="9" font-family="{FONT}">dbt</text></a>'
     )
     out = cartoonize(svg(body))
     assert 'class="mark-rect role-mark marks"' in out
     assert 'fill="#4f89c0"' in out
-    assert "role-axis-domain" in out
-    for gone in ("role-axis-label", "role-axis-tick", "role-axis-grid", "role-legend"):
+    for gone in ("role-axis", "role-axis-grid", "role-legend"):
         assert gone not in out
     assert "dbt-footer-link" not in out
     assert "<text" not in out

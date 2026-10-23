@@ -17,7 +17,7 @@ def test_numeric_string_gets_authored_number_format() -> None:
 
 
 def test_non_numeric_value_keeps_raw_text_under_a_number_format() -> None:
-    # Mirrors gate_label_format's own permissiveness: a nominal category
+    # Mirrors the engine's label-format gate's own permissiveness: a nominal category
     # column that reads as numbers stays formattable even if one row
     # doesn't — but a value that doesn't read as a number is left as-is
     # rather than raising or guessing.

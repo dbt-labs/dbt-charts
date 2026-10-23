@@ -63,7 +63,6 @@ def _warnings(
     ctx = WarningContext(
         board_spec=make_test_resolved_board(charts={}),
         chart_results={},
-        vega_specs={},
         pie_total_overflows=overflows,
     )
     return detector.detect(ctx)
@@ -79,7 +78,6 @@ def test_a_record_becomes_a_warning_anchored_on_the_total_format() -> None:
     ctx = WarningContext(
         board_spec=make_test_resolved_board(charts={}),
         chart_results={},
-        vega_specs={},
         pie_total_overflows={
             "c1": PieTotalOverflow(
                 formatted_value="113,135",

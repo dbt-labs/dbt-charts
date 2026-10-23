@@ -51,7 +51,6 @@ def _ctx(chart: Any, rows: list[dict[str, Any]] = _ROWS) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
     )
 
 
@@ -548,7 +547,6 @@ def test_silent_on_a_base_with_a_non_series_color_channel() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
     )
     assert detector.detect(ctx) == []
 
@@ -732,7 +730,6 @@ def test_layer_whose_own_query_diverges_from_the_base_reads_layer_results() -> N
         layer_results={
             resolved.id: {"layer_q": [{"target": 5, "region": "Diverging"}]}
         },
-        vega_specs={},
     )
     assert detector.detect(ctx) == []
 

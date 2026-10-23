@@ -141,6 +141,7 @@ struct Facts {
     x: Option<String>,
     y: Option<Value>,
     color: Option<String>,
+    link: Option<String>,
     orientation: Option<String>,
     stack: Option<String>,
     y_start: Option<String>,
@@ -225,6 +226,33 @@ pub fn check(payload: &Payload, chart_type: &str) -> Result<(), Diagnostic> {
         return Ok(());
     }
     let facts = Facts::deserialize(&payload.resolved).map_err(|e| format!("{chart_type} payload: {e}"))?;
+    if let (Some(template), "bar" | "line" | "area" | "scatter") = (&facts.link, chart_type) {
+        let mut missing = None;
+        // The walk only finds the first placeholder naming a channel the chart does not encode.
+        let _ = crate::href::resolve_channel_href(template, |channel| {
+            let encoded = match channel {
+                "x" => facts.x.is_some(),
+                "y" => facts.y.as_ref().is_some_and(|y| !y.is_null()),
+                "color" => facts.color.is_some(),
+                // `theta` is a pie channel; these families never encode it.
+                _ => false,
+            };
+            if encoded {
+                return Ok(String::new());
+            }
+            missing = Some(channel.to_string());
+            Err(String::new())
+        });
+        if let Some(channel) = missing {
+            return Err(Diagnostic::new(
+                &codes::ERR_LINK_CHANNEL_NOT_ENCODED,
+                [("chart_id", json!(facts.chart_id())), ("channel", json!(channel))],
+            ));
+        }
+    }
+    if facts.x.is_none() && !payload.resolved.get("support_table").is_none_or(Value::is_null) {
+        return Err(Diagnostic::new(&codes::ERR_SUPPORT_TABLE_NO_X_ENCODING, []));
+    }
     // Faceted against zero rows at resolve, rendered with rows: no panel axes to split by. Rendered
     // against zero rows too, it is the empty facet.
     if facts.multiples.is_some() && facts.panel_axes.is_empty() && !payload.rows.is_empty() {

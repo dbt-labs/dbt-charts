@@ -64,6 +64,13 @@ def collect_series_label_truncations() -> Generator[
         _sinks.reset(token)
 
 
+def reset_series_label_truncations(chart_id: str) -> None:
+    """Forget the cuts earlier renders of the chart recorded: the last render wins."""
+    sinks = _sinks.get()
+    if sinks:
+        sinks[-1].pop(chart_id, None)
+
+
 def record_series_label_truncations(
     chart_id: str, authored_field: SeriesLabelSource, series_names: list[str]
 ) -> None:

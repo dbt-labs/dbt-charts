@@ -1,0 +1,9 @@
+[package]
+name = "print"
+version = "0.0.1"
+edition = "2021"
+description = "The one serializer of scene nodes to SVG: pure and decision-free. Depends on `scene` alone among workspace crates."
+
+[dependencies]
+scene = { path = "../scene" }
+quick-xml = "0.42"

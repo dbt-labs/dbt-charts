@@ -45,7 +45,6 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 )
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
-    resolve_style_and_context,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_AXIS_COLUMN_REQUIRES_TABULAR_FONT,
@@ -1771,57 +1770,6 @@ def test_compacting_ladder_native_formatter_key_does_not_crash():
     )
     assert ay.ruler is None
     assert ay.labels.format.spec == "percent_number"
-
-
-def test_non_compacting_native_formatter_axis_renders_end_to_end():
-    """Full pipeline, not just ``build_resolved_axis`` in isolation: a real
-    theme-cascade ``axis_quantitative.labels.format: percent_number`` on a
-    chart whose y ladder does not compact must reach ``render_chart(...,
-    format="svg")`` without raising -- ``ERR-INTERNAL`` (an uncaught
-    ``D3FormatError``) is exactly the failure this CRITICAL closes.
-    ``format="json"`` does not exercise ``build_resolved_axis``'s tick-ladder
-    path at all (verified: it stayed green even reverting the fix), so this
-    must use ``"svg"``, the format ``dct render`` actually uses.
-
-    That still leaves an unrelated, pre-existing gap live past this test:
-    Vega's own format grammar for axis ticks is d3-format only, so
-    ``percent_number`` (a Python-only ``PREDEFINED_NATIVE`` callable, never
-    valid Vega grammar) fails inside vl-convert's JS layer regardless of
-    this fix, exactly as it would for any axis authoring a native-formatter
-    key, ruler feature or not. Confirmed separately (``dct render
-    --allow-chart-errors``) that this degrades gracefully to a per-chart
-    ``ERR-CHART-PAINTED-NO-MARKS``, not a whole-render crash -- so
-    ``render_chart`` below still returns a real SVG string rather than
-    raising, which is what this test actually pins.
-    """
-    from pydantic import TypeAdapter
-
-    from dbt_charts.core.compile.models.chart.normalized import Chart
-    from dbt_charts.core.compile.models.query.normalized import SqlQuery
-    from dbt_charts.core.compile.models.style.authored import StylePatch
-    from dbt_charts.core.render.chart.vega_lite import render_chart
-
-    patch = StylePatch.model_validate(
-        {"charts": {"axis_quantitative": {"labels": {"format": "percent_number"}}}}
-    )
-    resolved, chart_style_context = resolve_style_and_context(get_theme_style(), patch)
-    chart = TypeAdapter(Chart).validate_python(
-        {
-            "id": "c",
-            "type": "bar",
-            "x": "cat",
-            "y": "value",
-            "query": SqlQuery(sql="SELECT 1", source="test_db"),
-            "query_name": "q",
-        }
-    )
-    data = [
-        {"cat": "a", "value": 20.0},
-        {"cat": "b", "value": 40.0},
-        {"cat": "c", "value": 60.0},
-    ]
-    svg_output = render_chart(chart, resolved, chart_style_context, data, format="svg")
-    assert svg_output
 
 
 def test_ruler_and_tick_label_are_mutually_exclusive():

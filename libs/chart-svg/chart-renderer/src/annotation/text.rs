@@ -5,8 +5,9 @@ use std::fmt::Write as _;
 use super::model::{FontStyle, TextStyle};
 use super::place::{TextAnchor, TextBox};
 use crate::diagnostic::Diagnostic;
-use crate::svg::{num, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{num};
+use print::{xml_escape, xml_escape_attr};
+use measure::FontBook;
 
 pub(crate) fn css_family(families: &[String]) -> String {
     mdsvg::css::css_font_family_stack(&families.join(","))

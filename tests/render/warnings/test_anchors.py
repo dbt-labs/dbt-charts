@@ -44,7 +44,6 @@ def _ctx(chart: Any, rows: list[dict[str, Any]]) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
     )
 
 
@@ -148,7 +147,6 @@ def test_point_map_out_of_projection_anchors_on_projection() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={resolved.id: {"data": {"values": []}}},
     )
 
     for w in point_map_out_of_projection.detect(ctx):

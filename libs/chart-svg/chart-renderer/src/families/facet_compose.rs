@@ -23,7 +23,7 @@
 //! panel.
 //!
 //! Byte identity: hoisting this body verbatim out of `bar.rs` changed
-//! nothing about ITS OWN laws — `golden_sweep.py --group multiples` and
+//! nothing about ITS OWN laws — `the retired per-chart sweep --group multiples` and
 //! `board_sweep.py` both diff byte-identical on bar's own rungs 01-05
 //! before/after this move (see `docs/laws-shared.md`'s facet ledger).
 //!
@@ -91,8 +91,9 @@ use crate::families::scatter::PlainXAxis;
 use crate::families::scatter_axis::TemporalXAxis;
 use crate::families::multiples::{self, Panel};
 use crate::frame::ChartFrame;
-use crate::svg::{num_full, xml_escape, xml_escape_attr, vega_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{num_full};
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit;
 use crate::Payload;
 
@@ -758,17 +759,26 @@ pub(crate) fn compose_facet_full(
     // integer targets down from the first clamp-exceeding one finds the
     // nearest estimate that lands exactly on it.
     let mut solving = payload.clone();
+    // The step can jump over the box (a canvas just under it, then one just over), so
+    // no estimate lands on it exactly: the tallest canvas that fits inside is the nearest.
+    let mut nearest: Option<(f64, String)> = None;
     for step in 0..MAX_SOLVES {
         solving.height = payload.height - SIZING_CLAMP_PX - 1.0 - step as f64;
         (svg, canvas_h) = compose_facet_at(&solving, fonts, spec, chrome, row_axis, render_pass)?;
         if canvas_h == payload.height {
             return Ok(svg);
         }
+        if canvas_h < payload.height && nearest.as_ref().is_none_or(|(best, _)| canvas_h > *best) {
+            nearest = Some((canvas_h, svg));
+        }
     }
-    Err(format!(
-        "{}: no estimate within {MAX_SOLVES}px below the {} box lands the composite canvas on it (last {canvas_h})",
-        spec.family, payload.height
-    ).into())
+    match nearest {
+        Some((_, svg)) => Ok(svg),
+        None => Err(format!(
+            "{}: no estimate within {MAX_SOLVES}px below the {} box lands the composite canvas inside it (last {canvas_h})",
+            spec.family, payload.height
+        ).into()),
+    }
 }
 
 /// One probe-correct-render pass against `payload.height`; returns the
@@ -1470,7 +1480,7 @@ fn compose_facet_at(
         for col_i in 0..panel_cols_n {
             let (dx, _) = offsets[col_i];
             let text_x = plot_x(dx) + panel_w / 2.0;
-            let text_y = header_top + crate::measure::baseline_shift("top", HEADER_FONT_SIZE);
+            let text_y = header_top + measure::baseline_shift("top", HEADER_FONT_SIZE);
             crate::contract::facet_header_open(&mut svg, &col_labels[col_i])?;
             let _ = write!(
                 svg,
@@ -1607,7 +1617,7 @@ fn compose_facet_at(
             let (_, dy) = offsets[row_i * panel_cols_n];
             let text_x = header_right_edge - row_label_widths[row_i];
             let cy = pad_t + margin_top + top0 + dy + child_height / 2.0;
-            let text_y = cy + crate::measure::baseline_shift("middle", HEADER_FONT_SIZE);
+            let text_y = cy + measure::baseline_shift("middle", HEADER_FONT_SIZE);
             crate::contract::facet_header_open(&mut svg, &row_labels[row_i])?;
             let _ = write!(
                 svg,
@@ -1894,7 +1904,7 @@ mod tests {
         /// with a spy that records its own `orig_h`/`probe["height"]`/
         /// `target_height`/`panel_rows` while rendering this exact board
         /// through the real production pipeline (`_board_render_contexts`
-        /// + `_prod_render`, `golden_sweep.py`'s own machinery). The spy
+        /// + `_prod_render`, the retired per-chart sweep's own machinery). The spy
         /// recorded `orig_h=802.0/7.0=114.57142857142857`,
         /// `probe["height"]=993.0`, `target_height=802.0`, `panel_rows=7`,
         /// and — after `_correct_facet_overshoot` ran — `unit["height"]=

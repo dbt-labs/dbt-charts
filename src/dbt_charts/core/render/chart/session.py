@@ -2,13 +2,14 @@
 
 Holds the shared board style and drives the per-chart emit → features
 pipeline for a single board/board render.  Call ``emit_chart`` per chart,
-then ``finalize_vl`` to produce Vega-Lite JSON — that path is VL-only.
+then ``finalize_vl`` to produce Vega-Lite JSON — that path is the geo maps only.
 
-Non-VL families (``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``,
-``pie``) are hand-drawn SVG, not Vega-Lite: ``render_svg_family`` dispatches them
-straight to the Rust engine and returns the SVG string, bypassing
-``emit_chart``/``finalize_vl`` entirely. It returns ``None`` for VL families
-so the caller falls through to the ``emit_chart``/``finalize_vl`` path.
+Every other family (``bar``, ``line``, ``area``, ``scatter``, ``histogram``,
+``heatmap``, ``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``, ``pie``)
+is drawn by the Rust engine: ``render_svg_family`` dispatches it and returns the
+SVG string, bypassing ``emit_chart``/``finalize_vl`` entirely. It returns
+``None`` for a geo map so the caller falls through to the ``emit_chart``/
+``finalize_vl`` path.
 """
 
 from __future__ import annotations
@@ -21,22 +22,23 @@ from dbt_charts.core.compile.models.board.normalized import (
     TitleShift,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedAreaChart,
+    ResolvedBarChart,
     ResolvedCalloutChart,
     ResolvedChart,
     ResolvedCustomChart,
+    ResolvedHeatmapChart,
     ResolvedKpiChart,
+    ResolvedLineChart,
     ResolvedPieChart,
+    ResolvedScatterChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
 from dbt_charts.core.compile.models.chart.resolved._base import (
-    _CartesianResolvedChartFields,
     _SharedResolvedChartFields,
 )
-from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
-from dbt_charts.core.diagnostics.chart_data import ChartDataError
-from dbt_charts.core.diagnostics.codes_render import ERR_MULTIPLES_RESOLVED_WITHOUT_DATA
 from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.emitters import get_emitter
 from dbt_charts.core.render.chart.feature import FeaturePipeline, chart_rows
@@ -46,6 +48,7 @@ from dbt_charts.core.render.chart.translate import assemble_final_vl
 from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.sizing import custom_chart_height
 from dbt_charts.core.render.utils import normalize_data_types
+from dbt_charts.core.utils import Rows
 
 
 @dataclass
@@ -80,8 +83,11 @@ class BoardRenderSession:
         inset: dict[str, int | float] | None = None,
         padding: dict[str, int | float] | None = None,
         title_shift: TitleShift = NO_TITLE_SHIFT,
+        datasets: dict[str | None, Rows] | None = None,
+        measuring: bool = False,
+        authored_height: float | None = None,
     ) -> str | None:
-        """Non-VL families → SVG string; VL families → None (caller runs emit path).
+        """Engine families → SVG string; geo (Vega-Lite) → None (caller runs emit path).
 
         ``inset`` is the padding the caller shrank ``width``/``height`` by; a
         family that paints a card rect grows it back out over that padding.
@@ -145,7 +151,14 @@ class BoardRenderSession:
                     title_shift=title_shift,
                 )
                 return svg
-            case ResolvedPieChart():
+            case (
+                ResolvedPieChart()
+                | ResolvedBarChart()
+                | ResolvedLineChart()
+                | ResolvedAreaChart()
+                | ResolvedScatterChart()
+                | ResolvedHeatmapChart()
+            ):
                 svg, _ = render_native(
                     chart,
                     data,
@@ -157,6 +170,9 @@ class BoardRenderSession:
                     board_style=self.board_style,
                     title_shift=title_shift,
                     is_placeholder=is_placeholder,
+                    datasets=datasets,
+                    measuring=measuring,
+                    authored_height=authored_height,
                 )
                 return svg
             case ResolvedCalloutChart():
@@ -179,44 +195,22 @@ class BoardRenderSession:
         box: RenderBox,
         datasets: dict[str | None, list[dict[str, Any]]],
     ) -> ChartSpec:
-        """Run emit → features for one chart.
+        """Run emit → features for one geo map.
 
         Returns the ``ChartSpec`` before assembly; callers drive
-        ``finalize_vl(spec)`` for VL families.
+        ``finalize_vl(spec)``.
 
         Args:
             chart: Resolved chart for this family.
             box: Render-time slot geometry passed through to emitters and features.
-            datasets: Every query this chart references, keyed by query_name —
-                the base chart's own rows (``chart.query_name``) plus, for a
-                cartesian chart with typed overlay layers, each layer's own
-                query override. Built by ``layout_sizing.build_chart_datasets``.
+            datasets: Every query this chart references, keyed by query_name,
+                built by ``layout_sizing.build_chart_datasets``.
 
         Returns:
             Populated ``ChartSpec`` after all applicable features applied.
         """
         data = chart_rows(chart, datasets)
-        # A faceted chart resolved against zero rows bakes panel_axes == ()
-        # (partition()'s empty-data rule) even though multiples is set. Check
-        # this before the emitter runs — an emitter that regroups by
-        # panel_axes (gap-fill, per-panel validation) sees axes=() as the
-        # ordinary N=1 case and validates real data as one giant panel,
-        # raising a misleading duplicate-rows error before this chart ever
-        # reaches FacetFeature. Loud and accurate rather than silent or wrong.
-        if (
-            isinstance(chart, _CartesianResolvedChartFields)
-            and chart.multiples is not None
-            and not chart.panel_axes
-            and data.all_rows()
-        ):
-            raise ChartDataError.from_code(
-                ERR_MULTIPLES_RESOLVED_WITHOUT_DATA, chart_id=chart.id
-            )
-        emitter = get_emitter(chart)
-        if isinstance(chart, LayeredResolvedChart):
-            spec = emitter.emit(chart, box, data, datasets=datasets)  # type: ignore[call-arg]
-        else:
-            spec = emitter.emit(chart, box, data)
+        spec = get_emitter(chart).emit(chart, box, data)
         spec = self.features.apply(spec, chart, box, datasets)
         if (
             spec.data is None

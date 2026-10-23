@@ -25,7 +25,6 @@ def _make_ctx(chart: BarChart) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: []},
-        vega_specs={},
     )
 
 

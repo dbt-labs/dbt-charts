@@ -20,7 +20,6 @@ def _make_ctx() -> WarningContext:
     return WarningContext(
         board_spec=make_test_resolved_board(),
         chart_results={"c1": [{"x": 1}]},
-        vega_specs={"c1": {"mark": "bar"}},
     )
 
 

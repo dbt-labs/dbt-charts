@@ -1077,7 +1077,7 @@ cols:
 
 class TestBoardCanvasIsAlwaysOpaqueNeverTheTransparentLiteral:
     """ink_canvas -- what undercoat/halo/knockout consumers read for
-    contrast (support_table_attachment.py's ``charts_style.ink_canvas``)
+    contrast (the engine's support-table ``charts_style.ink_canvas``)
     -- is always a real opaque color, never the literal 'transparent', on
     both a top-level board and an unstyled nested board underneath a
     translucent root background."""

@@ -201,7 +201,7 @@ class AxisLineStyle(BaseModel):
 # axis_quantitative and axis_band as well as the `axis` baseline; only axis_x
 # narrows it (to DimensionTicksStyle, which adds time_unit). Cadence authored
 # through any of those slots is resolved and gated per axis at render:
-# render/chart/type_inference.py's apply_x_tick_cadence for x, and
+# the engine's tick cadence for x, and
 # _bake_cartesian_axes for the axis_y rejection.
 class AxisTicksStyle(BaseModel):
     """Tick marks on an axis: visibility, color, size, and cadence.
@@ -285,8 +285,7 @@ class DimensionTicksStyle(AxisTicksStyle, ConstrainedModel):
     # A bare `step` is deliberately NOT rejected: it is the quantitative-axis
     # cadence lever (VL's tickMinStep), and whether this axis resolves to
     # quantitative, temporal, or ordinal is data-dependent. The gate lives in
-    # render/chart/type_inference.py's apply_x_tick_cadence, which every
-    # cartesian x path routes through.
+    # the engine's tick cadence, which every cartesian x path routes through.
     __constraints__: ClassVar[tuple[Constraint, ...]] = (
         AtMostOneOf(
             ("time_unit", "count"),
@@ -488,7 +487,7 @@ class DimensionLabelStyle(AxisLabelStyle):
     # lives in the theme cascade (_base.yaml's axis_x.labels.clock), not as a
     # Python literal here — None on this field means "not authored at this
     # layer", same as every other passthrough field. See
-    # ``time_unit_detect.default_subday_label_expr_for``, which reads this
+    # the engine's sub-day label rule, which reads this
     # field on a genuinely continuous (non-bucketed) temporal x-axis.
     clock: Literal[24, 12] | None = Field(
         default=None,

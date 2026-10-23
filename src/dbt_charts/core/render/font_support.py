@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from types import ModuleType
 
 from dbt_charts.core.fonts import (
     INTER_FONT_FAMILY,
@@ -13,20 +14,22 @@ from dbt_charts.core.fonts import (
 )
 from dbt_charts.core.render.svg_utils import escape_attr
 
-_vl_convert_registered = False
+# The module the vendored fonts were registered with: a stand-in module must not
+# mark the real one registered.
+_registered_with: ModuleType | None = None
 
 
-def register_vl_convert_fonts(vlc_module: object) -> None:
+def register_vl_convert_fonts(vlc_module: ModuleType) -> None:
     """Register vendored fonts for vl-convert backed chart rendering."""
-    global _vl_convert_registered
+    global _registered_with
 
-    if _vl_convert_registered:
+    if _registered_with is vlc_module:
         return
 
     register_font_directory = getattr(vlc_module, "register_font_directory", None)
     if callable(register_font_directory):
         register_font_directory(str(get_fonts_dir()))
-    _vl_convert_registered = True
+    _registered_with = vlc_module
 
 
 _FONT_FAMILY_ATTR_PATTERN = re.compile(

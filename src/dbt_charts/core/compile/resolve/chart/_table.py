@@ -281,8 +281,7 @@ def _unscaled_decimal_pad_table(
     12100/900), since a bare whole number and a "k"-suffixed one share no
     decimal position to pad to.
 
-    Compile-side twin of ``support_table_attachment.py``'s
-    ``_unscaled_decimal_pad``: same string-level questions (do these cells
+    Same string-level questions as the engine's support-table strip (do these cells
     share a printed unit; how many fractional digits does the deepest one
     print), but formats with ``d3_format`` (the board locale) rather than render's
     ``format_value``, since ``compile`` cannot import ``render``
@@ -544,8 +543,8 @@ def _with_resolved_scale_stops(
             # decimal_pad_table_for refuses an SI spec (type "s") -- it only
             # builds a table from a declared fixed-point precision. A column
             # with no shared tier at all still needs decimal alignment, so
-            # fall back to measuring each cell's own printed depth, mirroring
-            # support_table_attachment.py's _unscaled_decimal_pad.
+            # fall back to measuring each cell's own printed depth, as the engine's
+            # support-table strip does.
             # _unscaled_decimal_pad_table self-gates on
             # column_shares_one_printed_unit, refusing a genuine tier mix.
             pad_table = _unscaled_decimal_pad_table(

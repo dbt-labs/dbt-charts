@@ -4,32 +4,10 @@
 
 use crate::pygments_re::is_py_space;
 
-/// Escape text for safe inclusion in XML/SVG, byte-exact under strict XML
-/// attribute-value normalization. Mirrors Python's `escape_xml`:
-/// `html.escape(text, quote=True)` (`&`, `<`, `>`, `"`, `'`), then `\n`, `\r`
-/// and `\t` as character references.
-pub fn escape_xml(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#x27;"),
-            '\n' => out.push_str("&#10;"),
-            '\r' => out.push_str("&#13;"),
-            '\t' => out.push_str("&#9;"),
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
 /// Escape text for inclusion in SVG text elements: XML-escape, then collapse
 /// runs of 2+ spaces down to one (preserving single spaces).
 pub fn escape_svg_text(text: &str) -> String {
-    let escaped = escape_xml(text);
+    let escaped = print::xml_escape_attr(text);
     let mut out = String::with_capacity(escaped.len());
     let mut chars = escaped.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -92,11 +70,6 @@ mod tests {
             normalize_whitespace(" a\x1cb\x1d\x1d c\u{a0}d\x1f"),
             "a b c d"
         );
-    }
-
-    #[test]
-    fn test_escape_xml() {
-        assert_eq!(escape_xml("<a>&\"'"), "&lt;a&gt;&amp;&quot;&#x27;");
     }
 
     #[test]

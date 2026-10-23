@@ -18,10 +18,13 @@
 //! `message.font.*`, tone-resolved colors) — no cascade left to trust
 //! Python for, so this ports `_callout_md_renderer` and `get_font_path`
 //! directly.
+//!
+//! On the family contract (`chart-renderer/AGENTS.md`): `bind` reads the
+//! payload, `compose` is the one law behind both `height_for_width` and
+//! `layout`, and `render` prints the nodes `layout` returns.
 
 use std::fmt::Write as _;
 
-use mdsvg::fonts::{cached_measurer, wrap_text_precise};
 use mdsvg::renderer::SVGRenderer;
 use mdsvg::style::Style as MdsvgStyle;
 use serde::Deserialize;
@@ -30,11 +33,16 @@ use serde_json::{json, Value};
 use crate::codes;
 use crate::common::Font;
 use crate::diagnostic::{warn, Diagnostic};
+use crate::layout::{Insets, IntrinsicWidth, Layout, Rect};
 use crate::svg::py_float_str;
-use crate::text::FontBook;
-use crate::xml::{Attrs, Xml};
 use crate::Payload;
+use measure::font_files::{font_path, mono_font_path};
+use measure::wrap::wrap_plain;
+use measure::{FontBook, Measure};
+use print::print;
+use scene::{Attrs, Chars, Child, Element, Escape, Extent, Node, TextBlock};
 
+const MIN_WIDTH: f64 = 120.0;
 const MIN_HEIGHT: f64 = 60.0;
 const LINE_HEIGHT_RATIO: f64 = 1.35;
 const MAX_MESSAGE_LINES: usize = 12;
@@ -42,6 +50,10 @@ const MAX_TITLE_LINES: usize = 3;
 const MAX_HINT_LINES: usize = 3;
 const CODE_SIZE_RATIO: f64 = 0.75;
 const DOC_LINK_SIZE_RATIO: f64 = 0.85;
+/// The only tags mdsvg writes as `<x/>`; every other empty element is a pair,
+/// which roxmltree cannot tell apart.
+const MDSVG_SELF_CLOSING: [&str; 4] = ["image", "rect", "line", "circle"];
+const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
 #[derive(Deserialize)]
 struct Resolved {
@@ -50,7 +62,7 @@ struct Resolved {
     title: Option<String>,
     style: CalloutStyle,
     #[serde(default)]
-    placard: Option<Placard>,
+    placard: Option<PlacardData>,
 }
 
 /// `render_callout_svg`'s `code`/`hint`/`doc_url`, plus the badge's own href
@@ -58,7 +70,7 @@ struct Resolved {
 /// refusal) has a badge anchor but no `doc_url`, so there is no "See the
 /// docs" link.
 #[derive(Deserialize)]
-struct Placard {
+struct PlacardData {
     code: String,
     code_url: String,
     hint: Option<String>,
@@ -67,6 +79,7 @@ struct Placard {
 
 #[derive(Deserialize)]
 struct CalloutStyle {
+    preferred_width: f64,
     tone: String,
     background: String,
     border: BorderStyle,
@@ -104,29 +117,82 @@ struct Padding {
     left: f64,
 }
 
-/// `fonts.py::registry_family` + `get_font_path`, restricted to the one
-/// branch `_callout_md_renderer` ever reaches (`numeric=False`): a "Source
-/// Serif" stack measures against the vendored Source Serif 4 file, every
-/// other family — including one we do not vendor — falls back to Inter
-/// Variable, the documented "closest honest estimate" default.
-fn font_path(fonts_dir: &str, family_css: &str) -> String {
-    let primary = family_css
-        .split(',')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .trim_matches(['\'', '"']);
-    let file = if primary.starts_with("Source Serif") {
-        "SourceSerif4Variable.ttf"
-    } else {
-        "InterVariable.ttf"
-    };
-    format!("{fonts_dir}/{file}")
+/// A callout after `bind`: the text, style and links its payload decides,
+/// before any width does.
+pub struct Bound {
+    id: String,
+    title: Option<String>,
+    message: String,
+    style: CalloutStyle,
+    title_color: String,
+    message_color: String,
+    fonts_dir: String,
+    placard: Option<Placard>,
 }
 
-/// `fonts.py::get_mono_font_path` — always Source Code Pro, no family input.
-fn mono_font_path(fonts_dir: &str) -> String {
-    format!("{fonts_dir}/SourceCodePro-Regular.ttf")
+/// The error placard's own parts. It is plain wrapped text, not markdown, and
+/// records no truncation warning: it has no authored YAML line to point at.
+struct Placard {
+    code: String,
+    code_href: String,
+    hint: Option<String>,
+    doc: Option<DocLink>,
+}
+
+struct DocLink {
+    href: String,
+    text: String,
+}
+
+pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
+    let r: Resolved = Deserialize::deserialize(&payload.resolved)
+        .map_err(|e| format!("callout: payload.resolved: {e}"))?;
+    let fonts_dir = payload
+        .fonts_dir
+        .clone()
+        .ok_or_else(|| "callout: payload.fonts_dir is required to measure markdown".to_string())?;
+    let title_color = r
+        .style
+        .title
+        .font
+        .color
+        .clone()
+        .ok_or("callout: title.font.color missing")?;
+    let message_color = r
+        .style
+        .message
+        .font
+        .color
+        .clone()
+        .ok_or("callout: message.font.color missing")?;
+    let placard = r
+        .placard
+        .map(|p| -> Result<Placard, Diagnostic> {
+            let doc = match p.doc_url.as_deref() {
+                Some(doc_url) => Some(DocLink {
+                    href: crate::href::checked_href(doc_url)?.to_string(),
+                    text: display_text::language::tr("placard.see_the_docs", None, &[])?,
+                }),
+                None => None,
+            };
+            Ok(Placard {
+                code_href: crate::href::checked_href(&p.code_url)?.to_string(),
+                code: p.code,
+                hint: p.hint.filter(|hint| !hint.is_empty()),
+                doc,
+            })
+        })
+        .transpose()?;
+    Ok(Bound {
+        id: r.id,
+        title: r.title.filter(|t| !t.is_empty()),
+        message: r.message,
+        style: r.style,
+        title_color,
+        message_color,
+        fonts_dir,
+        placard,
+    })
 }
 
 /// `callout.py::_callout_md_renderer`.
@@ -169,22 +235,20 @@ fn callout_md_renderer(
     )
 }
 
-struct ContentBlock {
-    elements: String,
-    style_block: String,
+/// A title or message laid out: the nodes it draws at its own origin, the
+/// `<style>` its markdown needs, and the height it asks for.
+struct Block {
+    nodes: Vec<Node>,
+    styles: Vec<Node>,
     height: f64,
 }
 
-fn render_markdown_block(
-    renderer: &SVGRenderer,
-    text: &str,
-    content_width: f64,
-) -> Result<ContentBlock, String> {
+fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64) -> Result<Block, String> {
     let doc = mdsvg::parser::parse(text);
     let r = renderer.render_content(&doc, content_width, 0.0)?;
-    Ok(ContentBlock {
-        elements: r.elements,
-        style_block: r.style_block,
+    Ok(Block {
+        nodes: markup_nodes(&r.elements)?,
+        styles: markup_nodes(&r.style_block)?,
         height: r.height,
     })
 }
@@ -198,39 +262,35 @@ fn plain_block(
     font: &Font,
     fill: &str,
     max_lines: usize,
-) -> Result<ContentBlock, String> {
+) -> Result<Block, String> {
     let family = font.family_or("Inter Variable, sans-serif");
     let size = font.size_or(14.0);
-    let lines = wrap_plain(fonts_dir, text, content_width, size, family, max_lines)?;
+    let lines = wrap_callout(fonts_dir, text, content_width, size, family, max_lines)?;
     let line_height = size * LINE_HEIGHT_RATIO;
-    let mut xml = Xml::new();
+    let mut nodes = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         if i > 0 {
-            xml.text("\n  ");
+            nodes.push(Node::Chars(Chars::new("\n  ", Escape::Quick)));
         }
-        xml.leaf(
-            "text",
+        nodes.push(text_line(
             Attrs::new()
-                .set("x", "0")
-                .set("y", py_float_str(size + i as f64 * line_height))
-                .set("font-size", py_float_str(size))
-                .set("font-family", family)
-                .set("fill", fill)
-                .set("text-anchor", "start"),
+                .quick("x", "0")
+                .quick("y", py_float_str(size + i as f64 * line_height))
+                .quick("font-size", py_float_str(size))
+                .quick("font-family", family)
+                .quick("fill", fill)
+                .quick("text-anchor", "start"),
             line,
-        );
+        ));
     }
-    let elements = xml.finish();
-    Ok(ContentBlock {
-        elements,
-        style_block: String::new(),
+    Ok(Block {
+        nodes,
+        styles: Vec::new(),
         height: lines.len() as f64 * line_height,
     })
 }
 
-/// `wrap_text_precise(..., ellipsis=True) or [text]` against the font
-/// `get_font_measurer(family)` loads.
-fn wrap_plain(
+fn wrap_callout(
     fonts_dir: &str,
     text: &str,
     width: f64,
@@ -238,129 +298,163 @@ fn wrap_plain(
     family: &str,
     max_lines: usize,
 ) -> Result<Vec<String>, String> {
-    let path = font_path(fonts_dir, family);
-    let measurer = cached_measurer(&path, 0, None);
-    if !measurer.is_available() {
-        return Err(format!("callout: font file {path} cannot be read to measure text"));
-    }
-    let (lines, _) = wrap_text_precise(text, width, size, &measurer, Some(max_lines), true, true);
-    Ok(if lines.is_empty() { vec![text.to_string()] } else { lines })
+    wrap_plain(fonts_dir, text, width, size, family, max_lines).map_err(|e| format!("callout: {e}"))
 }
 
-fn warn_truncated(chart_id: &str, field: &str, text: &str) {
-    warn(Diagnostic::new(
+/// mdsvg lays markdown out as markup; its elements enter the scene here until
+/// mdsvg emits `Element`s itself. Its text is escaped as `xml_escape_attr`
+/// (`Escape::Mdsvg`); its attribute values, `Escape::Attr`, print the same bytes.
+fn markup_nodes(markup: &str) -> Result<Vec<Node>, String> {
+    let wrapped = ["<root>", markup, "</root>"].concat();
+    let doc = roxmltree::Document::parse(&wrapped)
+        .map_err(|e| format!("callout: markdown markup: {e}"))?;
+    doc.root_element()
+        .children()
+        .map(|child| {
+            if child.is_element() {
+                Ok(Node::Element(markup_element(child)?))
+            } else if child.is_text() {
+                Ok(Node::Chars(Chars::new(child.text().unwrap_or_default(), Escape::Attr)))
+            } else {
+                Err("callout: markdown markup holds a comment or processing instruction".to_string())
+            }
+        })
+        .collect()
+}
+
+fn markup_element(node: roxmltree::Node<'_, '_>) -> Result<Element, String> {
+    let tag = node.tag_name().name();
+    let mut attrs = Attrs::new();
+    for attribute in node.attributes() {
+        let name = match attribute.namespace() {
+            None => attribute.name().to_string(),
+            Some(XML_NAMESPACE) => format!("xml:{}", attribute.name()),
+            Some(other) => {
+                return Err(format!(
+                    "callout: markdown <{tag}> has a namespaced attribute {other}"
+                ))
+            }
+        };
+        attrs = attrs.set(name, attribute.value());
+    }
+    let mut children = Vec::new();
+    for child in node.children() {
+        if child.is_element() {
+            children.push(Child::Element(markup_element(child)?));
+        } else if child.is_text() {
+            let text = child.text().unwrap_or_default();
+            if tag == "style" {
+                // mdsvg writes its CSS with raw newlines, which `Escape::Mdsvg`
+                // would turn into references.
+                for (i, line) in text.split('\n').enumerate() {
+                    if i > 0 {
+                        children.push(Child::Text(Chars::new("\n", Escape::Attr)));
+                    }
+                    children.push(Child::Text(Chars::new(line, Escape::Mdsvg)));
+                }
+            } else {
+                children.push(Child::Text(Chars::new(text, Escape::Mdsvg)));
+            }
+        } else {
+            return Err(format!(
+                "callout: markdown <{tag}> holds a comment or processing instruction"
+            ));
+        }
+    }
+    if children.is_empty() && !MDSVG_SELF_CLOSING.contains(&tag) {
+        children.push(Child::Text(Chars::new("", Escape::Mdsvg)));
+    }
+    Ok(Element {
+        tag: tag.to_string(),
+        attrs,
+        children,
+    })
+}
+
+fn truncated(chart_id: &str, field: &str, text: &str) -> Diagnostic {
+    Diagnostic::new(
         &codes::WARN_CALLOUT_TEXT_TRUNCATED,
-        [("chart_id", json!(chart_id)), ("authored_field", json!(field)), ("authored_text", json!(text))],
-    ));
+        [
+            ("chart_id", json!(chart_id)),
+            ("authored_field", json!(field)),
+            ("authored_text", json!(text)),
+        ],
+    )
 }
 
-fn emit_block(
-    xml: &mut Xml,
-    elements: &str,
-    (x, y): (f64, f64),
-    clip: Option<(&str, f64, f64)>,
-    kind: Option<&str>,
-) {
-    let mut group = Attrs::new().set("transform", format!("translate({}, {})", py_float_str(x), py_float_str(y)));
-    if let Some((id, width, height)) = clip {
-        xml.open("defs", Attrs::new());
-        xml.open("clipPath", Attrs::new().set("id", id));
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", "0")
-                .set("y", "0")
-                .set("width", py_float_str(width))
-                .set("height", py_float_str(height)),
-        );
-        xml.close("clipPath");
-        xml.close("defs");
-        group = group.set("clip-path", format!("url(#{id})"));
-    }
-    xml.open("g", group.set_some("data-authored-kind", kind));
-    xml.raw(elements);
-    xml.close("g");
+/// What a width decides, shared by `height_for_width` and `layout` so the
+/// height asked for is the height drawn.
+struct Composed {
+    width: f64,
+    content_width: f64,
+    title: Option<Block>,
+    message: Block,
+    hint_lines: Vec<String>,
+    title_size: f64,
+    message_size: f64,
+    max_title_height: f64,
+    max_message_height: f64,
+    title_height: f64,
+    message_height: f64,
+    badge_height: f64,
+    hint_height: f64,
+    natural_height: f64,
 }
 
-/// `callout.py::render_callout_svg`. Returns the SVG and its natural height:
-/// the height `render_callout_svg` draws at when no slot height is given
-/// (`max(MIN_HEIGHT, content)`), which core's sizing pass reads.
-pub fn render(payload: &Payload, fonts: &FontBook) -> Result<(String, f64), String> {
-    let _ = fonts; // measurement runs through mdsvg's own font loading, not FontBook
-    let r: Resolved = Deserialize::deserialize(&payload.resolved)
-        .map_err(|e| format!("callout: payload.resolved: {e}"))?;
-    let fonts_dir = payload
-        .fonts_dir
-        .as_deref()
-        .ok_or_else(|| "callout: payload.fonts_dir is required to measure markdown".to_string())?;
-
-    let inline = &r.style;
-    let pad_left = inline.padding.left;
-    let pad_right = inline.padding.right;
-    let pad_top = inline.padding.top;
-    let pad_bottom = inline.padding.bottom;
+fn compose(bound: &Bound, width: f64) -> Result<Composed, Diagnostic> {
+    let inline = &bound.style;
+    let pad = &inline.padding;
     let section_gap = inline.section_gap;
+    let fonts_dir = bound.fonts_dir.as_str();
 
-    let w = payload.width.max(120.0);
-    let content_width = (w - pad_left - pad_right).max(40.0);
+    let w = width.max(MIN_WIDTH);
+    let content_width = (w - pad.left - pad.right).max(40.0);
 
-    let title_color = r
-        .style
-        .title
-        .font
-        .color
-        .clone()
-        .ok_or("callout: title.font.color missing")?;
-    let message_color = r
-        .style
-        .message
-        .font
-        .color
-        .clone()
-        .ok_or("callout: message.font.color missing")?;
-
-    let title_text = r.title.as_deref().filter(|t| !t.is_empty());
-    let (title_block, message_block) = if r.placard.is_none() {
+    let (title_block, message_block) = if bound.placard.is_none() {
         let title_renderer = callout_md_renderer(
             fonts_dir,
             &inline.title.font,
             &inline.bold_font_weight,
-            &title_color,
-            &title_color,
+            &bound.title_color,
+            &bound.title_color,
         )?;
         let message_renderer = callout_md_renderer(
             fonts_dir,
             &inline.message.font,
             &inline.bold_font_weight,
-            &message_color,
-            &title_color,
+            &bound.message_color,
+            &bound.title_color,
         )?;
         (
-            title_text
-                .map(|t| render_markdown_block(&title_renderer, t, content_width))
+            bound
+                .title
+                .as_deref()
+                .map(|t| markdown_block(&title_renderer, t, content_width))
                 .transpose()?,
-            render_markdown_block(&message_renderer, &r.message, content_width)?,
+            markdown_block(&message_renderer, &bound.message, content_width)?,
         )
     } else {
         (
-            title_text
+            bound
+                .title
+                .as_deref()
                 .map(|t| {
                     plain_block(
                         fonts_dir,
                         t,
                         content_width,
                         &inline.title.font,
-                        &title_color,
+                        &bound.title_color,
                         MAX_TITLE_LINES,
                     )
                 })
                 .transpose()?,
             plain_block(
                 fonts_dir,
-                &r.message,
+                &bound.message,
                 content_width,
                 &inline.message.font,
-                &message_color,
+                &bound.message_color,
                 MAX_MESSAGE_LINES,
             )?,
         )
@@ -372,10 +466,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<(String, f64), Stri
     let max_title_height = MAX_TITLE_LINES as f64 * title_size * LINE_HEIGHT_RATIO;
     let max_message_height = MAX_MESSAGE_LINES as f64 * message_size * LINE_HEIGHT_RATIO;
 
-    let title_block_height = title_block
+    let title_height = title_block
         .as_ref()
         .map_or(0.0, |b| b.height.min(max_title_height));
-    let message_block_height = message_block.height.min(max_message_height);
+    let message_height = message_block.height.min(max_message_height);
     let title_gap = if title_block.is_some() {
         section_gap
     } else {
@@ -383,8 +477,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<(String, f64), Stri
     };
 
     let message_line_height = message_size * LINE_HEIGHT_RATIO;
-    let hint_lines = match r.placard.as_ref().and_then(|p| p.hint.as_deref()) {
-        Some(hint) if !hint.is_empty() => wrap_plain(
+    let hint_lines = match bound.placard.as_ref().and_then(|p| p.hint.as_deref()) {
+        Some(hint) => wrap_callout(
             fonts_dir,
             hint,
             content_width,
@@ -392,182 +486,313 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<(String, f64), Stri
             message_family,
             MAX_HINT_LINES,
         )?,
-        _ => Vec::new(),
+        None => Vec::new(),
     };
-    let hint_block_height = hint_lines.len() as f64 * message_line_height;
-    let doc_url = r.placard.as_ref().and_then(|p| p.doc_url.as_deref());
-    let doc_block_height = if doc_url.is_some() {
+    let hint_height = hint_lines.len() as f64 * message_line_height;
+    let has_doc = bound.placard.as_ref().is_some_and(|p| p.doc.is_some());
+    let doc_height = if has_doc {
         message_size * DOC_LINK_SIZE_RATIO * LINE_HEIGHT_RATIO
     } else {
         0.0
     };
-    let code = r.placard.as_ref().map(|p| (p.code.as_str(), p.code_url.as_str()));
-    let code_badge_height = if code.is_some() {
+    let has_code = bound.placard.is_some();
+    let badge_height = if has_code {
         title_size * CODE_SIZE_RATIO * LINE_HEIGHT_RATIO
     } else {
         0.0
     };
 
-    let natural_height = pad_top
-        + pad_bottom
-        + code_badge_height
-        + if code.is_some() { section_gap } else { 0.0 }
-        + title_block_height
+    let natural_height = pad.top
+        + pad.bottom
+        + badge_height
+        + if has_code { section_gap } else { 0.0 }
+        + title_height
         + title_gap
-        + message_block_height
-        + if hint_lines.is_empty() { 0.0 } else { section_gap + hint_block_height }
-        + if doc_url.is_some() { section_gap + doc_block_height } else { 0.0 };
-    let natural_height = natural_height.max(MIN_HEIGHT);
-    let h = payload.height.max(natural_height);
-
-    let mut current_y = pad_top;
-    let mut style_block = String::new();
-
-    let code_draw = match code {
-        Some((code, code_url)) => {
-            let code_font_size = title_size * CODE_SIZE_RATIO;
-            let draw = (crate::href::checked_href(code_url)?, code, current_y + code_font_size, code_font_size);
-            current_y += code_badge_height + section_gap;
-            Some(draw)
+        + message_height
+        + if hint_lines.is_empty() {
+            0.0
+        } else {
+            section_gap + hint_height
         }
-        None => None,
-    };
+        + if has_doc {
+            section_gap + doc_height
+        } else {
+            0.0
+        };
 
-    let mut title_draw = None;
-    if let Some(block) = &title_block {
-        style_block.push_str(&block.style_block);
+    Ok(Composed {
+        width: w,
+        content_width,
+        title: title_block,
+        message: message_block,
+        hint_lines,
+        title_size,
+        message_size,
+        max_title_height,
+        max_message_height,
+        title_height,
+        message_height,
+        badge_height,
+        hint_height,
+        natural_height: natural_height.max(MIN_HEIGHT),
+    })
+}
+
+pub fn intrinsic(bound: &Bound, _measure: &Measure) -> Result<Option<IntrinsicWidth>, Diagnostic> {
+    Ok(Some(IntrinsicWidth {
+        min: MIN_WIDTH,
+        preferred: bound.style.preferred_width.max(MIN_WIDTH),
+    }))
+}
+
+/// `max(MIN_HEIGHT, content)`: the height `render_callout_svg` draws at when no
+/// slot height is given. Markdown and plain text wrap at `width`, and a font
+/// file that cannot be read fails here as it does in `layout`.
+pub fn height_for_width(bound: &Bound, width: f64, _measure: &Measure) -> Result<f64, Diagnostic> {
+    Ok(compose(bound, width)?.natural_height)
+}
+
+/// A block's group: its translation, its clip when the block overflows its
+/// cap, and its authored-kind mark.
+fn block_nodes(
+    content: Vec<Node>,
+    (x, y): (f64, f64),
+    clip: Option<(&str, f64, f64)>,
+    kind: Option<&str>,
+) -> Vec<Node> {
+    let mut nodes = Vec::new();
+    let mut attrs = Attrs::new().quick(
+        "transform",
+        format!("translate({}, {})", py_float_str(x), py_float_str(y)),
+    );
+    if let Some((id, width, height)) = clip {
+        let rect = Node::Rect(
+            Attrs::new()
+                .quick("x", "0")
+                .quick("y", "0")
+                .quick("width", py_float_str(width))
+                .quick("height", py_float_str(height)),
+        );
+        nodes.push(Node::Defs(vec![Node::ClipPath {
+            attrs: Attrs::new().quick("id", id),
+            children: vec![rect],
+        }]));
+        attrs = attrs.quick("clip-path", format!("url(#{id})"));
+    }
+    if let Some(kind) = kind {
+        attrs = attrs.quick("data-authored-kind", kind);
+    }
+    nodes.push(Node::group(attrs, content));
+    nodes
+}
+
+/// A line of text; `attrs` carry its position.
+fn text_line(attrs: Attrs, text: &str) -> Node {
+    Node::Text(TextBlock {
+        attrs,
+        text: Chars::new(text, Escape::Quick),
+    })
+}
+
+fn link(href: &str, text: Node) -> Node {
+    Node::Link {
+        attrs: Attrs::new().quick("href", href).quick("target", "_blank"),
+        children: vec![text],
+    }
+}
+
+/// `callout.py::render_callout_svg`. `cell` is the card as drawn: its width
+/// floors at `MIN_WIDTH`, its height is the caller's (`height_for_width` at
+/// least).
+pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, Diagnostic> {
+    draw(bound, compose(bound, cell.width)?, cell.height)
+}
+
+/// The card drawn `height` tall from its composed content.
+fn draw(bound: &Bound, c: Composed, height: f64) -> Result<Layout, Diagnostic> {
+    let inline = &bound.style;
+    let pad = &inline.padding;
+    let section_gap = inline.section_gap;
+    let (w, h) = (c.width, height);
+    let mut diagnostics = Vec::new();
+    let mut styles = Vec::new();
+    let mut body = Vec::new();
+    let mut current_y = pad.top;
+
+    if let Some(placard) = &bound.placard {
+        let size = c.title_size * CODE_SIZE_RATIO;
+        let text = text_line(
+            Attrs::new()
+                .quick("x", py_float_str(pad.left))
+                .quick("y", py_float_str(current_y + size))
+                .quick("font-size", py_float_str(size))
+                .quick("font-weight", "normal")
+                .quick("font-family", "monospace")
+                .quick("fill", bound.message_color.as_str()),
+            &placard.code,
+        );
+        body.push(link(&placard.code_href, text));
+        current_y += c.badge_height + section_gap;
+    }
+
+    if let Some(block) = c.title {
+        styles.extend(block.styles);
         let translate_y = current_y + inline.title.y_offset;
-        let clip_id = if block.height > max_title_height {
-            if r.placard.is_none() {
-                warn_truncated(&r.id, "title", r.title.as_deref().unwrap_or_default());
+        let clip_id = if block.height > c.max_title_height {
+            if bound.placard.is_none() {
+                diagnostics.push(truncated(
+                    &bound.id,
+                    "title",
+                    bound.title.as_deref().unwrap_or_default(),
+                ));
             }
-            Some(format!("title-clip-{}", callout_hash(&r, w, &title_color, &message_color)))
+            Some(format!("title-clip-{}", callout_hash(bound, w)))
         } else {
             None
         };
-        title_draw = Some((block, translate_y, clip_id));
-        current_y += title_block_height + section_gap;
+        let clip = clip_id
+            .as_deref()
+            .map(|id| (id, c.content_width, c.title_height));
+        body.extend(block_nodes(
+            block.nodes,
+            (pad.left, translate_y),
+            clip,
+            Some("title"),
+        ));
+        current_y += c.title_height + section_gap;
     }
 
-    style_block.push_str(&message_block.style_block);
+    styles.extend(c.message.styles);
     let message_translate_y = current_y + inline.message.y_offset;
-    let message_clip_id = if message_block.height > max_message_height {
-        if r.placard.is_none() {
-            warn_truncated(&r.id, "message", &r.message);
+    let message_clip_id = if c.message.height > c.max_message_height {
+        if bound.placard.is_none() {
+            diagnostics.push(truncated(&bound.id, "message", &bound.message));
         }
-        Some(format!("msg-clip-{}", callout_hash(&r, w, &title_color, &message_color)))
+        Some(format!("msg-clip-{}", callout_hash(bound, w)))
     } else {
         None
     };
-    current_y += message_block_height;
+    let message_clip = message_clip_id
+        .as_deref()
+        .map(|id| (id, c.content_width, c.message_height));
+    body.extend(block_nodes(
+        c.message.nodes,
+        (pad.left, message_translate_y),
+        message_clip,
+        None,
+    ));
+    current_y += c.message_height;
 
+    let message_family = inline.message.font.family_or("Inter Variable, sans-serif");
+    let message_line_height = c.message_size * LINE_HEIGHT_RATIO;
     let hint_start_y = current_y + section_gap;
+    for (i, line) in c.hint_lines.iter().enumerate() {
+        body.push(text_line(
+            Attrs::new()
+                .quick("x", py_float_str(pad.left))
+                .quick("y", py_float_str(hint_start_y + i as f64 * message_line_height))
+                .quick("font-size", py_float_str(c.message_size))
+                .quick("font-weight", "normal")
+                .quick("font-style", "italic")
+                .quick("font-family", message_family)
+                .quick("fill", bound.message_color.as_str()),
+            line,
+        ));
+    }
 
-    let doc_draw = match doc_url {
-        Some(doc_url) => {
-            let after_hint_y =
-                current_y + if hint_lines.is_empty() { 0.0 } else { section_gap + hint_block_height };
-            Some((crate::href::checked_href(doc_url)?, after_hint_y + section_gap))
-        }
-        None => None,
-    };
+    if let Some(doc) = bound.placard.as_ref().and_then(|p| p.doc.as_ref()) {
+        let after_hint_y = current_y
+            + if c.hint_lines.is_empty() {
+                0.0
+            } else {
+                section_gap + c.hint_height
+            };
+        let text = text_line(
+            Attrs::new()
+                .quick("x", py_float_str(pad.left))
+                .quick("y", py_float_str(after_hint_y + section_gap))
+                .quick("font-size", py_float_str(c.message_size * DOC_LINK_SIZE_RATIO))
+                .quick("font-weight", "normal")
+                .quick("font-family", message_family)
+                .quick("fill", bound.title_color.as_str()),
+            &doc.text,
+        );
+        body.push(link(&doc.href, text));
+    }
 
     // `callout.py`'s own final return block interpolates `w`/`h`/
     // `inline.border.width`/`inline.border.radius` as bare Python floats
     // (`f'width="{w}"'`, never `format_svg_numeric`), so a whole number
-    // keeps its `.0` (`rx="4.0"`, not `rx="4"`) — `py_float_str`, not
-    // `num_full`. Caught by board_sweep.py's `layout_bg_rect_count`/
-    // `chrome_bytes` structural contract once `playground/callout-tones`
-    // could compose far enough to reach it.
-    let mut xml = Xml::new();
-    xml.open(
-        "svg",
+    // keeps its `.0` (`rx="4.0"`, not `rx="4"`): `py_float_str`.
+    let card = crate::common::border_dash_pairs(
+        inline.border.dash_array.as_deref(),
+        inline.border.line_cap.as_deref(),
+        inline.border.dash_offset,
+    )
+    .into_iter()
+    .fold(
         Attrs::new()
-            .set("xmlns", "http://www.w3.org/2000/svg")
-            .set("class", "dbt-chart-callout")
-            .set("width", py_float_str(w))
-            .set("height", py_float_str(h))
-            .set("viewBox", format!("0 0 {} {}", py_float_str(w), py_float_str(h))),
-    );
-    xml.empty(
-        "rect",
-        Attrs::new()
-            .set("x", "0")
-            .set("y", "0")
-            .set("width", py_float_str(w))
-            .set("height", py_float_str(h))
-            .set("fill", &inline.background)
-            .set("stroke", &inline.border.color)
-            .set("stroke-width", py_float_str(inline.border.width))
-            .extend(
-                crate::common::border_dash_pairs(
-                    inline.border.dash_array.as_deref(),
-                    inline.border.line_cap.as_deref(),
-                    inline.border.dash_offset,
-                )
-                .into_iter()
-                .fold(Attrs::new(), |attrs, (name, value)| attrs.set(name, value)),
-            )
-            .set("rx", py_float_str(inline.border.radius)),
-    );
-    xml.raw(&style_block);
+            .quick("x", "0")
+            .quick("y", "0")
+            .quick("width", py_float_str(w))
+            .quick("height", py_float_str(h))
+            .quick("fill", inline.background.as_str())
+            .quick("stroke", inline.border.color.as_str())
+            .quick("stroke-width", py_float_str(inline.border.width)),
+        |attrs, (name, value)| attrs.quick(name, value),
+    )
+    .quick("rx", py_float_str(inline.border.radius));
+    let mut children = vec![Node::Rect(card)];
+    children.extend(styles);
+    children.extend(body);
 
-    if let Some((href, code, y, size)) = code_draw {
-        xml.open("a", Attrs::new().set("href", href).set("target", "_blank"));
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", py_float_str(pad_left))
-                .set("y", py_float_str(y))
-                .set("font-size", py_float_str(size))
-                .set("font-weight", "normal")
-                .set("font-family", "monospace")
-                .set("fill", &message_color),
-            code,
-        );
-        xml.close("a");
-    }
+    let data_box = Rect {
+        x: pad.left,
+        y: pad.top,
+        width: c.content_width,
+        height: h - pad.top - pad.bottom,
+    };
+    let insets = Insets {
+        top: data_box.y,
+        right: w - data_box.x - data_box.width,
+        bottom: pad.bottom,
+        left: data_box.x,
+    };
+    Ok(Layout {
+        data_box,
+        insets,
+        nodes: vec![Node::Svg {
+            extent: Extent {
+                width: w,
+                height: h,
+            },
+            attrs: Attrs::new()
+                .quick("xmlns", "http://www.w3.org/2000/svg")
+                .quick("class", "dbt-chart-callout")
+                .quick("width", py_float_str(w))
+                .quick("height", py_float_str(h))
+                .quick("viewBox", format!("0 0 {} {}", py_float_str(w), py_float_str(h))),
+            children,
+        }],
+        diagnostics,
+        title_pos: None,
+    })
+}
 
-    if let Some((block, translate_y, clip_id)) = &title_draw {
-        let clip = clip_id.as_deref().map(|id| (id, content_width, title_block_height));
-        emit_block(&mut xml, &block.elements, (pad_left, *translate_y), clip, Some("title"));
-    }
-    let message_clip = message_clip_id.as_deref().map(|id| (id, content_width, message_block_height));
-    emit_block(&mut xml, &message_block.elements, (pad_left, message_translate_y), message_clip, None);
+/// The SVG and the height it draws at when no slot height is given, which
+/// core's sizing pass reads.
+pub fn render_sized(payload: &Payload) -> Result<(String, f64), Diagnostic> {
+    let bound = bind(payload)?;
+    let composed = compose(&bound, payload.width)?;
+    let natural_height = composed.natural_height;
+    let laid_out = draw(&bound, composed, payload.height.max(natural_height))?;
+    laid_out.diagnostics.into_iter().for_each(warn);
+    Ok((print(&laid_out.nodes), natural_height))
+}
 
-    for (i, line) in hint_lines.iter().enumerate() {
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", py_float_str(pad_left))
-                .set("y", py_float_str(hint_start_y + i as f64 * message_line_height))
-                .set("font-size", py_float_str(message_size))
-                .set("font-weight", "normal")
-                .set("font-style", "italic")
-                .set("font-family", message_family)
-                .set("fill", &message_color),
-            line,
-        );
-    }
-
-    if let Some((href, y)) = doc_draw {
-        xml.open("a", Attrs::new().set("href", href).set("target", "_blank"));
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", py_float_str(pad_left))
-                .set("y", py_float_str(y))
-                .set("font-size", py_float_str(message_size * DOC_LINK_SIZE_RATIO))
-                .set("font-weight", "normal")
-                .set("font-family", message_family)
-                .set("fill", &title_color),
-            &display_text::language::tr("placard.see_the_docs", None, &[])?,
-        );
-        xml.close("a");
-    }
-    xml.close("svg");
-    let svg = xml.finish();
-    Ok((svg, natural_height))
+/// Measurement runs through mdsvg's own font loading, so the book is unused.
+pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic> {
+    render_sized(payload).map(|(svg, _)| svg)
 }
 
 /// Python's bare `str(x)` on a `str | float` resolved font weight — NOT
@@ -602,8 +827,9 @@ fn hash_weight_str(font: &Font) -> String {
 /// a wrong one). Same input order, same `str()` formatting Python uses:
 /// `py_float_str` for a bare-interpolated float, [`hash_weight_str`] for the
 /// `str | float` weight fields.
-fn callout_hash(r: &Resolved, w: f64, title_color: &str, message_color: &str) -> String {
+fn callout_hash(bound: &Bound, w: f64) -> String {
     use md5::{Digest, Md5};
+    let r = bound;
     let parts = [
         r.title.as_deref().unwrap_or(""),
         r.message.as_str(),
@@ -620,8 +846,8 @@ fn callout_hash(r: &Resolved, w: f64, title_color: &str, message_color: &str) ->
         r.style.message.font.family_or(""),
         &py_float_str(r.style.message.font.size_or(0.0)),
         &hash_weight_str(&r.style.message.font),
-        title_color,
-        message_color,
+        &r.title_color,
+        &r.message_color,
     ];
     let digest = Md5::digest(parts.join("\x00").as_bytes());
     let mut hex = String::with_capacity(8);
@@ -685,7 +911,7 @@ mod tests {
     fn renders_title_and_message_as_svg_text() {
         let json = callout_payload(Some("**Checks passed**"), "All good.");
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         assert!(svg.starts_with("<svg"), "{svg}");
         assert!(svg.contains("dbt-chart-callout"), "{svg}");
         assert!(svg.contains("data-authored-kind=\"title\""), "{svg}");
@@ -699,7 +925,7 @@ mod tests {
     fn no_title_skips_the_title_group() {
         let json = callout_payload(None, "Just a message.");
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         assert!(!svg.contains("data-authored-kind=\"title\""), "{svg}");
         assert!(svg.contains("Just a message."), "{svg}");
     }
@@ -710,7 +936,7 @@ mod tests {
         let mut json = callout_payload(Some("Title"), long);
         json["height"] = serde_json::json!(60.0);
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         let h: f64 = svg
             .split("height=\"")
             .nth(1)
@@ -735,7 +961,7 @@ mod tests {
         json["resolved"]["style"]["border"] =
             serde_json::json!({"width": 1.0, "color": "#0f7b3e", "radius": 4.0});
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         assert!(svg.contains("width=\"300.0\""), "{svg}");
         assert!(svg.contains("stroke-width=\"1.0\""), "{svg}");
         assert!(svg.contains("rx=\"4.0\""), "{svg}");
@@ -750,7 +976,7 @@ mod tests {
         let message =
             "Thanks.\n\n![Acme Corp](https://example.com/acme.svg){width=48 height=24}\n\nMore.";
         let payload: Payload = serde_json::from_value(callout_payload(None, message)).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         assert!(
             svg.contains(
                 "<image x=\"0\" y=\"24.05\" width=\"48\" height=\"24\" \
@@ -769,7 +995,7 @@ mod tests {
     fn message_image_without_a_height_paints_at_the_fallback_ratio() {
         let message = "![A \"quoted\" <alt> & more](assets/missing.png){width=120}";
         let payload: Payload = serde_json::from_value(callout_payload(None, message)).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         assert!(
             svg.contains(
                 "<image x=\"0\" y=\"0\" width=\"120\" height=\"67.5\" \
@@ -789,7 +1015,7 @@ mod tests {
         let title = "Release notes\n\n![Logo](https://example.com/logo.svg){width=32 height=32}";
         let payload: Payload =
             serde_json::from_value(callout_payload(Some(title), "Shipped.")).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("callout renders");
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
         assert!(
             svg.contains(
                 "<image x=\"0\" y=\"25.9\" width=\"32\" height=\"32\" \
@@ -820,7 +1046,7 @@ mod tests {
             "format_locale": crate::number_locale::en_us_wire(), "language": "de", "time_locale": crate::time_locale::en_us_wire()
         });
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (svg, _) = display_text::language::with_language(display_text::language::Language::new("de").unwrap(), || {
+        let svg = display_text::language::with_language(display_text::language::Language::new("de").unwrap(), || {
             render(&payload, &test_fonts())
         })
         .expect("placard renders");
@@ -844,7 +1070,7 @@ mod tests {
             Some("https://docs.example.com/reference/errors/#err-kpi-no-data"),
         );
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("placard renders");
+        let svg = render(&payload, &test_fonts()).expect("placard renders");
         assert!(
             svg.contains(
                 "<a href=\"https://docs.example.com/reference/errors/#err-kpi-no-data\" \
@@ -865,7 +1091,7 @@ mod tests {
     #[test]
     fn placard_without_hint_or_doc_url_paints_neither() {
         let payload: Payload = serde_json::from_value(placard_payload(None, None)).unwrap();
-        let (svg, _) = render(&payload, &test_fonts()).expect("placard renders");
+        let svg = render(&payload, &test_fonts()).expect("placard renders");
         assert!(svg.contains("ERR-KPI-NO-DATA</text></a>"), "{svg}");
         assert!(!svg.contains("font-style=\"italic\""), "{svg}");
         assert!(!svg.contains("See the docs"), "{svg}");
@@ -887,8 +1113,8 @@ mod tests {
             Some("https://docs.example.com/x"),
         ))
         .unwrap();
-        let (_, bare_height) = render(&bare, &test_fonts()).unwrap();
-        let (_, full_height) = render(&full, &test_fonts()).unwrap();
+        let (_, bare_height) = render_sized(&bare).unwrap();
+        let (_, full_height) = render_sized(&full).unwrap();
         // hint: gap 8 + one line 13*1.35; doc link: gap 8 + 13*0.85*1.35.
         let expected = 8.0 + 13.0 * 1.35 + 8.0 + 13.0 * 0.85 * 1.35;
         assert!((full_height - bare_height - expected).abs() < 1e-9, "{bare_height} {full_height}");
@@ -901,8 +1127,8 @@ mod tests {
         let small: Payload = Deserialize::deserialize(&json).unwrap();
         json["height"] = serde_json::json!(500.0);
         let tall: Payload = serde_json::from_value(json).unwrap();
-        let (small_svg, small_height) = render(&small, &test_fonts()).unwrap();
-        let (tall_svg, tall_height) = render(&tall, &test_fonts()).unwrap();
+        let (small_svg, small_height) = render_sized(&small).unwrap();
+        let (tall_svg, tall_height) = render_sized(&tall).unwrap();
         assert_eq!(small_height, tall_height);
         assert!(small_height >= MIN_HEIGHT);
         assert!(small_svg.contains(&format!("height=\"{}\"", py_float_str(small_height))));
@@ -920,11 +1146,11 @@ mod tests {
         json["resolved"]["style"]["message"]["font"]["size"] = serde_json::json!(12.0);
         let payload: Payload = serde_json::from_value(json).unwrap();
         let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
-        let (svg, _) = rendered.expect("placard renders");
+        let svg = rendered.expect("placard renders");
         assert!(svg.contains("msg-clip-"), "{svg}");
         assert!(warnings.is_empty(), "{warnings:?}");
 
-        let mut json = callout_payload(None, &long);
+        let json = callout_payload(None, &long);
         let payload: Payload = serde_json::from_value(json).unwrap();
         let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
         rendered.expect("callout renders");
@@ -960,5 +1186,103 @@ mod tests {
         let (svg, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
         svg.expect("renders");
         assert!(warnings.is_empty());
+    }
+
+    /// mdsvg escapes `\t`, `\n` and `\r` as character references; the card
+    /// keeps them rather than printing the raw characters.
+    #[test]
+    fn whitespace_in_markdown_text_prints_as_character_references() {
+        let message = "a\tb\n\n```\nx\ty\n```";
+        let payload: Payload = serde_json::from_value(callout_payload(None, message)).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains(">x&#9;y</text>"), "{svg}");
+        assert!(!svg.contains('\t'), "{svg:?}");
+    }
+
+    /// mdsvg closes only `image`, `rect`, `line` and `circle` as `<x/>`; an
+    /// empty table cell stays a `<text></text>` pair.
+    #[test]
+    fn an_empty_markdown_element_keeps_the_close_tag_mdsvg_wrote() {
+        let payload: Payload =
+            serde_json::from_value(callout_payload(None, "| h |\n|---|\n|   |")).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("text-anchor=\"start\"></text>"), "{svg}");
+    }
+
+    fn bound_of(json: serde_json::Value) -> Bound {
+        bind(&serde_json::from_value(json).unwrap()).expect("binds")
+    }
+
+    fn contract_cases() -> Vec<serde_json::Value> {
+        let mut clipped = callout_payload(Some("Title"), &"line\n\n".repeat(30));
+        clipped["resolved"]["style"]["message"]["font"]["size"] = serde_json::json!(12.0);
+        vec![
+            callout_payload(Some("**Checks passed**"), "All good."),
+            callout_payload(None, "Just a message."),
+            clipped,
+            placard_payload(
+                Some("Fix it."),
+                Some("https://docs.example.com/reference/errors/"),
+            ),
+        ]
+    }
+
+    #[test]
+    fn height_for_width_is_the_height_layout_draws_into_its_own_answer() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        for json in contract_cases() {
+            let bound = bound_of(json);
+            for width in [120.0, 300.0, 480.0] {
+                let natural = height_for_width(&bound, width, &measure).unwrap();
+                let cell = Rect { x: 0.0, y: 0.0, width, height: natural };
+                let laid_out = layout(&bound, cell, &measure).unwrap();
+                let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+                    panic!("a card is one root");
+                };
+                assert_eq!((extent.width, extent.height), (width, natural));
+                let Insets { top, bottom, .. } = laid_out.insets;
+                assert_eq!(top + laid_out.data_box.height + bottom, natural);
+            }
+        }
+    }
+
+    #[test]
+    fn layout_draws_the_cell_height_it_is_given() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let bound = bound_of(callout_payload(Some("Title"), "Message."));
+        let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: 500.0 };
+        let laid_out = layout(&bound, cell, &measure).unwrap();
+        assert!(matches!(laid_out.nodes.as_slice(), [Node::Svg { extent, .. }] if extent.height == 500.0));
+    }
+
+    #[test]
+    fn intrinsic_min_never_exceeds_preferred() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        for json in contract_cases() {
+            let IntrinsicWidth { min, preferred } =
+                intrinsic(&bound_of(json), &measure).unwrap().unwrap();
+            assert!(min <= preferred, "{min} {preferred}");
+        }
+        let mut narrow = callout_payload(None, "Message.");
+        narrow["resolved"]["style"]["preferred_width"] = serde_json::json!(80.0);
+        let width = intrinsic(&bound_of(narrow), &measure).unwrap().unwrap();
+        assert_eq!((width.min, width.preferred), (MIN_WIDTH, MIN_WIDTH));
+    }
+
+    #[test]
+    fn layout_returns_the_truncation_warning_it_decided() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let message = "line\n\n".repeat(30);
+        let bound = bound_of(callout_payload(None, &message));
+        let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: 100.0 };
+        let (laid_out, sunk) = crate::diagnostic::collect(|| layout(&bound, cell, &measure));
+        let laid_out = laid_out.unwrap();
+        assert!(sunk.is_empty(), "layout hands its WARNs back, it does not sink them");
+        assert_eq!(laid_out.diagnostics.len(), 1);
+        assert_eq!(laid_out.diagnostics[0].code, "WARN-CALLOUT-TEXT-TRUNCATED");
     }
 }

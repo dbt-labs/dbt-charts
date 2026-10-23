@@ -180,22 +180,20 @@ class _LegendStyleBase(BaseModel):
             "order from the data."
         ),
     )
-    # A named shape emits a constant symbolType that wins over the mark-derived
-    # Vega expression.
+    # A named shape wins over the mark-derived glyph.
     symbol_shape: Annotated[SymbolShape | None, AutoUnset()] = Field(
         default=None,
         description=(
-            "Override the legend glyph shape; maps to VL legend.symbolType. "
+            "Override the legend glyph shape with a Vega symbol name. "
             "'auto' uses the mark-aware glyph derived from the chart's mark type."
         ),
     )
-    # False → symbolFillColor='transparent' in the emitted VL legend, which
-    # makes hollow (stroke-only) glyphs.
+    # False makes hollow (stroke-only) glyphs.
     symbol_fill: Annotated[bool | None, AutoUnset()] = Field(
         default=None,
         description=(
-            "When False, emits symbolFillColor='transparent' to produce a hollow "
-            "legend glyph. 'auto' uses Vega-Lite's default (filled symbol)."
+            "When False, draws a hollow (stroke-only) legend glyph. "
+            "'auto' draws a filled symbol."
         ),
     )
 

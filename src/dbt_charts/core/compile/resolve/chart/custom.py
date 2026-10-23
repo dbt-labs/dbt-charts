@@ -7,11 +7,13 @@ from typing import Any
 from pydantic import BaseModel, JsonValue
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.format import column_format
 from dbt_charts.core.compile.models.chart.normalized import CustomChart
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCustomChart,
     ResolvedCustomStyle,
 )
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import (
     LegendStylePatch,
     PieLegendStylePatch,
@@ -163,9 +165,29 @@ def _resolve_token(context: ChartStyleContext, token: str) -> str:
     return resolved
 
 
+def _column_formats(
+    normalized: CustomChart,
+    data: list[dict[str, Any]],  # type-state: explicit_any — DB rows
+    context: ChartStyleContext,
+) -> dict[str, ResolvedFormat]:
+    """The format each returned column prints with on a built-in chart.
+
+    The columns are the first row's, the set the renderer checks channels
+    against."""
+    return {
+        column: column_format(
+            "number",
+            context.formats,
+            query_formats=normalized.query.formats if normalized.query else None,
+            columns=column,
+        )
+        for column in (data[0] if data else ())
+    }
+
+
 def _resolve_custom(
     normalized: CustomChart,
-    _data: list[dict[str, Any]],  # type-state: explicit_any — DB rows
+    data: list[dict[str, Any]],  # type-state: explicit_any — DB rows
     chart_style_context: ChartStyleContext,
     width: float,
     automatic_link_candidate: AutomaticLinkCandidate,
@@ -205,6 +227,7 @@ def _resolve_custom(
         aspect_ratio=normalized.aspect_ratio,
         min_height=normalized.min_height,
         max_height=normalized.max_height,
+        column_formats=_column_formats(normalized, data, chart_style_context),
         column_options=tuple(
             name
             for name, spec in declared.items()

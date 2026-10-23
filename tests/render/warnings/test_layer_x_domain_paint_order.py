@@ -22,7 +22,6 @@ def _ctx(**recorded: XDomainPaintOrder) -> WarningContext:
     return WarningContext(
         board_spec=make_test_resolved_board(charts={}),
         chart_results={},
-        vega_specs={},
         x_domain_paint_orders=dict(recorded),
     )
 

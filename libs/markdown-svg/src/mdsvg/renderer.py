@@ -985,9 +985,8 @@ class SVGRenderer:
         """Narrowest width at which no word is split mid-glyph.
 
         The widest unbreakable token of any block, in the font it paints in.
-        A table draws equal columns, so its floor is every column at the widest
-        cell word plus padding. Blocks that wrap nothing (rules, images) have no
-        floor.
+        A table's floor is each column at its widest cell word plus padding.
+        Blocks that wrap nothing (rules, images) have no floor.
         """
         # Whole pixels, rounded up: a caller subtracts padding from a sum of
         # widths, and a float a hair under the token's width splits it.
@@ -1058,23 +1057,7 @@ class SVGRenderer:
                 (self._block_min_width(child) for child in block.blocks), default=0.0
             )
         if isinstance(block, Table):
-            cells = [
-                (cell, is_header)
-                for row, is_header in (
-                    [(block.header, True)] + [(row, False) for row in block.rows]
-                )
-                for cell in row.cells
-            ]
-            widest = max(
-                (
-                    self._widest_token(cell.spans, size, is_header=is_header)
-                    for cell, is_header in cells
-                ),
-                default=0.0,
-            )
-            return len(block.header.cells) * (
-                widest + 2 * self.style.table_cell_padding
-            )
+            return sum(self._table_column_extents(block)[0])
         return 0.0
 
     def render_block_window(
@@ -1232,22 +1215,56 @@ class SVGRenderer:
             piece.separator_width for piece in pieces[1:]
         )
 
-    def _table_max_content(self, table: Table) -> float:
-        def row_widths(row: TableRow, is_header: bool) -> list[float]:
-            return [
-                self._one_line_width(
-                    self._table_cell_runs(cell, is_header, 0.0),
-                    self.style.base_font_size,
-                )
-                for cell in row.cells
-            ]
+    def _table_column_extents(self, table: Table) -> tuple[list[float], list[float]]:
+        """Each column's narrowest and widest width, padding included.
 
-        # Columns are drawn equal, so the widest cell sets every column's width.
-        cells = row_widths(table.header, True) + [
-            width for row in table.rows for width in row_widths(row, False)
+        Narrowest holds its longest unbreakable word, widest its longest cell on
+        one line -- CSS auto table layout's min-content and max-content.
+        """
+        padding = 2 * self.style.table_cell_padding
+        size = self.style.base_font_size
+        rows = [(table.header, True), *((row, False) for row in table.rows)]
+        mins = [0.0] * len(table.header.cells)
+        maxs = [0.0] * len(table.header.cells)
+        for row, is_header in rows:
+            for col, cell in enumerate(row.cells):
+                mins[col] = max(
+                    mins[col],
+                    self._widest_token(cell.spans, size, is_header=is_header) + padding,
+                )
+                maxs[col] = max(
+                    maxs[col],
+                    self._one_line_width(
+                        self._table_cell_runs(cell, is_header, 0.0), size
+                    )
+                    + padding,
+                )
+        # Rounded up to 0.01px, as max_content_width is: a width that comes back
+        # a hair short through layout arithmetic would wrap its last character.
+        return [math.ceil(w * 100) / 100 for w in mins], [
+            math.ceil(w * 100) / 100 for w in maxs
         ]
-        column_width = max(cells) + 2 * self.style.table_cell_padding
-        return column_width * len(table.header.cells)
+
+    def _table_column_widths(self, table: Table, available: float) -> list[float]:
+        """Column widths in ``available`` px: content-sized, wrapping only if forced.
+
+        Every column gets its widest when they all fit, so the table is as wide
+        as its text. Otherwise each gets its narrowest and the slack goes to the
+        columns in proportion to ``max - min``: how much each would have to wrap
+        to fit its narrowest. Narrowest columns that overflow fall back to equal
+        columns.
+        """
+        mins, maxs = self._table_column_extents(table)
+        if sum(maxs) <= available:
+            return maxs
+        if sum(mins) > available:
+            return [available / len(mins)] * len(mins)
+        flex = [high - low for low, high in zip(mins, maxs)]
+        slack = (available - sum(mins)) / sum(flex)
+        return [low + extra * slack for low, extra in zip(mins, flex)]
+
+    def _table_max_content(self, table: Table) -> float:
+        return sum(self._table_column_extents(table)[1])
 
     def _block_max_content(self, block: Block) -> float:
         style = self.style
@@ -2192,13 +2209,12 @@ class SVGRenderer:
         padding = self.style.table_cell_padding
         font_size = self.style.base_font_size
 
-        # Calculate column widths (equal distribution for now)
-        num_cols = len(table.header.cells)
-        col_width = ctx.width / num_cols if num_cols > 0 else ctx.width
+        col_widths = self._table_column_widths(table, ctx.width)
+        table_width = sum(col_widths)
 
         header_layout = self._measure_table_row_layout(
             table.header,
-            col_width=col_width,
+            col_widths=col_widths,
             padding=padding,
             font_size=font_size,
             is_header=True,
@@ -2206,7 +2222,7 @@ class SVGRenderer:
         body_layouts = [
             self._measure_table_row_layout(
                 row,
-                col_width=col_width,
+                col_widths=col_widths,
                 padding=padding,
                 font_size=font_size,
                 is_header=False,
@@ -2219,7 +2235,7 @@ class SVGRenderer:
         # Render header background
         elements.append(
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(current_y)}" '
-            f'width="{format_number(ctx.width)}" height="{format_number(header_layout.row_height)}" '
+            f'width="{format_number(table_width)}" height="{format_number(header_layout.row_height)}" '
             f'fill="{escape_xml(self.style.table_header_background)}"/>'
         )
 
@@ -2230,7 +2246,7 @@ class SVGRenderer:
             header_layout,
             ctx.x,
             current_y,
-            col_width,
+            col_widths,
             padding,
             font_size,
             is_header=True,
@@ -2245,7 +2261,7 @@ class SVGRenderer:
                 row_layout,
                 ctx.x,
                 current_y,
-                col_width,
+                col_widths,
                 padding,
                 font_size,
                 is_header=False,
@@ -2259,13 +2275,13 @@ class SVGRenderer:
 
         elements.append(
             f'  <rect x="{format_number(ctx.x)}" y="{format_number(ctx.y)}" '
-            f'width="{format_number(ctx.width)}" height="{format_number(total_height)}" '
+            f'width="{format_number(table_width)}" height="{format_number(total_height)}" '
             f'fill="none" {stroke}/>'
         )
 
         # Column separators
         col_x = ctx.x
-        for _ in range(num_cols - 1):
+        for col_width in col_widths[:-1]:
             col_x += col_width
             elements.append(
                 f'  <line x1="{format_number(col_x)}" y1="{format_number(ctx.y)}" '
@@ -2284,7 +2300,7 @@ class SVGRenderer:
             if row_y < current_y:
                 elements.append(
                     f'  <line x1="{format_number(ctx.x)}" y1="{format_number(row_y)}" '
-                    f'x2="{format_number(ctx.x + ctx.width)}" y2="{format_number(row_y)}" '
+                    f'x2="{format_number(ctx.x + table_width)}" y2="{format_number(row_y)}" '
                     f"{stroke}/>"
                 )
 
@@ -2316,19 +2332,20 @@ class SVGRenderer:
     def _measure_table_row_layout(
         self,
         row: TableRow,
-        col_width: float,
+        col_widths: Sequence[float],
         padding: float,
         font_size: float,
         is_header: bool,
     ) -> TableRowLayout:
         """Lay out each cell on its own lines; the row is its tallest cell."""
-        max_width = max(col_width - (padding * 2), 1.0)
         line_height = font_size * self.style.line_height
         # A cell's text sits one font size below its line's top, not on the
         # half-leading baseline prose uses. An empty cell still paints one
         # (empty) line, so every cell holds at least one.
-        cell_lines = tuple(
-            tuple(
+        cell_lines: list[tuple[_Line, ...]] = []
+        for cell, col_width in zip(row.cells, col_widths):
+            max_width = max(col_width - (padding * 2), 1.0)
+            lines = tuple(
                 self._layout_lines(
                     self._table_cell_runs(cell, is_header, max_width),
                     max_width,
@@ -2337,15 +2354,13 @@ class SVGRenderer:
                     line_height,
                 )
             )
-            or (_Line((), font_size, line_height),)
-            for cell in row.cells
-        )
+            cell_lines.append(lines or (_Line((), font_size, line_height),))
         content_height = max(
-            (sum(line.height for line in lines) for lines in cell_lines),
+            (math.fsum(line.height for line in lines) for lines in cell_lines),
             default=line_height,
         )
         return TableRowLayout(
-            cell_lines=cell_lines, row_height=content_height + (padding * 2)
+            cell_lines=tuple(cell_lines), row_height=content_height + (padding * 2)
         )
 
     def _render_table_row(
@@ -2355,7 +2370,7 @@ class SVGRenderer:
         layout: TableRowLayout,
         start_x: float,
         y: float,
-        col_width: float,
+        col_widths: Sequence[float],
         padding: float,
         font_size: float,
         is_header: bool,
@@ -2368,7 +2383,7 @@ class SVGRenderer:
             f'font-weight="{escape_xml(str(weight))}"'
         )
         x = start_x
-        for cell, lines in zip(row.cells, layout.cell_lines):
+        for cell, lines, col_width in zip(row.cells, layout.cell_lines, col_widths):
             if cell.align == "center":
                 anchor_x, anchor = x + col_width / 2, "middle"
             elif cell.align == "right":
@@ -2752,7 +2767,7 @@ class SVGRenderer:
                 chips,
             )
             line_top += line.height
-        return sum(line.height for line in lines)
+        return math.fsum(line.height for line in lines)
 
     def _emit_line(
         self,

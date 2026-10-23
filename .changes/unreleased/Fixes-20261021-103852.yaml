@@ -1,0 +1,3 @@
+kind: Fixes
+body: The `list_diagnostic_codes` MCP tool now returns codes in pages, so its result fits in an agent's context.
+time: 2026-10-21T10:38:52.007714-04:00

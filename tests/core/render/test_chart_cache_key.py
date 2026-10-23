@@ -122,63 +122,6 @@ def test_repeated_non_pie_reuses_its_canonical_resolved_chart() -> None:
     assert narrow is wide
 
 
-def test_same_chart_different_widths_get_separate_cache_entries():
-    """Same chart_id at two different widths → two separate cache entries.
-
-    Pre-fix: second occurrence hits the first-width cache entry and is skipped.
-    Post-fix: each (chart_id, width) gets its own entry in natural_heights and
-    render_cache.
-    """
-    from dbt_charts.core.render.layout_sizing import (
-        SizingRenderCtx,
-        _make_data_aware_height_provider,
-    )
-
-    chart = _bar_chart("shared_chart")
-    item_narrow = LayoutItem(type="chart", width=300.0, height=0.0, chart=chart)
-    item_wide = LayoutItem(type="chart", width=600.0, height=0.0, chart=chart)
-
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    rs, ctx = resolve_style_and_context(get_theme_style())
-    render_ctx = SizingRenderCtx(
-        executor=executor,
-        resolved_style=rs,
-        chart_style_context=ctx,
-        pre_resolved={"shared_chart": _resolved(chart, ctx)},
-    )
-
-    render_calls: list[float] = []
-
-    def fake_render(_resolved_v2, _executor, _variables, width, **kwargs):
-        render_calls.append(width)
-        return f'<svg viewBox="0 0 {width} 300"></svg>', width, 300.0
-
-    with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
-        provider = _make_data_aware_height_provider(
-            render_ctx,
-            executor,
-            variables={},
-            card_padding=0.0,
-            style_contexts={id(rs): ctx},
-        )
-        provider(item_narrow, 0.0, 0.0, 300.0, None, rs)
-        provider(item_wide, 0.0, 0.0, 600.0, None, rs)
-
-    # Both widths must have been rendered independently.
-    assert render_calls == [300.0, 600.0], (
-        f"Expected renders at both widths [300.0, 600.0], got {render_calls}. "
-        "Pre-fix: second render is skipped because chart_id alone keys the cache."
-    )
-    assert ("shared_chart", 300.0) in render_ctx.natural_heights
-    assert ("shared_chart", 600.0) in render_ctx.natural_heights
-    assert any(
-        k[0] == "shared_chart" and k[1] == 300.0 for k in render_ctx.render_cache
-    )
-    assert any(
-        k[0] == "shared_chart" and k[1] == 600.0 for k in render_ctx.render_cache
-    )
-
-
 def test_same_chart_same_width_is_deduplicated():
     """Same chart_id at the same width → rendered once, second call uses natural_heights."""
     from dbt_charts.core.render.layout_sizing import (

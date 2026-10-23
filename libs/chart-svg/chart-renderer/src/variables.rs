@@ -30,7 +30,8 @@ use display_text::case::apply_case;
 use crate::conditions::eval_bool_condition;
 use crate::diagnostic::py_str;
 use crate::time_locale::active_time_locale;
-use crate::svg::{num_full, xml_escape, xml_escape_attr};
+use crate::svg::{num_full};
+use print::{xml_escape, xml_escape_attr};
 
 fn pxi(v: f64) -> String {
     num_full(px(v))
@@ -535,7 +536,7 @@ fn measure_font_path(fonts_dir: &str, family: &str) -> String {
 /// `font_measure.py::centered_baseline_offset`.
 fn centered_baseline_offset(family: &str, font_size: f64, fonts_dir: &str) -> f64 {
     let path = measure_font_path(fonts_dir, family);
-    crate::text::centered_baseline_offset(&mdsvg::fonts::cached_measurer(&path, 0, None), font_size)
+    measure::centered_baseline_offset(&mdsvg::fonts::cached_measurer(&path, 0, None), font_size)
 }
 
 /// `variables_layout.py::_input_width`.

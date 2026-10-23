@@ -21,7 +21,7 @@ use super::{
     PAGINATION_GROW_CAP, PAGINATOR_AUX_SLOT_RATIO,
 };
 use crate::common::measure_family_stand_in;
-use crate::text::FontBook;
+use measure::FontBook;
 use d3rs::py_float::py_float_sum;
 
 /// What the measure reads: the table's resolved chart, its rows, and the

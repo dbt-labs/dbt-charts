@@ -8,7 +8,6 @@ from dbt_charts.core.render.chart.type_inference import (
     DATE_LIKE_PATTERNS,
     infer_vega_type_from_data,
     is_date_like_string,
-    is_lex_sortable_date_like,
 )
 
 
@@ -71,60 +70,6 @@ class TestInferVegaTypeFromData:
         # histogram guard stays intact.
         data = self._data(["alpha", "beta", "gamma"])
         assert infer_vega_type_from_data(data, "model") == "nominal"
-
-
-class TestIsLexSortableDateLike:
-    def test_daily_yyyy_mm_dd_returns_true(self):
-        assert is_lex_sortable_date_like("2025-04-15") is True
-
-    def test_iso_timestamp_hh_mm_returns_true(self):
-        assert is_lex_sortable_date_like("2025-04-15T13:30") is True
-
-    def test_iso_timestamp_hh_mm_ss_returns_true(self):
-        assert is_lex_sortable_date_like("2025-04-15T13:30:00") is True
-
-    def test_space_separated_naive_timestamp_returns_true(self):
-        # Space-separated naive timestamps are lex==chron just like the T form.
-        assert is_lex_sortable_date_like("2025-04-15 13:30:00") is True
-
-    def test_space_separated_timestamp_with_offset_returns_false(self):
-        # tz offsets break lex==chron regardless of separator
-        assert is_lex_sortable_date_like("2025-04-15 13:30:00+05:00") is False
-
-    def test_iso_timestamp_with_fractional_seconds_returns_true(self):
-        assert is_lex_sortable_date_like("2025-04-15T13:30:00.123") is True
-
-    def test_iso_timestamp_with_z_suffix_returns_false(self):
-        # Mixed offsets would break lex==chron invariant
-        assert is_lex_sortable_date_like("2025-04-15T13:30:00Z") is False
-
-    def test_iso_timestamp_with_offset_returns_false(self):
-        assert is_lex_sortable_date_like("2025-04-15T13:30:00+05:00") is False
-
-    def test_garbage_T_tail_returns_false(self):
-        # T must be followed by HH:MM digits
-        assert is_lex_sortable_date_like("2025-04-15Tfoobar") is False
-
-    def test_incomplete_time_component_returns_false(self):
-        # T followed by only hours — no minute component
-        assert is_lex_sortable_date_like("2025-04-15T13") is False
-
-    def test_month_name_format_returns_false(self):
-        assert is_lex_sortable_date_like("April 15, 2025") is False
-
-    def test_mm_dd_yyyy_slash_format_returns_false(self):
-        # Year-last formats don't sort lex==chron
-        assert is_lex_sortable_date_like("01/15/2025") is False
-
-    # Existing patterns still work
-    def test_year_month_returns_true(self):
-        assert is_lex_sortable_date_like("2024-01") is True
-
-    def test_quarter_returns_true(self):
-        assert is_lex_sortable_date_like("2024-Q1") is True
-
-    def test_iso_week_returns_true(self):
-        assert is_lex_sortable_date_like("2024-W01") is True
 
 
 def test_drift_guard_passes():

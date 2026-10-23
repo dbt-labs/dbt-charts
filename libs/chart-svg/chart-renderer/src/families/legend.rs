@@ -14,11 +14,12 @@ use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::common::{field_display_text, truncate_label, FieldLabels, Font};
 use crate::contract;
-use crate::measure::baseline_shift;
-use crate::node::{Attrs, Node};
-use crate::print::print;
-use crate::text::FontBook;
+use measure::baseline_shift;
+use scene::{Attrs, Node};
+use print::print;
+use measure::FontBook;
 use crate::vega_fit;
+use crate::families::scatter_shape::{self, Bounds};
 
 #[derive(Deserialize)]
 pub struct LegendConfig {
@@ -429,7 +430,9 @@ pub fn legend_grid(
     // its half is just `strokeWidth / 2`.
     let stroke_half_extent = |half_len: f64, w: f64| (half_len + w, w / 2.0);
     let half_extent_x = |i: usize| match symbols.get(i).copied().flatten() {
-        Some(LegendSymbol::Glyph(g) | LegendSymbol::Ring(.., g)) => g.x + VEGA_SYMBOL_STROKE_WIDTH,
+        Some(LegendSymbol::Glyph(g) | LegendSymbol::Ring(.., g) | LegendSymbol::BorderedGlyph(.., g)) => {
+            g.x + VEGA_SYMBOL_STROKE_WIDTH
+        }
         Some(LegendSymbol::Stroke(w)) => stroke_half_extent(10.0, w).0,
         Some(LegendSymbol::ShortStroke) => stroke_half_extent(5.0, VEGA_SYMBOL_STROKE_WIDTH).0,
         Some(LegendSymbol::Dash(_)) => VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0 + VEGA_SYMBOL_STROKE_WIDTH,
@@ -441,7 +444,7 @@ pub fn legend_grid(
     // The reach above and below the cell center.
     let both = |v: f64| (v, v);
     let extent_y = |i: usize| match symbols.get(i).copied().flatten() {
-        Some(LegendSymbol::Glyph(g) | LegendSymbol::Ring(.., g)) => {
+        Some(LegendSymbol::Glyph(g) | LegendSymbol::Ring(.., g) | LegendSymbol::BorderedGlyph(.., g)) => {
             (g.up + VEGA_SYMBOL_STROKE_WIDTH, g.down + VEGA_SYMBOL_STROKE_WIDTH)
         }
         Some(LegendSymbol::Stroke(w)) => both(stroke_half_extent(10.0, w).1),
@@ -638,9 +641,10 @@ const VEGA_GRADIENT_HORIZONTAL_MIN_LENGTH: f64 = 100.0;
 pub(crate) const GRADIENT_STOP_TICKS: usize = 15;
 
 /// `value`'s place in `[min, max]` as d3's `normalize` puts it: a zero-width
-/// domain maps everything to the middle.
+/// domain maps everything to the middle, and so does the empty domain (NaN ends) of a
+/// color scale no mark fed, which Vega's legend places the same way.
 pub(crate) fn unit_position(value: f64, min: f64, max: f64) -> f64 {
-    if max == min {
+    if max == min || min.is_nan() || max.is_nan() {
         0.5
     } else {
         (value - min) / (max - min)
@@ -671,9 +675,10 @@ pub(crate) fn gradient_tick_count(length: f64) -> usize {
 
 /// A gradient legend's labeled values: the scale's ticks, or its two ends when
 /// there are fewer than three (`LegendEntries`), a one-value domain's single
-/// label drawn once (the legend's data join keys its entries by value).
+/// label drawn once (the legend's data join keys its entries by value, so the two `NaN`
+/// ends of an empty domain are one entry too).
 pub(crate) fn gradient_labeled_values(ticks: Vec<f64>, min: f64, max: f64) -> Vec<f64> {
-    match (ticks.len() < 3, min == max) {
+    match (ticks.len() < 3, min == max || (min.is_nan() && max.is_nan())) {
         (false, _) => ticks,
         (true, true) => vec![min],
         (true, false) => vec![min, max],
@@ -721,6 +726,10 @@ pub(crate) fn stack_legends(blocks: &[(f64, f64)], along_x: bool) -> (Vec<f64>, 
     let along = (cursor - VEGA_LEGEND_GROUP_MARGIN).max(0.0);
     (offsets, if along_x { (along, across) } else { (across, along) })
 }
+
+/// Vega's default `symbolLimit`: the most entries a symbol legend draws before
+/// it folds the rest into an "…N entries" row.
+pub(crate) const VEGA_LEGEND_SYMBOL_LIMIT: u32 = 30;
 
 /// A legend's start-anchored origin (its group's top-left, in plot
 /// coordinates) per `legendParams` (vega-view-transforms `layout/legend.js`):
@@ -867,6 +876,13 @@ pub fn limit_legend_text<'a>(
     Ok(LimitedLegendText { labels: drawn, label_ws, title, title_w })
 }
 
+/// `symbolLimit`: vega-encode's `LegendEntries` keeps the first `limit - 1` of `count` entries and
+/// folds the rest into one "…N entries" row that carries the next entry's own swatch. `None` where
+/// the entries fit.
+pub fn fold_symbol_limit(count: usize, limit: usize) -> Option<(usize, String)> {
+    (limit > 0 && count > limit).then(|| (limit - 1, format!("\u{2026}{} entries", count - (limit - 1))))
+}
+
 /// Lay `entries` out as Vega would under `title_text` (empty for none).
 pub fn vega_legend(
     entries: &[LegendEntry],
@@ -888,7 +904,14 @@ pub fn vega_legend(
     } else {
         fonts.measure_shaped(title_text, cfg.title.font.family_or("sans-serif"), cfg.title.font.size_or(12.0))?
     };
-    let symbols: Vec<Option<LegendSymbol>> = entries.iter().map(|e| e.symbol).collect();
+    // Rows are sized for the symbol they will draw, so the authored glyph resolves here.
+    let symbols: Vec<Option<LegendSymbol>> = entries
+        .iter()
+        .map(|e| match authored_glyph(cfg, e.symbol) {
+            Some((_, bounds, _)) => Some(LegendSymbol::Glyph(bounds)),
+            None => e.symbol,
+        })
+        .collect();
     legend_from_widths(&ws, &symbols, mixed_marks, title_text, title_w, cfg)
 }
 
@@ -990,6 +1013,9 @@ pub enum LegendSymbol<'a> {
     /// fill under a stroke in the entry's color, at the mark's opacity, the
     /// glyph's half extents given for the legend grid.
     Ring(&'a str, &'a str, f64, crate::families::scatter_shape::Bounds),
+    /// A shape-named glyph, path `d`, filled with the entry's color and ringed in a constant `stroke`
+    /// at Vega's 1.5: a `symbolType` override on a stroked mark.
+    BorderedGlyph(&'a str, &'a str, crate::families::scatter_shape::Bounds),
     Stroke(f64),
     /// A strokeDash legend's symbol: a size-2000 horizontal segment
     /// (`M-22.361,0L22.361,0`) stroked in the entry's own color at 1.5 with
@@ -1003,6 +1029,33 @@ pub enum LegendSymbol<'a> {
     /// triangles are shorter than the circle along one axis. Laid out by
     /// [`legend_grid`] only; nothing draws through [`emit_vega_legend`].
     Glyph(crate::families::scatter_shape::Bounds),
+}
+
+/// The glyph an entry draws when the author set `legend.symbol_shape`, or hollowed the
+/// entry's own symbol with `legend.symbol_fill: false`: its path, bounds and opacity.
+/// `None` keeps the mark-derived symbol. A bordered symbol keeps its fill when hollowed:
+/// Vega strokes it with the mark's border, not the series color.
+fn authored_glyph(cfg: &LegendConfig, symbol: Option<LegendSymbol>) -> Option<(String, Bounds, f64)> {
+    let named = |shape: &str, opacity: f64| {
+        let path = scatter_shape::path(shape, 5.0).expect("authored legend shapes are Vega symbols");
+        Some((path, scatter_shape::half_extents(shape, 5.0), opacity))
+    };
+    if let Some(shape) = cfg.symbol_shape.as_deref() {
+        return named(shape, 1.0);
+    }
+    if cfg.symbol_fill != Some(false) {
+        return None;
+    }
+    match symbol? {
+        LegendSymbol::Square(_) | LegendSymbol::SquareInFill | LegendSymbol::FilledSquare => named("square", 1.0),
+        LegendSymbol::Circle
+        | LegendSymbol::ThinCircle
+        | LegendSymbol::StrokedCircle(_)
+        | LegendSymbol::FilledCircle => named("circle", 1.0),
+        LegendSymbol::FadedCircle(opacity) => named("circle", opacity),
+        LegendSymbol::FilledGlyph(d) => Some((d.to_string(), scatter_shape::half_extents("circle", 5.0), 1.0)),
+        _ => None,
+    }
 }
 
 /// The legend Vega draws for a scale no theme styles: `themed`'s fonts at Vega's own
@@ -1049,6 +1102,12 @@ pub fn symbol_legend(
     legend_y: f64,
     stamp_series: bool,
 ) -> Node {
+    // Vega joins the entries with ", " for its own aria-label, ambiguous once a name holds a
+    // comma: the legend then says only how many series it names.
+    let aria = entries.iter().any(|e| e.label.contains(',')).then(|| {
+        let count = entries.iter().map(|e| e.label).collect::<std::collections::BTreeSet<_>>().len();
+        display_text::language::tr("series.count", Some(count as u64), &[]).expect("every language catalog words series.count")
+    });
     let mut children = Vec::new();
     if !legend.title.is_empty() {
         let tf = &cfg.title.font;
@@ -1079,7 +1138,18 @@ pub fn symbol_legend(
         let x = legend_x + grid.col_x[i % columns];
         let y = legend_y + grid.row_y[i / columns];
         let c = grid.size / 2.0;
-        let symbol = symbol_node(entry.symbol.unwrap_or(default_symbol), entry.fill, (x + c, y + c));
+        let mut symbol = entry.symbol.unwrap_or(default_symbol);
+        let authored = authored_glyph(cfg, Some(symbol));
+        if let Some((path, bounds, opacity)) = &authored {
+            symbol = match symbol {
+                LegendSymbol::BorderedCircle(border) => LegendSymbol::BorderedGlyph(path, border, *bounds),
+                _ => {
+                    let interior = if cfg.symbol_fill == Some(false) { "transparent" } else { entry.fill };
+                    LegendSymbol::Ring(path, interior, *opacity, *bounds)
+                }
+            };
+        }
+        let symbol = symbol_node(symbol, entry.fill, (x + c, y + c));
         cells.push(Node::group(contract::legend_symbol_attrs(), vec![symbol]));
         // `data-dbt-series` -- the untruncated join key `_stamp_series_keys`
         // (converters/chart.py:367-385, :457-461: the label's text, stripped) stamps -- fires exactly when
@@ -1102,7 +1172,7 @@ pub fn symbol_legend(
         cells.push(Node::group(contract::legend_label_attrs(series_key), vec![label]));
     }
     children.push(Node::group(contract::legend_entries_attrs(), cells));
-    Node::group(contract::legend_attrs(), children)
+    Node::group(contract::legend_attrs(aria.as_deref()), children)
 }
 
 /// One legend swatch drawn centered on `(cx, cy)`.
@@ -1160,6 +1230,14 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
                 .set_if(bounds.sharp, "stroke-miterlimit", "10")
                 .set("opacity", opacity.to_string()),
         ),
+        LegendSymbol::BorderedGlyph(d, stroke, bounds) => path(
+            d.into(),
+            Attrs::new()
+                .set("fill", fill)
+                .set("stroke", stroke)
+                .set("stroke-width", "1.5")
+                .set_if(bounds.sharp, "stroke-miterlimit", "10"),
+        ),
         LegendSymbol::FilledSquare => square(Attrs::new().set("fill", fill).set("stroke-width", "1.5")),
         LegendSymbol::Dash(pattern) => {
             let half = VEGA_DASH_SYMBOL_SIZE.sqrt() / 2.0;
@@ -1178,6 +1256,166 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
     }
 }
 
+/// d3's tick target for a size legend (`legend.tickCount`'s default): fixed at 5
+/// whatever the legend's pixel size, unlike an axis's.
+const SIZE_LEGEND_TICK_COUNT: usize = 5;
+
+/// A size scale's legend ticks over `domain` and their text: d3's five ticks, comma-grouped
+/// at the precision the tick step implies. `drop_zero` omits a zero tick, whose circle has
+/// no area (Vega-Lite lists none when the range starts at 0).
+pub fn size_legend_ticks(domain: (f64, f64), drop_zero: bool) -> Result<(Vec<f64>, Vec<String>), String> {
+    let ticks = d3rs::ticks::d3_ticks(domain.0, domain.1, SIZE_LEGEND_TICK_COUNT);
+    let step = ticks.get(1).map_or(1.0, |&v| v - ticks[0]);
+    let spec = crate::number_locale::vega_tick_spec(step);
+    let values: Vec<f64> = ticks.into_iter().filter(|&v| !(drop_zero && v == 0.0)).collect();
+    let labels = values.iter().map(|&v| crate::number_locale::d3_format(&spec, v)).collect::<Result<_, _>>()?;
+    Ok((values, labels))
+}
+
+/// The widths of a size legend's labels: Vega sizes the legend from its own text metrics,
+/// so the shaped ones.
+pub fn size_label_widths(labels: &[String], cfg: &LegendConfig, fonts: &FontBook) -> Result<Vec<f64>, String> {
+    let font = &cfg.label.font;
+    labels.iter().map(|l| fonts.measure_shaped(l, font.family_or("sans-serif"), font.size_or(11.0))).collect()
+}
+
+/// How a size legend's circles are painted (`legend/encode.ts` `symbols()`): the
+/// mark's own constant fill at its opacity, black beside a color channel, or an
+/// unfilled mark's interior under its ring.
+#[derive(Clone, Copy)]
+pub enum SizePaint<'a> {
+    Static { fill: &'a str, opacity: f64 },
+    Field,
+    /// Black beside a color channel at the mark's opacity: a point map's size legend.
+    Black { opacity: f64 },
+    Ring { interior: &'a str, stroke: Option<&'a str>, opacity: f64 },
+}
+
+/// A size legend's rows, bottom of the domain first: the label of each circle, its
+/// path, its mark size (px²) and its label's width.
+pub struct SizeRows {
+    pub labels: Vec<String>,
+    pub glyphs: Vec<String>,
+    pub areas: Vec<f64>,
+    pub label_ws: Vec<f64>,
+}
+
+/// A size channel's circle legend: a title, then one circle per labeled value, each
+/// row as tall as its own circle ([`size_legend_grid`], or [`size_legend_row`] for a
+/// horizontal legend). Built once for its box, painted wherever the legend stack
+/// puts it.
+pub struct SizeLegend {
+    title: String,
+    labels: Vec<String>,
+    glyphs: Vec<String>,
+    cells: Vec<SizeCell>,
+    title_band: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl SizeLegend {
+    /// `label_offset` is the gap from a symbol's cell to its label; `glyph` the circle's
+    /// bounds. `cfg` is the legend's own text style.
+    pub fn new(
+        title: &str,
+        rows: SizeRows,
+        (label_offset, horizontal): (f64, bool),
+        glyph: crate::families::scatter_shape::Bounds,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+    ) -> Result<Self, String> {
+        let label_size = cfg.label.font.size_or(11.0);
+        let title_font = &cfg.title.font;
+        let (title_size, title_family) = (title_font.size_or(12.0), title_font.family_or("sans-serif"));
+        let (cells, box_h, box_w) = if horizontal {
+            size_legend_row(&rows.areas, &rows.label_ws, label_size, label_offset, glyph)
+        } else {
+            let grid = size_legend_grid(&rows.areas, &rows.label_ws, label_size, label_offset, glyph);
+            let cells = (0..rows.areas.len())
+                .map(|i| SizeCell { y: grid.row_y[i], c: grid.row_c[i], symbol_x: grid.symbol_c, label_x: grid.label_x })
+                .collect();
+            (cells, grid.box_h, grid.width)
+        };
+        let title_band = if title.is_empty() { 0.0 } else { title_size + VEGA_LEGEND_TITLE_PADDING };
+        let title_w = fonts.measure_shaped(title, title_family, title_size)?;
+        Ok(Self {
+            title: title.to_string(),
+            labels: rows.labels,
+            glyphs: rows.glyphs,
+            cells,
+            title_band,
+            w: title_w.max(box_w).ceil(),
+            h: title_band + box_h,
+        })
+    }
+
+    /// The legend's nodes with its top-left at `(x, y)`.
+    pub fn nodes(&self, cfg: &LegendConfig, paint: SizePaint, x: f64, y: f64) -> Vec<Node> {
+        let mut nodes = Vec::new();
+        let tf = &cfg.title.font;
+        let title_size = tf.size_or(12.0);
+        if !self.title.is_empty() {
+            nodes.push(Node::text(
+                Attrs::new()
+                    .set("x", format!("{x:.2}"))
+                    .set("y", format!("{:.2}", y + baseline_shift("top", title_size)))
+                    .vega("font-family", tf.family_or("sans-serif"))
+                    .set("font-size", title_size.to_string())
+                    .set("font-weight", tf.weight_str())
+                    .set("fill", tf.color.as_deref().unwrap_or("#313233")),
+                self.title.as_str(),
+            ));
+        }
+        let lf = &cfg.label.font;
+        let label_size = lf.size_or(11.0);
+        let entries_y = y + self.title_band;
+        for (i, label) in self.labels.iter().enumerate() {
+            let cell = &self.cells[i];
+            let row_y = entries_y + cell.y;
+            let painted = match paint {
+                SizePaint::Static { fill, opacity } => {
+                    Attrs::new().set("fill", fill).set("opacity", opacity.to_string()).set("stroke-width", "1.5")
+                }
+                SizePaint::Field => {
+                    Attrs::new().set("fill", "black").set("stroke", "transparent").set("stroke-width", "1.5")
+                }
+                SizePaint::Black { opacity } => Attrs::new()
+                    .set("fill", "black")
+                    .set("fill-opacity", opacity.to_string())
+                    .set("stroke-width", "1.5")
+                    .set("opacity", opacity.to_string()),
+                SizePaint::Ring { interior, stroke, opacity } => {
+                    let attrs = Attrs::new().set("fill", interior);
+                    let attrs = match stroke {
+                        Some(stroke) => attrs.set("stroke", stroke),
+                        None => attrs,
+                    };
+                    attrs.set("stroke-width", "1.5").set("opacity", opacity.to_string())
+                }
+            };
+            nodes.push(Node::Path(
+                Attrs::new()
+                    .set("transform", format!("translate({:.2},{:.2})", x + cell.symbol_x, row_y + cell.c))
+                    .set("d", self.glyphs[i].as_str())
+                    .extend(painted),
+            ));
+            let text = Node::text(
+                Attrs::new()
+                    .set("x", format!("{:.2}", x + cell.label_x))
+                    .set("y", format!("{:.2}", row_y + cell.c + baseline_shift("middle", label_size)))
+                    .vega("font-family", lf.family_or("sans-serif"))
+                    .set("font-size", label_size.to_string())
+                    .set("font-weight", lf.weight_str())
+                    .set("fill", lf.color.as_deref().unwrap_or("#626366")),
+                label.as_str(),
+            );
+            nodes.push(Node::group(contract::legend_label_attrs(None), vec![text]));
+        }
+        nodes
+    }
+}
+
 /// [`symbol_legend`] printed onto `out`, the sink the string-building callers
 /// still hold.
 #[allow(clippy::too_many_arguments)]
@@ -1191,6 +1429,9 @@ pub fn emit_vega_legend(
     legend_y: f64,
     stamp_series: bool,
 ) {
+    if entries.is_empty() && legend.title.is_empty() {
+        return;
+    }
     let node = symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series);
     out.push_str(&print(&[node]));
 }
@@ -1614,10 +1855,10 @@ mod tests {
     // Real font family present in InterVariable.ttf; "sans-serif" is skipped by face_for().
     const TEST_FONT: &str = "'Inter Variable', Inter, sans-serif";
 
-    fn test_fonts() -> crate::text::FontBook {
+    fn test_fonts() -> measure::FontBook {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let dir = format!("{manifest}/../../../src/dbt_charts/core/render/fonts");
-        crate::text::FontBook::load_dir(&dir).expect("test fonts load")
+        measure::FontBook::load_dir(&dir).expect("test fonts load")
     }
 
     /// `legendParams` (vega-view-transforms `layout/legend.js:41-64`) for a

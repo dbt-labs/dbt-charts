@@ -703,9 +703,11 @@ def test_engine_refusal_raises_instead_of_falling_back() -> None:
         "longitude": "lon",
     }
     with pytest.raises(ChartDataError) as caught:
-        _native(point_map, [{"lat": 1.0, "lon": 2.0}])
+        _native(point_map, [{"lat": "north", "lon": 2.0}])
     assert caught.value.code.code == "ERR-ENGINE-REFUSED"
-    assert caught.value.fields == {"message": "chart family not implemented: point_map"}
+    assert caught.value.fields == {
+        "message": "a point map row with a missing or non-numeric latitude is not supported"
+    }
 
 
 def test_kpi_label_truncation_lands_in_the_text_sink() -> None:
@@ -1372,3 +1374,63 @@ rows:
 """
     )
     assert ">0.0042</tspan>" in svg
+
+
+_US_STATES_URL = "bundled:us-10m.json"
+_GEOSHAPE = {"type": "map", "query": "q", "geo": {"source": "us-states"}}
+_POINT_MAP = {
+    "type": "point_map",
+    "query": "q",
+    "latitude": "lat",
+    "longitude": "lon",
+    "basemap": {"source": "us-states"},
+}
+_POINT_ROWS = [{"lat": 40.7, "lon": -74.0}]
+
+
+def _payload_of(
+    chart_def: dict[str, Any], rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    chart = _resolved(chart_def, rows)
+    return build_chart_payload(
+        chart,
+        {chart.query_name: rows},
+        width=600.0,
+        height=400.0,
+        padding=None,
+        board_style=_BOARD_RS,
+        board_width=_BOARD_WIDTH,
+        variables={},
+        title_shift=NO_TITLE_SHIFT,
+        is_placeholder=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("chart_def", "rows"), [(_GEOSHAPE, []), (_POINT_MAP, _POINT_ROWS)]
+)
+def test_a_geo_chart_payload_carries_its_document_under_the_source_url(
+    chart_def: dict[str, Any], rows: list[dict[str, Any]]
+) -> None:
+    geometries = _payload_of(chart_def, rows)["geometries"]
+    assert set(geometries) == {_US_STATES_URL}
+    assert geometries[_US_STATES_URL]["type"] == "Topology"
+
+
+def test_a_non_geo_chart_payload_carries_no_geometries() -> None:
+    assert _payload_of(_KPI, _REVENUE)["geometries"] is None
+
+
+def test_a_point_map_without_a_basemap_loads_no_geometry() -> None:
+    chart_def = {k: v for k, v in _POINT_MAP.items() if k != "basemap"}
+    assert _payload_of(chart_def, _POINT_ROWS)["geometries"] is None
+
+
+@pytest.mark.parametrize(
+    ("chart_def", "rows"), [(_GEOSHAPE, []), (_POINT_MAP, _POINT_ROWS)]
+)
+def test_the_engine_renders_a_bundled_geo_chart_through_the_python_payload(
+    chart_def: dict[str, Any], rows: list[dict[str, Any]]
+) -> None:
+    svg, _ = _native(chart_def, rows, width=600.0, height=400.0)
+    assert svg.lstrip().startswith("<svg")

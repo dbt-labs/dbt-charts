@@ -276,15 +276,15 @@ impl TimePart {
 
     /// What Vega-Lite's own axis format paints at a tick of the part's scale
     /// (`timeUnitSpecifier`): `%b`, `%a`, `%d`, `%j`, `%H:00`.
-    fn tick_text(self, instant: f64) -> String {
+    fn tick_text(self, instant: f64) -> Result<String, String> {
         let (y, m, d) = civil_from_days(instant.floor() as i64);
-        match self {
-            TimePart::MonthOfYear => MONTH_ABBR[(m - 1) as usize].to_string(),
-            TimePart::DayOfWeek => WEEKDAY_ABBR[weekday(y, m, d) as usize].to_string(),
+        Ok(match self {
+            TimePart::MonthOfYear => month_abbr(m)?,
+            TimePart::DayOfWeek => weekday_abbr(weekday(y, m, d) as usize)?,
             TimePart::DayOfMonth => format!("{d:02}"),
             TimePart::DayOfYear => format!("{:03}", days_from_civil(y, m, d) - days_from_civil(y, 1, 1) + 1),
             TimePart::HourOfDay => format!("{:02}:00", clock_hour(instant)),
-        }
+        })
     }
 
     /// Vega-Lite's default `tickCount` for the part's axis: none for the
@@ -376,22 +376,22 @@ pub fn time_part_ticks(
     format: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<PartTick>, String> {
     let (lo, hi) = domain;
-    let text = |at: f64| -> String {
+    let text = |at: f64| -> Result<String, String> {
         let (y, m, d) = civil_from_days(at.floor() as i64);
         match format {
-            Some(f) => f.text(y, m, d),
+            Some(f) => Ok(f.text(y, m, d)),
             None => part.tick_text(at),
         }
     };
     if lo == hi {
-        return Ok(vec![PartTick { at: lo, frac: 0.5, text: text(lo) }]);
+        return Ok(vec![PartTick { at: lo, frac: 0.5, text: text(lo)? }]);
     }
     // Vega asks d3 for ten ticks when no `tickCount` reaches the axis.
     let count = authored.or_else(|| part.default_tick_count(plot_w)).unwrap_or(10);
     let count = part.min_step_days().map_or(count, |step| count.min(min_step_ticks(hi - lo, step)));
     utc_instants(lo, hi, count)
         .into_iter()
-        .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at) }))
+        .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at)? }))
         .collect()
 }
 
@@ -1974,7 +1974,7 @@ pub fn datum_label(grain: Option<TimeUnit>, day: i64) -> Result<String, String> 
         Some(TimeUnit::YearMonth) => fmt("%b %Y"),
         Some(TimeUnit::YearWeek) => fmt("W%U %Y"),
         Some(TimeUnit::YearMonthDate) => fmt("%b %d, %Y"),
-        None => Ok(d3_multi_format(y, m, d)),
+        None => d3_multi_format(y, m, d),
     }
 }
 
@@ -2623,7 +2623,14 @@ fn resolve_vega_bucketed(
     // the emitted `values` stay every visibility-grain opener, unhalved,
     // with Vega's own runtime `labelOverlap: parity` (this `parity` flag)
     // doing the actual thinning against real ink.
-    let mut visible = openers_at(dates, data_tu, visibility_tu, fiscal_start);
+    // Every date that opens a period counts, not one per period: a year of daily rows opens on each of its
+    // first seven days (`is_label_opener`).
+    let mut visible: Vec<usize> = (0..dates.len())
+        .filter(|&i| {
+            let (y, m, d) = dates[i];
+            is_opener(y, m, d, data_tu, visibility_tu, fiscal_start)
+        })
+        .collect();
     let parity = skip && visibility_tu == TimeUnit::Year;
     if parity {
         visible = visible.into_iter().step_by(2).collect();
@@ -2669,8 +2676,8 @@ pub fn vl_default_format(y: i32, m: u8, d: u8, tu: TimeUnit) -> Result<String, S
             None,
             &[("year", &format!("{y:04}")), ("n", &((m - 1) / 3 + 1).to_string())],
         ),
-        TimeUnit::YearMonth => Ok(format!("{} {y:04}", MONTH_ABBR[(m - 1) as usize])),
-        TimeUnit::YearMonthDate => Ok(format!("{} {d:02}, {y:04}", MONTH_ABBR[(m - 1) as usize])),
+        TimeUnit::YearMonth => Ok(format!("{} {y:04}", month_abbr(m)?)),
+        TimeUnit::YearMonthDate => Ok(format!("{} {d:02}, {y:04}", month_abbr(m)?)),
         // A week bucket starts on a Sunday, and Vega-Lite names it `%Y W%U`.
         TimeUnit::YearWeek => {
             let day = days_from_civil(y, m, d);
@@ -2922,10 +2929,10 @@ pub fn resolve_vega_x_labels(
 
 // ── Label formatting ──────────────────────────────────────────────────────────
 
-pub(crate) const MONTH_ABBR: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
+/// The board time locale's short month name (`%b`).
+pub(crate) fn month_abbr(m: u8) -> Result<String, String> {
+    Ok(crate::time_locale::active_time_locale()?.short_months[(m - 1) as usize].clone())
+}
 
 /// Full calendar-date text for a structured-tooltip identity header --
 /// `tooltip_header_date_expr` (time_unit_detect.py:2159-2183). Unlike an
@@ -2935,7 +2942,7 @@ pub(crate) const MONTH_ABBR: [&str; 12] = [
 /// `tu: None` is the continuous/sub-daily case, sharing
 /// `YearMonthDate`'s day-level format (production's own `else` branch).
 pub fn tooltip_header_date(y: i32, m: u8, d: u8, tu: Option<TimeUnit>) -> Result<String, String> {
-    let mon = |m: u8| MONTH_ABBR[(m - 1) as usize];
+    let mon = |m: u8| month_abbr(m);
     Ok(match tu {
         Some(TimeUnit::Year) => format!("{y:04}"),
         Some(TimeUnit::YearQuarter) => display_text::language::tr(
@@ -2943,18 +2950,18 @@ pub fn tooltip_header_date(y: i32, m: u8, d: u8, tu: Option<TimeUnit>) -> Result
             None,
             &[("year", &format!("{y:04}")), ("n", &((m - 1) / 3 + 1).to_string())],
         )?,
-        Some(TimeUnit::YearMonth) => format!("{} {y:04}", mon(m)),
+        Some(TimeUnit::YearMonth) => format!("{} {y:04}", mon(m)?),
         Some(TimeUnit::YearWeek) => {
             let (ey, em, ed) = civil_from_days(days_from_civil(y, m, d) + 6);
             if ey != y {
-                format!("{d} {} {y:04} \u{2013} {ed} {} {ey:04}", mon(m), mon(em))
+                format!("{d} {} {y:04} \u{2013} {ed} {} {ey:04}", mon(m)?, mon(em)?)
             } else if em != m {
-                format!("{d} {} \u{2013} {ed} {} {ey:04}", mon(m), mon(em))
+                format!("{d} {} \u{2013} {ed} {} {ey:04}", mon(m)?, mon(em)?)
             } else {
-                format!("{d}\u{2013}{ed} {} {ey:04}", mon(em))
+                format!("{d}\u{2013}{ed} {} {ey:04}", mon(em)?)
             }
         }
-        Some(TimeUnit::YearMonthDate) | None => format!("{d} {} {y:04}", mon(m)),
+        Some(TimeUnit::YearMonthDate) | None => format!("{d} {} {y:04}", mon(m)?),
     })
 }
 
@@ -3127,7 +3134,7 @@ fn format_label(
         }
 
         TimeUnit::YearMonth => {
-            let row1 = MONTH_ABBR[(month - 1) as usize].to_string();
+            let row1 = month_abbr(month)?;
             let row2 = if is_first || is_year_start {
                 format!("{year:04}")
             } else {
@@ -3145,11 +3152,11 @@ fn format_label(
             };
             let row2 = if is_first || (opens_month && is_year_start) {
                 // Anchor or fiscal-year-opening month opener: "Jan'24"
-                let mon = MONTH_ABBR[(month - 1) as usize];
+                let mon = month_abbr(month)?;
                 format!("{mon}'{year2:02}")
             } else if opens_month {
                 // Other month openers: bare month name
-                MONTH_ABBR[(month - 1) as usize].to_string()
+                month_abbr(month)?
             } else {
                 String::new()
             };
@@ -3821,11 +3828,15 @@ fn utc_tick_days(interval: UtcTickInterval, lo: i64, hi: i64) -> Vec<i64> {
     out
 }
 
-const MONTH_FULL: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-];
-const WEEKDAY_ABBR: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/// The board time locale's full month name (`%B`).
+fn month_full(m: u8) -> Result<String, String> {
+    Ok(crate::time_locale::active_time_locale()?.months[(m - 1) as usize].clone())
+}
+
+/// The board time locale's short weekday (`%a`) for a Monday-first index.
+fn weekday_abbr(monday_first: usize) -> Result<String, String> {
+    Ok(crate::time_locale::active_time_locale()?.short_days[(monday_first + 1) % 7].clone())
+}
 
 /// d3's multi-scale UTC format — the tick's own finest non-zero unit picks
 /// the specifier. From d3-scale's `calendar` (the bundled vega source:
@@ -3833,18 +3844,18 @@ const WEEKDAY_ABBR: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"
 /// : month<t ? (week<t ? "%a %d" : "%b %d") : year<t ? "%B" : "%Y"`), whose
 /// day-grained tail is all this module can reach: a year start takes `%Y`,
 /// any other month start `%B`, a Sunday `%b %d`, any other day `%a %d`.
-pub(crate) fn d3_multi_format(y: i32, m: u8, d: u8) -> String {
-    if d != 1 {
+pub(crate) fn d3_multi_format(y: i32, m: u8, d: u8) -> Result<String, String> {
+    Ok(if d != 1 {
         if weekday(y, m, d) == 6 {
-            format!("{} {d:02}", MONTH_ABBR[(m - 1) as usize])
+            format!("{} {d:02}", month_abbr(m)?)
         } else {
-            format!("{} {d:02}", WEEKDAY_ABBR[weekday(y, m, d) as usize])
+            format!("{} {d:02}", weekday_abbr(weekday(y, m, d) as usize)?)
         }
     } else if m != 1 {
-        MONTH_FULL[(m - 1) as usize].to_string()
+        month_full(m)?
     } else {
         format!("{y:04}")
-    }
+    })
 }
 
 /// Production's `_TEMPORAL_TICK_INTERVAL` (`type_inference.py:132-138`): the
@@ -4176,7 +4187,7 @@ pub(crate) fn multi_format_at(at: f64) -> Result<String, String> {
     let clock = ms.rem_euclid(864_00_000);
     let (y, m, d) = civil_from_days(ms.div_euclid(864_00_000));
     if clock == 0 {
-        return Ok(d3_multi_format(y, m, d));
+        return d3_multi_format(y, m, d);
     }
     if clock % 1000 != 0 {
         return Ok(format!(".{:03}", clock % 1000));
@@ -4400,6 +4411,7 @@ mod tests {
     /// full bucket text, never the coarsened bare form an axis label uses.
     #[test]
     fn tooltip_header_date_matches_production_vocabulary() {
+        let _locale = crate::time_locale::en_us_scope();
         assert_eq!(tooltip_header_date(2024, 2, 3, Some(TimeUnit::Year)).unwrap(), "2024");
         assert_eq!(
             tooltip_header_date(2024, 2, 3, Some(TimeUnit::YearQuarter)).unwrap(),
@@ -4766,6 +4778,7 @@ mod tests {
     /// yearmonth cadence: first label gets year row, others only on January.
     #[test]
     fn yearmonth_labels_anchor_and_jan() {
+        let _locale = crate::time_locale::en_us_scope();
         // Jan 2024 (first) → "Jan" / "2024"
         let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearMonth, true, 1).unwrap();
         assert_eq!(r1, "Jan");
@@ -4854,6 +4867,7 @@ mod tests {
     /// yearmonthdate cadence: day number, two-row at month/year openers.
     #[test]
     fn yearmonthdate_labels_anchor_and_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         // First label (Jan 1): "1" / "Jan'24"
         let (r1, r2) = format_label(2024, 1, 1, TimeUnit::YearMonthDate, true, 1).unwrap();
         assert_eq!(r1, "1");
@@ -4878,6 +4892,7 @@ mod tests {
     /// build_temporal_labels produces month-opener labels for daily data.
     #[test]
     fn temporal_labels_daily_at_month_cadence() {
+        let _locale = crate::time_locale::en_us_scope();
         // 60 daily data points: Jan + Feb 2024
         let domain: Vec<String> = (0..60)
             .map(|i| {
@@ -4956,6 +4971,7 @@ mod tests {
     /// straight to month openers, Jan..Dec, year on the first label only.
     #[test]
     fn wk_52_coarsens_to_month_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 6), 7, 52);
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -4988,6 +5004,7 @@ mod tests {
     /// month-opening Monday.
     #[test]
     fn dy_90_coarsens_to_monday_rung() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 1), 1, 90);
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -5019,6 +5036,7 @@ mod tests {
     /// fits, so no coarsening happens — every month gets its own label.
     #[test]
     fn monthly_data_needs_no_coarsening() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -5052,6 +5070,7 @@ mod tests {
     /// here, since no other tick in this domain also carries a year row.
     #[test]
     fn monthly_row1_fits_despite_wider_anchor_year_row() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -5084,6 +5103,7 @@ mod tests {
     /// fits; deleting that check would wrongly leave it flat.
     #[test]
     fn year_row_own_independent_clearance_still_coarsens() {
+        let _locale = crate::time_locale::en_us_scope();
         let mut domain = vec!["2024-12-01".to_string()];
         for m in 1u8..=11 {
             domain.push(format!("2025-{m:02}-01"));
@@ -5114,6 +5134,7 @@ mod tests {
     /// "Q1 Q2 Q3 Q4" — a label names the tick, not the coarser interval.
     #[test]
     fn wk_130_visibility_steps_to_quarter_openers_with_month_text() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 6), 7, 130);
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -5138,6 +5159,7 @@ mod tests {
     /// same grain — no auto-coarsening runs at all.
     #[test]
     fn authored_label_time_unit_skips_coarsening() {
+        let _locale = crate::time_locale::en_us_scope();
         // Wide enough that all 52 weekly labels clear each other — authored
         // format used as-is, no visibility thinning needed.
         let domain = iso_range((2025, 1, 6), 7, 52);
@@ -5168,6 +5190,7 @@ mod tests {
     /// still read as day numbers, never month names.
     #[test]
     fn authored_native_format_still_thins_visibility() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 1), 1, 90);
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -5201,6 +5224,7 @@ mod tests {
     /// the Monday rung only matters when native doesn't fit.
     #[test]
     fn continuous_axis_keeps_native_daily_cadence_when_it_fits() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 20), 1, 6);
         let (labels, _vt) = resolve_temporal_labels(
             &domain,
@@ -5226,6 +5250,7 @@ mod tests {
     /// (`_label_overlap.py:570-598`), measured over every calendar day.
     #[test]
     fn continuous_daily_axis_takes_the_weekly_rung_before_month_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 2, 19), 1, 150);
         let (labels, (format_tu, visibility_tu)) = {
             let dates = parse_domain_dates(&domain);
@@ -5258,6 +5283,7 @@ mod tests {
     /// not continuous) jumps from the native misfit straight to month openers.
     #[test]
     fn daily_axis_without_either_gate_keeps_month_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 2, 19), 1, 150);
         let (labels, visibility_tu) = resolve_temporal_labels(
             &domain,
@@ -5284,6 +5310,7 @@ mod tests {
     /// visibility and the label texts unchanged.
     #[test]
     fn continuous_daily_axis_with_a_missing_day_resolves_like_the_full_domain() {
+        let _locale = crate::time_locale::en_us_scope();
         let full = iso_range((2025, 2, 19), 1, 150);
         let mut gapped = full.clone();
         gapped.remove(10);
@@ -5316,6 +5343,7 @@ mod tests {
     /// ladder coarsens. Without `continuous_temporal` the rows alone decide.
     #[test]
     fn continuous_monthly_axis_measures_the_gap_between_rows() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = ["2022-01-01", "2022-02-01", "2022-03-01", "2022-04-01", "2022-05-01", "2022-06-01", "2023-12-01"]
             .iter()
             .map(|s| s.to_string())
@@ -5354,6 +5382,7 @@ mod tests {
     /// instead of 5 quarterly ones.
     #[test]
     fn flushed_continuous_axis_coarsens_month_to_quarter_on_first_pair_overflow() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (0..16)
             .map(|i| {
                 let total = 10 + i; // Nov = 0-based month index 10
@@ -5518,6 +5547,7 @@ mod tests {
     /// (`_label_overlap.py:570-598`) — flat, no parity, no tilt.
     #[test]
     fn vega_continuous_daily_axis_takes_the_monday_rung_before_month_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates = parse_domain_dates(&iso_range((2025, 2, 19), 1, 150));
         let layout = resolve_vega_label_layout(
             &dates,
@@ -5545,6 +5575,7 @@ mod tests {
     /// (`bucket_aligned_temporal`), where a line's goes straight to the month openers.
     #[test]
     fn a_bucket_aligned_continuous_weekly_axis_keeps_its_week_vocabulary_when_it_fits() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates = parse_domain_dates(&iso_range((2024, 1, 1), 7, 14));
         let layout = |bucket_aligned: bool| {
             resolve_vega_label_layout(
@@ -5588,6 +5619,7 @@ mod tests {
     /// month-opener ladder: the Monday rung is a continuous-axis law.
     #[test]
     fn vega_daily_axis_that_is_not_continuous_keeps_month_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates = parse_domain_dates(&iso_range((2025, 2, 19), 1, 150));
         let layout = resolve_vega_label_layout(
             &dates,
@@ -5619,6 +5651,7 @@ mod tests {
     /// production pin.
     #[test]
     fn vega_continuous_daily_axis_inside_one_month_tilts_the_monday_rung() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates = parse_domain_dates(&iso_range((2025, 1, 1), 1, 30));
         let layout = resolve_vega_label_layout(
             &dates,
@@ -5647,6 +5680,7 @@ mod tests {
     /// layout unchanged.
     #[test]
     fn vega_continuous_daily_axis_with_a_missing_day_resolves_like_the_full_domain() {
+        let _locale = crate::time_locale::en_us_scope();
         let full = iso_range((2025, 2, 19), 1, 150);
         let mut gapped = full.clone();
         gapped.remove(10);
@@ -5680,6 +5714,7 @@ mod tests {
     /// (same rows and width as the legacy-arm test).
     #[test]
     fn vega_continuous_monthly_axis_measures_the_gap_between_rows() {
+        let _locale = crate::time_locale::en_us_scope();
         let dates = parse_domain_dates(
             &["2022-01-01", "2022-02-01", "2022-03-01", "2022-04-01", "2022-05-01", "2022-06-01", "2023-12-01"]
                 .iter()
@@ -5756,6 +5791,7 @@ mod tests {
     /// only -90 clears a very narrow band).
     #[test]
     fn daily_generic_layout_parities_then_tilts_to_ninety() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2024, 1, 1), 1, 30);
         let dates = parse_domain_dates(&domain);
         let layout = resolve_vega_label_layout(
@@ -5786,6 +5822,7 @@ mod tests {
     /// day, untilted, unthinned — the plain end of `_generic_layout`.
     #[test]
     fn daily_native_labels_that_fit_flat_stay_flat() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2024, 1, 1), 1, 5);
         let dates = parse_domain_dates(&domain);
         let layout = resolve_vega_label_layout(
@@ -5821,6 +5858,7 @@ mod tests {
     /// (not a structural month promotion), then steps month -> quarter.
     #[test]
     fn authored_native_grain_enters_the_bucketed_ladder_at_its_own_grain() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2024, 1, 1), 7, 52); // 52 weekly Mondays
         let dates = parse_domain_dates(&domain);
         let layout = resolve_vega_label_layout(
@@ -5868,6 +5906,7 @@ mod tests {
     /// (probe-pinned: `test_vl_probe.py::vl_default_temporal_format_by_grain`).
     #[test]
     fn vl_default_format_matches_vega_lite_defaults() {
+        let _locale = crate::time_locale::en_us_scope();
         assert_eq!(vl_default_format(2024, 1, 1, TimeUnit::Year).unwrap(), "2024");
         assert_eq!(vl_default_format(2024, 4, 1, TimeUnit::YearQuarter).unwrap(), "2024 Q2");
         assert_eq!(vl_default_format(2024, 2, 1, TimeUnit::YearMonth).unwrap(), "Feb 2024");
@@ -5909,6 +5948,7 @@ mod tests {
     /// a Sunday, `%a %d` on any other day.
     #[test]
     fn the_bare_axis_ticks_are_d3s_own_across_the_whole_interval_ladder() {
+        let _locale = crate::time_locale::en_us_scope();
         let cases: &[(&str, &str, f64, &[&str])] = &[
             ("2024-01-07", "2025-06-29", 80.0, &["2025"]),
             ("2024-01-07", "2025-06-29", 120.0, &["April", "July", "October", "2025", "April"]),
@@ -6009,6 +6049,7 @@ mod tests {
     /// by `tests/test_vl_probe.py::test_utc_ticks_at_an_authored_count`).
     #[test]
     fn an_authored_count_runs_utc_ticks_at_that_count_whatever_the_plot_width() {
+        let _locale = crate::time_locale::en_us_scope();
         let months: &[&str] = &[
             "February", "March", "April", "May", "June", "July", "August", "September",
             "October", "November", "December", "2025", "February", "March", "April", "May",
@@ -6079,6 +6120,7 @@ mod tests {
 
     #[test]
     fn an_authored_yearmonth_ticks_every_month_start_in_the_domain() {
+        let _locale = crate::time_locale::en_us_scope();
         let got = authored_tick_texts("2024-02-01", "2026-01-01", "yearmonth", None);
         assert_eq!(got.len(), 24, "{got:?}");
         assert_eq!(&got[..3], ["February", "March", "April"]);
@@ -6092,6 +6134,7 @@ mod tests {
     /// table step of 3 belongs to the unauthored default cadence.
     #[test]
     fn an_authored_yearquarter_is_monthly_until_a_step_is_authored() {
+        let _locale = crate::time_locale::en_us_scope();
         assert_eq!(authored_tick_texts("2024-02-01", "2026-01-01", "yearquarter", None).len(), 24);
         assert_eq!(
             authored_tick_texts("2024-02-01", "2026-01-01", "yearquarter", Some(3.0)),
@@ -6105,6 +6148,7 @@ mod tests {
     /// month).
     #[test]
     fn an_authored_step_filters_by_the_calendar_field_not_a_running_stride() {
+        let _locale = crate::time_locale::en_us_scope();
         assert_eq!(
             authored_tick_texts("2024-02-01", "2025-06-01", "yearmonth", Some(5.0)),
             ["June", "November", "2025", "June"]
@@ -6122,6 +6166,7 @@ mod tests {
     /// first Sunday (1969-12-28): d3-time `interval.js` `count(0, d) % k`.
     #[test]
     fn an_authored_week_step_counts_sundays_from_the_epoch() {
+        let _locale = crate::time_locale::en_us_scope();
         assert_eq!(
             authored_tick_texts("2024-01-03", "2024-03-20", "yearweek", Some(3.0)),
             ["Jan 14", "Feb 04", "Feb 25", "Mar 17"]
@@ -6143,6 +6188,7 @@ mod tests {
     /// interval, and a negative one makes `every` null, so d3 ticks its default ten.
     #[test]
     fn an_authored_tick_step_below_one_follows_vega_tick_count() {
+        let _locale = crate::time_locale::en_us_scope();
         let bare = authored_tick_texts("2022-03-17", "2024-12-19", "yearmonth", None);
         assert_eq!(authored_tick_texts("2022-03-17", "2024-12-19", "yearmonth", Some(0.0)), bare);
         assert_eq!(authored_tick_interval("year", Some(-2.0)), Ok(AuthoredTickCadence::UncappedCount(10)));
@@ -6164,6 +6210,7 @@ mod tests {
     /// (a data-row filter kept only the two whose 1st is a Monday).
     #[test]
     fn interval_ticks_over_weekly_rows_label_every_month_start() {
+        let _locale = crate::time_locale::en_us_scope();
         let mondays: Vec<String> =
             (0..46).map(|i| civil_iso(days_from_civil(2024, 1, 1) + 7 * i)).collect();
         let floored: Vec<String> =
@@ -6194,6 +6241,7 @@ mod tests {
     /// year. Probed: 32 labels over 24 monthly rows.
     #[test]
     fn interval_ticks_finer_than_the_rows_repeat_the_opening_months_label() {
+        let _locale = crate::time_locale::en_us_scope();
         let months: Vec<String> =
             (0..24).map(|i| format!("{}-{:02}-01", 2024 + i / 12, i % 12 + 1)).collect();
         let extent = utc_domain_extent(&months).unwrap();
@@ -6257,6 +6305,7 @@ mod tests {
     /// anchor and wears the year (probed against the reference render).
     #[test]
     fn the_weekly_anchor_matches_by_sunday_week_of_the_year() {
+        let _locale = crate::time_locale::en_us_scope();
         let mondays: Vec<String> =
             (0..20).map(|i| civil_iso(days_from_civil(2024, 4, 1) + 7 * i)).collect();
         let floored: Vec<String> =
@@ -6293,6 +6342,7 @@ mod tests {
     /// Mar 17, 24, 31, Apr 7).
     #[test]
     fn interval_ticks_in_the_week_vocabulary_read_the_monday_bucket() {
+        let _locale = crate::time_locale::en_us_scope();
         let mondays: Vec<String> =
             (0..4).map(|i| civil_iso(days_from_civil(2024, 3, 18) + 7 * i)).collect();
         let floored: Vec<String> =
@@ -6314,6 +6364,7 @@ mod tests {
     /// bucket, and a month's first day carries its month.
     #[test]
     fn interval_ticks_in_the_day_vocabulary_read_the_tick_date() {
+        let _locale = crate::time_locale::en_us_scope();
         let days = domain_of(&["2024-03-30", "2024-04-02"]);
         let extent = utc_domain_extent(&days).unwrap();
         let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Day(1));
@@ -6559,6 +6610,7 @@ mod tests {
     /// format changes the cadence only through the text it measures.
     #[test]
     fn the_built_in_vocabulary_clears_a_rung_the_authored_text_does_not() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
         let (labels, vis) = resolve_temporal_labels(
             &domain,
@@ -6633,6 +6685,7 @@ mod tests {
     /// quarter openers, not months, and the year rides under the first.
     #[test]
     fn a_vertical_ladder_steps_from_months_to_quarter_openers() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = months(24);
         let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 272.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(out.fits);
@@ -6657,6 +6710,7 @@ mod tests {
     /// With skipping off the ladder never steps: every month paints.
     #[test]
     fn a_vertical_ladder_without_skip_keeps_every_label() {
+        let _locale = crate::time_locale::en_us_scope();
         let domain = months(24);
         let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 100.0, 1, false, 11.0, 16.0, None).unwrap();
         assert!(!out.fits);
@@ -6685,6 +6739,7 @@ mod tests {
     /// caps that at `floor(span / 31) + 1`: five over Feb..Jul, so the month rung.
     #[test]
     fn a_month_part_axis_ticks_month_starts_under_its_min_step() {
+        let _locale = crate::time_locale::en_us_scope();
         let lo = days_from_civil(2012, 2, 1) as f64;
         let hi = days_from_civil(2012, 7, 1) as f64;
         let ticks = time_part_ticks((lo, hi), 455.0, TimePart::MonthOfYear, None, None).unwrap();
@@ -6706,6 +6761,7 @@ mod tests {
     /// four-day span ticks every 12 hours.
     #[test]
     fn a_weekday_part_axis_ticks_every_half_day() {
+        let _locale = crate::time_locale::en_us_scope();
         let lo = days_from_civil(2012, 1, 1) as f64;
         let ticks = time_part_ticks((lo, lo + 4.0), 455.0, TimePart::DayOfWeek, None, None).unwrap();
         assert_eq!(part_texts(&ticks), ["Sun", "Sun", "Mon", "Mon", "Tue", "Tue", "Wed", "Wed", "Thu"]);
@@ -6745,6 +6801,7 @@ mod tests {
     /// per-grain format, an empty bucket's included.
     #[test]
     fn a_none_axis_labels_every_tick_in_the_grains_own_format() {
+        let _locale = crate::time_locale::en_us_scope();
         let days = [days_from_civil(2024, 3, 1), days_from_civil(2024, 4, 1)];
         let labels = none_tick_labels(&days, TimeUnit::YearMonth, None).unwrap();
         assert_eq!(labels.iter().map(|l| l.row1.as_str()).collect::<Vec<_>>(), ["Mar 2024", "Apr 2024"]);

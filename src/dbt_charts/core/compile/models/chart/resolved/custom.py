@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
 from dbt_charts.core.compile.template.custom_template import OptionValue
 
 from ._base import _SharedResolvedChartFields
@@ -52,6 +52,14 @@ class ResolvedCustomChart(_SharedResolvedChartFields):
     )
     column_options: tuple[str, ...] = Field(
         description="Names of the options that name query columns."
+    )
+    column_formats: dict[str, ResolvedFormat] = Field(
+        description=(
+            "Every column the query returned -> the number format a built-in "
+            "chart would print it with (chart cascade: query `formats:`, "
+            "`style.formats`, the `number` default); what `format(column=...)` "
+            "prints through. A date column is not formatted by it."
+        )
     )
     category_pins: dict[str, dict[str, str]] = Field(
         description="Board category color pins: column → value → hex."

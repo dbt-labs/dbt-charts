@@ -21,21 +21,22 @@ options:
 {% set top = rows[0][value_col] | float %}
 {% set peak = rows | map(attribute=value_col) | map("float") | max %}
 {% set n = rows | length %}
-{% set band = height / n %}
-{% set bar_h = band * 0.62 %}
+{% set stages = d3.scale_band(range(n), [0, height], padding_inner=0.38, padding_outer=0.19) %}
+{% set bar_h = stages.bandwidth() %}
 {% set plot_w = width - p.label_width - 90 %}
+{% set bar_width = d3.scale_linear([0, peak], [0, plot_w]) %}
 {% set cx = p.label_width + plot_w / 2 %}
 {% set fill = style.charts.color.categorical.single_series_palette[0] %}
 {% set axis_font = style.charts.axis.labels.font %}
 <g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}">
 {% for r in rows %}
   {% set v = r[value_col] | float %}
-  {% set w = plot_w * v / peak %}
-  {% set y = loop.index0 * band + (band - bar_h) / 2 %}
+  {% set w = bar_width(v) %}
+  {% set y = stages(loop.index0) %}
   {% if not loop.first %}
     {% set pv = rows[loop.index0 - 1][value_col] | float %}
-    {% set pw = plot_w * pv / peak %}
-    {% set py = y - band + bar_h %}
+    {% set pw = bar_width(pv) %}
+    {% set py = stages(loop.index0 - 1) + bar_h %}
     <path d="M{{ (cx - pw / 2)|round(1) }},{{ py|round(1) }}H{{ (cx + pw / 2)|round(1) }}L{{ (cx + w / 2)|round(1) }},{{ y|round(1) }}H{{ (cx - w / 2)|round(1) }}Z" fill="{{ fill }}" fill-opacity="0.15"/>
     <text x="{{ width }}" y="{{ (py + (y - py) / 2)|round(1) }}" dy="0.35em" text-anchor="end" fill="{{ style.muted }}" font-size="{{ axis_font.size }}">{{ (v / pv) | format(".0%") }} of previous</text>
   {% endif %}

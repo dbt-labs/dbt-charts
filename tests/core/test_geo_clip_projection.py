@@ -20,7 +20,6 @@ from typing import Any
 
 from dbt_charts.core.compile.models.chart.normalized import PointMapChart
 from dbt_charts.core.diagnostics import WARN_POINT_MAP_OUT_OF_PROJECTION
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 from dbt_charts.core.render.warnings import (
     WarningContext,
     point_map_out_of_projection as detector,
@@ -59,56 +58,13 @@ def _make_ctx(chart: PointMapChart, rows: list[dict[str, Any]]) -> WarningContex
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},  # point_map not in vega_specs; detector reads chart_results
+        # point_map not in vega_specs; detector reads chart_results
     )
 
 
 # ---------------------------------------------------------------------------
 # 1. clip: true on the point mark
 # ---------------------------------------------------------------------------
-
-
-def test_point_map_mark_has_clip_true() -> None:
-    """Circle mark for a point_map must carry clip: true.
-
-    Without clip, albersUsa clamped out-of-projection points to the top-left
-    corner of the chart canvas instead of hiding them.
-    """
-    chart = _make_point_map()
-    spec = generate_vega_lite_spec(chart, _MIXED_ROWS)
-
-    # No background — spec is a direct circle mark (not layered)
-    assert spec["mark"]["type"] == "circle", f"Expected circle mark, got {spec['mark']}"
-    assert spec["mark"].get("clip") is True, (
-        f"clip: true missing from point_map mark; mark = {spec['mark']}"
-    )
-
-
-def test_point_map_with_background_circle_layer_has_clip_true(make_chart) -> None:
-    """Even when a geo background is present, the circle layer must have clip: true."""
-    chart = make_chart(
-        "point_map",
-        latitude="lat",
-        longitude="lng",
-        geo_source="us-states",
-    )
-    spec = generate_vega_lite_spec(chart, _MIXED_ROWS)
-
-    assert "layer" in spec, "Expected layered spec with background"
-    circle_layer = spec["layer"][1]
-    assert circle_layer["mark"]["type"] == "circle"
-    assert circle_layer["mark"].get("clip") is True, (
-        f"clip: true missing from circle layer; mark = {circle_layer['mark']}"
-    )
-
-    # The row filter runs before the background branch, so the layered path
-    # must also carry filtered data — not just the direct (no-background) path.
-    data_values: list[dict[str, Any]] = circle_layer["data"]["values"]
-    lons = {row["lng"] for row in data_values}
-    assert 168.0 not in lons, (
-        f"Kwajalein should be filtered from the layered circle layer too; "
-        f"data = {data_values}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -173,79 +129,3 @@ def test_no_warning_when_lat_lon_fields_missing_from_data() -> None:
 # ---------------------------------------------------------------------------
 # 3. Emitter drops out-of-projection rows from spec.data
 # ---------------------------------------------------------------------------
-
-
-def test_out_of_projection_row_filtered_from_emitted_spec() -> None:
-    """Kwajalein row must not appear in the emitted VL data.values for albersUsa.
-
-    clip: true cannot hide a mark centered exactly at (0,0) — the inner quarter
-    still paints. Pre-filtering the data ensures nothing is placed at (0,0).
-    """
-    chart = _make_point_map("albersUsa")
-    spec = generate_vega_lite_spec(chart, _MIXED_ROWS)
-
-    data_values: list[dict[str, Any]] = spec["data"]["values"]
-    lons = {row["lng"] for row in data_values}
-    assert 168.0 not in lons, (
-        f"Kwajalein (lon=168) should have been filtered out; data = {data_values}"
-    )
-    # In-projection rows must survive
-    assert len(data_values) == len(_US_ROWS)
-
-
-def test_in_projection_rows_not_filtered() -> None:
-    """All-US rows are kept intact — filtering must not drop in-projection points."""
-    chart = _make_point_map("albersUsa")
-    spec = generate_vega_lite_spec(chart, _US_ROWS)
-
-    data_values: list[dict[str, Any]] = spec["data"]["values"]
-    assert len(data_values) == len(_US_ROWS)
-
-
-def test_unbounded_projection_does_not_filter() -> None:
-    """mercator is unbounded — all rows including Pacific coords pass through."""
-    chart = _make_point_map("mercator")
-    spec = generate_vega_lite_spec(chart, _MIXED_ROWS)
-
-    data_values: list[dict[str, Any]] = spec["data"]["values"]
-    lons = {row["lng"] for row in data_values}
-    assert 168.0 in lons, "mercator should not filter any rows"
-    assert len(data_values) == len(_MIXED_ROWS)
-
-
-def test_neighborhood_geo_source_relies_on_clip_not_prefilter(make_chart) -> None:
-    """sf-neighborhoods (a shipped regional geo_source) resolves to `mercator`.
-
-    The repo already ships tightly-bounded neighborhood-level geo sets
-    (sf-neighborhoods, nyc-neighborhoods, chicago-neighborhoods,
-    la-neighborhoods — see geo_defaults.yml). They all use projection type
-    `mercator` with a `center`/`scale` zoom, not `albersUsa`. Unlike albersUsa,
-    mercator never collapses an out-of-region coordinate to a degenerate point
-    on the viewport boundary — it's a continuous projection, so a far-away
-    point (here, New York) projects to a real off-canvas pixel and is fully
-    hidden by `clip: true` alone. That's why BOUNDED_PROJECTIONS only lists
-    albersUsa: pre-filtering exists for the (0,0)-collapse defect, which these
-    regional mercator sources don't have.
-    """
-    chart = make_chart(
-        "point_map",
-        latitude="lat",
-        longitude="lng",
-        geo_source="sf-neighborhoods",
-    )
-
-    rows = [
-        {"lat": 37.7749, "lng": -122.4194},  # San Francisco — in region
-        {"lat": 40.71, "lng": -74.01},  # New York — far outside the SF frame
-    ]
-    spec = generate_vega_lite_spec(chart, rows)
-
-    circle_layer = spec["layer"][1] if "layer" in spec else spec
-    proj = circle_layer.get("projection", spec.get("projection"))
-    assert proj["type"] == "mercator", f"expected mercator projection, got {proj}"
-    assert circle_layer["mark"].get("clip") is True
-
-    data_values: list[dict[str, Any]] = circle_layer["data"]["values"]
-    assert len(data_values) == len(rows), (
-        f"mercator-based regional sources are not pre-filtered; data = {data_values}"
-    )

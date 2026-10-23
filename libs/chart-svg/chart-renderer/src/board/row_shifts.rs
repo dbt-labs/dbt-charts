@@ -23,7 +23,7 @@ use super::{
     active_tab_index, effective_padding, item_subtree_untouched, item_visible,
     nested_child_gap, nested_content_width, slot_dims, BoardDoc, BoardPayload, ItemDoc, LayoutDoc,
 };
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::title;
 use crate::title_shift::{chart_title_metrics, row_title_shifts, TitleMetrics};
 use crate::TitleShift;

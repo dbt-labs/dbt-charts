@@ -19,7 +19,7 @@ use crate::common::{
 };
 use crate::diagnostic::{warn, Diagnostic};
 use crate::svg::py_float_str;
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::xml::{Attrs, Xml};
 use crate::{Payload, TonesStyle};
 const CAP_HEIGHT_RATIO: f64 = 0.7;

@@ -40,6 +40,7 @@ from dbt_charts.core.render.chart.geo_tooltip import (
 from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
 from dbt_charts.core.render.chart.spec_builders import tooltip_entry
 from dbt_charts.core.render.chart.type_inference import infer_vega_type_from_data
+from dbt_charts.core.render.geo.loader import load_geometry
 from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.text.case import field_display_text, field_title
 
@@ -193,6 +194,14 @@ def _geo_format(chart: ResolvedGeoshapeChart) -> dict[str, Any]:
     return fmt
 
 
+def _inline_geo_data(
+    source: str,
+    fmt: dict[str, Any],  # type-state: explicit_any — Vega-Lite format block
+) -> dict[str, Any]:  # type-state: explicit_any — Vega-Lite data block
+    """The VL `data` block carrying the loaded geometry itself, not its URL."""
+    return {"values": load_geometry(source), "format": fmt}
+
+
 def _geo_projection(chart: ResolvedGeoshapeChart) -> dict[str, Any]:
     """Assemble the VL-projection dict from baked semantic fields."""
     proj: dict[str, Any] = {"type": chart.geo_projection_type}
@@ -228,7 +237,7 @@ class GeoshapeEmitter:
     ) -> ChartSpec:
         data = dataset.all_rows()
         # All geo descriptor fields were baked at resolve time.
-        geo_data = {"url": chart.geo_url, "format": _geo_format(chart)}
+        geo_data = _inline_geo_data(chart.geo_url, _geo_format(chart))
         proj = _geo_projection(chart)
 
         map_config = chart.style.geoshape
@@ -625,10 +634,9 @@ class PointMapEmitter:
 
         # Background geo layer when geo_source or basemap is configured.
         if chart.basemap_geo_url is not None and chart.basemap_geo_format is not None:
-            bg_geo_data: dict[str, Any] = {
-                "url": chart.basemap_geo_url,
-                "format": chart.basemap_geo_format,
-            }
+            bg_geo_data = _inline_geo_data(
+                chart.basemap_geo_url, chart.basemap_geo_format
+            )
             # Fill/stroke baked at resolve time from authored basemap config.
             bg_mark_props: dict[str, Any] = {}
             if chart.basemap_fill is not None:

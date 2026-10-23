@@ -2218,11 +2218,6 @@ fn test_empty_heading_font_family_inherits_body_family() {
     assert!(md_rule_body(&svg, "heading").starts_with(" font-family: Georgia, serif;"));
 }
 
-#[test]
-fn test_escape_xml_escapes_whitespace_like_python() {
-    assert_eq!(crate::utils::escape_xml("a\tb\nc\rd"), "a&#9;b&#10;c&#13;d");
-}
-
 // --- Heading measurement font ---
 
 fn heading_lines(heading: Option<FontSlot>, markdown: &str) -> (usize, HashSet<&'static str>) {
@@ -2361,7 +2356,7 @@ fn test_every_authored_style_string_is_escaped_at_every_site() {
     // No path to the output: `code_font_case`/`blockquote_font_case` (a case
     // transform, never interpolated), `code_theme` (highlighting is not
     // ported).
-    let escaped = escape_xml(RAW_FORM);
+    let escaped = xml_escape_attr(RAW_FORM);
     for (name, set) in &fields {
         let mut style = Style::default();
         set(&mut style);
@@ -2388,7 +2383,7 @@ fn test_every_authored_font_family_is_css_escaped_at_every_site() {
             Box::new(|s| s.heading_font_family = PAYLOAD.to_string()),
         ),
     ];
-    let escaped = escape_xml(&crate::css::css_font_family_stack(PAYLOAD));
+    let escaped = xml_escape_attr(&crate::css::css_font_family_stack(PAYLOAD));
     for (name, set) in &fields {
         let mut style = Style::default();
         set(&mut style);
@@ -2399,7 +2394,7 @@ fn test_every_authored_font_family_is_css_escaped_at_every_site() {
         );
         // `mono`/`code` also reach the fenced-code `font-family="..."`
         // attribute, which production writes with `escape_xml` alone.
-        let attribute = format!("font-family=\"{}\"", escape_xml(PAYLOAD));
+        let attribute = format!("font-family=\"{}\"", xml_escape_attr(PAYLOAD));
         for raw in RAW_FORMS {
             assert!(
                 !svg.replace(&attribute, "").contains(raw),
@@ -2908,7 +2903,7 @@ fn max_content_cases() -> Vec<(&'static str, String, f64)> {
         ("blockquote", format!("> {SENTENCE}"), 430.27),
         ("bold run", format!("Plain **{SENTENCE}** plain"), 485.49),
         ("code span", format!("Run `{SENTENCE}` now"), 530.13),
-        ("table", MAX_CONTENT_TABLE.to_string(), 269.05),
+        ("table", MAX_CONTENT_TABLE.to_string(), 212.53),
         (
             "code block",
             "```\nlet x = 1;\nlonger_line_of_code(x, y, z)\n```".to_string(),
@@ -3462,4 +3457,76 @@ fn a_numeric_weight_is_read_with_its_surrounding_whitespace_stripped() {
     assert_eq!(numeric_weight(Some("\x1c600")), None);
     assert_eq!(numeric_weight(Some(" BOLD\x1f")), Some(700.0));
     assert_eq!(numeric_weight(Some("semibold")), None);
+}
+
+#[test]
+fn table_columns_are_content_sized_and_the_long_cell_absorbs_wrapping() {
+    let long = "This cell holds a great deal of explanatory text that must wrap ".repeat(2);
+    let md = format!("| Region | Units | Notes |\n|---|---|---|\n| West | 812 | {long} |\n");
+    let svg = super::render(&md, 400.0, 0.0, Style::default(), test_fonts()).unwrap();
+    let rule_xs: Vec<f64> = svg
+        .lines()
+        .filter(|l| l.contains("<line") && l.contains(r#"y1="0""#))
+        .map(|l| l.split(r#"x1=""#).nth(1).unwrap().split('"').next().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(rule_xs.len(), 2);
+    let widths = [rule_xs[0], rule_xs[1] - rule_xs[0], 400.0 - rule_xs[1]];
+    assert!(widths[2] > widths[0] && widths[2] > widths[1], "{widths:?}");
+
+    let short = "| Region | Units |\n|---|---|\n| West | 812 |\n";
+    let svg = super::render(short, 600.0, 0.0, Style::default(), test_fonts()).unwrap();
+    let outer = svg
+        .lines()
+        .find(|l| l.contains("<rect") && l.contains(r#"fill="none""#))
+        .unwrap();
+    let table_width: f64 = outer.split(r#" width=""#).nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+    assert!(table_width < 600.0, "{table_width}");
+}
+
+#[test]
+fn a_ragged_table_row_is_clamped_to_the_header_width() {
+    let md = "| A | B |\n|---|---|\n| 1 | 2 | 3 |\n| 4 |\n";
+    let svg = super::render(md, 300.0, 0.0, Style::default(), test_fonts()).unwrap();
+    let rules = svg.lines().filter(|l| l.contains("<line") && l.contains(r#"y1="0""#)).count();
+    assert_eq!(rules, 1, "{svg}");
+}
+
+#[test]
+fn the_floor_width_does_not_split_a_token() {
+    let md = "| A | llllllllllllllll tail |\n|---|---|\n";
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let table = match parse(md).remove(0) {
+        AnyBlock::Table(t) => t,
+        _ => panic!("expected table"),
+    };
+    let (mins, _) = renderer.table_column_extents(&table).unwrap();
+    let floor: f64 = mins.iter().sum();
+    let widths = renderer.table_column_widths(&table, floor).unwrap();
+    assert_eq!(widths, mins);
+}
+
+#[test]
+fn a_table_cell_splits_on_python_whitespace_when_measuring_its_narrowest_width() {
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let extents = |md: &str| match parse(md).remove(0) {
+        AnyBlock::Table(t) => renderer.table_column_extents(&t).unwrap().0[0],
+        _ => panic!("expected table"),
+    };
+    assert_eq!(
+        extents("| A |\n|---|\n| llll\x1cllll |\n"),
+        extents("| A |\n|---|\n| llll llll |\n"),
+    );
+}
+
+#[test]
+fn a_whitespace_run_is_never_a_table_cell_token() {
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let narrowest = |md: &str| match parse(md).remove(0) {
+        AnyBlock::Table(t) => renderer.table_column_extents(&t).unwrap().0[0],
+        _ => panic!("expected table"),
+    };
+    assert_eq!(
+        narrowest("| A |\n|---|\n| l   l |\n"),
+        narrowest("| A |\n|---|\n| l |\n"),
+    );
 }

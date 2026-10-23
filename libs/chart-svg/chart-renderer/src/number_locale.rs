@@ -214,6 +214,15 @@ pub fn d3_format(spec: &str, value: f64) -> Result<String, String> {
     d3rs::format::format(&active_number_locale().locale, spec, value)
 }
 
+/// The spec Vega's axes and legends print ticks `step` apart with
+/// ([`d3rs::format::vega_precision_fixed`]): `,f` at d3's default precision where it is NaN.
+pub fn vega_tick_spec(step: f64) -> String {
+    match d3rs::format::vega_precision_fixed(step) {
+        Some(precision) => format!(",.{precision}f"),
+        None => ",f".to_string(),
+    }
+}
+
 /// The value a [`d3_format`] result (`".0f"`, `".1~f"`: no grouping) reads as,
 /// under the active locale's numerals, decimal mark and minus sign.
 pub fn parse_printed(text: &str) -> Result<f64, String> {

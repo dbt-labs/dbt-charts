@@ -3,9 +3,7 @@ that paints one, verbatim; `x_label`/`y_label` and `layer.label` still win."""
 
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -15,19 +13,9 @@ import yaml
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
-from dbt_charts.core.render.chart.emitters import get_emitter
-from dbt_charts.core.render.chart.emitters._endpoint_rail import (
-    resolve_endpoint_rail_span,
-)
-from dbt_charts.core.render.chart.features.structured_tooltip import (
-    _cartesian_roles,
-)
-from dbt_charts.core.render.chart.spec import RenderBox
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 Rows = list[dict[str, Any]]
 
@@ -53,12 +41,6 @@ def _board(
     )
 
 
-def _spec(chart: dict[str, Any], rows: Rows) -> dict[str, Any]:
-    result = compile_board(_board(chart, rows))
-    assert result.board is not None, result.errors
-    return generate_vega_lite_spec(result.board.charts["c"], rows)
-
-
 def _render(
     chart: dict[str, Any], rows: Rows, extra_queries: dict[str, Rows] | None = None
 ) -> Any:
@@ -70,38 +52,6 @@ def _render(
         query_registry=result.query_registry,
     )
     return render(result.board, executor, format="svg")
-
-
-def _values(node: Any, key: str) -> Iterator[Any]:
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if k == key:
-                yield v
-            yield from _values(v, key)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _values(v, key)
-
-
-def _tooltip_text(spec: dict[str, Any]) -> str:
-    """Structured tooltip expressions (``description``) plus plain tooltip
-    entry titles, so an assertion cannot pass on an axis or legend title."""
-    exprs = [json.dumps(d) for d in _values(spec, "description") if d]
-    entries = [
-        t["title"]
-        for tooltip in _values(spec, "tooltip")
-        if isinstance(tooltip, list)
-        for t in tooltip
-    ]
-    return "\n".join(exprs + entries)
-
-
-def _encoding(spec: dict[str, Any], channel: str) -> dict[str, Any]:
-    return next(
-        enc[channel]
-        for enc in _values(spec, "encoding")
-        if isinstance(enc.get(channel), dict) and "field" in enc[channel]
-    )
 
 
 _WIDE_ROWS = [
@@ -118,12 +68,6 @@ _CAPITAL_ROWS = [
 _CAPITAL = {**_WIDE, "y": ["All", "fix-linked"]}
 
 
-def test_wide_measure_entries_and_joined_title_use_field_label() -> None:
-    spec = _spec({**_WIDE, "field_labels": {"fix-linked": "fix-linked"}}, _WIDE_ROWS)
-    assert "All, fix-linked" in list(_values(spec, "title"))
-    assert "Fix linked" not in json.dumps(spec)
-
-
 @pytest.mark.parametrize("family", ["line", "bar", "area"])
 def test_wide_measure_entry_paints_field_label_in_svg(family: str) -> None:
     labeled = {**_WIDE, "type": family, "field_labels": {"fix-linked": "fix-linked"}}
@@ -131,12 +75,6 @@ def test_wide_measure_entry_paints_field_label_in_svg(family: str) -> None:
     assert ">fix-linked<" in svg
     assert "Fix linked" not in svg
     assert "Fix linked" in _render({**_WIDE, "type": family}, _WIDE_ROWS).output
-
-
-def test_scatter_wide_measure_labels_use_field_label() -> None:
-    labeled = {**_WIDE, "type": "scatter", "field_labels": {"fix-linked": "fix-linked"}}
-    assert "Fix linked" not in json.dumps(_spec(labeled, _WIDE_ROWS))
-    assert "Fix linked" in json.dumps(_spec({**_WIDE, "type": "scatter"}, _WIDE_ROWS))
 
 
 _DATE_LAYER_ROWS = [
@@ -196,46 +134,11 @@ def test_legend_values_resolve_against_field_labels(
     assert "WARN-LEGEND-VALUES-UNRESOLVED" in codes([*values[:-1], "ZZZ"])
 
 
-@pytest.mark.parametrize("field", ["revenue", "target"])
-def test_endpoint_rail_reserves_width_for_field_label(field: str) -> None:
-    def span(labels: dict[str, str]) -> float:
-        chart = _resolved(
-            {
-                **_DATE_LAYERED,
-                "field_labels": labels,
-                "style": {"endpoint_labels": {"visible": True}},
-            },
-            _DATE_LAYER_ROWS,
-        )
-        return resolve_endpoint_rail_span(chart, _DATE_LAYER_ROWS, 600.0)
-
-    long_label = "Quarterly plan target set by the board"
-    assert span({field: long_label}) > span({})
-
-
-def test_hyphen_still_splits_without_a_field_label() -> None:
-    assert "All, Fix linked" in list(_values(_spec(_WIDE, _WIDE_ROWS), "title"))
-
-
 def test_colliding_authored_wide_label_errors() -> None:
     result = _render({**_CAPITAL, "field_labels": {"fix-linked": "All"}}, _CAPITAL_ROWS)
     [error] = result.chart_errors
     assert error.code == "ERR-FIELD-LABELS-WIDE-COLLISION"
     assert "'All'" in error.message
-
-
-def test_heatmap_derived_label_falls_back_beside_an_authored_one() -> None:
-    spec = _spec(
-        {
-            "type": "heatmap",
-            "x": "month",
-            "y": ["all", "fix-linked"],
-            "field_labels": {"all": "Fix linked"},
-        },
-        _WIDE_ROWS,
-    )
-    datums = [c["datum"] for c in _values(spec, "color") if "datum" in c]
-    assert sorted(datums) == ["Fix linked", "fix-linked"]
 
 
 def test_colliding_authored_heatmap_label_errors() -> None:
@@ -300,69 +203,6 @@ _SEG_LABELS = {
 }
 
 
-def test_bar_legend_title_axis_titles_and_tooltip_use_field_labels() -> None:
-    chart = {
-        "type": "bar",
-        "x": "month",
-        "y": "MTok_cost",
-        "color": "seg",
-        "style": {"orientation": "vertical"},
-    }
-    spec = _spec({**chart, "field_labels": _SEG_LABELS}, _SEG_ROWS)
-    assert _encoding(spec, "color")["title"] == "customer SEG"
-    assert _encoding(spec, "x")["title"] == "billing MONTH"
-    assert _encoding(spec, "y")["title"] == "cost/MTok"
-    tooltip = _tooltip_text(spec)
-    assert "cost/MTok: " in tooltip
-    assert "MTok cost" not in tooltip
-    assert "MTok cost: " in _tooltip_text(_spec(chart, _SEG_ROWS))
-
-
-def test_line_color_legend_title_uses_field_label() -> None:
-    spec = _spec(
-        {
-            "type": "line",
-            "x": "month",
-            "y": "MTok_cost",
-            "color": "seg",
-            "field_labels": _SEG_LABELS,
-        },
-        _SEG_ROWS,
-    )
-    assert _encoding(spec, "color")["title"] == "customer SEG"
-
-
-def test_heatmap_legend_title_uses_field_label() -> None:
-    spec = _spec(
-        {
-            "type": "heatmap",
-            "x": "x",
-            "y": "y",
-            "color": "v",
-            "field_labels": {"v": "V LBL"},
-        },
-        [{"x": "a", "y": "b", "v": 1}, {"x": "c", "y": "d", "v": 2}],
-    )
-    assert _encoding(spec, "color")["title"] == "V LBL"
-
-
-def test_bar_layer_y_start_tooltip_row_uses_field_label() -> None:
-    rows = [
-        {"month": "Jan", "revenue": 5, "lo": 2, "hi": 6},
-        {"month": "Feb", "revenue": 7, "lo": 3, "hi": 8},
-    ]
-    chart = {
-        "type": "bar",
-        "x": "month",
-        "y": "revenue",
-        "layers": [{"type": "bar", "y": "hi", "y_start": "lo"}],
-    }
-    assert "Low LBL" in _tooltip_text(
-        _spec({**chart, "field_labels": {"lo": "Low LBL"}}, rows)
-    )
-    assert "Low LBL" not in _tooltip_text(_spec(chart, rows))
-
-
 def _resolved(chart: dict[str, Any], rows: Rows) -> Any:
     result = compile_board(_board(chart, rows))
     assert result.board is not None, result.errors
@@ -371,79 +211,6 @@ def _resolved(chart: dict[str, Any], rows: Rows) -> Any:
         rows,
         chart_style_context=result.board.chart_style_context,
     )
-
-
-def test_unpainted_tooltip_header_and_series_titles_use_field_labels() -> None:
-    rows = [
-        {"month": m, "seg": s, "MTok_cost": v}
-        for m, s, v in [("Jan", "a", 1), ("Jan", "b", 2), ("Feb", "a", 3)]
-    ]
-    chart = _resolved(
-        {
-            "type": "line",
-            "x": "month",
-            "y": "MTok_cost",
-            "color": "seg",
-            "field_labels": _SEG_LABELS,
-        },
-        rows,
-    )
-    base = get_emitter(chart).emit(
-        chart, RenderBox(width=600, height=300), regroup((), rows)
-    )
-    header, series, _, _ = _cartesian_roles(chart, rows, base)
-    assert header[0].title == "billing MONTH"
-    assert series[0].title == "customer SEG"
-
-
-def test_axis_labels_win_over_field_labels() -> None:
-    spec = _spec(
-        {
-            "type": "bar",
-            "x": "month",
-            "y": "MTok_cost",
-            "x_label": "X wins",
-            "style": {"orientation": "vertical"},
-            "y_label": "Y wins",
-            "field_labels": _SEG_LABELS,
-        },
-        _SEG_ROWS,
-    )
-    assert _encoding(spec, "x")["title"] == "X wins"
-    assert _encoding(spec, "y")["title"] == "Y wins"
-    assert "Y wins: " in _tooltip_text(spec)
-    assert "cost/MTok" not in json.dumps(spec)
-
-
-_LAYER_ROWS = [
-    {"month": "Jan", "revenue": 5, "target": 6},
-    {"month": "Feb", "revenue": 7, "target": 6},
-]
-
-
-@pytest.mark.parametrize(
-    ("layer_label", "expected", "absent"),
-    [(None, "Goal LINE", "target"), ("Authored", "Authored", "Goal LINE")],
-)
-def test_layer_label_wins_over_field_labels(
-    layer_label: str | None, expected: str, absent: str
-) -> None:
-    layer: dict[str, Any] = {"type": "line", "y": "target"}
-    if layer_label is not None:
-        layer["label"] = layer_label
-    spec = _spec(
-        {
-            "type": "line",
-            "x": "month",
-            "y": "revenue",
-            "layers": [layer],
-            "field_labels": {"target": "Goal LINE"},
-        },
-        _LAYER_ROWS,
-    )
-    tooltip = _tooltip_text(spec)
-    assert f"{expected}: " in tooltip
-    assert f"{absent}: " not in tooltip
 
 
 _BASE_ROWS = [{"month": "Jan", "revenue": 5}, {"month": "Feb", "revenue": 7}]
@@ -483,19 +250,6 @@ def test_bar_layer_y_start_key_is_accepted() -> None:
         },
     )
     assert result.chart_errors == []
-
-
-def test_heatmap_multi_measure_entries_use_field_labels() -> None:
-    spec = _spec(
-        {
-            "type": "heatmap",
-            "x": "month",
-            "y": ["all", "fix-linked"],
-            "field_labels": {"fix-linked": "fix-linked"},
-        },
-        _WIDE_ROWS,
-    )
-    assert {"datum": "fix-linked"} in list(_values(spec, "color"))
 
 
 def test_pie_legend_and_tooltip_rows_use_field_labels() -> None:
@@ -544,56 +298,6 @@ def test_donut_total_label_is_not_prefixed_twice() -> None:
     )
     assert chart.total is not None
     assert chart.total.label == "Total spend"
-
-
-def test_scatter_size_legend_title_uses_field_label() -> None:
-    spec = _spec(
-        {
-            "type": "scatter",
-            "x": "a",
-            "y": "b",
-            "size": "pop_cnt",
-            "field_labels": {"pop_cnt": "residents"},
-        },
-        [{"a": 1, "b": 2, "pop_cnt": 3}, {"a": 4, "b": 5, "pop_cnt": 6}],
-    )
-    assert _encoding(spec, "size")["title"] == "residents"
-
-
-def test_point_map_tooltip_fields_use_field_labels() -> None:
-    spec = _spec(
-        {
-            "type": "point_map",
-            "latitude": "lat",
-            "longitude": "lon",
-            "field_labels": {"pop_cnt": "residents", "lat": "LAT"},
-        },
-        [
-            {"lat": 40.0, "lon": -100.0, "pop_cnt": 3},
-            {"lat": 35.0, "lon": -90.0, "pop_cnt": 6},
-        ],
-    )
-    tooltip = _tooltip_text(spec).split("\n")
-    assert "residents" in tooltip
-    assert "LAT" in tooltip
-    assert "Longitude" in tooltip
-
-
-def test_geoshape_legend_and_tooltip_use_field_labels() -> None:
-    spec = _spec(
-        {
-            "type": "geoshape",
-            "geo_source": "us-states",
-            "lookup": "state_id",
-            "value": "revenue",
-            "field_labels": {"revenue": "Rev LBL", "state_id": "State LBL"},
-        },
-        [{"state_id": "06", "revenue": 5}, {"state_id": "36", "revenue": 7}],
-    )
-    tooltip = _tooltip_text(spec).split("\n")
-    assert "Rev LBL" in tooltip
-    assert "State LBL" in tooltip
-    assert _encoding(spec, "color")["title"] == "Rev LBL"
 
 
 def test_unknown_field_label_key_errors() -> None:

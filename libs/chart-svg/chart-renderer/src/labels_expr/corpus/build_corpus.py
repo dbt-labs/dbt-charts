@@ -20,9 +20,19 @@ from pathlib import Path
 from typing import Any
 
 KINDS = ("linear", "time", "point")
+
+
+def load(path: str | Path) -> Any:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def save(path: str | Path, text: str) -> None:
+    Path(path).write_text(text, encoding="utf-8")
+
+
 # The Vega whose output the corpus records (the bundle vl-convert 1.9 ships): `npm i vega@6.2.0`.
 VEGA = "6.2.0"
-installed = json.loads((Path("node_modules/vega/package.json")).read_text())["version"]
+installed = load("node_modules/vega/package.json")["version"]
 if installed != VEGA:
     sys.exit(
         f"the corpus is Vega {VEGA}'s; node_modules/vega is {installed} (npm i vega@{VEGA})"
@@ -32,20 +42,18 @@ src = sys.argv[1] if len(sys.argv) > 1 else "exprs.json"
 dst = sys.argv[2] if len(sys.argv) > 2 else "corpus.json"
 env = dict(os.environ, TZ="UTC")  # the render pins UTC
 tmp = Path(tempfile.mkdtemp())
-exprs = json.loads(Path(src).read_text())
+exprs = load(src)
 out: list[dict[str, Any]] = []
 
 
 def run(batch: list[str], kinds: str | None = None) -> list[dict[str, Any]] | None:
     inp, res = tmp / "in.json", tmp / "out.json"
-    inp.write_text(json.dumps(batch))
+    save(inp, json.dumps(batch))
     cmd = ["node", "--max-old-space-size=3000", "corpus.mjs", str(inp), str(res)] + (
         [kinds] if kinds else []
     )
-    done = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=600, env=env, check=False
-    )
-    return json.loads(res.read_text()) if done.returncode == 0 else None
+    done = subprocess.run(cmd, capture_output=True, timeout=600, env=env, check=False)
+    return load(res) if done.returncode == 0 else None
 
 
 # vega-functions' pluck memoizes its accessors per key for the life of the process, so each pluck case runs alone.
@@ -103,12 +111,12 @@ for e, per_kind in by.items():
         dropped.append(e)
         continue
     cases.append({"e": e, "o": outs[0] if all(x == outs[0] for x in outs) else outs})
-Path(dst).write_text(
+save(
+    dst,
     json.dumps(
         {"kinds": ticks, "cases": cases}, ensure_ascii=False, separators=(",", ":")
     )
     + "\n",
-    encoding="utf-8",
 )
 print(len(cases), "expressions")
 for e in dropped:

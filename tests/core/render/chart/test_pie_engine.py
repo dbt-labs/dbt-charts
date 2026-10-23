@@ -8,16 +8,12 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import PieChart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
 from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.normalize.charts import normalize_chart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
-from dbt_charts.core.render.chart.emitters import get_emitter
 from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.text.case import apply_case
 
 from ..._engine_render import render_pie_svg
@@ -44,17 +40,6 @@ def _wedge_fills(svg: str) -> list[str]:
     return re.findall(
         r'<path d="[^"]+" fill="([^"]+)"[^>]*aria-roledescription="arc mark"', svg
     )
-
-
-def test_pie_has_no_vega_lite_path() -> None:
-    chart = _resolved({"type": "pie", "query": "q", "theta": "v"})
-    with pytest.raises(RenderError, match="No emitter registered"):
-        get_emitter(chart)
-    flat = PieChart(id="p", type="pie", query_name="q", theta="v")
-    with pytest.raises(RenderError) as exc:
-        generate_vega_lite_spec(flat, _ROWS, width=400)
-    assert exc.value.code is not None
-    assert exc.value.code.code == "ERR-VEGA-LITE-UNSUPPORTED-TYPE"
 
 
 def test_donut_hole_is_inner_radius_of_the_wheel() -> None:

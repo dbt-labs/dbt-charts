@@ -46,7 +46,6 @@ def _ctx(
     return WarningContext(
         board_spec=board,
         chart_results={"c1": []},
-        vega_specs={},
         endpoint_label_gap_overflows={
             "c1": EndpointLabelGapOverflow(
                 series_count=5,

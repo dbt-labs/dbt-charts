@@ -18,7 +18,7 @@ read the collected dict via ``WarningContext.text_truncations``.
   "callout_text" — callout title, message, or hint (callout family)
   "spark_label"  — spark-bar row label (engine)
   "support_table_cell_overflow" — strip cells wider than their band
-    (support_table_attachment.py); not a cut but a collision, so
+    (engine); not a cut but a collision, so
     ``authored_text`` carries the measured "needed vs available" detail
 
 ``authored_field`` is the YAML key or column name the squiggle should point

@@ -33,13 +33,15 @@ use crate::common::{
     category_color, category_ink, category_scale_for, row_str, FormatSlot, Font, Stroke, StyleChannel, TitleStyle,
 };
 use crate::families::legend::{
+    VEGA_LEGEND_SYMBOL_LIMIT,
     emit_vega_legend, legend_from_widths, legend_slide, legend_title_text, resolve_legend_values,
-    legend_fit_bounds, legend_origin, limit_legend_text, LegendConfig, LegendEntry, LegendSymbol, VegaLegend,
+    fold_symbol_limit, legend_fit_bounds, legend_origin, limit_legend_text, LegendConfig, LegendEntry, LegendSymbol, VegaLegend,
 };
 use crate::families::table::is_date_like_cell;
 use crate::frame::{ChartFrame, FrameTitle};
-use crate::svg::{num_full, py_float_str, vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{num_full, py_float_str};
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::Payload;
 
 #[derive(Deserialize)]
@@ -210,6 +212,7 @@ fn render_attached_table_svg(
         interactive_controls: payload.interactive_controls,
         link_context: payload.link_context.clone(),
         datasets: None,
+        geometries: None,
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
@@ -384,11 +387,6 @@ fn legend_is_drawn(r: &Resolved) -> bool {
     r.legend.visible && color_field_of(r).is_some()
 }
 
-// Vega's own default for the most symbol entries a legend draws (vega-parser's
-// default `config.legend`, which Vega-Lite leaves in force when the theme does
-// not author it).
-const VEGA_LEGEND_SYMBOL_LIMIT: u32 = 30;
-
 /// A pie's color legend as Vega lays it out: `(label, fill)` per entry plus
 /// the shared grid layout, and the slice stroke color the symbols carry.
 struct PieLegend {
@@ -501,15 +499,11 @@ fn plan_legend(
         Some(authored) => resolve_legend_values(authored, &domain, None),
     };
 
-    // `symbolLimit`: vega-encode's `LegendEntries` keeps the first
-    // `limit - 1` entries and folds the rest into one "…N entries" row that
-    // carries the next entry's own swatch.
     let limit = cfg.symbol_limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize;
     let mut entries: Vec<(String, String)> =
         order.iter().map(|&idx| (domain[idx].to_string(), fills[idx].clone())).collect();
-    if limit > 0 && entries.len() > limit {
-        let kept = limit - 1;
-        let folded = (format!("\u{2026}{} entries", entries.len() - kept), entries[kept].1.clone());
+    if let Some((kept, label)) = fold_symbol_limit(entries.len(), limit) {
+        let folded = (label, entries[kept].1.clone());
         entries.truncate(kept);
         entries.push(folded);
     }
@@ -888,7 +882,7 @@ fn draw_pie_fit(
             let value_family = value_font.family_or("sans-serif");
             let value_weight = value_font.weight_str();
             let value_color = value_font.color.as_deref().unwrap_or("#000");
-            let value_y = cy + crate::measure::baseline_shift("bottom", value_size);
+            let value_y = cy + measure::baseline_shift("bottom", value_size);
             crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_1_marks");
             svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
             let _ = write!(
@@ -907,7 +901,7 @@ fn draw_pie_fit(
                 let label_family = label_font.family_or("sans-serif");
                 let label_weight = label_font.weight_str();
                 let label_color = label_font.color.as_deref().unwrap_or("#000");
-                let label_y = cy + crate::measure::baseline_shift("top", label_size);
+                let label_y = cy + measure::baseline_shift("top", label_size);
                 crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_2_marks");
                 svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
                 let _ = write!(
@@ -937,7 +931,7 @@ fn draw_pie_fit(
             let y_anchored = cy - sl.mid.cos() * (radius + label_offset)
                 + if top { -(sl.lines.len() as f64 * label_lh) } else { 0.0 };
             let anchor = if right { "start" } else { "end" };
-            let first_dy = crate::measure::baseline_shift("top", label_fs);
+            let first_dy = measure::baseline_shift("top", label_fs);
             let label_aria: Option<String> = match &value_title {
                 Some(value_title) => {
                     Some(pie_row_aria(r, payload_rows, thetas, total, value_title, sl.idx)?)

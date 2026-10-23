@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
 use crate::families::temporal::{
-    civil_from_days, date_text_day, utc_instants, AuthoredTimeFormat, TimeUnit, MONTH_ABBR,
+    civil_from_days, date_text_day, month_abbr, utc_instants, AuthoredTimeFormat, TimeUnit,
 };
 use crate::Payload;
 
@@ -154,8 +154,8 @@ impl RangedBars {
             Some(unit) => {
                 let days = end - start;
                 vec![
-                    row(&self.start_title, tooltip_date(start), false),
-                    row(value_title, tooltip_date(end), false),
+                    row(&self.start_title, tooltip_date(start)?, false),
+                    row(value_title, tooltip_date(end)?, false),
                     row(&display_text::language::tr("tooltip.duration", None, &[])?, unit.text(days)?, false),
                     row("", unit.native_text(days)?, true),
                 ]
@@ -336,7 +336,7 @@ impl SpanBlock {
         let mut rows = Vec::with_capacity(self.rows.len() + 2);
         for block in &self.rows {
             let value = number(&block.field)?;
-            rows.push(row(block, if self.duration.is_some() { tooltip_date(value) } else { paint(value)? }, false));
+            rows.push(row(block, if self.duration.is_some() { tooltip_date(value)? } else { paint(value)? }, false));
         }
         let (end, start) = (number(&self.change_ends.0)?, number(&self.change_ends.1)?);
         match self.duration {
@@ -356,23 +356,23 @@ impl SpanBlock {
 
 /// `5 Jan 2026` (`PredefinedTimeFormat.date_short`, `%-d %b %Y`): the house
 /// date every span tooltip prints.
-fn tooltip_date(day: f64) -> String {
+fn tooltip_date(day: f64) -> Result<String, String> {
     let (y, m, d) = civil_from_days(day.floor() as i64);
-    format!("{d} {} {y}", MONTH_ABBR[(m - 1) as usize])
+    Ok(format!("{d} {} {y}", month_abbr(m)?))
 }
 
 /// The tick label of a date measure (`_DATE_TICK_LABEL_EXPR`): the coarsest
 /// boundary the tick sits on — `2026` on a January 1, `Feb` on any other
 /// month start, `Feb 9` mid-month.
-fn date_tick_label(day: i64) -> String {
+fn date_tick_label(day: i64) -> Result<String, String> {
     let (y, m, d) = civil_from_days(day);
-    if d != 1 {
-        format!("{} {d}", MONTH_ABBR[(m - 1) as usize])
+    Ok(if d != 1 {
+        format!("{} {d}", month_abbr(m)?)
     } else if m != 1 {
-        MONTH_ABBR[(m - 1) as usize].to_string()
+        month_abbr(m)?
     } else {
         y.to_string()
-    }
+    })
 }
 
 /// A date measure's scale and ticks, in day numbers.
@@ -391,14 +391,15 @@ pub(crate) struct DateAxis {
 ///
 /// `None` when the dates span no time: the scale has no extent and every bar draws
 /// zero-sized, which production reports as `ERR-CHART-PAINTED-NO-MARKS`.
-pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_count: usize) -> Option<DateAxis> {
+pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_count: usize) -> Result<Option<DateAxis>, String> {
     let days = rows.iter().flat_map(|row| fields.iter().map(|f| row.get(*f).and_then(Value::as_f64)));
     let (lo, hi) = days.flatten().chain(extra.iter().copied()).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
     if !(hi > lo) {
-        return None;
+        return Ok(None);
     }
     let ticks = utc_instants(lo, hi, tick_count);
-    Some(DateAxis { domain: (lo, hi), labels: ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect(), ticks })
+    let labels = ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(DateAxis { domain: (lo, hi), labels, ticks }))
 }
 
 /// `payload` with each row's date columns as day numbers (a time of day as the
@@ -537,10 +538,11 @@ mod tests {
 
     #[test]
     fn tick_labels_name_the_coarsest_boundary() {
+        let _locale = crate::time_locale::en_us_scope();
         let day = |y, m, d| days_from_civil(y, m, d);
-        assert_eq!(date_tick_label(day(2026, 1, 1)), "2026");
-        assert_eq!(date_tick_label(day(2026, 2, 1)), "Feb");
-        assert_eq!(date_tick_label(day(2026, 2, 9)), "Feb 9");
+        assert_eq!(date_tick_label(day(2026, 1, 1)).unwrap(), "2026");
+        assert_eq!(date_tick_label(day(2026, 2, 1)).unwrap(), "Feb");
+        assert_eq!(date_tick_label(day(2026, 2, 9)).unwrap(), "Feb 9");
     }
 
     #[test]
@@ -555,7 +557,8 @@ mod tests {
                 serde_json::json!({"start": day(s), "end": day(e)}).as_object().unwrap().clone()
             })
             .collect();
-        let axis = date_axis(&rows, ["end", "start"], &[], 6).unwrap();
+        let _locale = crate::time_locale::en_us_scope();
+        let axis = date_axis(&rows, ["end", "start"], &[], 6).unwrap().unwrap();
         assert_eq!(axis.labels, ["Feb", "Mar", "Apr", "May"]);
         let (y, m, d) = civil_from_days(axis.domain.0 as i64);
         assert_eq!((y, m, d), (2026, 1, 5), "no nice: the first bar starts at the plot's left edge");
@@ -564,14 +567,15 @@ mod tests {
     #[test]
     fn a_layers_dates_widen_the_date_axis_past_the_bars() {
         let rows: Vec<Row> = vec![serde_json::json!({"start": 100.0, "end": 120.0}).as_object().unwrap().clone()];
-        let axis = date_axis(&rows, ["end", "start"], &[90.0, 140.0], 6).unwrap();
+        let _locale = crate::time_locale::en_us_scope();
+        let axis = date_axis(&rows, ["end", "start"], &[90.0, 140.0], 6).unwrap().unwrap();
         assert_eq!(axis.domain, (90.0, 140.0));
     }
 
     #[test]
     fn a_span_of_no_time_has_no_scale() {
         let rows: Vec<Row> = vec![serde_json::json!({"start": 5.0, "end": 5.0}).as_object().unwrap().clone()];
-        assert!(date_axis(&rows, ["end", "start"], &[], 6).is_none());
+        assert!(date_axis(&rows, ["end", "start"], &[], 6).unwrap().is_none());
     }
 
     fn bars(pairs: &[(f64, f64)], temporal: bool) -> RangedBars {

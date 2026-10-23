@@ -55,17 +55,17 @@ def _cramped_table_board() -> str:
     )
 
 
-def _bar_chart_board() -> str:
+def _map_board() -> str:
     return (
         "title: T\n"
         "queries:\n"
         "  q:\n"
         "    type: values\n"
         "    rows:\n"
-        "      - {cat: 'A', val: 10}\n"
-        "      - {cat: 'B', val: 20}\n"
+        "      - {lat: 40.0, lng: -100.0, val: 10}\n"
+        "      - {lat: 41.0, lng: -101.0, val: 20}\n"
         "charts:\n"
-        "  b: {query: q, type: bar, x: cat, y: val}\n"
+        "  b: {query: q, type: point_map, latitude: lat, longitude: lng, size: val}\n"
         "rows:\n"
         "  - b\n"
     )
@@ -125,7 +125,7 @@ def test_painted_no_marks_error_reported_on_data_format_same_as_svg(
     regardless of output format — the data path must not report success on a
     chart the svg path treats as a genuine rendering failure.
     """
-    result = compile_board(_bar_chart_board())
+    result = compile_board(_map_board())
     assert result.success, result.diagnostics
     board = result.board
     assert board is not None
@@ -195,7 +195,7 @@ def test_render_first_is_unconditional_on_format(
     )
     from dbt_charts.core.render.layout_sizing import RenderCache
 
-    result = compile_board(_bar_chart_board())
+    result = compile_board(_map_board())
     assert result.success, result.diagnostics
     board = result.board
     assert board is not None

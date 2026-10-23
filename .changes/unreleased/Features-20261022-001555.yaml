@@ -1,0 +1,3 @@
+kind: Features
+body: Hosts can register buttons into a toolbar the hover runtime draws at every chart's top-right (`registerChartButton`), with info, filter, and share slots.
+time: 2026-10-22T00:15:55.778732-07:00

@@ -29,8 +29,9 @@ use d3rs::sankey_circular::SankeyCircular;
 use crate::common::{emit_title, Font, TitleStyle};
 use crate::contract::{aria_attr, mark_group_close, mark_group_open, ItemRole, MUTED, ROLE_HEADER};
 use crate::frame::ChartFrame;
-use crate::svg::{num, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{num};
+use print::{xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::Payload;
 
 #[derive(Deserialize)]

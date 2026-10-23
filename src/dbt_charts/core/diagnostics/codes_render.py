@@ -431,6 +431,23 @@ ERR_MAP_LOOKUP_KEY_MISMATCH = REGISTRY.register(
     )
 )
 
+ERR_GEO_SOURCE_UNAVAILABLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-GEO-SOURCE-UNAVAILABLE",
+        domain="render",
+        title="Map geometry could not be loaded",
+        message_template="Map geometry {source!r} could not be loaded: {reason}",
+        doc=(
+            "Fired when a map's geo source is not a bundled map and its URL could "
+            "not be fetched, was larger than the size cap, or did not hold a "
+            "JSON object (TopoJSON or GeoJSON). Check the URL is reachable from "
+            "where dbt Charts runs; the built-in `us-states`, `us-counties` and "
+            "`world-countries` sources need no network."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_FORMAT_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
         code="ERR-FORMAT-UNSUPPORTED",
@@ -597,22 +614,6 @@ ERR_TAB_UNKNOWN = REGISTRY.register(
     )
 )
 
-ERR_VEGA_LITE_UNSUPPORTED_TYPE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-VEGA-LITE-UNSUPPORTED-TYPE",
-        domain="render",
-        title="Chart type does not render to a Vega-Lite spec",
-        message_template=(
-            "Chart type {chart_type!r} does not render to a Vega-Lite spec."
-        ),
-        doc=(
-            "Fired when a chart type is asked to render a Vega-Lite spec but does "
-            "not support that output format. Use a Vega-Lite-compatible chart type "
-            "or choose a different output format."
-        ),
-        docs_topic="charts",
-    )
-)
 
 # WHY: Histogram requires a numeric x field for binning. A missing or non-numeric
 # x field would silently pass bin:True to VL on a nominal column (garbage output)
@@ -3770,16 +3771,6 @@ ERR_BAR_OVERLAP_SERIES_COUNT = REGISTRY.register(
     )
 )
 
-ERR_BAR_MULTI_METRIC_NO_X = REGISTRY.register(
-    ErrorCode(
-        code="ERR-BAR-MULTI-METRIC-NO-X",
-        domain="render",
-        title="Multi-metric bar chart without an x field",
-        message_template="Bar chart '{chart_id}': multi-metric (y: [...]) charts require an x field.",
-        doc="Fired when a bar chart with several y fields has no x field.",
-        docs_topic="charts",
-    )
-)
 
 ERR_TICKS_TIME_UNIT_NO_CADENCE = REGISTRY.register(
     ErrorCode(
@@ -3793,27 +3784,6 @@ ERR_TICKS_TIME_UNIT_NO_CADENCE = REGISTRY.register(
     )
 )
 
-ERR_ENDPOINT_LABELS_RECASCADE_RATIO = REGISTRY.register(
-    ErrorCode(
-        code="ERR-ENDPOINT-LABELS-RECASCADE-RATIO",
-        domain="render",
-        title="Endpoint-label re-cascade needs a positive height ratio",
-        message_template="could not re-cascade endpoint labels: height_correction_ratio must be positive, got {ratio}",
-        doc="Fired when the endpoint-label rail is re-cascaded against a non-positive height correction ratio.",
-        docs_topic="charts",
-    )
-)
-
-ERR_LAYERED_NO_COLOR_SCALE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-LAYERED-NO-COLOR-SCALE",
-        domain="render",
-        title="Layered chart has no shared color scale for its endpoint-label rail",
-        message_template="layered chart has no shared color scale for its endpoint-label rail",
-        doc="Fired when a layered chart with endpoint labels has no layer carrying a categorical color scale.",
-        docs_topic="charts",
-    )
-)
 
 ERR_LAYERED_NO_PALETTE = REGISTRY.register(
     ErrorCode(
@@ -3848,16 +3818,6 @@ ERR_LAYER_X_DOMAIN_MISMATCH = REGISTRY.register(
     )
 )
 
-ERR_LAYER_ORDER_TRANSFORM_MISSING = REGISTRY.register(
-    ErrorCode(
-        code="ERR-LAYER-ORDER-TRANSFORM-MISSING",
-        domain="render",
-        title="Base order encoding has no matching calculate transform",
-        message_template="base spec carries order encoding for field {order_field!r} but no matching calculate transform was found",
-        doc="Fired when a layered chart's base order encoding has no calculate transform to hoist.",
-        docs_topic="charts",
-    )
-)
 
 ERR_LAYER_LABEL_COLLISION = REGISTRY.register(
     ErrorCode(
@@ -3870,49 +3830,6 @@ ERR_LAYER_LABEL_COLLISION = REGISTRY.register(
     )
 )
 
-ERR_SUPPORT_TABLE_NO_X_ENCODING = REGISTRY.register(
-    ErrorCode(
-        code="ERR-SUPPORT-TABLE-NO-X-ENCODING",
-        domain="render",
-        title="support_table attachment has no x-encoding",
-        message_template="support_table attachment requires an x-encoding on the chart spec or its layers; none found.",
-        doc="Fired when a support_table strip cannot find an x-encoding on the chart or any layer.",
-        docs_topic="charts",
-    )
-)
-
-ERR_SUPPORT_TABLE_INDEPENDENT_X = REGISTRY.register(
-    ErrorCode(
-        code="ERR-SUPPORT-TABLE-INDEPENDENT-X",
-        domain="render",
-        title="support_table strip on layers with independent x scales",
-        message_template="support_table strip cannot anchor to a layer spec with resolve.scale.x == 'independent'; the layers have per-dataset x scales and the strip cannot anchor coherently.",
-        doc="Fired when a support_table strip is attached to layers with independent x scales.",
-        docs_topic="charts",
-    )
-)
-
-ERR_SUPPORT_TABLE_X_FIELD_DISAGREE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-SUPPORT-TABLE-X-FIELD-DISAGREE",
-        domain="render",
-        title="support_table strip on layers with disagreeing x fields",
-        message_template="support_table strip cannot anchor to a layer spec whose per-layer x-encodings disagree on field; lift x to chart level or remove support_table.",
-        doc="Fired when layers carry different x fields under a support_table strip.",
-        docs_topic="charts",
-    )
-)
-
-ERR_SUPPORT_TABLE_NO_Y_ENCODING = REGISTRY.register(
-    ErrorCode(
-        code="ERR-SUPPORT-TABLE-NO-Y-ENCODING",
-        domain="render",
-        title="support_table column attachment has no category y-encoding",
-        message_template="support_table column attachment requires a category y-encoding on the chart spec; none found.",
-        doc="Fired when a support_table column block cannot find a category y-encoding.",
-        docs_topic="charts",
-    )
-)
 
 ERR_HEATMAP_COLOR_NO_VALUES = REGISTRY.register(
     ErrorCode(
@@ -3932,6 +3849,28 @@ ERR_SUPPORT_TABLE_FORMAT_NOT_NUMERIC = REGISTRY.register(
         title="support_table entry formats a non-numeric column",
         message_template="support_table source {source!r} carries the number format {format_spec!r} but holds the non-numeric value {value!r}. To fix: drop the format, or source a numeric column.",
         doc="Fired when a support_table source entry with a number format reads a column that holds a value other than a number; the strip would otherwise paint NaN.",
+        docs_topic="charts",
+    )
+)
+
+ERR_SUPPORT_TABLE_NO_X_ENCODING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-SUPPORT-TABLE-NO-X-ENCODING",
+        domain="render",
+        title="support_table attachment has no x-encoding",
+        message_template="support_table requires an x-encoding; the chart has no `x:` field. To fix: add `x: <column>` or remove the support_table block.",
+        doc="Fired when a chart carries a support_table but no x field for the strip to anchor on.",
+        docs_topic="charts",
+    )
+)
+
+ERR_LINK_CHANNEL_NOT_ENCODED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINK-CHANNEL-NOT-ENCODED",
+        domain="render",
+        title="Link template names a channel the chart does not encode",
+        message_template="Chart {chart_id!r}: the link template references `{{{{ {channel} }}}}` but the chart has no `{channel}:` field. To fix: add `{channel}:` to the chart or drop the placeholder from `link:`.",
+        doc="Fired when a chart link template names an x, y or color channel the chart does not assign, so the link cannot be resolved for any mark.",
         docs_topic="charts",
     )
 )

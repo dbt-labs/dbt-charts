@@ -47,17 +47,12 @@ def _make_chart(**kwargs: object) -> Chart:
     return TypeAdapter(Chart).validate_python(dict(**{**_CHART_DEFAULTS, **kwargs}))
 
 
-def _make_ctx(
-    chart: Chart,
-    rows: list[dict[str, Any]],
-    vega_spec: dict[str, Any] | None = None,
-) -> WarningContext:
+def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     resolved = make_test_resolved_chart(chart)
     board = make_test_resolved_board(charts={chart.id: resolved})
     return WarningContext(
         board_spec=board,
         chart_results={chart.id: rows},
-        vega_specs={chart.id: vega_spec or {"mark": "bar"}},
     )
 
 
@@ -180,7 +175,6 @@ def test_no_fire_when_no_y_encoding_kpi() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={chart.id: rows},
-        vega_specs={},  # KPI not in vega_specs
     )
     assert detector.detect(ctx) == []
 
@@ -193,7 +187,6 @@ def test_no_fire_when_no_y_encoding_callout() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={chart.id: rows},
-        vega_specs={},
     )
     assert detector.detect(ctx) == []
 
@@ -210,7 +203,6 @@ def test_no_fire_when_chart_not_in_chart_results() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={},  # chart absent — execution failed
-        vega_specs={chart.id: {"mark": "bar"}},
     )
     assert detector.detect(ctx) == []
 

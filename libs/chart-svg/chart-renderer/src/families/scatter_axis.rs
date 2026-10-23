@@ -31,8 +31,8 @@ use crate::families::temporal::{
     time_unit_specifier, TimePart, TimeUnit,
 };
 use crate::families::x_type::{Grain, XResolution};
-use crate::svg::{vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
 
 /// Where a tick sits on the scale.
@@ -160,6 +160,8 @@ pub(crate) struct TemporalXAxis {
     /// The cyclic part a point's date maps to, on a `time_unit: monthofyear`
     /// (...) axis.
     part: Option<TimePart>,
+    /// See [`DateColumn::folded`].
+    folded: bool,
     /// The grain the structured tooltip names a date at: the data's own.
     tooltip_grain: Option<TimeUnit>,
     /// The tooltip header of timed values spanning two days at most, which names the time of day instead.
@@ -221,6 +223,9 @@ pub(crate) struct DateColumn<'a> {
     pub(crate) timed: &'a SubdaySource,
     /// The chart's outer width, which the clock vocabulary reads its tier and tick budget off.
     pub(crate) chart_width: f64,
+    /// The dates already sit on a time part's cycle (a bar folds its rows and their bucket ends itself),
+    /// so the axis must not fold them again: an end that crossed the cycle would wrap to its start.
+    pub(crate) folded: bool,
 }
 
 /// A temporal x axis laid on a point or band scale over its distinct dates, each tick a category in date order.
@@ -316,6 +321,7 @@ impl TemporalXAxis {
             ticks: Ticks::Fixed(Vec::new()),
             grain: None,
             part: None,
+            folded: false,
             tooltip_grain: None,
             tooltip_time: None,
             align: labels_cfg.align.clone(),
@@ -355,6 +361,7 @@ impl TemporalXAxis {
         };
         axis.grain = grain;
         axis.part = part;
+        axis.folded = col.folded;
         axis.tooltip_grain = match part {
             Some(_) => {
                 let dates: Vec<&str> = col.ladder.iter().map(String::as_str).collect();
@@ -435,7 +442,7 @@ impl TemporalXAxis {
             .filter(|date| !nan(date))
             .map(|date| match part {
                 Some(part) => date_text_day(date)
-                    .map(|day| part.instant(day))
+                    .map(|day| if col.folded { day } else { part.instant(day) })
                     .ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date")),
                 None => floor(date),
             })
@@ -468,7 +475,7 @@ impl TemporalXAxis {
                     let (y, m, d) = crate::families::temporal::civil_from_days(day.floor() as i64);
                     let text = match authored {
                         Some(format) => format.text(y, m, d),
-                        None => crate::families::temporal::d3_multi_format(y, m, d),
+                        None => crate::families::temporal::d3_multi_format(y, m, d)?,
                     };
                     let (tilted_align, baseline) = bare_label_anchor(labels_cfg.angle.unwrap_or(0.0), 0.5, 100.0, axis.edge);
                     let width = fonts.measure(&text, &axis.family, axis.font_size)?;
@@ -790,7 +797,10 @@ impl TemporalXAxis {
                     return 0.0;
                 }
                 let day = match self.part {
-                    Some(part) => part.instant(date_text_day(date).expect("a kept date parsed at resolve")),
+                    Some(part) => {
+                        let day = date_text_day(date).expect("a kept date parsed at resolve");
+                        if self.folded { day } else { part.instant(day) }
+                    }
                     None => {
                         let floored = match self.grain {
                             Some(tu) => time_unit_floor(date, tu).expect("a kept date parsed at resolve"),
@@ -1019,8 +1029,8 @@ impl TemporalXAxis {
                         Some(unit) => Ok(bucket_text(v, Grain::Calendar(unit))),
                         // No grain explains the dates: Vega labels each category under d3's multi-scale format.
                         None => parse_iso_date(v)
-                            .map(|(y, m, d)| crate::families::temporal::d3_multi_format(y, m, d))
-                            .ok_or_else(|| format!("axis aria: x value {v:?} is not an ISO date")),
+                            .ok_or_else(|| format!("axis aria: x value {v:?} is not an ISO date"))
+                            .and_then(|(y, m, d)| crate::families::temporal::d3_multi_format(y, m, d)),
                     })
                     .collect::<Result<_, String>>()?,
                 format: vega_axis_format(ax_x, false)?,
@@ -1079,7 +1089,7 @@ impl TemporalXAxis {
         }
         let kept = self.kept(&labels, plot_w);
         let anchor_y = group_y + sign * (self.tick_eff() + self.label_pad);
-        let flat_y = anchor_y + crate::measure::baseline_shift(self.edge.baseline(), fs);
+        let flat_y = anchor_y + measure::baseline_shift(self.edge.baseline(), fs);
         let mut reach = 0.0_f64;
         for ((frac, l), keep) in labels.iter().zip(&kept) {
             if !keep || l.text.is_empty() {
@@ -1108,7 +1118,7 @@ impl TemporalXAxis {
                      rotate({}) translate(0,{})\" font-family=\"{}\" font-size=\"{fs}\" \
                      font-weight=\"{}\" fill=\"{}\">{rows}</text>",
                     self.angle,
-                    crate::measure::baseline_shift(l.baseline, fs),
+                    measure::baseline_shift(l.baseline, fs),
                     vega_escape_attr(&self.family),
                     xml_escape_attr(&self.weight),
                     xml_escape_attr(&self.color),
@@ -1150,7 +1160,7 @@ impl TemporalXAxis {
         let title_fs = ax_x.title.font.size_or(11.0);
         let title_y = anchor_y
             + sign * (reach + ax_x.title.padding.unwrap_or(10.0))
-            + crate::measure::baseline_shift(self.edge.baseline(), title_fs);
+            + measure::baseline_shift(self.edge.baseline(), title_fs);
         crate::common::emit_axis_title_at(svg, &self.title_text, &ax_x.title, plot_left + plot_w / 2.0, title_y, self.title_key);
         crate::contract::axis_group_close(svg);
         Ok(())

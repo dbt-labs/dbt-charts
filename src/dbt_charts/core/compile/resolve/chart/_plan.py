@@ -226,7 +226,7 @@ def build_cartesian_axes(
     ``_resolve_cartesian_ticks`` with (bar's ``bar_zero``, line's
     ``zero_anchored_line``, ...) — passed again here rather than re-derived,
     because ``y.style.scale.continuous.zero`` does not always carry it: a
-    single-metric line/area/bar anchors at zero via ``BaselineFeature``'s
+    single-metric line/area/bar anchors at zero via the engine's
     render-time ``datum: 0`` rule, not a resolve-time bake, so the scale
     field alone would under-detect the zero-anchored case.
 

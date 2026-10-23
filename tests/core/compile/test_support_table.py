@@ -3,8 +3,7 @@
 Covers sizing/style resolution knowable before any query runs: row height,
 axis offset, style-cascade resolution. Strip height (data-aware — depends on
 series_count derived from query rows) and data-aware validation
-(validate_support_table_against_data) live at the render boundary — see
-tests/core/render/chart/test_support_table_attachment.py.
+(validate_support_table_against_data) live at the render boundary — the engine's support_table_strip.rs.
 """
 
 from __future__ import annotations
@@ -326,8 +325,7 @@ def test_axis_offset_font_size_matches_every_axis_x_channel_type(
     theme_name: str, channel_type: str
 ) -> None:
     """axis_offset (this module) always resolves axis_x with channel_type
-    "band" — a bar's categorical axis. render/chart/support_table_attachment.py's
-    _tilted_label_axis_offset instead reads resolved_chart.style.axis_x,
+    "band" — a bar's categorical axis. the engine's tilted-label axis offset instead reads resolved_chart.style.axis_x,
     baked with the CHART'S REAL channel type (e.g. "temporal" for a line/area
     chart's date x, "quantitative" for a scatter's numeric x). The render-side
     subtraction (labels.font.size * label_max_lines) only cancels what the

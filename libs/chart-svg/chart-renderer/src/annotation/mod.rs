@@ -15,7 +15,7 @@ pub use axis_map::{AxisMap, Site};
 pub use model::Annotation;
 
 use crate::diagnostic::Diagnostic;
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::vega_fit::Bounds;
 use place::{Mark, Placed};
 

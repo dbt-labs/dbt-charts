@@ -103,7 +103,6 @@ MDSVG_STRUCTURAL_FIELDS: frozenset[str] = frozenset(
         "inline_code_padding",
         "inline_code_border_radius",
         "blockquote_padding",
-        "table_cell_padding",
         # Image layout constants
         "image_width",
         "image_height",
@@ -331,6 +330,8 @@ def compact_style_kwargs(
         "blockquote_font_decoration": _bq.font.decoration
         or "",  # type-state: silent_fallback — unset theme font fields map to the empty string mdsvg expects
         "blockquote_font_case": _mdsvg_case(_bq.font.case, "blockquote"),
+        # Half a body line on every side: a one-line row pitches one whole line.
+        "table_cell_padding": float(_text_font_size) * float(_text_line_height) / 2,
         "table_border_color": _rs.text.divider.color,
         "table_border_width": float(_rs.text.divider.width),
         "table_border_dasharray": _rs.text.divider.dasharray

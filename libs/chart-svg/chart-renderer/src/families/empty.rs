@@ -22,7 +22,7 @@ use crate::families::layers::{
 };
 use crate::families::legend::{legend_title_text, LegendConfig, LegendEntry, LegendSymbol};
 use crate::frame::{ChartFrame, FrameTitle};
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::Payload;
 
 pub fn render(chart_type: &str, payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {

@@ -1,4 +1,4 @@
-"""Render one kpi, spark_bar, table or pie chart in the engine, for tests that assert on its SVG."""
+"""Render one chart in the engine, for tests that assert on its SVG."""
 
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -9,7 +9,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     TitleShift,
     VariableValues,
 )
-from dbt_charts.core.compile.models.chart.normalized import PieChart
+from dbt_charts.core.compile.models.chart.normalized import Chart, PieChart
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedKpiChart,
     ResolvedPieChart,
@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
+from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.style.theme import Style
 from dbt_charts.core.compile.normalize.charts import normalize_chart
@@ -123,6 +124,34 @@ def render_pie_svg(
         chart = resolved
     artifact = render_resolved_chart(
         chart, data, board_style, width=width, height=height, padding=padding
+    )
+    assert artifact.kind == "svg"
+    assert isinstance(artifact.payload, str)
+    return artifact.payload
+
+
+def render_chart_svg(
+    chart: Chart,
+    data: Rows,
+    *,
+    width: float | None = None,
+    height: float | None = None,
+    board_style: ResolvedStyle | None = None,
+    chart_style_context: ChartStyleContext | None = None,
+) -> str:
+    """A normalized chart through resolve and the production render entry.
+
+    ``board_style`` and ``chart_style_context`` come together or not at all
+    (the default theme's cascade when omitted).
+    """
+    assert (board_style is None) == (chart_style_context is None)
+    if board_style is None or chart_style_context is None:
+        board_style, chart_style_context = resolve_style_and_context(get_theme_style())
+    resolved = resolve(
+        chart, data, chart_style_context=chart_style_context, width=width
+    )
+    artifact = render_resolved_chart(
+        resolved, data, board_style, width=width, height=height
     )
     assert artifact.kind == "svg"
     assert isinstance(artifact.payload, str)

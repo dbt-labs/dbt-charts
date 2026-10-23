@@ -4,7 +4,7 @@
 Detection rule:
   ``WarningContext.text_truncations`` contains records with
   ``surface == "axis_title"`` — the single wrap site
-  (``wrap_axis_title`` via ``resolve_xy_titles``) recorded that at least one
+  (the engine's axis-title wrap) recorded that at least one
   axis title was cut with an ellipsis.
 
 One ``Diagnostic`` fires per (chart, authored_field) pair.  The path points at

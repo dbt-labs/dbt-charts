@@ -51,7 +51,8 @@ def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
     return WarningContext(
-        board_spec=board, chart_results={resolved.id: rows}, vega_specs={}
+        board_spec=board,
+        chart_results={resolved.id: rows},
     )
 
 
@@ -171,7 +172,6 @@ def _ctx_for(*charts_and_rows: tuple[Chart, list[dict[str, Any]]]) -> WarningCon
         chart_results={
             r.id: rows for r, (_, rows) in zip(resolved, charts_and_rows, strict=True)
         },
-        vega_specs={},
     )
 
 
@@ -199,7 +199,6 @@ def test_one_chart_whose_rows_do_not_regroup_does_not_silence_the_others() -> No
     ctx = WarningContext(
         board_spec=make_test_resolved_board(charts={r.id: r for r in resolved}),
         chart_results={"bad": stray_rows, "good": _rows(60)},
-        vega_specs={},
     )
     assert [w.chart for w in detector.detect(ctx)] == ["good"]
 

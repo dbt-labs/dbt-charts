@@ -19,11 +19,6 @@ from __future__ import annotations
 
 import pytest
 
-from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
-from dbt_charts.core.render.chart.spec import RenderBox
-
-_DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
-
 
 def _default_board_style():  # type: ignore[no-untyped-def]
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
@@ -152,67 +147,6 @@ def test_bar_with_no_scale_type_does_not_raise() -> None:
 # ── bar + pow/sqrt/symlog passthrough (only log is banned on bar) ────────
 
 
-def test_bar_vertical_pow_scale_type_reaches_emitted_vl_spec() -> None:
-    """A non-stacked vertical bar with no authored zero override hits the
-    `elif bar_zero:` branch in _emit_vertical, which built its own
-    domainMin+zero dict from scratch — verify type/exponent still reach VL
-    rather than being silently dropped by that separate code path."""
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
-    from dbt_charts.core.render.chart.spec import RenderBox
-    from dbt_charts.core.render.chart.translate import translate_to_vl
-
-    chart = _bar_normalized(
-        style=BarChartStylePatch.model_validate(
-            {
-                "orientation": "vertical",
-                "axis_y": {
-                    "scale": {"continuous": {"type": "pow", "pow": {"exponent": 0.5}}}
-                },
-            }
-        )
-    )
-    resolved = resolve(chart, _DATA, _default_board_style())
-    spec = BarEmitter().emit(
-        resolved, RenderBox(width=600.0, height=300.0), regroup((), _DATA)
-    )
-    vl = translate_to_vl(spec)
-    y_scale = vl["encoding"]["y"]["scale"]
-    assert y_scale["type"] == "pow"
-    assert y_scale["exponent"] == 0.5
-
-
-def test_bar_horizontal_pow_scale_type_reaches_emitted_vl_spec() -> None:
-    """Horizontal bar puts the measure on VL x — a separate code path
-    (_emit_horizontal) that built its x-scale dict from scratch with only
-    zero/padding, never merging scale.type."""
-    from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
-    from dbt_charts.core.render.chart.spec import RenderBox
-    from dbt_charts.core.render.chart.translate import translate_to_vl
-
-    chart = _bar_normalized(
-        style=BarChartStylePatch.model_validate(
-            {
-                "orientation": "horizontal",
-                "axis_y": {
-                    "scale": {"continuous": {"type": "pow", "pow": {"exponent": 0.5}}}
-                },
-            }
-        )
-    )
-    resolved = resolve(chart, _DATA, _default_board_style())
-    spec = BarEmitter().emit(
-        resolved, RenderBox(width=600.0, height=300.0), regroup((), _DATA)
-    )
-    vl = translate_to_vl(spec)
-    x_scale = vl["encoding"]["x"]["scale"]
-    assert x_scale["type"] == "pow"
-    assert x_scale["exponent"] == 0.5
-
-
 # ── type: log + ticks.count ───────────────────────────────────────────────
 
 
@@ -339,26 +273,6 @@ def test_area_log_scale_smart_zero_heuristic_does_not_bake_zero_true() -> None:
 
 
 # ── genuine log scale.type reaches the emitted VL spec for line ──────────
-
-
-def test_line_log_scale_type_reaches_emitted_vl_spec() -> None:
-    """End-to-end confirmation of the bug fix: axis_y.scale.type: log must
-    reach the VL y-scale on line (previously silently dropped — only scatter
-    honored it; see the task's Context section)."""
-    from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.emitters.line import LineEmitter
-    from dbt_charts.core.render.chart.translate import translate_to_vl
-
-    chart = _line_normalized(
-        style=LineChartStylePatch.model_validate(
-            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
-        )
-    )
-    resolved = resolve(chart, _DATA, _default_board_style())
-    spec = LineEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _DATA))
-    vl = translate_to_vl(spec)
-    assert vl["encoding"]["y"]["scale"]["type"] == "log"
 
 
 # ── type: log requires strictly positive data ─────────────────────────────
@@ -804,63 +718,3 @@ def test_area_multi_metric_log_scale_bakes_domain_across_all_metrics() -> None:
     scale = resolved.style.axis_y.scale
     assert scale is not None
     assert scale.continuous is not None and scale.continuous.domain == (100.0, 5000.0)
-
-
-def test_area_multi_metric_log_scale_domain_reaches_emitted_vl_spec() -> None:
-    """The baked domain must reach the actual VL spec, not just the resolved
-    model — the multi-metric emitter builds its y-scale via y_zero_scale()
-    directly, which doesn't merge domain (that's normally the single-metric
-    path's job), so this needs its own explicit merge."""
-    from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.emitters.area import AreaEmitter
-    from dbt_charts.core.render.chart.translate import translate_to_vl
-
-    data = [
-        {"month": "Jan", "revenue": 100.0, "target": 4000.0},
-        {"month": "Feb", "revenue": 200.0, "target": 5000.0},
-    ]
-    chart = _area_normalized(
-        y=["revenue", "target"],
-        style=AreaChartStylePatch.model_validate(
-            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
-        ),
-    )
-    resolved = resolve(chart, data, _default_board_style())
-    spec = AreaEmitter().emit(resolved, _DEFAULT_BOX, regroup((), data))
-    vl = translate_to_vl(spec)
-    # Wide measures now use one folded unit spec so Vega-Lite performs the
-    # stack. The shared measure scale therefore lives at the unit root.
-    unit = vl.get("hconcat", [vl])[0]
-    y_scale = unit["encoding"]["y"]["scale"]
-    assert y_scale["type"] == "log"
-    assert y_scale["domain"] == [100.0, 5000.0]
-    # Unstacked/overlap area folds in display_order (last-value order via
-    # _area_spatial_order), not authored y: list order -- target's last
-    # value (5000) ranks it before revenue's (200) here. See
-    # fold_wide_measures's docstring.
-    assert any(
-        transform.get("fold") == ["target", "revenue"]
-        for transform in unit["transform"]
-    )
-
-
-def test_area_log_scale_type_reaches_emitted_vl_spec_with_domain() -> None:
-    """End-to-end confirmation: axis_y.scale.type: log on area emits both
-    the log type AND a baked domain, avoiding the degenerate VL area render."""
-    from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.render.chart.emitters.area import AreaEmitter
-    from dbt_charts.core.render.chart.translate import translate_to_vl
-
-    chart = _area_normalized(
-        style=AreaChartStylePatch.model_validate(
-            {"axis_y": {"scale": {"continuous": {"type": "log"}}}}
-        )
-    )
-    resolved = resolve(chart, _DATA, _default_board_style())
-    spec = AreaEmitter().emit(resolved, _DEFAULT_BOX, regroup((), _DATA))
-    vl = translate_to_vl(spec)
-    y_scale = vl["encoding"]["y"]["scale"]
-    assert y_scale["type"] == "log"
-    assert y_scale["domain"] == [100.0, 200.0]

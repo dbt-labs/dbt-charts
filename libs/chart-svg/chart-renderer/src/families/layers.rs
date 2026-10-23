@@ -27,8 +27,8 @@ use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
 use crate::families::axis_caption::{slot_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol};
-use crate::svg::xml_escape_attr;
-use crate::text::FontBook;
+use print::xml_escape_attr;
+use measure::FontBook;
 use crate::Payload;
 
 #[derive(Deserialize)]
@@ -92,27 +92,6 @@ pub(crate) struct OverlayPointMark {
     pub fill: Option<String>,
     pub stroke_width: f64,
     pub labels: MarkLabels,
-}
-
-/// A layer's `labels.format` is painted on its own axis, and a layer on the base's scale paints
-/// the same tick labels (`_overlay.py:1583`); only the tooltip's affix has no painter and refuses.
-pub(crate) fn refuse_unpainted_layer_affix(family: &str, raw: &Value) -> Result<(), String> {
-    #[derive(Deserialize)]
-    struct Axis {
-        #[serde(default)]
-        tooltip_format: Option<FormatSlot>,
-    }
-    #[derive(Deserialize)]
-    struct Layer {
-        #[serde(default)]
-        axis_y: Option<Axis>,
-    }
-    let layer: Layer = Deserialize::deserialize(raw).map_err(|e| format!("{family}: layer payload: {e}"))?;
-    let Some(axis) = layer.axis_y else { return Ok(()) };
-    if let Some(key) = axis.tooltip_format.as_ref().and_then(|slot| slot.carried().next()) {
-        return Err(format!("{family}: layer axis_y.tooltip_format {key:?} is not painted: a layer tooltip's affix is unprobed against production"));
-    }
-    Ok(())
 }
 
 /// The opacity of every area layer's legend circle: the last area layer's
@@ -1746,7 +1725,7 @@ pub(crate) fn paint_layer_value_labels(
         crate::common::write_value_label(
             svg,
             m.x + spot.dx,
-            m.y + spot.dy + crate::measure::baseline_shift(spot.baseline, style.font.size),
+            m.y + spot.dy + measure::baseline_shift(spot.baseline, style.font.size),
             spot.align,
             &style.font.family,
             style.font.size,
@@ -2391,6 +2370,7 @@ pub(crate) fn paint_layer_grids(
     family: &str,
 ) -> Result<(), String> {
     for la in layer_axes.iter().filter(|la| la.grid_visible) {
+        crate::contract::grid_group_open(svg);
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), family, "axis_y.grid.color")?;
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
@@ -2407,6 +2387,7 @@ pub(crate) fn paint_layer_grids(
                 ),
             );
         }
+        crate::contract::grid_group_close(svg);
     }
     Ok(())
 }
@@ -2713,17 +2694,17 @@ pub(crate) fn paint_layer_axis(
             outward,
             ink.tick_size,
         )?;
-        let y = tick_y + crate::measure::baseline_shift("middle", ink.font_size);
+        let y = tick_y + measure::baseline_shift("middle", ink.font_size);
         let _ = std::fmt::Write::write_fmt(
             svg,
             format_args!(
                 "<text x=\"{label_x:.2}\" y=\"{y:.2}\" text-anchor=\"{anchor}\" \
                  font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                crate::svg::vega_escape_attr(ink.font_family),
+                print::vega_escape_attr(ink.font_family),
                 ink.font_size,
                 xml_escape_attr(ink.font_weight),
                 xml_escape_attr(ink.font_color),
-                crate::svg::xml_escape(label),
+                print::xml_escape(label),
             ),
         );
     }

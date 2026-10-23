@@ -849,7 +849,7 @@ def _y_domain_floor(
     ``_resolve_cartesian_ticks`` -- not re-derived from
     ``ay.scale.continuous.zero``, which stays unbaked (None) for a
     single-metric line/area/bar: those anchor at render time via
-    ``BaselineFeature``'s ``datum: 0`` rule, not a resolve-time bake, so the
+    the engine's ``datum: 0`` baseline rule, not a resolve-time bake, so the
     scale field alone under-detects the zero-anchored case.
 
     Returns None only when nothing pins the floor at all: no tick ladder

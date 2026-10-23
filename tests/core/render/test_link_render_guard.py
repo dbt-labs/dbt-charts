@@ -66,40 +66,6 @@ rows:
     assert 'href="javascript:alert(1)"' not in output
 
 
-def test_hand_written_sentinel_link_becomes_chart_error() -> None:
-    """An author who hand-writes the sentinel prefix
-    (`link: "http://dct.invalidjavascript:alert(1)"`) bypasses both checks:
-    it reads as scheme `http` at compile, and Vega's sanitizer never sees
-    more than a domain-shaped string. The stripped value must be
-    scheme-checked again, post-strip — as a per-chart error (chart_errors),
-    not a whole-board failure: the layout-sizing pass's own render-first
-    probe hits this same RenderError before the real render pass ever runs."""
-    board = """
-title: Test
-queries:
-  q1:
-    type: values
-    rows:
-      - {month: "2024-01", revenue: 1000}
-charts:
-  c1:
-    query: q1
-    type: bar
-    x: month
-    y: revenue
-    link: "http://dct.invalidjavascript:alert(1)"
-rows:
-  - c1
-"""
-    result = _render_yaml(board)
-
-    assert result.board_error is None
-    assert result.chart_errors, "unsafe sentinel link must surface as a chart error"
-    assert result.chart_errors[0].code == "ERR-LINK-SCHEME-UNSAFE-AT-RENDER"
-    output = result.output if isinstance(result.output, str) else ""
-    assert 'href="javascript:alert(1)"' not in output
-
-
 def test_non_sentinel_xlink_href_is_scheme_checked_too() -> None:
     """An absolute or template-first chart link (https://, ./, #...) never
     gets the http://dct.invalid sentinel, so it reaches vl_convert's output

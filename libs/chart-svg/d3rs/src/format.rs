@@ -19,6 +19,16 @@ const SI_PREFIXES: [&str; 17] = [
 ];
 const SI_PREFIX_OFFSET: i32 = 8;
 
+/// The SI level (a power of 1000, clamped to the table) a number with this
+/// decimal exponent prints at: d3's `Math.max(-8, Math.min(8, Math.floor(e / 3)))`.
+fn si_level(exponent: i32) -> i32 {
+    exponent.div_euclid(3).clamp(-8, 8)
+}
+
+fn si_prefix(level: i32) -> &'static str {
+    SI_PREFIXES[(level + SI_PREFIX_OFFSET) as usize]
+}
+
 /// d3-format's thousands grouping (`locale.grouping` + `locale.thousands`):
 /// group sizes taken from the right and cycled, joined by `separator`.
 #[derive(Clone, Debug, PartialEq)]
@@ -425,10 +435,9 @@ fn format_si(abs_val: f64, precision: usize) -> (String, &'static str) {
         return (body, "");
     }
     let (coefficient, exponent) = format_decimal_parts(abs_val, precision);
-    let prefix_level = ((exponent as f64) / 3.0).floor() as i32;
-    let prefix_level = prefix_level.clamp(-8, 8);
+    let prefix_level = si_level(exponent);
     let prefix_exp = prefix_level * 3;
-    let prefix = SI_PREFIXES[(prefix_level + SI_PREFIX_OFFSET) as usize];
+    let prefix = si_prefix(prefix_level);
     // i = digits before the decimal point in the SI-scaled representation.
     let i = exponent - prefix_exp + 1;
     let n = coefficient.len() as i32;
@@ -672,8 +681,12 @@ pub fn sub_unit_spec_for_value(
 /// `.N` (precision), `~` (trim zeros), `$` (currency).
 /// Unsupported features return `Err` with a description — never a silently wrong string.
 pub fn format(locale: &Locale, spec: &str, value: f64) -> Result<String, String> {
-    let out = format_ascii_digits(locale, spec, value)?;
-    Ok(match &locale.numerals {
+    Ok(numerals(locale, format_ascii_digits(locale, spec, value)?))
+}
+
+/// d3's closing `numerals(value)` step: the locale's digit glyphs for `0`-`9`.
+fn numerals(locale: &Locale, out: String) -> String {
+    match &locale.numerals {
         Some(numerals) => out
             .chars()
             .map(|c| match c {
@@ -682,34 +695,48 @@ pub fn format(locale: &Locale, spec: &str, value: f64) -> Result<String, String>
             })
             .collect(),
         None => out,
-    })
+    }
 }
 
-/// d3-format's `exponent(x)`: the decimal exponent of `|x|` in exponential
-/// notation (`0` for zero, NaN for a non-finite `x`).
+/// d3-format's `exponent(x)` (`exponent.js`): the decimal exponent of `|x|` in
+/// exponential notation. NaN where `formatDecimalParts` has none: zero and
+/// every non-finite `x`.
 fn exponent(x: f64) -> f64 {
-    if !x.is_finite() {
+    if !x.is_finite() || x == 0.0 {
         return f64::NAN;
-    }
-    if x == 0.0 {
-        return 0.0;
     }
     // `toExponential()` with no digit count keeps every digit, so the exponent never rounds up.
     format!("{:e}", x.abs()).split('e').nth(1).and_then(|e| e.parse::<i32>().ok()).map_or(f64::NAN, f64::from)
 }
 
-/// d3-format's `precisionFixed(step)`: the fixed-point decimal precision a tick
-/// step implies, `max(0, -exponent(step))`; Vega's default axis and legend
-/// number format derives its precision this way when none is authored.
-pub fn precision_fixed(step: f64) -> usize {
-    (-exponent(step.abs())).max(0.0) as usize
+/// The `exponent` of the d3-format Vega bundles, which predates 3.1.2: 0 for zero.
+fn vega_exponent(x: f64) -> f64 {
+    if x == 0.0 { 0.0 } else { exponent(x) }
 }
 
-/// vega-format's `formatSpan(start, stop, count, specifier)(value)`: a number
-/// locale's format whose missing precision is derived from the tick step a
-/// scale over `[start, stop]` would use at `count` ticks, so every number of
-/// the span prints at one precision. `specifier` defaults to `,f`.
-pub fn format_span(
+/// d3-format's `precisionFixed(step)` (`precisionFixed.js`): `max(0, -exponent(|step|))`,
+/// `None` where that is NaN (a step of 0 or a non-finite step).
+pub fn precision_fixed(step: f64) -> Option<usize> {
+    precision_fixed_by(exponent, step)
+}
+
+/// [`precision_fixed`] under Vega's bundled d3-format, where a step of 0 has precision 0.
+pub fn vega_precision_fixed(step: f64) -> Option<usize> {
+    precision_fixed_by(vega_exponent, step)
+}
+
+fn precision_fixed_by(exponent: fn(f64) -> f64, step: f64) -> Option<usize> {
+    let e = exponent(step.abs());
+    (!e.is_nan()).then(|| (-e).max(0.0) as usize)
+}
+
+/// d3-scale's `tickFormat(start, stop, count, specifier)(value)`
+/// (`d3-scale/src/tickFormat.js`): a number locale's format whose missing
+/// precision is derived from the tick step a scale over `[start, stop]` would
+/// use at `count` ticks, so every number of the span prints at one precision.
+/// An `s` type always prints at one SI prefix for the whole span. `specifier`
+/// defaults to `,f`.
+pub fn tick_format(
     locale: &Locale,
     specifier: Option<&str>,
     start: f64,
@@ -717,33 +744,63 @@ pub fn format_span(
     count: usize,
     value: f64,
 ) -> Result<String, String> {
+    tick_format_by(exponent, locale, specifier, (start, stop), count, value)
+}
+
+/// [`tick_format`] under Vega's bundled d3-format, whose `exponent(0)` is 0: a collapsed
+/// span or an all-zero domain prints whole numbers where d3-format 3.1.2 prints NaN or
+/// six decimals.
+pub fn vega_tick_format(
+    locale: &Locale,
+    specifier: Option<&str>,
+    start: f64,
+    stop: f64,
+    count: usize,
+    value: f64,
+) -> Result<String, String> {
+    tick_format_by(vega_exponent, locale, specifier, (start, stop), count, value)
+}
+
+fn tick_format_by(
+    exponent: fn(f64) -> f64,
+    locale: &Locale,
+    specifier: Option<&str>,
+    (start, stop): (f64, f64),
+    count: usize,
+    value: f64,
+) -> Result<String, String> {
     let mut s = parse_spec(specifier.unwrap_or(",f"))?;
-    // d3-array's `tickStep` of a collapsed span is NaN: no precision follows from it.
-    let step = if start == stop { f64::NAN } else { crate::ticks::d3_tick_step(start, stop, count) };
+    let step = crate::ticks::d3_tick_step(start, stop, count);
     let max = start.abs().max(stop.abs());
-    if s.precision.is_none() {
-        let digits = |p: f64| (!p.is_nan()).then_some(p.max(0.0) as usize);
-        match s.type_ {
-            's' => {
-                let prefix_exponent = (exponent(max) / 3.0).floor().clamp(-8.0, 8.0) * 3.0;
+    let unset = s.precision.is_none();
+    // d3 leaves the precision unset where `precision*` is NaN, so the default of 6 applies.
+    let digits = |p: f64| (!p.is_nan()).then_some(p.max(0.0) as usize);
+    match s.type_ {
+        's' => {
+            // d3-scale `tickFormat`: `precisionPrefix`, then `formatPrefix(specifier, max)`.
+            let prefix_exponent = (exponent(max) / 3.0).floor().clamp(-8.0, 8.0) * 3.0;
+            if unset {
                 s.precision = digits(prefix_exponent - exponent(step.abs()));
-                s.type_ = 'f';
-                let scaled = format_parsed(locale, s, value * 10f64.powf(-prefix_exponent))?;
-                return Ok(format!("{scaled}{}", SI_PREFIXES[(SI_PREFIX_OFFSET + (prefix_exponent / 3.0) as i32) as usize]));
             }
-            'e' | 'g' | 'p' | 'r' => {
-                let range = max.abs() - step.abs();
-                let gap = exponent(range) - exponent(step.abs());
-                let precision = digits(if gap.is_nan() { gap } else { gap.max(0.0) + 1.0 });
-                s.precision = precision.map(|p| p.saturating_sub(usize::from(s.type_ == 'e')));
-            }
-            'f' | '%' => {
-                s.precision = (!step.is_nan()).then(|| precision_fixed(step).saturating_sub(2 * usize::from(s.type_ == '%')));
-            }
-            _ => {}
+            s.type_ = 'f';
+            // A NaN exponent (max of 0) scales the value to NaN and has no prefix to print.
+            let prefix = if prefix_exponent.is_nan() { "" } else { si_prefix(prefix_exponent as i32 / 3) };
+            let scaled = format_parsed(locale, s, 10f64.powf(-prefix_exponent) * value, prefix)?;
+            return Ok(numerals(locale, scaled));
         }
+        '\0' | 'e' | 'g' | 'p' | 'r' if unset => {
+            // `precisionRound(step, max)`.
+            let range = max.abs() - step.abs();
+            let gap = exponent(range) - exponent(step.abs());
+            let precision = digits(if gap.is_nan() { gap } else { gap.max(0.0) + 1.0 });
+            s.precision = precision.map(|p| p.saturating_sub(usize::from(s.type_ == 'e')));
+        }
+        'f' | '%' if unset => {
+            s.precision = precision_fixed_by(exponent, step).map(|p| p.saturating_sub(2 * usize::from(s.type_ == '%')));
+        }
+        _ => {}
     }
-    format_parsed(locale, s, value)
+    Ok(numerals(locale, format_parsed(locale, s, value, "")?))
 }
 
 /// vega-format's `formatFloat(specifier)(value)`: a spec with no precision
@@ -753,10 +810,10 @@ pub fn format_span(
 pub fn format_float(locale: &Locale, specifier: Option<&str>, value: f64) -> Result<String, String> {
     let mut s = parse_spec(specifier.filter(|spec| !spec.is_empty()).unwrap_or(","))?;
     if s.type_ == '\0' || s.precision.is_some() {
-        return format_parsed(locale, s, value);
+        return format_parsed(locale, s, value, "");
     }
     s.precision = Some(12 - 2 * usize::from(s.type_ == '%') - usize::from(s.type_ == 'e'));
-    Ok(trim_zeroes(&format_parsed(locale, s, value)?, &locale.decimal))
+    Ok(trim_zeroes(&format_parsed(locale, s, value, "")?, &locale.decimal))
 }
 
 /// vega-format's `trimZeroes`: the fraction's trailing zeros (and a bare
@@ -791,10 +848,12 @@ fn trim_zeroes(text: &str, decimal: &str) -> String {
 
 // d3's `format(value)` closure up to its closing `numerals(value)` step.
 fn format_ascii_digits(locale: &Locale, spec: &str, value: f64) -> Result<String, String> {
-    format_parsed(locale, parse_spec(spec)?, value)
+    format_parsed(locale, parse_spec(spec)?, value, "")
 }
 
-fn format_parsed(locale: &Locale, mut s: Spec, value: f64) -> Result<String, String> {
+/// `suffix` is d3's `options.suffix` (`formatPrefix`'s SI prefix): it follows the currency or
+/// percent suffix.
+fn format_parsed(locale: &Locale, mut s: Spec, value: f64, suffix: &str) -> Result<String, String> {
     // d3-format `formatSpecifier.js`: the empty type is `.12~g` — the default
     // precision is 12 (an authored one stands), the trim flag is forced.
     if s.type_ == '\0' {
@@ -826,7 +885,7 @@ fn format_parsed(locale: &Locale, mut s: Spec, value: f64) -> Result<String, Str
         // A body with no leading digit joins the suffix whole, out of
         // grouping and zero padding (d3's split-suffix step).
         let prefix = format!("{sign_prefix}{base_prefix}");
-        return Ok(pad(&s, locale, &prefix, String::new(), &format!("{}{base_suffix}", locale.nan)));
+        return Ok(pad(&s, locale, &prefix, String::new(), &format!("{}{base_suffix}{suffix}", locale.nan)));
     }
 
     let is_negative = value.is_sign_negative();
@@ -849,7 +908,7 @@ fn format_parsed(locale: &Locale, mut s: Spec, value: f64) -> Result<String, Str
             base_prefix.to_string()
         };
         let close = if paren_wrap { ")" } else { "" };
-        return Ok(pad(&s, locale, &value_prefix, String::new(), &format!("{body}{base_suffix}{close}")));
+        return Ok(pad(&s, locale, &value_prefix, String::new(), &format!("{body}{base_suffix}{suffix}{close}")));
     }
 
     // Default precision = 6; clamp per type (significant vs decimal).
@@ -884,7 +943,13 @@ fn format_parsed(locale: &Locale, mut s: Spec, value: f64) -> Result<String, Str
         }
         'd' => {
             let body = if abs_val >= 1e21 {
-                js_number_to_string(abs_val)
+                // d3-format 3.1.2 `formatDecimal`: `toLocaleString("en")` prints the shortest
+                // round-trip digits padded with zeros, with the commas removed.
+                let shortest = format!("{abs_val:e}");
+                let (mantissa, exponent) = shortest.split_once('e').expect("{:e} always prints an exponent");
+                let digits = mantissa.replace('.', "");
+                let zeros = exponent.parse::<usize>().expect("a finite value >= 1e21") + 1 - digits.len();
+                format!("{digits}{}", "0".repeat(zeros))
             } else {
                 round_half_up_abs(abs_val, 0)
             };
@@ -919,7 +984,7 @@ fn format_parsed(locale: &Locale, mut s: Spec, value: f64) -> Result<String, Str
     };
 
     // si_prefix goes between the number body and any percent/currency suffix.
-    let value_suffix = format!("{si_prefix}{base_suffix}");
+    let value_suffix = format!("{si_prefix}{base_suffix}{suffix}");
 
     // Split the body at the first non-digit character so that the fraction/exponent
     // is held out of comma grouping (mirrors d3's maybeSuffix logic).
@@ -1056,9 +1121,9 @@ mod tests {
         assert_eq!(fmt("s", 0.0),         "0.00000");
     }
 
-    // vega-format `formatSpan`/`formatFloat`, expected strings from vega 6.2.
+    // `tick_format` is pinned by the d3-scale oracle; `format_float` is vega-format's.
     fn span(spec: Option<&str>, start: f64, stop: f64, value: f64) -> String {
-        format_span(&Locale::en_us(), spec, start, stop, 5, value).expect("a supported spec")
+        tick_format(&Locale::en_us(), spec, start, stop, 5, value).expect("a supported spec")
     }
 
     fn float(spec: Option<&str>, value: f64) -> String {
@@ -1066,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    fn format_span_takes_its_precision_from_the_tick_step() {
+    fn tick_format_takes_its_precision_from_the_tick_step() {
         assert_eq!(span(None, 0.0, 1500.0, 1500.0), "1,500");
         assert_eq!(span(None, 0.0, 0.5, 0.25), "0.3");
         assert_eq!(span(Some(".0%"), 0.0, 0.5, 0.5), "50%");
@@ -1085,27 +1150,27 @@ mod tests {
         assert_eq!(exponent(9.6), 0.0);
         assert_eq!(exponent(99_999.0), 4.0);
         assert_eq!(exponent(0.096), -2.0);
-        assert_eq!(precision_fixed(0.096), 2);
-        assert_eq!(precision_fixed(0.0), 0);
-        assert_eq!(precision_fixed(1000.0), 0);
-        assert_eq!(precision_fixed(0.05), 2);
+        assert_eq!(precision_fixed(0.096), Some(2));
+        assert_eq!(precision_fixed(0.0), None);
+        assert_eq!(precision_fixed(1000.0), Some(0));
+        assert_eq!(precision_fixed(0.05), Some(2));
         // 999.6 sits under 1e3: no SI prefix, where a rounded exponent would pick `k` and print `1k`.
         assert_eq!(span(Some("s"), 0.0, 999.6, 999.6), "1000");
     }
 
     #[test]
-    fn format_span_keeps_an_authored_precision() {
+    fn tick_format_keeps_an_authored_precision() {
         assert_eq!(span(Some("$,.0f"), 406_240.0, 605_760.0, 406_240.0), "$406,240");
     }
 
     #[test]
-    fn format_span_fixes_one_si_prefix_for_the_whole_span() {
+    fn tick_format_fixes_one_si_prefix_for_the_whole_span() {
         assert_eq!(span(Some("s"), 0.0, 81_800.0, 81_800.0), "82k");
         assert_eq!(span(Some("s"), 0.0, 81_800.0, 40_900.0), "41k");
     }
 
     #[test]
-    fn format_span_of_a_collapsed_span_uses_the_default_precision() {
+    fn tick_format_of_a_collapsed_span_uses_the_default_precision() {
         assert_eq!(span(Some("f"), 0.0, 0.0, 3.0), "3.000000");
     }
 

@@ -70,6 +70,11 @@ __all__ = [
 ]
 
 
+# The PAINTS_MARKS families whose painted-no-marks guard still runs in Python; the
+# engine raises ERR-CHART-PAINTED-NO-MARKS for the cartesian ones itself.
+PAINTS_MARKS_GUARDED_IN_PYTHON = frozenset({"pie", "geoshape", "point_map"})
+
+
 def _uses_svg_family_layout_padding(chart_type: str) -> bool:
     """Return whether the chart should be inset by layout card padding."""
     return chart_type in SVG_LAYOUT_PADDED_TYPES
@@ -463,7 +468,9 @@ def _render_chart_item_inner(
 
     chart_type = chart.chart_type
     is_svg_family = chart_type in SVG_LAYOUT_PADDED_TYPES
-    paints_marks = chart_type in PAINTS_MARKS
+    # The engine raises ERR-CHART-PAINTED-NO-MARKS for the cartesian families
+    # itself; a pie's and a map's SVG still need the check here.
+    paints_marks = chart_type in PAINTS_MARKS_GUARDED_IN_PYTHON
     cache_key = (chart.id, available_width, available_height, title_shift)
     if not is_svg_family and cache_key in render_cache:
         chart_svg, _ = render_cache[cache_key]

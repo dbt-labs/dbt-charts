@@ -16,7 +16,7 @@ import dataclasses
 import re
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import TypeAdapter
@@ -155,35 +155,6 @@ def test_vega_chart_data_error_fallback_has_no_nested_svg() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("chart_type", ["line", "bar"])
-def test_vega_chart_retains_standalone_nested_svg(chart_type: str) -> None:
-    from dbt_charts.core.render.converters import chart as converters_chart
-
-    chart = _chart(chart_type, x="x", y="y")
-    canned_vega_svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" '
-        'viewBox="0 0 400 300"><g class="mark-rect role-mark">'
-        '<rect x="0" y="0" width="40" height="30"/></g></svg>'
-    )
-    with patch.object(
-        converters_chart,
-        "render_vega_spec",
-        return_value=canned_vega_svg,
-    ):
-        svg, _ = render_chart_item(
-            _rc(chart),
-            _executor([{"x": 1, "y": 2}]),
-            {},
-            400,
-            300,
-            resolved_style=_RESOLVED_STYLE,
-            render_cache={},
-        )
-    assert _SVG_OPEN_TAG.search(svg)
-    assert _DBT_CHART_CLASS.search(svg)
-    assert 'class="mark-rect role-mark"' in svg
-
-
 # ---------------------------------------------------------------------------
 # PAINTS_MARKS parity — must equal exactly what get_emitter() accepts.
 #
@@ -195,43 +166,6 @@ def test_vega_chart_retains_standalone_nested_svg(chart_type: str) -> None:
 # registries together so that mistake fails loudly instead of rendering
 # marks with no viewport.
 # ---------------------------------------------------------------------------
-
-
-def test_paints_marks_matches_get_emitter_registry() -> None:
-    """PAINTS_MARKS must equal exactly the chart_type strings get_emitter()
-    dispatches an emitter for, plus pie, which paints its wedges in the engine.
-
-    Builds an unvalidated (`model_construct`) instance of every member of the
-    `ResolvedChart` discriminated union — enough for get_emitter()'s
-    isinstance-based `match` to classify it — and compares the chart_type
-    literals of the accepted members against PAINTS_MARKS. A new VL family
-    registered in get_emitter() without a matching PAINTS_MARKS update fails
-    here first, not silently at render time.
-    """
-    import typing
-
-    from dbt_charts.core.compile.models.chart.normalized import PAINTS_MARKS
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
-    from dbt_charts.core.render.chart.emitters import get_emitter
-    from dbt_charts.core.render.errors import RenderError
-
-    member_classes = typing.get_args(typing.get_args(ResolvedChart)[0])
-
-    emitter_chart_types: set[str] = set()
-    for cls in member_classes:
-        try:
-            get_emitter(cls.model_construct())
-        except RenderError:
-            continue
-        emitter_chart_types.update(
-            typing.get_args(cls.model_fields["chart_type"].annotation)
-        )
-
-    assert emitter_chart_types | {"pie"} == PAINTS_MARKS, (
-        "PAINTS_MARKS is out of sync with get_emitter()'s registry — add the "
-        "new family's chart_type string(s) to PAINTS_MARKS in "
-        "compile/models/chart/normalized/_base.py"
-    )
 
 
 # ---------------------------------------------------------------------------

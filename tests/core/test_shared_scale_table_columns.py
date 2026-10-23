@@ -24,7 +24,6 @@ from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
 from dbt_charts.core.text.numeral_scale import (
     SuffixMode,
     column_digit_format,
-    decimal_pad_for,
     tier_distance,
 )
 
@@ -746,109 +745,6 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
     fail to align on the decimal point with fractional ones.
     """
 
-    def test_mixed_whole_and_fractional_below_every_tier_bakes_a_pad_table(
-        self,
-    ) -> None:
-        columns = {"amount": TableColumnConfig(format="number")}
-        rows = [{"amount": v} for v in (84.3, 88, 128.4, 42)]
-        resolved = _with_resolved_scale_stops(
-            columns,
-            text_color=None,
-            formats=None,
-            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=rows,
-            allow_shared_scale=True,
-            own_formats={n: c.format for n, c in (columns or {}).items()},
-            defaults_format=None,
-            declared=None,
-            filter_variables=frozenset(),
-            link_open="page",
-        )
-        assert resolved is not None
-        col = resolved["amount"]
-        # Confirms the gap this fallback targets: no shared SI tier at all.
-        assert col.shared_scale is None
-        assert col.decimal_pad_table != ()
-
-        whole_pad = decimal_pad_for(col.decimal_pad_table, "88")
-        assert whole_pad != ""
-        # Measured placeholder unit, never a visible zero -- repo rule: no
-        # padded zeros on data values.
-        assert "0" not in whole_pad
-
-        deepest_pad = decimal_pad_for(col.decimal_pad_table, "84.3")
-        assert deepest_pad == ""
-
-    def test_sub_dollar_currency_cell_bakes_deep_enough_for_its_own_render(
-        self,
-    ) -> None:
-        # Regression: the table's lane formatter prints a sub-$1 currency
-        # cell through a different, deeper spec than the rest of the column
-        # (the per-row sub-unit swap). A bake that measures every row
-        # with the bare SI spec is too shallow for that swapped row.
-        columns = {"amount": TableColumnConfig(format="currency")}
-        values = (0.25, 84.3, 88, 42)
-        rows = [{"amount": v} for v in values]
-        resolved = _with_resolved_scale_stops(
-            columns,
-            text_color=None,
-            formats=None,
-            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=rows,
-            allow_shared_scale=True,
-            own_formats={n: c.format for n, c in (columns or {}).items()},
-            defaults_format=None,
-            declared=None,
-            filter_variables=frozenset(),
-            link_open="page",
-        )
-        assert resolved is not None
-        col = resolved["amount"]
-        assert col.shared_scale is None
-        # 0.25 -> "0.25" (2 fractional digits, the swapped fallback spec);
-        # 84.3 -> "84.3" (1); 88/42 -> 0. Precision must be the deepest: 2.
-        assert len(col.decimal_pad_table) - 2 == 2
-
-        for v in values:
-            _, number_str, _ = format_kpi_parts(v, "currency", default_number=True)
-            decimal_pad_for(col.decimal_pad_table, number_str)  # must not raise
-        assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
-        assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
-        assert decimal_pad_for(col.decimal_pad_table, "88") != ""
-
-    def test_allow_shared_scale_false_still_pads_a_homogeneous_real_tier(
-        self,
-    ) -> None:
-        """``allow_shared_scale=False`` (pie/donut's attached legend table)
-        never attempts the shared-scale bake at all, so ``shared_scale`` is
-        None for EVERY column of that caller -- including a homogeneous
-        single-real-tier one (every value in thousands, e.g. 15000/5000/
-        3500). That column still has one shared decimal position to align
-        on and must still pad -- only a genuine tier mix should refuse
-        (``column_shares_one_printed_unit``).
-        """
-        columns = {"amount": TableColumnConfig(format="number")}
-        rows = [{"amount": v} for v in (15_000.0, 5_000.0, 3_500.0)]
-        resolved = _with_resolved_scale_stops(
-            columns,
-            text_color=None,
-            formats=None,
-            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=rows,
-            allow_shared_scale=False,
-            own_formats={n: c.format for n, c in (columns or {}).items()},
-            defaults_format=None,
-            declared=None,
-            filter_variables=frozenset(),
-            link_open="page",
-        )
-        assert resolved is not None
-        col = resolved["amount"]
-        assert col.shared_scale is None
-        assert col.decimal_pad_table != ()
-        assert decimal_pad_for(col.decimal_pad_table, "15") != ""
-        assert decimal_pad_for(col.decimal_pad_table, "3.5") == ""
-
     def test_genuine_tier_mix_bakes_no_pad_at_all(self) -> None:
         """A real mix -- some values print with a "k" suffix, some bare -- is
         not the same "everyone's too small" case the fallback above targets.
@@ -922,79 +818,6 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         )
         assert resolved is not None
         assert len(resolved["amount"].decimal_pad_table) - 2 == 4
-
-    def test_currency_spec_via_format_config_measures_the_sub_dollar_swap(
-        self,
-    ) -> None:
-        """``raw_format_name`` is derived from ``col.format.spec`` when the
-        column authors a ``FormatConfig`` (not a bare string) -- must not
-        skip the sub-$1 swap that measurement depends on. 0.25 falls in the
-        sub-$1 band and is measured through the deeper two-decimal fallback
-        spec; 84.3/88 are measured through the bare SI spec. Must not raise.
-        """
-        from dbt_charts.core.compile.models.primitives import FormatConfig
-
-        columns = {"amount": TableColumnConfig(format=FormatConfig(spec="currency"))}
-        rows = [{"amount": v} for v in (0.25, 84.3, 88)]
-        resolved = _with_resolved_scale_stops(
-            columns,
-            text_color=None,
-            formats=None,
-            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=rows,
-            allow_shared_scale=True,
-            own_formats={n: c.format for n, c in (columns or {}).items()},
-            defaults_format=None,
-            declared=None,
-            filter_variables=frozenset(),
-            link_open="page",
-        )
-        assert resolved is not None
-        col = resolved["amount"]
-        assert col.shared_scale is None
-        # pad_table length is precision + 2 (see build_decimal_pad_table);
-        # 0.25 -> "0.25" (2 fractional digits, the swapped fallback spec) is
-        # the deepest cell, so precision is 2.
-        assert len(col.decimal_pad_table) - 2 == 2
-        assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
-        assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
-        assert decimal_pad_for(col.decimal_pad_table, "88") != ""
-
-    def test_affixed_number_measures_the_sub_one_swap(self) -> None:
-        """A ``number`` column with an affix routes 0.25 through the deeper
-        two-decimal fallback spec, not the bare SI one. Must not raise.
-        """
-        from dbt_charts.core.compile.models.primitives import FormatConfig
-
-        columns = {
-            "amount": TableColumnConfig(
-                format=FormatConfig(spec="number", suffix=" USD")
-            )
-        }
-        rows = [{"amount": v} for v in (0.25, 84.3, 88)]
-        resolved = _with_resolved_scale_stops(
-            columns,
-            text_color=None,
-            formats=None,
-            font_family=DBT_SANS_TABULAR_FONT_FAMILY,
-            rows=rows,
-            allow_shared_scale=True,
-            own_formats={n: c.format for n, c in (columns or {}).items()},
-            defaults_format=None,
-            declared=None,
-            filter_variables=frozenset(),
-            link_open="page",
-        )
-        assert resolved is not None
-        col = resolved["amount"]
-        assert col.shared_scale is None
-        # pad_table length is precision + 2 (see build_decimal_pad_table);
-        # 0.25 -> "0.25" (2 fractional digits, the swapped fallback spec) is
-        # the deepest cell, so precision is 2.
-        assert len(col.decimal_pad_table) - 2 == 2
-        assert decimal_pad_for(col.decimal_pad_table, "0.25") == ""
-        assert decimal_pad_for(col.decimal_pad_table, "84.3") != ""
-        assert decimal_pad_for(col.decimal_pad_table, "88") != ""
 
 
 def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:

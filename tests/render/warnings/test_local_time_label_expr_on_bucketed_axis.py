@@ -72,7 +72,6 @@ def _make_ctx(
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows} if rows is not None else {},
-        vega_specs={},
     )
 
 
@@ -430,7 +429,10 @@ def test_no_fire_when_chart_not_in_chart_results() -> None:
     )
     resolved = make_test_resolved_chart(chart, _ROWS)
     board = make_test_resolved_board(charts={resolved.id: resolved})
-    ctx = WarningContext(board_spec=board, chart_results={}, vega_specs={})
+    ctx = WarningContext(
+        board_spec=board,
+        chart_results={},
+    )
     assert detector.detect(ctx) == []
 
 
@@ -918,7 +920,7 @@ def test_fires_for_date_part_accessor_on_ordinal_axis_without_todate() -> None:
 def test_fires_for_wide_vertical_bar_above_density_threshold() -> None:
     """Vertical wide bar (y: [a, b]) routes through _emit_vertical, the same
     function narrow single-metric bars use, which resolves x through
-    build_cartesian_x_encoding and CAN emit a temporal encoding when the bucket
+    the engine's x-axis builder and CAN emit a temporal encoding when the bucket
     count crosses max_ordinal_buckets=60. The detector must NOT force vl_type=
     'ordinal' for wide bars; it must let the density gate decide -- same as a
     narrow bar. Regression: the previous fix force-ordinaled all isinstance(y, list)
@@ -1195,7 +1197,6 @@ def test_valueerror_from_one_chart_does_not_suppress_other_chart_warning() -> No
     ctx = WarningContext(
         board_spec=board,
         chart_results={resolved_a.id: bad_rows, resolved_b.id: _ROWS},
-        vega_specs={},
     )
     diags = detector.detect(ctx)
     assert len(diags) == 1

@@ -25,7 +25,6 @@ def _ctx(collisions: dict[str, AxisLabelCollision]) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: []},
-        vega_specs={},
         axis_label_collisions=collisions,
     )
 

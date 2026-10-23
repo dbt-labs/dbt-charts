@@ -1368,14 +1368,6 @@ def _mirror_without_a_tick_ladder(values: list[float], fmt: Any = "currency") ->
     return render_board_to_svg(_to_yaml(board))
 
 
-def test_mirror_axis_currency_preset_below_one_without_a_tick_ladder_paints_plain_digits() -> (
-    None
-):
-    dollars = _dollar_texts(_mirror_without_a_tick_ladder([0.2, 0.45, 0.7]))
-    assert dollars, "the mirror edge painted no currency labels"
-    assert not any(_MILLI_RE.search(t) for t in dollars), dollars
-
-
 def test_mirror_axis_currency_preset_at_or_above_one_without_a_tick_ladder_compacts() -> (
     None
 ):

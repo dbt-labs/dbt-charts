@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from mdsvg import parse
 from mdsvg.renderer import SVGRenderer
 
@@ -20,14 +22,18 @@ def test_paragraph_floor_is_the_widest_word() -> None:
     assert _lines_at(renderer, "Extraordinarily", floor - 3) == 2
 
 
-def test_table_floor_counts_every_equal_column() -> None:
+def test_table_floor_sums_each_columns_widest_word() -> None:
     renderer = SVGRenderer()
     md = "| Region | Units |\n|---|---|\n| West | 812 |\n"
     blocks = list(parse(md))
     floor = renderer.min_content_width(blocks)
     pad = renderer.style.table_cell_padding
-    header_word = renderer.min_content_width(list(parse("**Region**")))
-    assert floor >= 2 * (header_word + 2 * pad) - 2
+    # Each column needs only its own widest word, not the table's widest.
+    columns = [
+        renderer.min_content_width(list(parse(f"**{word}**")))
+        for word in ("Region", "Units")
+    ]
+    assert floor == pytest.approx(sum(columns) + 4 * pad, abs=2)
     one_line = renderer.measure_blocks(blocks, width=floor)[0].line_advances
     narrower = renderer.measure_blocks(blocks, width=floor - 8)[0].line_advances
     assert sum(narrower) > sum(one_line)

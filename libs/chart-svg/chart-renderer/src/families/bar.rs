@@ -91,7 +91,7 @@ use crate::families::multiples;
 use crate::families::span::{self, RangedBars};
 use crate::families::support_table_columns::{self, ColumnBlock, Side};
 use crate::families::support_table_strip;
-use crate::families::color_scale::NumericLegends;
+use crate::families::color_scale::{ContinuousColor, NumericLegends};
 use crate::families::legend::{
     emit_vega_legend, fold_legend_token, legend_slide, legend_title_text,
     legend_fit_bounds, legend_origin, narrow_legend_entries, resolve_legend_values, title_only_legend, vega_legend, VegaLegend, LegendConfig,
@@ -106,8 +106,9 @@ use crate::families::temporal::{
     AuthoredTimeFormat, LabelUnit, TemporalLabel, TimeUnit, complete_buckets, parse_domain_dates, parse_iso_date};
 use crate::contract::Reads;
 use crate::frame::{ChartFrame, FrameTitle};
-use crate::svg::{num_full, py_float_str, xml_escape, xml_escape_attr, vega_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{num_full, py_float_str};
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit;
 use crate::{Padding, Payload};
 
@@ -168,6 +169,16 @@ pub(crate) struct BarResolved {
     /// colorless bar).
     #[serde(default)]
     resolved_channels: HashMap<String, StyleChannel>,
+    /// How the query prints the `color` column.
+    #[serde(default)]
+    color_format: Option<crate::common::FormatSlot>,
+    /// The continuous scale a numeric `color` column draws, set at render.
+    #[serde(skip)]
+    numeric_color: Option<ContinuousColor>,
+    /// Every queried row when rows with a null numeric color were dropped: a dropped row
+    /// draws no bar but its category keeps its place on the axis.
+    #[serde(skip)]
+    all_rows: Option<Vec<serde_json::Map<String, Value>>>,
     /// Authored `chart.sort` — production honors it on both orientations
     /// (`CatOrder::Field`).
     #[serde(default)]
@@ -247,6 +258,9 @@ pub(crate) struct BarResolved {
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     link: Option<String>,
     link_open: crate::href::LinkOpen,
+    /// The host's board URL scheme, from the payload; rewrites each datum href.
+    #[serde(skip)]
+    link_context: Option<crate::href::LinkContext>,
     /// The columns a link's `{{ y }}` and `{{ color }}` read: the authored
     /// ones, or on a wide chart the first measure and the authored dimension
     /// (else the fold's raw measure name). Set before the fold overwrites
@@ -612,16 +626,17 @@ fn validate_scatter_layer(raw: &Value, r: &BarResolved, payload: &Payload) -> Re
 
 /// The legends of the layers colored by a numeric field, in layer order.
 pub(crate) fn numeric_legends_of<'a>(
+    base: Option<(&'a ContinuousColor, bool, String, Option<&'a crate::common::FormatSlot>)>,
     layers: impl Iterator<Item = (&'a OverlayLayer, &'a LayerClaim)> + Clone,
     legend: &LegendConfig,
     chart_id: &str,
 ) -> Result<NumericLegends<'a>, String> {
     let mut legends = NumericLegends::new(
-        layers.clone().filter_map(|(layer, claim)| {
+        base.into_iter().chain(layers.clone().filter_map(|(layer, claim)| {
             claim.numeric.as_ref().map(|color| {
-                (color, matches!(layer, OverlayLayer::Bar(_) | OverlayLayer::Scatter(_)), layer.color().expect("a numeric layer has a color"))
+                (color, matches!(layer, OverlayLayer::Bar(_) | OverlayLayer::Scatter(_)), layer.color().expect("a numeric layer has a color").to_string(), None)
             })
-        }),
+        })),
         legend,
         &format!("layer_grad-{}", crate::contract::safe_svg_id(chart_id)),
     )?;
@@ -829,9 +844,6 @@ fn validate_layers(r: &BarResolved, payload: &Payload) -> Result<Vec<OverlayLaye
             }
         }
     }
-    for raw in &r.layers {
-        crate::families::layers::refuse_unpainted_layer_affix("bar", raw)?;
-    }
     Ok(layers)
 }
 
@@ -941,7 +953,7 @@ fn overlap_errors(r: &BarResolved, payload: &Payload) -> Result<(), Diagnostic> 
         ));
     }
     // `_count_series`: the distinct color values, one for a chart with none.
-    let n_series = if wide { r.wide_measures.len() } else { crate::common::color_domain_of(&payload.rows, &series).len().max(1) };
+    let n_series = if wide { crate::common::wide_series_names(&r.wide_measures, r.color.as_deref(), &payload.rows).len() } else { crate::common::color_domain_of(&payload.rows, &series).len().max(1) };
     if fraction > 0.0 && n_series != 2 {
         return Err(Diagnostic::new(&codes::ERR_BAR_OVERLAP_SERIES_COUNT, [("chart_id", chart_id()), ("n_series", Value::from(n_series))]));
     }
@@ -955,6 +967,14 @@ fn color_one_to_one(r: &BarResolved, payload: &Payload, color: &str) -> Result<b
         return Ok(color_1to1_with_cat(&payload.rows, &r.x, color));
     }
     Ok(color_1to1_across_panels(&facet_panels(r, &payload.rows)?, &r.x, color))
+}
+
+/// The rows a panel's category domain reads: its own, plus those dropped for a null numeric color.
+fn panel_cat_rows<'a>(
+    all: Option<&'a [multiples::Panel]>,
+    panel: &'a multiples::Panel,
+) -> &'a [serde_json::Map<String, Value>] {
+    all.and_then(|all| all.iter().find(|p| p.key == panel.key)).map_or(panel.rows.as_slice(), |p| p.rows.as_slice())
 }
 
 /// The chart's rows regrouped into its facet panels, with the category and
@@ -971,14 +991,74 @@ impl BarResolved {
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("bar payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
+        r.link_context = payload.link_context.clone();
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
         Ok(r)
     }
 }
 
+impl BarResolved {
+    /// A numeric `color` column is a continuous scale, not a set of series: each
+    /// mark takes the scale's color for its own value, one gradient legend names
+    /// the scale, and no endpoint label rail names a series.
+    fn use_numeric_color(&mut self, rows: &[serde_json::Map<String, Value>]) {
+        let quantitative = self.resolved_channels.get("color").is_some_and(|ch| ch.is_continuous());
+        let Some(field) = self.color.clone().filter(|_| quantitative && self.wide_measures.is_empty()) else { return };
+        let Some(color) = crate::families::layers::numeric_layer_color(rows, &field) else { return };
+        let overrides = rows
+            .iter()
+            .filter_map(|row| row_num(row, &field).map(|v| (row_str(row, &field), color.fill(v))))
+            .collect();
+        self.category_colors.retain(|scale| scale.field != field);
+        self.category_colors.push(crate::common::CategoryColorScale { field, slots: Default::default(), overrides });
+        self.style.endpoint_labels.visible = false;
+        self.numeric_color = Some(color);
+    }
+
+    /// The tooltip's series row for a numeric color: the value as the legend prints it,
+    /// under the color column's query format. A null cell has no value to print.
+    fn numeric_series_names(&self, domain: &[String]) -> Result<std::collections::HashMap<String, String>, String> {
+        let (Some(_), Some(format)) = (self.numeric_color.as_ref(), self.color_format.as_ref()) else { return Ok(Default::default()) };
+        domain
+            .iter()
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                let value = crate::common::js_string_to_number(name).ok_or_else(|| format!("bar: numeric color value {name:?} is not a number"))?;
+                Ok((name.clone(), format.paint_tick(value)?))
+            })
+            .collect()
+    }
+
+    /// The numeric color's legend part: a gradient, titled by the field.
+    fn numeric_base(&self) -> Result<Option<(&ContinuousColor, bool, String, Option<&crate::common::FormatSlot>)>, String> {
+        let Some(color) = self.numeric_color.as_ref() else { return Ok(None) };
+        let field = self.color.as_deref().expect("a numeric color has its field");
+        Ok(Some((color, true, legend_title_text(field, &self.legend, &self.field_labels)?, self.color_format.as_ref())))
+    }
+}
+
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+    let mut probe = BarResolved::from_payload(payload)?;
+    probe.use_numeric_color(&payload.rows);
+    if let (Some(_), Some(field)) = (&probe.numeric_color, probe.color.as_deref()) {
+        let kept: Vec<_> = payload.rows.iter().filter(|row| row_num(row, field).is_some()).cloned().collect();
+        if kept.len() < payload.rows.len() {
+            let dropped = payload.with_inputs(payload.resolved.clone(), kept);
+            return render_rows(&dropped, fonts, Some(payload.rows.clone()));
+        }
+    }
+    render_rows(payload, fonts, None)
+}
+
+fn render_rows(
+    payload: &Payload,
+    fonts: &FontBook,
+    all_rows: Option<Vec<serde_json::Map<String, Value>>>,
+) -> Result<String, Diagnostic> {
     let mut r = BarResolved::from_payload(payload)?;
+    r.all_rows = all_rows;
+    r.use_numeric_color(&payload.rows);
     // `labels.stacked: false` leaves a stack's segments unlabeled
     // (`_append_bar_segment_label_layer`); the total label is its own layer.
     if r.stack != "none" {
@@ -2631,6 +2711,24 @@ fn layered_by_sign<'a>(
     order.iter().filter(move |s| !negative(s)).chain(order.iter().filter(negative))
 }
 
+/// The outermost segment of each sign layer of `cat`'s stack, `(>= 0, < 0)`: the only ones Vega's clip rounds
+/// (`cornerRadiusEnd` on the layer's group), so every join inside a stack stays square.
+fn outer_segments<'a>(
+    order: &'a [String],
+    cat: &'a str,
+    data_map: &'a HashMap<(String, String), f64>,
+) -> (Option<&'a String>, Option<&'a String>) {
+    let (mut positive, mut negative) = (None, None);
+    for series in layered_by_sign(order, cat, data_map).filter(|s| data_map.contains_key(&(cat.to_string(), (*s).clone()))) {
+        if data_map[&(cat.to_string(), series.clone())] < 0.0 {
+            negative = Some(series);
+        } else {
+            positive = Some(series);
+        }
+    }
+    (positive, negative)
+}
+
 /// How many tiers above the first each series of `data_map` has.
 fn tier_depths(data_map: &HashMap<(String, String), f64>) -> HashMap<String, usize> {
     let mut depths: HashMap<String, usize> = HashMap::new();
@@ -2907,9 +3005,10 @@ fn build_legend_state(
     reverse_stack_for_legend: bool,
     field_labels: &crate::common::FieldLabels,
     wide_labels: &HashMap<String, String>,
+    numeric: bool,
 ) -> Result<LegendState, String> {
     let shown = legend.visible && (!color_domain.is_empty() || extra_admit) && !suppress;
-    let entries: Vec<(String, String)> = if shown && !color_domain.is_empty() {
+    let entries: Vec<(String, String)> = if shown && !color_domain.is_empty() && !numeric {
         if is_stacked {
             let order: Vec<String> = if reverse_stack_for_legend {
                 stack_order.iter().rev().cloned().collect()
@@ -2929,7 +3028,7 @@ fn build_legend_state(
     } else {
         Vec::new()
     };
-    let title = legend_title_text(color_field.unwrap_or(""), legend, field_labels)?;
+    let title = if numeric { String::new() } else { legend_title_text(color_field.unwrap_or(""), legend, field_labels)? };
     Ok(LegendState { shown, title, entries })
 }
 
@@ -3093,6 +3192,8 @@ pub(crate) struct HorizontalValueAxis {
     color: String,
     weight: String,
     title: String,
+    /// The authored label the title edits: none in a facet, whose panels do not pin one.
+    title_key: Option<crate::contract::LabelKey>,
     caption: AxisCaption,
     /// How far the leftmost drawn label reaches left of the plot origin.
     left_reach: f64,
@@ -3160,7 +3261,7 @@ impl HorizontalValueAxis {
         let delta = 0.5;
         crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, plot_bottom + delta))?;
         // Baseline one `round(0.79·fs)` below the label row's top.
-        let label_y = plot_bottom + delta + self.pad + crate::measure::baseline_shift("top", self.font_size);
+        let label_y = plot_bottom + delta + self.pad + measure::baseline_shift("top", self.font_size);
         for (x, _, label, anchor) in self.drawn(plot_w) {
             let _ = write!(
                 svg,
@@ -3181,7 +3282,7 @@ impl HorizontalValueAxis {
             plot_left + plot_w / 2.0,
             label_y,
             self.font_size,
-            Some(crate::contract::LabelKey::Y),
+            self.title_key,
         );
         crate::contract::axis_group_close(svg);
         Ok(())
@@ -3234,7 +3335,7 @@ fn render_horizontal_panel(
     // no reversal, see `common::sorted_series_by_stack_order`).
     let state = build_chart_domains(
         facet.map_or(rows, |f| f.chart_rows),
-        facet.map_or(rows, |f| f.cat_rows),
+        facet.map_or(r.all_rows.as_deref().unwrap_or(rows), |f| f.cat_rows),
         facet.map(|f| f.color_one_to_one),
         cat_field,
         val_field,
@@ -3281,7 +3382,10 @@ fn render_horizontal_panel(
     let tooltip_labels = !r.style.tooltip_format.spec.is_empty();
     // A wide fold names its series by the measure's display label.
     let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
-    let series_text = |s: &str| crate::common::wide_series_display(s, &wide_labels);
+    let numeric_names = r.numeric_series_names(&color_domain)?;
+    let series_text = |s: &str| {
+        numeric_names.get(s).cloned().unwrap_or_else(|| crate::common::wide_series_display(s, &wide_labels))
+    };
     let horizontal_domain_strs: Vec<&str> = cat_domain.iter().map(String::as_str).collect();
     // The STRICT `all_temporal` fact `render_vertical` derives
     // (`x_values_are_standard_dates`): a standard-date x with no detected
@@ -3343,13 +3447,18 @@ fn render_horizontal_panel(
         support_table.is_some_and(|c| c.retires_series_legend()) && is_stacked,
         false,
         &r.field_labels,
-        &display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?,
+        &wide_labels,
+        r.numeric_color.is_some(),
     )?;
     let LegendState { shown: legend_shown, title: legend_title, entries: legend_entries } = legend;
     let base_legend_label = axis_title_text(val_field, r.y_label.as_deref(), &r.field_labels)?;
     // The base's own entries come first on the shared scale: one palette slot per color
     // value of a split base, else the one labeled fill.
-    let base_scale_entries: Vec<(String, String)> = if color_domain.is_empty() {
+    let numeric_base = r.numeric_color.is_some();
+    let base_scale_entries: Vec<(String, String)> = if numeric_base {
+        // The base paints on its own continuous scale; only the layers claim the shared one.
+        Vec::new()
+    } else if color_domain.is_empty() {
         vec![(base_legend_label.clone(), r.style.single_series_fill.clone())]
     } else {
         color_domain
@@ -3361,9 +3470,9 @@ fn render_horizontal_panel(
             .collect::<Result<_, String>>()?
     };
     let mut layer_scale =
-        LayerScale::new(&r.palette, &r.style.single_series_fill, &r.category_colors, &base_scale_entries, color_field.is_some());
+        LayerScale::new(&r.palette, &r.style.single_series_fill, &r.category_colors, &base_scale_entries, color_field.is_some() && !numeric_base);
     let claims = claim_layers(&mut layer_scale, layers, &r.field_labels)?;
-    let numeric_legends = numeric_legends_of(layers.iter().zip(&claims).map(|((layer, _), claim)| (*layer, claim)), &r.legend, &r.id)?;
+    let numeric_legends = numeric_legends_of(r.numeric_base()?, layers.iter().zip(&claims).map(|((layer, _), claim)| (*layer, claim)), &r.legend, &r.id)?;
     let bar_layers: Vec<(&OverlayBarLayer, &[serde_json::Map<String, Value>])> = layers
         .iter()
         .filter_map(|&(layer, rows)| match layer {
@@ -3377,7 +3486,7 @@ fn render_horizontal_panel(
         &base_legend_label,
         &legend_entries,
         &base_scale_entries,
-        &color_domain,
+        if numeric_base { &[] } else { &color_domain },
         &layer_scale,
         &claims,
         &layers.iter().map(|(l, _)| *l).collect::<Vec<_>>(),
@@ -3426,7 +3535,7 @@ fn render_horizontal_panel(
     let layer_days = layer_day_numbers(layers.iter().map(|(layer, rows)| (*layer, *rows)));
     let date_axis_at = |count: usize| match (r.measure_type.as_deref(), r.y_start.as_deref()) {
         (Some("temporal"), Some(start_field)) => {
-            span::date_axis(value_rows, [val_field.as_str(), start_field], &layer_days, count)
+            span::date_axis(value_rows, [val_field.as_str(), start_field], &layer_days, count)?
                 .map(Some)
                 .ok_or_else(|| crate::painted_no_marks(w, json!(chart_id), rows.len()))
         }
@@ -3943,7 +4052,7 @@ fn render_horizontal_panel(
         };
         // A top legend sits inside the chart pane and lifts the pane's bounds.
         let legend_top_reach = match top_rail {
-            Some(_) if (legend_shown && !legend_entries_typed.is_empty()) || title_only_legend(legend_shown, &r.legend) => {
+            Some(_) if (legend_shown && (!legend_entries_typed.is_empty() || numeric_legends.len() > 0)) || title_only_legend(legend_shown, &r.legend) => {
                 let lg = vega_legend(&legend_entries_typed, false, &legend_title, &r.legend, fonts)?;
                 let size = (lg.box_w, lg.box_h());
                 let origin = legend_origin(&r.legend.position, (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), size);
@@ -4065,7 +4174,7 @@ fn render_horizontal_panel(
         // one text row (with its own baseline-rounding quirk) below
         // labels + titlePadding.
         let val_title_extra = crate::common::x_title_extra(&ax_y.title, &val_title_paint);
-        let legend = ((legend_shown && !legend_entries_typed.is_empty()) || title_only_legend(legend_shown, &r.legend))
+        let legend = ((legend_shown && (!legend_entries_typed.is_empty() || numeric_legends.len() > 0)) || title_only_legend(legend_shown, &r.legend))
             .then(|| {
                 vega_legend(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts)
                     .and_then(|lg| numeric_legends.stack_onto(lg, &r.legend, fonts, (w, h)))
@@ -4382,6 +4491,7 @@ fn render_horizontal_panel(
         color: ax_y.labels.font.color.as_deref().unwrap_or("#626366").to_string(),
         weight: ax_y.labels.font.weight_str(),
         title: val_title_paint.clone(),
+        title_key: facet.is_none().then_some(crate::contract::LabelKey::Y),
         caption: match &date_axis {
             Some(axis) => date_value_caption(&val_title_paint, ax_y, axis.domain)?,
             None => value_axis_caption(&val_title_paint, &ax_y.title, ax_y, (linear_domain_min, linear_domain_max), normalize)?,
@@ -4444,7 +4554,7 @@ fn render_horizontal_panel(
             let rail_y = plot_top - rail_pane_overhang - rail.spacing - rail.height + rail.text_dy;
             let mut cum = 0.0_f64;
             if tooltip_labels {
-                crate::contract::mark_group_open(&mut svg, "text", "concat_1_marks")?;
+                crate::contract::mark_group_open(&mut svg, "text", "concat_0_marks")?;
             }
             for series in &stack_order {
                 let raw_val = data_map.get(&(top_cat.clone(), series.clone())).copied().unwrap_or(0.0);
@@ -4495,6 +4605,7 @@ fn render_horizontal_panel(
     // Vega's +0.5 crispness translate in both coordinates.
     let grid = &ax_y.grid;
     if grid.visible.unwrap_or(false) {
+        crate::contract::grid_group_open(&mut svg);
         let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
         let gw = grid.width.unwrap_or(1.0);
         let gd = 0.5;
@@ -4520,6 +4631,7 @@ fn render_horizontal_panel(
                 plot_h + gd, gc = xml_escape_attr(gc)
             );
         }
+        crate::contract::grid_group_close(&mut svg);
     }
 
     // Structured-tooltip content for the paint loop below (see the module
@@ -4562,6 +4674,7 @@ fn render_horizontal_panel(
             } else {
                 0.0 // unused when !normalize
             };
+            let outers = outer_segments(&stack_paint_order, cat, &data_map);
             for series in layered_by_sign(&stack_paint_order, cat, &data_map) {
                 let key = (cat.clone(), series.clone());
                 // A row Vega has no datum for draws nothing.
@@ -4596,9 +4709,10 @@ fn render_horizontal_panel(
                 // split — see `emit_bar`'s doc comment and the vertical
                 // arm's mirrored `Rounded::Negative`): a positive segment rounds
                 // its right (far) end, a negative one its left.
+                let outer = if raw_val < 0.0 { outers.1 } else { outers.0 } == Some(series);
                 emit_bar(
-                    &mut svg, seg_start, bar_y, seg_w, mark_h, &fill, stroke_color, stroke_w, corner_r,
-                    Rounded::by_sign(raw_val), aria.as_deref(), anchor_of(&key),
+                    &mut svg, seg_start, bar_y, seg_w, mark_h, &fill, stroke_color, stroke_w, if outer { corner_r } else { 0.0 },
+                    Rounded::by_sign(raw_val), false, aria.as_deref(), anchor_of(&key),
                 )?;
             }
         }
@@ -4663,7 +4777,7 @@ fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), linear.position(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
             }
-            emit_bar(&mut svg, bar_x, bar_y, bar_w, mark_h, &fill, stroke_color, stroke_w, corner_r, ends, aria.as_deref(), anchor_of(&key))?;
+            emit_bar(&mut svg, bar_x, bar_y, bar_w, mark_h, &fill, stroke_color, stroke_w, corner_r, ends, true, aria.as_deref(), anchor_of(&key))?;
         }
     } else {
         let bw = band.bandwidth();
@@ -4746,7 +4860,7 @@ fn render_horizontal_panel(
             }
             emit_bar(
                 &mut svg, bar_x, bar_y, bar_w, mark_h, fill, stroke_color, stroke_w, corner_r,
-                ends, aria.as_deref(), anchor_of(&key),
+                ends, true, aria.as_deref(), anchor_of(&key),
             )?;
         }
     }
@@ -4820,7 +4934,7 @@ fn render_horizontal_panel(
                     let layer_href = crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())).map(|link| link.href(m.row)).transpose()?;
                     emit_bar(
                         &mut svg, x1.min(x2), band_y + bar_pad, (x2 - x1).abs(), mark_h, &fill, bl_stroke_color,
-                        bl_stroke_w, bl_corner_r, if layer_clip { Rounded::Fall } else if bl.y_start.is_none() { Rounded::by_sign(m.value) } else if m.to >= m.from { Rounded::Both } else { Rounded::Fall }, aria.as_deref(),
+                        bl_stroke_w, bl_corner_r, if layer_clip { Rounded::Fall } else if bl.y_start.is_none() { Rounded::by_sign(m.value) } else if m.to >= m.from { Rounded::Both } else { Rounded::Fall }, true, aria.as_deref(),
                         r.link_open.anchor(layer_href.as_deref()),
                     )?;
                 }
@@ -5045,7 +5159,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         // axis label's encoded y bakes the −0.5 back out, so only x
         // shifts (bc0 scenegraph, flip model: label abs x = plot_left
         // − 52.974, baseline y = band center + 3 exactly).
-        let label_y = center_y + crate::measure::baseline_shift("middle", cat_font_size);
+        let label_y = center_y + measure::baseline_shift("middle", cat_font_size);
         let (label_x, anchor) = (cat_edge_x + cat_side * cat_label_pad + 0.5, cat_anchor);
         // B6 — Vega's labelLimit: draw the SAME truncated measure the
         // gutter above (`cat_w = max_cat_w.min(cat_limit)`) reserved, so
@@ -5333,7 +5447,7 @@ impl ContinuousXAxis {
         let x_label_y = plot_bottom
             + x_axis_drop
             + sign * (x_tick_eff + x_label_pad)
-            + crate::measure::baseline_shift(self.edge.baseline(), x_font_size);
+            + measure::baseline_shift(self.edge.baseline(), x_font_size);
         crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, &self.caption, (plot_left + 0.5, plot_bottom + x_axis_drop))?;
         if x_ticks_visible {
             let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "bar", "axis_x.ticks.color")?;
@@ -5365,8 +5479,8 @@ impl ContinuousXAxis {
                 "<text x=\"{pos:.3}\" y=\"{x_label_y:.3}\" text-anchor=\"{anchor}\" \
                  font-family=\"{}\" font-size=\"{x_font_size}\" \
                  font-weight=\"{x_label_weight}\" fill=\"{x_label_color}\">{}</text>",
-                crate::svg::vega_escape_attr(x_family),
-                crate::svg::xml_escape(lbl), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
+                print::vega_escape_attr(x_family),
+                print::xml_escape(lbl), anchor = xml_escape_attr(anchor), x_label_weight = xml_escape_attr(&x_label_weight), x_label_color = xml_escape_attr(x_label_color)
             );
         }
         crate::common::emit_axis_title_flat(
@@ -5852,7 +5966,7 @@ fn render_vertical_continuous_x_panel(
     let ghost_texts = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.texts(&y_ticks, &y_labels))?;
     let ghost_ws = ghost
         .as_ref()
-        .map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_label_ws, |label| fonts.measure_shaped(label, y_family, y_font_size)))?;
+        .map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_labels, &y_label_ws, |label| fonts.measure_shaped(label, y_family, y_font_size)))?;
     // The labels the right-hand axis paints and their widths.
     let (right_texts, right_ws) = if left_flip { (&ghost_texts, &ghost_ws) } else { (&y_labels, &y_label_ws) };
     let y_label_y_anchor = |pw: f64| -> (f64, &'static str) {
@@ -5966,7 +6080,7 @@ fn render_vertical_continuous_x_panel(
         LayerScale::new(&r.palette, &r.style.single_series_fill, &r.category_colors, &base_entries, false);
     let claim_pairs: Vec<_> = layers.all.iter().zip(layer_rows.iter().copied()).collect();
     let claims = claim_layers(&mut layer_scale, &claim_pairs, &r.field_labels)?;
-    let numeric_legends = numeric_legends_of(layers.all.iter().zip(&claims), &r.legend, &r.id)?;
+    let numeric_legends = numeric_legends_of(None, layers.all.iter().zip(&claims), &r.legend, &r.id)?;
     let ring = LegendSymbol::BorderedCircle(mark.border.color.as_deref().unwrap_or("none"));
     let has_line = layers.all.iter().any(|l| matches!(l, OverlayLayer::Line(_)));
     let scatter_entries: Vec<(String, String, bool)> = if legend_shown && !has_line {
@@ -6359,6 +6473,7 @@ fn render_vertical_continuous_x_panel(
     let y_pos = |tv: f64| y_scale.position(tv);
 
     if ax_y.grid.visible.unwrap_or(false) {
+        crate::contract::grid_group_open(&mut svg);
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "bar", "axis_y.grid.color")?;
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
@@ -6371,6 +6486,7 @@ fn render_vertical_continuous_x_panel(
                 plot_w + 0.5, gc = xml_escape_attr(gc)
             );
         }
+        crate::contract::grid_group_close(&mut svg);
     }
     crate::families::layers::paint_layer_grids(&mut svg, &layer_axes, ax_y, (plot_w, plot_h), "bar")?;
 
@@ -6687,14 +6803,14 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     };
     let y_label_anchor = if val_away { "start" } else { "end" };
     for (&tv, lbl) in y_ticks.iter().zip(right_texts.iter()) {
-        let gy = y_pos(tv) + 0.5 + crate::measure::baseline_shift("middle", y_font_size);
+        let gy = y_pos(tv) + 0.5 + measure::baseline_shift("middle", y_font_size);
         let _ = write!(
             svg,
             "<text x=\"{y_label_x:.3}\" y=\"{gy:.3}\" text-anchor=\"{y_label_anchor}\" \
              font-family=\"{}\" font-size=\"{y_font_size}\" \
              font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
-            crate::svg::vega_escape_attr(y_family),
-            crate::svg::xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+            print::vega_escape_attr(y_family),
+            print::xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
         );
     }
 
@@ -6722,14 +6838,14 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             y_tick_eff,
         )?;
         for (&tv, lbl) in y_ticks.iter().zip(ghost_texts.iter()) {
-            let gy = y_pos(tv) + 0.5 + crate::measure::baseline_shift("middle", y_font_size);
+            let gy = y_pos(tv) + 0.5 + measure::baseline_shift("middle", y_font_size);
             let _ = write!(
                 svg,
                 "<text x=\"{:.3}\" y=\"{gy:.3}\" text-anchor=\"end\" font-family=\"{}\" font-size=\"{y_font_size}\" \
                  font-weight=\"{y_label_weight}\" fill=\"{y_label_color}\">{}</text>",
                 0.5 - y_tick_eff - ghost_pad,
-                crate::svg::vega_escape_attr(y_family),
-                crate::svg::xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
+                print::vega_escape_attr(y_family),
+                print::xml_escape(lbl), y_label_weight = xml_escape_attr(&y_label_weight), y_label_color = xml_escape_attr(y_label_color)
             );
         }
         crate::contract::axis_group_close(&mut svg);
@@ -6830,7 +6946,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
                 .iter()
                 .zip(y_labels.iter())
                 .map(|(&tv, lbl)| {
-                    (group_y + y_pos(tv) + 0.5 + crate::measure::baseline_shift("middle", y_font_size), lbl.clone())
+                    (group_y + y_pos(tv) + 0.5 + measure::baseline_shift("middle", y_font_size), lbl.clone())
                 })
                 .collect(),
             val_tick_marks: crate::common::value_tick_rows(
@@ -6922,6 +7038,9 @@ fn render_facet(
     let axes = r.panel_axes.clone();
 
     let panels = facet_panels(&r, &payload.rows)?;
+    // Rows dropped for a null numeric color keep their category in their panel's domain.
+    let all_panels = r.all_rows.as_deref().map(|all| facet_panels(&r, all)).transpose()?;
+    let chart_cat_rows = r.all_rows.as_deref().unwrap_or(&payload.rows);
     if panels.is_empty() {
         return Err("bar: multiples produced zero panels — no row matched the baked panel_axes".into());
     }
@@ -7055,7 +7174,19 @@ fn render_facet(
         } else {
             crate::common::count_horizontal_bar_categories(&payload.rows, &r.x)
         };
-        let height = payload.height.max(horizontal_min_height(&r, n_categories)? * panel_rows_n as f64);
+        let min_height = horizontal_min_height(&r, n_categories)? * panel_rows_n as f64;
+        if let Some(authored) = payload.authored_height.filter(|&authored| n_categories > 0 && min_height > authored) {
+            crate::diagnostic::warn(Diagnostic::new(
+                &codes::WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
+                [
+                    ("authored_height", json!(authored)),
+                    ("chart_id", json!(r.id)),
+                    ("min_height", json!(min_height)),
+                    ("n_categories", json!(n_categories)),
+                ],
+            ));
+        }
+        let height = payload.height.max(min_height);
         floored = Payload { height, ..payload.clone() };
         &floored
     } else {
@@ -7079,7 +7210,7 @@ fn render_facet(
                     let layer_rows = horizontal_layer_rows(payload, &r, &layers, Some(&panel.rows));
                     let opts = HorizontalFacetOpts {
                         chart_rows: &payload.rows,
-                        cat_rows: if cat_narrowed { &panel.rows } else { &payload.rows },
+                        cat_rows: if cat_narrowed { panel_cat_rows(all_panels.as_deref(), panel) } else { chart_cat_rows },
                         color_one_to_one,
                         value_domain_rows: if independent { &panel.rows } else { &payload.rows },
                         independent_scale: independent,
@@ -7172,6 +7303,7 @@ fn render_facet(
                     center_stack,
                     center_label_stack: whole_chart,
                     share_cat_domain: mc.rows.is_some(),
+                    cat_rows: if mc.rows.is_some() { chart_cat_rows } else { panel_cat_rows(all_panels.as_deref(), panel) },
                     color_one_to_one,
                     has_mirror,
                     ghost_only,
@@ -7468,9 +7600,9 @@ impl BandXAxis {
         let sign = self.edge.sign();
         // `plot_bottom` is the y of the plot edge the axis hangs from; Vega's crisp half pixel shifts the group down on either edge.
         let group_y = plot_bottom + sign * ax_off_x + 0.5;
-        let cat_label_y = group_y + sign * (x_tick_len + cat_pad) + crate::measure::baseline_shift(self.edge.baseline(), cat_font_size);
+        let cat_label_y = group_y + sign * (x_tick_len + cat_pad) + measure::baseline_shift(self.edge.baseline(), cat_font_size);
         // The rotated labels' anchor, and the pivot the rotated title measures from.
-        let anchor_y = cat_label_y - crate::measure::baseline_shift(self.edge.baseline(), cat_font_size);
+        let anchor_y = cat_label_y - measure::baseline_shift(self.edge.baseline(), cat_font_size);
         let rows_at = |anchor: f64, two: bool| match (self.edge, two) {
             (crate::common::XEdge::Top, true) => (anchor - vega_fit::label_row_advance(cat_font_size), anchor),
             _ => (anchor, anchor + vega_fit::label_row_advance(cat_font_size)),
@@ -7527,7 +7659,7 @@ impl BandXAxis {
         } else if cat_angle != 0.0 {
             // Vega's SVG text transform for a rotated item: translate to the
             // anchor, rotate, then the baseline shift.
-            let dy = crate::measure::baseline_shift(cat_baseline, cat_font_size);
+            let dy = measure::baseline_shift(cat_baseline, cat_font_size);
             let text_anchor = match cat_align {
                 "left" => "start",
                 "right" => "end",
@@ -7571,7 +7703,7 @@ impl BandXAxis {
             let title_fs = ax_x.title.font.size_or(11.0);
             let title_y = anchor_y
                 + sign * (reach + ax_x.title.padding.unwrap_or(10.0))
-                + crate::measure::baseline_shift(self.edge.baseline(), title_fs);
+                + measure::baseline_shift(self.edge.baseline(), title_fs);
             emit_axis_title_at(svg, cat_title_text, &ax_x.title, title_center_x, title_y, self.title_key);
         } else {
             let cat_title_baseline = cat_label_y + sign * (label_rows - 1) as f64 * vega_fit::label_row_advance(cat_font_size);
@@ -7734,6 +7866,9 @@ pub(crate) struct BarFacetPanelOpts<'a> {
     /// `chart_rows`. A columns-only facet's per-panel domain is either the
     /// full one or the narrowed one, both equal to the panel's own.
     pub(crate) share_cat_domain: bool,
+    /// Where the category domain comes from: every panel's rows when shared, this panel's own
+    /// when narrowed, either including rows dropped for a null numeric color.
+    pub(crate) cat_rows: &'a [serde_json::Map<String, Value>],
     /// `emitters/bar.py::_is_color_1to1_with_x`, folded per panel: `true`
     /// only when EVERY panel with data maps each category to one color, the
     /// verdict that suppresses `xOffset` and keys the palette off the
@@ -7808,7 +7943,7 @@ pub(crate) fn render_vertical_panel(
     // Chart-level color context: a facet panel's own `rows` are only its
     // slice (`BarFacetPanelOpts::chart_rows`).
     let chart_rows = chart_rows_normalized.as_deref().or(facet.map(|f| f.chart_rows)).unwrap_or(rows);
-    let cat_rows = if facet.is_some_and(|f| f.share_cat_domain) { chart_rows } else { rows };
+    let cat_rows = facet.map_or(r.all_rows.as_deref().unwrap_or(rows), |f| f.cat_rows);
     let eff_title_style = crate::common::effective_title_style(
         r.style.title_font.as_ref(),
         r.title_style.as_ref(),
@@ -7964,7 +8099,10 @@ pub(crate) fn render_vertical_panel(
     let tooltip_labels = !r.style.tooltip_format.spec.is_empty();
     // A wide fold names its series by the measure's display label.
     let wide_labels = display_text::wide_measure_labels_for(&r.wide_measures, &r.field_labels)?;
-    let series_text = |s: &str| crate::common::wide_series_display(s, &wide_labels);
+    let numeric_names = r.numeric_series_names(&color_domain)?;
+    let series_text = |s: &str| {
+        numeric_names.get(s).cloned().unwrap_or_else(|| crate::common::wide_series_display(s, &wide_labels))
+    };
     let order_domain =
         tooltip_order_domain(is_stacked, is_grouped, true, &stack_order, &color_domain, &r.legend, category_scale);
     // A layer joins the base's color field to one shared scale with an explicit
@@ -8070,12 +8208,6 @@ pub(crate) fn render_vertical_panel(
     // ONLY valid for the base's own un-re-pinned side.
     let base_label_pad = if val_on_right != baked_on_right { MOVED_BASE_LABEL_PAD } else { ax_y.labels.padding.unwrap_or(6.0) };
 
-    // A time-part grain draws bars on the part's cycle, which this arm does not.
-    if let Some(s) = ax_x.time_unit.as_ref().and_then(|v| v.as_str()).filter(|s| crate::families::temporal::TimePart::parse(s).is_some()) {
-        return Err(crate::refuse!(
-            "bar: authored time_unit {s:?}, not a calendar grain, is not supported"
-        ).into());
-    }
     let time: Option<TimeX> = if law.vl_type == crate::families::temporal::VegaType::Temporal {
         if time_x::has_year_below_100(rows, &r.x) {
             return Err(payload.painted_no_marks());
@@ -8206,7 +8338,7 @@ pub(crate) fn render_vertical_panel(
     let layer_days = layer_day_numbers(layers.iter().zip(layer_rows.iter().copied()));
     let date_axis_at = |count: usize| match (date_measure, r.y_start.as_deref()) {
         (true, Some(start_field)) => {
-            span::date_axis(value_domain_rows.unwrap_or(rows), [val_field, start_field], &layer_days, count)
+            span::date_axis(value_domain_rows.unwrap_or(rows), [val_field, start_field], &layer_days, count)?
                 .map(Some)
                 .ok_or_else(|| payload.painted_no_marks())
         }
@@ -8338,7 +8470,7 @@ pub(crate) fn render_vertical_panel(
     // a layer over a grouped base keeps the grouped legend's OWN entries
     // (see `legend_entries_typed` below), it does not fall back to the
     // layer-only 2-entry shape.
-    let legend_entries: Vec<(String, String)> = if legend_shown && !color_domain.is_empty() {
+    let legend_entries: Vec<(String, String)> = if legend_shown && !color_domain.is_empty() && r.numeric_color.is_none() {
         if is_stacked {
             let reversed: Vec<String> = stack_order.iter().rev().cloned().collect();
             stacked_legend_entries(&reversed, palette_domain, &r.series_palette, category_scale, &wide_labels)?
@@ -8355,7 +8487,7 @@ pub(crate) fn render_vertical_panel(
         Vec::new()
     };
     let legend_title = merged_legend_title(
-        legend_title_text(color_field.unwrap_or(""), &r.legend, &r.field_labels)?,
+        if r.numeric_color.is_some() { String::new() } else { legend_title_text(color_field.unwrap_or(""), &r.legend, &r.field_labels)? },
         color_field.is_some(),
         crate::families::layers::shared_color_fields(layers.iter().zip(layer_rows.iter().copied())),
         &r.legend,
@@ -8368,7 +8500,11 @@ pub(crate) fn render_vertical_panel(
     // neither the board nor the scale has taken (probed:
     // `grouped-bar-with-layer`'s reference line uses `palette[2]`, the base's
     // 2-entry color domain's next free color).
-    let base_scale_entries: Vec<(String, String)> = if color_domain.is_empty() {
+    let numeric_base = r.numeric_color.is_some();
+    let base_scale_entries: Vec<(String, String)> = if numeric_base {
+        // The base paints on its own continuous scale; only the layers claim the shared one.
+        Vec::new()
+    } else if color_domain.is_empty() {
         vec![(base_legend_label.clone(), r.style.single_series_fill.clone())]
     } else {
         color_domain
@@ -8380,7 +8516,7 @@ pub(crate) fn render_vertical_panel(
             .collect::<Result<_, String>>()?
     };
     let mut layer_scale =
-        LayerScale::new(&r.palette, &r.style.single_series_fill, &r.category_colors, &base_scale_entries, color_field.is_some());
+        LayerScale::new(&r.palette, &r.style.single_series_fill, &r.category_colors, &base_scale_entries, color_field.is_some() && !numeric_base);
     // Every layer claims in authored order: a colorless one its label and the
     // color it paints, one grouping by its own color each value the scale
     // lacks, one sharing the base's color field nothing new.
@@ -8413,14 +8549,14 @@ pub(crate) fn render_vertical_panel(
         .filter(|(layer, _)| matches!(layer, OverlayLayer::Scatter(_)))
         .map(|(_, claim)| claim)
         .collect();
-    let numeric_legends = numeric_legends_of(layers.iter().zip(&claims), &r.legend, &r.id)?;
+    let numeric_legends = numeric_legends_of(r.numeric_base()?, layers.iter().zip(&claims), &r.legend, &r.id)?;
     let layered_legend = LayeredBarLegend::new(
         r,
         legend_shown,
         &base_legend_label,
         &legend_entries,
         &base_scale_entries,
-        &color_domain,
+        if numeric_base { &[] } else { &color_domain },
         &layer_scale,
         &claims,
         &layers.iter().collect::<Vec<_>>(),
@@ -9355,8 +9491,7 @@ pub(crate) fn render_vertical_panel(
                 color_field,
                 &per_series_order,
                 &per_series_ink,
-                r.strip_linked().then_some(&strip_links),
-            )?;
+                r.strip_linked().then_some(&strip_links), detected_data_tu.is_some() || time.is_some())?;
             let strip_aria = strip_cell_aria(r, &cat_title_text, &cat_domain, time.as_ref(), color_field)?;
             strip_rows.iter_mut().for_each(|row| row.describe(&strip_aria));
             // The offset scale places every strip layer: a series-less row (a
@@ -9513,8 +9648,7 @@ pub(crate) fn render_vertical_panel(
                     &r.id,
                         cfg, rows, cat_field, &cat_domain, &centers, fonts, strip_style,
                         true, time.as_ref().is_none_or(TimeX::spans_buckets), val_on_right, color_field, &per_series_order, &per_series_ink,
-                        r.strip_linked().then_some(&strip_links),
-                    )?;
+                        r.strip_linked().then_some(&strip_links), false)?;
                     Some((rows, strip_h, ink_ext))
                 }
             };
@@ -9626,7 +9760,7 @@ pub(crate) fn render_vertical_panel(
         // A legend kept beside the rail sits inside pane 0 (`legendParams`'
         // `xBounds`/`yBounds`: the plot rect and the axes of its own
         // orientation) and widens its bounds like any other ink.
-        let legend = ((legend_shown && !legend_entries_typed.is_empty()) || title_only_legend(legend_shown, &r.legend))
+        let legend = ((legend_shown && (!legend_entries_typed.is_empty() || numeric_legends.len() > 0)) || title_only_legend(legend_shown, &r.legend))
             .then(|| {
                 vega_legend(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts)
                     .and_then(|lg| numeric_legends.stack_onto(lg, &r.legend, fonts, (w, h)))
@@ -9666,6 +9800,7 @@ pub(crate) fn render_vertical_panel(
                 layer.ink(&geom, if layer.total { None } else { hide }, &mut ink);
             }
             // The time axis's labels and ticks are pane ink too: one centered near an end reaches past it.
+            let before = (ink.x1, ink.x2);
             if let Some(axis) = &time_axis {
                 if let Err(e) = axis.union_label_ink(pw, ph, &mut ink, fonts) {
                     time_axis_err.borrow_mut().get_or_insert(e);
@@ -9683,7 +9818,8 @@ pub(crate) fn render_vertical_panel(
                 Some(ends) if time.is_some() && drawn_stroke_w > 0.0 => {
                     let band = make_band(pw);
                     let cols = columns_for(&band, pw);
-                    (cols.x_extent(&band, &cat_domain, ends).1 + drawn_stroke_w - pw).max(0.0)
+                    let ext = cols.x_extent(&band, &cat_domain, ends);
+                    (ext.1 + drawn_stroke_w - pw).max(0.0)
                 }
                 _ => 0.0,
             }
@@ -9913,8 +10049,7 @@ pub(crate) fn render_vertical_panel(
                     &r.id,
                 cfg, rows, cat_field, &cat_domain, &centers, fonts, strip_style, true,
                 time.as_ref().is_none_or(TimeX::spans_buckets), val_on_right, color_field, &per_series_order, &per_series_ink,
-                r.strip_linked().then_some(&strip_links),
-            )?;
+                r.strip_linked().then_some(&strip_links), false)?;
             let strip_aria = strip_cell_aria(r, &cat_title_text, &cat_domain, time.as_ref(), color_field)?;
             composed_rows.iter_mut().for_each(|row| row.describe(&strip_aria));
             if rail_right {
@@ -9991,7 +10126,7 @@ pub(crate) fn render_vertical_panel(
         let mut val_label_ws = measure_labels(&val_tick_labels)?;
         let val_title_extra = crate::common::y_title_extra(val_title_style, &val_title_paint);
         let cat_title_extra = crate::common::x_title_extra(&ax_x.title, &cat_title_paint);
-        let legend = ((legend_shown && !legend_entries_typed.is_empty()) || title_only_legend(legend_shown, &r.legend))
+        let legend = ((legend_shown && (!legend_entries_typed.is_empty() || numeric_legends.len() > 0)) || title_only_legend(legend_shown, &r.legend))
             .then(|| {
                 vega_legend(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts)
                     .and_then(|lg| numeric_legends.stack_onto(lg, &r.legend, fonts, (w, h)))
@@ -10030,11 +10165,11 @@ pub(crate) fn render_vertical_panel(
             title.ink().map(|t| vega_fit::TitleInk { offset: theme_offset + correction, ..t.clone() })
         });
         let fit_err = std::cell::RefCell::new(None::<String>);
-        let mut fit = |tick_values: &[f64], primary_ws: &[f64], val_gutter: f64| {
+        let mut fit = |tick_values: &[f64], primary_labels: &[String], primary_ws: &[f64], val_gutter: f64| {
             top_overhang.set(0.0);
             // The right edge of a flipped left axis paints the mirror's ghost labels.
             let flipped_ws = match ghost.as_ref().filter(|_| left_flip) {
-                Some(g) => g.widths(tick_values, primary_ws, |label| fonts.measure_shaped(label, val_family, val_font_size)),
+                Some(g) => g.widths(tick_values, primary_labels, primary_ws, |label| fonts.measure_shaped(label, val_family, val_font_size)),
                 None => Ok(primary_ws.to_vec()),
             }
             .unwrap_or_else(|e| {
@@ -10140,7 +10275,7 @@ pub(crate) fn render_vertical_panel(
                         (pw + ax_off_y + val_tick_size + base_label_pad, "left")
                     };
                     let ghost_ws = ghost.as_ref().map_or(Ok(Vec::new()), |g| {
-                        g.widths(tick_values, val_label_ws, |label| fonts.measure_shaped(label, val_family, val_font_size))
+                        g.widths(tick_values, primary_labels, val_label_ws, |label| fonts.measure_shaped(label, val_family, val_font_size))
                     });
                     let ghost_ws = match ghost_ws {
                         Ok(ws) => ws,
@@ -10516,7 +10651,7 @@ pub(crate) fn render_vertical_panel(
         };
         let (mut tick_values, mut val_tick_labels, mut max_val_w, mut val_gutter) =
             (tick_values, val_tick_labels, max_val_w, val_gutter);
-        let mut m = fit(&tick_values, &val_label_ws, val_gutter);
+        let mut m = fit(&tick_values, &val_tick_labels, &val_label_ws, val_gutter);
         // An unbaked, uncounted value axis takes Vega-Lite's default
         // `tickCount`, `ceil(height/40)`, at the plot's final height
         // (`unbaked_rungs`). Here the rungs' labels size the value gutter,
@@ -10547,7 +10682,7 @@ pub(crate) fn render_vertical_panel(
             } else if !(val_on_right && ax_y.tick_values.is_empty()) {
                 val_gutter = gutter_of(max_val_w)?;
             }
-            m = fit(&tick_values, &val_label_ws, val_gutter);
+            m = fit(&tick_values, &val_tick_labels, &val_label_ws, val_gutter);
         }
         if let Some(e) = fit_err.take() {
             return Err(e.into());
@@ -10867,6 +11002,7 @@ pub(crate) fn render_vertical_panel(
     let grid = &ax_y.grid;
     let gd = 0.5;
     if grid.visible.unwrap_or(false) {
+        crate::contract::grid_group_open(&mut svg);
         let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
         let gw = grid.width.unwrap_or(1.0);
         for &tv in &tick_values {
@@ -10885,6 +11021,7 @@ pub(crate) fn render_vertical_panel(
                 plot_w + gd, gc = xml_escape_attr(gc)
             );
         }
+        crate::contract::grid_group_close(&mut svg);
     }
 
     // Dual axis: each layer's own independent scale draws its OWN grid —
@@ -10897,6 +11034,7 @@ pub(crate) fn render_vertical_panel(
     let layer_linear: Vec<LinearScale> = layer_axes.iter().map(|la| la.scale(plot_h)).collect();
     for (la, ll) in layer_axes.iter().zip(&layer_linear) {
         if la.grid_visible {
+            crate::contract::grid_group_open(&mut svg);
             let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
             let gw = grid.width.unwrap_or(1.0);
             for &tv in &la.tick_values {
@@ -10911,6 +11049,7 @@ pub(crate) fn render_vertical_panel(
                     plot_w + gd, gc = xml_escape_attr(gc)
                 );
             }
+            crate::contract::grid_group_close(&mut svg);
         }
     }
 
@@ -11036,6 +11175,7 @@ pub(crate) fn render_vertical_panel(
             } else {
                 0.0 // unused when !normalize
             };
+            let outers = outer_segments(&stack_paint_order, cat, &data_map);
             for series in layered_by_sign(&stack_paint_order, cat, &data_map) {
                 let stored = data_map.get(&(cat.clone(), series.clone())).copied();
                 let raw_val = stored.unwrap_or(0.0);
@@ -11097,13 +11237,12 @@ pub(crate) fn render_vertical_panel(
                 // segment rounds its top (far) end, a negative one its
                 // bottom.
                 // A time axis's stack is one clipped group: only its top segment keeps the rounded end.
-                let is_top = stack_paint_order.iter().rev().find(|s| data_map.contains_key(&(cat.clone(), (*s).clone()))) == Some(series);
-                let segment_r = if continuous_time && !is_top { 0.0 } else { corner_r };
+                let segment_r = if (if raw_val < 0.0 { outers.1 } else { outers.0 }) == Some(series) { corner_r } else { 0.0 };
                 stack_ends = Some(stack_ends.map_or((top_y, bottom_y), |(top, bottom)| (top.min(top_y), bottom.max(bottom_y))));
                 emit_column_passes(
                     &mut svg, col_x, top_y, columns.width, seg_h, &fill, stroke_color, stroke_w,
                     segment_r,
-                    Rounded::by_sign(raw_val), double_stroke && !continuous_time, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key),
+                    Rounded::by_sign(raw_val), false, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key),
                 )?;
             }
             if let (Some((top, bottom)), true) = (stack_ends, continuous_time && stroke_color != "none" && stroke_w > 0.0) {
@@ -11933,7 +12072,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
     } else {
         (plot_left - ax_off_y + 0.5 - val_tick_size - base_label_pad, "end")
     };
-    let val_baseline_shift = crate::measure::baseline_shift("middle", val_font_size);
+    let val_baseline_shift = measure::baseline_shift("middle", val_font_size);
     let val_y_delta = 0.5;
     // One mark per rung, from the axis edge outward; label overlap thins the
     // labels, never the marks.
@@ -12135,7 +12274,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         // A grouped bar has no stack order: its series take the palette in color-domain order.
         let rail_palette: &[String] = if is_stacked { palette_domain } else { &color_domain };
         for (series, v) in &cascaded {
-            let ry = linear.position(*v) + crate::measure::baseline_shift("middle", sl.font_size);
+            let ry = linear.position(*v) + measure::baseline_shift("middle", sl.font_size);
             let rcolor = crate::common::series_ink(
                 series,
                 rail_palette,
@@ -12148,6 +12287,8 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 Some(field) => crate::contract::series_label_attr(field, series)?,
                 None => String::new(),
             };
+            // The text mark's `limit` is the pane's own (capped) width.
+            let label = crate::common::truncate_label(series, rail_pane_w, &sl.font_family, sl.font_size, fonts, false)?;
             let _ = write!(
                 svg,
                 "<text x=\"0\" y=\"{ry:.3}\" text-anchor=\"start\" \
@@ -12157,7 +12298,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 sl.font_size,
                 xml_escape_attr(&sl.font_weight),
                 xml_escape_attr(&sl.font_style),
-                xml_escape(series), rcolor = xml_escape_attr(&rcolor)
+                xml_escape(&label), rcolor = xml_escape_attr(&rcolor)
             );
         }
         if tooltip_labels {
@@ -12525,6 +12666,7 @@ impl BarResolved {
                 },
             }),
             color: self.link_color.as_deref().map(crate::href::LinkField::raw),
+            context: self.link_context.as_ref(),
         })
     }
 }
@@ -12745,6 +12887,7 @@ fn emit_bar(
     stroke_w: f64,
     r: f64,
     ends: Rounded,
+    outline: bool,
     aria_label: Option<&str>,
     href: Option<crate::href::Anchor<'_>>,
 ) -> Result<(), String> {
@@ -12757,8 +12900,8 @@ fn emit_bar(
     let label_attr = crate::contract::aria_attr(aria_label, crate::contract::ItemRole::Bar)?;
     // The second, stroke-only pass models `cornerRadiusEnd`'s clipped group
     // (see this fn's doc); a ranged bar's plain `cornerRadius` is one
-    // stroked shape.
-    let restroke = !stroke_attrs.is_empty() && !matches!(ends, Rounded::Both | Rounded::Fall);
+    // stroked shape, and a stack's segment is one stroked shape inside its layer's clip.
+    let restroke = outline && !stroke_attrs.is_empty() && !matches!(ends, Rounded::Both | Rounded::Fall);
     if aria_label.is_some() {
         crate::contract::mark_group_open(out, "rect", "layer_0_marks")?;
     }
@@ -14061,7 +14204,7 @@ fn emit_mark_labels(
              font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\"{} \
              fill=\"{}\"{}{}",
             plot_left + spot.x,
-            plot_top + spot.y + crate::measure::baseline_shift(spot.baseline, style.font.size),
+            plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size),
             spot.anchor,
             vega_escape_attr(&style.font.family),
             style.font.size,
@@ -14277,6 +14420,13 @@ mod tests {
 
     use super::*;
 
+    /// Renders in the en-US time vocabulary the fixtures' dates are drawn in; the
+    /// engine entry point scopes the board's own.
+    fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+        let _en = crate::time_locale::en_us_scope();
+        super::render(payload, fonts)
+    }
+
     /// `marks.bar.max_size` caps a band's bar thickness and centers it; an
     /// unauthored one leaves the band-fraction bar as it was.
     /// A step layer over a grouped base turns the offset scale into a point
@@ -14371,11 +14521,11 @@ mod tests {
     ///
     /// Tests that measure text must call this — `FontBook::empty()` fails on
     /// any `measure()` because no font faces are loaded.
-    fn test_fonts() -> crate::text::FontBook {
+    fn test_fonts() -> measure::FontBook {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let dir =
             format!("{manifest}/../../../src/dbt_charts/core/render/fonts");
-        crate::text::FontBook::load_dir(&dir).expect("test fonts load")
+        measure::FontBook::load_dir(&dir).expect("test fonts load")
     }
 
     /// The text content of the first `<text>` element in `snippet` --
@@ -21056,7 +21206,7 @@ mod tests {
         let pad_t = 16.0;
         assert_eq!(
             title_y(&without),
-            pad_t + crate::measure::baseline_shift("top", 18.0),
+            pad_t + measure::baseline_shift("top", 18.0),
             "title baseline must use Vega's real top-baseline shift, not the 0.85 approximation: {without}"
         );
     }
@@ -22936,7 +23086,12 @@ mod tests {
     fn bar_group_x_and_rightmost_edge(svg: &str) -> (f64, f64) {
         let gi = svg.find("<g transform=\"translate(").expect("bar group present");
         let group_x: f64 = svg[gi..].split("translate(").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
-        let group_end = svg[gi..].find("</g>").map(|o| gi + o).unwrap_or(svg.len());
+        let grid_open = "<g class=\"mark-rule role-axis-grid\" aria-hidden=\"true\">";
+        let mut body = gi + svg[gi..].find('>').unwrap() + 1;
+        while svg[body..].starts_with(grid_open) {
+            body += svg[body..].find("</g>").unwrap() + "</g>".len();
+        }
+        let group_end = svg[body..].find("</g>").map(|o| body + o).unwrap_or(svg.len());
         let rightmost = svg[gi..group_end]
             .match_indices("<rect x=\"")
             .map(|(i, _)| {
@@ -23399,7 +23554,7 @@ mod tests {
         let pos = svg.find(">Region Signups<").expect("title text present");
         let tag_start = svg[..pos].rfind("<text").unwrap();
         let y: f64 = svg[tag_start..pos].split("y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
-        assert_eq!(y, pad_t + crate::measure::baseline_shift("top", 18.0), "title pad-anchors: {svg}");
+        assert_eq!(y, pad_t + measure::baseline_shift("top", 18.0), "title pad-anchors: {svg}");
     }
 
     /// S8, both directions: the strip's own right-reaching cell competes
@@ -24252,7 +24407,7 @@ mod tests {
             let reach = vega_fit::text_ink(0.0, 0.0, widest, 11.0, align, baseline)
                 .rotate(rot, 0.0, 0.0)
                 .y2;
-            let expected = anchor_y + reach + title_padding + crate::measure::baseline_shift("top", title_fs);
+            let expected = anchor_y + reach + title_padding + measure::baseline_shift("top", title_fs);
             let title_tag = {
                 let end = svg.find(">Product<").expect("title drawn");
                 let start = svg[..end].rfind("<text").unwrap();
@@ -26503,7 +26658,8 @@ mod tests {
                 j["resolved"]["format"] = json!(".0%");
                 let svg = render(&make_payload(j), &test_fonts()).expect("renders");
                 let ctx = format!("{orientation}\n{svg}");
-                assert_eq!(svg.matches(hidden).count(), 2, "{ctx}");
+                let grids = svg.matches("role-axis-grid").count();
+                assert_eq!(svg.matches(hidden).count() - grids, 2, "{ctx}");
                 assert_eq!(svg.matches("aria-roledescription=\"rule mark\"").count(), 0, "{ctx}");
             }
         }
@@ -26544,7 +26700,11 @@ mod tests {
 
     /// The `.role-mark` rule groups of a render, in layer order.
     fn rule_groups(svg: &str) -> Vec<&str> {
-        svg.split("<g class=\"mark-rule ").skip(1).map(|g| &g[..g.find("</g>").unwrap()]).collect()
+        svg.split("<g class=\"mark-rule ")
+            .skip(1)
+            .filter(|g| !g.starts_with("role-axis-grid"))
+            .map(|g| &g[..g.find("</g>").unwrap()])
+            .collect()
     }
 
     /// The shapes `_apply_unity` rules at `datum: 1` beyond a normalize stack:
@@ -27706,7 +27866,7 @@ mod tests {
         /// Pins the two laws this port ships for `multiples.scale:
         /// "independent"` on a rows-only facet, taken from `fixtures/
         /// multiples/05-independent-scale`'s own real reference SVG
-        /// (`golden_sweep.py --group fixtures/multiples`, canvas 578×432,
+        /// (`the retired per-chart sweep --group fixtures/multiples`, canvas 578×432,
         /// MISMATCH 4.5% — the row_footer/embedded-axis and gutter-estimate
         /// laws land canvas width and every value-axis label's own `x`
         /// exact; the still-open residual is a vertical one, the single-
@@ -28825,15 +28985,15 @@ mod tests {
             );
         }
 
-        /// A `ResolvedMirrorAxis` with `expr` set is an authored relabel the
-        /// ghost cannot honor, whatever else is null.
+        /// A `ResolvedMirrorAxis` with `expr` speaks the ghost's labels through the expression;
+        /// the primary keeps its own.
         #[test]
-        fn mirror_object_with_expr_refuses() {
+        fn mirror_object_with_expr_relabels_the_ghost() {
             let mut payload_json = make_facet_payload("shared");
             payload_json["resolved"]["style"]["axis_y"]["mirror"] =
                 json!({"format": null, "expr": "datum.label + '%'", "ruler": null, "tick_label": null});
-            let err = render(&make_payload(payload_json), &test_fonts()).unwrap_err();
-            assert_eq!(err, "bar: axis_y.mirror.expr (an authored Vega expression) is not supported");
+            let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+            assert!(svg.contains("%</text>"), "the ghost labels carry the expression: {svg}");
         }
 
         /// A compacting ruler production bakes on a right-edge measure axis.
@@ -28980,6 +29140,17 @@ mod tests {
                 assert_eq!(svg.matches(&format!("data-dbt-link-open=\"{mode}\"")).count(), 2, "{svg}");
             }
             assert!(render_with(Some("popup")).unwrap_err().contains("popup"));
+        }
+
+        /// The host's link context rewrites a bar's board link like it does a table cell's.
+        #[test]
+        fn a_bar_link_is_rewritten_through_the_host_link_context() {
+            let mut payload_json = make_vertical_payload(&[("a", 1.0), ("b", 2.0)], false);
+            payload_json["resolved"]["link"] = json!("/target?label={{ x }}");
+            payload_json["resolved"]["link_open"] = json!("modal");
+            payload_json["link_context"] = json!({"root": "/org/proj/d", "current_board_slug": "home", "origin": ""});
+            let svg = render(&make_payload(payload_json), &test_fonts()).unwrap();
+            assert!(svg.contains("<a href=\"/org/proj/d/target?label=a\" data-dbt-link-open=\"modal\">"), "{svg}");
         }
 
         /// A chart with no `link:` spec at all draws no wrapper — the
@@ -29223,7 +29394,7 @@ mod tests {
         fn a_stroked_datum_links_only_its_first_drawn_element() {
             for radius in [0.0, 3.0] {
                 let mut bar = String::new();
-                emit_bar(&mut bar, 10.0, 10.0, 50.0, 20.0, "#111", "#fff", 1.0, radius, Rounded::Positive, Some("aria"), Some(crate::href::Anchor { url: "/x", open: crate::href::LinkOpen::Page })).unwrap();
+                emit_bar(&mut bar, 10.0, 10.0, 50.0, 20.0, "#111", "#fff", 1.0, radius, Rounded::Positive, true, Some("aria"), Some(crate::href::Anchor { url: "/x", open: crate::href::LinkOpen::Page })).unwrap();
                 let mut column = String::new();
                 emit_column(&mut column, 10.0, 10.0, 50.0, 20.0, "#111", "#fff", 1.0, radius, Rounded::Positive, Some("aria"), Some(crate::href::Anchor { url: "/x", open: crate::href::LinkOpen::Page })).unwrap();
                 for out in [bar, column] {

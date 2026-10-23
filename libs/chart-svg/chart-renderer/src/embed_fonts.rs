@@ -99,7 +99,7 @@ static DECLARES_FAMILY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"font-family\s*[:=]\s*("[^"]*"|'[^']*'|(?:&#?\w+;|[^;}])+)"#).unwrap()
 });
 
-/// Undo the references `svg::xml_escape_attr` and `xml::Xml` write in a
+/// Undo the references `print::xml_escape_attr` and `xml::Xml` write in a
 /// font-family stack (production's broader `html.unescape`).
 pub(crate) fn xml_unescape_attr(s: &str) -> String {
     s.replace("&#x27;", "'")

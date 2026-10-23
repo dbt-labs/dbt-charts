@@ -267,11 +267,11 @@ class TestEveryWordSurvivesTheWeight:
 
 
 class TestATableKeepsItsNaturalWidth:
-    """A markdown table cannot reflow, so its block takes the spans it needs.
+    """A markdown table wraps only below its natural width.
 
     The run's grid is unchanged; the block takes the fewest whole spans of it
-    whose text width holds the table unwrapped, and never squeezes a table into
-    a narrower column.
+    whose text width holds the table unwrapped, and never a width below the
+    table's min-content width, which would split a word.
     """
 
     TABLE = (
@@ -378,6 +378,11 @@ class TestATableKeepsItsNaturalWidth:
             for w in re.findall(r'<rect[^>]*width="([\d.]+)"[^>]*fill="none"', svg)
         )
         assert border <= 600.0 + 0.5
+
+    def test_a_table_never_gets_a_measure_that_splits_a_word(self) -> None:
+        word = "Pneumonoultramicroscopicsilicovolcanoconiosis"
+        md = f"| a | b |\n|---|---|\n| {word} | one two three four five six seven |\n"
+        assert word in render(md, 450.0)
 
     def test_fitting_a_table_measures_only_the_span_candidates(
         self, monkeypatch: pytest.MonkeyPatch

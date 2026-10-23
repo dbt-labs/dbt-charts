@@ -5,8 +5,8 @@
 //! below the title.
 
 use crate::common::{Font, TitleBlock, TitleStyle};
-use crate::svg::xml_escape_attr;
-use crate::text::FontBook;
+use print::xml_escape_attr;
+use measure::FontBook;
 use crate::vega_fit::{self, Bounds, FitMargins, TitleInk};
 use crate::Payload;
 
@@ -171,6 +171,15 @@ impl FrameTitle {
             (self.text.as_deref(), self.block.title_truncated),
             (self.subtitle.as_deref(), self.block.subtitle_truncated),
         );
+    }
+
+    /// [`Self::warn_truncated`]'s findings, for a layout that returns its own.
+    pub fn truncations(&self, chart_id: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        crate::common::title_truncations(
+            chart_id,
+            (self.text.as_deref(), self.block.title_truncated),
+            (self.subtitle.as_deref(), self.block.subtitle_truncated),
+        )
     }
 
     pub fn ink(&self) -> Option<&TitleInk> {

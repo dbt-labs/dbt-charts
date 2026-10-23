@@ -144,8 +144,8 @@ use crate::families::color_scale::GradientAt;
 use crate::families::color_scale::ContinuousColor;
 use crate::families::temporal::{infer_vega_type, VegaType};
 use crate::frame::{ChartFrame, FrameTitle};
-use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
-use crate::text::FontBook;
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit;
 use crate::Payload;
 
@@ -174,6 +174,9 @@ struct Resolved {
     link: Option<String>,
     #[serde(default)]
     link_open: crate::href::LinkOpen,
+    /// The host's board URL scheme, from the payload; rewrites each datum href.
+    #[serde(skip)]
+    link_context: Option<crate::href::LinkContext>,
     /// How the query formats a numeric color column: its gradient legend's labels.
     #[serde(default)]
     color_format: Option<crate::common::FormatSlot>,
@@ -194,6 +197,10 @@ struct HistogramStyle {
     mark: HistogramMark,
     single_series_fill: String,
     title_font: Option<Font>,
+    /// The count's card format: with an affix, the card is rewritten row by row
+    /// (`NativeTooltipAffixFeature`) and a bin edge below 1 drops its SI letter.
+    #[serde(default)]
+    tooltip_format: crate::common::FormatSlot,
 }
 
 #[derive(Deserialize)]
@@ -509,6 +516,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let mut r: Resolved = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("histogram: payload.resolved: {e}"))?;
     r.series_palette = payload.series_palette(&r.palette);
+    r.link_context = payload.link_context.clone();
     let ax_x = &r.style.axis_x;
     let ax_y = &r.style.axis_y;
     let x_edge = ax_x.x_edge();
@@ -570,6 +578,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             name,
             text: if stack_color.as_ref().is_some_and(|c| c.dated) { crate::href::LinkText::Date } else { crate::href::LinkText::Raw },
         }),
+        context: r.link_context.as_ref(),
     });
     let row_hrefs: Vec<Option<String>> = match &link {
         Some(link) => binned_rows.iter().map(|row| link.href(row).map(Some)).collect::<Result<_, _>>()?,
@@ -815,7 +824,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                     .map(|lbl| fonts.measure_shaped(lbl, y_family, y_font_size))
                     .collect::<Result<_, _>>()?;
                 let y_gutter = y_ink_gutter(&y_label_ws, &y_ticks, ph);
-                let ghost_ws = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_label_ws, measure_ghost))?;
+                let ghost_ws = ghost.as_ref().map_or(Ok(Vec::new()), |g| g.widths(&y_ticks, &y_labels, &y_label_ws, measure_ghost))?;
                 // The FREE edge (no value axis) still keeps a minimum
                 // breathing room past the plot (`AXIS_FREE_EDGE_PAD`, same
                 // small reservation `bar.rs`'s own axis-free edge uses) —
@@ -967,6 +976,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let _ = write!(svg, "<g transform=\"translate({group_x:.3},{group_y:.3})\">");
 
     if ax_y.grid.visible.unwrap_or(false) {
+        crate::contract::grid_group_open(&mut svg);
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "histogram", "axis_y.grid.color")?;
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
@@ -979,6 +989,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
                 plot_w + 0.5, gc = xml_escape_attr(gc)
             );
         }
+        crate::contract::grid_group_close(&mut svg);
     }
 
     // Bars. An empty bin (count == 0) paints nothing — Vega's own
@@ -988,13 +999,18 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // `title: value`, the bin as its formatted range, both through the axes'
     // own label formats.
     let y_fmt_spec = ax_y.labels.spec();
+    let affixed_card = r.style.tooltip_format.has_affix();
     crate::contract::mark_group_open(&mut svg, "rect", "marks")?;
     // The mirror's invisible rule layer carries each segment's label at its own count (the rules do not stack).
     let mut ghosts: Vec<(String, f64, f64, String, Option<String>)> = Vec::new();
     for bin in bins.iter().filter(|b| b.count() > 0) {
         let (left, right) = bar_edges(x_scale.position(bin.start), x_scale.position(bin.end), band_width);
         let fmt = |spec: &str, v: f64| {
-            crate::number_locale::d3_format(spec, v).map_err(|e| format!("histogram tooltip format: {e}"))
+            let plain_below_one = affixed_card
+                && v.abs() < 1.0
+                && d3rs::format::parse_parts(spec).is_ok_and(|p| p.type_ == 's');
+            let spec = if plain_below_one { d3rs::format::sub_unit_specs(spec)?.0 } else { spec.to_string() };
+            crate::number_locale::d3_format(&spec, v).map_err(|e| format!("histogram tooltip format: {e}"))
         };
         let x_spec = x_fmt.ok_or("histogram: axis_x.labels.format missing (theme required)")?;
         let span = format!("{} \u{2013} {}", fmt(x_spec, bin.start)?, fmt(x_spec, bin.end)?);
@@ -1029,6 +1045,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             let top = y_pos(below as f64);
             // A count axis with no label format prints the bare number.
             let count = match y_fmt_spec {
+                _ if affixed_card => r.style.tooltip_format.paint(n as f64)?,
                 Some(spec) => fmt(spec, n as f64)?,
                 None => n.to_string(),
             };
@@ -1083,7 +1100,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         let legend = at.legend(&r.legend, color, &gradient_id, &legend_title, fonts)?;
         let block = (legend.box_width(at.length), legend.height(at.length));
         let (dx, dy) = legend::slide_block(&r.id, &r.legend.position, block, (plot_w, plot_h))?;
-        svg.push_str(&crate::print::print(&legend.nodes(lx + dx, ly + dy, at.length)));
+        svg.push_str(&print::print(&legend.nodes(lx + dx, ly + dy, at.length)));
     }
 
     // X ticks + labels.
@@ -1112,7 +1129,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_label_y =
-        x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + crate::measure::baseline_shift(x_edge.baseline(), x_font_size);
+        x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + measure::baseline_shift(x_edge.baseline(), x_font_size);
     for (&tv, lbl) in x_ticks_domain.iter().zip(x_tick_labels.iter()) {
         let pos = x_scale.position(tv);
         // labelOverlap: allow (module doc) — every tick always draws; the
@@ -1181,7 +1198,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             "right" => "end",
             _ => "middle",
         };
-        let shift = crate::measure::baseline_shift(baseline, y_font_size);
+        let shift = measure::baseline_shift(baseline, y_font_size);
         let placement = if y_angle != 0.0 {
             format!("text-anchor=\"{anchor}\" transform=\"translate({x:.3},{:.3}) rotate({y_angle}) translate(0,{shift})\"", y_pos(tv) + 0.5)
         } else {
@@ -1399,6 +1416,13 @@ pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize, hrefs: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Renders in the en-US time vocabulary the fixtures' dates are drawn in; the
+    /// engine entry point scopes the board's own.
+    fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+        let _en = crate::time_locale::en_us_scope();
+        super::render(payload, fonts)
+    }
 
     /// vega-statistics/test/bin-test.js's own first case: extent [0, 100],
     /// maxbins 10 -> step 10, start 0, stop 100 (already step-aligned, no

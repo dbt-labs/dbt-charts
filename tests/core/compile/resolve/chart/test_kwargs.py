@@ -105,36 +105,6 @@ class TestChartLocalPaletteCapacity:
         narrow = resolved_board.charts["narrow"]
         assert list(narrow.palette) == ["#111111", "#222222", "#333333"]
 
-    def test_no_two_categories_drawn_by_the_narrow_chart_share_a_swatch(self) -> None:
-        """`narrow` only ever draws two values ("A", "D") against its own
-        three-stop palette. Unbound, it carries no explicit color scale at
-        all -- VL colors a categorical encoding from the chart's own
-        ``config.range.category`` (its resolved ``palette``), which is
-        untouched here and has no repeated hex, so two distinct domain
-        values drawn from it can never land on the same swatch. That is
-        exactly the coloring the chart had before board-wide binding
-        existed."""
-        from dbt_charts.core.render.chart.session import BoardRenderSession
-        from dbt_charts.core.render.chart.spec import RenderBox
-
-        resolved_board, executor = _resolve_board(_BOARD)
-        narrow = resolved_board.charts["narrow"]
-        rows = executor.execute_query(narrow.query_name, {})
-        session = BoardRenderSession.create(resolved_board.style)
-        item = next(
-            i for i in resolved_board.layout.items if i.chart and i.chart.id == "narrow"
-        )
-        spec = session.finalize_vl(
-            session.emit_chart(
-                narrow,
-                RenderBox(width=item.width, height=item.height),
-                {narrow.query_name: rows},
-            )
-        )
-        color_range = spec["config"]["range"]["category"]
-        assert color_range == list(narrow.palette)
-        assert len(set(color_range)) == len(color_range)
-
 
 class TestPieAttachmentPaletteCapacity:
     """`pie.py`'s own `_bound_scales` call (feeding the attached-table swatch

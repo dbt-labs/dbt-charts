@@ -1,4 +1,7 @@
 title: ""
+# Serve scales a board to the window; left to hug its short text, the listing
+# would render several times larger than any other board.
+width: 1200
 
 text: |
   # Directory {{ directory_title }}

@@ -297,7 +297,7 @@ _LIST_CONFLICTS = {
 # `emitters/line.py:311` and `emitters/area.py:260` raise `ERR-INTERNAL` —
 # "band-aware step curve is not supported for multi-metric (`y: [...]`) charts"
 # — when the curve is authored `step`. *Band-aware* means the x column resolved
-# to a categorical scale, which `resolve_cartesian_x` reads off the data: the
+# to a categorical scale, which the engine reads off the data: the
 # panel cannot know whether a given board is one of the broken ones, so it
 # withholds the pair on every board that could be.
 #
@@ -1517,12 +1517,12 @@ def _support_table_attach_blocked(instance: Any) -> bool:
       (`compile/models/chart/authored/_base.py`).
     - `multiples:` — `render/chart/features/facet.py` refuses `support_table`
       unconditionally once a chart facets into panels.
-    - No `x:` — `support_table_attachment.py` requires an x-encoding to align
-      strip columns to.
+    - No `x:` — the engine's support-table strip requires an x-encoding to align
+      its columns to.
     - `color:` — a color-encoded chart is long-format, and the correct entry
       there is `per_series:`, which this control cannot author (the same
       standard `_LIST_CONFLICTS["LineChart"]` applies to `y:` against
-      `layers:`); `support_table_attachment.py`'s ambiguous-source
+      `layers:`); the engine's ambiguous-source
       check would also fire on it the moment a query returns more than one
       row per x, which this verb cannot see coming.
 

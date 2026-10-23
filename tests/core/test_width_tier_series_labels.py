@@ -14,10 +14,7 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
-    resolve_style_and_context,
 )
-from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
-from dbt_charts.core.render.converters.chart import render_vega_spec
 
 
 def _multi_series_data() -> list[dict[str, int | str]]:
@@ -254,70 +251,3 @@ def test_narrow_width_keeps_endpoint_label_mechanism(
     assert resolved.style.endpoint_labels.visible is True
     assert resolved.legend.visible is False
     assert resolved.style.axis_y.position == "left"
-
-
-def test_narrow_endpoint_labels_keep_minimum_readable_collision_gap(
-    make_chart: Callable[..., Any],
-    model_copy_at: Callable[[Any, str, Any], Any],
-) -> None:
-    """Compact endpoint text retains a layout-level readable gap — tiered to
-    its own (compact) type size, not the full-size floor.
-
-    Delivered spacing is only knowable once the real plot geometry is known —
-    render through the full pipeline (``render_vega_spec``, not just
-    ``render_resolved_chart``) and measure the label pane's rendered text
-    marks, matching ``test_endpoint_label_gap.py``.
-    """
-    import re
-
-    from dbt_charts.core.compile.resolve.style.typography import _NARROW_MAX
-
-    compact_size = 11.0
-    height = 500.0
-    width = _NARROW_MAX - 0.1
-    chart = make_chart("line", x="date", y="value", color="series")
-    data = [
-        {"date": "2024-01-01", "value": 0, "series": "A"},
-        {"date": "2024-02-01", "value": 500, "series": "A"},
-        {"date": "2024-01-01", "value": 1000, "series": "B"},
-        {"date": "2024-02-01", "value": 501, "series": "B"},
-    ]
-    board_context = _board_with_distinctive_series_label_sizes(
-        model_copy_at,
-        regular_size=12.0,
-        compact_size=compact_size,
-    )
-    resolved = resolve(chart, data, board_context, width=width)
-
-    assert isinstance(resolved, ResolvedLineChart)
-    assert resolved.style.series_label.font_size == compact_size
-    minimum_gap = resolved.style.series_label.gap_px
-    board_style = resolve_style_and_context(get_theme_style())[0]
-    artifact = render_resolved_chart(
-        resolved, data, board_style, width=width, height=height
-    )
-    assert artifact.kind == "vega_spec"
-    svg = render_vega_spec(
-        artifact.payload,
-        "svg",
-        board_style,
-        width=width,
-        height=height,
-        is_placeholder=False,
-        chart_id="test",
-    )
-    match = re.search(r"concat_1_marks[^>]*>(.*?)</g></g>", svg, re.DOTALL)
-    assert match is not None, "expected a concat_1 (label pane) marks group in the SVG"
-    ys = {
-        text: float(y)
-        for y, text in re.findall(
-            r'transform="translate\([\-0-9.]+,\s*([\-0-9.]+)\)"[^>]*>([^<]*)</text>',
-            match.group(1),
-        )
-    }
-    pixel_gap = abs(ys["B"] - ys["A"])
-
-    assert pixel_gap >= minimum_gap - 0.5, (
-        "Compact endpoint text must retain the minimum readable collision gap; "
-        f"got {pixel_gap}px for {compact_size}px text and a {minimum_gap}px minimum"
-    )

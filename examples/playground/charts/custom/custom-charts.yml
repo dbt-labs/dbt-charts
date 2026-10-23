@@ -120,6 +120,39 @@ queries:
       - [Redshift, 96]
       - [Postgres, 61]
       - [DuckDB, 38]
+  campaign_economics:
+    sql: |
+      SELECT
+        channel,
+        campaign,
+        cost_per_signup,
+        retention,
+        avg(cost_per_signup) OVER () AS avg_cost,
+        avg(retention) OVER () AS avg_retention
+      FROM (VALUES
+        ('Search', 'Brand search', 18, 0.46),
+        ('Search', 'Generic search', 42, 0.31),
+        ('Search', 'Competitor terms', 55, 0.27),
+        ('Search', 'Retargeting', 24, 0.38),
+        ('Social', 'LinkedIn sponsored', 68, 0.29),
+        ('Social', 'Instagram', 33, 0.18),
+        ('Social', 'YouTube pre-roll', 47, 0.21),
+        ('Social', 'Reddit', 29, 0.24),
+        ('Email', 'Newsletter', 9, 0.41),
+        ('Email', 'Win-back', 14, 0.22),
+        ('Email', 'Onboarding drip', 6, 0.52),
+        ('Partners', 'Agency referrals', 31, 0.58),
+        ('Partners', 'Marketplace listing', 22, 0.44),
+        ('Partners', 'Integration directory', 16, 0.49),
+        ('Events', 'Conference booth', 92, 0.47),
+        ('Events', 'Webinar series', 27, 0.43),
+        ('Events', 'Meetups', 51, 0.36)
+      ) AS t(channel, campaign, cost_per_signup, retention)
+    formats:
+      cost_per_signup: currency_whole
+      avg_cost: currency_whole
+      retention: percent_whole
+      avg_retention: percent_whole
 charts:
   signup_sankey:
     type: custom
@@ -203,6 +236,24 @@ charts:
     options:
       max: 10
       rings: 5
+  campaign_quadrant:
+    type: custom
+    template: quadrant
+    query: campaign_economics
+    title: Campaign cost against retention
+    subtitle: One dot per campaign; the crosshair sits at the average of all campaigns
+    style:
+      aspect_ratio: 1.3
+    x: cost_per_signup
+    y: retention
+    color: channel
+    options:
+      center_x: avg_cost
+      center_y: avg_retention
+      corner: top_left
+      corner_label: Cheaper and stickier
+      x_title: Cost per signup
+      y_title: Signups still active after 90 days
   # Inline: the template, header included, lives under `svg:` instead of templates/.
   trade_balance:
     type: custom
@@ -222,24 +273,28 @@ charts:
       {% set up = channels.y[0] %}{% set lo = channels.y[1] %}
       {% set n = rows | length %}{% set pad = 40 %}
       {% set ymax = [rows | map(attribute=up) | max, rows | map(attribute=lo) | max] | max * 1.1 %}
+      {% set x = d3.scale_linear([0, n - 1], [pad, width - pad]) %}
+      {% set y = d3.scale_linear([0, ymax], [height - pad, pad]) %}
+      {% set ns = namespace(upper=[], lower=[]) %}
+      {% for r in rows %}
+        {% set ns.upper = ns.upper + [[x(loop.index0), y(r[up])]] %}
+        {% set ns.lower = ns.lower + [[x(loop.index0), y(r[lo])]] %}
+      {% endfor %}
       <g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}" fill="{{ style.font.color }}">
-        <polygon fill="{{ style.tones.positive }}" fill-opacity="0.3"
-          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}{% for r in rows | reverse %}{{ pad + (n - 1 - loop.index0) * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
-        <polyline fill="none" stroke="{{ style.accent }}" stroke-width="2"
-          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}"/>
-        <polyline fill="none" stroke="{{ style.muted }}" stroke-width="2"
-          points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
+        <path fill="{{ style.tones.positive }}" fill-opacity="0.3"
+          d="{{ d3.line(ns.upper + (ns.lower | reverse | list)) }}Z"/>
+        <path fill="none" stroke="{{ style.accent }}" stroke-width="2" d="{{ d3.line(ns.upper) }}"/>
+        <path fill="none" stroke="{{ style.muted }}" stroke-width="2" d="{{ d3.line(ns.lower) }}"/>
         {% for r in rows %}
-        <text x="{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }}" y="{{ height - pad / 3 }}"
+        <text x="{{ x(loop.index0) }}" y="{{ height - pad / 3 }}"
               text-anchor="middle">{{ r[channels.x] }}</text>
         {% endfor %}
         {% set mid = rows[n // 2] %}
-        <text x="{{ pad + (n // 2) * (width - 2 * pad) / (n - 1) }}"
-              y="{{ height - pad - (mid[up] + mid[lo]) / 2 / ymax * (height - 2 * pad) }}"
+        <text x="{{ x(n // 2) }}" y="{{ y((mid[up] + mid[lo]) / 2) }}"
               text-anchor="middle" dy="0.35em" font-style="italic">Balance in our favor</text>
-        <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][up] / ymax * (height - 2 * pad) - 8 }}"
+        <text x="{{ width - pad }}" y="{{ y(rows[n - 1][up]) - 8 }}"
               text-anchor="end" fill="{{ style.accent }}">{{ up }}</text>
-        <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][lo] / ymax * (height - 2 * pad) + 22 }}"
+        <text x="{{ width - pad }}" y="{{ y(rows[n - 1][lo]) + 22 }}"
               text-anchor="end" fill="{{ style.muted }}">{{ lo }}</text>
       </g>
     x: year
@@ -269,6 +324,19 @@ rows:
   - cols:
     - defect_xmr
     - plan_radar
+- title: Quadrants
+  rows:
+  - cols:
+    - campaign_quadrant
+    - text: |
+        A **quadrant scatter** splits the plane at a center point and shades
+        the corner where both measures sit on their better side: here, cheaper
+        than the average campaign and better at keeping signups.
+
+        The query computes the center with a window average and repeats it on
+        every row, so the template only draws. Its scales, ticks and gutter
+        come from `d3.scale_linear(...).nice()`; `corner:` picks the quadrant
+        to shade.
 - title: Pictograms
   rows:
   - cols:

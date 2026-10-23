@@ -568,105 +568,6 @@ def gradient_scale_to_vl(
     return vl_scale
 
 
-def apply_gradient_legend_endpoint_labels(
-    enc: dict[str, Any],
-    scale: ScaleTargetConfig,
-    data: list[dict[str, Any]],
-    field: str,
-) -> None:
-    """Label a gradient legend's ticks in place on an already-
-    ``apply_color_legend``'d encoding dict.
-
-    The domain an author's ``min``/``max`` override describes IS the scale's
-    effective domain (``gradient_scale_to_vl`` bakes it as VL ``domain``/
-    ``domainMin``/``domainMax``), so an authored bound always wins over
-    anything data-derived for the edge(s) it covers: both set is labeled
-    with just those two values outright; a single-sided bound is honored as
-    that exact edge, with the free edge falling back to the real data
-    extent — never silently dropped in favor of a nice-widened domain that
-    ignores it, and never silently overridden by the raw data extent on the
-    *bound* edge either (both would produce the same symptom: the legend's
-    labeled ticks disagree with what ``gradient_scale_to_vl`` actually baked
-    into the scale). Otherwise:
-
-    - ``scale.nice`` True (the default): the domain widens to a "nice"
-      round ladder via ``nice_tick_values`` (mirroring Vega-Lite's own
-      ``scale.nice`` concept) and EVERY nice tick is labeled — min, max, and
-      the round in-betweens — not just the two endpoints. This mirrors
-      ``gradient_scale_to_vl``'s own widened ``domain`` for the same scale,
-      so the labeled ticks always match what's actually rendered. Nice
-      widening only fires when NEITHER bound is authored — see
-      ``_nice_domain_ticks``.
-    - ``scale.nice`` False (author opt-out): falls back to the real data
-      extent for ``field``, matching what VL derives on its own with no
-      ``domainMin``/``domainMax`` set — only the two endpoints are labeled,
-      exact, never nice-rounded.
-
-    Server-side only — ``data`` must be the exact rows VL will render (no
-    later join step can drop any of them). Geoshape's choropleth data is
-    pre-lookup-join, so it calls ``apply_geo_choropleth_legend_endpoint_labels``
-    instead, which reads the resolved scale domain client-side rather than
-    trusting a Python-side extent over data VL hasn't joined yet.
-
-    Deliberately scoped to this gradient-only seam (heatmap.py / geo.py call
-    sites) rather than ``legend_to_vl``/``apply_color_legend`` — those are
-    shared with categorical legends, which have no scale-type discriminator
-    and must not gain min/max labels from this.
-
-    No-op when the legend was suppressed (``enc["legend"]`` is ``None`` or
-    absent), when the legend already carries an authored ``values`` ladder —
-    checked via ``is not None`` rather than truthiness, so an authored empty
-    ladder (``values: []``, an odd but real author choice) is also respected
-    and not silently overwritten (``apply_color_legend``'s write from
-    ``ResolvedLegendStyle.values`` wins outright either way) — or when the
-    data has no numeric values for ``field`` on whichever edge isn't
-    author-bound.
-
-    ``scale.hinge`` set threads hinge-awareness through every branch above:
-    the resolved pivot (``_resolve_hinge_value`` — the same resolution
-    ``gradient_scale_to_vl`` uses) EXTENDS whichever labeled endpoint
-    excludes it, so the legend's endpoints always match what
-    ``gradient_scale_to_vl`` actually rendered (a legend showing [500, 1000]
-    while the scale secretly renders [0, 1000] would be a real bug, not
-    cosmetic). When the resolved hinge sits strictly between the (possibly
-    now-extended) endpoints, it is also inserted into ``values`` as its own
-    labeled tick — sorted, deduplicated — so the legend shows where the
-    palette pivots, not just its two extremes. Does not add a hinge TICK to
-    ``apply_geo_choropleth_legend_endpoint_labels`` (see that function).
-    """
-    legend = enc.get("legend")
-    if not isinstance(legend, dict):
-        return
-    if legend.get("values") is not None:
-        return
-    hinge_val = _resolve_hinge_value(scale, data, field)
-    if scale.min is not None and scale.max is not None:
-        # No float() cast here -- an authored int bound (min: 0, max: 100)
-        # must stay an int in the emitted spec when there's no hinge to
-        # extend for; _extend_for_hinge passes it straight through unless
-        # hinge_val is set.
-        lo, hi = _extend_for_hinge(scale.min, scale.max, hinge_val)
-        legend["values"] = _with_hinge_tick([lo, hi], hinge_val)
-        return
-    nice_ticks = _nice_domain_ticks(scale, data, field)
-    if nice_ticks is not None:
-        lo, hi = _extend_for_hinge(nice_ticks[0], nice_ticks[-1], hinge_val)
-        ticks = list(nice_ticks)
-        if lo < ticks[0]:
-            ticks.insert(0, lo)
-        if hi > ticks[-1]:
-            ticks.append(hi)
-        legend["values"] = _with_hinge_tick(ticks, hinge_val)
-        return
-    extent = _numeric_extent(data, field)
-    extent_lo = scale.min if scale.min is not None else (extent[0] if extent else None)
-    extent_hi = scale.max if scale.max is not None else (extent[1] if extent else None)
-    if extent_lo is None or extent_hi is None:
-        return
-    lo, hi = _extend_for_hinge(extent_lo, extent_hi, hinge_val)
-    legend["values"] = _with_hinge_tick([lo, hi], hinge_val)
-
-
 def _is_scheme_palette(scale: ScaleTargetConfig) -> bool:
     """True iff ``scale``'s palette resolves to a Vega scheme string in
     ``gradient_scale_to_vl`` (``{"scheme": ...}``, never ``{"range": ...}``)
@@ -691,21 +592,6 @@ def _extend_for_hinge(
     if hinge_val is None:
         return lo, hi
     return min(lo, hinge_val), max(hi, hinge_val)
-
-
-def _with_hinge_tick(ticks: list[float], hinge_val: float | None) -> list[float]:
-    """Insert ``hinge_val`` into an ascending, already-extended tick ladder
-    when it sits strictly between the two endpoints and isn't already one
-    of the ticks — the diverging pivot earns its own labeled tick, not just
-    the two extremes."""
-    if (
-        hinge_val is None
-        or hinge_val <= ticks[0]
-        or hinge_val >= ticks[-1]
-        or hinge_val in ticks
-    ):
-        return ticks
-    return sorted([*ticks, hinge_val])
 
 
 def apply_geo_choropleth_legend_endpoint_labels(
@@ -1207,10 +1093,6 @@ def channel_to_encoding(
     )
 
 
-def field_encoding(field: str, type_: str) -> dict[str, str]:
-    return {"field": field, "type": type_}
-
-
 def categorical_color_encoding(
     color_ch: ResolvedStyleChannel | None, enc_type: str | None
 ) -> bool:
@@ -1441,11 +1323,9 @@ def apply_legend_entry_order(
 __all__ = [
     "apply_color_legend",
     "apply_geo_choropleth_legend_endpoint_labels",
-    "apply_gradient_legend_endpoint_labels",
     "apply_legend_entry_order",
     "categorical_color_encoding",
     "channel_to_encoding",
-    "field_encoding",
     "gradient_scale_to_vl",
     "infer_vega_type_from_data",
     "resolve_legend_entries",

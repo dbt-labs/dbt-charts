@@ -27,8 +27,7 @@ options:
 {% set thick = step * 0.78 %}
 {# Angles in radians, measured clockwise from twelve o'clock. #}
 {% macro ring(r0, r1, a1, fill, tip="") %}
-  {% set large = 1 if a1 > math.pi else 0 %}
-  <path d="M{{ cx|round(2) }},{{ (cy - r1)|round(2) }}A{{ r1|round(2) }},{{ r1|round(2) }} 0 {{ large }} 1 {{ (cx + r1 * math.sin(a1))|round(2) }},{{ (cy - r1 * math.cos(a1))|round(2) }}L{{ (cx + r0 * math.sin(a1))|round(2) }},{{ (cy - r0 * math.cos(a1))|round(2) }}A{{ r0|round(2) }},{{ r0|round(2) }} 0 {{ large }} 0 {{ cx|round(2) }},{{ (cy - r0)|round(2) }}Z" fill="{{ fill }}">{% if tip %}<title>{{ tip }}</title>{% endif %}</path>
+  <path transform="translate({{ cx }},{{ cy }})" d="{{ d3.arc(r0, r1, 0, a1) }}" fill="{{ fill }}">{% if tip %}<title>{{ tip }}</title>{% endif %}</path>
 {% endmacro %}
 <g font-family="{{ style.font.family }}" font-size="{{ style.charts.axis.labels.font.size }}">
 {% for r in rows %}

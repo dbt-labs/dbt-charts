@@ -74,7 +74,6 @@ def _make_ctx(
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={resolved.id: {"mark": "layered"}},
         layer_results={resolved.id: layer_rows} if layer_rows is not None else {},
     )
 

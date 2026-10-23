@@ -28,7 +28,6 @@ def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={resolved.id: {"mark": "arc"}},
     )
 
 

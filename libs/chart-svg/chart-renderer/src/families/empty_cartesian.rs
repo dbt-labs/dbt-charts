@@ -21,8 +21,9 @@ use crate::families::legend::{
 };
 use crate::families::scatter_shape::{ShapeLegend, SymbolFill};
 use crate::frame::ChartFrame;
-use crate::svg::{num_full, vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{num_full};
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit;
 use crate::common::VALUE_AXIS_BREATHING_ROOM;
 use crate::Payload;
@@ -40,8 +41,8 @@ pub(crate) enum ValueAxis {
 
 #[derive(Deserialize)]
 struct Extra {
-    x: String,
-    y: String,
+    x: Option<String>,
+    y: Option<String>,
     #[serde(default)]
     x_label: Option<String>,
     #[serde(default)]
@@ -416,10 +417,15 @@ pub(crate) fn render(
         base_pad
     };
 
-    let cat_text = crate::common::axis_title_text(&extra.x, extra.x_label.as_deref(), &extra.field_labels)?;
-    let val_text = match extra.y_label.as_deref() {
-        None if !head.wide_measures().is_empty() => crate::common::wide_measures_title(head.wide_measures(), &extra.field_labels)?,
-        label => crate::common::axis_title_text(&extra.y, label, &extra.field_labels)?,
+    // A position channel left unset has no field to title its axis.
+    let cat_text = match &extra.x {
+        Some(x) => crate::common::axis_title_text(x, extra.x_label.as_deref(), &extra.field_labels)?,
+        None => String::new(),
+    };
+    let val_text = match (extra.y_label.as_deref(), &extra.y) {
+        (None, _) if !head.wide_measures().is_empty() => crate::common::wide_measures_title(head.wide_measures(), &extra.field_labels)?,
+        (label, Some(y)) => crate::common::axis_title_text(y, label, &extra.field_labels)?,
+        (_, None) => String::new(),
     };
     let primary_title_style = if dual_titles && ax_y.title.visible == Some(false) && extra.y_label.is_none() {
         crate::common::vega_default_axis_title(ax_y.title.font.family.clone())
@@ -751,7 +757,7 @@ pub(crate) fn render(
         let _ = write!(svg, "<g transform=\"translate({:.3},{plot_top:.3})\">", plot_left + m.plot_w + rail.offset);
         for (i, (name, ink)) in rail.series.iter().enumerate() {
             let value = rail.gap_px * i as f64 / m.plot_h;
-            let y = m.plot_h * (1.0 - value / top) + crate::measure::baseline_shift("middle", *size);
+            let y = m.plot_h * (1.0 - value / top) + measure::baseline_shift("middle", *size);
             let _ = write!(
                 svg,
                 "<text x=\"0\" y=\"{y:.3}\" text-anchor=\"start\" font-family=\"{}\" font-size=\"{size}\" font-weight=\"{}\" font-style=\"{}\" fill=\"{}\">{}</text>",
@@ -898,7 +904,7 @@ fn paint_axes(
                     "right" => "end",
                     _ => "middle",
                 };
-                let shift = crate::measure::baseline_shift(baseline, st.size);
+                let shift = measure::baseline_shift(baseline, st.size);
                 let (anchor_x, anchor_y) = if horizontal {
                     (plot_left + 0.5 + along, plot_top + m.plot_h + axis.offset + 0.5 + axis.tick_len + axis.pad)
                 } else {
@@ -931,7 +937,7 @@ fn paint_axes(
                     &t.text,
                     &t.style,
                     plot_left + m.plot_w / 2.0,
-                    plot_top + m.plot_h + axis.offset + 0.5 + reach + t.pad + crate::measure::baseline_shift("top", t.size),
+                    plot_top + m.plot_h + axis.offset + 0.5 + reach + t.pad + measure::baseline_shift("top", t.size),
                     None,
                 );
             } else {
@@ -980,7 +986,7 @@ fn paint_axes(
                     &t.text,
                     &t.style,
                     plot_left + m.plot_w / 2.0,
-                    plot_top + m.plot_h + category.offset + 0.5 + t.pad + crate::measure::baseline_shift("top", t.size),
+                    plot_top + m.plot_h + category.offset + 0.5 + t.pad + measure::baseline_shift("top", t.size),
                     None,
                 );
             }

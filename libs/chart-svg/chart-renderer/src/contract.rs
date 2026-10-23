@@ -9,8 +9,8 @@
 use display_text::language::tr;
 use crate::families::axis_caption::AxisCaption;
 use crate::common::FormatSlot;
-use crate::node::Attrs;
-use crate::svg::xml_escape_attr;
+use scene::Attrs;
+use print::xml_escape_attr;
 use std::fmt::Write as _;
 
 /// `_tooltip.py:56-73`'s exact codepoints -- `chart_interactivity.js`
@@ -117,6 +117,15 @@ pub fn axis_group_open(
 /// unwraps it.
 const BARE_AXIS_MARK: &str = " data-dct-bare=\"1\"";
 
+/// Open the group Vega draws around an axis's gridlines; close with [`grid_group_close`].
+pub fn grid_group_open(out: &mut String) {
+    out.push_str("<g class=\"mark-rule role-axis-grid\" aria-hidden=\"true\">");
+}
+
+pub fn grid_group_close(out: &mut String) {
+    out.push_str("</g>");
+}
+
 pub fn axis_group_close(out: &mut String) {
     let opener = out.rfind("<g class=\"mark-group role-axis\"").expect("an axis group is open");
     if !out[opener..].starts_with(&format!("<g class=\"mark-group role-axis\"{BARE_AXIS_MARK}")) {
@@ -155,8 +164,14 @@ pub fn axis_title_group_open(out: &mut String, key: Option<LabelKey>) {
 /// Vega's symbol-legend group (`role-legend`): the thumbnail strips it and
 /// the hover runtime skips a cursor inside it. It holds the title and the
 /// entries group.
-pub fn legend_attrs() -> Attrs {
-    Attrs::new().set("class", "mark-group role-legend")
+///
+/// `aria` is the legend's own label, set where the entries' names are ambiguous.
+pub fn legend_attrs(aria: Option<&str>) -> Attrs {
+    let attrs = Attrs::new().set("class", "mark-group role-legend");
+    match aria {
+        Some(label) => attrs.set("role", "graphics-symbol").set("aria-roledescription", "legend").set("aria-label", label),
+        None => attrs,
+    }
 }
 
 /// A legend's title group (`role-legend-title`).
@@ -359,8 +374,8 @@ pub fn aria_attr(label: Option<&str>, role: ItemRole) -> Result<String, String> 
     Ok(format!(
         " data-dct-role=\"{key}\" aria-label=\"{}\" role=\"graphics-symbol\" \
          aria-roledescription=\"{}\"",
-        crate::svg::xml_escape_attr(label),
-        crate::svg::xml_escape_attr(&description),
+        print::xml_escape_attr(label),
+        print::xml_escape_attr(&description),
     ))
 }
 
@@ -706,7 +721,7 @@ pub fn tooltip_order_rank(order_domain: &[String], series: &str) -> i64 {
 /// The `data-authored-kind` a *leaf* text run carries -- `svg_utils.py`'s
 /// `authored_kind_attr`, verbatim.
 pub fn authored_kind_attr(kind: &str) -> String {
-    format!(" data-authored-kind=\"{}\"", crate::svg::xml_escape_attr(kind))
+    format!(" data-authored-kind=\"{}\"", print::xml_escape_attr(kind))
 }
 
 /// The chart-id tail of the id-namespace suffix every vl-convert-minted id
@@ -869,8 +884,8 @@ mod tests {
         );
     }
 
-    // Every string below is copied verbatim from a live golden-sweep dump
-    // (`golden_sweep.py --group ... --dump-svgs`), never fitted by hand.
+    // Every string below is copied verbatim from a live retired per-chart sweep dump
+    // (`the retired per-chart sweep --group ... --dump-svgs`), never fitted by hand.
 
     /// `charts/bar-charts_0/product_revenue_columns`: single-series, no
     /// `y_label` (default axis title, lowercase), tooltip_format `,.2~f`.
@@ -1028,6 +1043,7 @@ mod tests {
     /// a temporal x header built from `temporal::tooltip_header_date`.
     #[test]
     fn temporal_header_matches_the_corpus() {
+        let _en = crate::time_locale::en_us_scope();
         let header = crate::families::temporal::tooltip_header_date(
             2024,
             2,
@@ -1051,6 +1067,7 @@ mod tests {
     /// A bucketed grain formats through it regardless of `is_standard_date`.
     #[test]
     fn tooltip_header_text_formats_a_detected_bucket() {
+        let _en = crate::time_locale::en_us_scope();
         use crate::families::temporal::TimeUnit;
         assert_eq!(
             tooltip_header_text("2024-02-01", Some(TimeUnit::YearMonth), false, None).unwrap(),
@@ -1083,6 +1100,7 @@ mod tests {
     /// never the raw ISO string.
     #[test]
     fn tooltip_header_text_formats_a_standard_date_with_no_detected_bucket() {
+        let _en = crate::time_locale::en_us_scope();
         assert_eq!(tooltip_header_text("2025-04-27", None, true, None).unwrap(), "27 Apr 2025");
     }
 

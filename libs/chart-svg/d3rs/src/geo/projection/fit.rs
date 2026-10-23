@@ -19,8 +19,13 @@ pub trait Fit: Sized {
     fn stream_object(&self, object: &GeoJson, sink: impl GeoStream) -> Result<(), String>;
 
     /// d3's `fit`: project `object` at scale 150 with no clip extent, then let `fit_bounds` set the scale and
-    /// translate from the bounds, which must be finite. An error from the pipeline (see [`Fit::stream_object`]) leaves the
-    /// projection as d3 is left by the throw: scale 150, translate [0, 0], clip extent cleared.
+    /// translate from the bounds.
+    ///
+    /// - A pipeline error (see [`Fit::stream_object`]) leaves the projection as d3 is left by the throw:
+    ///   scale 150, translate [0, 0], clip extent cleared.
+    /// - Bounds that are not finite (nothing projected) are an `Err` where d3 sets a NaN scale and goes on.
+    ///   The clip extent is restored first, as d3 restores it; scale and translate stay 150 and [0, 0].
+    /// - A single point has finite bounds of zero size, so the scale is infinite and the result is `Ok`, as in d3.
     fn fit(
         &mut self,
         object: &GeoJson,
@@ -34,14 +39,18 @@ pub trait Fit: Sized {
         let mut bounds = Bounds::default();
         self.stream_object(object, &mut bounds)?;
         let extent = bounds.result();
-        if extent.iter().flatten().any(|v| !v.is_finite()) {
-            return Err(format!("fit: the projected extent is not finite: {extent:?}"));
+        let finite = extent.iter().flatten().all(|v| v.is_finite());
+        if finite {
+            fit_bounds(self, extent);
         }
-        fit_bounds(self, extent);
         if let Some(clip) = clip {
             self.set_clip_extent(Some(clip));
         }
-        Ok(self)
+        if finite {
+            Ok(self)
+        } else {
+            Err(format!("fit: the projected extent is not finite: {extent:?}"))
+        }
     }
 
     fn fit_extent(&mut self, extent: [[f64; 2]; 2], object: &GeoJson) -> Result<&mut Self, String> {

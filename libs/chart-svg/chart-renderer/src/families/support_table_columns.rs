@@ -25,8 +25,9 @@ use crate::families::support_table_strip::{
     build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, validate_against_data,
     CellAria, ComposedCell, DecimalPad, EntryLines, SupportTableConfig, SupportTableStyle,
 };
-use crate::svg::{py_float_str, vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use crate::svg::{py_float_str};
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
 
 /// Which side of the plot the block sits on
@@ -170,7 +171,7 @@ pub fn build_block(
         return Err("support_table: domain/centers length mismatch".into());
     }
     let rows = config.source_rows(rows);
-    validate_against_data(config, rows, cat_field, domain)?;
+    validate_against_data(config, rows, cat_field, domain, false)?;
     let font_size = style.font.size.ok_or("support_table: font.size absent (theme required)")?;
     let cell_ink =
         style.font.color.clone().ok_or("support_table: font.color absent (theme required)")?;
@@ -400,13 +401,14 @@ impl ColumnBlock {
         let (label_family, label_size) = label_font_resolved(style);
         let label_ink = self.label_ink.as_str();
         let label_weight = style.label.font.weight_str();
-        let cell_shift = crate::measure::baseline_shift("middle", font_size);
-        let label_shift = crate::measure::baseline_shift("middle", label_size);
+        let cell_shift = measure::baseline_shift("middle", font_size);
+        let label_shift = measure::baseline_shift("middle", label_size);
         let header_y = origin_y - row_height(style) / 2.0 + label_shift;
         let paint = cell_family(style);
         let last = self.columns.len() - 1;
         for (i, (col, edge)) in self.columns.iter().zip(self.right_edges(plot_w)).enumerate() {
             let x = origin_x + edge;
+            crate::contract::mark_group_open(out, "text", "strip")?;
             out.push_str(&crate::href::anchor_open(undefined));
             let _ = write!(
                 out,
@@ -418,6 +420,7 @@ impl ColumnBlock {
                 xml_escape(&col.header),
             );
             out.push_str(crate::href::anchor_close(undefined));
+            crate::contract::mark_group_close(out);
             crate::contract::mark_group_open(out, "text", "strip")?;
             for (k, cell) in col.cells.iter().enumerate() {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
@@ -496,6 +499,13 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"cat": c, "units": u, "revenue": r}))
                     .unwrap()
             })
+            .collect()
+    }
+
+    fn ratio_rows() -> Vec<serde_json::Map<String, Value>> {
+        [("A", 0.05), ("B", 0.6), ("C", 0.07)]
+            .iter()
+            .map(|(c, u)| serde_json::from_value(serde_json::json!({"cat": c, "units": u})).unwrap())
             .collect()
     }
 
@@ -607,14 +617,15 @@ mod tests {
     #[test]
     fn an_anchored_percent_column_hangs_its_anchor_suffix_past_the_digit_edge() {
         let pct_w = test_fonts().measure("%", TAB_FONT, 11.0).unwrap();
-        let block = block_of(
+        let block = block_over(
+            &ratio_rows(),
             serde_json::json!([{"source": "units", "format": {"spec": ".0%", "raw": "percent_whole"}, "label": "U"}]),
             true,
         )
         .unwrap();
         let col = &block.columns[0];
         let texts: Vec<&str> = col.cells.iter().map(|c| c.text.as_str()).collect();
-        assert_eq!(texts, vec!["500%", "6000", "700"]);
+        assert_eq!(texts, vec!["5%", "60", "7"]);
         let bands: Vec<f64> = col.cells.iter().map(|c| c.x).collect();
         assert_eq!(bands, vec![10.0, 30.0, 50.0]);
         let hangs: Vec<f64> = col.cells.iter().map(|c| c.hang).collect();
@@ -624,8 +635,8 @@ mod tests {
         let mut out = String::new();
         block.render(&mut out, &style(), 400.0, 300.0, 100.0, 50.0, None).unwrap();
         let edge = 100.0 + block.right_edges(400.0)[0];
-        assert!((text_x(&out, "500%") - edge).abs() < 0.005, "anchor at the header edge");
-        assert!((text_x(&out, "6000") - (edge - pct_w)).abs() < 0.005, "bare digits one suffix in");
+        assert!((text_x(&out, "5%") - edge).abs() < 0.005, "anchor at the header edge");
+        assert!((text_x(&out, "60") - (edge - pct_w)).abs() < 0.005, "bare digits one suffix in");
         assert!((text_x(&out, "U") - edge).abs() < 0.005, "header stays at the edge");
 
         let mut b = Bounds::empty_new();
@@ -644,7 +655,8 @@ mod tests {
     /// no anchor.
     #[test]
     fn an_unanchored_percent_column_hangs_nothing() {
-        let block = block_of(
+        let block = block_over(
+            &ratio_rows(),
             serde_json::json!([{"source": "units", "format": {"spec": ".0%", "raw": "percent_whole"}, "label": "U"}]),
             false,
         )

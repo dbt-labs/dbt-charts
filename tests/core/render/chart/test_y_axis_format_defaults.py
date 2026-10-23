@@ -17,12 +17,8 @@ from dbt_charts.core.compile.config import (
     get_theme_style,
     reset_config,
 )
-from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-_BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 
 @pytest.fixture(autouse=True)
@@ -30,37 +26,6 @@ def reset():
     reset_config()
     yield
     reset_config()
-
-
-class TestBarChartGetsCompactFormat:
-    """type: bar with quantitative y and no explicit format emits ".3~s" from theme."""
-
-    def test_bar_quantitative_y_theme_format(self, make_chart):
-        """Vertical bar chart with no authored format should emit axis.format == ".3~s".
-
-        Uses explicit vertical orientation so the VL y-axis is quantitative
-        and the theme's axis_quantitative.format cascade applies. The emitted
-        value is the fully resolved literal (``.3~s``), never the raw alias
-        name (``number``) — this doubles as the alias no-leak guard.
-        """
-        chart = make_chart(
-            "bar",
-            x="month",
-            y="revenue",
-            style=BarChartStylePatch.model_validate({"orientation": "vertical"}),
-        )
-        data = [
-            {"month": "Jan", "revenue": 1_200_000},
-            {"month": "Feb", "revenue": 1_400_000},
-        ]
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        axis_fmt = spec["encoding"]["y"]["axis"].get("format")
-        assert axis_fmt == ".3~s", (
-            f"Expected axis.format='.3~s' from theme cascade, got {axis_fmt!r}. "
-            "axis_quantitative.format references the number alias (.3~s) "
-            "in _base.yaml; the alias must resolve, not leak its name."
-        )
 
 
 class TestLineChartNumberFormatFlowsThroughResolve:
@@ -77,10 +42,6 @@ class TestLineChartNumberFormatFlowsThroughResolve:
         from dbt_charts.core.compile.models.chart.normalized import LineChart
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
-        from dbt_charts.core.compile.resolve import resolve
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_chart_style_context,
-        )
         from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
 
         chart = LineChart(
@@ -109,29 +70,4 @@ class TestLineChartNumberFormatFlowsThroughResolve:
             f"Expected axis.format='.0%' from axis_y={'labels': {'format': percent_whole}}, "
             f"got {fmt!r}. style.number_format must flow through _resolve_line "
             "into the y-axis format, not just into the resolved style label."
-        )
-
-
-class TestHorizontalBarNoFormatOnCategoricalY:
-    """Horizontal bar has a categorical y-axis — no axis.format should appear."""
-
-    def test_horizontal_bar_categorical_y_no_format(self, make_chart):
-        """Horizontal bar's categorical y-axis must not emit axis.format."""
-        chart = make_chart(
-            "bar",
-            x="product",
-            y="revenue",
-            style=BarChartStylePatch.model_validate({"orientation": "horizontal"}),
-        )
-        data = [
-            {"product": "Widget A", "revenue": 100},
-            {"product": "Widget B", "revenue": 200},
-        ]
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        # In horizontal bar, y is categorical, x is quantitative
-        y_axis = spec["encoding"]["y"].get("axis", {})
-        assert "format" not in y_axis, (
-            f"Categorical y-axis should not have format, got {y_axis.get('format')!r}. "
-            "The ~s format must only apply to quantitative axes."
         )

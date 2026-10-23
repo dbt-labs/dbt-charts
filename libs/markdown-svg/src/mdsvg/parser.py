@@ -531,7 +531,7 @@ class MarkdownParser:
         alignments = self._parse_table_alignments(separator_line)
 
         # Parse header
-        header_cells = self._parse_table_row(header_line, alignments)
+        header_cells = self._parse_table_row(header_line, alignments, None)
         header = TableRow(cells=tuple(header_cells))
 
         # Parse body rows
@@ -543,7 +543,7 @@ class MarkdownParser:
             if not self.TABLE_ROW.match(line):
                 break
 
-            row_cells = self._parse_table_row(line, alignments)
+            row_cells = self._parse_table_row(line, alignments, len(header_cells))
             rows.append(TableRow(cells=tuple(row_cells)))
             i += 1
 
@@ -580,8 +580,14 @@ class MarkdownParser:
         self,
         line: str,
         alignments: List[Optional[str]],
+        columns: Optional[int],
     ) -> List[TableCell]:
-        """Parse a single table row."""
+        """Parse a single table row.
+
+        ``columns`` is the header's cell count; as in GFM, a body row drops
+        cells past it and pads a short row with empty cells. ``None`` keeps the
+        row's own width (the header).
+        """
         # Remove outer pipes and split
         content = line.strip().strip("|")
         cell_texts = content.split("|")
@@ -593,6 +599,12 @@ class MarkdownParser:
             align = alignments[idx] if idx < len(alignments) else None
             cells.append(TableCell(spans=tuple(spans), align=align))
 
+        if columns is None:
+            return cells
+        cells = cells[:columns]
+        for idx in range(len(cells), columns):
+            align = alignments[idx] if idx < len(alignments) else None
+            cells.append(TableCell(align=align))
         return cells
 
     def _parse_inline(self, text: str) -> List[Span]:

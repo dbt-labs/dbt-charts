@@ -64,7 +64,6 @@ def _ctx(chart: Any, width: float | None, rows: list[dict[str, Any]]) -> Warning
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
         layout_charts={resolved.id: resolved},
     )
 
@@ -140,7 +139,6 @@ def test_silent_when_chart_absent_from_layout_charts() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={resolved.id: _GROUPED_ROWS},
-        vega_specs={},
         layout_charts={},  # chart absent from active layout
     )
     assert detector.detect(ctx) == []

@@ -21,20 +21,12 @@ heading level (``test_heading_margin_is_the_same_for_every_heading_level``).
 from __future__ import annotations
 
 import re
-import tempfile
-from pathlib import Path
 
 import pytest
 
-from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.render.board_resolve import build_resolved_board
-from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.prose import render_prose_svg
 
 from ._prose_plan import full_width_plan
@@ -76,19 +68,6 @@ def _heading_top(svg: str) -> float:
     # `y` is emitted at 2dp, so a recovered distance is good to ~0.01px. The old
     # `baseline - font_size` form hid that: both terms were whole pixels.
     return wrap + baseline - offset
-
-
-def _prose_column_svg(svg: str) -> str:
-    """Slice a full board render down to just its prose column's own content.
-
-    A board's own ``title:`` is *also* an ``md-heading`` and renders before any
-    row content, so searching the whole board SVG for the heading class finds
-    the board title, not the prose column's heading. Bound the search to
-    between the prose block's own marker and the next chart's.
-    """
-    start = svg.index('data-authored-kind="text"')
-    end = svg.index('data-authored-kind="chart"', start)
-    return svg[start:end]
 
 
 def _render(markdown: str, width: float, n_cols: int | None) -> str:
@@ -195,94 +174,3 @@ def test_heading_margin_is_the_same_for_every_heading_level() -> None:
     h3_top = _heading_top(_render(f"{ONE_PARAGRAPH}\n\n### H3 heading", _WIDE_SLOT, 1))
 
     assert h1_top == pytest.approx(h3_top, abs=_ROUNDING)
-
-
-def _render_board(yaml_text: str) -> tuple[str, float]:
-    """Returns (svg, card_padding) -- the padding a chart's title band sits inside."""
-    with tempfile.TemporaryDirectory() as tmp:
-        result = compile_board(yaml_text)
-        assert result.success, result.errors
-        assert result.board is not None
-        executor = Executor(
-            result.board,
-            build_adapter_registry(FilesystemProject(Path(tmp))),
-            query_registry=result.query_registry,
-        )
-        variables: dict[str, object] = {}
-        resolved, render_cache = build_resolved_board(result.board, executor, variables)
-        background = resolved.style.background
-        svg = render_board_svg(
-            resolved,
-            executor,
-            variables,
-            background=None if background == "transparent" else background,
-            render_cache=render_cache,
-        )
-        assert resolved.card_padding is not None
-        return svg, resolved.card_padding
-
-
-_CHART_TITLE_RE = re.compile(
-    r'class="mark-text role-title-text"[^>]*>'
-    r'<text[^>]*transform="translate\(([\d.]+),([\d.]+)\)"[^>]*font-size="(\d+)px"'
-)
-
-# The prose band's own inset, on the group that wraps the text block. The block
-# itself renders at its own origin, so its ink's distance from the column top is
-# this translate plus whatever the block puts above its first line.
-_TEXT_BLOCK_RE = re.compile(
-    r'<g transform="translate\(([\d.]+), ([\d.]+)\)">\s*'
-    r'<g transform="translate\(0, 0\)" data-authored-kind="text"'
-)
-
-_BOARD_YAML = """
-title: Chart title alignment probe
-queries:
-  q:
-    columns: [month, revenue]
-    values:
-      - ["2026-01-01", 100]
-      - ["2026-02-01", 150]
-      - ["2026-03-01", 120]
-charts:
-  bar1:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-    title: Revenue by month
-rows:
-  - cols:
-      - text: "## Key takeaways\\n\\nNorth region is leading this quarter."
-      - bar1
-"""
-
-
-def test_a_prose_heading_starts_level_with_a_sibling_chart_title() -> None:
-    """The alignment target, through the real board pipeline.
-
-    A chart column shares a row with a prose column, both the same width. The
-    two cells start at the same y, so what has to agree is the distance from
-    each cell's top to its first ink. A chart's is ``card_padding``: Vega's
-    autosize insets the whole plot by that plus the title band's own reserved
-    height, and the title role-group's transform is that reserved height
-    negated, so the two cancel and the band's top is ``card_padding``. The
-    prose column now claims the same inset.
-    """
-    svg, card_padding = _render_board(_BOARD_YAML)
-
-    block = _TEXT_BLOCK_RE.search(svg)
-    assert block, svg
-    prose_ink_top = float(block.group(2)) + _heading_top(_prose_column_svg(svg))
-
-    assert prose_ink_top == pytest.approx(card_padding, abs=_ROUNDING)
-
-    # The chart side of the same statement, read off the render rather than
-    # asserted from the algebra above: its title's glyphs land within one line
-    # box of the heading's, which two blocks 25px apart could not.
-    m = _CHART_TITLE_RE.search(svg)
-    assert m, svg
-    chart_title_glyph_top = card_padding + float(m.group(2)) - float(m.group(3))
-    style = get_compact_style(resolve_style(get_theme_style("clarity")))
-    line_box = style.base_font_size * style.line_height
-    assert abs(chart_title_glyph_top - prose_ink_top) < line_box

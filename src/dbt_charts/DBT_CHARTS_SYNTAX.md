@@ -1213,8 +1213,11 @@ Template context: `rows` (list of row dicts, raw values), `columns`, `channels`
 `style` (the merged style tree; `style.palettes.<role>` is a list of hex colors,
 or an alias dict for tone roles such as `info`), `math` (`sin`, `cos`, `tan`,
 `asin`, `acos`, `atan2`, `sqrt`, `log`, `exp`, `floor`, `ceil`, `pi`, `tau`),
-`variables` (the board's variable values), filter `format` (d3-format), and the
-helpers `text_width(text, size, weight)`, `color_for(value, column=None)` (board
+`variables` (the board's variable values), `d3` (`scale_linear` and `scale_sqrt`, callable, with `nice`, `ticks`,
+`tick_format`, `invert` and `domain`/`range`; `scale_band`, callable, with
+`bandwidth()` and `step()`; and `line`, `area`, `arc`, `pie`; d3's names in
+snake_case), filter
+`format` (a d3-format spec, or `format(column=channels.y)` for the format the board resolved for that column, numbers only), and the helpers `text_width(text, size, weight)`, `color_for(value, column=None)` (board
 pin for that column's value, else the categorical palette in first-call order),
 `href(row)` (the chart's `link:` with its `{{ channel }}` placeholders filled from
 the row; a `link:` with no placeholder wraps the whole drawing instead),

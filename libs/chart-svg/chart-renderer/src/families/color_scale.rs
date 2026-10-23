@@ -13,10 +13,10 @@ use crate::families::legend::{
     VEGA_GRADIENT_THICKNESS, VEGA_LEGEND_TITLE_PADDING,
 };
 use crate::contract;
-use crate::measure::baseline_shift;
-use crate::node::{Attrs, Node};
-use crate::print::print;
-use crate::text::FontBook;
+use measure::baseline_shift;
+use scene::{Attrs, Node};
+use print::print;
+use measure::FontBook;
 use crate::vega_fit;
 
 /// How a value in the scale's domain becomes a color.
@@ -40,6 +40,26 @@ enum Ramp {
     /// spans half the ramp, clamped. A categorical scheme's array is a range
     /// list, mixed in HCL (`hcl`); a continuous scheme is sampled by position.
     Halved { ramp: &'static [Rgb], pivot: f64, hcl: bool },
+}
+
+/// Where `v` sits in `[lo, hi]` for a sequential color scale: d3's `scaleSequential` multiplies by the
+/// domain's reciprocal (`75000 * (1 / 100000)` is `0.7500000000000001`, which rounds a tie channel the
+/// other way than dividing does) and puts a zero-width domain mid-ramp.
+fn sequential_position(v: f64, lo: f64, hi: f64) -> f64 {
+    if lo == hi {
+        0.5
+    } else {
+        (v - lo) * (1.0 / (hi - lo))
+    }
+}
+
+/// What [`ContinuousColor::mid_pivoted`] makes of a scale.
+pub(crate) enum MidPivot {
+    /// The scale takes no `domainMid` pivot; build it with `gradient`.
+    NotPivoted,
+    Scale(ContinuousColor),
+    /// The pivot lies outside the domain.
+    Outside,
 }
 
 /// A color scale over the data extent `[lo, hi]`; a date scale counts days.
@@ -110,6 +130,32 @@ impl ContinuousColor {
         Ok(Self { ramp, lo, hi, dates: false, pivot: None })
     }
 
+    /// `gradient_scale_to_vl`'s fallback for a Vega scheme pivoted at a numeric `hinge` over bounds the
+    /// caller cannot resolve: Vega-Lite's `domainMid` over `kept`, the extent of the values the marks
+    /// draw, each authored bound extended (never clamped) to hold the pivot. A pivot outside the domain
+    /// makes Vega's piecewise domain non-monotonic, which no port models: the caller refuses it.
+    pub(crate) fn mid_pivoted(scale: &ScaleTarget, kept: (f64, f64)) -> Result<MidPivot, String> {
+        let Some(pivot) = scale.hinge.as_ref().and_then(serde_json::Value::as_f64) else { return Ok(MidPivot::NotPivoted) };
+        if scale.min.is_some() && scale.max.is_some() {
+            return Ok(MidPivot::NotPivoted);
+        }
+        let (lo, hi) = (scale.min.map_or(kept.0, |m| m.min(pivot)), scale.max.map_or(kept.1, |m| m.max(pivot)));
+        let (ramp, hcl) = match Palette::of(scale)? {
+            Palette::Stops(_) => return Ok(MidPivot::NotPivoted),
+            Palette::Ramp(ramp) => (ramp, false),
+            Palette::Array(colors) => (colors, true),
+        };
+        if !(lo <= pivot && pivot <= hi) {
+            return Ok(MidPivot::Outside);
+        }
+        Ok(MidPivot::Scale(Self { ramp: Ramp::Halved { ramp, pivot, hcl }, lo, hi, dates: false, pivot: Some(pivot) }))
+    }
+
+    /// Whether the scale runs over dates, in day numbers.
+    pub(crate) fn is_dated(&self) -> bool {
+        self.dates
+    }
+
     /// The color at `v`, printed the way d3 formats an `rgb()`. A one-value
     /// domain maps everything to the middle of the ramp.
     /// Whether the scale gives a mark a color: Vega's interpolator over a
@@ -148,7 +194,8 @@ impl ContinuousColor {
                     rgb_text(interpolate_rgb_piecewise(ramp, t))
                 }
             }
-            _ => self.fill_at(unit_position(v, self.lo, self.hi)),
+            _ if self.dates => self.fill_at(unit_position(v, self.lo, self.hi)),
+            _ => self.fill_at(sequential_position(v, self.lo, self.hi)),
         }
     }
 
@@ -189,16 +236,25 @@ impl ContinuousColor {
             // An authored `legend.values` replaces the ladder, each token read as
             // the number d3's scale coerces it to; a non-number is `NaN`, which
             // Vega labels `NaN` at the bar's origin.
-            Some(tokens) => tokens.iter().map(|t| crate::common::js_string_to_number(t).unwrap_or(f64::NAN)).collect(),
+            // The legend's data join keys its entries by value, so a repeat (`NaN` included) is one entry.
+            Some(tokens) => {
+                let mut values: Vec<f64> = Vec::new();
+                for v in tokens.iter().map(|t| crate::common::js_string_to_number(t).unwrap_or(f64::NAN)) {
+                    if !values.iter().any(|&seen| seen == v || (seen.is_nan() && v.is_nan())) {
+                        values.push(v);
+                    }
+                }
+                values
+            }
             None => gradient_labeled_values(d3rs::ticks::d3_ticks(self.lo, self.hi, count), self.lo, self.hi),
         };
-        let precision = d3rs::format::precision_fixed(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
+        let spec = crate::number_locale::vega_tick_spec(d3rs::ticks::d3_tick_step(self.lo, self.hi, count));
         let labels = values
             .iter()
             .map(|&v| match format {
                 _ if v.is_nan() => Ok("NaN".to_string()),
                 Some(format) => format.paint_tick(v),
-                None => crate::number_locale::d3_format(&format!(",.{precision}f"), v),
+                None => crate::number_locale::d3_format(&spec, v),
             })
             .collect::<Result<_, _>>()?;
         Ok((values, labels))
@@ -464,7 +520,19 @@ impl GradientAt {
         legend: &LegendConfig,
         color_format: Option<&FormatSlot>,
         color: &ContinuousColor,
+        unit: (f64, f64),
+    ) -> Result<Self, String> {
+        Self::with_ends(legend, color_format, color, unit, None)
+    }
+
+    /// [`Self::new`] with `ends`, the values the chart pins the legend to when `legend.values` authors
+    /// none (a choropleth labels its scale's ends).
+    pub(crate) fn with_ends(
+        legend: &LegendConfig,
+        color_format: Option<&FormatSlot>,
+        color: &ContinuousColor,
         (pw, ph): (f64, f64),
+        ends: Option<&[String]>,
     ) -> Result<Self, String> {
         let position = &legend.position;
         let length = if legend.direction == "vertical" {
@@ -472,7 +540,7 @@ impl GradientAt {
         } else {
             crate::families::legend::horizontal_gradient_length(&position.edge, position.overlay, pw)
         };
-        let (values, labels) = color.legend_ladder(length, color_format, legend.values.as_deref())?;
+        let (values, labels) = color.legend_ladder(length, color_format, legend.values.as_deref().or(ends))?;
         Ok(Self { length, values, labels, ticks: color.stop_ticks()? })
     }
 
@@ -524,11 +592,17 @@ const SYMBOL_LEGEND_TICKS: usize = 5;
 
 impl ContinuousColor {
     /// A symbol legend's entries over this scale: each tick's text and color.
-    pub(crate) fn symbol_ladder(&self) -> Result<Vec<(String, String)>, String> {
-        let precision = d3rs::format::precision_fixed(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
+    pub(crate) fn symbol_ladder(&self, format: Option<&FormatSlot>) -> Result<Vec<(String, String)>, String> {
+        let spec = crate::number_locale::vega_tick_spec(d3rs::ticks::d3_tick_step(self.lo, self.hi, SYMBOL_LEGEND_TICKS));
         d3rs::ticks::d3_ticks(self.lo, self.hi, SYMBOL_LEGEND_TICKS)
             .into_iter()
-            .map(|v| Ok((crate::number_locale::d3_format(&format!(",.{precision}f"), v)?, self.fill(v))))
+            .map(|v| {
+                let label = match format {
+                    Some(slot) => slot.paint(v)?,
+                    None => crate::number_locale::d3_format(&spec, v)?,
+                };
+                Ok((label, self.fill(v)))
+            })
             .collect()
     }
 }
@@ -547,6 +621,8 @@ pub(crate) struct NumericLegends<'a> {
 struct NumericPart<'a> {
     color: &'a ContinuousColor,
     gradient: bool,
+    /// How the query prints the color column.
+    format: Option<&'a FormatSlot>,
     title: String,
     id: String,
 }
@@ -555,24 +631,27 @@ struct NumericPart<'a> {
 pub(crate) struct LegendStack {
     pub(crate) offsets: Vec<(f64, f64)>,
     pub(crate) size: (f64, f64),
+    /// Whether a legend of the chart's own series leads the stack; a chart whose
+    /// color field is numeric has only the numeric legends.
+    base_block: bool,
 }
 
 impl<'a> NumericLegends<'a> {
-    /// `layers` yields each numeric layer's scale, whether it draws a gradient, and its color field.
+    /// `layers` yields each numeric color's scale, whether it draws a gradient, and its legend title.
     pub(crate) fn new(
-        layers: impl IntoIterator<Item = (&'a ContinuousColor, bool, &'a str)>,
+        layers: impl IntoIterator<Item = (&'a ContinuousColor, bool, String, Option<&'a FormatSlot>)>,
         cfg: &LegendConfig,
         id_stem: &str,
     ) -> Result<Self, String> {
         let parts = layers
             .into_iter()
             .enumerate()
-            .map(|(i, (color, gradient, field))| {
+            .map(|(i, (color, gradient, title, format))| {
                 Ok(NumericPart {
                     color,
                     gradient,
-                    // The implicit title of the layer's own encoding: the field as authored.
-                    title: if cfg.title.visible == Some(false) { String::new() } else { field.to_string() },
+                    format,
+                    title: if cfg.title.visible == Some(false) { String::new() } else { title },
                     id: format!("{id_stem}-{i}"),
                 })
             })
@@ -594,7 +673,7 @@ impl<'a> NumericLegends<'a> {
     ) -> Result<(f64, f64), String> {
         let part = &self.parts[index];
         if part.gradient {
-            GradientAt::measure(cfg, None, part.color, (&part.id, &part.title), fonts, unit)
+            GradientAt::measure(cfg, part.format, part.color, (&part.id, &part.title), fonts, unit)
         } else {
             let (legend, _) = part.symbol_legend(cfg, fonts)?;
             Ok((legend.box_w, legend.box_h()))
@@ -613,7 +692,7 @@ impl<'a> NumericLegends<'a> {
     ) -> Result<(), String> {
         let part = &self.parts[index];
         if part.gradient {
-            return GradientAt::paint(cfg, None, part.color, (&part.id, &part.title), fonts, unit, (svg, x, y));
+            return GradientAt::paint(cfg, part.format, part.color, (&part.id, &part.title), fonts, unit, (svg, x, y));
         }
         let (legend, ladder) = part.symbol_legend(cfg, fonts)?;
         let entries: Vec<_> = ladder
@@ -646,14 +725,15 @@ impl<'a> NumericLegends<'a> {
         fonts: &FontBook,
         unit: (f64, f64),
     ) -> Result<LegendStack, String> {
-        let mut blocks = vec![base];
+        let base_block = base != (0.0, 0.0);
+        let mut blocks = if base_block { vec![base] } else { Vec::new() };
         for index in 0..self.len() {
             blocks.push(self.measure_part(index, cfg, fonts, unit)?);
         }
         let along_x = matches!(cfg.position.edge.as_str(), "top" | "bottom");
         let (along, size) = crate::families::legend::stack_legends(&blocks, along_x);
         let offsets = along.into_iter().map(|o| if along_x { (o, 0.0) } else { (0.0, o) }).collect();
-        Ok(LegendStack { offsets, size })
+        Ok(LegendStack { offsets, size, base_block })
     }
 
     /// `base` stacked with these legends: its box grows to the stack's.
@@ -695,7 +775,7 @@ impl<'a> NumericLegends<'a> {
         unit: (f64, f64),
         (x, y): (f64, f64),
     ) -> Result<(), String> {
-        for (index, (dx, dy)) in stack.offsets.iter().skip(1).enumerate() {
+        for (index, (dx, dy)) in stack.offsets.iter().skip(usize::from(stack.base_block)).enumerate() {
             self.paint_part(index, svg, cfg, fonts, unit, (x + dx, y + dy))?;
         }
         Ok(())
@@ -708,7 +788,7 @@ impl NumericPart<'_> {
         cfg: &LegendConfig,
         fonts: &FontBook,
     ) -> Result<(crate::families::legend::VegaLegend, Vec<(String, String)>), String> {
-        let ladder = self.color.symbol_ladder()?;
+        let ladder = self.color.symbol_ladder(self.format)?;
         let entries: Vec<_> = ladder
             .iter()
             .map(|(label, fill)| crate::families::legend::LegendEntry {
@@ -771,7 +851,7 @@ fn ramp_gradient_def(id: &str, vertical: bool, color_at: impl Fn(f64) -> String)
 /// The gradient of a continuous `color` sampled at `ticks`; a one-value domain
 /// has none to sample, so its whole ramp runs across the bar.
 pub(crate) fn continuous_gradient_def(id: &str, color: &ContinuousColor, ticks: &[f64], vertical: bool) -> Node {
-    if color.lo == color.hi {
+    if color.lo == color.hi || color.lo.is_nan() || color.hi.is_nan() {
         ramp_gradient_def(id, vertical, |t| color.fill_at(t))
     } else {
         scale_gradient_def(id, (color.lo, color.hi), ticks, |v| color.fill(v), vertical)
@@ -905,7 +985,7 @@ mod tests {
     #[test]
     fn a_symbol_legend_lists_the_ticks_of_the_scale() {
         let color = ContinuousColor::blues(1.0, 4.0);
-        let ladder = color.symbol_ladder().unwrap();
+        let ladder = color.symbol_ladder(None).unwrap();
         let labels: Vec<&str> = ladder.iter().map(|(label, _)| label.as_str()).collect();
         assert_eq!(labels, ["1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0"]);
         assert_eq!(ladder[0].1, color.fill(1.0));
@@ -980,6 +1060,15 @@ mod tests {
             let (values, labels) = ladder(token).expect("a non-number reads as NaN");
             assert!(values[0].is_nan() && labels == ["NaN"], "{token}");
         }
+    }
+
+    /// Oracle: Vega's `viridis` over `[0, 100000]`. d3 multiplies by the domain's reciprocal, so
+    /// 75000 sits at 0.7500000000000001 and rounds the blue tie down where dividing rounds it up.
+    #[test]
+    fn a_sequential_scale_multiplies_by_the_reciprocal_of_its_domain() {
+        let scale = gradient(serde_json::json!("viridis"), serde_json::json!({"min": 0.0, "max": 100000.0}));
+        assert_eq!(scale.fill(75000.0), "rgb(93, 201, 98)");
+        assert_eq!(scale.fill(74999.99999999999), "rgb(93, 200, 99)");
     }
 
     fn fills(scale: &ContinuousColor, ws: &[f64]) -> Vec<String> {
@@ -1210,6 +1299,7 @@ mod tests {
 
     #[test]
     fn gradient_legend_markup_is_pinned() {
+        let _en = crate::time_locale::en_us_scope();
         assert_eq!(gradient_legend_markup(), include_str!("gradient_legends_golden.svg"));
     }
 }

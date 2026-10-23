@@ -17,6 +17,7 @@ calling the same function here with the same plan.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -86,17 +87,21 @@ def _fit_tables(
 ) -> tuple[tuple[tuple[float, float], ...], float]:
     """Fewest spans per column, and the table measure, that hold every table unwrapped.
 
-    A table cannot reflow and draws equal columns across whatever width it is
-    given, so it is unwrapped once its height stops shrinking. Candidates are
-    the whole-span groups of the run's grid, at the capped prose measure first
-    and at the group's full width only if no capped measure holds the tables;
-    a table wider than the slot keeps the whole slot and wraps.
+    A table sizes its columns to their content and wraps a cell only when the
+    width is below the table's natural width. Height is not monotone in width
+    below the narrowest column sizing, so a candidate narrower than the tables'
+    min-content width is never taken: it could tie the unwrapped height while
+    splitting a word. Candidates are the whole-span groups of the run's grid,
+    at the capped prose measure first and at the group's full width only if no
+    capped measure holds the tables; a table wider than the slot keeps the whole
+    slot and wraps.
     """
 
     def height(table: Table, width: float) -> float:
         return renderer.measure_blocks([table], width=width)[0].line_advances[0]
 
     unwrapped = [height(table, slot) for table in tables]
+    floor = renderer.min_content_width([*tables])
 
     def text_width(group: tuple[tuple[float, float], ...]) -> float:
         return min(box_width for _, box_width in group) - 2 * pad
@@ -107,7 +112,7 @@ def _fit_tables(
             width = text_width(group)
             if capped:
                 width = _measure(width, max_chars, char_px)
-            if all(
+            if width >= floor and all(
                 height(table, width) <= natural
                 for table, natural in zip(tables, unwrapped, strict=True)
             ):
@@ -385,7 +390,7 @@ def render_prose_svg(
             col_elements.append(
                 translate_group(px(dx), px(y - lift), rendered.elements)
             )
-            y += sum(m.line_advances[first : last + 1]) - lift
+            y += math.fsum(m.line_advances[first : last + 1]) - lift
         column_heights.append(y)
         if col_elements:
             column_parts.append(

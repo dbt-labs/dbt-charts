@@ -1152,7 +1152,7 @@ _RENDER_FIXTURES = {
     # which puts the category on VL's own y encoding — the mirror ghost reads
     # that literal VL y, not dbt charts' axis_y/measure convention, so a
     # default-orientation bar here would mirror `month` instead of `revenue`
-    # and gate_label_format would correctly refuse a percent format on it.
+    # and the engine's label-format gate would correctly refuse a percent format on it.
     "bar-mirrored-object": (
         "rows:\n"
         "  - title: Bar\n"
@@ -3361,8 +3361,8 @@ class TestSupportTableDesignProperty:
         assert "support_table" not in self._chart(board).properties
 
     def test_not_offered_unset_without_an_x_encoding(self) -> None:
-        # support_table_attachment.py requires an x-encoding to align strip
-        # columns to; a single-metric line may legally omit x.
+        # the engine's support-table strip requires an x-encoding to align
+        # its columns to; a single-metric line may legally omit x.
         board = "charts:\n  c:\n    type: line\n    query: q\n    y: revenue\n"
         assert "support_table" not in self._chart(board).properties
 

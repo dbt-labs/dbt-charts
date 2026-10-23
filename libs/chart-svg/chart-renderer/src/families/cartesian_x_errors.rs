@@ -313,7 +313,7 @@ pub(super) fn gate_label_format(
         return Ok(());
     }
     let default_remedy = if vl_type == VegaType::Temporal {
-        format!("This axis is temporal {DASH} d3's number grammar doesn't read over dates. Author a time spec here (e.g. \"%b %Y\").")
+        format!("This axis is temporal {DASH} d3's number grammar doesn't read over dates. Write a time spec: `format: \"%Y\"` for years, `\"%b %Y\"` for months.")
     } else {
         format!("axis_x addresses the dimension channel {DASH} author the number format on style.axis_y.labels.format, the measure axis.")
     };
@@ -473,8 +473,11 @@ pub fn check(resolved: &Value, rows: &[Row]) -> Result<(), Diagnostic> {
     if facts.chart_type == "heatmap" {
         return heatmap(&facts, field, rows);
     }
-    if facts.chart_type == "scatter" && infer_vega_type(rows, field) == VegaType::Quantitative {
-        return Ok(());
+    if facts.chart_type == "scatter" {
+        scatter_y(&facts, rows)?;
+        if infer_vega_type(rows, field) == VegaType::Quantitative {
+            return Ok(());
+        }
     }
     // Bar and the other cartesian emitters rewrite a labeled or year-shaped x
     // to ISO dates before anything below reads it.
@@ -577,6 +580,17 @@ fn gap_fill(facts: &Facts, field: &str, rows: &[Row], axis: &XAxis, resolution: 
 
 pub(super) const HEATMAP_FORMAT_REMEDY: &str = "Remove the format \u{2014} a heatmap has no measure axis. Both axes are grid dimensions and the value lives on the color channel, which carries no label format of its own.";
 
+/// A scatter's y format gate: a categorical y (a dot plot) has no measure ticks to format.
+fn scatter_y(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
+    let (Some(y), Some(axis_y)) = (facts.y.as_ref().and_then(Value::as_str), facts.style.axis_y.as_ref()) else {
+        return Ok(());
+    };
+    let y_type = infer_vega_type(rows, y);
+    let remedy = "A categorical y (dot plot) has no measure ticks to format \u{2014} the measure is axis_x here. Author the number format on style.axis_x.labels.format, or remove it.";
+    let categorical = matches!(y_type, VegaType::Nominal | VegaType::Ordinal);
+    gate_label_format(axis_y.labels.format.as_ref(), "axis_y.labels.format", y, y_type, rows, categorical.then_some(remedy))
+}
+
 /// A heatmap's x and y are grid dimensions: nominal bands that still run the
 /// authored-axis gates `build_cartesian_x_encoding` and the y gate apply.
 fn heatmap(facts: &Facts, field: &str, raw_rows: &[Row]) -> Result<(), Diagnostic> {
@@ -606,6 +620,25 @@ fn heatmap(facts: &Facts, field: &str, raw_rows: &[Row]) -> Result<(), Diagnosti
     if !multi_measure {
         for value in axis.labels.values.iter().flatten() {
             label_value_date(value)?;
+        }
+    }
+    if let (Some(y), Some(axis_y)) = (facts.y.as_ref().filter(|_| multi_measure), facts.style.axis_y.as_ref()) {
+        // A multi-measure heatmap draws no y axis of its own, so no label format can reach it.
+        if let Some(spec) = axis_y.labels.format.as_ref().map(|f| f.spec.as_str()) {
+            return Err(Diagnostic::new(
+                &codes::ERR_LABEL_FORMAT_AXIS_MISMATCH,
+                [
+                    ("field", json!(py_repr(y))),
+                    ("fmt", json!(spec)),
+                    (
+                        "remedy",
+                        json!(format!(
+                            "A multi-measure heatmap draws no y axis of its own \u{2014} each measure becomes a color-coded layer \u{2014} so no label format can reach it. {HEATMAP_FORMAT_REMEDY}"
+                        )),
+                    ),
+                    ("setting", json!("axis_y.labels.format")),
+                ],
+            ));
         }
     }
     if let (Some(y), Some(axis_y)) = (facts.y.as_ref().and_then(Value::as_str), facts.style.axis_y.as_ref()) {

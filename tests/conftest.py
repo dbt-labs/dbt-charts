@@ -246,6 +246,25 @@ def isolate_user_cache_dir(
 
 
 @pytest.fixture(autouse=True)
+def geometry_fetches() -> Iterator[list[str]]:
+    """Serve every non-bundled geo source from a stub and record the URLs asked for.
+
+    Bundled maps never reach the fetcher; a test that renders a map from a URL
+    gets an empty FeatureCollection instead of the network.
+    """
+    from dbt_charts.core.render.geo.loader import geometry_fetcher_scope
+
+    fetched: list[str] = []
+
+    def fetch(url: str) -> bytes:
+        fetched.append(url)
+        return b'{"type": "FeatureCollection", "features": []}'
+
+    with geometry_fetcher_scope(fetch):
+        yield fetched
+
+
+@pytest.fixture(autouse=True)
 def disable_usage_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Suppress CLI usage telemetry for every test, subprocesses included.
 

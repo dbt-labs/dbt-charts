@@ -130,18 +130,6 @@ def color_at(scale: CategoryColorScale, value: str, palette: Sequence[str]) -> s
     return palette[_slot_for(scale, value, palette)]
 
 
-def ink_at(scale: CategoryColorScale, value: str, palette: Sequence[str]) -> str:
-    """The INK ``value``'s companion carries: always the slot, never the override.
-
-    A parallel palette (dark companion, ghost, light) is indexed by slot only
-    — an author's literal fill (an override) has no companion of its own, and
-    its slot keeps its ink distinct from its neighbors' unless the palette is
-    full and the slot is shared. Endpoint labels read the ink baked for an override at resolve
-    time instead of calling this.
-    """
-    return palette[_slot_for(scale, value, palette)]
-
-
 def category_scale_for(
     category_colors: Sequence[CategoryColorScale], field: str
 ) -> CategoryColorScale | None:

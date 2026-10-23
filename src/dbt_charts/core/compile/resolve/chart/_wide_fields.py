@@ -45,7 +45,6 @@ WIDE_KEY_FIELD = "__dbt_charts_wide_key__"
 # measure name under this same key.
 WIDE_LABEL_FIELD = "__dbt_charts_wide_label__"
 # Synthetic sort-order field appended when stack != 'none'.
-WIDE_ORDER_FIELD = "__dbt_charts_wide_order__"
 WIDE_SERIES_SEPARATOR = " - "
 
 # The resolved chart types whose resolver folds an authored y: [a, b] list

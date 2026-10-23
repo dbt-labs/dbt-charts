@@ -1,0 +1,20 @@
+title: Single Map Board
+
+queries:
+  stores:
+    type: values
+    rows:
+      - {store: Boston, lat: 42.36, lng: -71.06}
+      - {store: Hartford, lat: 41.76, lng: -72.68}
+
+charts:
+  store_points:
+    type: point_map
+    query: stores
+    latitude: lat
+    longitude: lng
+    geo_source: us-states
+
+rows:
+  - cols:
+      - store_points

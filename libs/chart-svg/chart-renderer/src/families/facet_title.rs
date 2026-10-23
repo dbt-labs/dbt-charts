@@ -4,7 +4,7 @@
 //! composites of scatter and heatmap).
 
 use crate::common::{Font, TitleBlock, TitleStyle};
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::vega_fit;
 
 /// The resolved fields a title reads, borrowed off whichever chart owns them.

@@ -181,12 +181,13 @@ impl ClipGeometry for CircleClip {
 /// Takes a line and cuts into visible segments.
 pub struct CircleLine {
     circle: CircleClip,
-    point0: Option<[f64; 2]>, // previous point
-    c0: u8,                   // code for previous point
-    v0: bool,                 // visibility of previous point
-    v00: bool,                // visibility of first point
-    clean: u8,                // no intersections
-    error: Option<&'static str>, // d3 throws; the line records it
+    point0: Option<[f64; 2]>,
+    c0: u8,
+    v0: bool,
+    v00: bool,
+    clean: u8,
+    /// What d3 throws; the line records it.
+    error: Option<&'static str>,
 }
 
 impl ClipLine for CircleLine {

@@ -129,16 +129,17 @@ dependencies = [
  "libm",
  "md-5",
  "mdsvg",
+ "measure",
  "minijinja",
+ "print",
  "quick-xml",
  "regex",
  "resvg",
  "roxmltree",
- "rustybuzz",
+ "scene",
  "serde",
  "serde_json",
  "svg2pdf",
- "ttf-parser",
  "usvg",
 ]
 
@@ -222,6 +223,7 @@ version = "0.0.1"
 dependencies = [
  "chart-renderer",
  "display-text",
+ "measure",
  "pyo3",
  "serde",
  "serde_json",
@@ -498,11 +500,21 @@ version = "0.1.0"
 dependencies = [
  "d3rs",
  "once_cell",
+ "print",
  "regex",
  "roxmltree",
  "serde",
  "serde_json",
  "sha2",
+ "ttf-parser",
+]
+
+[[package]]
+name = "measure"
+version = "0.0.1"
+dependencies = [
+ "mdsvg",
+ "rustybuzz",
  "ttf-parser",
 ]
 
@@ -640,6 +652,14 @@ name = "portable-atomic"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
+name = "print"
+version = "0.0.1"
+dependencies = [
+ "quick-xml",
+ "scene",
+]
 
 [[package]]
 name = "proc-macro2"
@@ -837,6 +857,10 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "scene"
+version = "0.0.1"
 
 [[package]]
 name = "serde"

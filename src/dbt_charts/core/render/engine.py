@@ -33,7 +33,9 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedChart,
     ResolvedCustomChart,
+    ResolvedGeoshapeChart,
     ResolvedKpiChart,
+    ResolvedPointMapChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
@@ -65,10 +67,16 @@ from dbt_charts.core.render.chart.automatic_link import get_filter_variables_con
 from dbt_charts.core.render.chart.axis_label_collision import (
     AxisLabelCollision,
     record_axis_label_collision,
+    reset_axis_label_collision,
 )
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     record_endpoint_label_gap_overflow,
+)
+from dbt_charts.core.render.chart.geometry_warnings import (
+    claim_placement,
+    record_geometry_warning,
+    reset_geometry_warnings,
 )
 from dbt_charts.core.render.chart.pie_total_overflow import (
     PieTotalOverflow,
@@ -79,6 +87,7 @@ from dbt_charts.core.render.chart.plot_width_floor_record import (
 )
 from dbt_charts.core.render.chart.series_label_truncation import (
     record_series_label_truncations,
+    reset_series_label_truncations,
 )
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
@@ -103,6 +112,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     record_x_domain_paint_order,
 )
 from dbt_charts.core.render.controls import controls_are_interactive
+from dbt_charts.core.render.geo.loader import GeoDocument, load_geometry
 from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
 from dbt_charts.core.render.svg_utils import css_color
 from dbt_charts.core.text.format_d3 import (
@@ -356,6 +366,22 @@ def check_table_link_colors(chart: ResolvedTableChart) -> None:
             css_color(column.font.color)
 
 
+def chart_geometries(chart: ResolvedChart) -> dict[str, GeoDocument] | None:
+    """The geo documents a chart draws from, keyed by the source URL the engine
+    looks them up by; `None` for a chart that draws no map.
+
+    Raises:
+        ChartDataError: ERR-GEO-SOURCE-UNAVAILABLE when a source cannot be loaded.
+    """
+    if isinstance(chart, ResolvedGeoshapeChart):
+        url = chart.geo_url
+    elif isinstance(chart, ResolvedPointMapChart) and chart.basemap_geo_url:
+        url = chart.basemap_geo_url
+    else:
+        return None
+    return {url: load_geometry(url)}
+
+
 def build_chart_payload(
     chart: ResolvedChart,
     datasets: dict[str | None, Rows],
@@ -368,13 +394,16 @@ def build_chart_payload(
     variables: VariableValues,
     title_shift: TitleShift,
     is_placeholder: bool,
+    measuring: bool = False,
+    authored_height: float | None = None,
 ) -> JsonDict:
     """The engine payload for one chart.
 
     `datasets` is `layout_sizing.build_chart_datasets`'s full result, forwarded
     unreshaped: `rows` is `datasets[chart.query_name]` and a layer with its own
     `query_name` reads its rows from the map. `variables` are the board's
-    variable values (a table reads `{chart_id}_page`).
+    variable values (a table reads `{chart_id}_page`). `measuring` marks a sizing
+    probe; `authored_height` is the literal slot height an ancestor authored.
     """
     link_context = get_link_context()
     resolved = chart.model_dump(mode="json")
@@ -413,6 +442,7 @@ def build_chart_payload(
         "resolved": resolved,
         "rows": datasets[chart.query_name],
         "datasets": datasets,
+        "geometries": chart_geometries(chart),
         "column_types": {
             "rows": column_types(datasets[chart.query_name]),
             "datasets": {name: column_types(rows) for name, rows in datasets.items()},
@@ -435,6 +465,8 @@ def build_chart_payload(
             active_language(),
         ),
         "is_placeholder": is_placeholder,
+        "measuring": measuring,
+        "authored_height": authored_height,
         # A custom chart's template draws on the board's one output budget:
         # the engine gets what is left, and the render charges what it emits.
         "max_template_output_bytes": (
@@ -521,7 +553,31 @@ def _endpoint_rail_degraded(
     )
 
 
+_RAIL_WARNINGS = frozenset(
+    {
+        "WARN-ENDPOINT-LABEL-GAP-OVERFLOW",
+        "WARN-ENDPOINT-LABEL-RAIL-OVERFLOW",
+        "WARN-ENDPOINT-LABEL-RAIL-TIED",
+    }
+)
+
+_GEOMETRY_WARNINGS = (
+    "WARN-BAR-BAND-WIDTH-TOO-NARROW",
+    "WARN-BAR-GROUPED-SERIES-COINCIDE",
+    "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
+    "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+    "WARN-VALUE-LABELS-CROWD-WIDTH",
+)
+
+_PLACEMENT_WARNINGS = frozenset(
+    {*_GEOMETRY_WARNINGS, "WARN-AXIS-LABEL-COLLISION", "WARN-SERIES-LABEL-TRUNCATED"}
+)
+
 _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
+    **{
+        code: lambda p, code=code: record_geometry_warning(code, p)
+        for code in _GEOMETRY_WARNINGS
+    },
     "WARN-AXIS-LABEL-COLLISION": lambda p: record_axis_label_collision(
         p["chart_id"],
         AxisLabelCollision(field=p["field"], label_count=p["label_count"]),
@@ -638,14 +694,23 @@ def render_native(
     title_shift: TitleShift = NO_TITLE_SHIFT,
     is_placeholder: bool = False,
     record_warnings: bool = True,
+    datasets: dict[str | None, Rows] | None = None,
+    measuring: bool = False,
+    authored_height: float | None = None,
 ) -> tuple[str, float | None]:
     """Render one chart in the engine; return `(svg, natural_height)`.
 
+    `datasets` carries a layered chart's per-layer queries (default: `data`
+    alone). A `measuring` render is a sizing probe: its `natural_height` is the
+    box the layout sizes the slot from.
+
     `variables` and `board_width` default to the board's current values
-    (`board_variables`); outside a board scope there are none. A sizing probe
-    passes `record_warnings=False`: its render is never shown, so its warnings
-    are not the board's. Raises `ChartDataError` for any engine error,
-    including an `ERR-ENGINE-REFUSED` gap.
+    (`board_variables`); outside a board scope there are none. Warnings are
+    recorded into the open sinks. Placement warnings (geometry, axis collision,
+    series labels) come only from painted renders, never a `measuring` probe, and a
+    chart placed more than once keeps the narrowest painted placement's set. A caller whose
+    render is never shown (a table's height estimate) passes `record_warnings=False`.
+    Raises `ChartDataError` for any engine error, including an `ERR-ENGINE-REFUSED` gap.
     """
     if variables is None:
         scoped = current_board_variables()
@@ -654,7 +719,7 @@ def render_native(
         board_width = current_root_board_width()
     payload = build_chart_payload(
         chart,
-        {chart.query_name: data},
+        {chart.query_name: data} if datasets is None else datasets,
         width=width,
         height=height,
         padding=padding,
@@ -663,6 +728,8 @@ def render_native(
         variables=variables,
         title_shift=title_shift,
         is_placeholder=is_placeholder,
+        measuring=measuring,
+        authored_height=authored_height,
     )
     authored = (
         {"title": chart.title, "message": chart.message}
@@ -670,7 +737,7 @@ def render_native(
         else None
     )
     svg, natural_height = _render_payload(
-        payload, authored, record_warnings=record_warnings
+        payload, authored, record_warnings=record_warnings, measuring=measuring
     )
     if isinstance(chart, ResolvedCustomChart):
         # The engine refused the template's own output past the budget; the
@@ -689,6 +756,7 @@ def _render_payload(
     authored: dict[str, str | None] | None = None,
     *,
     record_warnings: bool = True,
+    measuring: bool = False,
 ) -> tuple[str, float | None]:
     """Render `payload`; `authored` maps a callout field to its text as written,
     which a truncation warning reports in place of the resolved image URLs."""
@@ -696,10 +764,28 @@ def _render_payload(
         svg, warnings, natural_height = _engine.render_chart(dumps_payload(payload))
     except _engine.RenderDiagnosticError as exc:
         raise _chart_data_error(exc) from exc
+    # Placement warnings come from painted renders only, at the chart's narrowest
+    # placement; a sizing probe's geometry was never painted.
+    speaks_for_placement = False
+    if record_warnings:
+        chart_id = payload["resolved"]["id"]
+        speaks_for_placement = not measuring and claim_placement(
+            chart_id, payload["width"]
+        )
+        if speaks_for_placement:
+            reset_geometry_warnings(chart_id)
+            reset_axis_label_collision(chart_id)
+            reset_series_label_truncations(chart_id)
+        # The sink holds the most recent render's verdict: a render that fits clears an
+        # earlier cramped trial of the same chart.
+        if not any(w["code"] in _RAIL_WARNINGS for w in warnings):
+            record_endpoint_label_gap_overflow(chart_id, None)
     for warning in warnings:
         if warning["code"] not in _WARNING_SINKS:
             raise ValueError(f"engine emitted unmapped warning {warning['code']}")
         if not record_warnings:
+            continue
+        if warning["code"] in _PLACEMENT_WARNINGS and not speaks_for_placement:
             continue
         params = warning["params"]
         if authored is not None and "authored_field" in params:

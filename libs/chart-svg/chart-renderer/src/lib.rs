@@ -12,16 +12,14 @@ pub mod contract;
 pub mod diagnostic;
 pub mod embed_fonts;
 pub mod families;
+pub mod layout;
 pub mod font_normalize;
 pub mod frame;
 pub mod href;
 pub mod js_date;
 pub mod label_template;
-pub mod measure;
 pub mod labels_expr;
-pub mod node;
 pub mod number_locale;
-pub mod print;
 pub mod prose;
 pub mod sizing;
 pub mod step_band;
@@ -38,6 +36,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use diagnostic::{Diagnostic, RenderOutput};
+use scene::{Attrs, Chars, Escape, Node, TextBlock};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -230,18 +229,10 @@ pub struct PlaceholderFont {
 }
 
 impl PlaceholderStyle {
-    /// `placeholder.py::add_placeholder_overlay`: a `width` x `height` wash and
-    /// the overlay text centered on it, in `family`, cased by `case`.
-    pub fn overlay(
-        &self,
-        xml: &mut xml::Xml,
-        width: f64,
-        height: f64,
-        family: &str,
-        case: Option<&str>,
-    ) -> Result<(), Diagnostic> {
+    /// `placeholder.py::add_placeholder_overlay`'s text cased by `case`, and its
+    /// font weight as printed.
+    pub fn overlay_label(&self, case: Option<&str>) -> Result<(String, String), Diagnostic> {
         use crate::svg::py_float_str;
-        use crate::xml::Attrs;
         let overlay = &self.overlay;
         let text = match case {
             Some(case) if case != "none" => display_text::case::apply_case(&overlay.text, case)?,
@@ -254,32 +245,49 @@ impl PlaceholderStyle {
             Value::Number(n) => py_float_str(n.as_f64().ok_or("placeholder font weight is not a number")?),
             other => return Err(format!("placeholder font weight {other} is neither a keyword nor a number").into()),
         };
-        xml.open("g", Attrs::new().set("class", "placeholder-overlay"));
-        xml.empty(
-            "rect",
+        Ok((text, weight))
+    }
+
+    /// The overlay as nodes: a `width` x `height` wash and the label centered on it.
+    pub fn overlay_node(&self, width: f64, height: f64, family: &str, text: String, weight: String) -> Node {
+        use crate::svg::py_float_str;
+        let overlay = &self.overlay;
+        let wash = Node::Rect(
             Attrs::new()
-                .set("class", "dbt-pointer-inert")
-                .set("x", "0")
-                .set("y", "0")
-                .set("width", py_float_str(width))
-                .set("height", py_float_str(height))
-                .set("fill", &overlay.background),
+                .quick("class", "dbt-pointer-inert")
+                .quick("x", "0")
+                .quick("y", "0")
+                .quick("width", py_float_str(width))
+                .quick("height", py_float_str(height))
+                .quick("fill", overlay.background.as_str()),
         );
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("class", "dbt-pointer-inert")
-                .set("x", py_float_str(width / 2.0))
-                .set("y", py_float_str(height / 2.0))
-                .set("text-anchor", "middle")
-                .set("dominant-baseline", "middle")
-                .set("font-family", family)
-                .set("font-size", py_float_str(overlay.font.size))
-                .set("font-weight", weight)
-                .set("fill", &overlay.font.color),
-            &text,
-        );
-        xml.close("g");
+        let label = Node::Text(TextBlock {
+            attrs: Attrs::new()
+                .quick("class", "dbt-pointer-inert")
+                .quick("x", py_float_str(width / 2.0))
+                .quick("y", py_float_str(height / 2.0))
+                .quick("text-anchor", "middle")
+                .quick("dominant-baseline", "middle")
+                .quick("font-family", family)
+                .quick("font-size", py_float_str(overlay.font.size))
+                .quick("font-weight", weight)
+                .quick("fill", overlay.font.color.as_str()),
+            text: Chars::new(text, Escape::Quick),
+        });
+        Node::group(Attrs::new().quick("class", "placeholder-overlay"), vec![wash, label])
+    }
+
+    /// The overlay printed into `xml`, for the families that still write through it.
+    pub fn overlay(
+        &self,
+        xml: &mut xml::Xml,
+        width: f64,
+        height: f64,
+        family: &str,
+        case: Option<&str>,
+    ) -> Result<(), Diagnostic> {
+        let (text, weight) = self.overlay_label(case)?;
+        xml.raw(&print::print(&[self.overlay_node(width, height, family, text, weight)]));
         Ok(())
     }
 }
@@ -389,6 +397,11 @@ pub struct Payload {
     /// layer authors a differing `query_name`.
     #[serde(default)]
     pub datasets: Option<HashMap<String, Vec<serde_json::Map<String, Value>>>>,
+    /// Every geo source a map chart draws, as the parsed TopoJSON or GeoJSON
+    /// document, keyed by the chart's `geo_url`. The engine does no I/O: the
+    /// host loads the documents. Absent on a payload with no map.
+    #[serde(default)]
+    pub geometries: Option<HashMap<String, Value>>,
     /// Set by `sizing::render_first_vega_height`'s own probe render —
     /// production's ONE "static estimate, before any layout decision"
     /// measurement call (`layout_sizing.py`'s `item.height == 0` branch) —
@@ -411,7 +424,7 @@ pub struct Payload {
     /// flag is the one signal this port has for "this render gets a fresh
     /// probe-and-shrink pass" without threading production's own render
     /// cache. `#[serde(default)]` because every payload the Python harness
-    /// sends (`board_sweep.py`, `golden_sweep.py`) predates this field and
+    /// sends (`board_sweep.py`, the retired per-chart sweep) predates this field and
     /// never sets it — `false` is the correct read of an absent key, not a
     /// silent guess.
     #[serde(default)]
@@ -443,7 +456,7 @@ pub struct Payload {
 impl Payload {
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, measuring, title_shift, is_placeholder, authored_height, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, authored_height, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -459,6 +472,7 @@ impl Payload {
             interactive_controls: *interactive_controls,
             link_context: link_context.clone(),
             datasets: datasets.clone(),
+            geometries: geometries.clone(),
             measuring: *measuring,
             title_shift: title_shift.clone(),
             is_placeholder: *is_placeholder,
@@ -550,7 +564,7 @@ impl<'de> Deserialize<'de> for Payload {
     }
 }
 
-pub fn render(payload: &Payload, fonts: &text::FontBook) -> Result<String, Diagnostic> {
+pub fn render(payload: &Payload, fonts: &measure::FontBook) -> Result<String, Diagnostic> {
     render_sized(payload, fonts).map(|(svg, _)| svg)
 }
 
@@ -563,7 +577,7 @@ pub fn render(payload: &Payload, fonts: &text::FontBook) -> Result<String, Diagn
 /// no such default: a date name formatted outside any scope refuses.
 pub fn render_sized(
     payload: &Payload,
-    fonts: &text::FontBook,
+    fonts: &measure::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
     in_payload_scope(payload, || render_in_scope(payload, fonts))
 }
@@ -580,7 +594,7 @@ fn in_payload_scope<T>(payload: &Payload, draw: impl FnOnce() -> T) -> T {
 
 fn render_in_scope(
     payload: &Payload,
-    fonts: &text::FontBook,
+    fonts: &measure::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
     let draw = || {
         render_family(payload, fonts)
@@ -599,9 +613,23 @@ fn render_in_scope(
     }
 }
 
+/// A cartesian chart with a position channel unset (a chart authored with no `x`
+/// or no `y`) has nothing to plot: it draws its empty frame, as a chart over no
+/// rows does.
+fn unplotted(resolved: &Value, chart_type: &str) -> bool {
+    let unset = |field: &str| resolved.get(field).is_none_or(Value::is_null);
+    let wide = resolved.get("wide_measures").and_then(Value::as_array).is_some_and(|m| !m.is_empty());
+    match chart_type {
+        "bar" | "line" | "area" | "scatter" => unset("x") || (unset("y") && !wide),
+        "heatmap" => unset("x") || unset("y"),
+        "histogram" => unset("x"),
+        _ => false,
+    }
+}
+
 fn render_family(
     payload: &Payload,
-    fonts: &text::FontBook,
+    fonts: &measure::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
     let chart_type = payload
         .resolved
@@ -623,7 +651,10 @@ fn render_family(
     }
     let every_dataset_empty = payload.rows.is_empty()
         && payload.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty));
-    if every_dataset_empty && chart_type != "callout" {
+    // A map with no rows is a base map, not an empty chart: `geoshape` decides it.
+    if (every_dataset_empty || unplotted(&payload.resolved, chart_type))
+        && !matches!(chart_type, "callout" | "geoshape")
+    {
         // The empty chart still raises what production raises of its resolved model.
         if matches!(chart_type, "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram") {
             families::cartesian_errors::check(payload, chart_type)?;
@@ -633,7 +664,7 @@ fn render_family(
     families::cartesian_errors::check(payload, chart_type)?;
     // A Vega-family root is `class="marks"`, the host of the hover markers.
     if chart_type == "callout" {
-        let (svg, natural_height) = families::callout::render(payload, fonts)?;
+        let (svg, natural_height) = families::callout::render_sized(payload)?;
         return Ok((svg, Some(natural_height)));
     }
     let svg = match chart_type {
@@ -646,7 +677,8 @@ fn render_family(
         "area" => families::area::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "scatter" => families::scatter::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "heatmap" => families::heatmap::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
-        "geoshape" => families::geoshape::render(payload, fonts)?,
+        "geoshape" => families::geo::geoshape::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
+        "point_map" => families::geo::point_map::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "histogram" => families::histogram::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "kpi" => families::kpi::render(payload, fonts)?,
         "table" => families::table::render(payload, fonts)?,
@@ -664,7 +696,7 @@ fn is_table(payload: &Payload) -> bool {
 /// A table's height with nothing bounding it: the one measure core sizes a
 /// table slot from (`measure_table_height`). Warnings of the probe render are
 /// dropped.
-pub fn table_natural_height(payload: &Payload, fonts: &text::FontBook) -> Result<f64, Diagnostic> {
+pub fn table_natural_height(payload: &Payload, fonts: &measure::FontBook) -> Result<f64, Diagnostic> {
     let mut probe = payload.clone();
     probe.height = 0.0;
     let svg = diagnostic::collect(|| render(&probe, fonts)).0?;
@@ -673,7 +705,10 @@ pub fn table_natural_height(payload: &Payload, fonts: &text::FontBook) -> Result
 
 /// `render_fitted`, plus a table's natural height for the callers that read
 /// it (the binding and the CLI); the board composer renders without it.
-pub fn render_measured(payload: &Payload, fonts: &text::FontBook) -> Result<RenderOutput, Diagnostic> {
+pub fn render_measured(payload: &Payload, fonts: &measure::FontBook) -> Result<RenderOutput, Diagnostic> {
+    if payload.measuring && !is_table(payload) {
+        return render_probe(payload, fonts);
+    }
     let mut output = render_fitted(payload, fonts)?;
     if is_table(payload) {
         output.natural_height = Some(if payload.height > 0.0 {
@@ -685,7 +720,18 @@ pub fn render_measured(payload: &Payload, fonts: &text::FontBook) -> Result<Rend
     Ok(output)
 }
 
-pub fn render_output(payload: &Payload, fonts: &text::FontBook) -> Result<RenderOutput, Diagnostic> {
+/// A sizing probe's render: the box a layout sizes a slot from. Width-corrected
+/// like the render at the settled slot, but not height-corrected: that
+/// correction belongs to the render at the slot the box decides, and applying it
+/// here would size the slot off the shrunk height. `natural_height` is the box.
+fn render_probe(payload: &Payload, fonts: &measure::FontBook) -> Result<RenderOutput, Diagnostic> {
+    let (fitted, warnings) = diagnostic::collect(|| render_width_fitted(payload, fonts));
+    let (svg, _) = fitted?;
+    let natural_height = Some(board::extract_svg_height(&svg)?);
+    Ok(RenderOutput { svg, warnings, natural_height })
+}
+
+pub fn render_output(payload: &Payload, fonts: &measure::FontBook) -> Result<RenderOutput, Diagnostic> {
     let (sized, warnings) = diagnostic::collect(|| render_sized(payload, fonts));
     let (svg, natural_height) = sized?;
     Ok(RenderOutput { svg, warnings, natural_height })
@@ -726,7 +772,7 @@ pub(crate) fn is_support_table_arm(payload: &Payload) -> Result<bool, String> {
 
 fn render_width_fitted(
     payload: &Payload,
-    fonts: &text::FontBook,
+    fonts: &measure::FontBook,
 ) -> Result<(String, Option<Payload>), Diagnostic> {
     // The first render wears the resolve production measured its overhead from;
     // the payload's own is the shrunk width's, which the second render wears.
@@ -785,7 +831,7 @@ fn render_width_fitted(
 /// at the already-decided slot height — never during the box-sizing pass
 /// itself. Applying it here too would size the box off the CORRECTED
 /// (shrunk) height where production sizes it off the uncorrected one.
-pub fn render_fitted(payload: &Payload, fonts: &text::FontBook) -> Result<RenderOutput, Diagnostic> {
+pub fn render_fitted(payload: &Payload, fonts: &measure::FontBook) -> Result<RenderOutput, Diagnostic> {
     render_fitted_natural(payload, payload, fonts)
 }
 
@@ -798,7 +844,7 @@ pub fn render_fitted(payload: &Payload, fonts: &text::FontBook) -> Result<Render
 pub fn render_fitted_natural(
     natural: &Payload,
     slot: &Payload,
-    fonts: &text::FontBook,
+    fonts: &measure::FontBook,
 ) -> Result<RenderOutput, Diagnostic> {
     if !is_support_table_arm(slot)? {
         // The cached sizing render stays while the box holds its height. A
@@ -843,7 +889,7 @@ pub fn render_fitted_natural(
 fn render_fitted_with_payload<'a>(
     natural: &'a Payload,
     slot: &'a Payload,
-    fonts: &text::FontBook,
+    fonts: &measure::FontBook,
 ) -> Result<(String, Cow<'a, Payload>, &'a Payload), Diagnostic> {
     let (svg, width_corrected_payload) = render_width_fitted(natural, fonts)?;
     if !is_support_table_arm(natural)? {
@@ -888,11 +934,11 @@ fn render_fitted_with_payload<'a>(
 /// A support_table chart on line's legacy splice refuses: the splice
 /// composes its strip after the negotiation, so no rect is known to
 /// describe the written SVG.
-pub fn render_layout(payload: &Payload, fonts: &text::FontBook) -> Result<Value, Diagnostic> {
+pub fn render_layout(payload: &Payload, fonts: &measure::FontBook) -> Result<Value, Diagnostic> {
     in_payload_scope(payload, || layout_in_scope(payload, fonts))
 }
 
-fn layout_in_scope(payload: &Payload, fonts: &text::FontBook) -> Result<Value, Diagnostic> {
+fn layout_in_scope(payload: &Payload, fonts: &measure::FontBook) -> Result<Value, Diagnostic> {
     let (_, fitted, _) = render_fitted_with_payload(payload, payload, fonts)?;
     let chart_type = fitted
         .resolved

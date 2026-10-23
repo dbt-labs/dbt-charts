@@ -26,13 +26,9 @@ by quarter as a horizontal bar" is routine.
 
 from __future__ import annotations
 
-import datetime as dt
-import json
-import re
 from typing import Any
 
 import pytest
-import vl_convert as vlc
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -80,15 +76,6 @@ def _render(chart: Chart, data: list[dict[str, Any]]) -> dict[str, Any]:
     ).payload
 
 
-def _svg(chart: Chart, data: list[dict[str, Any]]) -> str:
-    return vlc.vegalite_to_svg(json.dumps(_render(chart, data)))
-
-
-def _tick_labels(chart: Chart, data: list[dict[str, Any]]) -> list[str]:
-    """Every axis tick Vega actually painted, both axes."""
-    return re.findall(r"<text[^>]*>([^<]*)</text>", _svg(chart, data))
-
-
 class TestNumberFormatOnCategoryAxisRaises:
     def test_horizontal_bar_axis_x_currency_names_the_measure_axis(self) -> None:
         """The reported case: the currency belongs on axis_y, and the error
@@ -130,7 +117,7 @@ class TestNumberFormatOnCategoryAxisRaises:
         assert "style.axis_y.labels.format" in str(exc.value)
 
     def test_line_axis_x_currency_raises(self) -> None:
-        """build_cartesian_x_encoding is the shared path — pinned on a second
+        """the engine's x-axis builder is the shared path — pinned on a second
         family so bar's own emitter isn't the only thing holding the gate."""
         chart = LineChart(
             id="line",
@@ -179,7 +166,7 @@ class TestNumberFormatOnCategoryAxisRaises:
         self, y: str | list[str]
     ) -> None:
         """Both heatmap shapes, because they reach the gate by different routes:
-        a single measure through build_cartesian_x_encoding's mark_type branch,
+        a single measure through the engine's x-axis builder's mark_type branch,
         a list-y through the emitter's own call. Only the second draws no x axis
         dict at all — the band still paints category labels either way.
 
@@ -420,35 +407,6 @@ class TestNumberFormatOnCategoryYAxisRaises:
         assert "axis_y" in message
         assert "color" in message
 
-    def test_histogram_mirror_format_does_not_crash(self) -> None:
-        """A histogram emits a ``{aggregate: "count"}`` y with NO ``field``
-        key, so the mirror gate must read the encoding rather than index it.
-        The axis is quantitative — the rule has no opinion here — but eager
-        argument evaluation would raise ``KeyError`` before the gate could
-        no-op, and a KeyError escapes as bug-class rather than rendering the
-        per-chart callout."""
-        chart = BarChart(
-            id="histogram-mirror",
-            type="histogram",
-            x="v",
-            style=BarChartStylePatch(
-                axis_y=AxisYStylePatch(mirror={"format": "currency"})
-            ),
-        )
-        data = [{"v": float(i)} for i in range(12)]
-        spec = _render(chart, data)
-        # The mirror feature really ran — a ghost axis exists on the opposite
-        # edge and carries the authored format. Without this the test would
-        # still pass if a change stopped mirroring histograms at all.
-        ghosts = [
-            layer["encoding"]["y"]["axis"]
-            for layer in spec.get("layer", [])
-            if isinstance(layer.get("encoding", {}).get("y", {}).get("axis"), dict)
-            and layer["encoding"]["y"]["axis"].get("orient") == "right"
-        ]
-        assert ghosts, f"no mirrored ghost axis emitted; got {spec.get('layer')}"
-        assert ghosts[0].get("format") == "$.3~s"
-
     def test_line_axis_x_currency_on_temporal_raises(self) -> None:
         """A number spec on a temporal x used to paint the literal text
         across the axis, deliberately carved out of the old gate. Temporal
@@ -472,89 +430,6 @@ class TestNumberFormatOnCategoryYAxisRaises:
 
 
 class TestLegalFormatsAreUntouched:
-    def test_horizontal_bar_axis_y_currency_is_the_working_authoring(self) -> None:
-        """The fix the error points at has to actually render the currency on
-        the measure axis, with no NaN anywhere."""
-        chart = BarChart(
-            id="hbar-ok",
-            type="bar",
-            x="stage",
-            y="revenue",
-            style=BarChartStylePatch(
-                orientation="horizontal",
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="currency")),
-            ),
-        )
-        spec = _render(chart, _STAGES)
-        assert spec["encoding"]["x"]["axis"]["format"] == "$.3~s"
-        assert "NaN" not in vlc.vegalite_to_svg(json.dumps(spec))
-
-    def test_numeric_categories_still_format(self) -> None:
-        """A numeric dimension formats cleanly, so there is nothing to raise
-        about — this is the half of the defect the gate cannot see."""
-        data = [
-            {"stage_id": i, "revenue": row["revenue"]}
-            for i, row in enumerate(_STAGES, 1)
-        ]
-        chart = BarChart(
-            id="numcat",
-            type="bar",
-            x="stage_id",
-            y="revenue",
-            style=BarChartStylePatch(
-                orientation="horizontal", axis_x=_x_format("currency_whole")
-            ),
-        )
-        # Read the painted ticks, not just the absence of NaN: bare 1/2/3 would
-        # pass an absence check while the format was silently dropped.
-        assert {"$1", "$2", "$3"} <= set(_tick_labels(chart, data))
-
-    def test_numeric_strings_still_format(self) -> None:
-        """A numeric-string column is nominal by the repo's own type rule, but
-        d3 coerces it — so it formats rather than NaNs, and must not raise."""
-        data: list[dict[str, Any]] = [
-            {"code": s, "revenue": 5.0} for s in ("100", "200", "300")
-        ]
-        chart = BarChart(
-            id="numstr",
-            type="bar",
-            x="code",
-            y="revenue",
-            style=BarChartStylePatch(orientation="horizontal", axis_x=_x_format(".2f")),
-        )
-        assert {"100.00", "200.00", "300.00"} <= set(_tick_labels(chart, data))
-
-    def test_quantitative_x_number_format_unaffected(self) -> None:
-        """The vertical quantitative-x path shares the same gate call."""
-        data = [{"customers": i * 140.0, "arr": float(i)} for i in range(30)]
-        chart = LineChart(
-            id="quant",
-            type="line",
-            x="customers",
-            y="arr",
-            style=LineChartStylePatch(axis_x=_x_format("integer")),
-        )
-        spec = _render(chart, data)
-        assert spec["encoding"]["x"]["axis"]["format"] == ",.0f"
-
-    def test_temporal_x_time_format_unaffected(self) -> None:
-        """A time spec is a different grammar and never reaches the gate.
-
-        Reads the painted ticks rather than the absence of NaN — a silently
-        dropped format would pass an absence check.
-        """
-        data = [
-            {"month": f"2024-{m:02d}-01", "revenue": float(m)} for m in range(1, 13)
-        ]
-        chart = LineChart(
-            id="temporal",
-            type="line",
-            x="month",
-            y="revenue",
-            style=LineChartStylePatch(axis_x=_x_format("%b %Y")),
-        )
-        assert "Jan 2024" in _tick_labels(chart, data)
-
     @pytest.mark.parametrize("family", ["bar", "line"])
     def test_time_format_on_a_category_x_raises_not_invalid_date(
         self, family: str
@@ -598,90 +473,6 @@ class TestLegalFormatsAreUntouched:
         with pytest.raises(ChartDataError) as exc:
             _render(chart, data)
         assert exc.value.code is ERR_TIME_FORMAT_NOT_TEMPORAL
-
-    def test_heatmap_y_datetime_values_format_with_a_time_format(self) -> None:
-        """Real datetime cells are dates; the gate must not call them non-dates."""
-        data = [
-            {"team": t, "month": dt.datetime(2024, m, 1), "n": float(m)}
-            for t in ("A", "B")
-            for m in (1, 2, 3)
-        ]
-        chart = HeatmapChart(
-            id="hm-dt",
-            type="heatmap",
-            x="team",
-            y="month",
-            style=HeatmapChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="%b %Y"))
-            ),
-        )
-        assert "Jan 2024" in _tick_labels(chart, data)
-
-    def test_scatter_categorical_y_datetime_values_format(self) -> None:
-        data = [
-            {"hours": float(m), "when": dt.datetime(2024, m, 1, tzinfo=dt.UTC)}
-            for m in (1, 2, 3)
-        ]
-        chart = ScatterChart(
-            id="sc-dt",
-            type="scatter",
-            x="hours",
-            y="when",
-            style=ScatterChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format="%b %Y"))
-            ),
-        )
-        assert "Jan 2024" in _tick_labels(chart, data)
-
-    def test_time_format_on_iso_date_buckets_still_formats(self) -> None:
-        """``2024-01`` bands are date-shaped, so the time pattern reads them."""
-        data = [{"month": f"2024-{m:02d}", "revenue": float(m)} for m in range(1, 5)]
-        chart = BarChart(
-            id="buckets",
-            type="bar",
-            x="month",
-            y="revenue",
-            style=BarChartStylePatch(axis_x=_x_format("%b %Y")),
-        )
-        assert "Jan 2024" in _tick_labels(chart, data)
-
-    def test_boolean_categories_still_format(self) -> None:
-        """d3 reads ``+true`` as 1 and paints 0/1, so a boolean dimension is a
-        working board — the gate must not borrow a numeric rule that excludes
-        bool and take it away."""
-        data: list[dict[str, Any]] = [
-            {"flag": True, "n": 10.0},
-            {"flag": False, "n": 4.0},
-        ]
-        chart = BarChart(
-            id="boolcat",
-            type="bar",
-            x="flag",
-            y="n",
-            style=BarChartStylePatch(
-                orientation="horizontal", axis_x=_x_format("integer")
-            ),
-        )
-        assert {"0", "1"} <= set(_tick_labels(chart, data))
-
-    def test_scatter_numeric_string_y_categories_still_format(self) -> None:
-        """A numeric-string y column infers nominal (Vega-Lite's own type
-        rule), but d3 coerces it — the same exemption axis_x already had,
-        now also on axis_y: the format takes effect instead of being popped
-        the way scatter.py used to pop every categorical y format."""
-        data = [
-            {"code": s, "hours": 1.0 + i} for i, s in enumerate(("100", "200", "300"))
-        ]
-        chart = ScatterChart(
-            id="scatter-numstr",
-            type="scatter",
-            x="hours",
-            y="code",
-            style=ScatterChartStylePatch(
-                axis_y=AxisYStylePatch(labels=AxisLabelStylePatch(format=".2f"))
-            ),
-        )
-        assert {"100.00", "200.00", "300.00"} <= set(_tick_labels(chart, data))
 
     def test_scatter_categorical_y_time_format_raises(self) -> None:
         chart = ScatterChart(

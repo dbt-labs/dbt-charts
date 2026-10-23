@@ -708,6 +708,45 @@ class TestHelperArguments:
         assert ">True</text>" in out.output
 
 
+class TestD3Namespace:
+    @staticmethod
+    def _render_template(tmp_path: Path, template: str) -> Any:
+        yaml_text = re.sub(
+            r"    x: from_stage\n    y: visitors\nrows:",
+            "rows:",
+            _board_yaml(),
+            flags=re.S,
+        )
+        return _render(_project(tmp_path, template), yaml_text)
+
+    def test_scales_and_paths_reach_the_template(self, tmp_path: Path) -> None:
+        out = self._render_template(
+            tmp_path,
+            "{% set x = d3.scale_linear([0, 97], [0, 100]).nice() %}"
+            '<path id="p" d="{{ d3.line([[0, 0], [x(100), 10]]) }}"/>'
+            "<text>{{ x.domain }} {{ x.ticks(2) }}</text>",
+        )
+        assert out.chart_errors == []
+        assert 'd="M0,0L100,10"' in out.output
+        assert "[0.0, 100.0] [0.0, 50.0, 100.0]" in out.output
+
+    @pytest.mark.parametrize(
+        ("call", "named"),
+        [
+            ("d3.scale_linear([1, 1], [0, 1])", "d3.scale_linear()"),
+            ('d3.scale_band(["a"], [0, 1])("b")', "d3.scale_band()"),
+            ('d3.line([[0, 0]], "bumpy")', "d3.line()"),
+            ("d3.pie([1, -1])", "d3.pie()"),
+        ],
+    )
+    def test_a_bad_call_is_err_custom_render_naming_it(
+        self, tmp_path: Path, call: str, named: str
+    ) -> None:
+        out = self._render_template(tmp_path, "{{ " + call + " }}")
+        assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
+        assert named in out.chart_errors[0].message
+
+
 class TestStyleTreeWeights:
     def test_weight_tokens_reach_the_template_as_integers(self, tmp_path: Path) -> None:
         yaml_text = re.sub(
@@ -1072,3 +1111,84 @@ class TestReviewRegressions:
         assert chart_title_metrics(custom, 16, 300) == chart_title_metrics(
             bars, 16, 300
         )
+
+
+FORMATS_BOARD = """
+{header}
+queries:
+  flows:
+    type: values
+    rows:
+      - {{from_stage: visit, visitors: 1234567.5}}
+      - {{from_stage: signup, visitors: 0.25}}
+    formats:
+      visitors: currency
+charts:
+  flow:
+    type: custom
+    query: flows
+    template: flow
+    x: from_stage
+    y: visitors
+rows:
+  - flow
+"""
+
+FORMAT_BY_COLUMN = (
+    "{#---\ndescription: probe\nchannels:\n  x:\n    description: x\n"
+    "  y:\n    description: y\n---#}"
+    '{% for r in rows %}<text id="{{ r[channels.x] }}">'
+    "{{ r[channels.y] | format(column=channels.y) }}</text>{% endfor %}"
+)
+
+
+def _labels(tmp_path: Path, header: str = "") -> dict[str, str]:
+    project = _project(tmp_path, FORMAT_BY_COLUMN)
+    out = _render(project, FORMATS_BOARD.format(header=header))
+    assert out.chart_errors == []
+    return dict(re.findall(r'<text id="(\w+)"[^>]*>([^<]*)</text>', out.output))
+
+
+class TestQueryFormats:
+    def test_resolved_payload_carries_every_returned_column_format(
+        self, tmp_path: Path
+    ) -> None:
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.resolve import resolve
+        from dbt_charts.core.compile.resolve.style.board import (
+            resolve_style_and_context,
+        )
+
+        project = _project(tmp_path, FORMAT_BY_COLUMN)
+        board = _compile(project, FORMATS_BOARD.format(header="")).board
+        assert board is not None
+        _, context = resolve_style_and_context(get_theme_style())
+        rows = [{"from_stage": "visit", "visitors": 5}]
+        resolved = resolve(board.charts["flow"], rows, context, width=600)
+        formats = resolved.column_formats
+        assert set(formats) == {"from_stage", "visitors"}
+        assert formats["visitors"].raw == "currency"
+        assert formats["from_stage"].raw == "number"
+
+    def test_query_formats_change_the_label(self, tmp_path: Path) -> None:
+        assert _labels(tmp_path)["visit"].startswith("$")
+
+    def test_style_formats_redefinition_changes_the_label(self, tmp_path: Path) -> None:
+        header = 'style:\n  formats:\n    currency: "$,.0f"\n'
+        assert _labels(tmp_path, header)["visit"] == "$1,234,568"
+
+    def test_a_redefined_small_value_format_reaches_the_label(
+        self, tmp_path: Path
+    ) -> None:
+        header = 'style:\n  formats:\n    currency_full: "$,.3f"\n'
+        assert _labels(tmp_path, header)["signup"] == "$0.250"
+
+    def test_regional_currency_changes_the_label(self, tmp_path: Path) -> None:
+        header = "regional:\n  currency: EUR\n"
+        assert "€" in _labels(tmp_path, header)["visit"]
+
+    def test_an_unreturned_column_names_the_returned_ones(self, tmp_path: Path) -> None:
+        template = FORMAT_BY_COLUMN.replace("column=channels.y", "column='nope'")
+        out = _render(_project(tmp_path, template), FORMATS_BOARD.format(header=""))
+        message = out.chart_errors[0].message
+        assert "nope" in message and "'from_stage', 'visitors'" in message

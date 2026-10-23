@@ -1425,6 +1425,12 @@
 
         svg.addEventListener('mousemove', function (event) {
             const target = event.target;
+            /*{# The toolbar's buttons own their own popovers; the snap below #}*/
+            /*{# would otherwise hand the cursor to a mark within radius. #}*/
+            if (target && target.closest && target.closest('.dbt-chart-toolbar')) {
+                if (state.activeMark) hideTooltip(state);
+                return;
+            }
             const labeledTarget = target && target.closest
                 ? event.target.closest('[aria-label]')
                 : null;
@@ -1493,13 +1499,124 @@
         });
     }
 
+    /*{# ---------------------------------------------------------------- #}*/
+    /*{# Chart toolbar. One <g role="toolbar"> per chart at the top-right of #}*/
+    /*{# its inner box, so every host puts chart actions in the same corner. #}*/
+    /*{# A host fills it through registerChartButton, by slot: info (the #}*/
+    /*{# chart's notes; pinned when the chart carries data-chart-notes), #}*/
+    /*{# filter (pinned when filters apply to the chart), share (the host's). #}*/
+    /*{# A pinned button shows without hover; the rest show on chart hover or #}*/
+    /*{# keyboard focus. No registered buttons, no toolbar. Drawn in chart #}*/
+    /*{# user space, so it scales with the board and is never re-measured. #}*/
+    const CHART_TOOLBAR_SLOTS = ['info', 'filter', 'share'];
+    /*{# Glyph and hit target over the tooltip font size; the glyph sits flush #}*/
+    /*{# with the inner box's corner, as the title does with its left edge, and #}*/
+    /*{# the hit target overhangs it by the same margin on every side. #}*/
+    const TOOLBAR_BUTTON_FONT_RATIO = 1.6;
+    const TOOLBAR_ICON_FONT_RATIO = 0.9;
+    const TOOLBAR_GAP_FONT_RATIO = 1 / 3;
+    const chartButtons = {};
+
+    /*{# button: { id, label(chart) -> string, icon(size) -> <svg>, #}*/
+    /*{# pinned(chart) -> boolean (optional), onActivate(chart, buttonEl, event) }. #}*/
+    /*{# Registration after a board mounted adds the button to its toolbars, #}*/
+    /*{# so the order the runtime bundle and a host script load in is free. #}*/
+    function registerChartButton(button) {
+        if (CHART_TOOLBAR_SLOTS.indexOf(button.id) === -1) {
+            throw new Error('unknown chart toolbar slot "' + button.id + '"; slots: ' + CHART_TOOLBAR_SLOTS.join(', '));
+        }
+        if (chartButtons[button.id]) throw new Error('chart toolbar slot "' + button.id + '" is already registered');
+        chartButtons[button.id] = button;
+        document.querySelectorAll('svg[data-dbt-hover-initialized="true"]').forEach(mountToolbars);
+    }
+
+    function buildChartButton(chart, button, size, iconSize) {
+        const g = svgNode('g', {
+            class: 'dbt-chart-button', 'data-chart-button': button.id,
+            role: 'button', tabindex: '0', 'aria-label': button.label(chart),
+        });
+        g.appendChild(svgNode('rect', { width: size, height: size, rx: size / 6, fill: 'transparent' }));
+        const icon = button.icon(iconSize);
+        icon.setAttribute('x', (size - iconSize) / 2);
+        icon.setAttribute('y', (size - iconSize) / 2);
+        icon.setAttribute('width', iconSize);
+        icon.setAttribute('height', iconSize);
+        icon.setAttribute('aria-hidden', 'true');
+        g.appendChild(icon);
+        if (button.pinned && button.pinned(chart)) g.setAttribute('data-pinned', '');
+        /*{# The gesture stays here: a host's board click means selection. #}*/
+        const activate = function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            button.onActivate(chart, g, event);
+        };
+        g.addEventListener('click', activate);
+        g.addEventListener('keydown', function (event) {
+            if (event.repeat) return;
+            if (event.key === 'Enter' || event.key === ' ') activate(event);
+        });
+        return g;
+    }
+
+    function layoutToolbar(chart, toolbar, size, iconSize, gap) {
+        const inner = chart.querySelector('.dbt-box-inner');
+        const items = toolbar.querySelectorAll('[data-chart-button]');
+        items.forEach(function (item, i) { item.setAttribute('transform', 'translate(' + i * (size + gap) + ',0)'); });
+        const width = items.length * size + (items.length - 1) * gap;
+        const overhang = (size - iconSize) / 2;
+        const x = parseFloat(inner.getAttribute('x')) + parseFloat(inner.getAttribute('width')) - width + overhang;
+        const y = parseFloat(inner.getAttribute('y')) - overhang;
+        toolbar.setAttribute('transform', 'translate(' + x + ',' + y + ')');
+    }
+
+    /*{# Idempotent per chart and per slot: a re-mount over an unchanged board #}*/
+    /*{# adds nothing, a late registration adds only its own button. #}*/
+    function mountToolbars(svg) {
+        const slots = CHART_TOOLBAR_SLOTS.filter(function (id) { return chartButtons[id]; });
+        if (!slots.length || !svg.matches('[data-dbt-tooltip-style]')) return;
+        const ts = DCT_TOOLTIP_STYLE;
+        const size = ts.font.size * TOOLBAR_BUTTON_FONT_RATIO;
+        const iconSize = ts.font.size * TOOLBAR_ICON_FONT_RATIO;
+        svg.querySelectorAll('.dbt-chart').forEach(function (chart) {
+            let toolbar = chart.querySelector(':scope > .dbt-chart-toolbar');
+            if (!toolbar) {
+                toolbar = svgNode('g', { class: 'dbt-chart-toolbar', role: 'toolbar', 'aria-label': chart.getAttribute('data-chart-title') });
+                toolbar.style.setProperty('--dbt-toolbar-ink', ts.label.font.color);
+                toolbar.style.setProperty('--dbt-toolbar-bg', ts.background);
+                chart.appendChild(toolbar);
+            }
+            const present = function (id) { return toolbar.querySelector('[data-chart-button="' + id + '"]'); };
+            let changed = false;
+            slots.forEach(function (id, i) {
+                if (present(id)) return;
+                const next = slots.slice(i + 1).map(present).filter(Boolean)[0] || null;
+                toolbar.insertBefore(buildChartButton(chart, chartButtons[id], size, iconSize), next);
+                changed = true;
+            });
+            if (changed) layoutToolbar(chart, toolbar, size, iconSize, ts.font.size * TOOLBAR_GAP_FONT_RATIO);
+        });
+    }
+
     /*{# Hosts that swap boards in place hand the new one here (the controls #}*/
     /*{# runtime's mount() does); a page that loads once binds on ready. #}*/
+    /*{# A host that serializes a live board (an SVG download, a PNG copy) #}*/
+    /*{# takes picture(): a copy without the runtime's chrome, so the export #}*/
+    /*{# stays the picture the render produced. #}*/
     window.dbtChartHover = {
+        registerChartButton: registerChartButton,
+        picture: function (svg) {
+            const copy = svg.cloneNode(true);
+            copy.querySelectorAll('.dbt-chart-toolbar').forEach(function (el) { el.remove(); });
+            return copy;
+        },
         mount: function (root) {
             const scope = root || document;
-            if (scope.matches && scope.matches('svg')) initializeSvg(scope);
-            scope.querySelectorAll('svg').forEach(initializeSvg);
+            const boards = scope.matches && scope.matches('svg') ? [scope] : [];
+            scope.querySelectorAll('svg').forEach(function (svg) { boards.push(svg); });
+            boards.forEach(function (svg) {
+                initializeSvg(svg);
+                mountToolbars(svg);
+            });
         }
     };
 

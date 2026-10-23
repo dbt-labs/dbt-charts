@@ -8,7 +8,6 @@ is covered separately by the render-v2 emitter parity suite.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import re
 
@@ -16,7 +15,6 @@ import pytest
 import vl_convert as vlc
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-from dbt_charts.core.compile.models.chart.authored._annotations import ChartSort
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedAxisStyle
 from dbt_charts.core.compile.resolve.chart._axes import _bake_cartesian_axes
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -24,23 +22,6 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     build_resolved_axis,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-from dbt_charts.core.render.chart.emitters._cartesian import (
-    CartesianXResolution,
-    XYTitles,
-    bar_sort_to_vl,
-    build_palette_config,
-    build_x_enc,
-    chart_sort_to_vl,
-    pin_normalize_axis_format,
-    resolve_cartesian_x,
-    resolve_xy_titles,
-)
-from dbt_charts.core.render.chart.spec import RenderBox
-from dbt_charts.core.render.chart.vl_field_maps import compose_axis_label_expr
-from dbt_charts.core.text.predefined_formats import (
-    PREDEFINED_SPECS,
-    PredefinedNumberFormat,
-)
 from dbt_charts.core.utils import x_domain_order
 
 from ...conftest import baked_format, fixture_chart_for_type
@@ -81,82 +62,6 @@ def _axes() -> tuple[ResolvedAxisStyle, ResolvedAxisStyle]:
             formats=None,
         ),
     )
-
-
-def test_build_palette_config_with_palette() -> None:
-    assert build_palette_config(("#fff", "#000")) == {
-        "range": {"category": ["#fff", "#000"]}
-    }
-
-
-def test_build_palette_config_without_palette() -> None:
-    assert build_palette_config(None) == {}
-
-
-def test_resolve_cartesian_x_returns_named_fields() -> None:
-    ax, _ay = _axes()
-    data = [{"date": "2025-01-01"}, {"date": "2025-02-01"}]
-    result = resolve_cartesian_x(
-        "date",
-        data,
-        ax,
-        label_usable_ratio=1.0,
-        chart_width=600.0,
-        chart_id="c1",
-        mark_type="line",
-        panel_fields=(),
-        x_date_range=None,
-    )
-    assert isinstance(result, CartesianXResolution)
-    assert result.vl_type
-    assert isinstance(result.axis, dict)
-    assert isinstance(result.scale, dict)
-
-
-def test_resolve_xy_titles_returns_named_fields() -> None:
-    ax, ay = _axes()
-    result = resolve_xy_titles(
-        "date",
-        "revenue",
-        None,
-        None,
-        ax,
-        ay,
-        RenderBox(width=600.0, height=300.0),
-        "",
-        field_labels={},
-    )
-    assert isinstance(result, XYTitles)
-    assert result.x_title == "Date"
-    assert result.y_title == "Revenue"
-
-
-def test_build_x_enc_uses_resolved_fields() -> None:
-    enc = build_x_enc(
-        "date", "temporal", "Date", {"grid": True}, {"padding": 1}, sort=None
-    )
-    assert enc == {
-        "field": "date",
-        "type": "temporal",
-        "title": "Date",
-        "axis": {"grid": True},
-        "sort": None,
-        "scale": {"padding": 1},
-    }
-
-
-def test_build_x_enc_carries_an_authored_sort() -> None:
-    """The authored sort reaches the encoding verbatim, so a discrete x scale
-    takes its domain order from the sort field rather than from row order."""
-    enc = build_x_enc(
-        "month",
-        "nominal",
-        "Month",
-        {},
-        {},
-        sort=chart_sort_to_vl(ChartSort(by="seq", order="desc")),
-    )
-    assert enc["sort"] == {"field": "seq", "order": "descending"}
 
 
 def test_x_domain_order_ops_disagree_on_multi_row_categories() -> None:
@@ -305,47 +210,6 @@ def test_x_domain_order_ranks_a_text_column_under_min() -> None:
     )
 
 
-def test_chart_sort_to_vl_does_not_pin_op() -> None:
-    """chart_sort_to_vl stays unopinionated about VL's own sort ``op`` default.
-
-    It is the shared mapper, reached by surfaces with no aggregate in common:
-    the support table's category domain is not a VL scale at all, while a
-    bar's stacked sort-by-measure IS a stacked total and a dimension axis
-    never is. A caller that needs the aggregate stated says so at its own
-    point — ``dimension_sort_to_vl`` for a dimension axis, ``bar_sort_to_vl``
-    for a bar — rather than making this mapper opine on every surface at once.
-    """
-    vl_sort = chart_sort_to_vl(ChartSort(by="val", order="desc"))
-    assert vl_sort == {"field": "val", "order": "descending"}, (
-        f"chart_sort_to_vl must not add an 'op' key, got {vl_sort!r}"
-    )
-
-
-@pytest.mark.parametrize(
-    ("sort_by", "stacked", "op"),
-    [
-        ("seq", True, "min"),
-        ("seq", False, "min"),
-        ("val", True, "sum"),
-        ("val", False, "min"),
-    ],
-)
-def test_bar_sort_to_vl_pins_sum_only_for_a_stacked_measure_sort(
-    sort_by: str, stacked: bool, op: str
-) -> None:
-    """Sorting a stack by its own measure is the one sort that means a total."""
-    assert bar_sort_to_vl(ChartSort(by=sort_by, order="asc"), "val", stacked) == {
-        "field": sort_by,
-        "order": "ascending",
-        "op": op,
-    }
-
-
-def test_bar_sort_to_vl_passes_an_unauthored_sort_through() -> None:
-    """No authored sort, nothing to pin — the encoding keeps VL's own order."""
-    assert bar_sort_to_vl(None, "val", True) is None
-
-
 class TestPinNormalizeAxisFormat:
     """A normalize-stacked axis is always a 0-100% share axis, unconditionally
     -- including over a labelExpr the ladder-less sub-unit guard composed for
@@ -377,37 +241,4 @@ class TestPinNormalizeAxisFormat:
             band_position=baked.y.band_position,
             chart_id="test",
             formats=None,
-        )
-
-    def test_clears_a_composed_label_expr(self) -> None:
-        ay = self._ladder_less_ay()
-        assert ay.tick_label is not None and ay.tick_label.si_format is not None
-        ay_vl = compose_axis_label_expr({}, ay.ruler, ay)
-        assert "labelExpr" in ay_vl
-        pin_normalize_axis_format(ay_vl, ay)
-        assert "labelExpr" not in ay_vl
-        assert (
-            ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole].d3
-        )
-
-    def test_keeps_an_authored_label_expr(self) -> None:
-        """The pre-existing contract: an author's own `axis_y.labels.expr`
-        already wins over `format` today (Vega's own labelExpr precedence) --
-        that must survive unchanged, not be swept up by the new clear.
-        """
-        ay = self._ladder_less_ay()
-        authored_ay = dataclasses.replace(
-            ay, labels=dataclasses.replace(ay.labels, expr="'x'")
-        )
-        ay_vl = {"labelExpr": "'x'"}
-        pin_normalize_axis_format(ay_vl, authored_ay)
-        assert ay_vl["labelExpr"] == "'x'"
-
-    def test_no_op_when_no_label_expr_present(self) -> None:
-        ay = self._ladder_less_ay()
-        ay_vl: dict[str, object] = {}
-        pin_normalize_axis_format(ay_vl, ay)
-        assert "labelExpr" not in ay_vl
-        assert (
-            ay_vl["format"] == PREDEFINED_SPECS[PredefinedNumberFormat.percent_whole].d3
         )

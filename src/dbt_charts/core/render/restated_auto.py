@@ -16,6 +16,9 @@ from dbt_charts.core.compile.format import inferred_number_format
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.chart.normalized import CalloutChart, Chart
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved._base import (
+    _CartesianResolvedChartFields,
+)
 from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.variable.authored import Variable
@@ -35,6 +38,7 @@ from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 from dbt_charts.core.render.variables_resolve import resolve_controls
+from dbt_charts.core.text.case import field_title
 
 Row: TypeAlias = dict[str, Any]  # type-state: explicit_any — DB rows
 Artifact: TypeAlias = (
@@ -65,9 +69,24 @@ def _resolver(
         artifact = render_resolved_chart(
             resolved, data, scope.resolved_style, width=width
         )
-        return resolved, artifact.payload
+        return resolved, (artifact.payload, _plotted_titles(resolved))
 
     return resolve
+
+
+def _plotted_titles(resolved: ResolvedChart) -> dict[str, str]:
+    """The title each plotted field would print, painted or not: an axis whose
+    title is hidden still changes with its authored label."""
+    if not isinstance(resolved, _CartesianResolvedChartFields):
+        return {}
+    channels = [resolved.x, resolved.y, resolved.color]
+    fields = [
+        field
+        for channel in channels
+        for field in (channel if isinstance(channel, list) else [channel])
+        if isinstance(field, str)
+    ]
+    return {field: field_title(field, resolved.field_labels) for field in fields}
 
 
 def _declared_format_warnings(

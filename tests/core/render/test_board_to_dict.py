@@ -216,6 +216,7 @@ _OMITTED_FROM_PROJECTION = {
     "template_name": "authored as `template:`/`svg:`",
     "template_source": "project file content, not chart config",
     "column_options": "derived from the template header",
+    "column_formats": "derived from the query formats and style.formats at resolve",
     "category_pins": "board style.charts.category_colors, resolved per chart",
     "base_dir": "internal: directory the chart was written in, not chart content",
     # Resolved/derived internals with no authored counterpart.

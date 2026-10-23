@@ -622,7 +622,7 @@ impl MarkdownParser {
 
         let alignments = self.parse_table_alignments(separator_line);
 
-        let header_cells = self.parse_table_row(header_line, &alignments);
+        let header_cells = self.parse_table_row(header_line, &alignments, None);
         let header = TableRow {
             cells: header_cells,
         };
@@ -635,7 +635,7 @@ impl MarkdownParser {
             if !table_row().is_match(line) {
                 break;
             }
-            let row_cells = self.parse_table_row(line, &alignments);
+            let row_cells = self.parse_table_row(line, &alignments, Some(header.cells.len()));
             rows.push(TableRow { cells: row_cells });
             i += 1;
         }
@@ -663,10 +663,17 @@ impl MarkdownParser {
             .collect()
     }
 
-    /// Parse a single table row.
-    fn parse_table_row(&self, line: &str, alignments: &[Option<String>]) -> Vec<TableCell> {
+    /// Parse a single table row. `columns` is the header's cell count: as in
+    /// GFM, a body row drops cells past it and pads a short row with empty
+    /// cells. `None` keeps the row's own width (the header).
+    fn parse_table_row(
+        &self,
+        line: &str,
+        alignments: &[Option<String>],
+        columns: Option<usize>,
+    ) -> Vec<TableCell> {
         let content = line.trim_matches(is_py_space).trim_matches('|');
-        content
+        let mut cells: Vec<TableCell> = content
             .split('|')
             .enumerate()
             .map(|(idx, cell_text)| {
@@ -675,7 +682,15 @@ impl MarkdownParser {
                 let align = alignments.get(idx).cloned().flatten();
                 TableCell { spans, align }
             })
-            .collect()
+            .collect();
+        if let Some(columns) = columns {
+            cells.truncate(columns);
+            for idx in cells.len()..columns {
+                let align = alignments.get(idx).cloned().flatten();
+                cells.push(TableCell { spans: Vec::new(), align });
+            }
+        }
+        cells
     }
 
     /// Parse inline formatting in text: bold, italic, bold+italic, inline

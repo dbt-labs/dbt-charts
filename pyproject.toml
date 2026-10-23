@@ -446,9 +446,7 @@ forbidden_module_paths = [
 # `databricks` extra, not a runtime dep.
 # `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No
 # `dct` verb reaches it — the gateway exists for in-repo hosts (Cloud,
-# Playground, evals), each of which declares openai itself. (A lIe does not
-# use it; it carries its own client, which is why the follow-up folds in that
-# consolidation.)
+# Playground, A lIe, evals), each of which declares openai itself.
 # Deferred, not undecided: extracting ai/openai_gateway.py was priced against
 # what removing this one entry buys and judged not worth it on that basis
 # alone. The reasons that do stand alone — core ships an importable-but-

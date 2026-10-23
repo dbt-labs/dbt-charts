@@ -8,7 +8,8 @@
 use std::time::Instant;
 
 use chart_renderer::families::table::width::{measure_natural_width, MeasurePayload};
-use chart_renderer::{board, render_fitted, render_measured, text::FontBook, Payload};
+use chart_renderer::{board, render_fitted, render_measured, Payload};
+use measure::FontBook;
 
 /// Resolve a payload-relative `fonts_dir` against the directory holding
 /// `payload_path`, so a committed fixture's `fonts_dir` stays
@@ -265,7 +266,7 @@ fn write_output(out_arg: &str, bytes: &[u8]) {
 }
 
 /// Load `--fonts-dir`'s TTFs into a fresh `fontdb::Database` for `usvg` to
-/// shape text with — the same font FILES `text::FontBook::load_dir` loads
+/// shape text with — the same font FILES `measure::FontBook::load_dir` loads
 /// for the port's own measurement, into the font-matching structure `usvg`/
 /// `resvg`/`svg2pdf` need instead (their own text layout, not this crate's).
 ///

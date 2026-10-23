@@ -25,7 +25,6 @@ from typing import Any
 
 from dbt_charts.core.compile.models.chart.normalized import PointMapChart
 from dbt_charts.core.diagnostics import WARN_POINT_MAP_NEGATIVE_SIZE_VALUES
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 from dbt_charts.core.render.warnings import (
     WarningContext,
     point_map_negative_size_values as detector,
@@ -71,50 +70,12 @@ def _make_ctx(chart: PointMapChart, rows: list[dict[str, Any]]) -> WarningContex
     return WarningContext(
         board_spec=board,
         chart_results={resolved.id: rows},
-        vega_specs={},
     )
 
 
 # ---------------------------------------------------------------------------
 # 1. Emitter drops negative-size rows from the emitted spec
 # ---------------------------------------------------------------------------
-
-
-def test_negative_size_rows_filtered_from_emitted_spec() -> None:
-    chart = _make_bubble_map()
-    spec = generate_vega_lite_spec(chart, _MIXED_ROWS)
-
-    data_values: list[dict[str, Any]] = spec["data"]["values"]
-    profits = {row["profit"] for row in data_values}
-    assert -25.0 not in profits
-    assert -10.0 not in profits
-    assert len(data_values) == 3
-
-
-def test_zero_size_row_is_not_filtered() -> None:
-    """Zero is not negative — a zero-valued row keeps its legitimate area of nothing."""
-    chart = _make_bubble_map()
-    spec = generate_vega_lite_spec(chart, _MIXED_ROWS)
-
-    data_values: list[dict[str, Any]] = spec["data"]["values"]
-    profits = [row["profit"] for row in data_values]
-    assert 0.0 in profits
-
-
-def test_all_negative_rows_render_empty_marks_without_raising() -> None:
-    chart = _make_bubble_map()
-    spec = generate_vega_lite_spec(chart, _ALL_NEGATIVE_ROWS)
-
-    assert spec["data"]["values"] == []
-    assert spec["mark"]["type"] == "circle"
-
-
-def test_no_negative_rows_leaves_data_unchanged() -> None:
-    """Regression guard: an unconditional filter would drop rows here too."""
-    chart = _make_bubble_map()
-    spec = generate_vega_lite_spec(chart, _NO_NEGATIVE_ROWS)
-
-    assert len(spec["data"]["values"]) == len(_NO_NEGATIVE_ROWS)
 
 
 # ---------------------------------------------------------------------------

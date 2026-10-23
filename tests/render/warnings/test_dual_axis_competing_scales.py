@@ -41,7 +41,6 @@ def _detect(*layers: LineLayer, **chart_kwargs: Any) -> list[Any]:
     ctx = WarningContext(
         board_spec=make_test_resolved_board(charts={resolved.id: resolved}),
         chart_results={resolved.id: _ROWS},
-        vega_specs={resolved.id: {"mark": "layered"}},
         layer_results={},
     )
     return detector.detect(ctx)

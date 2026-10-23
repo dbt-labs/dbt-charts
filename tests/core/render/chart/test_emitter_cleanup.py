@@ -5,11 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
-from dbt_charts.core.render.chart.spec import RenderBox
-
-_DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
-
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -191,33 +186,6 @@ def test_ay_position_never_auto_after_resolve(
 # ---------------------------------------------------------------------------
 
 
-def test_grouped_bar_scale_padding_set_by_emitter(
-    make_chart: Any,
-) -> None:
-    """BarEmitter applies grouped-bar outer axis scale padding directly.
-
-    Padding must be set before an authored ``layers:`` block wraps the spec
-    into a layered VL spec (the categorical scale is only reachable at the
-    top level before that wrap), so the emitter — not a post-emit feature —
-    owns this now.
-    """
-    from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-    from dbt_charts.core.render.chart.emitters.bar import BarEmitter
-
-    board_ctx = resolve_chart_style_context(get_theme_style())
-    chart = make_chart("bar", x="month", y="value", color="series")
-    rc = resolve(chart, _MULTI_SERIES_DATA, chart_style_context=board_ctx)
-    spec = BarEmitter().emit(rc, _DEFAULT_BOX, regroup((), _MULTI_SERIES_DATA))
-    # Categorical channel is whichever side carries the group offset (x for
-    # vertical bars, y for horizontal) — don't assume an orientation default.
-    cat_ch = "y" if "yOffset" in spec.encoding else "x"
-    cat_scale = spec.encoding.get(cat_ch, {}).get("scale", {})
-    grouped_bar_padding_outer = get_theme_style().charts.bar.grouped.padding_outer
-    assert cat_scale.get("paddingOuter") == grouped_bar_padding_outer
-
-
 # ---------------------------------------------------------------------------
 # Change 5: sorted_series_by_stack_order shared helper
 # ---------------------------------------------------------------------------
@@ -265,45 +233,3 @@ def test_sorted_series_value_order() -> None:
 # ---------------------------------------------------------------------------
 # Scatter size-legend: theme styling must propagate to size encoding
 # ---------------------------------------------------------------------------
-
-
-def test_scatter_size_legend_applies_resolved_theme_styling() -> None:
-    """size encoding must carry the resolved legend label styling (font-size,
-    color, weight) — not VL defaults — matching what the color legend gets."""
-    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.models.chart.normalized import ScatterChart
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.board import (
-        resolve_chart_style_context,
-        resolve_style,
-    )
-    from dbt_charts.core.render.chart.session import BoardRenderSession
-
-    theme = get_theme_style(get_default_theme_name())
-    board_rs = resolve_style(theme)
-    board_ctx = resolve_chart_style_context(theme)
-    chart = ScatterChart.model_validate(
-        {"id": "t", "type": "scatter", "x": "revenue", "y": "profit", "size": "volume"}
-    )
-    data = [
-        {"revenue": 100.0, "profit": 50.0, "volume": 200.0},
-        {"revenue": 200.0, "profit": 80.0, "volume": 400.0},
-    ]
-    resolved = resolve(chart, data, chart_style_context=board_ctx)
-    session = BoardRenderSession.create(board_rs)
-    spec = session.emit_chart(resolved, _DEFAULT_BOX, {resolved.query_name: data})
-
-    size_legend = spec.encoding.get("size", {}).get("legend")
-    assert size_legend is not None, "size encoding must have a legend config"
-    assert isinstance(size_legend, dict), "size legend must be a VL legend dict"
-
-    # Theme sets label font-size to 11; VL default would be 10 — check theme wins.
-    label_font_size = size_legend.get("labelFontSize")
-    assert label_font_size == 11, (
-        f"size legend labelFontSize must use resolved theme value (11), got {label_font_size}"
-    )
-    # Theme sets label color; VL default would be #000.
-    label_color = size_legend.get("labelColor")
-    assert label_color is not None, (
-        "size legend must have resolved labelColor (not VL default #000)"
-    )

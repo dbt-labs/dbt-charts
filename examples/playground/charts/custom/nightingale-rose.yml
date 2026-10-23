@@ -62,7 +62,8 @@ charts:
     template: nightingale_rose
     query: mortality
     style:
-      aspect_ratio: 2.1
+      aspect_ratio: 1.8
+      max_height: 800
     x: month
     y: [disease, wounds, other_causes]
     options:

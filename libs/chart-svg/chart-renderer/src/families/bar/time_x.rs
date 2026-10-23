@@ -15,11 +15,11 @@ use crate::families::subday::SubdaySource;
 use crate::families::support_table_strip::label_period_keep;
 use crate::families::temporal::{
     civil_from_days, complete_buckets, complete_ordinal_rows, date_text_day, is_opener, days_from_civil, floor_to_bucket_start, next_bucket, normalize_labeled_temporal,
-    parse_iso_date, time_unit_floor, TimeUnit,
+    parse_iso_date, time_unit_floor, TimePart, TimeUnit,
 };
 use crate::families::x_type::{Grain, XResolution};
 use crate::labels_expr::Expr;
-use crate::text::FontBook;
+use measure::FontBook;
 
 use crate::common::RAW_X;
 use super::{continuous_pad_px, x_resolution, BandColumns, BarResolved, ColumnSplit, ContinuousWidth, MarkStyle};
@@ -195,6 +195,18 @@ pub(super) fn has_year_below_100(rows: &[Row], x: &str) -> bool {
     rows.iter().any(|row| row.get(x).and_then(Value::as_str).and_then(parse_iso_date).is_some_and(|(year, _, _)| year < 100))
 }
 
+/// `instant` (an ISO date or timestamp) folded onto its part's cycle, as text.
+fn folded_text(part: TimePart, instant: &str) -> Result<String, String> {
+    let day = date_text_day(instant).ok_or_else(|| format!("bar: {instant:?} is not a date or timestamp on a time x axis"))?;
+    let at = part.instant(day);
+    let (y, m, d) = civil_from_days(at.floor() as i64);
+    Ok(if part == TimePart::HourOfDay {
+        format!("{y:04}-{m:02}-{d:02}T{:02}:00:00", ((at - at.floor()) * 24.0).round() as i64)
+    } else {
+        format!("{y:04}-{m:02}-{d:02}")
+    })
+}
+
 /// Days a bucket spans in the reference month Vega-Lite sizes a grouped bar's offset scale against;
 /// probe-pinned per grain by the `bar-continuous-time-x` grouped fixtures (month, quarter, year, week, day).
 fn canonical_days(tu: TimeUnit) -> f64 {
@@ -209,7 +221,13 @@ fn canonical_days(tu: TimeUnit) -> f64 {
 
 /// `rows` as production's time scale plots them: the plain-dated rows, each keyed to its bucket's start (a gap
 /// fill's scaffold where one ran), in time order, with the dates they carried before any bucket folded them.
-fn plot_rows(r: &BarResolved, rows: &[Row], filled: Option<TimeUnit>, grain: Option<TimeUnit>) -> Result<(Vec<Row>, Vec<String>, Vec<String>), String> {
+fn plot_rows(
+    r: &BarResolved,
+    rows: &[Row],
+    filled: Option<TimeUnit>,
+    grain: Option<TimeUnit>,
+    part: Option<TimePart>,
+) -> Result<(Vec<Row>, Vec<String>, Vec<String>, Vec<String>), String> {
     let ax_x = &r.style.axis_x;
     let normalized = normalize_labeled_temporal(rows, &r.x)?;
     let mut dated: Vec<Row> = Vec::with_capacity(normalized.len());
@@ -221,13 +239,22 @@ fn plot_rows(r: &BarResolved, rows: &[Row], filled: Option<TimeUnit>, grain: Opt
                 originals.extend(cell.as_str().map(str::to_string));
                 let instant = instant_text(cell)?.ok_or_else(|| format!("bar: x value {cell} is not a date or timestamp on a time x axis"))?;
                 let mut row = row;
-                row.insert(r.x.clone(), Value::String(instant));
+                // A time part folds the date onto its cycle; the tooltip keeps the date it came from.
+                let at = match part {
+                    Some(part) => {
+                        row.insert(RAW_X.to_string(), Value::String(instant.clone()));
+                        folded_text(part, &instant)?
+                    }
+                    None => instant,
+                };
+                row.insert(r.x.clone(), Value::String(at));
                 dated.push(row);
             }
         }
     }
     let dims: Vec<&str> = r.color.as_deref().into_iter().collect();
     let raw_dates: Vec<String> = dated.iter().map(|row| row_str(row, &r.x)).collect();
+    let shown_dates: Vec<String> = dated.iter().map(|row| tooltip_date(row, &r.x)).collect();
     let plotted = match filled {
         Some(tu) => {
             let fill = ax_x.fill.as_deref().ok_or("bar: axis_x.fill absent (theme required for a date x axis)")?;
@@ -246,7 +273,7 @@ fn plot_rows(r: &BarResolved, rows: &[Row], filled: Option<TimeUnit>, grain: Opt
             dated
         }
     };
-    Ok((plotted, raw_dates, originals))
+    Ok((plotted, raw_dates, originals, shown_dates))
 }
 
 impl TimeX {
@@ -259,14 +286,21 @@ impl TimeX {
         let grain = match law.grain {
             Grain::None => None,
             Grain::Calendar(tu) => Some(tu),
-            Grain::Part(_) => return Err("bar: a time-part grain reached the time x axis, which authored time_unit refuses earlier".into()),
+            // A part's bars span its bucket on the folded cycle; an hour has no bucket and sits on its instant.
+            Grain::Part(TimePart::MonthOfYear) => Some(TimeUnit::YearMonth),
+            Grain::Part(TimePart::DayOfWeek | TimePart::DayOfMonth | TimePart::DayOfYear) => Some(TimeUnit::YearMonthDate),
+            Grain::Part(TimePart::HourOfDay) => None,
         };
-        let (plotted, panel_dates, panel_originals) = plot_rows(r, rows, filled_x.filled, grain)?;
+        let part = match law.grain {
+            Grain::Part(part) => Some(part),
+            _ => None,
+        };
+        let (plotted, panel_dates, panel_originals, panel_shown) = plot_rows(r, rows, filled_x.filled, grain, part)?;
         // The scale spans every panel of the chart; a panel's bars are its own.
-        let pooled = (!std::ptr::eq(rows, chart_rows)).then(|| plot_rows(r, chart_rows, filled_x.filled, grain)).transpose()?;
-        let (scale_plotted, raw_dates, originals) = match &pooled {
-            Some((plotted, dates, originals)) => (plotted, dates, originals),
-            None => (&plotted, &panel_dates, &panel_originals),
+        let pooled = (!std::ptr::eq(rows, chart_rows)).then(|| plot_rows(r, chart_rows, filled_x.filled, grain, part)).transpose()?;
+        let (scale_plotted, raw_dates, originals, shown_dates) = match &pooled {
+            Some((plotted, dates, originals, shown)) => (plotted, dates, originals, shown),
+            None => (&plotted, &panel_dates, &panel_originals, &panel_shown),
         };
         if scale_plotted.is_empty() {
             return Err("bar: the time x axis resolved over rows that carry no date".into());
@@ -292,8 +326,12 @@ impl TimeX {
         }
         let cats: Vec<String> = cats.into_iter().collect();
         let label_ladder: Vec<String> = label_dates.into_iter().collect();
-        let ends: Vec<String> = match grain {
-            Some(tu) => cats.iter().map(|date| bucket_end(date, tu)).collect(),
+        // An hour of the day has no calendar bucket: its bars span the hour on the folded instants.
+        let hourly = part == Some(TimePart::HourOfDay);
+        let end_of = |date: &str, tu: TimeUnit| if hourly { hour_end(date) } else { Ok(bucket_end(date, tu)) };
+        let spanning = grain.or(hourly.then_some(TimeUnit::YearMonthDate));
+        let ends: Vec<String> = match spanning {
+            Some(tu) => cats.iter().map(|date| end_of(date, tu)).collect::<Result<_, _>>()?,
             None => Vec::new(),
         };
         let signs = |keep: fn(f64) -> bool| scale_plotted.iter().filter_map(|row| row_num(row, &r.y)).any(keep);
@@ -328,11 +366,12 @@ impl TimeX {
         let mut indexed = None;
         let mut width_is_nan = false;
         let sizing = match grain {
-            Some(grain) if !value_labels => {
-                kept.insert(bucket_end(ladder.last().expect("a plotted date"), grain));
+            _ if !value_labels && spanning.is_some() => {
+                let grain = spanning.expect("checked above");
+                kept.insert(end_of(ladder.last().expect("a plotted date"), grain)?);
                 for layer in layer_x.iter().filter(|layer| layer.spans_buckets) {
                     let last = layer.dates.iter().map(|date| layer_start(date)).collect::<Result<BTreeSet<_>, _>>()?;
-                    kept.insert(bucket_end(last.last().expect("a layer with dates"), grain));
+                    kept.insert(end_of(last.last().expect("a layer with dates"), grain)?);
                 }
                 Sizing::Bucket { size: mark.size, grain, band_width: mark.band_width }
             }
@@ -375,13 +414,13 @@ impl TimeX {
                 }
             }
         };
-        let distinct = raw_dates.iter().collect::<BTreeSet<_>>().len();
+        let distinct = shown_dates.iter().collect::<BTreeSet<_>>().len();
         // Any clock time makes the rows continuous to the detector.
-        let timed = raw_dates.iter().any(|date| date_text_day(date).is_some_and(|day| day.fract() != 0.0));
+        let timed = shown_dates.iter().any(|date| date_text_day(date).is_some_and(|day| day.fract() != 0.0));
         let tooltip_grain = if timed {
             None
         } else {
-            crate::families::temporal::detect_time_unit(&raw_dates.iter().map(String::as_str).collect::<Vec<_>>())
+            crate::families::temporal::detect_time_unit(&shown_dates.iter().map(String::as_str).collect::<Vec<_>>())
         };
         let own_dates: Vec<&str> = originals.iter().map(String::as_str).chain(layer_x.iter().flat_map(|l| l.dates.iter().map(String::as_str))).collect();
         let timed = SubdaySource::of(&own_dates);
@@ -408,7 +447,7 @@ impl TimeX {
     ) -> Result<TemporalXAxis, String> {
         let usable = r.style.label_usable_ratio.ok_or("bar: label_usable_ratio absent (theme required for a date x axis)")?;
         let mut axis = TemporalXAxis::resolve(
-            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w },
+            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w, folded: matches!(self.law.grain, Grain::Part(_)) },
             &self.scale_ax,
             svg_w * usable,
             title_text,
@@ -615,6 +654,14 @@ impl TimeX {
             })
             .collect()
     }
+}
+
+/// The instant an hour after `date`, a folded hour-of-day bar's end.
+fn hour_end(date: &str) -> Result<String, String> {
+    let day = date_text_day(date).ok_or_else(|| format!("bar: {date:?} is not a date or timestamp on a time x axis"))?;
+    let at = day + 1.0 / 24.0;
+    let (y, m, d) = civil_from_days(at.floor() as i64);
+    Ok(format!("{y:04}-{m:02}-{d:02}T{:02}:00:00", ((at - at.floor()) * 24.0).round() as i64))
 }
 
 fn bucket_end(date: &str, tu: TimeUnit) -> String {

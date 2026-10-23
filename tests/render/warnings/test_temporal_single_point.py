@@ -44,7 +44,8 @@ def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
     return WarningContext(
-        board_spec=board, chart_results={resolved.id: rows}, vega_specs={}
+        board_spec=board,
+        chart_results={resolved.id: rows},
     )
 
 
@@ -151,7 +152,6 @@ def test_no_fire_when_chart_not_in_chart_results() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={},  # chart absent from results
-        vega_specs={},
     )
     assert detector.detect(ctx) == []
 

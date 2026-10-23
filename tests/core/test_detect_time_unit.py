@@ -9,7 +9,6 @@ import pytest
 from dbt_charts.core.render.chart.time_unit_detect import (
     detect_time_unit,
     normalize_labeled_temporal,
-    ordinal_axis_values,
 )
 
 from ._svg_render import render_board_to_svg
@@ -401,31 +400,6 @@ class TestNormalizeLabeledTemporalYearShaped:
         result = normalize_labeled_temporal(data, "y")
         assert result[0]["y"] == "2014-01-01"
         assert result[1]["y"] is None
-
-
-class TestOrdinalAxisValues:
-    """ordinal_axis_values must return JSON-safe strings, not date/datetime objects."""
-
-    def test_date_objects_return_iso_strings(self) -> None:
-        rows = [{"d": dt.date(2024, 1, 1), "v": 1}, {"d": dt.date(2024, 1, 2), "v": 2}]
-        result = ordinal_axis_values(rows, "d")
-        assert result == ["2024-01-01", "2024-01-02"]
-        assert all(isinstance(v, str) for v in result)
-
-    def test_datetime_objects_return_iso_strings(self) -> None:
-        rows = [
-            {"d": dt.datetime(2024, 1, 1, 0, 0, 0), "v": 1},
-            {"d": dt.datetime(2024, 1, 2, 0, 0, 0), "v": 2},
-        ]
-        result = ordinal_axis_values(rows, "d")
-        assert result is not None
-        assert all(isinstance(v, str) for v in result)
-        assert "T" in result[0]
-
-    def test_iso_strings_pass_through_unchanged(self) -> None:
-        rows = [{"d": "2024-01-01", "v": 1}, {"d": "2024-01-02", "v": 2}]
-        result = ordinal_axis_values(rows, "d")
-        assert result == ["2024-01-01", "2024-01-02"]
 
 
 def _month_ends(start: dt.date, count: int) -> list[dt.date]:

@@ -121,7 +121,7 @@ class ChartStyleContext:
     # label text painted over that slot's mark color. Baked once here so
     # render never calls compile.resolve.style.palette.label_ink itself.
     # This is the board palette, not a chart's effective (possibly
-    # chart-local-overridden) one — support_table_attachment.py's strip ink
+    # chart-local-overridden) one — the engine's support-table strip ink
     # intentionally keys off the board palette; do not consolidate with
     # ResolvedSeriesLabelStyle.dark_companion_palette (chart-effective)
     # without checking that call site.

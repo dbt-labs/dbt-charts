@@ -104,10 +104,10 @@ pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
         Some(Value::Bool(b)) => Ok(b.to_string()),
         Some(Value::String(s)) => Ok(s.clone()),
         Some(Value::Number(n)) => {
-            let f = n.as_f64().ok_or_else(|| format!("link value {n}: not an f64"))?;
+            let f = n.as_f64().ok_or_else(|| format!("value {n}: not an f64"))?;
             Ok(crate::families::color_scale::js_number_string(f))
         }
-        Some(other) => Err(format!("link value {other}: not a scalar")),
+        Some(other) => Err(format!("value {other}: not a scalar")),
     }
 }
 
@@ -150,6 +150,8 @@ pub(crate) struct DatumLink<'a> {
     pub(crate) x: LinkField<'a>,
     pub(crate) y: Option<LinkField<'a>>,
     pub(crate) color: Option<LinkField<'a>>,
+    /// The host that serves boards: rewrites the resolved href when present.
+    pub(crate) context: Option<&'a LinkContext>,
 }
 
 /// The link of the first datum at each x, keyed `(x, "")`: what a plain support-table
@@ -177,7 +179,7 @@ pub(crate) fn anchor_for<'h>(link: Option<&DatumLink>, href: &'h Option<String>)
 impl DatumLink<'_> {
     /// The href of `row`'s datum.
     pub(crate) fn href(&self, row: &serde_json::Map<String, Value>) -> Result<String, String> {
-        resolve_channel_href(self.template, |channel| {
+        let href = resolve_channel_href(self.template, |channel| {
             let field = match channel {
                 "x" => Some(self.x),
                 "y" => self.y,
@@ -208,7 +210,8 @@ impl DatumLink<'_> {
                     },
                 },
             }
-        })
+        })?;
+        Ok(self.context.map_or(href.clone(), |ctx| resolve_href(&href, ctx)))
     }
 }
 
@@ -368,7 +371,7 @@ pub(crate) fn anchor_open(anchor: Option<Anchor<'_>>) -> String {
     anchor.map_or_else(String::new, |a| {
         let open = a.open.open_attr().map_or_else(String::new, |v| format!(" data-dbt-link-open=\"{v}\""));
         let target = a.open.target().map_or_else(String::new, |v| format!(" target=\"{v}\""));
-        format!("<a href=\"{}\"{open}{target}>", crate::svg::xml_escape_attr(a.url))
+        format!("<a href=\"{}\"{open}{target}>", print::xml_escape_attr(a.url))
     })
 }
 
@@ -455,7 +458,7 @@ mod tests {
         assert_eq!(js_string(Some(&json!(1e21))).unwrap(), "1e+21");
         assert_eq!(js_string(Some(&json!(1.5e-7))).unwrap(), "1.5e-7");
         for value in [json!([1]), json!({"a": 1})] {
-            assert!(js_string(Some(&value)).unwrap_err().starts_with("link value"), "{value}");
+            assert!(js_string(Some(&value)).unwrap_err().starts_with("value"), "{value}");
         }
     }
 

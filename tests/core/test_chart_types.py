@@ -4,8 +4,6 @@ Tests the dbt_charts.core.render.vega_lite module for generating
 Vega-Lite specifications for all supported chart types.
 """
 
-from unittest.mock import patch
-
 import pytest
 
 from dbt_charts.core.compile.config import (
@@ -17,12 +15,10 @@ from dbt_charts.core.compile.models.chart.authored import (
     ChartType,
 )
 from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -39,39 +35,6 @@ def test_chart_type_parity_with_authored_union() -> None:
 
 class TestChartTypeMappings:
     """Tests that chart types map to correct Vega-Lite marks."""
-
-    @pytest.mark.parametrize(
-        ("chart_type", "expected_mark"),
-        [
-            ("bar", "bar"),
-            ("line", "line"),
-            ("area", "area"),
-            ("scatter", "point"),
-            ("heatmap", "rect"),
-        ],
-    )
-    def test_chart_type_mapping(self, make_chart, chart_type: str, expected_mark: str):
-        """Authorable chart types map to correct Vega-Lite marks."""
-        chart = make_chart(chart_type)
-        data = [{"x_field": 1, "y_field": 2}]
-
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-
-        # Check the mark type for both top-level and layered specs
-        if "layer" in spec:
-            first_layer = spec["layer"][0]
-            mark = first_layer.get("mark")
-            if isinstance(mark, dict):
-                assert mark.get("type") == expected_mark
-            else:
-                assert mark == expected_mark
-        else:
-            mark = spec.get("mark")
-            if isinstance(mark, dict):
-                assert mark.get("type") == expected_mark
-            else:
-                assert mark == expected_mark
 
     @pytest.mark.parametrize(
         "chart_type",
@@ -123,77 +86,6 @@ class TestRemovedTextChartType:
         }
         with pytest.raises(CompilationError, match=r"text"):
             normalize_chart("test_text", chart_def, {}, sources={})
-
-
-class TestHistogramChart:
-    """Tests for histogram chart generation."""
-
-    def test_histogram_has_binning(self, make_chart):
-        chart = make_chart("histogram", x="value", y=None)
-        data = [{"value": v} for v in [10, 20, 25, 30, 15]]
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-
-        mark = spec["mark"]
-        assert (mark["type"] if isinstance(mark, dict) else mark) == "bar"
-        assert spec["encoding"]["x"]["bin"] is True
-        assert spec["encoding"]["x"]["field"] == "value"
-        assert spec["encoding"]["y"]["aggregate"] == "count"
-
-    def test_histogram_with_color(self, make_chart):
-        chart = make_chart("histogram", x="value", y=None, color="category")
-        data = [
-            {"value": 10, "category": "A"},
-            {"value": 20, "category": "B"},
-        ]
-        _rc = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        spec = generate_vega_lite_spec(chart, data)
-        assert spec["encoding"]["color"]["field"] == "category"
-
-    def test_colored_histogram_baseline_category_receives_first_palette_slot(
-        self, make_chart
-    ):
-        chart = make_chart("histogram", x="value", y=None, color="category")
-        data = [
-            {"value": 10, "category": "A"},
-            {"value": 11, "category": "Z"},
-            {"value": 12, "category": "Z"},
-            {"value": 13, "category": "Z"},
-        ]
-        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-
-        spec = generate_vega_lite_spec(chart, data)
-
-        color_scale = spec["encoding"]["color"]["scale"]
-        color_by_category = dict(
-            zip(color_scale["domain"], color_scale["range"], strict=True)
-        )
-        assert color_by_category == {
-            "Z": resolved.palette[0],
-            "A": resolved.palette[1],
-        }
-        assert "order" in spec["encoding"]
-
-    def test_histogram_pins_angle_without_replacing_resolved_axis(self, make_chart):
-        from dbt_charts.core.render.chart.emitters import bar
-
-        chart = make_chart("histogram", x="value", y=None)
-        data = [{"value": value} for value in [10, 20, 25, 30, 15]]
-        resolved = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        original_axis = resolved.style.axis_x
-        real_axis_to_vl = bar.axis_to_vl
-
-        with patch.object(bar, "axis_to_vl", wraps=real_axis_to_vl) as axis_to_vl:
-            spec = bar.BarEmitter().emit(
-                resolved,
-                bar.RenderBox(width=600, height=300),
-                regroup((), data),
-            )
-
-        call = axis_to_vl.call_args
-        assert call.args[0] is original_axis
-        assert call.kwargs["label_angle"] == 0.0
-        assert spec.encoding["x"]["axis"]["labelAngle"] == 0.0
 
 
 class TestTableChart:

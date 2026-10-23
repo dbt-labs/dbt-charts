@@ -45,7 +45,7 @@ use crate::common::{
 };
 use crate::diagnostic::{py_repr, py_str, warn, Diagnostic};
 use crate::svg::num_full;
-use crate::text::FontBook;
+use measure::FontBook;
 use crate::xml::{Attrs, Xml};
 use crate::{Payload, TitleShift, TonesStyle};
 use super::table_dates;
@@ -7363,7 +7363,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
             }
             let label_y = row_y
                 + group_row_height / 2.0
-                + crate::text::centered_baseline_offset(&header_measurer, header_size.trunc());
+                + measure::centered_baseline_offset(&header_measurer, header_size.trunc());
             for (label, first_leaf, n_leaves) in level {
                 let abs_first = pivot_n_row_dims + first_leaf;
                 let abs_last = abs_first + n_leaves - 1;

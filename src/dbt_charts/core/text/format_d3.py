@@ -729,16 +729,6 @@ def affix_signed(
     return f"{sign}{prefix}{body}{suffix}"
 
 
-def sign_affixed(
-    sign: str, affixed: str, prefix: str, sign_placement: SignPlacement | None
-) -> str:
-    """``sign`` placed against ``prefix`` in ``affixed``, an unsigned value
-    already wrapped in that prefix (a signed change: ``+``/``−``)."""
-    if not affixed.startswith(prefix):
-        raise ValueError(f"{affixed!r} does not start with prefix {prefix!r}")
-    return affix_signed(sign + affixed[len(prefix) :], prefix, "", sign_placement)
-
-
 def format_d3(
     value: int | float | None,
     format_spec: str,

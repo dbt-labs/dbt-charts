@@ -8,8 +8,6 @@ TDD: these tests fail before the fix and pass after.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -18,8 +16,6 @@ import pytest
 from dbt_charts.core.compile.config import (
     get_theme_style,
 )
-from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.project import Project
 
 # ---------------------------------------------------------------------------
 # 1. render_layout_item: Vega charts get no SVG translate, full width
@@ -340,63 +336,3 @@ rows:
 # ---------------------------------------------------------------------------
 # 2. Layout sizing: Vega item height = actual SVG height (no + 2*card_pad)
 # ---------------------------------------------------------------------------
-
-
-class TestVegaSizingNoPadInflation:
-    """Layout sizing provider must return actual SVG height for Vega charts.
-
-    The SVG height already contains Vega's internal padding (= card_pad).
-    Adding 2*card_pad on top inflates the item height incorrectly.
-    """
-
-    def test_render_first_sizing_returns_actual_height(
-        self, local_project: Callable[..., Project]
-    ):
-        """Data-aware sizing returns actual SVG height without adding 2*card_pad."""
-        import importlib
-        from unittest.mock import patch
-
-        _converters_chart = importlib.import_module(
-            "dbt_charts.core.render.converters.chart"
-        )
-        from dbt_charts.core.compile import compile
-        from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.board_resolve import build_resolved_board
-
-        yaml_content = """
-queries:
-  q:
-    type: values
-    rows:
-      - {month: "2024-01", revenue: 1000}
-      - {month: "2024-02", revenue: 1500}
-      - {month: "2024-03", revenue: 1200}
-charts:
-  c1:
-    query: q
-    type: bar
-    x: month
-    y: revenue
-rows:
-  - c1
-"""
-        MOCK_HEIGHT = 2000
-        MOCK_SVG = f'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="{MOCK_HEIGHT}"><g/></svg>'
-
-        result = compile(yaml_content)
-        assert result.success and result.board is not None
-        executor = Executor(
-            result.board,
-            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-            query_registry=result.query_registry,
-        )
-
-        with patch.object(_converters_chart, "render_vega_spec", return_value=MOCK_SVG):
-            resolved_board, _ = build_resolved_board(result.board, executor, {})
-
-        bar_item = resolved_board.layout.items[0]
-        # After fix: item height equals actual SVG height (card_pad is Vega-internal)
-        assert abs(bar_item.height - MOCK_HEIGHT) < 1.0, (
-            f"Item height {bar_item.height} should equal SVG height {MOCK_HEIGHT}, "
-            f"not {MOCK_HEIGHT} + 2*card_pad"
-        )

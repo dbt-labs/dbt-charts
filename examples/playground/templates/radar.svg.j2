@@ -58,10 +58,11 @@ options:
 {% set rad = [width / 2 - lw.w - 10, ph / 2 - 8 - small * 2.2] | min %}
 {% if rad <= 0 %}{{ raise_error("The chart is too small to fit its spoke labels.") }}{% endif %}
 {% set step = 2 * math.pi / n %}
+{% set radial = d3.scale_linear([0, top], [0, rad]) %}
 {% macro pt(i, r) %}{{ (cx + r * math.sin(step * i))|round(2) }},{{ (cy - r * math.cos(step * i))|round(2) }}{% endmacro %}
 <g font-family="{{ style.font.family }}">
 {% for k in range(1, p.rings + 1) %}
-  {% set rr = rad * k / p.rings %}
+  {% set rr = radial(top * k / p.rings) %}
   <polygon points="{% for i in range(n) %}{{ pt(i, rr) }} {% endfor %}" fill="none" stroke="{{ style.charts.axis.grid.color }}"/>
   <text x="{{ (cx + 4)|round(1) }}" y="{{ (cy - rr)|round(1) }}" dy="-0.3em" font-size="{{ small }}" fill="{{ style.muted }}">{{ (top * k / p.rings) | format(p.value_format) }}</text>
 {% endfor %}
@@ -81,9 +82,9 @@ options:
     {% endfor %}
   {% endfor %}
   <g>
-    <polygon points="{% for v in vs.list %}{{ pt(loop.index0, rad * v / top) }} {% endfor %}" fill="{{ c }}" fill-opacity="0.15" stroke="{{ c }}" stroke-width="2" stroke-linejoin="round"/>
+    <polygon points="{% for v in vs.list %}{{ pt(loop.index0, radial(v)) }} {% endfor %}" fill="{{ c }}" fill-opacity="0.15" stroke="{{ c }}" stroke-width="2" stroke-linejoin="round"/>
   {% for v in vs.list %}
-    {% set rr = rad * v / top %}
+    {% set rr = radial(v) %}
     <circle cx="{{ (cx + rr * math.sin(step * loop.index0))|round(2) }}" cy="{{ (cy - rr * math.cos(step * loop.index0))|round(2) }}" r="3.5" fill="{{ c }}" stroke="{{ style.background }}"><title>{{ (s ~ ", ") if series_col else "" }}{{ ns.axes[loop.index0] }}: {{ v | format(p.value_format) }}</title></circle>
   {% endfor %}
   </g>

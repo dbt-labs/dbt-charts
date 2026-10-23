@@ -12,29 +12,8 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.utils import Rows
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.primitives import FontStyle, ToneLiteral
+    from dbt_charts.core.compile.models.primitives import ToneLiteral
     from dbt_charts.core.compile.models.style.theme import KpiTonesStyle
-
-
-def font_style_to_mark(font: FontStyle) -> dict[str, str | float]:
-    """Copy non-None ``FontStyle`` fields into a VL text-mark dict fragment.
-
-    The one family/size/weight/style/color → VL-mark copier shared by every
-    emitter that paints a ``FontStyle`` onto a text mark (support-table
-    row/label text). ``font.color`` lands on the mark's ``fill``.
-    """
-    mark: dict[str, str | float] = {}
-    if font.family is not None:
-        mark["font"] = font.family
-    if font.size is not None:
-        mark["fontSize"] = font.size
-    if font.weight is not None:
-        mark["fontWeight"] = font.weight
-    if font.style is not None:
-        mark["fontStyle"] = font.style
-    if font.color is not None:
-        mark["fill"] = font.color
-    return mark
 
 
 def resolve_tone_color(tone: ToneLiteral, tones: KpiTonesStyle) -> str:
@@ -108,20 +87,3 @@ def normalize_data_types(data: Rows) -> Rows:
 # these values are compared, hashed, and serialized into a scale domain or a
 # Vega filter literal, and nothing else is ever done with them.
 DomainValue = str | int | float | bool
-
-
-def ordered_distinct_values(rows: Rows, field: str) -> list[DomainValue]:
-    """Ordered distinct non-null values of ``field`` across ``rows`` (first-seen).
-
-    Normalized the same way as any other data reaching the VL spec
-    (``normalize_data_types``) — these values land directly in ``scale.domain``
-    and in Vega filter expressions, never through that normalizer, so a raw
-    ``datetime.date``/``Decimal`` value here would otherwise reach vl_convert's
-    JSON serialization unconverted.
-    """
-    ordered: dict[DomainValue, None] = {}
-    for row in rows:
-        value = row.get(field)
-        if value is not None:
-            ordered.setdefault(normalize_scalar_for_json(value), None)
-    return list(ordered)

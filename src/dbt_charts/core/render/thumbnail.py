@@ -53,9 +53,7 @@ ET.register_namespace("xlink", XLINK_NS)
 
 Rgb = tuple[float, float, float]
 
-_REMOVED_CLASSES = frozenset(
-    {"role-axis-label", "role-axis-tick", "role-axis-grid", "role-legend"}
-)
+_REMOVED_CLASSES = frozenset({"role-axis", "role-axis-grid", "role-legend"})
 _FOOTER_CLASS = "dbt-footer-link"
 _A11Y_ATTRS = (
     "aria-label",

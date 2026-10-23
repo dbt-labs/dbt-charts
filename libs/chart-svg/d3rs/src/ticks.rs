@@ -1,6 +1,8 @@
 // Ported from dbt-charts/src/dbt_charts/core/numeric.py — nice_tick_values.
 // Same nice-step selection and inclusive-bounds behavior as the Python original.
 
+use crate::js_math::{js_max, js_round, pow};
+
 /// Return ≤ `count` tick values at a "nice" step: 1, 2, or 5 × 10^k.
 ///
 /// Mirrors d3-scale's tick algorithm with an upper bound on tick count.
@@ -84,30 +86,26 @@ pub fn d3_ticks_fractional(start: f64, stop: f64, count: f64) -> Vec<f64> {
         return vec![start];
     }
     let reverse = stop < start;
-    let (lo, hi) = if reverse {
-        (stop, start)
+    let (i1, i2, inc) = if reverse {
+        tick_spec(stop, start, count)
     } else {
-        (start, stop)
+        tick_spec(start, stop, count)
     };
-    let (i1, i2, inc) = tick_spec(lo, hi, count);
-    if i2 < i1 {
+    if !(i2 >= i1) {
         return vec![];
     }
-    let n = (i2 - i1 + 1) as usize;
-    let mut out: Vec<f64> = (0..n)
+    let n = (i2 - i1 + 1.0) as usize;
+    (0..n)
         .map(|i| {
-            let v = i1 + i as i64;
+            let i = i as f64;
+            let v = if reverse { i2 - i } else { i1 + i };
             if inc < 0.0 {
-                v as f64 / -inc
+                v / -inc
             } else {
-                v as f64 * inc
+                v * inc
             }
         })
-        .collect();
-    if reverse {
-        out.reverse();
-    }
-    out
+        .collect()
 }
 
 /// Vega's `tickCount` (vega-scale `ticks.js`, as bundled by vl-convert 1.9,
@@ -132,24 +130,14 @@ pub fn vega_tick_count(start: f64, stop: f64, count: usize, min_step: Option<f64
     (count as f64).min(quotient.floor() + 1.0).max(0.0) as usize
 }
 
-fn tick_spec(start: f64, stop: f64, count: f64) -> (i64, i64, f64) {
-    let spec = tick_spec_once(start, stop, count);
-    // d3's tickSpec retries at count*2 when a count of 1 yields an empty
-    // ladder (`if (i2 < i1 && 0.5 <= count && count < 2)`), so a domain too
-    // narrow for one round tick still gets a ladder instead of nothing.
-    if spec.1 < spec.0 && (0.5..2.0).contains(&count) {
-        return tick_spec(start, stop, count * 2.0);
-    }
-    spec
-}
-
-/// d3-array `tickIncrement`: the tick step for [start, stop] at `count`,
-/// encoded d3-style — positive = the step itself; negative = −1/step for
-/// sub-unit steps (so integer arithmetic stays exact).
-fn tick_increment(start: f64, stop: f64, count: usize) -> f64 {
-    let step = (stop - start) / count.max(1) as f64;
+/// d3-array `tickSpec`: the tick indices `i1..=i2` and the increment, encoded
+/// d3-style — positive = the step itself; negative = −1/step for sub-unit steps
+/// (so the index arithmetic stays integral). `Math.pow` is V8's, whose last-bit
+/// errors move a sub-unit ladder's ends: `10 ** 26` is `9.999999999999999e25`.
+fn tick_spec(start: f64, stop: f64, count: f64) -> (f64, f64, f64) {
+    let step = (stop - start) / js_max(0.0, count);
     let power = step.log10().floor();
-    let error = step / 10f64.powf(power);
+    let error = step / pow(10.0, power);
     let factor = if error >= E10 {
         10.0
     } else if error >= E5 {
@@ -159,17 +147,44 @@ fn tick_increment(start: f64, stop: f64, count: usize) -> f64 {
     } else {
         1.0
     };
+    let (mut i1, mut i2, mut inc);
     if power < 0.0 {
-        -(10f64.powf(-power)) / factor
+        inc = pow(10.0, -power) / factor;
+        i1 = js_round(start * inc);
+        i2 = js_round(stop * inc);
+        if i1 / inc < start {
+            i1 += 1.0;
+        }
+        if i2 / inc > stop {
+            i2 -= 1.0;
+        }
+        inc = -inc;
     } else {
-        10f64.powf(power) * factor
+        inc = pow(10.0, power) * factor;
+        i1 = js_round(start / inc);
+        i2 = js_round(stop / inc);
+        if i1 * inc < start {
+            i1 += 1.0;
+        }
+        if i2 * inc > stop {
+            i2 -= 1.0;
+        }
     }
+    if i2 < i1 && 0.5 <= count && count < 2.0 {
+        return tick_spec(start, stop, count * 2.0);
+    }
+    (i1, i2, inc)
+}
+
+/// d3-array `tickIncrement`: [`tick_spec`]'s encoded increment.
+fn tick_increment(start: f64, stop: f64, count: usize) -> f64 {
+    tick_spec(start, stop, count as f64).2
 }
 
 /// d3-array `tickStep(start, stop, count)`: [`tick_increment`] decoded back
-/// into a plain positive step. d3-time's `utcTickInterval` calls it to size
-/// the multi-year rung of its ladder (`year.every(tickStep(start/durationYear,
-/// stop/durationYear, count))`).
+/// into a plain step, negative for a descending domain. d3-time's
+/// `utcTickInterval` calls it to size the multi-year rung of its ladder
+/// (`year.every(tickStep(start/durationYear, stop/durationYear, count))`).
 pub fn d3_tick_step(start: f64, stop: f64, count: usize) -> f64 {
     let reverse = stop < start;
     let inc = if reverse {
@@ -177,11 +192,7 @@ pub fn d3_tick_step(start: f64, stop: f64, count: usize) -> f64 {
     } else {
         tick_increment(start, stop, count)
     };
-    if inc < 0.0 {
-        -1.0 / inc
-    } else {
-        inc
-    }
+    (if reverse { -1.0 } else { 1.0 }) * if inc < 0.0 { 1.0 / -inc } else { inc }
 }
 
 /// d3-array `nice(start, stop, count)` — the domain extension Vega's linear
@@ -202,44 +213,6 @@ pub fn d3_nice(mut start: f64, mut stop: f64, count: usize) -> (f64, f64) {
             stop = (stop * step).floor() / step;
         }
         prestep = Some(step);
-    }
-}
-
-fn tick_spec_once(start: f64, stop: f64, count: f64) -> (i64, i64, f64) {
-    let step = (stop - start) / count.max(0.0);
-    let power = step.log10().floor();
-    let error = step / 10f64.powf(power);
-    let factor = if error >= E10 {
-        10.0
-    } else if error >= E5 {
-        5.0
-    } else if error >= E2 {
-        2.0
-    } else {
-        1.0
-    };
-    if power < 0.0 {
-        let inc = 10f64.powf(-power) / factor;
-        let mut i1 = (start * inc).round() as i64;
-        let mut i2 = (stop * inc).round() as i64;
-        if (i1 as f64) / inc < start {
-            i1 += 1;
-        }
-        if (i2 as f64) / inc > stop {
-            i2 -= 1;
-        }
-        (i1, i2, -inc)
-    } else {
-        let inc = 10f64.powf(power) * factor;
-        let mut i1 = (start / inc).round() as i64;
-        let mut i2 = (stop / inc).round() as i64;
-        if i1 as f64 * inc < start {
-            i1 += 1;
-        }
-        if i2 as f64 * inc > stop {
-            i2 -= 1;
-        }
-        (i1, i2, inc)
     }
 }
 
@@ -418,7 +391,7 @@ mod tests {
         assert_eq!(d3_nice(0.0, 40.0, 10), (0.0, 40.0));
     }
 
-    /// d3-array's `tickStep`: [`tick_increment`] decoded back to a positive
+    /// d3-array's `tickStep`: [`tick_increment`] decoded back to a plain
     /// step, sub-unit `−1/step` form included. The 55-year case is the one
     /// `utcTickInterval`'s year rung asks for on a
     /// `2020-01-15 .. 2075-06-29` domain at count 3, where Vega draws

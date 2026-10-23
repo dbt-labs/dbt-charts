@@ -36,6 +36,8 @@ from dbt_charts.core.render.errors import (
     RenderError,
 )
 
+from .._engine_render import render_chart_svg
+
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 
@@ -276,7 +278,6 @@ class TestRenderMapLookupKeyMismatchCarriesCode:
         from dbt_charts.core.diagnostics.codes_render import (
             ERR_MAP_LOOKUP_KEY_MISMATCH,
         )
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
         chart = make_chart(
             "map",
@@ -288,7 +289,7 @@ class TestRenderMapLookupKeyMismatchCarriesCode:
         resolve(chart, data, chart_style_context=_BOARD_STYLE)
 
         with pytest.raises(ChartDataError) as exc_info:
-            generate_vega_lite_spec(chart, data)
+            render_chart_svg(chart, data)
 
         assert exc_info.value.code is ERR_MAP_LOOKUP_KEY_MISMATCH
 
@@ -386,23 +387,6 @@ rows:
 
         assert render_result.board_error is not None
         assert render_result.board_error.code == ERR_INTERNAL.code
-
-
-class TestRenderVegaLiteUnsupportedTypeCarriesCode:
-    def test_svg_chart_type_carries_code(self, make_chart) -> None:
-        from dbt_charts.core.diagnostics.codes_render import (
-            ERR_VEGA_LITE_UNSUPPORTED_TYPE,
-        )
-        from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
-
-        chart = make_chart("kpi", value="n")
-        data = [{"n": 1}]
-        resolve(chart, data, chart_style_context=_BOARD_STYLE)
-
-        with pytest.raises(RenderError) as exc_info:
-            generate_vega_lite_spec(chart, data)
-
-        assert exc_info.value.code is ERR_VEGA_LITE_UNSUPPORTED_TYPE
 
 
 def _kpi_error(data: list[dict[str, int]], value: str = "n") -> ChartDataError:
@@ -551,12 +535,6 @@ class TestRenderTableDataErrorsCarryCode:
             "unaddressed": ["ghost"],
             "addressable": ["a", "b", "c"],
         }
-
-
-_PIVOT_ROWS = [
-    {"region": "US", "quarter": "Q1", "revenue": 100},
-    {"region": "EU", "quarter": "Q1", "revenue": 90},
-]
 
 
 _NEW_DATA_ERROR_CODES = (

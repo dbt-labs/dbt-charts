@@ -35,16 +35,16 @@ use crate::families::facet_compose::{
 use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::heatmap::{
     dated_bands,
-    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, emit_rotated_x_label, legend_labels, svg_text_anchor, paint_cells, tooltip_value_title, CellFill, CellPaint,
+    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, emit_rotated_x_label, legend_labels, svg_text_anchor, paint_cells, tooltip_value_title, CellFill, CellPaint, HeaderFmt,
     HeatmapResolved, AXIS_TRANSLATE, BREATHING_ROOM_PX,
 };
 use crate::families::color_scale::{
     continuous_gradient_def, stops_gradient_def, ContinuousColor, GradientAt, VerticalGradient,
 };
 use crate::contract;
-use crate::measure::baseline_shift;
-use crate::print::print;
-use crate::node::{Attrs, Node};
+use measure::baseline_shift;
+use print::print;
+use scene::{Attrs, Node};
 use crate::families::legend::{
     LegendEntry, emit_vega_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendSymbol,
     VEGA_GRADIENT_THICKNESS,
@@ -55,8 +55,8 @@ use crate::families::temporal::{
     ExprBands, LabelUnit, TemporalLabel, TimeUnit, VegaType,
 };
 use crate::families::x_type::{parse_date, resolve_cartesian_x_type, Grain, XAxis};
-use crate::svg::{vega_escape_attr, xml_escape, xml_escape_attr};
-use crate::text::FontBook;
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 use crate::vega_fit;
 use crate::Payload;
 
@@ -416,7 +416,7 @@ impl HeatmapXAxis {
         let scale = BandScale::new(self.domain.clone(), 0.0, plot_w, 0.0, 0.0);
         let sign = self.edge.sign();
         let axis_top = plot_edge + sign * self.offset + AXIS_TRANSLATE;
-        let label_y = axis_top + sign * (self.tick_len + self.label_pad) + crate::measure::baseline_shift(self.edge.baseline(), self.font_size);
+        let label_y = axis_top + sign * (self.tick_len + self.label_pad) + measure::baseline_shift(self.edge.baseline(), self.font_size);
         let row_advance = vega_fit::label_row_advance(self.font_size);
         let tick_color = crate::common::required_ink(ax_x.ticks.color.as_deref(), "heatmap_facet", "axis_x.ticks.color")?;
         let tick_width = ax_x.ticks.width.unwrap_or(1.0);
@@ -430,7 +430,7 @@ impl HeatmapXAxis {
         )?;
         let (align, baseline) = self.anchor();
         let anchor_y = axis_top + sign * (self.tick_len + self.label_pad);
-        let dy = crate::measure::baseline_shift(baseline, self.font_size);
+        let dy = measure::baseline_shift(baseline, self.font_size);
         let text_anchor = svg_text_anchor(align);
         let visible = self.visible(plot_w);
         for (label, &shown) in self.labels.iter().zip(&visible) {
@@ -494,7 +494,7 @@ impl HeatmapXAxis {
             let title_fs = ax_x.title.font.size_or(11.0);
             let title_y = axis_top
                 + sign * (bounds_bottom + ax_x.title.padding.unwrap_or(10.0))
-                + crate::measure::baseline_shift(self.edge.baseline(), title_fs);
+                + measure::baseline_shift(self.edge.baseline(), title_fs);
             crate::common::emit_axis_title_at(svg, &self.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, None);
             crate::contract::axis_group_close(svg);
             return Ok(());
@@ -747,7 +747,7 @@ fn render_panel(
     let _ = write!(svg, "<g transform=\"translate({left:.2},0)\">");
     paint_cells(&mut svg, rows, &x_scale, &y_scale, &style.cells)?;
     svg.push_str("</g>");
-    let label_shift = crate::measure::baseline_shift("middle", style.y_font_size);
+    let label_shift = measure::baseline_shift("middle", style.y_font_size);
     let y_caption = category_axis_caption(style.y_title, style.ax_y, y_domain)?;
     if style.own_axis && !own_right {
         crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption, (left + label_x, 0.0))?;
@@ -1182,6 +1182,7 @@ pub(crate) fn render_facet(
     }
     let axes = &r.panel_axes;
     let (rows, x_grain) = date_dimension(&payload.rows, &r.x, &r.style.axis_x, true)?;
+    let rows = if r.is_flat() { super::heatmap::with_flat_column(rows) } else { rows };
     // Vega-Lite decides which scales a panel narrows from the data as authored;
     // only the domains it then draws follow the rows with a valid color.
     let authored_panels = multiples::regroup(axes, &rows).map_err(|e| format!("heatmap: {e}"))?;
@@ -1290,7 +1291,10 @@ pub(crate) fn render_facet(
         opacity: r.style.rect_mark.opacity.unwrap_or(1.0),
         stroke_attr: r.style.rect_mark.stroke_attr()?,
         stroke_reach: r.style.rect_mark.stroke_reach(),
-        tooltip: tooltip_value_title(r, &rows)?.zip(r.style.tooltip_format.as_ref()),
+        tooltip: tooltip_value_title(r)?.zip(r.style.tooltip_format.as_ref()),
+        native_aria: false,
+        x_header: HeaderFmt::of(&rows, &r.x, ax_x)?,
+        y_header: HeaderFmt::of(&rows, &r.y, ax_y)?,
         link: r.datum_link((x_grain.is_some(), false, kind == ColorKind::Dates)),
         mirror,
         ghost_titles: Some((x_title.as_str(), y_title.as_str())),
@@ -1530,7 +1534,7 @@ pub(crate) fn render_facet(
 #[cfg(test)]
 mod tests {
     use super::{facet_extra_axis_px, narrowed_domain, AxisLabels, ChartSort, CHROME_PX};
-    use crate::text::FontBook;
+    use measure::FontBook;
     use serde_json::{Map, Value};
 
     fn labels_at(weight: &str, max_width: Option<f64>) -> AxisLabels {

@@ -17,8 +17,10 @@ description: Flow map after Charles Joseph Minard's 1869 map of Napoleon's Russi
 {% set temp_h = height - temp_top - size %}
 {% set peak = troops | map(attribute="survivors") | map("float") | max %}
 {% set band = map_h * 0.13 %}
-{% macro x(lon) %}{{ (((lon | float) - lon0) / (lon1 - lon0) * (width - right)) | round(1) }}{% endmacro %}
-{% macro y(lat) %}{{ (map_h - ((lat | float) - lat0) / (lat1 - lat0) * map_h) | round(1) }}{% endmacro %}
+{% set lon_scale = d3.scale_linear([lon0, lon1], [0, width - right]) %}
+{% set lat_scale = d3.scale_linear([lat0, lat1], [map_h, 0]) %}
+{% macro x(lon) %}{{ lon_scale(lon | float) | round(1) }}{% endmacro %}
+{% macro y(lat) %}{{ lat_scale(lat | float) | round(1) }}{% endmacro %}
 <g font-family="{{ style.font.family }}">
 {# Retreat draws after advance so it stays on top. #}
 {% for dir in ["A", "R"] %}
@@ -44,16 +46,17 @@ description: Flow map after Charles Joseph Minard's 1869 map of Napoleon's Russi
 {% endfor %}
 {% if temps %}
   {% set t_lo = [temps | map(attribute="temp") | map("float") | min, -30] | min %}
-  {% macro ty(v) %}{{ (temp_top + ((v | float) / t_lo) * temp_h) | round(1) }}{% endmacro %}
-  {% for v in range(0, (t_lo | int) - 1, -10) %}
+  {% set temp_scale = d3.scale_linear([0, t_lo], [temp_top, temp_top + temp_h]).nice(3) %}
+  {% macro ty(v) %}{{ temp_scale(v | float) | round(1) }}{% endmacro %}
+  {% for v in temp_scale.ticks(3) %}
   <line x1="0" x2="{{ width - right }}" y1="{{ ty(v) }}" y2="{{ ty(v) }}" stroke="{{ style.charts.axis.grid.color }}"/>
-  <text x="{{ width - right + 6 }}" y="{{ ty(v) }}" dy="0.35em" font-size="{{ small }}" fill="{{ style.muted }}">{{ v }}°R</text>
+  <text x="{{ width - right + 6 }}" y="{{ ty(v) }}" dy="0.35em" font-size="{{ small }}" fill="{{ style.muted }}">{{ v | format(".0f") }}°R</text>
   {% endfor %}
   <polyline fill="none" stroke="{{ style.font.color }}" stroke-width="1.5" points="{% for t in temps %}{{ x(t.lon) }},{{ ty(t.temp) }} {% endfor %}"/>
   {% for t in temps %}
   <line x1="{{ x(t.lon) }}" x2="{{ x(t.lon) }}" y1="{{ map_h }}" y2="{{ ty(t.temp) }}" stroke="{{ style.muted }}" stroke-width="0.6" stroke-dasharray="2 2"/>
-  <circle cx="{{ x(t.lon) }}" cy="{{ ty(t.temp) }}" r="2.5" fill="{{ style.font.color }}"><title>{{ t.name }}: {{ t.temp }}° Réaumur</title></circle>
-  <text x="{{ x(t.lon) }}" y="{{ (ty(t.temp) | float) + small + 4 }}" text-anchor="middle" font-size="{{ small }}" fill="{{ style.font.color }}">{{ t.temp }}° {{ t.name }}</text>
+  <circle cx="{{ x(t.lon) }}" cy="{{ ty(t.temp) }}" r="2.5" fill="{{ style.font.color }}"><title>{{ t.name }}: {{ t.temp | format('.1~f') }}° Réaumur</title></circle>
+  <text x="{{ x(t.lon) }}" y="{{ (ty(t.temp) | float) + small + 4 }}" text-anchor="middle" font-size="{{ small }}" fill="{{ style.font.color }}">{{ t.temp | format('.1~f') }}° {{ t.name }}</text>
   {% endfor %}
   <text x="0" y="{{ temp_top - size * 0.8 }}" font-size="{{ small }}" fill="{{ style.muted }}">Temperature on the retreat, degrees Réaumur</text>
 {% endif %}

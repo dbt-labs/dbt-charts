@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct serve directory listings no longer render several times too large.
+time: 2026-10-22T18:07:29.100327-07:00

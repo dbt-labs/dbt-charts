@@ -32,17 +32,11 @@ def _make_chart(chart_id: str = "c1", chart_type: str = "bar") -> Chart:
     return TypeAdapter(Chart).validate_python(fields)
 
 
-def _make_ctx(
-    chart: Chart,
-    rows: list[dict[str, Any]],
-    include_in_vega_specs: bool = True,
-) -> WarningContext:
+def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     board = make_test_resolved_board(charts={chart.id: chart})
-    vega_specs = {chart.id: {"mark": chart.type}} if include_in_vega_specs else {}
     return WarningContext(
         board_spec=board,
         chart_results={chart.id: rows},
-        vega_specs=vega_specs,
     )
 
 
@@ -97,10 +91,6 @@ def test_fires_only_for_empty_chart_in_multi_chart_board() -> None:
             "c_empty": [],
             "c_full": [{"x": "a", "y": 1}],
         },
-        vega_specs={
-            "c_empty": {"mark": "bar"},
-            "c_full": {"mark": "bar"},
-        },
     )
     warnings = detector.detect(ctx)
     assert len(warnings) == 1
@@ -119,29 +109,7 @@ def test_no_fire_when_chart_not_in_chart_results() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={},  # no entry for this chart
-        vega_specs={chart.id: {"mark": "bar"}},
     )
-    assert detector.detect(ctx) == []
-
-
-# ---------------------------------------------------------------------------
-# Sparse vega_specs irrelevance: KPI/text charts fire anyway
-# ---------------------------------------------------------------------------
-
-
-def test_fires_for_kpi_chart_not_in_vega_specs() -> None:
-    """KPI charts are absent from vega_specs but zero rows is still meaningful."""
-    chart = _make_chart(chart_type="kpi")
-    ctx = _make_ctx(chart, [], include_in_vega_specs=False)
-    warnings = detector.detect(ctx)
-    assert len(warnings) == 1
-    assert warnings[0].code == WARN_QUERY_RETURNED_ZERO_ROWS.code
-
-
-def test_no_fire_for_kpi_chart_with_rows() -> None:
-    """KPI chart absent from vega_specs but with rows must not fire."""
-    chart = _make_chart(chart_type="kpi")
-    ctx = _make_ctx(chart, [{"value": 42}], include_in_vega_specs=False)
     assert detector.detect(ctx) == []
 
 
@@ -162,7 +130,6 @@ def test_no_fire_when_zero_rows_is_explained_by_truncation() -> None:
     ctx = WarningContext(
         board_spec=board,
         chart_results={chart.id: []},
-        vega_specs={chart.id: {"mark": "bar"}},
         chart_truncations={
             chart.id: TruncationInfo(
                 query_name="q", kept_row_count=0, reason="max_result_bytes"

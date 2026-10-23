@@ -8,7 +8,6 @@ from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
-    resolve_chart_style_context,
     resolve_style_and_context,
 )
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
@@ -32,24 +31,6 @@ def _get_zero_rule_layer(spec: dict) -> dict | None:
             enc = layer.get("encoding", {})
             y_datum = "y" in enc and enc["y"].get("datum") == 0
             x_datum = "x" in enc and enc["x"].get("datum") == 0
-            if y_datum or x_datum:
-                return layer
-    return None
-
-
-def _get_top_rule_layer(spec: dict) -> dict | None:
-    """Return the top (100%) rule layer from a layered VL spec, or None.
-
-    Mirror of `_get_zero_rule_layer` for the y=1 (normalized-stack ceiling)
-    rule.
-    """
-    layers = chart_pane(spec).get("layer", [])
-    for layer in layers:
-        mark = layer.get("mark", {})
-        if isinstance(mark, dict) and mark.get("type") == "rule":
-            enc = layer.get("encoding", {})
-            y_datum = "y" in enc and enc["y"].get("datum") == 1
-            x_datum = "x" in enc and enc["x"].get("datum") == 1
             if y_datum or x_datum:
                 return layer
     return None
@@ -123,26 +104,6 @@ def _make_spec_with_ticks_visible(
     return render_resolved_chart(
         resolved_chart, data, _BOARD_RS, width=400, height=300
     ).payload
-
-
-def test_zero_rule_layer_is_last_in_spec():
-    """Zero rule (discriminated by datum==0) is the last layer so it renders on top."""
-
-    chart = BarChart(id="t", type="bar", x="x", y="y", query_name="q")
-    data = [{"x": "A", "y": 10}, {"x": "B", "y": -5}]
-    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
-    spec = render_resolved_chart(
-        resolved, data, _BOARD_RS, width=400, height=300
-    ).payload
-
-    layers = spec.get("layer", [])
-    assert layers, "Expected layered spec with zero rule"
-    zero_layer = _get_zero_rule_layer(spec)
-    assert zero_layer is not None, "Zero rule layer not found"
-    assert zero_layer is layers[-1], (
-        f"Zero rule must be the last layer; "
-        f"found at {layers.index(zero_layer)}, last is {len(layers) - 1}"
-    )
 
 
 @pytest.mark.xfail(
@@ -275,52 +236,6 @@ def test_zero_rule_horizontal_top_extends_via_encoding_y_not_mark_yoffset():
     assert mark.get("clip") is False
 
 
-def test_zero_rule_no_offset_when_ticks_hidden():
-    """No tick-coverage extension when axis ticks are hidden (default)."""
-    from dbt_charts.core.compile.models.style.authored import (
-        BarChartStylePatch,
-    )
-
-    chart = BarChart(
-        id="t",
-        type="bar",
-        x="x",
-        y="y",
-        query_name="q",
-        style=BarChartStylePatch(orientation="vertical"),
-    )
-    data = [{"x": "A", "y": 10}, {"x": "B", "y": -5}]
-    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
-    spec = render_resolved_chart(
-        resolved, data, _BOARD_RS, width=400, height=300
-    ).payload
-
-    rule_layer = _get_zero_rule_layer(spec)
-    assert rule_layer is not None
-    enc = rule_layer["encoding"]
-    mark = rule_layer["mark"]
-    # Encoding endpoints must be the plain pixel constants (no expr extension).
-    assert enc.get("x") == {"value": 0}, (
-        f"Unexpected x encoding when ticks hidden: {enc.get('x')}"
-    )
-    assert enc.get("x2") == {"value": "width"}, (
-        f"Unexpected x2 encoding: {enc.get('x2')}"
-    )
-    assert "clip" not in mark, f"Unexpected clip key when ticks hidden: {mark}"
-
-
-def test_zero_rule_no_offset_when_tick_size_zero():
-    """tick_size=0 is treated as 'no stub to cover' — no extension applied."""
-    spec = _make_spec_with_ticks_visible("bar", "vertical", tick_size=0.0)
-    rule_layer = _get_zero_rule_layer(spec)
-    assert rule_layer is not None
-    mark = rule_layer["mark"]
-    assert "x2Offset" not in mark and "xOffset" not in mark, (
-        f"Unexpected mark offset for tick_size=0: {mark}"
-    )
-    assert "clip" not in mark, f"Unexpected clip key for tick_size=0: {mark}"
-
-
 @pytest.mark.xfail(
     reason="V2 zero-rule emitter does not yet read chart-local axis ticks state for extension",
     strict=True,
@@ -396,60 +311,3 @@ class TestNormalizeStackTopRule:
         return render_resolved_chart(
             resolved, self._DATA, _BOARD_RS, width=400, height=300
         ).payload
-
-    def test_normalize_stack_emits_top_rule_at_y1(self):
-        spec = self._render(self._stacked_bar("normalize"))
-        rule = _get_top_rule_layer(spec)
-        assert rule is not None, (
-            "stack: normalize should emit a top-rule at y=1, mirror of the "
-            "zero baseline at y=0. Got layers: "
-            f"{[layer.get('mark', {}).get('type') for layer in spec.get('layer', [])]}"
-        )
-        # The rule's color should match the resolved grid.threshold.color (same
-        # token used for the zero baseline — a single visual contract).
-        assert rule["mark"].get("color"), (
-            "top rule should carry an explicit color from the cascade"
-        )
-
-    def test_normalize_stack_top_rule_color_matches_zero_rule_color(self):
-        """Both the zero and the top rule pull from grid.threshold.color — the
-        cascade owns the single visual contract for these emphasis rules."""
-        spec = self._render(self._stacked_bar("normalize"))
-        zero_rule = _get_zero_rule_layer(spec)
-        top_rule = _get_top_rule_layer(spec)
-        assert zero_rule is not None and top_rule is not None
-        assert zero_rule["mark"].get("color") == top_rule["mark"].get("color")
-
-    def test_zero_stack_does_not_emit_top_rule(self):
-        """Inverse: stack: zero (the default for color-encoded bar) should
-        NOT emit a top rule. The top rule is normalize-mode-specific."""
-        spec = self._render(self._stacked_bar(None))  # default = zero stack
-        rule = _get_top_rule_layer(spec)
-        assert rule is None, (
-            f"non-normalized stack must not emit a top-rule; got {rule!r}"
-        )
-
-
-def test_zero_rule_color_matches_resolved_grid_zero_color():
-    """Zero rule color in VL spec matches the resolved grid.threshold.color (not hardcoded)."""
-    from dbt_charts.core.compile.resolve.style.axis_cascade import resolved_axis_style
-
-    ctx = resolve_chart_style_context(get_theme_style())
-    axis_y = resolved_axis_style(
-        ctx, "axis_y", "quantitative", chart_type="", labeled=False
-    )
-    expected_color = axis_y.grid.threshold.color
-
-    chart = BarChart(id="t", type="bar", x="x", y="y", query_name="q")
-    data = [{"x": "A", "y": 10}, {"x": "B", "y": -5}]
-    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
-    spec = render_resolved_chart(
-        resolved, data, _BOARD_RS, width=400, height=300
-    ).payload
-
-    rule_layer = _get_zero_rule_layer(spec)
-    assert rule_layer is not None
-    mark = rule_layer["mark"]
-    assert mark.get("color") == expected_color, (
-        f"Zero rule color {mark.get('color')!r} != resolved zero.color {expected_color!r}"
-    )

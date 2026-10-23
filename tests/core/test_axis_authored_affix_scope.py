@@ -9,19 +9,15 @@ import pytest
 from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
-    reset_config,
 )
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.models.chart.normalized import LineChart
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import (
     AxisLabelStylePatch,
     AxisXStylePatch,
     AxisYStylePatch,
     DimensionLabelStylePatch,
-    LineChartStylePatch,
 )
-from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart._axes import (
     AxisOverrides,
     _bake_cartesian_axes,
@@ -32,18 +28,9 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 )
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
-    resolve_style,
 )
-from dbt_charts.core.render.chart.vega_lite import generate_vega_lite_spec
 
 from .conftest import fixture_chart_for_type
-
-
-@pytest.fixture(autouse=True)
-def _reset():
-    reset_config()
-    yield
-    reset_config()
 
 
 def _bake_ay_with_format(chart_type: str, y_channel_type: str, fmt: FormatConfig):
@@ -85,7 +72,7 @@ def test_temporal_channel_drops_the_affix_extraction():
 
 
 def test_nominal_channel_rejects_the_authored_affix():
-    """A categorical axis's format is judged by gate_label_format at render (reads the
+    """A categorical axis's format is judged by the engine's label-format gate at render (reads the
     plain `format` key).
     """
     with pytest.raises(CompilationError) as exc_info:
@@ -208,88 +195,6 @@ def test_resolved_axis_style_wrapper_does_not_crash_on_a_formatconfig():
         ctx, "axis_x", "band", chart_type="bar", labeled=False
     )
     assert resolved.labels.padding is not None
-
-
-_LABEL_EXPR_DATA = [
-    {"month": "Jan", "revenue_eur": 100000},
-    {"month": "Feb", "revenue_eur": 50000},
-]
-
-
-def _render_line_with_style(ctx, style: LineChartStylePatch, data=_LABEL_EXPR_DATA):
-    # A line chart's y is always the measure axis -- unlike bar, which
-    # auto-picks orientation from the data and can put the measure on x.
-    board_style = resolve_style(get_theme_style(get_default_theme_name()))
-    chart = LineChart(
-        id="fixture", type="line", x="month", y="revenue_eur", style=style
-    )
-    resolve(chart, data, chart_style_context=ctx)
-    return generate_vega_lite_spec(
-        chart, data, width=400, board_style=board_style, chart_style_context=ctx
-    )
-
-
-def _svg(spec) -> str:  # type-state: explicit_any — vl_convert's own dict boundary
-    import vl_convert as vlc
-
-    result: str = vlc.vegalite_to_svg(spec)
-    return result
-
-
-def test_labels_expr_wins_over_an_alias_spelling_of_the_same_affix():
-    """Same precedence, chart-wide format authored via a style.formats alias name."""
-    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    ctx = dataclasses.replace(
-        ctx, formats={"eur": FormatConfig(spec=",.0f", prefix="EUR ")}
-    )
-    style = LineChartStylePatch(
-        axis_y=AxisYStylePatch(
-            labels=AxisLabelStylePatch(format="eur", expr="datum.label + ' /mo'")
-        ),
-    )
-    spec = _render_line_with_style(ctx, style)
-    y_axis = spec["encoding"]["y"]["axis"]
-    assert y_axis["labelExpr"] == "datum.label + ' /mo'"
-    svg = _svg(spec)
-    assert "100,000 /mo" in svg, svg
-    assert "EUR 100,000" in svg, svg
-
-
-def test_labels_expr_wins_over_an_affix_authored_directly_on_the_axis():
-    """Same precedence when the affix is authored on axis_y.labels.format
-    itself, not inherited from a chart-wide fallback."""
-    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    style = LineChartStylePatch(
-        axis_y=AxisYStylePatch(
-            labels=AxisLabelStylePatch(
-                format=FormatConfig(spec=",.0f", prefix="EUR "),
-                expr="datum.label + ' /mo'",
-            )
-        )
-    )
-    spec = _render_line_with_style(ctx, style)
-    y_axis = spec["encoding"]["y"]["axis"]
-    assert y_axis["labelExpr"] == "datum.label + ' /mo'"
-    svg = _svg(spec)
-    assert "100,000 /mo" in svg, svg
-
-
-def test_labels_expr_can_write_the_symbol_in_directly():
-    """An author who wants the symbol on the axis writes it into the expression
-    themselves.
-    """
-    ctx = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
-    style = LineChartStylePatch(
-        axis_y=AxisYStylePatch(
-            labels=AxisLabelStylePatch(
-                format=FormatConfig(spec=",.0f", prefix="EUR "),
-                expr="'EUR ' + datum.label + ' /mo'",
-            )
-        ),
-    )
-    spec = _render_line_with_style(ctx, style)
-    svg = _svg(spec)
-    assert "EUR 100,000 /mo" in svg, svg
 
 
 def test_labels_expr_with_a_plain_spec_and_no_affix_still_resolves():

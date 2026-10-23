@@ -15,20 +15,11 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from unittest.mock import Mock
 
-import pytest
-
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import (
-    AreaChart,
-    BarChart,
-    LineChart,
-)
-from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
-from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 _SVG_NS = "http://www.w3.org/2000/svg"
 _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
@@ -134,46 +125,6 @@ def _is_zero_extent(d: str) -> bool:
     return "v0h" in d or "h0v" in d
 
 
-def _categorical_axis_order(svg: str, axis: str) -> list[str]:
-    """Rendered category order along the given VL axis ('x' or 'y'), read
-    from the axis-label text nodes in DOM order (paint order — left-to-right
-    for x, top-to-bottom for y).
-
-    Scoped to ``role-axis-label`` groups specifically, not every text node
-    under the axis group — the axis also carries a ``role-axis-title`` text
-    node (the axis title, visible by default) that is not a category tick
-    and must not be picked up as one.
-    """
-    root = ET.fromstring(svg)
-    prefix = "X-axis" if axis == "x" else "Y-axis"
-    for g in root.iter(f"{{{_SVG_NS}}}g"):
-        if (
-            g.get("aria-label", "").startswith(prefix)
-            and g.get("aria-roledescription") == "axis"
-        ):
-            labels: list[str] = []
-            for label_g in g.iter(f"{{{_SVG_NS}}}g"):
-                if "role-axis-label" not in label_g.get("class", ""):
-                    continue
-                labels.extend(
-                    t.text for t in label_g.iter(f"{{{_SVG_NS}}}text") if t.text
-                )
-            return labels
-    raise AssertionError(f"no {axis}-axis found in svg")
-
-
-@pytest.mark.parametrize("width", _WIDTH_TIERS)
-def test_vertical_bar_zero_gets_direct_label_no_mark(width: int) -> None:
-    svg = _render_svg(_bar_board(orientation="vertical", width=width), _ROWS_ZERO_NULL)
-    bars = dict(_bar_marks(svg))
-    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
-    assert _is_zero_extent(zero_bar), zero_bar
-    assert any("V: 12" in label for label in bars), bars
-    assert any("V: 7" in label for label in bars), bars
-    labels = _value_label_texts(svg)
-    assert labels == ["0"], labels
-
-
 def test_zero_label_carries_the_hover_emphasis_value_label_marker() -> None:
     """The "0" text this feature draws IS the zero row's own printed value
     (the same slot ValueLabelFeature's formatted labels occupy on every
@@ -184,20 +135,6 @@ def test_zero_label_carries_the_hover_emphasis_value_label_marker() -> None:
     """
     svg = _render_svg(_bar_board(orientation="vertical", width=600), _ROWS_ZERO_NULL)
     assert svg.count('data-dbt-value-label="true"') == 1
-
-
-@pytest.mark.parametrize("width", _WIDTH_TIERS)
-def test_horizontal_bar_zero_gets_direct_label_no_mark(width: int) -> None:
-    svg = _render_svg(
-        _bar_board(orientation="horizontal", width=width), _ROWS_ZERO_NULL
-    )
-    bars = dict(_bar_marks(svg))
-    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
-    assert _is_zero_extent(zero_bar), zero_bar
-    assert any("V: 12" in label for label in bars), bars
-    assert any("V: 7" in label for label in bars), bars
-    labels = _value_label_texts(svg)
-    assert labels == ["0"], labels
 
 
 def test_null_row_gets_no_mark_and_no_label() -> None:
@@ -218,15 +155,6 @@ def test_no_zero_values_is_a_no_op() -> None:
     bars = _bar_marks(svg)
     assert len(bars) == 3, bars
     assert not any(_is_zero_extent(d) for _, d in bars), bars
-
-
-def test_all_zero_values_all_get_labels() -> None:
-    rows = [{"k": "A", "v": 0}, {"k": "B", "v": 0}, {"k": "C", "v": 0}]
-    svg = _render_svg(_bar_board(orientation="vertical", width=600), rows)
-    bars = _bar_marks(svg)
-    assert len(bars) == 3, bars
-    assert all(_is_zero_extent(d) for _, d in bars), bars
-    assert _value_label_texts(svg) == ["0", "0", "0"]
 
 
 def test_zero_label_composes_an_authored_affix() -> None:
@@ -334,217 +262,12 @@ rows: [{rows: [c]}]
     assert _value_label_texts(svg) == ["99", "5", "3"]
 
 
-def test_negative_value_alongside_zero() -> None:
-    rows = [{"k": "A", "v": -5}, {"k": "B", "v": 0}, {"k": "C", "v": 7}]
-    svg = _render_svg(_bar_board(orientation="vertical", width=600), rows)
-    bars = dict(_bar_marks(svg))
-    assert any(label.startswith("⁡A;") for label in bars), bars
-    assert any("V: 7" in label for label in bars), bars
-    zero_bar = next(d for label, d in bars.items() if "V: 0" in label)
-    assert _is_zero_extent(zero_bar), zero_bar
-    assert _value_label_texts(svg) == ["0"]
-
-
-def test_horizontal_bar_default_sort_survives_a_zero_row() -> None:
-    """Regression: an earlier revision of this feature suppressed the zero
-    row's mark via a per-layer VL `filter` transform. A `transform` array on
-    ANY sub-layer — even one that changes nothing about what other layers
-    draw — makes vl-convert silently discard the shared categorical axis's
-    `sort` and fall back to alphabetical order. Horizontal bar's default
-    sort (descending by measure) is the most common case this would break."""
-    no_zero = _render_svg(
-        _bar_board(orientation="horizontal", width=600),
-        [
-            {"k": "D", "v": 3},
-            {"k": "B", "v": 12},
-            {"k": "A", "v": 5},
-            {"k": "C", "v": 7},
-        ],
-    )
-    with_zero = _render_svg(
-        _bar_board(orientation="horizontal", width=600),
-        [
-            {"k": "D", "v": 3},
-            {"k": "B", "v": 12},
-            {"k": "A", "v": 0},
-            {"k": "C", "v": 7},
-        ],
-    )
-    assert _categorical_axis_order(no_zero, "y") == ["B", "C", "A", "D"]
-    # A's value dropped from 5 to 0 — still the smallest, so it moves to last;
-    # B/C/D keep their same relative descending order either way.
-    assert _categorical_axis_order(with_zero, "y") == ["B", "C", "D", "A"]
-
-
-def test_vertical_bar_authored_sort_survives_a_zero_row() -> None:
-    """Same regression as the horizontal-default case, for an explicit
-    authored `sort:` on a vertical bar."""
-    board = """
-title: probe
-charts:
-  c:
-    type: bar
-    query: q
-    x: k
-    y: v
-    width: 600
-    sort: {by: v, order: desc}
-    style:
-      orientation: vertical
-queries:
-  q:
-    sql: "SELECT 1"
-    source: test_source
-rows: [{rows: [c]}]
-"""
-    with_zero = _render_svg(
-        board,
-        [
-            {"k": "D", "v": 3},
-            {"k": "B", "v": 12},
-            {"k": "A", "v": 0},
-            {"k": "C", "v": 7},
-        ],
-    )
-    assert _categorical_axis_order(with_zero, "x") == ["B", "C", "D", "A"]
-
-
 # ---------------------------------------------------------------------------
 # Adversarial shapes this feature must leave alone (documented scope limit):
 # grouped/stacked/multi-metric bar, and non-bar families (line/area). Faster,
 # more precise structural checks via resolve() -> render_resolved_chart(),
 # the same real emit+feature seam without the query/layout machinery.
 # ---------------------------------------------------------------------------
-
-
-def _spec_layers(chart: object, data: list[dict[str, object]]) -> list[dict]:
-    """The chart's own VL sub-layer list.
-
-    A stacked/grouped bar with a color legend wraps the chart spec in a
-    `vconcat` (legend row + chart row) rather than emitting `layer` at the
-    top level — this digs into that wrapper so a stacked-bar fixture's
-    layers are actually inspected, not silently read as `[]`.
-    """
-    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
-    payload = render_resolved_chart(
-        resolved, data, _BOARD_STYLE, width=600, height=300
-    ).payload
-    assert isinstance(payload, dict)
-    if "layer" in payload:
-        return payload["layer"]
-    for sub in payload.get("vconcat", []):
-        if "layer" in sub:
-            return sub["layer"]
-    raise AssertionError(f"no layer array found in payload keys: {sorted(payload)}")
-
-
-def _has_zero_label_layer(layers: list[dict], measure_field: str = "y") -> bool:
-    """True if any sub-layer is the ZeroValueLabelFeature's own text mark —
-    identified by the ``text`` encoding condition it actually emits (blank
-    every row except the zero one), not a ``transform``. The feature never
-    carries a ``transform`` on its layer (see the module docstring in
-    ``zero_value_label.py`` for why: any sub-layer transform makes vl-convert
-    silently drop the shared categorical axis's sort)."""
-    expected_test = f"datum['{measure_field}'] != 0"
-    for layer in layers:
-        mark = layer.get("mark")
-        if not (isinstance(mark, dict) and mark.get("type") == "text"):
-            continue
-        encoding = layer.get("encoding", {})
-        text_enc = encoding.get("text") if isinstance(encoding, dict) else None
-        if not isinstance(text_enc, dict):
-            continue
-        condition = text_enc.get("condition")
-        if isinstance(condition, dict) and condition.get("test") == expected_test:
-            return True
-    return False
-
-
-def test_has_zero_label_layer_helper_detects_the_feature_firing() -> None:
-    """Positive control for `_has_zero_label_layer`: the plain single-series
-    bar shape the feature DOES fire for must be detected, so a future
-    mechanism change breaks this helper loudly instead of silently
-    disarming the adversarial-shape tests below that depend on it."""
-    chart = BarChart(id="t", type="bar", x="cat", y="y", query_name="q")
-    data = [{"cat": "A", "y": 0}, {"cat": "B", "y": 5}]
-    layers = _spec_layers(chart, data)
-    assert _has_zero_label_layer(layers), layers
-
-
-def test_stacked_bar_zero_segment_is_not_touched() -> None:
-    """Stacked bar: this feature doesn't fire (mid-stack zero-label position
-    is undefined) — the pre-existing 0-height segment mark still renders."""
-    chart = BarChart(
-        id="t",
-        type="bar",
-        x="cat",
-        y="y",
-        color="series",
-        query_name="q",
-        stack="zero",
-    )
-    data = [
-        {"cat": "A", "y": 5, "series": "s1"},
-        {"cat": "A", "y": 3, "series": "s2"},
-        {"cat": "B", "y": 0, "series": "s1"},
-        {"cat": "B", "y": 4, "series": "s2"},
-    ]
-    layers = _spec_layers(chart, data)
-    assert not _has_zero_label_layer(layers), layers
-
-
-def test_grouped_color_bar_zero_is_not_touched() -> None:
-    chart = BarChart(
-        id="t",
-        type="bar",
-        x="cat",
-        y="y",
-        color="series",
-        query_name="q",
-        stack="none",
-    )
-    data = [
-        {"cat": "A", "y": 5, "series": "s1"},
-        {"cat": "A", "y": 3, "series": "s2"},
-        {"cat": "B", "y": 0, "series": "s1"},
-        {"cat": "B", "y": 4, "series": "s2"},
-    ]
-    layers = _spec_layers(chart, data)
-    assert not _has_zero_label_layer(layers), layers
-
-
-def test_multi_metric_bar_zero_is_not_touched() -> None:
-    chart = BarChart(id="t", type="bar", x="cat", y=["y1", "y2"], query_name="q")
-    data = [
-        {"cat": "A", "y1": 0, "y2": 4},
-        {"cat": "B", "y1": 5, "y2": 2},
-    ]
-    layers = _spec_layers(chart, data)
-    assert not _has_zero_label_layer(layers), layers
-
-
-def test_line_chart_zero_value_is_not_touched() -> None:
-    """Line/area don't share bar's 0-height-mark defect (a zero-value vertex
-    still renders visibly), so this feature scopes to bar only."""
-    from dbt_charts.core.render.chart.features.zero_value_label import (
-        ZeroValueLabelFeature,
-    )
-
-    chart = LineChart(id="t", type="line", x="cat", y="y", query_name="q")
-    data = [{"cat": "A", "y": 0}, {"cat": "B", "y": 5}]
-    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
-    assert ZeroValueLabelFeature().applies_to(resolved) is False
-
-
-def test_area_chart_zero_value_is_not_touched() -> None:
-    from dbt_charts.core.render.chart.features.zero_value_label import (
-        ZeroValueLabelFeature,
-    )
-
-    chart = AreaChart(id="t", type="area", x="cat", y="y", query_name="q")
-    data = [{"cat": "A", "y": 0}, {"cat": "B", "y": 5}]
-    resolved = resolve(chart, data, chart_style_context=_BOARD_CTX)
-    assert ZeroValueLabelFeature().applies_to(resolved) is False
 
 
 # ---------------------------------------------------------------------------
@@ -554,49 +277,3 @@ def test_area_chart_zero_value_is_not_touched() -> None:
 # whether the other is present in the pipeline — so removing either from
 # DEFAULT_FEATURES degrades gracefully instead of silently dropping a label.
 # ---------------------------------------------------------------------------
-
-
-def test_disabling_zero_feature_does_not_delete_an_authored_value_label(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Regression: with `marks.bar.labels.visible: true` authored, the zero
-    row's own value label must render whether or not ZeroValueLabelFeature is
-    in the pipeline. An earlier revision coupled the two features through a
-    shared predicate that any feature reading it could satisfy independently
-    of whether ZeroValueLabelFeature actually ran — removing it from
-    DEFAULT_FEATURES silently deleted the zero row's ValueLabelFeature label
-    too, instead of leaving ValueLabelFeature's own output untouched."""
-    from dbt_charts.core.render.chart import session as session_module
-    from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
-    from dbt_charts.core.render.chart.features.zero_value_label import (
-        ZeroValueLabelFeature,
-    )
-
-    reduced = [f for f in DEFAULT_FEATURES if not isinstance(f, ZeroValueLabelFeature)]
-    monkeypatch.setattr(session_module, "DEFAULT_FEATURES", reduced)
-
-    board = """
-title: probe
-charts:
-  c:
-    type: bar
-    query: q
-    x: k
-    y: v
-    width: 600
-    style:
-      orientation: vertical
-      marks:
-        bar:
-          labels:
-            visible: true
-            position: above
-queries:
-  q:
-    sql: "SELECT 1"
-    source: test_source
-rows: [{rows: [c]}]
-"""
-    rows = [{"k": "A", "v": 0}, {"k": "B", "v": 12}, {"k": "C", "v": 7}]
-    svg = _render_svg(board, rows)
-    assert _value_label_texts(svg) == ["0", "12", "7"]

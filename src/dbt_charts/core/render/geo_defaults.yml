@@ -1,6 +1,6 @@
 geo_sources:
   us-states:
-    url: "https://vega.github.io/vega-datasets/data/us-10m.json"
+    url: "bundled:us-10m.json"
     format: topojson
     feature: states
     projection: albersUsa
@@ -9,7 +9,7 @@ geo_sources:
     key_examples: ["6", "48", "36"]
 
   us-counties:
-    url: "https://vega.github.io/vega-datasets/data/us-10m.json"
+    url: "bundled:us-10m.json"
     format: topojson
     feature: counties
     projection: albersUsa
@@ -18,7 +18,7 @@ geo_sources:
     key_examples: ["6001", "48201", "36061"]
 
   world-countries:
-    url: "https://vega.github.io/vega-datasets/data/world-110m.json"
+    url: "bundled:world-110m.json"
     format: topojson
     feature: countries
     projection: equalEarth
@@ -27,6 +27,7 @@ geo_sources:
     key_examples: ["840", "156", "250"]
 
   world-50m:
+    # Not bundled: no vega-datasets release ships this file, so it is fetched.
     url: "https://vega.github.io/vega-datasets/data/world-50m.json"
     format: topojson
     feature: countries

@@ -51,7 +51,8 @@ use crate::types::{
     AnyBlock, Blockquote, CodeBlock, Document, Heading, ImageBlock, ListItem, OrderedList, Paragraph, RawHtmlBlock, Span, SpanType,
     Table, TableCell, TableRow, UnorderedList,
 };
-use crate::utils::{escape_svg_text, escape_xml, format_number2 as fmt};
+use crate::utils::{escape_svg_text, format_number2 as fmt};
+use print::xml_escape_attr;
 use sha2::{Digest, Sha256};
 
 /// First 8 hex chars of the SHA-256 digest of `input`. Mirrors Python's
@@ -74,7 +75,7 @@ const STYLE_RULE_NAMES: [&str; 6] = ["text", "mono", "heading", "code", "link", 
 /// never drift out of sync. Mirrors `_style_rule_bodies`.
 fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
     let text_weight = match &style.font_weight {
-        Some(w) => format!(" font-weight: {};", escape_xml(w)),
+        Some(w) => format!(" font-weight: {};", xml_escape_attr(w)),
         None => String::new(),
     };
     let code_family = if style.code_font_family.is_empty() {
@@ -85,10 +86,10 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
     let mut code_extra = String::new();
     if !style.code_font_weight.is_empty() {
         code_extra +=
-            &format!(" font-weight: {};", escape_xml(&style.code_font_weight));
+            &format!(" font-weight: {};", xml_escape_attr(&style.code_font_weight));
     }
     if !style.code_font_style.is_empty() {
-        code_extra += &format!(" font-style: {};", escape_xml(&style.code_font_style));
+        code_extra += &format!(" font-style: {};", xml_escape_attr(&style.code_font_style));
     }
     if style.code_font_size != 0.0 {
         code_extra += &format!(" font-size: {}px;", fmt(style.code_font_size));
@@ -96,7 +97,7 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
     if !style.code_font_decoration.is_empty() {
         code_extra += &format!(
             " text-decoration: {};",
-            escape_xml(&style.code_font_decoration)
+            xml_escape_attr(&style.code_font_decoration)
         );
     }
 
@@ -111,16 +112,16 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
     } else {
         &style.blockquote_font_family
     };
-    let mut bq_extra = format!(" font-family: {};", escape_xml(&css_font_family_stack(bq_family)));
+    let mut bq_extra = format!(" font-family: {};", xml_escape_attr(&css_font_family_stack(bq_family)));
     if !style.blockquote_font_weight.is_empty() {
         bq_extra += &format!(
             " font-weight: {};",
-            escape_xml(&style.blockquote_font_weight)
+            xml_escape_attr(&style.blockquote_font_weight)
         );
     }
     if !style.blockquote_font_style.is_empty() {
         bq_extra +=
-            &format!(" font-style: {};", escape_xml(&style.blockquote_font_style));
+            &format!(" font-style: {};", xml_escape_attr(&style.blockquote_font_style));
     }
     if style.blockquote_font_size != 0.0 {
         bq_extra += &format!(" font-size: {}px;", fmt(style.blockquote_font_size));
@@ -128,7 +129,7 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
     if !style.blockquote_font_decoration.is_empty() {
         bq_extra += &format!(
             " text-decoration: {};",
-            escape_xml(&style.blockquote_font_decoration)
+            xml_escape_attr(&style.blockquote_font_decoration)
         );
     }
 
@@ -137,8 +138,8 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
             "text",
             format!(
                 "font-family: {}; fill: {};{}",
-                escape_xml(&css_font_family_stack(&style.font_family)),
-                escape_xml(&style.text_color),
+                xml_escape_attr(&css_font_family_stack(&style.font_family)),
+                xml_escape_attr(&style.text_color),
                 text_weight
             ),
         ),
@@ -146,30 +147,30 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
             "mono",
             format!(
                 "font-family: {};",
-                escape_xml(&css_font_family_stack(&style.mono_font_family))
+                xml_escape_attr(&css_font_family_stack(&style.mono_font_family))
             ),
         ),
         (
             "heading",
             format!(
                 "font-family: {}; fill: {}; font-weight: {};",
-                escape_xml(&css_font_family_stack(heading_family)),
-                escape_xml(style.get_heading_color()),
-                escape_xml(&style.heading_font_weight)
+                xml_escape_attr(&css_font_family_stack(heading_family)),
+                xml_escape_attr(style.get_heading_color()),
+                xml_escape_attr(&style.heading_font_weight)
             ),
         ),
         (
             "code",
             format!(
                 "font-family: {}; fill: {};{code_extra}",
-                escape_xml(&css_font_family_stack(code_family)),
-                escape_xml(&style.code_color)
+                xml_escape_attr(&css_font_family_stack(code_family)),
+                xml_escape_attr(&style.code_color)
             ),
         ),
-        ("link", format!("fill: {};", escape_xml(&style.link_color))),
+        ("link", format!("fill: {};", xml_escape_attr(&style.link_color))),
         (
             "blockquote",
-            format!("fill: {};{}", escape_xml(&style.blockquote_color), bq_extra),
+            format!("fill: {};{}", xml_escape_attr(&style.blockquote_color), bq_extra),
         ),
     ])
 }
@@ -774,24 +775,74 @@ impl SVGRenderer {
         Ok(py_sum(widths) + py_float_sum(&separators))
     }
 
-    fn table_max_content(&self, table: &Table) -> Result<f64, String> {
-        let mut widest = f64::NEG_INFINITY;
+    /// `renderer.py::_table_column_extents`: each column's narrowest and
+    /// widest width, padding included, rounded up to 0.01px.
+    fn table_column_extents(&self, table: &Table) -> Result<(Vec<f64>, Vec<f64>), String> {
+        let padding = 2.0 * self.style.table_cell_padding;
+        let size = self.style.base_font_size;
+        let mut mins = vec![0.0_f64; table.header.cells.len()];
+        let mut maxs = mins.clone();
         let rows = std::iter::once((&table.header, true))
             .chain(table.rows.iter().map(|row| (row, false)));
         for (row, is_header) in rows {
-            for cell in &row.cells {
+            for (col, cell) in row.cells.iter().enumerate() {
                 let runs = self.table_cell_runs(cell, is_header)?;
-                widest = widest.max(self.one_line_width(
-                    &runs,
-                    self.style.base_font_size,
-                    None,
-                    false,
-                )?);
+                let mut widest_token = 0.0_f64;
+                for run in &runs {
+                    for token in split_whitespace_tokens(&run.text) {
+                        if token.chars().all(is_py_space) {
+                            continue;
+                        }
+                        widest_token = widest_token.max(self.measure_text(
+                            token,
+                            size,
+                            run.is_bold,
+                            run.is_italic,
+                            run.is_code,
+                            None,
+                            false,
+                        )?);
+                    }
+                }
+                mins[col] = mins[col].max(widest_token + padding);
+                maxs[col] = maxs[col].max(self.one_line_width(&runs, size, None, false)? + padding);
             }
         }
-        // Columns are drawn equal, so the widest cell sets every column's width.
-        let column_width = widest + 2.0 * self.style.table_cell_padding;
-        Ok(column_width * table.header.cells.len() as f64)
+        let round_up = |w: &f64| (w * 100.0).ceil() / 100.0;
+        Ok((mins.iter().map(round_up).collect(), maxs.iter().map(round_up).collect()))
+    }
+
+    /// `renderer.py::min_content_width` for a list of tables: the narrowest
+    /// whole-pixel width at which no table splits a word. Any other block is
+    /// refused by name.
+    pub fn table_min_content_width(&self, tables: &[AnyBlock]) -> Result<f64, String> {
+        let mut floor = 0.0_f64;
+        for block in tables {
+            let AnyBlock::Table(table) = block else {
+                return Err("table_min_content_width: not a table".to_string());
+            };
+            floor = floor.max(py_float_sum(&self.table_column_extents(table)?.0));
+        }
+        Ok(floor.ceil())
+    }
+
+    /// `renderer.py::_table_column_widths`: content-sized columns, wrapping
+    /// only when `available` forces it.
+    fn table_column_widths(&self, table: &Table, available: f64) -> Result<Vec<f64>, String> {
+        let (mins, maxs) = self.table_column_extents(table)?;
+        if py_float_sum(&maxs) <= available {
+            return Ok(maxs);
+        }
+        if py_float_sum(&mins) > available {
+            return Ok(vec![available / mins.len() as f64; mins.len()]);
+        }
+        let flex: Vec<f64> = mins.iter().zip(&maxs).map(|(lo, hi)| hi - lo).collect();
+        let slack = (available - py_float_sum(&mins)) / py_float_sum(&flex);
+        Ok(mins.iter().zip(&flex).map(|(lo, extra)| lo + extra * slack).collect())
+    }
+
+    fn table_max_content(&self, table: &Table) -> Result<f64, String> {
+        Ok(py_float_sum(&self.table_column_extents(table)?.1))
     }
 
     fn block_max_content(&self, block: &AnyBlock) -> Result<f64, String> {
@@ -1045,17 +1096,17 @@ impl SVGRenderer {
             // An attribute value, not a CSS declaration: production
             // (`renderer.py:1448`) escapes it with `escape_xml` alone and does
             // not route it through `css_font_family_stack`.
-            format!("font-family=\"{}\"", escape_xml(family)),
+            format!("font-family=\"{}\"", xml_escape_attr(family)),
             format!("font-size=\"{}\"", fmt(font_size)),
-            format!("font-weight=\"{}\"", escape_xml(weight)),
+            format!("font-weight=\"{}\"", xml_escape_attr(weight)),
         ];
         if !s.code_font_style.is_empty() {
-            attrs.push(format!("font-style=\"{}\"", escape_xml(&s.code_font_style)));
+            attrs.push(format!("font-style=\"{}\"", xml_escape_attr(&s.code_font_style)));
         }
         if !s.code_font_decoration.is_empty() {
             attrs.push(format!(
                 "text-decoration=\"{}\"",
-                escape_xml(&s.code_font_decoration)
+                xml_escape_attr(&s.code_font_decoration)
             ));
         }
         attrs.join(" ")
@@ -1121,10 +1172,10 @@ impl SVGRenderer {
         }
 
         if !segments.iter().any(|(_, color)| !color.is_empty()) {
-            let escaped = escape_xml(&apply_case(&text, &self.style.code_font_case));
+            let escaped = xml_escape_attr(&apply_case(&text, &self.style.code_font_case));
             return Some(format!(
                 "  <text x=\"{}\" y=\"{}\" {code_attrs} xml:space=\"preserve\" fill=\"{}\"{clip_attr}>{escaped}</text>",
-                fmt(x), fmt(y), escape_xml(default_fill)
+                fmt(x), fmt(y), xml_escape_attr(default_fill)
             ));
         }
 
@@ -1133,7 +1184,7 @@ impl SVGRenderer {
             if seg_text.is_empty() {
                 continue;
             }
-            let escaped = escape_xml(&apply_case(seg_text, &self.style.code_font_case));
+            let escaped = xml_escape_attr(&apply_case(seg_text, &self.style.code_font_case));
             let fill = if color.is_empty() {
                 default_fill
             } else {
@@ -1141,7 +1192,7 @@ impl SVGRenderer {
             };
             tspans.push_str(&format!(
                 "<tspan fill=\"{}\">{escaped}</tspan>",
-                escape_xml(fill)
+                xml_escape_attr(fill)
             ));
         }
         Some(format!(
@@ -1374,7 +1425,7 @@ impl SVGRenderer {
             fmt(width),
             fmt(height),
             escape_svg_text(url),
-            escape_xml(&self.style.image_preserve_aspect_ratio)
+            xml_escape_attr(&self.style.image_preserve_aspect_ratio)
         )];
         if !alt.is_empty() {
             elements.push(format!("  <title>{}</title>", escape_svg_text(alt)));
@@ -1400,7 +1451,7 @@ impl SVGRenderer {
                 fmt(y_pos),
                 fmt(ctx.width),
                 fmt(height),
-                escape_xml(&self.style.hr_color)
+                xml_escape_attr(&self.style.hr_color)
             )
         } else {
             let mid = y_pos + height / 2.0;
@@ -1410,15 +1461,15 @@ impl SVGRenderer {
                 fmt(mid),
                 fmt(ctx.x + ctx.width),
                 fmt(mid),
-                escape_xml(&self.style.hr_color),
+                xml_escape_attr(&self.style.hr_color),
                 fmt(height),
-                escape_xml(&self.style.hr_dasharray)
+                xml_escape_attr(&self.style.hr_dasharray)
             )
         };
         Ok((vec![element], space))
     }
 
-    /// `renderer.py::_render_table`: equal-width columns, a header
+    /// `renderer.py::_render_table`: content-sized columns, a header
     /// background, an outer border, and column/row separator lines.
     fn render_table(&self, table: &Table, ctx: &RenderContext) -> Result<(Vec<String>, f64), String> {
         let mut elements: Vec<String> = Vec::new();
@@ -1426,15 +1477,15 @@ impl SVGRenderer {
         let padding = self.style.table_cell_padding;
         let font_size = self.style.base_font_size;
 
-        let num_cols = table.header.cells.len();
-        let col_width = if num_cols > 0 { ctx.width / num_cols as f64 } else { ctx.width };
+        let col_widths = self.table_column_widths(table, ctx.width)?;
+        let table_width = py_float_sum(&col_widths);
 
         let header_layout =
-            self.measure_table_row_layout(&table.header, col_width, padding, font_size, true)?;
+            self.measure_table_row_layout(&table.header, &col_widths, padding, font_size, true)?;
         let body_layouts: Vec<TableRowLayout> = table
             .rows
             .iter()
-            .map(|row| self.measure_table_row_layout(row, col_width, padding, font_size, false))
+            .map(|row| self.measure_table_row_layout(row, &col_widths, padding, font_size, false))
             .collect::<Result<Vec<_>, String>>()?;
 
         let mut current_y = ctx.y;
@@ -1444,9 +1495,9 @@ impl SVGRenderer {
             r#"  <rect x="{}" y="{}" width="{}" height="{}" fill="{}"/>"#,
             fmt(ctx.x),
             fmt(current_y),
-            fmt(ctx.width),
+            fmt(table_width),
             fmt(header_layout.row_height),
-            escape_xml(&self.style.table_header_background)
+            xml_escape_attr(&self.style.table_header_background)
         ));
 
         self.render_table_row(
@@ -1455,7 +1506,7 @@ impl SVGRenderer {
             &header_layout.cell_lines,
             ctx.x,
             current_y,
-            col_width,
+            &col_widths,
             padding,
             font_size,
             true,
@@ -1469,7 +1520,7 @@ impl SVGRenderer {
                 &row_layout.cell_lines,
                 ctx.x,
                 current_y,
-                col_width,
+                &col_widths,
                 padding,
                 font_size,
                 false,
@@ -1488,13 +1539,13 @@ impl SVGRenderer {
             r#"  <rect x="{}" y="{}" width="{}" height="{}" fill="none" {stroke}/>"#,
             fmt(ctx.x),
             fmt(ctx.y),
-            fmt(ctx.width),
+            fmt(table_width),
             fmt(total_height),
         ));
 
         // Column separators.
         let mut col_x = ctx.x;
-        for _ in 0..num_cols.saturating_sub(1) {
+        for col_width in &col_widths[..col_widths.len().saturating_sub(1)] {
             col_x += col_width;
             elements.push(format!(
                 r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" {stroke}/>"#,
@@ -1516,7 +1567,7 @@ impl SVGRenderer {
                     r#"  <line x1="{}" y1="{}" x2="{}" y2="{}" {stroke}/>"#,
                     fmt(ctx.x),
                     fmt(row_y),
-                    fmt(ctx.x + ctx.width),
+                    fmt(ctx.x + table_width),
                     fmt(row_y),
                 ));
             }
@@ -1528,14 +1579,14 @@ impl SVGRenderer {
     /// `renderer.py::_table_border_stroke`: the stroke attributes every table
     /// gridline shares. A width of 1 and a solid line add no attribute.
     fn table_border_stroke(&self) -> String {
-        let mut stroke = format!(r#"stroke="{}""#, escape_xml(&self.style.table_border_color));
+        let mut stroke = format!(r#"stroke="{}""#, xml_escape_attr(&self.style.table_border_color));
         if self.style.table_border_width != 1.0 {
             stroke += &format!(r#" stroke-width="{}""#, fmt(self.style.table_border_width));
         }
         if !self.style.table_border_dasharray.is_empty() {
             stroke += &format!(
                 r#" stroke-dasharray="{}""#,
-                escape_xml(&self.style.table_border_dasharray)
+                xml_escape_attr(&self.style.table_border_dasharray)
             );
         }
         stroke
@@ -1592,7 +1643,7 @@ impl SVGRenderer {
             let style_attr = if style_parts.is_empty() {
                 String::new()
             } else {
-                format!(r#" style="{}""#, escape_xml(&style_parts.join("; ")))
+                format!(r#" style="{}""#, xml_escape_attr(&style_parts.join("; ")))
             };
             if run.is_link && run.url.is_some() {
                 let url = run.url.as_deref().unwrap_or_default();
@@ -1614,17 +1665,17 @@ impl SVGRenderer {
     fn measure_table_row_layout(
         &self,
         row: &TableRow,
-        col_width: f64,
+        col_widths: &[f64],
         padding: f64,
         font_size: f64,
         is_header: bool,
     ) -> Result<TableRowLayout, String> {
-        let max_width = (col_width - (padding * 2.0)).max(1.0);
         let line_height = font_size * self.style.line_height;
         let mut cell_lines: Vec<Vec<Vec<TextRun>>> = Vec::new();
         let mut max_lines = 1usize;
 
-        for cell in &row.cells {
+        for (cell, col_width) in row.cells.iter().zip(col_widths) {
+            let max_width = (col_width - (padding * 2.0)).max(1.0);
             let runs = self.table_cell_runs(cell, is_header)?;
             let mut wrapped = self.wrap_runs(&runs, max_width, font_size, None, false)?;
             if wrapped.is_empty() {
@@ -1668,7 +1719,7 @@ impl SVGRenderer {
         cell_lines: &[Vec<Vec<TextRun>>],
         start_x: f64,
         y: f64,
-        col_width: f64,
+        col_widths: &[f64],
         padding: f64,
         font_size: f64,
         is_header: bool,
@@ -1678,6 +1729,7 @@ impl SVGRenderer {
 
         for (idx, cell) in row.cells.iter().enumerate() {
             let line_runs = &cell_lines[idx];
+            let col_width = col_widths[idx];
 
             let (text_x, anchor) = match cell.align.as_deref() {
                 Some("center") => (x + col_width / 2.0, "middle"),
@@ -1686,7 +1738,7 @@ impl SVGRenderer {
             };
 
             let css_class = self.scoped_class("text");
-            let weight = escape_xml(if is_header {
+            let weight = xml_escape_attr(if is_header {
                 self.style.bold_font_weight.as_str()
             } else {
                 "normal"
@@ -1802,7 +1854,7 @@ impl SVGRenderer {
         let stroke_attrs = if !border_color.is_empty() {
             format!(
                 " stroke=\"{}\" stroke-width=\"{}\"",
-                escape_xml(border_color),
+                xml_escape_attr(border_color),
                 fmt(self.style.code_block_border_width)
             )
         } else {
@@ -1814,7 +1866,7 @@ impl SVGRenderer {
             fmt(ctx.y),
             fmt(block_width),
             fmt(total_height),
-            escape_xml(&self.style.code_background),
+            xml_escape_attr(&self.style.code_background),
             fmt(self.style.code_block_border_radius),
         )
     }
@@ -2080,7 +2132,7 @@ impl SVGRenderer {
                 fmt(ctx.y),
                 fmt(ctx.width),
                 fmt(total_height),
-                escape_xml(bg_color)
+                xml_escape_attr(bg_color)
             ));
         }
 
@@ -2090,7 +2142,7 @@ impl SVGRenderer {
             fmt(ctx.y),
             fmt(self.style.blockquote_border_width),
             fmt(total_height),
-            escape_xml(&self.style.blockquote_border_color),
+            xml_escape_attr(&self.style.blockquote_border_color),
         ));
 
         elements.extend(inner_elements);
@@ -2168,7 +2220,7 @@ impl SVGRenderer {
                 fmt(bullet_x),
                 fmt(bullet_y),
                 fmt(bullet_radius),
-                escape_xml(&self.style.text_color)
+                xml_escape_attr(&self.style.text_color)
             ));
 
             let (item_elements, item_height) = self.paint_text_lines(
@@ -2344,7 +2396,7 @@ impl SVGRenderer {
             crate::style::TextAlign::Right => ctx.x + ctx.width,
             crate::style::TextAlign::Left => ctx.x,
         };
-        let text_attrs = format!(r#"font-size="{}" class="{}""#, fmt(font_size), escape_xml(css_class));
+        let text_attrs = format!(r#"font-size="{}" class="{}""#, fmt(font_size), xml_escape_attr(css_class));
         let mut elements: Vec<String> = Vec::new();
         let mut line_top = ctx.y;
         for line in lines {
@@ -2425,7 +2477,7 @@ impl SVGRenderer {
                 r#"  <text x="{}" y="{}" {text_attrs} text-anchor="{}">{}</text>"#,
                 fmt(anchor_x),
                 fmt(baseline),
-                escape_xml(anchor),
+                xml_escape_attr(anchor),
                 self.tspan_content(runs, font_size, font_weight)
             ));
             return Ok(());
@@ -2506,7 +2558,7 @@ impl SVGRenderer {
                     fmt(baseline - CHIP_CAP_HEIGHT_RATIO * code_font_size - chip_padding),
                     fmt(rw + 2.0 * chip_padding),
                     fmt(chip_height),
-                    escape_xml(&self.style.code_background),
+                    xml_escape_attr(&self.style.code_background),
                 ));
             }
             run_x += rw;
@@ -2583,7 +2635,7 @@ impl SVGRenderer {
             let style_attr = if style_parts.is_empty() {
                 String::new()
             } else {
-                format!(" style=\"{}\"", escape_xml(&style_parts.join("; ")))
+                format!(" style=\"{}\"", xml_escape_attr(&style_parts.join("; ")))
             };
 
             match &run.url {

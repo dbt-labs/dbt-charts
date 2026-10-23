@@ -215,7 +215,6 @@ def test_pie_side_edge_on_a_tiny_card_falls_back_loudly() -> None:
         WarningContext(
             board_spec=board,
             chart_results={resolved.id: _pie_rows(_HYBRID)},
-            vega_specs={},
             layout_charts={resolved.id: resolved},
         )
     )

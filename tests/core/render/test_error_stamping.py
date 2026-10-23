@@ -32,14 +32,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("engine.py", "_render_payload"),
         # chart/presentation.py
         ("chart/presentation.py", "apply_presentation_defaults"),
-        # chart/support_table_attachment.py
-        ("chart/support_table_attachment.py", "_aggregate_by_x"),
-        ("chart/support_table_attachment.py", "_entry_cell_widths"),
-        ("chart/support_table_attachment.py", "apply_chart_support_table_post_pass"),
-        # Theme-cascade-guarantee guard (font.family always populated by a
-        # fully-resolved support-table style), identical in kind to the
-        # allowlisted _entry_cell_widths font.size guard above.
-        ("chart/support_table_attachment.py", "resolved_pad_font_family"),
         # layouts.py: same theme-cascade guarantee (layout.tabs.font.case is
         # inherited from style.font, so a resolved style always carries it).
         ("layouts.py", "render_tabs_layout"),
@@ -66,21 +58,14 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # direct color lookup), not yet migrated to a compile-time check.
         ("chart/emitters/_channels.py", "_diverging_domain"),
         ("chart/emitters/_channels.py", "_diverging_breakpoints_truncated"),
-        # chart/emitters/_label_overlap.py
-        ("chart/emitters/_label_overlap.py", "_pick_tilt_for_widths"),
         # chart/emitters/bar.py
-        ("chart/emitters/bar.py", "_emit_horizontal"),
         # chart/emitters/geo.py
         ("chart/emitters/geo.py", "GeoshapeEmitter._emit_choropleth"),
         # chart/features/click_interactivity.py
         ("chart/features/click_interactivity.py", "_build_href_calc_expr"),
         # chart/features/endpoint_labels.py
-        ("chart/features/endpoint_labels.py", "EndpointLabelFeature.apply"),
         # chart/vega_lite.py
-        ("chart/vega_lite.py", "generate_vega_lite_spec"),
         # chart/translate.py
-        ("chart/translate.py", "_translate_layer"),
-        ("chart/translate.py", "_wrap_endpoint_labels"),
         ("chart/translate.py", "translate_to_vl"),
         # converters/chart.py
         ("converters/chart.py", "render_svg_content"),

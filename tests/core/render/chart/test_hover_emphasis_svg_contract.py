@@ -17,13 +17,9 @@ tests are the render-side half of that contract.
 
 from __future__ import annotations
 
-import re
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
 
 import pytest
-
-from dbt_charts.core.compile.config import reset_config
 
 from ..._svg_render import render_board_to_svg
 
@@ -45,14 +41,6 @@ _CASES: dict[str, tuple[str, bool]] = {
     "line": ("type: line\n    x: cat\n    y: val", False),
     "heatmap": ("type: heatmap\n    x: cat\n    y: series\n    color: val", False),
 }
-
-
-@pytest.fixture(autouse=True)
-def _reset(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    reset_config()
-    monkeypatch.setenv("DCT_DEFAULT_THEME", "stark")
-    yield
-    reset_config()
 
 
 def _render(body: str) -> str:
@@ -91,58 +79,6 @@ def test_a_heatmaps_cells_are_named_rect_mark() -> None:
     assert 'aria-roledescription="rect mark"' in svg
 
 
-_PLACEMENTS = {
-    "direct row": "rows:\n  - c",
-    "cols row": "rows:\n  - cols:\n      - c",
-}
-
-
-def _render_placed(body: str, rows: str) -> str:
-    return render_board_to_svg(f"""
-title: T
-{_QUERY}
-charts:
-  c:
-    query: q
-    {body}
-{rows}
-""")
-
-
-def _canvas_stamp(svg: str) -> str | None:
-    wrapper = re.search(r'<g class="dbt-chart"[^>]*>', svg)
-    assert wrapper is not None, "no chart wrapper in rendered SVG"
-    stamp = re.search(r'data-dbt-chart-canvas="([^"]*)"', wrapper.group(0))
-    return stamp.group(1) if stamp else None
-
-
-def _has_ground_rect(svg: str) -> bool:
-    return re.search(r'<svg [^>]*class="marks"[^>]*>\s*<rect ', svg) is not None
-
-
-@pytest.mark.parametrize(("name", "case"), [(n, c) for n, c in _CASES.items() if c[1]])
-def test_a_chart_wrapper_carries_the_canvas_its_marks_recede_toward(
-    name: str, case: tuple[str, bool]
-) -> None:
-    """A chart inside ``cols:`` is transparent over its board and paints no
-    ground rect, yet its wrapper still names the board's canvas."""
-    body, _ = case
-    svgs = {where: _render_placed(body, rows) for where, rows in _PLACEMENTS.items()}
-
-    assert _has_ground_rect(svgs["direct row"])
-    assert not _has_ground_rect(svgs["cols row"]), (
-        f"{name}: the cols chart paints a ground rect, so this no longer "
-        "exercises the transparent case"
-    )
-    stamps = {where: _canvas_stamp(svg) for where, svg in svgs.items()}
-    for where, stamp in stamps.items():
-        assert stamp is not None, f"{name} ({where}): wrapper carries no canvas"
-        assert re.fullmatch(r"#[0-9A-Fa-f]{6}", stamp), (
-            f"{name} ({where}): canvas {stamp!r} is not an opaque color"
-        )
-    assert len(set(stamps.values())) == 1, f"{name}: placement changed the canvas"
-
-
 def test_a_kpi_has_no_canvas_to_stamp_and_still_renders() -> None:
     """A KPI paints no marks that recede, so its resolved chart carries no
     canvas; the wrapper must simply omit the stamp rather than fail."""
@@ -164,19 +100,6 @@ rows:
 
     assert '<g class="dbt-chart"' in svg
     assert "data-dbt-chart-canvas" not in svg
-
-
-def test_an_authored_translucency_reaches_the_mark() -> None:
-    """The runtime leaves a translucent-at-rest mark alone by reading the
-    attribute Vega writes for it; this pins that the attribute is written."""
-    svg = _render(
-        "type: bar\n    x: cat\n    y: val\n"
-        "    style:\n      marks:\n        bar:\n          opacity: 0.5"
-    )
-    bars = re.findall(r'<path[^>]*aria-roledescription="bar"[^>]*>', svg)
-
-    assert bars, "no bar marks rendered"
-    assert all(re.search(r'(fill-)?opacity="0\.5"', bar) for bar in bars)
 
 
 def test_a_faceted_chart_emits_one_shared_cell_with_unclassed_panel_children() -> None:
@@ -254,43 +177,6 @@ rows:
   - c
 """)
     assert svg.count('data-dbt-value-label="true"') == 2
-
-
-def test_value_label_marks_a_concat_wrapped_charts_own_value() -> None:
-    """A vertical bar with series color gets vl_convert's endpoint-label
-    right-pane hconcat, which names the main pane's groups
-    ``concat_0_layer_N_marks`` -- a third shape neither the bare nor the
-    facet join key matches.
-    """
-    svg = render_board_to_svg("""
-title: T
-queries:
-  q:
-    type: values
-    rows:
-      - {cat: A, val: 10, series: X}
-      - {cat: A, val: 5, series: Y}
-      - {cat: B, val: 4, series: X}
-      - {cat: B, val: 8, series: Y}
-charts:
-  c:
-    query: q
-    type: bar
-    x: cat
-    y: val
-    color: series
-    style:
-      stack: zero
-      orientation: vertical
-      marks:
-        bar:
-          labels:
-            visible: true
-rows:
-  - c
-""")
-    assert "concat_0_layer" in svg, "board did not actually reach the concat shape"
-    assert svg.count('data-dbt-value-label="true"') == 1
 
 
 def test_magnitude_colored_attribute_marks_a_gradient_bar_but_not_a_series_bar() -> (

@@ -183,7 +183,7 @@ pub fn chart_title_metrics(
     chart: &Value,
     card_padding: f64,
     slot_width: f64,
-    fonts: &crate::text::FontBook,
+    fonts: &measure::FontBook,
     spark_title: Option<&crate::SparkBarTitle>,
 ) -> Result<Option<TitleMetrics>, String> {
     // `title_band.py:106`: a subtitle-only chart draws no title block.
@@ -296,7 +296,7 @@ mod tests {
         height: 24.0,
         baseline_y: 16.0,
     };
-    use crate::text::FontBook;
+    use measure::FontBook;
     use serde_json::json;
 
     fn m(ascent: f64, tail: f64) -> Option<TitleMetrics> {

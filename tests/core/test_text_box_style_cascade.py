@@ -211,6 +211,18 @@ class TestGetCompactStyleMapper:
         style = get_compact_style(rs)
         assert style.table_border_color == rs.text.divider.color
 
+    def test_table_cell_padding_is_half_a_body_line(self) -> None:
+        """Cell padding is half the body line, so single-line rows pitch in whole lines."""
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.resolve.style.markdown_style import (
+            get_compact_style,
+        )
+
+        rs = resolve_style(get_theme_style())
+        style = get_compact_style(rs)
+        body_line = style.base_font_size * style.line_height
+        assert style.table_cell_padding == body_line / 2
+
     def test_heading_color_from_title_font_color(self) -> None:
         """heading_color comes from rs.title.font.color."""
         from dbt_charts.core.compile.config import (

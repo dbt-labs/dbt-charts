@@ -313,8 +313,7 @@ def column_shares_one_printed_unit(cells: Iterable[tuple[float, str]]) -> bool:
 
     Every caller of this predicate must gate on it before building a
     no-shared-tier decimal-pad table -- ``_table.py``'s
-    ``_unscaled_decimal_pad_table``, ``support_table_attachment.py``'s
-    ``_unscaled_decimal_pad`` -- not merely on ``shared_scale_for_column``
+    ``_unscaled_decimal_pad_table`` -- not merely on ``shared_scale_for_column``
     returning ``None``. That includes a caller whose own shared-scale bake
     is structurally disabled (``_table.py``'s ``allow_shared_scale=False``
     pie/donut legend path never even calls ``shared_scale_for_column``), so
@@ -439,8 +438,7 @@ def fractional_digit_count(num_str: str) -> int:
 
     The ONE definition of "how many fractional digits does this formatted
     string show" every pad-table builder and selector shares --
-    ``decimal_pad_for`` below, and (mirrored) every pad-table builder in
-    ``render/chart/support_table_attachment.py``. Only digit characters
+    ``decimal_pad_for`` below, and (mirrored) the engine's support-table strip. Only digit characters
     count, deliberately: a trailing non-digit character after the dot --
     accounting-sign format's closing ")" (``"(2.5)"`` -> "5)"), or a
     significant-figures spec's magnitude suffix letter (``"4.00M"`` -> "00M")
@@ -451,26 +449,6 @@ def fractional_digit_count(num_str: str) -> int:
     """
     decimal = active_format_locale().decimal
     return sum(1 for c in num_str.partition(decimal)[2] if c.isdigit())
-
-
-def decimal_pad_for(pad_table: tuple[str, ...], num_str: str) -> str:
-    """Select the trailing pad for ``num_str`` from a pre-built ``pad_table``.
-
-    Returns the pad string to append to ``num_str`` before measurement or
-    paint.  ``pad_table`` must be non-empty (the caller already guards on
-    ``if pad_table``); raises ``IndexError`` when the formatted value has more
-    fractional digits than the table was built for.
-
-    ``precision = len(pad_table) - 2`` is implicit: the table always has
-    ``precision + 2`` entries (indices 0..precision+1).
-    """
-    precision = len(pad_table) - 2
-    frac = fractional_digit_count(num_str)
-    if frac > precision:
-        raise IndexError(
-            f"pad_table precision {precision} < formatted value fractional depth {frac}"
-        )
-    return pad_table[precision - frac if frac else precision + 1]
 
 
 def _digit_spec(parsed: FormatSpec, precision: int) -> str:

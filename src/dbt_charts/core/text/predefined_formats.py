@@ -92,7 +92,7 @@ class PredefinedTimeFormat(StrEnum):
     ("%H:%M") — the sub-day sibling of date_short. Also the format the
     time-notation engine default emits for a continuous temporal axis
     authored with ``clock: 24`` (see
-    ``time_unit_detect.default_subday_label_expr_for``).
+    the engine's sub-day label rule).
     """
 
     date_short = "date_short"

@@ -9,7 +9,8 @@ use super::place::{Connector, Mark, Placed};
 use super::{text, AnnotationCtx, Plane};
 use crate::contract::{aria_attr, ItemRole};
 use crate::diagnostic::Diagnostic;
-use crate::svg::{num, xml_escape_attr};
+use crate::svg::{num};
+use print::{xml_escape_attr};
 
 fn d3_curve(curve: Curve) -> D3Curve {
     match curve {

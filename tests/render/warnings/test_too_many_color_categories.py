@@ -54,7 +54,8 @@ def _make_ctx(chart: Chart, rows: list[dict[str, Any]]) -> WarningContext:
     resolved = make_test_resolved_chart(chart, rows)
     board = make_test_resolved_board(charts={resolved.id: resolved})
     return WarningContext(
-        board_spec=board, chart_results={resolved.id: rows}, vega_specs={}
+        board_spec=board,
+        chart_results={resolved.id: rows},
     )
 
 
@@ -260,7 +261,6 @@ def test_fires_on_a_pie_with_more_slices_than_the_palette_holds() -> None:
     ctx = WarningContext(
         board_spec=make_test_resolved_board(charts={resolved.id: resolved}),
         chart_results={resolved.id: rows},
-        vega_specs={},
     )
     assert [d.code for d in detector.detect(ctx)] == [
         WARN_TOO_MANY_COLOR_CATEGORIES.code

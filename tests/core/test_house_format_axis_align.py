@@ -19,7 +19,6 @@ import pytest
 from dbt_charts.core.compile.config import (
     get_default_theme_name,
     get_theme_style,
-    reset_config,
 )
 from dbt_charts.core.compile.models.chart.normalized import BarChart, LineChart
 from dbt_charts.core.compile.models.style.authored import (
@@ -39,13 +38,6 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import build_resolved_ax
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
 from .conftest import baked_format, fixture_chart_for_type
-
-
-@pytest.fixture(autouse=True)
-def _reset():
-    reset_config()
-    yield
-    reset_config()
 
 
 def _merged_ay(chart_type: str = "line", y_channel_type: str = "quantitative"):
@@ -213,36 +205,6 @@ def test_non_number_format_does_not_right_align_a_right_edge_axis(spec: str):
         formats=None,
     )
     assert resolved.labels.align is None
-
-
-@pytest.mark.parametrize("spec", _NON_NUMBER_FORMATS)
-def test_non_number_format_on_right_edge_renders_without_crashing(spec: str):
-    from dbt_charts.core.compile.models.chart.normalized import LineChart as _Line
-    from dbt_charts.core.compile.resolve import resolve
-    from dbt_charts.core.compile.resolve.style.board import (
-        resolve_style_and_context,
-    )
-    from dbt_charts.core.render.chart.session import BoardRenderSession
-    from dbt_charts.core.render.chart.spec import RenderBox
-
-    data = [{"m": 1, "v": 12000}, {"m": 2, "v": 90000}, {"m": 3, "v": 150000}]
-    chart = _Line.model_validate(
-        {
-            "id": "t",
-            "type": "line",
-            "x": "m",
-            "y": "v",
-            "style": {"axis_y": {"position": "right", "labels": {"format": spec}}},
-        }
-    )
-    board_rs, ctx = resolve_style_and_context(get_theme_style("clarity"))
-    resolved = resolve(chart, data, chart_style_context=ctx)
-    session = BoardRenderSession.create(board_rs)
-    session.finalize_vl(
-        session.emit_chart(
-            resolved, RenderBox(width=600.0, height=300.0), {resolved.query_name: data}
-        )
-    )
 
 
 def test_non_quantitative_axis_alias_format_does_not_force_right_align():

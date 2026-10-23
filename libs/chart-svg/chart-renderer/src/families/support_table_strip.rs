@@ -37,8 +37,8 @@ use crate::diagnostic::Diagnostic;
 use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
 use crate::number_locale::active_number_locale;
 use crate::families::temporal::TimeUnit;
-use crate::svg::{xml_escape, xml_escape_attr, vega_escape_attr};
-use crate::text::FontBook;
+use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use measure::FontBook;
 
 // Per-row base height before padding — mirrors `_ROW_HEIGHT_BASE` in
 // `compile/support_table.py`.
@@ -591,6 +591,8 @@ pub struct StripNumerals {
     /// `declares_once`, else on every cell.
     authored: Option<FormatSlot>,
     declares_once: bool,
+    /// `repeat: every`: each cell declares the unit, none is bare.
+    pub(crate) every: bool,
     /// The trailing pad `decimal_pad_for` selects per cell so mixed fractional
     /// depths line up on the decimal point; empty when nothing aligns.
     decimal_pad: Vec<String>,
@@ -610,6 +612,7 @@ impl StripNumerals {
             prefix_repeats: false,
             authored: None,
             declares_once: false,
+            every: false,
         }
     }
 
@@ -705,6 +708,7 @@ impl StripNumerals {
     /// The text one cell paints. `is_anchor` marks the single unit-declaring
     /// cell (the first carrying cell in paint order).
     pub fn cell_text(&self, v: f64, is_anchor: bool) -> Result<String, String> {
+        let is_anchor = is_anchor || self.every;
         if let Some(slot) = &self.authored {
             // `_compose_affixed_text` / `_bare_authored_text`: the declaring
             // cell leads its sign with the prefix, the rest paint the digits
@@ -870,6 +874,7 @@ pub(crate) fn strip_numerals_for_values(
     resolved: &str,
     hang_right: bool,
     vertical: bool,
+    every: bool,
     pad: &DecimalPad,
 ) -> Result<StripNumerals, String> {
     let parts = d3rs::format::parse_parts(resolved)
@@ -882,7 +887,7 @@ pub(crate) fn strip_numerals_for_values(
         }
         let locale = active_number_locale();
         let suffix = if parts.type_ == '%' { locale.locale.percent.clone() } else { String::new() };
-        let (lead, trail) = currency_affixes(parts.symbol, false);
+        let (lead, trail) = currency_affixes(parts.symbol, every);
         if !trail.is_empty() {
             return Ok(StripNumerals { suffix, hang_right, ..StripNumerals::plain(resolved) });
         }
@@ -952,7 +957,7 @@ pub(crate) fn strip_numerals_for_values(
     let pow = 10f64.powi(decimals);
     let printed_extreme = (extreme / magnitude * pow).round() / pow;
     let repeat = mode_repeat || integer_digit_count(printed_extreme) >= 4;
-    let (lead, trail) = currency_affixes(parts.symbol, hang_right);
+    let (lead, trail) = currency_affixes(parts.symbol, hang_right || every);
     Ok(StripNumerals {
         digit_spec,
         prefix_repeats: hang_right && !lead.is_empty(),
@@ -964,6 +969,7 @@ pub(crate) fn strip_numerals_for_values(
         hang_right,
         authored: None,
         declares_once: false,
+        every: false,
         decimal_pad,
     })
 }
@@ -1262,6 +1268,12 @@ pub(crate) fn entry_lines<'a>(
             None => None,
         })
         .collect();
+    // A percent spec is fed ratios: a value of 10 or more is a forgotten division by 100.
+    if let Some(spec) = spec {
+        for n in &nums {
+            crate::common::check_percent_range(*n, None, spec)?;
+        }
+    }
     let numerals = match (&entry.format, spec) {
         (Some(slot), _) if slot.has_affix() => {
             Some(StripNumerals::authored(
@@ -1274,7 +1286,12 @@ pub(crate) fn entry_lines<'a>(
         }
         (_, Some(s)) if !anchored => Some(StripNumerals::undeclared(&nums, s, pad)?),
         (_, Some(s)) if !predefined => Some(StripNumerals::literal(s, pad)?),
-        (_, Some(s)) => Some(strip_numerals_for_values(&nums, s, !axis_on_right, vertical, pad)?),
+        (slot, Some(s)) => {
+            let every = slot.as_ref().is_some_and(|f| f.repeat.as_deref() == Some("every"));
+            let mut numerals = strip_numerals_for_values(&nums, s, !axis_on_right, vertical, every, pad)?;
+            numerals.every = every;
+            Some(numerals)
+        }
         (_, None) => None,
     };
     Ok(EntryLines { spec, lines, numerals, nums })
@@ -1320,12 +1337,13 @@ pub fn build_rows_composed(
     series_order: &[String],
     series_ink: &[String],
     links: Option<&HashMap<(String, String), String>>,
+    ordered_x: bool,
 ) -> Result<Vec<ComposedRow>, Diagnostic> {
     if domain.len() != x_positions.len() {
         return Err("support_table: domain/x_positions length mismatch".into());
     }
     let rows = config.source_rows(rows);
-    validate_against_data(config, rows, x_field, domain)?;
+    validate_against_data(config, rows, x_field, domain, ordered_x)?;
     let (font_family, font_size) = cell_font(style)?;
     let (label_family, label_size) = label_font_resolved(style);
 
@@ -1431,11 +1449,8 @@ pub fn build_rows_composed(
 /// own `max_cell_w + 2 * row.padding.horizontal` (`max_cell_w` reads
 /// straight off the already-built `ComposedCell::w`s — the same shaped
 /// measurement `_entry_cell_widths` performs, so no separate width pass is
-/// needed here). The cap-overflow half is out of scope (this port's
-/// `SUPPORT_TABLE_MAX_X_TICKS` still hard-errors every x type, `validate_against_data`'s
-/// own doc) — n never reaches that cap on a chart this override fires for,
-/// so `sampling_step` starts at 1 here, unlike production's own two-term
-/// `max(sampling_step, width_step)`. Only meaningful for a genuinely
+/// needed here). The cap-overflow step is folded in by `apply_width_sampling`.
+/// Only meaningful for a genuinely
 /// ordered x (a detected/authored calendar cadence): callers gate this to
 /// that case, mirroring production's own `validator_x_type == "temporal"`
 /// guard — an unordered nominal/ordinal domain is never sampled (dropping
@@ -1567,7 +1582,9 @@ pub fn apply_width_sampling(
     let n = rows.first().map_or(0, |r| r.cells.len());
     // Only an ordered x axis is thinned; any other never drops a category.
     let step = if ordered_x {
-        width_sampling_step(n, axis_x_width, min_band_px(max_cell_w, row_padding_horizontal))
+        // Production's two-term `max(sampling_step, width_step)`.
+        let cap_step = n.div_ceil(SUPPORT_TABLE_MAX_X_TICKS).max(1);
+        cap_step.max(width_sampling_step(n, axis_x_width, min_band_px(max_cell_w, row_padding_horizontal)))
     } else {
         1
     };
@@ -1747,7 +1764,7 @@ pub fn render_rows_composed(
     let (label_family, label_size) = label_font_resolved(style);
     let label_color = style.label.font.color.as_deref().unwrap_or(font_color);
     let label_weight = style.label.font.weight_str();
-    let baseline = crate::measure::baseline_shift("middle", font_size);
+    let baseline = measure::baseline_shift("middle", font_size);
 
     if style.divider.line.visible {
         let y = origin_y + divider_y_base(style, axis_offset);
@@ -1806,16 +1823,17 @@ pub fn render_rows_composed(
 
 /// Data-aware guards this config must pass before any entry is resolved —
 /// port of the checks `validate_support_table_against_data` runs at production
-/// render time (`support_table_attachment.py:213-322`). Unlike production, this
-/// renderer never sampled a temporal/quantitative x past the cap (see
-/// `AGENTS.md`), so every x type fails closed here.
+/// render time (`support_table_attachment.py:213-322`). Past the tick cap an ordered
+/// (temporal or quantitative) x is sampled by the caller (`apply_width_sampling`);
+/// any other x type fails closed, as dropping categories would be silent data loss.
 pub(crate) fn validate_against_data(
     config: &SupportTableConfig,
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
     domain: &[String],
+    ordered_x: bool,
 ) -> Result<(), String> {
-    if domain.len() > SUPPORT_TABLE_MAX_X_TICKS {
+    if domain.len() > SUPPORT_TABLE_MAX_X_TICKS && !ordered_x {
         return Err(format!(
             "support_table: supports at most {SUPPORT_TABLE_MAX_X_TICKS} x-axis ticks; got {}. \
              Aggregate or filter in the query before attaching a support_table.",
@@ -1937,7 +1955,7 @@ mod numerals_tests {
     #[test]
     fn trimmed_currency_declares_the_dollar_once() {
         let vals = [75404.0, 68400.0, 62070.0];
-        let n = strip_numerals_for_values(&vals, "$,.0f", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$,.0f", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75,404");
         assert_eq!(n.cell_text(68400.0, false).unwrap(), "68,400");
         assert_eq!(n.cell_text(62070.0, false).unwrap(), "62,070");
@@ -1948,7 +1966,7 @@ mod numerals_tests {
     #[test]
     fn trimmed_percent_declares_the_percent_once() {
         let vals = [0.232, 0.22, 0.195];
-        let n = strip_numerals_for_values(&vals, ".1%", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, ".1%", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(0.232, true).unwrap(), "23.2%");
         assert_eq!(n.cell_text(0.22, false).unwrap(), "22.0");
         assert_eq!(n.cell_text(0.195, false).unwrap(), "19.5");
@@ -1964,7 +1982,7 @@ mod numerals_tests {
     #[test]
     fn composed_si_divides_by_one_shared_magnitude() {
         let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
         assert_eq!(n.cell_text(97469.0, false).unwrap(), "97.5");
         assert_eq!(n.cell_text(45402.0, false).unwrap(), "45.4");
@@ -1975,7 +1993,7 @@ mod numerals_tests {
     #[test]
     fn composed_zero_cell_is_never_the_anchor_and_never_suffixed() {
         let vals = [0.0, 102850.0, 97469.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, false, &pad()).unwrap();
         assert!(!n.carries(0.0), "zero cannot carry the unit");
         assert!(n.carries(102850.0), "first non-zero cell declares");
         // The zero cell prints no decimals beside `97.5`, so it takes the
@@ -1989,7 +2007,7 @@ mod numerals_tests {
     #[test]
     fn composed_below_compaction_threshold_keeps_the_author_spec() {
         let vals = [75404.0, 68400.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(75404.0, true).unwrap(), "$75.4k");
         assert_eq!(
             n.cell_text(68400.0, false).unwrap(),
@@ -2112,7 +2130,7 @@ mod numerals_tests {
     /// type and symbol, and the fill paints through d3.
     #[test]
     fn a_padded_format_paints_its_fill_in_every_cell() {
-        let n = strip_numerals_for_values(&[100.0, 90.0], "*>10,.0f", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&[100.0, 90.0], "*>10,.0f", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(100.0, true).unwrap(), "*******100");
         assert_eq!(n.cell_text(90.0, false).unwrap(), "********90");
     }
@@ -2121,10 +2139,10 @@ mod numerals_tests {
     /// (`bare + suffix`), so a padded spec keeps its fill before the unit.
     #[test]
     fn a_left_axis_padded_percent_anchor_puts_the_suffix_after_the_fill() {
-        let n = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", true, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", true, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(0.55, true).unwrap(), "55*****%");
         assert_eq!(n.cell_text(0.09, false).unwrap(), "9******");
-        let right = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", false, false, &pad()).unwrap();
+        let right = strip_numerals_for_values(&[0.55, 0.09], "*<8.0%", false, false, false, &pad()).unwrap();
         assert_eq!(right.cell_text(0.55, true).unwrap(), "55%*****");
     }
 
@@ -2132,7 +2150,7 @@ mod numerals_tests {
     /// every cell, anchored or not.
     #[test]
     fn affix_free_specs_are_unchanged() {
-        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(2693.0, true).unwrap(), "2,693");
         assert_eq!(n.cell_text(2280.0, false).unwrap(), "2,280");
     }
@@ -2146,7 +2164,7 @@ mod numerals_tests {
     #[test]
     fn a_left_axis_trimmed_symbol_format_never_anchors() {
         let vals = [102850.0, 97469.0, 86180.0];
-        let n = strip_numerals_for_values(&vals, "$,.0f", true, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$,.0f", true, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102,850");
         assert_eq!(
             n.cell_text(97469.0, false).unwrap(),
@@ -2161,7 +2179,7 @@ mod numerals_tests {
     #[test]
     fn a_left_axis_symbol_si_format_repeats_the_dollar_and_declares_the_suffix_once() {
         let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0, 0.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", true, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
         assert_eq!(n.cell_text(97469.0, false).unwrap(), "$97.5");
         assert_eq!(n.cell_text(45402.0, false).unwrap(), "$45.4");
@@ -2178,7 +2196,7 @@ mod numerals_tests {
     #[test]
     fn a_right_axis_symbol_si_format_declares_the_dollar_once() {
         let vals = [102850.0, 97469.0, 86180.0, 111122.0, 45402.0];
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(102850.0, true).unwrap(), "$102.8k");
         assert_eq!(n.cell_text(97469.0, false).unwrap(), "97.5");
         assert_eq!(n.hung_suffix(), "k");
@@ -2190,11 +2208,11 @@ mod numerals_tests {
     #[test]
     fn a_vertical_block_declares_its_magnitude_in_the_analytic_register() {
         let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-        let n = strip_numerals_for_values(&vals, ".3~s", false, true, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, ".3~s", false, true, false, &pad()).unwrap();
         assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1.2M");
         assert_eq!(n.cell_text(3_400_000.0, false).unwrap(), "3.4");
         assert_eq!(n.hung_suffix(), "M");
-        let row = strip_numerals_for_values(&vals, ".3~s", false, false, &pad()).unwrap();
+        let row = strip_numerals_for_values(&vals, ".3~s", false, false, false, &pad()).unwrap();
         assert_eq!(row.cell_text(1_200_000.0, true).unwrap(), "1.2mn");
     }
 
@@ -2211,7 +2229,7 @@ mod numerals_tests {
         let de: crate::number_locale::NumberLocale = serde_json::from_value(wire).unwrap();
         crate::number_locale::with_number_locale(&de, || {
             let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
-            let n = strip_numerals_for_values(&vals, ".3~s", false, true, &pad()).unwrap();
+            let n = strip_numerals_for_values(&vals, ".3~s", false, true, false, &pad()).unwrap();
             assert_eq!(n.cell_text(1_200_000.0, true).unwrap(), "1,2\u{a0}M");
             assert_eq!(n.cell_text(3_400_000.0, false).unwrap(), "3,4");
             assert_eq!(n.hung_suffix(), "\u{a0}M");
@@ -2225,11 +2243,11 @@ mod numerals_tests {
     fn an_anchored_dollar_strip_leads_the_board_currency_under_a_suffix_currency_locale() {
         let vals = [1_200_000.0, 3_400_000.0, 5_600_000.0];
         crate::number_locale::with_number_locale(&crate::number_locale::de_de(), || {
-            let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+            let n = strip_numerals_for_values(&vals, "$.3~s", false, false, false, &pad()).unwrap();
             assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('€'));
             assert!(!n.cell_text(3_400_000.0, false).unwrap().contains('€'));
         });
-        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, "$.3~s", false, false, false, &pad()).unwrap();
         assert!(n.cell_text(1_200_000.0, true).unwrap().starts_with('$'));
     }
 
@@ -2239,7 +2257,7 @@ mod numerals_tests {
     #[test]
     fn a_repeating_vertical_suffix_reads_narrative() {
         let vals = [1_500_000.0, 2_500_000.0, 1_200_500_000.0];
-        let n = strip_numerals_for_values(&vals, ".3~s", false, true, &pad()).unwrap();
+        let n = strip_numerals_for_values(&vals, ".3~s", false, true, false, &pad()).unwrap();
         assert_eq!(n.cell_text(1_500_000.0, false).unwrap(), "1.5mn");
         assert_eq!(n.hung_suffix(), "");
     }
@@ -2250,7 +2268,7 @@ mod numerals_tests {
     /// `Units` row on both left-axis reference cases).
     #[test]
     fn a_left_axis_affix_free_format_still_anchors() {
-        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", true, false, &pad()).unwrap();
+        let n = strip_numerals_for_values(&[2693.0, 2280.0], ",d", true, false, false, &pad()).unwrap();
         assert_eq!(n.cell_text(2693.0, true).unwrap(), "2,693");
         assert_eq!(n.cell_text(2280.0, false).unwrap(), "2,280");
     }
@@ -2327,8 +2345,7 @@ mod tests {
     ) -> Result<Vec<TestRow>, Diagnostic> {
         build_rows_composed(
             "test", config, rows, x_field, domain, x_positions, fonts, style, false, false, false, color_field,
-            series_order, series_ink, None,
-        )
+            series_order, series_ink, None, false)
         .map(|rows| {
             rows.into_iter()
                 .map(|r| TestRow {
@@ -3131,7 +3148,7 @@ mod tests {
             false,
             Some("category"),
             &series_order,
-            &series_ink, None)
+            &series_ink, None, false)
         .unwrap();
         assert_eq!(out.len(), 2, "one row per series, not one row per entry");
         assert_eq!(out[0].label, "A");
@@ -3175,7 +3192,7 @@ mod tests {
             false,
             Some("category"),
             &series_order,
-            &series_ink, None)
+            &series_ink, None, false)
         .unwrap();
         let expected_max_bare = ["100", "20", "50"]
             .iter()
@@ -3237,7 +3254,7 @@ mod tests {
             false,
             Some("category"),
             &series_order,
-            &series_ink, None)
+            &series_ink, None, false)
         .unwrap();
         assert_eq!(out.len(), 4, "3 series rows + 1 aggregate row");
         let mut svg = String::new();
@@ -3267,7 +3284,7 @@ mod tests {
             false,
             None,
             &[],
-            &[], None)
+            &[], None, false)
         .unwrap_err();
         assert!(err.contains("color"), "names the missing input: {err}");
     }
@@ -3290,7 +3307,7 @@ mod tests {
             false,
             Some("category"),
             &[],
-            &[], None)
+            &[], None, false)
         .unwrap_err();
         assert!(err.contains("series_order"), "names the missing input: {err}");
     }
@@ -3336,7 +3353,7 @@ mod tests {
             axis_on_right,
             None,
             &[],
-            &[], None)
+            &[], None, false)
         .unwrap()
     }
 

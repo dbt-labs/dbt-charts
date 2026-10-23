@@ -1,4 +1,4 @@
-//! Markup writer for the families the engine owns outright (KPI, spark bar,
+//! Markup writer for the families not yet split onto the node tree (KPI,
 //! table, callout, error placard). Names and values go through quick-xml, which
 //! escapes every XML metacharacter in text and attribute values, so a family
 //! never escapes by hand. A fragment drawn by a hand-written shared emitter

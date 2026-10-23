@@ -63,7 +63,9 @@
           "feature": "states",
           "type": "topojson"
         },
-        "url": "https://vega.github.io/vega-datasets/data/us-10m.json"
+        "values": {
+          "sha256": "55d708f4f604d0baeb6aece792542163ec6dcd2d043923ca7f59ce7038e81e5b"
+        }
       },
       "mark": {
         "fill": "#D0D3D9",
@@ -78,7 +80,9 @@
           "feature": "states",
           "type": "topojson"
         },
-        "url": "https://vega.github.io/vega-datasets/data/us-10m.json"
+        "values": {
+          "sha256": "55d708f4f604d0baeb6aece792542163ec6dcd2d043923ca7f59ce7038e81e5b"
+        }
       },
       "encoding": {
         "color": {

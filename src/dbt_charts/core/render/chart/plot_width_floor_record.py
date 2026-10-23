@@ -2,7 +2,7 @@
 
 Mirrors ``text_truncation.py``'s ContextVar-sink shape: the fact ("the column
 block takes more than its reasonable share of the card") is only knowable
-while ``support_table_attachment.py`` is building the column block's
+while the engine is building the column block's
 geometry — a render concern, since it depends on font-measured column
 widths computed from the executed query's own rows, not something knowable
 at compile time the way ``plot_height_floor_px``'s height estimate is.
@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict
 
 class PlotWidthShareWarning(BaseModel):
     """The column block's width against the pre-axis-chrome footprint it shares
-    with the plot, at the width support_table_attachment.py itself measured."""
+    with the plot, at the width the engine measured."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -137,16 +137,13 @@ def test_cramped_rail_warns_and_distributes_evenly() -> None:
     assert warning.fix
 
     assert render_result.output is not None
-    match = re.search(
-        r"concat_1_marks[^>]*>(.*?)</g></g>", render_result.output, re.DOTALL
-    )
-    assert match is not None
     ys = [
         float(y)
-        for _, y in re.findall(
-            r'transform="translate\(([\-0-9.]+),\s*([\-0-9.]+)\)"', match.group(1)
+        for y in re.findall(
+            r'concat_1_marks"[^>]*><text x="0" y="([\-0-9.]+)"', render_result.output
         )
     ]
+    assert ys
     ys.sort()
     gaps = [b - a for a, b in zip(ys, ys[1:], strict=False)]
     # Even distribution: every successive gap is the same, within rounding —

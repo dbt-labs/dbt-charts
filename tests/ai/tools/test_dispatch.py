@@ -304,6 +304,21 @@ class TestDispatchToolCall:
         assert [h["title"] for h in second["results"]] == ["Board c"]
         assert "next" not in second
 
+    def test_list_diagnostic_codes_forwards_limit_and_cursor(
+        self, context: DbtChartsAIContext
+    ) -> None:
+        first = dispatch_tool_call(
+            "list_diagnostic_codes", {"limit": 2}, context=context
+        )
+        second = dispatch_tool_call(
+            "list_diagnostic_codes",
+            {"limit": 2, "cursor": first["next"]},
+            context=context,
+        )
+
+        assert len(first["codes"]) == 2
+        assert second["codes"][0]["code"] > first["codes"][-1]["code"]
+
     def test_dispatch_routes_to_extra_handler(
         self, context: DbtChartsAIContext
     ) -> None:

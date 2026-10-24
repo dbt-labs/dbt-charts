@@ -1,0 +1,3 @@
+kind: Fixes
+body: A stacked bar's total label is now one mark per stack instead of one overlapping copy per segment.
+time: 2026-10-22T22:56:40.143645-07:00

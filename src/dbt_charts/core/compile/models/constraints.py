@@ -44,13 +44,24 @@ class ValueIn:
 
 
 @dataclasses.dataclass(frozen=True)
+class IsCall:
+    """Holds when the value at ``key`` is an argument-less call to one of
+    ``names`` (or, negated, is not): written ``name()``, or parsed to an object
+    whose ``fn`` is the name."""
+
+    key: str
+    names: tuple[str, ...]
+    negate: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
 class IsList:
     """Holds when the value at ``key`` is a list."""
 
     key: str
 
 
-Condition = IsSet | ValueIn | IsList
+Condition = IsSet | ValueIn | IsCall | IsList
 
 
 @dataclasses.dataclass(frozen=True)
@@ -204,6 +215,8 @@ def _holds(model: BaseModel, condition: Condition) -> bool:
             return _is_set(model, key, nonempty=False)
         case ValueIn(key, values, negate):
             return (_value_at(model, key) in values) != negate
+        case IsCall(key, names, negate):
+            return (_value_at(model, f"{key}.fn") in names) != negate
         case IsList(key):
             return isinstance(_value_at(model, key), (list, tuple))
 

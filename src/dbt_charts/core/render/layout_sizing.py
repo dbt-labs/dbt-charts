@@ -1494,6 +1494,7 @@ def calculate_data_aware_layout(
     resolved_variants: ResolvedChartVariants | EllipsisType = ...,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
+    hug_board: Board | EllipsisType = ...,
 ) -> tuple[Board, RenderCache]:
     """Calculate layout dimensions using actual query data for table sizing.
 
@@ -1519,6 +1520,11 @@ def calculate_data_aware_layout(
             chart_id -> the real px slot height assigned to every chart under
             an authored ancestor, captured before cols-alignment can overwrite
             it. See ``_snapshot_authored_slot_heights``.
+        hug_board: The board whose items the container width hugs, when that
+            is more than ``board``: a render that emptied its hidden tabs
+            (``tab_scope.scope_tabs``) passes the whole board, so the hidden
+            tabs still count. Tabs layouts are measured without data
+            (``layout_intrinsic_width``), so this reads no hidden query.
 
     Returns:
         (Board with calculated dimensions, render_cache mapping chart_id
@@ -1554,7 +1560,7 @@ def calculate_data_aware_layout(
         resolve_errors=(resolve_errors if resolve_errors is not ... else {}),
     )
     container_width = board_container_width(
-        board,
+        board if hug_board is ... else hug_board,
         variable_values,
         _make_chart_width_measurer(render_ctx, executor, effective_vars),
         item_is_drawn,

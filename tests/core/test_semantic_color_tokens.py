@@ -1,6 +1,6 @@
 """Tests for semantic color tokens at root Style level.
 
-Task 1d: Introduce accent + muted root tokens so components inherit
+Task 1d: Introduce the accent root token so components inherit
 instead of repeating hex values.
 
 NOTE: resolved.charts.table is the LEGACY TableChartStyle (no spark sub-field).
@@ -11,12 +11,9 @@ directly; spark_bar/tick/rule and focus_color are tested via the public resolve_
 from __future__ import annotations
 
 from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
-from dbt_charts.core.compile.resolve.style.inherit_resolver import apply_inherit
-from dbt_charts.core.compile.resolve.style.palette import color as resolve_palette_color
 
 # =============================================================================
-# Cascade: accent/muted propagate via apply_inherit(..., get_inherit_graph())
+# Cascade: accent propagates via apply_inherit(..., get_inherit_graph())
 # ResolvedChartsStyle.table is legacy TableChartStyle — no spark field.
 # We test cascade correctness via the internal cascade directly.
 # =============================================================================
@@ -76,15 +73,6 @@ def test_cascade_fills_spark_bar_color_from_single_series_palette():
     assert ctx.table.spark.bar.color == "#3b82f6"
 
 
-def test_cascade_keeps_the_theme_pinned_spark_bar_track():
-    """_base pins the spark-bar track on the grid step; muted does not override it."""
-    base = get_theme_style().model_copy(update={"muted": "#123456"})
-    cascaded = apply_inherit(base, get_inherit_graph())
-    assert cascaded.charts.table.spark.bar.background == resolve_palette_color(
-        "dbt-grays.3"
-    )
-
-
 def test_cascade_respects_explicit_spark_color():
     """resolve does not overwrite spark.color when explicitly set."""
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -111,7 +99,7 @@ def test_cascade_respects_explicit_spark_color():
 
 
 # =============================================================================
-# Cascade: accent/muted propagate to spark_bar (accessible via ResolvedChartsStyle)
+# Cascade: accent propagates to spark_bar (accessible via ResolvedChartsStyle)
 # =============================================================================
 
 
@@ -123,7 +111,7 @@ def test_resolve_style_spark_bar_bar_color_inherits_accent():
     assert ctx.spark_bar.bar.color is not None
 
 
-def test_resolve_style_spark_bar_bar_background_inherits_muted():
+def test_resolve_style_spark_bar_bar_background_is_set():
     """After resolve, spark_bar.bar.background is set (non-None)."""
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 
@@ -182,17 +170,15 @@ def test_single_series_palette_override_propagates_to_spark_bar_color():
     assert ctx.spark_bar.bar.color == "#ff0000"
 
 
-def test_muted_override_does_not_touch_spark_bar_track():
-    """muted is the secondary-TEXT token; bar tracks are theme-pinned fills.
-
-    The old muted → spark_bar.bar.background Inherit conflated fill-grade
-    and text-grade grays (invisible KPI support rows).
-    """
+def test_secondary_font_override_does_not_touch_spark_bar_track():
+    """The secondary font is text ink; bar tracks are theme-pinned fills."""
+    from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
     base = get_theme_style()
-    rs, ctx = resolve_style_and_context(base.model_copy(update={"muted": "#cccccc"}))
-    assert rs.muted == "#cccccc"
+    patch = StylePatch.model_validate({"fonts": {"secondary": {"color": "#cccccc"}}})
+    rs, ctx = resolve_style_and_context(base, patch)
+    assert rs.secondary_color == "#cccccc"
     assert ctx.spark_bar.bar.background == (base.charts.spark_bar.bar.background)
 
 
@@ -270,14 +256,14 @@ def test_accent_is_patchable():
     assert resolved.variables.input.focus_color == "#ff5500"
 
 
-def test_muted_is_patchable():
-    """muted can be patched via StylePatch and survives resolve."""
+def test_secondary_font_is_patchable():
+    """fonts.secondary can be patched via StylePatch and survives resolve."""
     from dbt_charts.core.compile.models.style.authored import StylePatch
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
-    patch = StylePatch.model_validate({"muted": "#dddddd"})
+    patch = StylePatch.model_validate({"fonts": {"secondary": {"color": "#dddddd"}}})
     resolved = resolve_style(get_theme_style(), patch)
-    assert resolved.muted == "#dddddd"
+    assert resolved.secondary_color == "#dddddd"
 
 
 # =============================================================================
@@ -287,7 +273,7 @@ def test_muted_is_patchable():
 
 
 class TestCascadeWithThemeLoadedBase:
-    """Cascade must propagate board-level accent/muted overrides even when
+    """Cascade must propagate board-level accent/secondary-font overrides even when
     the base Style was loaded via get_theme_style() (real path).
 
     These tests FAIL if the token cascade is applied at theme-load time
@@ -319,8 +305,8 @@ class TestCascadeWithThemeLoadedBase:
         ctx = resolve_chart_style_context(base, patch)
         assert ctx.spark_bar.bar.color == "#ff0000"
 
-    def test_board_muted_override_propagates_through_theme_loaded_base(self):
-        """Board muted override survives resolve on a theme-loaded base,
+    def test_board_secondary_font_override_propagates_through_theme_loaded_base(self):
+        """Board secondary font override survives resolve on a theme-loaded base,
         without leaking into the theme-pinned spark_bar track fill."""
         from dbt_charts.core.compile.config import (
             get_theme_style,
@@ -331,9 +317,11 @@ class TestCascadeWithThemeLoadedBase:
         )
 
         base = get_theme_style()
-        patch = StylePatch.model_validate({"muted": "#cccccc"})
+        patch = StylePatch.model_validate(
+            {"fonts": {"secondary": {"color": "#cccccc"}}}
+        )
         rs, ctx = resolve_style_and_context(base, patch)
-        assert rs.muted == "#cccccc"
+        assert rs.secondary_color == "#cccccc"
         assert ctx.spark_bar.bar.background == (base.charts.spark_bar.bar.background)
 
     def test_board_single_series_palette_propagates_to_spark_inline_via_cascade(self):

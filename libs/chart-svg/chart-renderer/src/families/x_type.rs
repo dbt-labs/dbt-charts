@@ -186,7 +186,7 @@ fn iso_clock(text: &str) -> Option<bool> {
 
 /// `parse_hh_mm_ss_ff`: two-digit fields with one consistent `:` style, an
 /// optional fraction of any length on the seconds.
-fn clock_fields(text: &str, max_hour: u8) -> Option<[u8; 3]> {
+pub(crate) fn clock_fields(text: &str, max_hour: u8) -> Option<[u8; 3]> {
     let b = text.as_bytes();
     let pair = |at: usize| -> Option<u8> {
         let d = b.get(at..at + 2)?;

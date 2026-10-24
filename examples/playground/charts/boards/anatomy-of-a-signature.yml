@@ -175,23 +175,13 @@ queries:
           WHEN 3 THEN 'Wed' WHEN 4 THEN 'Thu' WHEN 5 THEN 'Fri'
           WHEN 6 THEN 'Sat'
         END AS day_of_week,
+        (EXTRACT(DOW FROM signed_at)::int + 6) % 7 AS day_order,
         EXTRACT(HOUR FROM signed_at)::int AS hour_of_day,
         COUNT(*) AS signatures
       FROM signatures
       WHERE {{ filter_date_range('signed_at', date_range) }}
-      GROUP BY 1, 2
-      ORDER BY 2, 1
-
-  sessions_by_country:
-    sql: |
-      SELECT country, COUNT(*) AS sessions
-      FROM sessions
-      WHERE country IS NOT NULL
-        AND {{ filter('country', country) }}
-        AND {{ filter_date_range('started_at', date_range) }}
-      GROUP BY 1
-      ORDER BY sessions DESC
-      LIMIT 10
+      GROUP BY 1, 2, 3
+      ORDER BY 3, 2
 
   sessions_by_device:
     sql: |
@@ -239,16 +229,14 @@ queries:
       ORDER BY tickets DESC
 
   # ── Pipeline-shape row ─────────────────────────────────────────────────
-  opp_amount_vs_prob:
+  opps_by_stage:
     sql: |
-      SELECT
-        probability,
-        amount,
-        lead_source,
-        CASE WHEN is_won THEN 'Won' WHEN is_closed THEN 'Lost' ELSE 'Open' END AS outcome
+      SELECT stage_name, probability AS stage_order, COUNT(*) AS opportunities
       FROM opportunities
-      WHERE amount IS NOT NULL
+      WHERE NOT is_closed
         AND {{ filter_date_range('created_at', date_range) }}
+      GROUP BY 1, 2
+      ORDER BY 2
 
   cumulative_won:
     sql: |
@@ -410,6 +398,8 @@ charts:
     x: hour_of_day
     y: day_of_week
     color: signatures
+    sort:
+      by: day_order
 
   sessions_device:
     style:
@@ -457,13 +447,14 @@ charts:
     y: tickets
 
   # ── Pipeline shape ─────────────────────────────────────────────────────
-  opp_scatter:
-    title: Opportunity amount vs probability
-    query: opp_amount_vs_prob
-    type: scatter
-    x: probability
-    y: amount
-    color: outcome
+  opps_stage_bar:
+    title: Open opportunities by stage
+    query: opps_by_stage
+    type: bar
+    x: stage_name
+    y: opportunities
+    sort:
+      by: stage_order
 
   cumulative_revenue:
     title: Cumulative closed-won revenue
@@ -523,7 +514,7 @@ rows:
   - cols:
       - text: |
           ## Anatomy of a Signature
-          *How Dundersign's 91,495 documents move from sent to signed.*
+          *How Dundersign's 5,000 documents move from sent to signed.*
 
   # 2. KPI rail — four equal cells.
   - height: 120
@@ -574,7 +565,7 @@ rows:
 
   # 11. Pipeline-shape — 3 cells at 1/3 each.
   - cols:
-      - opp_scatter
+      - opps_stage_bar
       - cumulative_revenue
       - top_templates_bar
 

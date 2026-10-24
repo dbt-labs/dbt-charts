@@ -506,6 +506,7 @@ def test_a_categorical_point_map_legend_wraps() -> None:
         query_name="q",
         latitude="lat",
         longitude="lon",
+        projection="albersUsa",
         color="series",
         style={"legend": {"visible": True, "position": {"edge": "bottom"}}},
     )

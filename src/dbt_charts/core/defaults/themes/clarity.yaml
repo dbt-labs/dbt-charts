@@ -7,9 +7,6 @@ extends: _base
 notes: the default
 style:
   background: dbt-grays.white
-  accent: info.solid-hover
-  # Clarity palette — muted sits one step down the gray scaffold from ink.
-  muted: chrome[8]
   # Rebind the categorical role to the editorial-10 family. `_base` binds
   # category to vivid-10; without this rebind, theme-portable refs like
   # `category[2]` or `category[2].dark` keep resolving to vivid-10
@@ -21,6 +18,8 @@ style:
     # role so the heatmap/geoshape gradients below and any `sequence[N]` token
     # read the same palette.
     sequence: dbt-seq-blue
+  roles:
+    muted: chrome[8]
   # Board/card border — subtle gray when a board opts into a visible border.
   border:
     color: chrome[4]

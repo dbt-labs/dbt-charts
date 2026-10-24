@@ -647,9 +647,8 @@ def get_skill(
     )
     skill = merged.get(name)
     if skill is None or surface not in skill.surfaces:
-        raise SkillNotFound(
-            f"Unknown skill: {name!r}. Run `dct skills` to list available."
-        )
+        listing = "Run `dct skills`" if surface == "cli" else "Call list_skills"
+        raise SkillNotFound(f"Unknown skill: {name!r}. {listing} to list available.")
     return _render_for_surface(skill, surface, available_tools=available_tools)
 
 

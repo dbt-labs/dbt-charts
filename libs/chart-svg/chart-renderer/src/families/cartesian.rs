@@ -108,11 +108,20 @@ impl BandScale {
     ///
     /// Returns `None` when `value` is not in the domain.
     pub fn position(&self, value: &str) -> Option<f64> {
-        let at = self.domain.iter().position(|d| d == value)?;
-        Some(match &self.geometry {
+        Some(self.position_at(self.domain.iter().position(|d| d == value)?))
+    }
+
+    /// The bands, in order.
+    pub fn domain(&self) -> &[String] {
+        &self.domain
+    }
+
+    /// Leading-edge pixel position of band `at`.
+    pub fn position_at(&self, at: usize) -> f64 {
+        match &self.geometry {
             Bands::Uniform(g) => g.edge(at, 0.0),
             Bands::Anchored { starts, .. } => starts[at],
-        })
+        }
     }
 
     /// Where a point mark of `value`'s datum sits: its band's center, or on an anchored scale where its data

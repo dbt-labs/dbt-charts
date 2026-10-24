@@ -309,10 +309,11 @@ class TestKpiFontInheritPropagates:
 class TestTableFontInheritPropagates:
     """Chart-local table.font.color must propagate to table sub-element fonts.
 
-    more_rows.font, empty_state.font, and title_row.font all carry
-    InheritSlot(from_path="Style.charts.table.font") and have color=None in the
-    theme, so apply_inherit fills them from table.font.color after the chart-local
-    patch is merged.
+    title_row.font carries InheritSlot(from_path="Style.charts.table.font") and has
+    color=None in the theme, so apply_inherit fills it from table.font.color after
+    the chart-local patch is merged. more_rows.font, empty_state.font and
+    row_numbers.font carry the same slot but the theme binds them to the secondary
+    font, whose color wins over the inherited one.
 
     NOTE: table.header.font.color is NOT tested here because stark.yaml explicitly
     sets it to *color_ink (a non-None value). apply_inherit only fills None leaves;
@@ -320,7 +321,7 @@ class TestTableFontInheritPropagates:
     test incorrect expected behavior.
     """
 
-    def test_table_font_color_propagates_to_more_rows(self):
+    def test_table_font_color_leaves_the_secondary_text_surfaces_alone(self):
         from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
         from dbt_charts.core.compile.models.style.authored.table import (
             TableChartStylePatch,  # noqa: PLC0415
@@ -334,25 +335,15 @@ class TestTableFontInheritPropagates:
             type="table",
             style=TableChartStylePatch(font=FontStyle(color=_TABLE_SENTINEL)),
         )
-        result = build_chart_style_context(_board_resolved(), chart)
-        assert result.table.more_rows.font.color == _TABLE_SENTINEL
-
-    def test_table_font_color_propagates_to_empty_state(self):
-        from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415
-        from dbt_charts.core.compile.models.style.authored.table import (
-            TableChartStylePatch,  # noqa: PLC0415
-        )
-        from dbt_charts.core.compile.resolve.style.chart_context import (  # noqa: PLC0415
-            build_chart_style_context,
-        )
-
-        chart = TableChart(
-            id="t",
-            type="table",
-            style=TableChartStylePatch(font=FontStyle(color=_TABLE_SENTINEL)),
-        )
-        result = build_chart_style_context(_board_resolved(), chart)
-        assert result.table.empty_state.font.color == _TABLE_SENTINEL
+        board = _board_resolved()
+        result = build_chart_style_context(board, chart)
+        for slot in (
+            result.table.more_rows,
+            result.table.empty_state,
+            result.table.row_numbers,
+        ):
+            assert slot.font.color == board.table.more_rows.font.color
+            assert slot.font.color != _TABLE_SENTINEL
 
     def test_table_font_color_propagates_to_title_row(self):
         from dbt_charts.core.compile.models.primitives import FontStyle  # noqa: PLC0415

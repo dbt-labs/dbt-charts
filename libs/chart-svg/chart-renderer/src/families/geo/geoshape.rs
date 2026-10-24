@@ -24,10 +24,11 @@ use d3rs::topojson::{self, Topology};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
+use super::js_cell;
 use super::projection;
 use crate::codes;
 use crate::common::{
-    category_scale_for, js_string_to_number, series_color, CategoryColorScale, FieldLabels, Font, ScaleTarget,
+    category_scale_for, series_color, CategoryColorScale, FieldLabels, Font, ScaleTarget,
     Stroke, TitleStyle,
 };
 use crate::contract;
@@ -201,40 +202,59 @@ pub(super) fn decode_features(source: &GeoSource, geometries: &HashMap<String, V
                 GeoJson::Geometry(_) => Err(format!("{role}: topojson object {name:?} decoded to a bare geometry")),
             }
         }
-        "json" => {
-            let path = source.property.ok_or_else(|| {
-                crate::refuse!("a json geo source with no geo_property is not supported")
-            })?;
-            let items = path
-                .split('.')
-                .try_fold(doc, |value, key| value.get(key))
-                .and_then(Value::as_array)
-                .ok_or_else(|| format!("{role}: geo_url {url:?} has no array at {path:?}"))?;
-            items
-                .iter()
-                .map(|item| Feature::deserialize(item).map_err(|e| format!("{role}: geo_url {url:?}: {e}")))
-                .collect()
-        }
-        other => Err(crate::refuse!("geo_format_type {other:?} is not supported")),
+        "json" => json_items(source, doc)?
+            .iter()
+            .map(|item| Feature::deserialize(item).map_err(|e| format!("{role}: geo_url {url:?}: {e}")))
+            .collect(),
+        other => Err(crate::refuse!("production errors too, Vega raises \"Unknown data format type\": geo_format_type {other:?} is not supported")),
     }
 }
 
-/// A feature's join key, read by `geo_join_key`'s dotted path (`id`, `properties.name`). A path that
-/// starts anywhere else names a member a TopoJSON feature does not have, so every key is undefined; a
-/// GeoJSON feature may carry foreign members this decoder drops, so there it is refused.
-fn feature_key<'a>(feature: &'a Feature, path: &str, topojson: bool) -> Result<Option<&'a Value>, String> {
-    let mut parts = path.split('.');
-    let mut value = match parts.next() {
-        Some("id") => feature.id.as_ref(),
-        Some("properties") => Some(&feature.properties),
-        Some("type" | "geometry" | "bbox") => return Err(crate::refuse!("geo_join_key {path:?} is not supported")),
-        Some(_) if topojson => return Ok(None),
-        _ => return Err(crate::refuse!("geo_join_key {path:?} is not supported")),
-    };
-    for key in parts {
-        value = value.and_then(|v| v.get(key));
+/// The items of a `json` source: the array at `geo_property`, as the document spells them.
+fn json_items<'a>(source: &GeoSource, doc: &'a Value) -> Result<&'a Vec<Value>, String> {
+    let (role, url) = (source.role, source.url);
+    let path = source.property.ok_or_else(|| crate::refuse!("a json geo source with no geo_property, which Vega fits to NaN and draws as NaN paths, is not supported"))?;
+    path.split('.')
+        .try_fold(doc, |value, key| value.get(key))
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{role}: geo_url {url:?} has no array at {path:?}"))
+}
+
+/// A member of a datum as Vega's field accessor reads it: an object's key or a list's index.
+fn member<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    match value {
+        Value::Array(items) => items.get(key.parse::<usize>().ok()?),
+        other => other.get(key),
     }
-    Ok(value)
+}
+
+/// Each feature's join key text, read by `geo_join_key`'s dotted path from the datum Vega holds: a GeoJSON
+/// item as the document spells it, a TopoJSON feature as `topojson.feature` builds it.
+fn join_keys(source: &GeoSource, geometries: &HashMap<String, Value>, features: &[Feature], path: &str) -> Result<Vec<String>, String> {
+    let walk = |root: Option<&Value>| -> Result<String, String> {
+        let value = path.split('.').try_fold(root, |value, key| Some(member(value?, key)));
+        crate::href::js_string(value.flatten())
+    };
+    let first = path.split('.').next();
+    if matches!(first, Some("id" | "properties")) {
+        let rest = path.split_once('.').map(|(_, rest)| rest);
+        return features
+            .iter()
+            .map(|feature| {
+                let root = if first == Some("id") { feature.id.as_ref() } else { Some(&feature.properties) };
+                let value = rest.map_or(Ok(root), |rest| rest.split('.').try_fold(root, |value, key| Ok::<_, String>(value.and_then(|v| member(v, key)))))?;
+                crate::href::js_string(value)
+            })
+            .collect();
+    }
+    if source.format_type == "json" {
+        let doc = geometries.get(source.url).ok_or_else(|| format!("{}: payload.geometries has no document for geo_url {:?}", source.role, source.url))?;
+        return json_items(source, doc)?.iter().map(|item| walk(Some(item))).collect();
+    }
+    features
+        .iter()
+        .map(|feature| walk(Some(&serde_json::to_value(feature).map_err(|e| e.to_string())?)))
+        .collect()
 }
 
 /// `validate_map_lookup_key_contract`: a numeric-keyed source needs a lookup
@@ -296,15 +316,11 @@ fn is_integer_key(value: &Value) -> bool {
 }
 
 /// `+value` as Vega-Lite's quantitative filter reads it (`isValid(x) && isFinite(+x)`).
-fn finite_number(value: Option<&Value>) -> Result<Option<f64>, String> {
-    let number = match value {
+fn finite_number(value: Option<&Value>) -> Option<f64> {
+    match value {
         None | Some(Value::Null) => None,
-        Some(Value::Number(n)) => n.as_f64(),
-        Some(Value::Bool(b)) => Some(f64::from(u8::from(*b))),
-        Some(Value::String(s)) => js_string_to_number(s),
-        Some(other) => return Err(format!("geoshape: color value {other} is not a scalar")),
-    };
-    Ok(number.filter(|n| n.is_finite()))
+        cell => Some(js_cell::number(cell)).filter(|n| n.is_finite()),
+    }
 }
 
 /// Vega-Lite's description of a mark: the color row, then the lookup column.
@@ -318,6 +334,7 @@ fn native_label(color: (&str, String), lookup: Option<(&str, String)>) -> String
 fn bind_choropleth(
     r: &Resolved,
     features: &[Feature],
+    keys: &[String],
     rows: &[Map<String, Value>],
     (lookup, value_field): (&str, &str),
 ) -> Result<Choropleth, Diagnostic> {
@@ -328,10 +345,7 @@ fn bind_choropleth(
     for row in rows {
         index.insert(crate::href::js_string(row.get(lookup))?, row);
     }
-    let row_of = |feature: &Feature| -> Result<Option<&Map<String, Value>>, String> {
-        let key = crate::href::js_string(feature_key(feature, &r.geo_join_key, r.geo_format_type == "topojson")?)?;
-        Ok(index.get(&key).copied())
-    };
+    let row_of = |i: usize| index.get(&keys[i]).copied();
     let title = color_channel_title(value_field, &r.legend, &r.field_labels)?;
     let lookup_title = display_text::slug_to_text(lookup).map(|t| r.field_labels.get(lookup).cloned().unwrap_or(t))?;
     let in_data = rows.first().is_some_and(|row| row.contains_key(lookup));
@@ -354,9 +368,9 @@ fn bind_choropleth(
             .and_then(|c| c.gradient.as_ref())
             .ok_or("geoshape: style.geoshape.color.gradient absent (theme required)")?;
         let mut drawn: Vec<(usize, f64, &Map<String, Value>)> = Vec::new();
-        for (i, feature) in features.iter().enumerate() {
-            let Some(row) = row_of(feature)? else { continue };
-            if let Some(n) = finite_number(row.get(value_field))? {
+        for i in 0..features.len() {
+            let Some(row) = row_of(i) else { continue };
+            if let Some(n) = finite_number(row.get(value_field)) {
                 drawn.push((i, n, row));
             }
         }
@@ -367,12 +381,6 @@ fn bind_choropleth(
         let scale = match ContinuousColor::mid_pivoted(gradient, (lo, hi))? {
             MidPivot::Scale(scale) => scale,
             MidPivot::NotPivoted => ContinuousColor::gradient(gradient, None, (lo, hi))?,
-            MidPivot::Outside if drawn.is_empty() => {
-                return Err(crate::refuse!("a choropleth whose rows match no feature, under a scheme gradient hinge, is not supported").into())
-            }
-            MidPivot::Outside => {
-                return Err(crate::refuse!("a scheme gradient hinge outside the drawn values and the authored bounds is not supported").into())
-            }
         };
         for (feature, n, row) in drawn {
             let label = native_label(
@@ -397,19 +405,17 @@ fn bind_choropleth(
                 }
             }
         }
-        if domain.is_empty() {
-            return Err(crate::refuse!("a nominal geoshape color with no text value is not supported").into());
-        }
         let scale = category_scale_for(&r.category_colors, value_field);
         let fills = domain.iter().map(|v| series_color(v, &domain, &r.palette, scale)).collect::<Result<Vec<_>, _>>()?;
-        for (i, feature) in features.iter().enumerate() {
-            let (fill, value, row) = match row_of(feature)? {
+        for i in 0..features.len() {
+            let (fill, value, row) = match row_of(i) {
                 Some(row) => match row.get(value_field) {
                     Some(Value::String(value)) => {
                         let slot = domain.iter().position(|d| d == value).expect("the domain holds every text cell");
                         (Some(fills[slot].clone()), value.clone(), Some(row))
                     }
-                    other => (None, crate::href::js_string(other)?, Some(row)),
+                    Some(other) => (None, js_cell::description(other), Some(row)),
+                    None => (None, "undefined".to_string(), Some(row)),
                 },
                 None => (None, "null".to_string(), None),
             };
@@ -434,14 +440,24 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         feature: resolved.geo_feature.as_deref(),
         property: resolved.geo_property.as_deref(),
     };
+    if source.format_type == "json" && source.property.is_none() {
+        // Vega reads the whole document as one datum and draws nothing; production turns an empty chart that
+        // shows a value into an error and otherwise ships the blank chart.
+        if resolved.value_field.as_deref().is_none_or(|f| payload.rows.iter().any(|row| js_cell::has_ink(row.get(f)))) {
+            return Err(payload.painted_no_marks());
+        }
+        return Err(crate::refuse!("a json geo source with no geo_property and no value ink draws a blank chart that is not supported").into());
+    }
     let features = decode_features(&source, geometries)?;
     resolved.mark()?;
-    let rows = &payload.rows;
+    let rows: Vec<Map<String, Value>> = payload.rows.iter().map(js_cell::normalized).collect();
+    let rows = &rows[..];
     let has_color_channel = resolved.resolved_channels.contains_key("color");
     let choropleth = match (&resolved.lookup_field, &resolved.value_field) {
         (Some(lookup), value) if !rows.is_empty() && (value.is_some() || has_color_channel) => {
             let value = value.as_deref().ok_or("geoshape: value_field absent (resolver required)")?;
-            Some(bind_choropleth(&resolved, &features, rows, (lookup, value))?)
+            let keys = join_keys(&source, geometries, &features, &resolved.geo_join_key)?;
+            Some(bind_choropleth(&resolved, &features, &keys, rows, (lookup, value))?)
         }
         _ => None,
     };
@@ -491,11 +507,11 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
 
     let grad_id = format!("geo_grad-{}", contract::safe_svg_id(&r.id));
     let legend_visible = r.legend.visible;
-    // `symbol_legend` draws an authored `symbol_shape` in the bordered circle's stroke.
+    // An authored `symbol_shape` takes the mark's stroke; a mark with none draws the shape fill-only.
     let default_symbol = match (r.legend.symbol_shape.as_deref(), mark.stroke.as_ref().and_then(|s| s.color.as_deref())) {
         (None, None) => LegendSymbol::FilledCircle,
         (_, Some(stroke)) => LegendSymbol::BorderedCircle(stroke),
-        (Some(_), None) => return Err(crate::refuse!("a geoshape legend symbol_shape over a mark with no stroke is not supported").into()),
+        (Some(_), None) => LegendSymbol::FilledShape,
     };
     let symbol_entries;
     let folded_label;
@@ -718,15 +734,16 @@ mod tests {
 
     #[test]
     fn a_quantitative_value_is_valid_when_plus_x_is_finite() {
-        let number = |v: Value| finite_number(Some(&v)).unwrap();
+        let number = |v: Value| finite_number(Some(&v));
         assert_eq!(number(json!(2.5)), Some(2.5));
         assert_eq!(number(json!("12")), Some(12.0));
         assert_eq!(number(json!("")), Some(0.0));
         assert_eq!(number(json!(true)), Some(1.0));
         assert_eq!(number(json!("abc")), None);
         assert_eq!(number(json!(null)), None);
-        assert_eq!(finite_number(None).unwrap(), None);
-        assert!(finite_number(Some(&json!([1]))).is_err());
+        assert_eq!(finite_number(None), None);
+        assert_eq!(finite_number(Some(&json!([5]))), Some(5.0));
+        assert_eq!(finite_number(Some(&json!([1, 2]))), None);
     }
 
     #[test]

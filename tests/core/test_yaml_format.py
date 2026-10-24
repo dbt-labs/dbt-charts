@@ -154,7 +154,13 @@ class TestYamlFormat:
         never wrote it must not see it echoed back in `dct render` output
         (they'd copy the unauthored default straight back into the board)."""
         data = [{"lat": 1.0, "lng": 2.0}]
-        chart = make_chart("point_map", latitude="lat", longitude="lng", id="pads")
+        chart = make_chart(
+            "point_map",
+            latitude="lat",
+            longitude="lng",
+            id="pads",
+            projection="albersUsa",
+        )
         board = _make_board([chart])
         executor = _make_executor(data)
 
@@ -167,7 +173,12 @@ class TestYamlFormat:
         """`collapse: true` is a real authored decision — it must round-trip."""
         data = [{"lat": 1.0, "lng": 2.0}]
         chart = make_chart(
-            "point_map", latitude="lat", longitude="lng", id="pads", collapse=True
+            "point_map",
+            latitude="lat",
+            longitude="lng",
+            id="pads",
+            collapse=True,
+            projection="albersUsa",
         )
         board = _make_board([chart])
         executor = _make_executor(data)

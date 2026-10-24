@@ -447,7 +447,7 @@ class TestClassicSerifNumerals:
         return es
 
     def test_classic_variant_uses_serif_for_numerics(self, make_chart):
-        """Classic variant: numeric cell font-family contains 'Source Serif'."""
+        """Classic variant with a serif ``fonts.numeral``: digits set in the serif."""
         from ._engine_render import render_table_svg
 
         chart = make_chart("table", x=None, y=None)
@@ -458,7 +458,9 @@ class TestClassicSerifNumerals:
             chart,
             data,
             width=400,
-            board_style=_BOARD_STYLE,
+            board_style=dataclasses.replace(
+                _BOARD_STYLE, numeral_family="'Source Serif 4', Georgia, serif"
+            ),
         )
         assert "Source Serif" in svg, (
             "Expected Source Serif in numeric cell font-family"
@@ -503,8 +505,8 @@ class TestClassicSerifNumerals:
             "Default-font numeric cells must use the curated dbt Sans Tabular stack"
         )
 
-    def test_numeric_cells_use_table_font_family(self, make_chart):
-        """Numeric cells should use Source Serif when font_family is overridden."""
+    def test_serif_table_font_leaves_digits_on_the_numeral_font(self, make_chart):
+        """A serif table font sets text cells only; digits follow ``fonts.numeral``."""
 
         from dbt_charts.core.compile.models.primitives import FontStyle
 
@@ -532,9 +534,8 @@ class TestClassicSerifNumerals:
             width=400,
             board_style=_BOARD_STYLE,
         )
-        # Numeric cell "95" should use Source Serif, not dbt Sans Tabular
-        assert "dbt Sans Tabular" not in svg, (
-            "Numeric cells should use the table's serif font, not the sans stack"
+        assert "dbt Sans Tabular" in svg, (
+            "Numeric cells should use the default numeral stack, not the serif"
         )
         assert "Source Serif 4" in svg
 

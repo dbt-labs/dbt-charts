@@ -214,7 +214,7 @@ pub fn chart_title_metrics(
     let inset_top = card_padding + layout_top;
     match chart_type {
         "table" => {
-            let (ascent, tail) = crate::families::table::title_geometry(chart, slot_width, fonts)?;
+            let (ascent, tail) = crate::families::table::layout::title_geometry(chart, slot_width, fonts)?;
             Ok(Some(TitleMetrics {
                 ascent: inset_top + ascent,
                 tail,

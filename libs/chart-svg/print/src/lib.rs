@@ -10,7 +10,15 @@
 use std::borrow::Cow;
 
 use quick_xml::events::attributes::Attribute;
-use scene::{Attrs, Chars, Child, Element, Escape, Node};
+use scene::{Attrs, Chars, Child, Element, Escape, Node, TextBlock};
+
+/// `attrs` as an element's attribute run, each led by a space: the fragment a
+/// caller that still writes an opening tag by hand splices in.
+pub fn attributes(attrs: &Attrs) -> String {
+    let mut out = String::new();
+    attrs_into(&mut out, attrs);
+    out
+}
 
 pub fn print(nodes: &[Node]) -> String {
     let mut out = String::new();
@@ -142,6 +150,17 @@ fn element_into(out: &mut String, tag: &str, attrs: &Attrs, children: &[Node]) {
     out.push('>');
 }
 
+fn text_into(out: &mut String, tag: &str, block: &TextBlock) {
+    out.push('<');
+    out.push_str(tag);
+    attrs_into(out, &block.attrs);
+    out.push('>');
+    chars_into(out, &block.text);
+    out.push_str("</");
+    out.push_str(tag);
+    out.push('>');
+}
+
 fn empty_into(out: &mut String, tag: &str, attrs: &Attrs) {
     out.push('<');
     out.push_str(tag);
@@ -155,13 +174,25 @@ fn node_into(out: &mut String, node: &Node) {
         Node::Group { attrs, children } => element_into(out, "g", attrs, children),
         Node::Rect(attrs) => empty_into(out, "rect", attrs),
         Node::Path(attrs) => empty_into(out, "path", attrs),
+        Node::Line(attrs) => empty_into(out, "line", attrs),
+        Node::Circle(attrs) => empty_into(out, "circle", attrs),
+        Node::Polygon(attrs) => empty_into(out, "polygon", attrs),
+        Node::Polyline(attrs) => empty_into(out, "polyline", attrs),
         Node::Stop(attrs) => empty_into(out, "stop", attrs),
-        Node::Text(block) => {
-            out.push_str("<text");
-            attrs_into(out, &block.attrs);
-            out.push('>');
-            chars_into(out, &block.text);
-            out.push_str("</text>");
+        Node::Text(block) => text_into(out, "text", block),
+        Node::Tspan(block) => text_into(out, "tspan", block),
+        Node::TextRuns { attrs, children } => element_into(out, "text", attrs, children),
+        Node::TspanRuns { attrs, children } => element_into(out, "tspan", attrs, children),
+        Node::Script { attrs, children } => element_into(out, "script", attrs, children),
+        Node::Cdata(text) => {
+            out.push_str("<![CDATA[");
+            out.push_str(&text.replace("]]>", "]]]]><![CDATA[>"));
+            out.push_str("]]>");
+        }
+        Node::Title(chars) => {
+            out.push_str("<title>");
+            chars_into(out, chars);
+            out.push_str("</title>");
         }
         Node::Chars(chars) => chars_into(out, chars),
         Node::Link { attrs, children } => element_into(out, "a", attrs, children),
@@ -202,6 +233,13 @@ mod tests {
     use scene::Extent;
 
     #[test]
+    fn an_attribute_run_leads_each_attribute_with_a_space() {
+        let attrs = Attrs::new().set("a", "1 & 2").vega("font-family", "'x'");
+        assert_eq!(attributes(&attrs), " a=\"1 &amp; 2\" font-family=\"'x'\"");
+        assert_eq!(attributes(&Attrs::new()), "");
+    }
+
+    #[test]
     fn attributes_print_in_authored_order() {
         let node = Node::Rect(Attrs::new().set("y", "2").set("x", "1").set("fill", "#fff"));
         assert_eq!(print(&[node]), "<rect y=\"2\" x=\"1\" fill=\"#fff\"/>");
@@ -236,7 +274,7 @@ mod tests {
 
     #[test]
     fn a_quick_attribute_and_text_escape_every_metacharacter() {
-        let node = Node::Text(scene::TextBlock {
+        let node = Node::Text(TextBlock {
             attrs: Attrs::new().quick("font-family", "a \"b\" 'c' <&>\n"),
             text: Chars::new("t\"'<&>", Escape::Quick),
         });
@@ -244,6 +282,31 @@ mod tests {
             print(&[node]),
             "<text font-family=\"a &quot;b&quot; &apos;c&apos; &lt;&amp;&gt;&#10;\">t&quot;&apos;&lt;&amp;&gt;</text>"
         );
+    }
+
+    #[test]
+    fn text_runs_print_their_tspans_titles_and_the_characters_between() {
+        let runs = Node::TextRuns {
+            attrs: Attrs::new().quick("x", "14.0").quick("text-anchor", "start"),
+            children: vec![
+                Node::Title(Chars::new("it's", Escape::Quick)),
+                Node::Chars(Chars::new("\n", Escape::Quick)),
+                Node::Tspan(TextBlock {
+                    attrs: Attrs::new().quick("y", "30.5").quick("font-family", "'Inter'"),
+                    text: Chars::new("a<b", Escape::Quick),
+                }),
+            ],
+        };
+        assert_eq!(
+            print(&[runs]),
+            "<text x=\"14.0\" text-anchor=\"start\"><title>it&apos;s</title>\n<tspan y=\"30.5\" font-family=\"&apos;Inter&apos;\">a&lt;b</tspan></text>"
+        );
+    }
+
+    #[test]
+    fn an_empty_tspan_keeps_its_end_tag() {
+        let tspan = Node::Tspan(TextBlock { attrs: Attrs::new(), text: Chars::new("", Escape::Quick) });
+        assert_eq!(print(&[tspan]), "<tspan></tspan>");
     }
 
     #[test]
@@ -359,5 +422,57 @@ mod tests {
         assert!(matches!(xml_escape("plain"), Cow::Borrowed(_)));
         assert_eq!(xml_escape("&<>"), "&amp;&lt;&gt;");
         assert_eq!(html_escape("a\"'\n&"), "a&quot;&#x27;\n&amp;");
+    }
+
+    #[test]
+    fn the_empty_primitives_print_self_closing_with_their_attrs_in_order() {
+        let attrs = || Attrs::new().quick("x1", "1.5").quick("stroke", "#a&b").quick("x2", "9");
+        let body = "x1=\"1.5\" stroke=\"#a&amp;b\" x2=\"9\"/>";
+        for (node, tag) in [
+            (Node::Line(attrs()), "line"),
+            (Node::Circle(attrs()), "circle"),
+            (Node::Polygon(attrs()), "polygon"),
+            (Node::Polyline(attrs()), "polyline"),
+        ] {
+            assert_eq!(print(&[node]), format!("<{tag} {body}"));
+        }
+    }
+
+    #[test]
+    fn a_tspan_of_runs_prints_its_attrs_then_children_and_closes_when_empty() {
+        let glyph = Node::Tspan(TextBlock {
+            attrs: Attrs::new().quick("fill", "#0a0"),
+            text: Chars::new("+ ", Escape::Quick),
+        });
+        let line = Node::TspanRuns {
+            attrs: Attrs::new().quick("x", "4").quick("y", "12"),
+            children: vec![glyph, Node::Chars(Chars::new("a&b", Escape::Quick))],
+        };
+        assert_eq!(
+            print(&[line]),
+            "<tspan x=\"4\" y=\"12\"><tspan fill=\"#0a0\">+ </tspan>a&amp;b</tspan>"
+        );
+        assert_eq!(print(&[Node::TspanRuns { attrs: Attrs::new(), children: vec![] }]), "<tspan></tspan>");
+    }
+
+    #[test]
+    fn a_script_wraps_its_characters_and_cdata_sections() {
+        let script = Node::Script {
+            attrs: Attrs::new().quick("type", "text/javascript"),
+            children: vec![Node::Chars(Chars::new("\n", Escape::Quick)), Node::Cdata("a<b".into())],
+        };
+        assert_eq!(print(&[script]), "<script type=\"text/javascript\">\n<![CDATA[a<b]]></script>");
+    }
+
+    #[test]
+    fn cdata_splits_a_literal_close() {
+        assert_eq!(print(&[Node::Cdata("a]]>b".into())]), "<![CDATA[a]]]]><![CDATA[>b]]>");
+        assert_eq!(print(&[Node::Cdata(String::new())]), "<![CDATA[]]>");
+        for text in ["]]>", "]]>]]>", "x]]", "]>]]>y"] {
+            let quick: String = quick_xml::events::BytesCData::escaped(text)
+                .map(|section| format!("<![CDATA[{}]]>", section.into_inner()))
+                .collect();
+            assert_eq!(print(&[Node::Cdata(text.into())]), quick, "{text}");
+        }
     }
 }

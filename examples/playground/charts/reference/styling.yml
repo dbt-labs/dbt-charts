@@ -30,7 +30,7 @@ rows:
       - text: "**Named color**\n\nlightblue"
         style:
           background: "lightblue"
-      - text: "**Hex color**\n\n\\#90EE90"
+      - text: "**Hex color**\n\n#90EE90"
         style:
           background: "#90EE90"
       - text: "**RGB color**\n\nrgb(255, 182, 193)"
@@ -84,20 +84,20 @@ rows:
         style:
           border:
             width: 2
-            color: "#e65100"
+            color: "#b43c00"
             radius: 0
           background: "#fff"
       - text: "**8px radius**\n\nborder-radius: 8px"
         style:
           border:
             width: 2
-            color: "#e65100"
+            color: "#b43c00"
           background: "#fff"
       - text: "**20px radius**\n\nborder-radius: 20px"
         style:
           border:
             width: 2
-            color: "#e65100"
+            color: "#b43c00"
             radius: 20
           background: "#fff"
 
@@ -171,7 +171,7 @@ rows:
             color: "#ff9800"
             radius: 12
           font:
-            color: "#e65100"
+            color: "#b43c00"
 
       - text: |
           ### Info Card

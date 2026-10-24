@@ -11,13 +11,14 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-use crate::pygments_re::is_py_space;
 use crate::types::{
     AnyBlock, Blockquote, CodeBlock, Document, Heading, HorizontalRule, ImageBlock, ListItem,
     OrderedList, Paragraph, RawHtmlBlock, Span, SpanType, Table, TableCell, TableRow,
     UnorderedList,
 };
-use crate::utils::{normalize_whitespace, split_lines};
+use crate::utils::split_lines;
+use d3rs::py_str::is_py_space;
+use d3rs::py_str::normalize_whitespace;
 
 const HTML_VOID_TAGS: &[&str] = &[
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A dense yearly date axis now labels every 5th, then every 10th, year instead of an arbitrary alternating set.
+time: 2026-10-22T23:16:53.900928-07:00

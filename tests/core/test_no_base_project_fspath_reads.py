@@ -84,44 +84,29 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/serve/server.py", 234): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 327): (
-        "_directory_candidates(..., project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 340): (
-        "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 381): (
-        "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 339): (
-        "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 386): (
-        "_resolve_directory_url(project: FilesystemProject) — already FS-typed"
-    ),
-    ("core/serve/server.py", 539): (
+    ("core/serve/server.py", 416): (
         "_url_mount_dir(path, project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 684): (
+    ("core/serve/server.py", 488): (
         "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 797): (
+    ("core/serve/server.py", 616): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1272): (
+    ("core/serve/server.py", 1048): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1311): (
+    ("core/serve/server.py", 1087): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1346): (
+    ("core/serve/server.py", 1122): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1453): (
+    ("core/serve/server.py", 1229): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1648): (
+    ("core/serve/server.py", 1431): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -155,7 +140,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/serve.py", 86): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1387): (
+    ("core/serve/server.py", 1163): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
     ("agent_api/serve.py", 477): (

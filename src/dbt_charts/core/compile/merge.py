@@ -46,6 +46,10 @@ from pydantic.fields import FieldInfo
 
 from dbt_charts.core.compile.errors import CompilationError, FileValidationError
 from dbt_charts.core.compile.file_refs import anchor_images, resolve_ref
+from dbt_charts.core.compile.models.cache import (
+    CachePatch,
+    reject_prefetch_without_cache,
+)
 from dbt_charts.core.compile.models.factories import AUTHORED_INPUT
 from dbt_charts.core.compile.models.markers import (
     Exclusive,
@@ -230,6 +234,8 @@ def merge_patches(lower: P, upper: P) -> P:
     that reflects only fields genuinely authored in this merge, so subsequent
     merges do not mistake default-None values for explicit nulls.
     """
+    if isinstance(lower, CachePatch) and isinstance(upper, CachePatch):
+        reject_prefetch_without_cache(lower, upper)
     lower = _reset_on_set(lower, upper)
     out: dict[str, Any] = {}
     # Pre-populate with lower values so exclusive groups can clear them.

@@ -37,7 +37,7 @@ use crate::families::legend::{
     emit_vega_legend, legend_from_widths, legend_slide, legend_title_text, resolve_legend_values,
     fold_symbol_limit, legend_fit_bounds, legend_origin, limit_legend_text, LegendConfig, LegendEntry, LegendSymbol, VegaLegend,
 };
-use crate::families::table::is_date_like_cell;
+use crate::families::table::bind::is_date_like_cell;
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::svg::{num_full, py_float_str};
 use print::{vega_escape_attr, xml_escape, xml_escape_attr};
@@ -1111,9 +1111,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                     .as_deref()
                     .ok_or("pie: a placeholder chart needs board_style.placeholder.overlay.font.family")?;
                 let _ = write!(svg, "<g opacity=\"{}\">{content}</g>", py_float_str(style.opacity));
-                let mut overlay = crate::xml::Xml::new();
-                style.overlay(&mut overlay, w, frame.h, family, None).map_err(|e| e.to_string())?;
-                svg.push_str(&overlay.finish());
+                svg.push_str(&style.overlay(w, frame.h, family, None).map_err(|e| e.to_string())?);
             } else {
                 svg.push_str(&content);
             }

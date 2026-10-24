@@ -471,7 +471,11 @@ def test_quick_guide_example_reports_the_real_backgrounds(
 ) -> None:
     """The shipped ``quick-guide`` example nests a text row with its own
     dark background inside a board whose ``style.charts.background`` is
-    white — this pins that specific real-world reproduction directly."""
+    white. Its styling-demo section once shipped a body paragraph below the
+    WCAG floor against the board's own cream background (fixed by the
+    public-board audit); this pins the fixed, warning-free state so a
+    regression — any text painted under the floor against its real resolved
+    background, not ``charts.background`` — is caught again."""
     from dbt_charts.core.compile import compile_file
     from dbt_charts.core.diagnostics import WARN_LOW_TEXT_CONTRAST
     from dbt_charts.core.execute import Executor
@@ -495,14 +499,8 @@ def test_quick_guide_example_reports_the_real_backgrounds(
     )
     rendered = render(result.board, executor, format="svg")
     matches = [w for w in rendered.warnings if w.code == WARN_LOW_TEXT_CONTRAST.code]
-    paths = {w.path for w in matches}
-    assert "rows.14.rows.0" not in paths, (
-        f"header row's own dark background makes its cream ink readable: {matches}"
-    )
-    row3 = next((w for w in matches if w.path == "rows.14.rows.3"), None)
-    assert row3 is not None, f"expected rows.14.rows.3 to warn; got: {matches}"
-    assert "#f6f1e7" in row3.message, (
-        f"expected the board's own cream background, not charts.background: {row3.message}"
+    assert matches == [], (
+        f"the shipped quick-guide example should carry no low-contrast text: {matches}"
     )
 
 

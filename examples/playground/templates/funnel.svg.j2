@@ -38,7 +38,7 @@ options:
     {% set pw = bar_width(pv) %}
     {% set py = stages(loop.index0 - 1) + bar_h %}
     <path d="M{{ (cx - pw / 2)|round(1) }},{{ py|round(1) }}H{{ (cx + pw / 2)|round(1) }}L{{ (cx + w / 2)|round(1) }},{{ y|round(1) }}H{{ (cx - w / 2)|round(1) }}Z" fill="{{ fill }}" fill-opacity="0.15"/>
-    <text x="{{ width }}" y="{{ (py + (y - py) / 2)|round(1) }}" dy="0.35em" text-anchor="end" fill="{{ style.muted }}" font-size="{{ axis_font.size }}">{{ (v / pv) | format(".0%") }} of previous</text>
+    <text x="{{ width }}" y="{{ (py + (y - py) / 2)|round(1) }}" dy="0.35em" text-anchor="end" fill="{{ style.fonts.secondary.color }}" font-size="{{ axis_font.size }}">{{ (v / pv) | format(".0%") }} of previous</text>
   {% endif %}
   <rect x="{{ (cx - w / 2)|round(1) }}" y="{{ y|round(1) }}" width="{{ [w, 1]|max|round(1) }}" height="{{ bar_h|round(1) }}" rx="2" fill="{{ fill }}"><title>{{ r[stage_col] }}: {{ v | format(p.value_format) }} ({{ (v / top) | format(".1%") }} of {{ rows[0][stage_col] }})</title></rect>
   <text x="{{ p.label_width - 12 }}" y="{{ (y + bar_h / 2)|round(1) }}" dy="0.35em" text-anchor="end" fill="{{ style.font.color }}">{{ r[stage_col] }}</text>

@@ -40,7 +40,7 @@ use measure::font_files::{font_path, mono_font_path};
 use measure::wrap::wrap_plain;
 use measure::{FontBook, Measure};
 use print::print;
-use scene::{Attrs, Chars, Child, Element, Escape, Extent, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
 
 const MIN_WIDTH: f64 = 120.0;
 const MIN_HEIGHT: f64 = 60.0;
@@ -50,10 +50,6 @@ const MAX_TITLE_LINES: usize = 3;
 const MAX_HINT_LINES: usize = 3;
 const CODE_SIZE_RATIO: f64 = 0.75;
 const DOC_LINK_SIZE_RATIO: f64 = 0.85;
-/// The only tags mdsvg writes as `<x/>`; every other empty element is a pair,
-/// which roxmltree cannot tell apart.
-const MDSVG_SELF_CLOSING: [&str; 4] = ["image", "rect", "line", "circle"];
-const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
 #[derive(Deserialize)]
 struct Resolved {
@@ -247,8 +243,8 @@ fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64) -> Res
     let doc = mdsvg::parser::parse(text);
     let r = renderer.render_content(&doc, content_width, 0.0)?;
     Ok(Block {
-        nodes: markup_nodes(&r.elements)?,
-        styles: markup_nodes(&r.style_block)?,
+        nodes: mdsvg::indented_nodes(&r.elements),
+        styles: mdsvg::indented_nodes(std::slice::from_ref(&r.style)),
         height: r.height,
     })
 }
@@ -299,76 +295,6 @@ fn wrap_callout(
     max_lines: usize,
 ) -> Result<Vec<String>, String> {
     wrap_plain(fonts_dir, text, width, size, family, max_lines).map_err(|e| format!("callout: {e}"))
-}
-
-/// mdsvg lays markdown out as markup; its elements enter the scene here until
-/// mdsvg emits `Element`s itself. Its text is escaped as `xml_escape_attr`
-/// (`Escape::Mdsvg`); its attribute values, `Escape::Attr`, print the same bytes.
-fn markup_nodes(markup: &str) -> Result<Vec<Node>, String> {
-    let wrapped = ["<root>", markup, "</root>"].concat();
-    let doc = roxmltree::Document::parse(&wrapped)
-        .map_err(|e| format!("callout: markdown markup: {e}"))?;
-    doc.root_element()
-        .children()
-        .map(|child| {
-            if child.is_element() {
-                Ok(Node::Element(markup_element(child)?))
-            } else if child.is_text() {
-                Ok(Node::Chars(Chars::new(child.text().unwrap_or_default(), Escape::Attr)))
-            } else {
-                Err("callout: markdown markup holds a comment or processing instruction".to_string())
-            }
-        })
-        .collect()
-}
-
-fn markup_element(node: roxmltree::Node<'_, '_>) -> Result<Element, String> {
-    let tag = node.tag_name().name();
-    let mut attrs = Attrs::new();
-    for attribute in node.attributes() {
-        let name = match attribute.namespace() {
-            None => attribute.name().to_string(),
-            Some(XML_NAMESPACE) => format!("xml:{}", attribute.name()),
-            Some(other) => {
-                return Err(format!(
-                    "callout: markdown <{tag}> has a namespaced attribute {other}"
-                ))
-            }
-        };
-        attrs = attrs.set(name, attribute.value());
-    }
-    let mut children = Vec::new();
-    for child in node.children() {
-        if child.is_element() {
-            children.push(Child::Element(markup_element(child)?));
-        } else if child.is_text() {
-            let text = child.text().unwrap_or_default();
-            if tag == "style" {
-                // mdsvg writes its CSS with raw newlines, which `Escape::Mdsvg`
-                // would turn into references.
-                for (i, line) in text.split('\n').enumerate() {
-                    if i > 0 {
-                        children.push(Child::Text(Chars::new("\n", Escape::Attr)));
-                    }
-                    children.push(Child::Text(Chars::new(line, Escape::Mdsvg)));
-                }
-            } else {
-                children.push(Child::Text(Chars::new(text, Escape::Mdsvg)));
-            }
-        } else {
-            return Err(format!(
-                "callout: markdown <{tag}> holds a comment or processing instruction"
-            ));
-        }
-    }
-    if children.is_empty() && !MDSVG_SELF_CLOSING.contains(&tag) {
-        children.push(Child::Text(Chars::new("", Escape::Mdsvg)));
-    }
-    Ok(Element {
-        tag: tag.to_string(),
-        attrs,
-        children,
-    })
 }
 
 fn truncated(chart_id: &str, field: &str, text: &str) -> Diagnostic {
@@ -990,7 +916,7 @@ mod tests {
 
     /// A width with no height takes `width / image_fallback_aspect_ratio`
     /// (`renderer.py:2270-2272`, 16:9 by `style.py:252`); the alt and the
-    /// href escape as `escape_svg_text` does (`renderer.py:2280,2290`).
+    /// href collapse space runs as `collapse_spaces` does (`renderer.py:2280,2290`).
     #[test]
     fn message_image_without_a_height_paints_at_the_fallback_ratio() {
         let message = "![A \"quoted\" <alt> & more](assets/missing.png){width=120}";
@@ -1041,7 +967,7 @@ mod tests {
     fn the_placard_doc_link_speaks_the_board_language() {
         let mut json = placard_payload(None, Some("https://docs.example.com/reference/errors/"));
         json["board_style"] = serde_json::json!({
-            "font": "Inter", "text_mark_font": {"family": "Inter", "size": 11.0}, "muted": null, "tones": null,
+            "font": "Inter", "text_mark_font": {"family": "Inter", "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
             "format_locale": crate::number_locale::en_us_wire(), "language": "de", "time_locale": crate::time_locale::en_us_wire()
         });

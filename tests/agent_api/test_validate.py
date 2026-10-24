@@ -1493,9 +1493,11 @@ def test_validate_text_names_the_successor_of_a_retired_key(
 
     result = validate_text(_RETIRED_KEY_MIXED_BOARD, project=local_project(tmp_path))
 
-    zero = next(e for e in result.errors if "Unknown field 'zero'" in e.message)
-    assert zero.hint is not None
-    assert "`zero` was renamed to `threshold` in 0.7.0" in zero.hint
+    zero = next(e for e in result.errors if e.code == "ERR-RETIRED-FIELD")
+    assert (
+        "'zero' at charts.revenue_trend.style.axis_y.grid was renamed" in zero.message
+    )
+    assert "in 0.7.0" in zero.message
     assert (
         zero.fields["successor"] == "charts.revenue_trend.style.axis_y.grid.threshold"
     )

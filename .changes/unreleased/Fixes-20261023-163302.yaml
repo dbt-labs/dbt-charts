@@ -1,0 +1,3 @@
+kind: Fixes
+body: A bar chart now draws its authored color gradient with a gradient legend.
+time: 2026-10-23T16:33:02.7459-07:00

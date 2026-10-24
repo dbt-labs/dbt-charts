@@ -57,6 +57,7 @@ class _ExtraFieldDiagnostic:
     message: str
     hint: str
     fields: dict[str, Any]
+    retired: bool = False
 
 
 # Union-branch discriminator patterns: strings in Pydantic loc tuples that
@@ -105,6 +106,8 @@ def _branch_score(err: dict[str, Any]) -> int:
     extra_forbidden → field we actually authored that's forbidden here → 0
     missing         → required field for this branch missing → 1
     other           → some other type mismatch → 2 (noisier)
+    model_type      → a scalar where a mapping was expected → 3 (noisiest: a
+                      branch that parsed the scalar and rejected it says more)
     """
     from dbt_charts.core.diagnostics.registry import CODED_VALIDATION_ERROR
 
@@ -115,6 +118,8 @@ def _branch_score(err: dict[str, Any]) -> int:
         return 0
     if t == "missing":
         return 1
+    if t == "model_type":
+        return 3
     return 2
 
 
@@ -136,10 +141,19 @@ def _collapse_union_validation_errors(
     3. Pick the branch whose errors have the lowest aggregate _branch_score.
     4. Keep the errors from that winning branch, mapped to the canonical loc
        (prefix + remaining path after the discriminator).
-    5. Return non-union errors + winning-branch errors, capped at MAX_GROUPS.
+    5. Collapse the winning branches again: a union inside a union branch
+       leaves its own discriminator behind.
+    6. Return non-union errors + winning-branch errors, capped at MAX_GROUPS.
     """
-    MAX_GROUPS = 8
+    return _collapse_branches(errors)[:_MAX_GROUPS]
 
+
+_MAX_GROUPS = 8
+
+
+def _collapse_branches(
+    errors: list[dict[str, Any]],  # type-state: explicit_any — pydantic error dict
+) -> list[dict[str, Any]]:  # type-state: explicit_any — pydantic error dict
     non_union: list[dict[str, Any]] = []
     # Maps prefix_key → {branch_name: [error_dicts]}
     branch_groups: dict[tuple[Any, ...], dict[str, list[dict[str, Any]]]] = {}
@@ -170,17 +184,21 @@ def _collapse_union_validation_errors(
         _best_branch_name, best_errors = scored[0]
 
         # Rewrite locs to strip the discriminator so downstream path logic works
+        stripped: list[
+            dict[str, Any]  # type-state: explicit_any — pydantic error dict
+        ] = []
         for err in best_errors:
             loc = err.get("loc", ())
             disc_idx = _find_discriminator_index(loc)
             if disc_idx is not None:
                 # Canonical loc: prefix + everything after the discriminator
                 canonical_loc = loc[:disc_idx] + loc[disc_idx + 1 :]
-                collapsed.append({**err, "loc": canonical_loc})
+                stripped.append({**err, "loc": canonical_loc})
             else:
-                collapsed.append(err)
+                stripped.append(err)
+        collapsed.extend(_collapse_branches(stripped))
 
-    return collapsed[:MAX_GROUPS]
+    return collapsed
 
 
 @lru_cache(maxsize=1)
@@ -665,6 +683,13 @@ def _dotted(path: list[str]) -> str:
     return dotted if dotted else "root"
 
 
+def _annotation_type(field_path: list[str]) -> str | None:
+    """The type tag of the annotation *field_path* is a field of, else None."""
+    if len(field_path) >= 4 and field_path[-4] == "annotations":
+        return field_path[-2]
+    return None
+
+
 def _misplaced_key_hint(field_name: str, parent_path: list[str]) -> str | None:
     """Name the blocks near *parent_path* that do accept *field_name*.
 
@@ -672,6 +697,7 @@ def _misplaced_key_hint(field_name: str, parent_path: list[str]) -> str | None:
     blocks directly under it, nearest first. A match means the author knew the
     key and put it one block off.
     """
+    placed = _dotted(parent_path)
     homes: list[str] = []
     for depth in range(len(parent_path), -1, -1):
         ancestor = parent_path[:depth]
@@ -682,14 +708,13 @@ def _misplaced_key_hint(field_name: str, parent_path: list[str]) -> str | None:
         for candidate in candidates:
             home = _dotted(candidate)
             if (
-                candidate != parent_path
+                home != placed
                 and home not in homes
                 and field_name in _allowed_keys_at_path(candidate)
             ):
                 homes.append(home)
     if not homes:
         return None
-    placed = _dotted(parent_path)
     where = " or ".join(f"`{home}`" for home in homes[:_MAX_MISPLACED_HOMES])
     return f"`{field_name}` belongs at {where}, not at `{placed}`."
 
@@ -710,14 +735,16 @@ def _format_allowed_keys(keys: list[str], limit: int = 40) -> str:
     return ", ".join(displayed) + suffix
 
 
-def _retired_key_hint(retired: "RetiredKey") -> str:
-    """Name the successor (or the removal) a migration declaration records."""
+def _retired_key_story(retired: "RetiredKey") -> tuple[tuple[str, ...], str, str]:
+    """``(old, history, action)`` for a retired key: the old spelling relative to
+    where it sits, what became of it, and what the author should do."""
     version = retired.retired_in
     if retired.successor is None:
         reason = f": {retired.reason}" if retired.reason else "."
         return (
-            f"`{'.'.join(retired.path)}` was removed in {version}{reason} "
-            f"Delete the key. See: {yaml_reference_url()}"
+            retired.path[-1:],
+            f"was removed in {version}{reason}",
+            "Delete the key.",
         )
     shared = next(
         (
@@ -731,12 +758,7 @@ def _retired_key_hint(retired: "RetiredKey") -> str:
     )
     old, new = retired.path[shared:], retired.successor[shared:]
     verb, action = (
-        ("renamed to", "Rename")
-        if len(old) == len(new) == 1
-        else (
-            "moved to",
-            "Move",
-        )
+        ("renamed to", "Rename") if len(old) == len(new) == 1 else ("moved to", "Move")
     )
     alternative = (
         ", or set `formats:` on the query to format the column everywhere"
@@ -744,8 +766,9 @@ def _retired_key_hint(retired: "RetiredKey") -> str:
         else ""
     )
     return (
-        f"`{'.'.join(old)}` was {verb} `{'.'.join(new)}` in {version}. "
-        f"{action} the key{alternative}. See: {yaml_reference_url()}"
+        old,
+        f"was {verb} '{'.'.join(new)}' in {version}.",
+        f"{action} the key{alternative}.",
     )
 
 
@@ -880,15 +903,21 @@ def _extra_field_diagnostic(
         "docs_topic": docs_topic,
     }
 
-    retired_key = retired.get(tuple(_display_path(field_path)))
+    shown_path = _display_path(field_path)
+    retired_key = retired.get(tuple(shown_path))
     if retired_key is not None:
+        old, history, action = _retired_key_story(retired_key)
         fields["retired_in"] = retired_key.retired_in
+        fields["field_path"] = ".".join(shown_path)
+        fields["parent_path"] = _format_parent_path(shown_path[:-1])
         if retired_key.successor is not None:
             fields["successor"] = ".".join(retired_key.successor)
+        where = _format_parent_path(shown_path[: -len(old)])
         return _ExtraFieldDiagnostic(
-            message=message,
-            hint=_retired_key_hint(retired_key),
+            message=f"'{'.'.join(old)}' at {where} {history}",
+            hint=f"{action} See: {yaml_reference_url()}",
             fields=fields,
+            retired=True,
         )
 
     # Authored grid.gap is inert (resolve reads style.layout.grid.gap instead).
@@ -1132,9 +1161,13 @@ def _extra_field_diagnostic(
     ]
     if suggestion is not None:
         hint_parts.append(f"Did you mean {suggestion!r}?")
-    misplaced = _misplaced_key_hint(field_name, parent_path)
-    if misplaced is not None:
-        hint_parts.append(misplaced)
+    annotation_type = _annotation_type(field_path)
+    if annotation_type is not None:
+        hint_parts.append(f"A {annotation_type} takes no `{field_name}`.")
+    else:
+        misplaced = _misplaced_key_hint(field_name, parent_path)
+        if misplaced is not None:
+            hint_parts.append(misplaced)
     hint_parts.append(f"See: {yaml_reference_url()}")
     return _ExtraFieldDiagnostic(
         message=message,
@@ -1279,6 +1312,7 @@ def format_validation_errors_structured(
     """
     from dbt_charts.core.diagnostics.codes_compile import (
         ERR_EXTRA_FIELD,
+        ERR_RETIRED_FIELD,
         ERR_VALIDATION_FIELD,
         ERR_WRONG_SHAPE,
     )
@@ -1331,7 +1365,9 @@ def format_validation_errors_structured(
         # A validator raised ErrorCode.validation_error(): its message is final.
         coded = err_type == CODED_VALIDATION_ERROR
         ec: DiagnosticCode
-        if err_type == "extra_forbidden":
+        if extra_field_diagnostic is not None and extra_field_diagnostic.retired:
+            ec = ERR_RETIRED_FIELD
+        elif err_type == "extra_forbidden":
             ec = ERR_EXTRA_FIELD
         elif coded:
             ec = REGISTRY.get(err["ctx"]["code"])

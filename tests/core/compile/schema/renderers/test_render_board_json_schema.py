@@ -1,6 +1,7 @@
 """render_yaml_schema output for the board: the schema editors validate against."""
 
 import json
+from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -198,3 +199,40 @@ class TestSourceConnectors:
         a board-level `sources:` property nor a `Source` connector definition."""
         assert "sources" not in board_schema["properties"]
         assert "Source" not in board_schema["$defs"]
+
+
+class TestFieldLevelDiscriminatedUnions:
+    """A `Field(discriminator=...)` union narrows by tag, so editors suggest
+    only the selected variant's keys instead of merging every branch's."""
+
+    @pytest.mark.parametrize(
+        ("field", "union", "suffix", "tags"),
+        [
+            (
+                "annotations",
+                "Annotation",
+                "Annotation",
+                {"rule", "band", "note", "trend"},
+            ),
+            ("layers", "CartesianLayer", "Layer", {"bar", "line", "area", "scatter"}),
+        ],
+    )
+    def test_items_ref_a_union_that_branches_on_type(
+        self,
+        board_schema: dict[str, Any],
+        field: str,
+        union: str,
+        suffix: str,
+        tags: set[str],
+    ) -> None:
+        defs = board_schema["$defs"]
+        assert f"#/$defs/{union}" in json.dumps(defs["BarChart"]["properties"][field])
+        definition = defs[union]
+        assert "anyOf" not in definition
+        branches = {
+            branch["if"]["properties"]["type"]["enum"][0]: branch["then"]
+            for branch in definition["allOf"]
+        }
+        assert set(branches) == tags
+        for tag, then in branches.items():
+            assert then == {"$ref": f"#/$defs/{tag.capitalize()}{suffix}"}

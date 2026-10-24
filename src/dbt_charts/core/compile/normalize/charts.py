@@ -377,6 +377,9 @@ def normalize_chart(
                 stack=authored_style.stack if authored_style is not None else None,
                 y_start=authored.y_start,
                 layers=authored.layers if authored.layers is not None else [],
+                annotations=authored.annotations
+                if authored.annotations is not None
+                else [],
                 query_registry=query_registry,
                 default_source=default_source,
                 sources=sources,
@@ -393,6 +396,9 @@ def normalize_chart(
                 type="line",
                 chart_id=chart_id,
                 layers=authored.layers if authored.layers is not None else [],
+                annotations=authored.annotations
+                if authored.annotations is not None
+                else [],
                 query_registry=query_registry,
                 default_source=default_source,
                 sources=sources,
@@ -410,6 +416,9 @@ def normalize_chart(
                 chart_id=chart_id,
                 stack=authored_style.stack if authored_style is not None else None,
                 layers=authored.layers if authored.layers is not None else [],
+                annotations=authored.annotations
+                if authored.annotations is not None
+                else [],
                 query_registry=query_registry,
                 default_source=default_source,
                 sources=sources,
@@ -428,6 +437,9 @@ def normalize_chart(
                 size=authored.size,
                 shape=authored.shape,
                 layers=authored.layers if authored.layers is not None else [],
+                annotations=authored.annotations
+                if authored.annotations is not None
+                else [],
                 query_registry=query_registry,
                 default_source=default_source,
                 sources=sources,

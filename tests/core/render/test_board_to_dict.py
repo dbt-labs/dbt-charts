@@ -27,6 +27,7 @@ from .._board_utils import _default_chart_style_context, _default_resolved_style
 
 def _make_executor(data: list[dict[str, Any]]) -> MagicMock:
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor.rendered_at = None
     executor.execute_chart.return_value = data
     executor.render_with_range_filters.return_value = None
     return executor
@@ -157,6 +158,7 @@ def test_render_chart_item_error_diagnostic_carries_authored_path(
     separately invented convention."""
     chart = make_chart("bar", x="month", y="revenue")
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor.rendered_at = None
     executor.execute_chart.side_effect = ExecutionError("timeout")
     collector: list[Any] = []
 
@@ -194,6 +196,8 @@ _OMITTED_FROM_PROJECTION = {
     # `query_name`, none of which the authored layer accepts. Projecting it
     # makes the yaml document fail to re-compile.
     "layers": "resolved layer carries baked mark styles; no authored counterpart",
+    "annotations": "resolved annotations carry baked anchors and styles; no authored counterpart",
+    "annotation_gaps": "annotations resolve found no rows for; a warning input, not authored",
     # Authored via the style cascade (`style.stack`); chart-root `stack:` is
     # rejected on every authored family, so re-emitting it here would produce
     # something that cannot be authored back.

@@ -1,0 +1,108 @@
+{
+  "id": "3539",
+  "title": "Gap research",
+  "dashboard_filters": [
+    {
+      "name": "date",
+      "title": "Date",
+      "type": "date_filter",
+      "default_value": "30 days"
+    },
+    {
+      "name": "region",
+      "title": "Region",
+      "type": "field_filter",
+      "default_value": "EMEA"
+    }
+  ],
+  "dashboard_layouts": [
+    {
+      "active": false,
+      "dashboard_layout_components": [
+        {
+          "dashboard_element_id": "10",
+          "row": 99,
+          "column": 0,
+          "width": 1,
+          "height": 1
+        }
+      ]
+    },
+    {
+      "active": true,
+      "dashboard_layout_components": [
+        {
+          "dashboard_element_id": "12",
+          "row": 6,
+          "column": 0,
+          "width": 12,
+          "height": 6
+        },
+        {
+          "dashboard_element_id": "11",
+          "row": 0,
+          "column": 12,
+          "width": 12,
+          "height": 6
+        },
+        {
+          "dashboard_element_id": "10",
+          "row": 0,
+          "column": 0,
+          "width": 12,
+          "height": 6
+        },
+        {
+          "dashboard_element_id": "13",
+          "row": 12,
+          "column": 0,
+          "width": 24,
+          "height": 2
+        }
+      ]
+    }
+  ],
+  "dashboard_elements": [
+    {
+      "id": "10",
+      "title": "Revenue by month",
+      "type": "vis",
+      "query_id": "101",
+      "result_maker": {
+        "filterables": [
+          {
+            "listen": [
+              {
+                "dashboard_filter_name": "date",
+                "field": "orders.created_date"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "11",
+      "title": "Total revenue",
+      "type": "single_value",
+      "query_id": "102",
+      "result_maker": {
+        "filterables": []
+      }
+    },
+    {
+      "id": "12",
+      "title": "Joined results",
+      "type": "vis",
+      "query_id": null,
+      "merge_result_id": "m7"
+    },
+    {
+      "id": "13",
+      "title": "Notes",
+      "type": "text",
+      "query_id": null,
+      "body_text": "Read me"
+    }
+  ]
+}

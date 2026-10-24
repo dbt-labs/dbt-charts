@@ -111,14 +111,14 @@ options:
   {% endif %}
   <text x="{{ x_col }}" y="{{ y + row_h / 2 - (size * 0.45 if p.note and r[p.note] else 0) }}" dy="0.35em" font-weight="600" fill="{{ ink }}">{{ r[label_col] }}</text>
   {% if p.note and r[p.note] %}
-  <text x="{{ x_col }}" y="{{ y + row_h / 2 + size * 0.75 }}" dy="0.35em" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.muted }}">{{ r[p.note] }}</text>
+  <text x="{{ x_col }}" y="{{ y + row_h / 2 + size * 0.75 }}" dy="0.35em" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.fonts.secondary.color }}">{{ r[p.note] }}</text>
   {% endif %}
   <g>
     <title>{{ r[label_col] }}: {{ r[value_col] | float | format(",") }}</title>
   {% if p.out_of %}
     {% set bw = cell %}{% set bh = cell * back.h / back.w %}
     {% for i in range(p.out_of | int) %}
-    <use href="#{{ uid }}-{{ p.backdrop_symbol }}" x="{{ slot_x(x0, i) }}" y="{{ y + (row_h - bh) / 2 }}" width="{{ bw * 0.9 }}" height="{{ bh * 0.9 }}" fill="none" stroke="{{ p.backdrop_color or style.muted }}" stroke-width="0.7"/>
+    <use href="#{{ uid }}-{{ p.backdrop_symbol }}" x="{{ slot_x(x0, i) }}" y="{{ y + (row_h - bh) / 2 }}" width="{{ bw * 0.9 }}" height="{{ bh * 0.9 }}" fill="none" stroke="{{ p.backdrop_color or style.charts.axis.grid.color }}" stroke-width="0.7"/>
     {% endfor %}
   {% endif %}
   {% for i in range(whole) %}
@@ -131,6 +131,6 @@ options:
   </g>
 {% endfor %}
 {% if p.key %}
-  <text x="0" y="{{ height - size * 0.6 }}" fill="{{ style.muted }}">{{ p.key }}</text>
+  <text x="0" y="{{ height - size * 0.6 }}" fill="{{ style.fonts.secondary.color }}">{{ p.key }}</text>
 {% endif %}
 </g>

@@ -248,33 +248,33 @@ def _tone_hex() -> str:
     return resolved.tones.positive
 
 
-def _muted() -> str:
+def _secondary() -> str:
     from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
     resolved, _ = resolve_style_and_context(get_theme_style(get_default_theme_name()))
-    return resolved.muted
+    return resolved.secondary_color
 
 
-def test_support_unstyled_is_muted() -> None:
-    muted = _muted()
-    assert _support_fills({}) == (muted, muted, muted)
+def test_support_unstyled_is_secondary() -> None:
+    secondary = _secondary()
+    assert _support_fills({}) == (secondary, secondary, secondary)
 
 
 def test_support_tone_paints_value_and_glyph() -> None:
     tone = _tone_hex()
-    assert _support_fills({"tone": _TONE_POSITIVE}) == (tone, tone, _muted())
+    assert _support_fills({"tone": _TONE_POSITIVE}) == (tone, tone, _secondary())
 
 
 def test_support_font_color_beats_tone_on_the_value_only() -> None:
     tone = _tone_hex()
     fills = _support_fills({"tone": _TONE_POSITIVE, "font": {"color": "#123456"}})
-    assert fills == ("#123456", tone, _muted())
+    assert fills == ("#123456", tone, _secondary())
 
 
 def test_support_glyph_falls_back_to_the_row_color_without_a_tone() -> None:
     fills = _support_fills({"font": {"color": "#123456"}})
-    assert fills == ("#123456", "#123456", _muted())
+    assert fills == ("#123456", "#123456", _secondary())
 
 
 def test_support_glyph_color_beats_tone() -> None:
@@ -282,7 +282,7 @@ def test_support_glyph_color_beats_tone() -> None:
     fills = _support_fills(
         {"tone": _TONE_POSITIVE, "glyph": {"font": {"color": "#654321"}}}
     )
-    assert fills == (tone, "#654321", _muted())
+    assert fills == (tone, "#654321", _secondary())
 
 
 def test_compact_right_column_follows_the_value_weight() -> None:

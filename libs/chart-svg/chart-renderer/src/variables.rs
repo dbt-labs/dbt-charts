@@ -511,7 +511,7 @@ fn text_width(text: &str, font_size: f64, fonts_dir: &str) -> f64 {
         return 0.0;
     }
     let path = format!("{fonts_dir}/InterVariable.ttf");
-    let measurer = mdsvg::fonts::cached_measurer(&path, 0, None);
+    let measurer = measure::fonts::cached_measurer(&path, 0, None);
     measurer.measure(text, font_size)
 }
 
@@ -536,7 +536,7 @@ fn measure_font_path(fonts_dir: &str, family: &str) -> String {
 /// `font_measure.py::centered_baseline_offset`.
 fn centered_baseline_offset(family: &str, font_size: f64, fonts_dir: &str) -> f64 {
     let path = measure_font_path(fonts_dir, family);
-    measure::centered_baseline_offset(&mdsvg::fonts::cached_measurer(&path, 0, None), font_size)
+    measure::centered_baseline_offset(&measure::fonts::cached_measurer(&path, 0, None), font_size)
 }
 
 /// `variables_layout.py::_input_width`.
@@ -1278,7 +1278,7 @@ const TITLE_INLINE_TITLE_MAX_INNER_RATIO: f64 = 0.8;
 pub fn resolve_title_variables_inline_widths(
     inner: f64,
     title_style: &mdsvg::style::Style,
-    title_fonts: &mdsvg::fonts::FontSlots,
+    title_fonts: &measure::fonts::FontSlots,
     title_case: Option<&str>,
     visible_variables: &[(&str, &VariableDoc)],
     title: &str,
@@ -1322,7 +1322,7 @@ pub fn should_use_title_inline_band(
     visible_variables: &[(&str, &VariableDoc)],
     content_width: f64,
     title_style: Option<&mdsvg::style::Style>,
-    title_fonts: Option<&mdsvg::fonts::FontSlots>,
+    title_fonts: Option<&measure::fonts::FontSlots>,
     title_case: Option<&str>,
     vs: &VariablesStyleDoc,
     card_padding: f64,
@@ -1387,7 +1387,7 @@ pub fn compute_title_variables_inline_band_height(
     card_padding: f64,
     title_min_height: f64,
     title_style: mdsvg::style::Style,
-    title_fonts: mdsvg::fonts::FontSlots,
+    title_fonts: measure::fonts::FontSlots,
     title_case: Option<&str>,
     vs: &VariablesStyleDoc,
     fonts_dir: &str,
@@ -1468,7 +1468,7 @@ pub fn render_title_variables_inline_band(
     layout_content_width: f64,
     card_pad: f64,
     title_style: mdsvg::style::Style,
-    title_fonts: mdsvg::fonts::FontSlots,
+    title_fonts: measure::fonts::FontSlots,
     title_case: Option<&str>,
     title_color: Option<&str>,
     title_min_height: f64,

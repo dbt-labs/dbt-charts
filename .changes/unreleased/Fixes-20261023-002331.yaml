@@ -1,0 +1,3 @@
+kind: Fixes
+body: Thinned bar-chart date axes now draw a tick only under each labeled bar.
+time: 2026-10-23T00:23:31.560105-07:00

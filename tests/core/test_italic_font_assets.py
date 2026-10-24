@@ -29,7 +29,7 @@ def _axis_tags(path: Path) -> set[str]:
     [
         (
             get_face(INTER_VARIABLE_FONT_FAMILY, "italic").measure_path,
-            "Inter",
+            INTER_VARIABLE_FONT_FAMILY,
             {"opsz", "wght"},
         ),
         (

@@ -30,6 +30,24 @@ from dbt_charts.ai.tools import dispatch_tool_call
 
 logger = logging.getLogger(__name__)
 
+# The skill a connected host is pointed at first; it must load on the "tool"
+# surface (the CLI-only `intro` would raise SkillNotFound there).
+ENTRY_SKILL_NAME = "chart"
+
+# A connected host gets no system prompt from us, so `instructions` is the one
+# place to point it at the guidance a shell agent gets from `dct skills chart`.
+# Kept to a pointer: `list_skills`/`get_skill` exist so this inlines nothing.
+# Cloud's connector extends it with how its users save a board.
+MCP_INSTRUCTIONS = (
+    "Before authoring or analyzing anything, call "
+    f"get_skill(name={ENTRY_SKILL_NAME!r}) — the dbt Charts board and chart "
+    "grammar and the build-render-fix loop. Call list_skills() to see the rest. "
+    "Answer a data question with a chart: render_board draws it inline for the "
+    "user, while execute_sql's rows reach only you. Render a stored board by "
+    "'path' when one already answers the question; otherwise author "
+    "whole-board YAML as render_board's 'yaml_content'."
+)
+
 _BASE_RESOURCES = [
     (
         "dct://boards",
@@ -120,7 +138,7 @@ def create_server(context: DbtChartsAIContext) -> Any:
             f"Install with: {install_hint('mcp')}"
         ) from e
 
-    server = Server("dbt-charts")
+    server = Server("dbt-charts", instructions=MCP_INSTRUCTIONS)
 
     def _uri(value: str) -> AnyUrl:
         return TypeAdapter(AnyUrl).validate_python(value)

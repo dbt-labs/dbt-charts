@@ -110,5 +110,5 @@ def test_text_rewrite_moves_the_key(catalog: YamlSchemaCatalog) -> None:
 def test_a_board_with_both_spellings_is_rejected_at_compile() -> None:
     result = compile("title: t\nauto_link: true\nlinks:\n  auto: false\nrows: []\n")
     assert not result.success
-    assert [error.code for error in result.errors] == ["ERR-EXTRA-FIELD"]
+    assert [error.code for error in result.errors] == ["ERR-RETIRED-FIELD"]
     assert "auto_link" in result.errors[0].message

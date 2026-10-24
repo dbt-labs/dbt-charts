@@ -10,7 +10,7 @@
 //! with roxmltree, so where the two parsers could disagree — a payload that is
 //! not UTF-8, a DTD attribute default, expat's error text — it refuses by name.
 
-use crate::pygments_re::is_py_space;
+use d3rs::py_str::is_py_space;
 
 /// `images.py::ImageSize`: integer pixel dimensions, both at least 1. Held as
 /// `f64` because an SVG size is `round()` of a float and can exceed `u64`;

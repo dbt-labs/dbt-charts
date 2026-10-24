@@ -4,7 +4,7 @@ name: Release to PyPI
 # monorepo (.github/workflows/release-dbt-charts-playground.yml there) — this
 # repo builds and publishes a single root-level package.
 #
-# Guard sequence (non-semver tag, tag not on main, frozen-schema verify,
+# Guard sequence (non-semver tag, tag not on main or a release branch, frozen-schema verify,
 # artifact audit) matches what the monorepo's own dbt-charts PyPI publish
 # workflow checked before it was deleted (#7611) when dbt-charts stopped
 # publishing from there — do not recreate a PyPI publish workflow for
@@ -80,13 +80,13 @@ jobs:
             exit 1
           fi
 
-      - name: Refuse release tags not on main
+      - name: Refuse release tags not on main or a release branch
         if: github.event_name == 'release'
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          if ! git branch -r --contains "${{ github.sha }}" | grep -qE '^[[:space:]]+origin/main$'; then
-            echo "::error::Tag '$TAG' (commit ${{ github.sha }}) is not on origin/main."
+          if ! git branch -r --contains "${{ github.sha }}" | grep -qE '^[[:space:]]+origin/(main|release/.+)$'; then
+            echo "::error::Tag '$TAG' (commit ${{ github.sha }}) is not on origin/main or a release branch."
             exit 1
           fi
 
@@ -104,7 +104,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.4"
+          version: "0.13.5"
 
       - uses: ./.github/actions/setup-rust
 
@@ -158,7 +158,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.4"
+          version: "0.13.5"
 
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b  # v1.51.0
         with:
@@ -199,7 +199,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.4"
+          version: "0.13.5"
 
       - run: uv publish --trusted-publishing always dist/*
 
@@ -219,7 +219,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
         with:
-          version: "0.13.4"
+          version: "0.13.5"
 
       - run: uv publish --trusted-publishing always dist/*
 
@@ -246,3 +246,41 @@ jobs:
             --changes-dir .changes \
             --tag "$TAG" \
             --repo "${{ github.repository }}"
+
+  tag-next-dev:
+    # Nightlies version off the nearest tag reachable from main. A release
+    # tagged off main is not reachable, so the next patch's dev0 tag on main
+    # keeps nightlies sorting above it.
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # persist-credentials: true (default) — the step pushes the tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Tag the next patch's dev0 on main
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if git merge-base --is-ancestor "$TAG" HEAD; then
+            echo "$TAG is on main; nightlies already count from it."
+            exit 0
+          fi
+          release="${TAG#dbt-charts-v}"
+          next="${release%.*}.$(( ${release##*.} + 1 ))"
+          current=$(git describe --tags --abbrev=0 --match 'dbt-charts-v[0-9]*.[0-9]*.[0-9]*' HEAD)
+          current="${current#dbt-charts-v}"
+          current="${current%%.dev*}"
+          # A backport release must not pull main below a newer tag.
+          if [[ "$(printf '%s\n' "$current" "$next" | sort -V | tail -1)" == "$current" ]]; then
+            echo "main is already at $current; not tagging $next.dev0."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            tag -a "dbt-charts-v$next.dev0" -m "Start $next dev cycle"
+          git push origin "refs/tags/dbt-charts-v$next.dev0"

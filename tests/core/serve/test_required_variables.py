@@ -116,7 +116,7 @@ def test_serve_missing_required_variable_error_page_tracks_theme(
     body = resp.text
     assert f"--panel-bg: {rstyle.background};" in body
     assert f"--text: {rstyle.font.color};" in body
-    assert f"--muted: {rstyle.muted};" in body
+    assert f"--secondary: {rstyle.secondary_color};" in body
     assert f"--border: {rstyle.border.color};" in body
     assert f"--accent: {rstyle.accent};" in body
     assert f"--font-family: {rstyle.font.family};" in body

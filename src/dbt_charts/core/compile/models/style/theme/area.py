@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import InheritSlot, SkipInheritSlots
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
     _QuantitativeAxisChartStyleMixin,
 )
@@ -105,7 +106,9 @@ class AreaLayerStyle(BaseModel):
     )
 
 
-class AreaChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
+class AreaChartStyle(
+    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+):
     """Area chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

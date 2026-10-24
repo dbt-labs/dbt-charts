@@ -116,15 +116,19 @@ def _modify_table(resolved: Any, **table_updates: Any) -> Any:
 def _with_row_numbers(
     resolved: Any, pagination: Any = None, **row_numbers_kwargs: Any
 ) -> Any:
+    from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.authored import PaginationConfig
     from dbt_charts.core.compile.models.style.theme import TableRowNumbersStyle
 
     if pagination is None:
         pagination = PaginationConfig(enabled=False)
 
+    ink = resolve_style(get_theme_style()).secondary_color
     return _modify_table(
         resolved,
-        row_numbers=TableRowNumbersStyle(**row_numbers_kwargs),
+        row_numbers=TableRowNumbersStyle(
+            font=FontStyle(color=ink), **row_numbers_kwargs
+        ),
         pagination=pagination,
     )
 
@@ -415,13 +419,15 @@ class TestSummaryRowsBlank:
             {"company": "Subtotal", "revenue": 3000, "kind": "summary"},
             {"company": "Total", "revenue": 3000, "kind": "total"},
         ]
+        from dbt_charts.core.compile.models.primitives import FontStyle
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
         from dbt_charts.core.compile.models.style.theme import TableRowNumbersStyle
 
         resolved_base = _resolve_table(make_chart, data)
+        ink = resolve_style(get_theme_style()).secondary_color
         chart = _modify_table(
             resolved_base,
-            row_numbers=TableRowNumbersStyle(visible=True),
+            row_numbers=TableRowNumbersStyle(visible=True, font=FontStyle(color=ink)),
             row=resolved_base.style.table.row.model_copy(update={"role": "kind"}),
             pagination=PaginationConfig(enabled=False),
         )

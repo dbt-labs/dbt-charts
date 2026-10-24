@@ -1,0 +1,123 @@
+{
+  "document": {
+    "identifier": "abc12345",
+    "name": "Sales overview",
+    "owner": {
+      "name": "Pat Example"
+    }
+  },
+  "dashboard": {
+    "name": "Sales overview",
+    "metadata": {
+      "layouts": {
+        "lg": [
+          {
+            "i": "2",
+            "x": 0,
+            "y": 10,
+            "w": 24,
+            "h": 20
+          },
+          {
+            "i": "1",
+            "x": 0,
+            "y": 0,
+            "w": 12,
+            "h": 10
+          },
+          {
+            "i": "txt-1",
+            "x": 12,
+            "y": 0,
+            "w": 12,
+            "h": 10
+          }
+        ],
+        "sm": []
+      },
+      "textTiles": [
+        {
+          "miniUuid": "txt-1",
+          "content": "# Sales overview\nOwned by the revenue team."
+        }
+      ],
+      "hiddenTiles": [
+        "3"
+      ],
+      "tileFilterMap": {
+        "2": {
+          "f1": "orders.created_at[date]",
+          "f2": false
+        }
+      }
+    },
+    "queryPresentationCollection": {
+      "filterOrder": [
+        "f1",
+        "f2",
+        "f3"
+      ],
+      "filterConfig": {
+        "f1": {
+          "kind": "TIME_FOR_INTERVAL_DURATION",
+          "type": "date",
+          "label": "Order date",
+          "fieldName": "orders.created_at",
+          "ui_type": "PAST",
+          "left_side": "90 days ago",
+          "right_side": "90 days",
+          "is_negative": false
+        },
+        "f2": {
+          "kind": "EQUALS",
+          "type": "string",
+          "label": "Region",
+          "fieldName": "orders.region",
+          "values": [
+            "EMEA"
+          ],
+          "is_negative": false
+        },
+        "f3": {
+          "kind": "EQUALS",
+          "type": "string",
+          "label": "Segment",
+          "values": [],
+          "is_negative": false
+        }
+      },
+      "queryPresentationCollectionMemberships": [
+        {
+          "queryPresentation": {
+            "id": "p1",
+            "name": "Closed Won",
+            "miniUuid": "mini-p1",
+            "visConfig": {
+              "chartType": "kpi"
+            }
+          }
+        },
+        {
+          "queryPresentation": {
+            "id": "p2",
+            "name": "Revenue by month",
+            "miniUuid": "mini-p2",
+            "visConfig": {
+              "chartType": "lineColor"
+            }
+          }
+        },
+        {
+          "queryPresentation": {
+            "id": "p3",
+            "name": "Retired tile",
+            "miniUuid": "mini-p3",
+            "visConfig": {
+              "chartType": "table"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -6,6 +6,10 @@ from typing import Literal
 
 from pydantic import Field
 
+from dbt_charts.core.compile.models.chart.resolved._annotation import (
+    ResolvedAnnotation,
+    ResolvedAnnotationGap,
+)
 from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
 from dbt_charts.core.compile.models.style.resolved import ResolvedLineStyle
 
@@ -32,4 +36,12 @@ class ResolvedLineChart(_DateAxisResolvedChartFields):
     layers: tuple[ResolvedLayer, ...] = Field(
         default=(),
         description="Typed overlay layers, each carrying its own resolved mark style.",
+    )
+    annotations: tuple[ResolvedAnnotation, ...] = Field(
+        default=(),
+        description="Rules, bands, notes and trends drawn on the chart.",
+    )
+    annotation_gaps: tuple[ResolvedAnnotationGap, ...] = Field(
+        default=(),
+        description="Annotations with a scope that has nothing to draw.",
     )

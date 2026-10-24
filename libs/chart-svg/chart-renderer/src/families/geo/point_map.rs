@@ -19,7 +19,9 @@
 //! against the rows as they arrived, as the warning detectors do. Vega-Lite itself
 //! then filters a row whose size or continuous color is not a finite number from the
 //! marks, but not from the projection fit; a null coordinate projects as zero and stays
-//! out of the fit; a point the projection drops is drawn at the view's origin.
+//! out of the fit, a text that is no number projects as `NaN` and stays out too; a point
+//! the projection drops is drawn at the view's origin. Cells are read as Vega reads them
+//! after production's `normalize_data_types` ([`super::js_cell`]).
 //!
 //! `bind` holds what the data decides; `layout` fits it to the cell and returns nodes.
 
@@ -30,6 +32,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::geoshape::{decode_features, GeoSource};
+use super::js_cell;
 use super::projection;
 use crate::codes;
 use crate::common::{
@@ -150,9 +153,19 @@ struct Point {
     /// Longitude and latitude; `None` for a map with no coordinate fields, drawn at the view's center.
     at: Option<(f64, f64)>,
     area: f64,
-    fill: String,
+    fill: Option<String>,
     label: String,
     href: Option<String>,
+}
+
+/// The rows of a collapsed map sharing one coordinate: one circle.
+struct Group {
+    at: Option<(f64, f64)>,
+    /// The longitude and latitude cells' tooltip texts, from the group's first row.
+    texts: Option<(String, String)>,
+    /// Whether the projection fit sees the group.
+    in_fit: bool,
+    count: usize,
 }
 
 /// The circles and the legends' content.
@@ -214,12 +227,9 @@ fn number(row: &Map<String, Value>, field: &str, what: &str) -> Result<f64, Stri
 }
 
 /// A coordinate as the projection reads the cell: JavaScript's `+cell`, so a null is the equator or the
-/// prime meridian and a numeric text is its number. Vega-Lite filters none out.
-fn coordinate(row: &Map<String, Value>, field: &str, what: &str) -> Result<f64, String> {
-    match row.get(field) {
-        Some(Value::Null) => Ok(0.0),
-        cell => number_of(cell, what),
-    }
+/// prime meridian, a numeric text is its number and any other text is `NaN`. Vega-Lite filters none out.
+fn coordinate(row: &Map<String, Value>, field: &str) -> f64 {
+    js_cell::number(row.get(field))
 }
 
 fn number_of(cell: Option<&Value>, what: &str) -> Result<f64, String> {
@@ -227,11 +237,15 @@ fn number_of(cell: Option<&Value>, what: &str) -> Result<f64, String> {
 }
 
 /// The latitude and longitude fields; a point map with neither leaves its marks at the view's center.
-fn coordinate_fields(r: &Resolved) -> Result<Option<(&str, &str)>, String> {
+/// With one of them Vega's projection reads a field the rows lack. A sized map throws in the scenegraph
+/// during the SVG conversion (`ERR-INTERNAL`, whatever the size column holds); an unsized one draws no
+/// mark and is production's `ERR-CHART-PAINTED-NO-MARKS`.
+fn coordinate_fields<'a>(payload: &Payload, r: &'a Resolved) -> Result<Option<(&'a str, &'a str)>, Diagnostic> {
     match (r.latitude.as_deref(), r.longitude.as_deref()) {
         (Some(lat), Some(lon)) => Ok(Some((lat, lon))),
         (None, None) => Ok(None),
-        _ => Err(crate::refuse!("a point map with only one of latitude and longitude is not supported")),
+        _ if r.size.is_none() => Err(payload.painted_no_marks()),
+        _ => Err(crate::refuse!("production errors too, Vega's scenegraph throws: a sized point map with one of latitude and longitude is not supported").into()),
     }
 }
 
@@ -240,9 +254,7 @@ fn quantitative_text(value: Option<&Value>) -> Result<String, String> {
     match value {
         None | Some(Value::Null) => Ok("null".into()),
         Some(Value::Number(n)) => crate::number_locale::d3_format("", n.as_f64().expect("a JSON number is an f64")),
-        Some(Value::Bool(b)) => crate::number_locale::d3_format("", f64::from(u8::from(*b))),
-        Some(Value::String(s)) => crate::number_locale::d3_format("", crate::common::js_string_to_number(s).unwrap_or(f64::NAN)),
-        Some(_) => Err(crate::refuse!("a point map tooltip value in a numeric column that is not a scalar is not supported")),
+        Some(cell) => crate::number_locale::d3_format("", js_cell::number(Some(cell))),
     }
 }
 
@@ -317,7 +329,7 @@ fn area_of(value: f64, max: f64) -> f64 {
 /// Read the chart's rows into circles. Warns of the rows production drops.
 pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let r: Resolved = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("point_map payload: {e}"))?;
-    let fields = coordinate_fields(&r)?;
+    let fields = coordinate_fields(payload, &r)?;
     if r.collapse && (r.size.is_some() || r.resolved_channels.contains_key("color")) {
         return Err(crate::refuse!("a collapsed point map with a size or color channel is not supported").into());
     }
@@ -355,7 +367,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         .iter()
         .filter(|row| bounded.is_none_or(|(lat_field, lon_field)| in_albers_usa(row, lat_field, lon_field) != Some(false)))
         .filter(|row| r.size.as_deref().is_none_or(|f| !has_negative_size(row, f)))
-        .cloned()
+        .map(js_cell::normalized)
         .collect();
 
     let Marks { coloring, size_entries, points, fit_points } = bind_marks(payload, &r, &rows)?;
@@ -394,7 +406,7 @@ fn bind_marks(
 ) -> Result<Marks, Diagnostic> {
     // Production attaches `link` to an unlayered map's circles and drops it under a basemap, never reading it.
     let layered = r.basemap_geo_url.is_some() && r.basemap_geo_format.is_some();
-    let fields = coordinate_fields(r)?;
+    let fields = coordinate_fields(payload, r)?;
     let color_field = match r.resolved_channels.get("color") {
         None => None,
         Some(ch) if ch.mode == "series" => Some(ch.data_field.as_deref().ok_or("point_map: a series color channel names no data_field")?),
@@ -425,41 +437,48 @@ fn bind_marks(
     // The coordinates as the projection reads them, in row order; a point map with no coordinate
     // fields leaves every mark at the center of the view.
     let coords: Vec<Option<(f64, f64)>> = match fields {
-        Some((lat_field, lon_field)) => rows
-            .iter()
-            .map(|row| Ok(Some((coordinate(row, lon_field, "longitude")?, coordinate(row, lat_field, "latitude")?))))
-            .collect::<Result<_, String>>()?,
+        Some((lat_field, lon_field)) => rows.iter().map(|row| Some((coordinate(row, lon_field), coordinate(row, lat_field)))).collect(),
         None => vec![None; rows.len()],
     };
 
-    // Collapse: one circle per exact coordinate, sized by its count, biggest first.
-    let mut groups: Vec<((f64, f64), usize)> = Vec::new();
+    // Collapse: one circle per group of rows sharing a position, sized by its count, biggest first.
+    let mut groups: Vec<Group> = Vec::new();
     if r.collapse {
-        let Some((lat_field, lon_field)) = fields else {
-            return Err(crate::refuse!("a collapsed point map with no latitude or longitude is not supported").into());
-        };
-        let mut index: HashMap<(u64, u64), usize> = HashMap::new();
-        for row in rows {
-            // Vega groups by the raw cell, so a text coordinate is a group of its own.
-            let (Some(Value::Number(lon)), Some(Value::Number(lat))) = (row.get(lon_field), row.get(lat_field)) else {
-                return Err(crate::refuse!("a collapsed point map with a coordinate that is not a number is not supported").into());
-            };
-            let (lon, lat) = (lon.as_f64().expect("a JSON number is an f64"), lat.as_f64().expect("a JSON number is an f64"));
-            let key = ((lon + 0.0).to_bits(), (lat + 0.0).to_bits());
+        let mut index: HashMap<String, usize> = HashMap::new();
+        let cell_text = |cell: Option<&Value>| cell.map_or_else(|| "undefined".to_string(), js_cell::string);
+        let albers = r.geo_projection_type == "albersUsa";
+        for (row, at) in rows.iter().zip(&coords) {
+            // Vega groups by the projected position and the two cells (`x|y|lat|lon`, each as `String(cell)`), so
+            // `40.7` and the text `"40.7"` are one group. A null and the text `null` are one only where the
+            // projection drops both; elsewhere they sit at different positions.
+            let key = fields.map_or(String::new(), |(lat_field, lon_field)| {
+                let position = match (albers, at) {
+                    (false, Some((lon, lat))) => format!("{:?}|{:?}", f64::to_bits(*lon + 0.0), f64::to_bits(if lat.is_nan() { f64::NAN } else { *lat + 0.0 })),
+                    _ => String::new(),
+                };
+                format!("{}|{}|{position}", cell_text(row.get(lon_field)), cell_text(row.get(lat_field)))
+            });
             match index.get(&key) {
-                Some(&g) => groups[g].1 += 1,
+                Some(&g) => groups[g].count += 1,
                 None => {
                     index.insert(key, groups.len());
-                    groups.push(((lon, lat), 1));
+                    let texts = fields
+                        .map(|(lat_field, lon_field)| Ok::<_, String>((quantitative_text(row.get(lon_field))?, quantitative_text(row.get(lat_field))?)))
+                        .transpose()?;
+                    groups.push(Group { at: *at, texts, in_fit: fits_projection(row, fields), count: 1 });
                 }
             }
         }
-        groups.sort_by_key(|g| std::cmp::Reverse(g.1));
+        groups.sort_by_key(|g| std::cmp::Reverse(g.count));
+        // Vega lists a group the projection drops ahead of the groups it ties with.
+        if albers && groups.iter().any(|g| !g.in_fit && groups.iter().filter(|o| o.count == g.count).count() > 1) {
+            return Err(crate::refuse!("a collapsed albersUsa map whose null or non-numeric coordinates tie another group in count is not supported").into());
+        }
     }
 
     let size_values: Vec<f64> = match r.size.as_deref() {
         Some(field) => rows.iter().map(|row| number(row, field, "size")).collect::<Result<_, _>>()?,
-        None if r.collapse => groups.iter().map(|g| g.1 as f64).collect(),
+        None if r.collapse => groups.iter().map(|g| g.count as f64).collect(),
         None => Vec::new(),
     };
     let size_max = size_values.iter().copied().fold(0.0_f64, f64::max);
@@ -477,34 +496,33 @@ fn bind_marks(
         None
     };
 
-    let coloring = match color_field {
-        None => None,
-        Some(field) => Some(bind_color(payload, r, rows, field, color_type.expect("a color field has a type"))?),
+    let (coloring, slots) = match color_field {
+        None => (None, Vec::new()),
+        Some(field) => {
+            let (coloring, slots) = bind_color(payload, r, rows, field, color_type.expect("a color field has a type"))?;
+            (Some(coloring), slots)
+        }
     };
+    let affixed = r.size.is_some() && r.style.tooltip_format.has_affix();
     let color_text = |row: &Map<String, Value>, field: &str| -> Result<String, String> {
         match &coloring {
             Some(Coloring::Gradient { scale, .. }) if scale.is_dated() => {
-                crate::families::heatmap::legend_date_label(row.get(field).and_then(date_cell_day).expect("filtered above"))
+                let day = row.get(field).and_then(date_cell_day).expect("filtered above");
+                if affixed { affixed_date_label(day) } else { crate::families::heatmap::legend_date_label(day) }
             }
             Some(Coloring::Gradient { .. }) => crate::number_locale::d3_format("", number(row, field, "color")?),
-            _ => crate::href::js_string(row.get(field)),
+            _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
         }
     };
-    let fills: Vec<String> = match (&coloring, color_field) {
-        (None, _) => vec![r.style.single_series_fill.clone(); rows.len()],
-        (Some(Coloring::Categories { domain, fills, .. }), Some(field)) => rows
-            .iter()
-            .map(|row| {
-                let label = category_label(row.get(field)).expect("every value was checked in bind_color");
-                fills[domain.iter().position(|d| *d == label).expect("the domain holds every value")].clone()
-            })
-            .collect(),
+    let fills: Vec<Option<String>> = match (&coloring, color_field) {
+        (None, _) => vec![Some(r.style.single_series_fill.clone()); rows.len()],
+        (Some(Coloring::Categories { fills, .. }), Some(_)) => slots.iter().map(|slot| slot.map(|i| fills[i].clone())).collect(),
         (Some(Coloring::Gradient { scale, .. }), Some(field)) if scale.is_dated() => rows
             .iter()
-            .map(|row| scale.fill(row.get(field).and_then(date_cell_day).expect("filtered above")))
+            .map(|row| Some(scale.fill(row.get(field).and_then(date_cell_day).expect("filtered above"))))
             .collect(),
         (Some(Coloring::Gradient { scale, .. }), Some(field)) => {
-            rows.iter().map(|row| scale.fill(number(row, field, "color").expect("filtered above"))).collect()
+            rows.iter().map(|row| Some(scale.fill(number(row, field, "color").expect("filtered above")))).collect()
         }
         (Some(_), None) => unreachable!("a coloring comes from a color field"),
     };
@@ -520,29 +538,33 @@ fn bind_marks(
     let default_area = r.style.point_mark.size;
     let mut points = Vec::new();
     if r.collapse {
-        let (lat_field, lon_field) = fields.expect("checked above");
-        let (lat_title, lon_title) = (lat_title.expect("fields are set"), lon_title.expect("fields are set"));
-        for &((lon, lat), count) in &groups {
-            let n = fmt(count as f64)?;
-            let label = describe(vec![
-                (lon_field.to_string(), fmt(lon)?),
-                (lat_field.to_string(), fmt(lat)?),
-                (COUNT_TITLE.to_string(), n.clone()),
-                (COUNT_OF_RECORDS.to_string(), n.clone()),
-                (lat_title.clone(), fmt(lat)?),
-                (lon_title.clone(), fmt(lon)?),
-                (COUNT_TITLE.to_string(), n),
-            ]);
+        for Group { at, texts, count, .. } in &groups {
+            let n = fmt(*count as f64)?;
+            let mut described = Vec::new();
+            if let (Some((lat_field, lon_field)), Some((lon_text, lat_text)), Some(lat_title), Some(lon_title)) =
+                (fields, texts, &lat_title, &lon_title)
+            {
+                described.push((lon_field.to_string(), lon_text.clone()));
+                described.push((lat_field.to_string(), lat_text.clone()));
+                described.push((COUNT_TITLE.to_string(), n.clone()));
+                described.push((COUNT_OF_RECORDS.to_string(), n.clone()));
+                described.push((lat_title.clone(), lat_text.clone()));
+                described.push((lon_title.clone(), lon_text.clone()));
+            } else {
+                described.push((COUNT_TITLE.to_string(), n.clone()));
+                described.push((COUNT_OF_RECORDS.to_string(), n.clone()));
+            }
+            described.push((COUNT_TITLE.to_string(), n));
             let href = if layered { None } else { href_of(payload, r, None, None)? };
             points.push(Point {
-                at: Some((lon, lat)),
-                area: area_of(count as f64, size_max),
-                fill: r.style.single_series_fill.clone(),
-                label,
+                at: *at,
+                area: area_of(*count as f64, size_max),
+                fill: Some(r.style.single_series_fill.clone()),
+                label: describe(described),
                 href,
             });
         }
-        let fit_points = groups.iter().map(|g| g.0).collect();
+        let fit_points = groups.iter().filter(|g| g.in_fit).filter_map(|g| g.at).collect();
         return Ok(Marks { coloring, size_entries, points, fit_points });
     }
 
@@ -569,22 +591,21 @@ fn bind_marks(
         Some(f) => Some(color_channel_title(f, &r.legend, &r.field_labels)?),
         None => None,
     };
-    let affixed = r.size.is_some() && r.style.tooltip_format.has_affix();
     let other_text = |row: &Map<String, Value>, field: &str, kind: VegaType| -> Result<String, String> {
         match kind {
             VegaType::Quantitative => quantitative_text(row.get(field)),
             VegaType::Temporal => match row.get(field) {
                 None | Some(Value::Null) => Ok("null".to_string()),
-                Some(cell) => crate::families::heatmap::legend_date_label(
-                    date_cell_day(cell).ok_or_else(|| crate::refuse!("a point map tooltip date that does not parse is not supported"))?,
-                ),
+                // A date that does not exist formats as d3 formats an invalid one: an empty month, then `NaN`.
+                Some(cell) => match date_cell_day(cell) {
+                    None => Ok(" NaN, 0NaN".to_string()),
+                    Some(day) if affixed => affixed_date_label(day),
+                    Some(day) => crate::families::heatmap::legend_date_label(day),
+                },
             },
-            _ => crate::href::js_string(row.get(field)),
+            _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
         }
     };
-    if affixed && other_types.contains(&VegaType::Temporal) {
-        return Err(crate::refuse!("a point map tooltip date beside an affixed size format is not supported").into());
-    }
     for (i, row) in rows.iter().enumerate() {
         let at = coords[i];
         let coordinate_text = |field: &str| quantitative_text(row.get(field));
@@ -639,16 +660,38 @@ fn bind_marks(
         let area = if r.size.is_some() { area_of(size_values[i], size_max) } else { default_area };
         points.push(Point { at, area, fill: fills[i].clone(), label: describe(rows_described), href });
     }
-    // A null coordinate is projected as zero, but Vega-Lite leaves it out of the fit.
     let fit_points = match fields {
         Some((lat_field, lon_field)) => all_rows
             .iter()
-            .filter(|row| !row.get(lat_field).is_some_and(Value::is_null) && !row.get(lon_field).is_some_and(Value::is_null))
-            .map(|row| Ok((coordinate(row, lon_field, "longitude")?, coordinate(row, lat_field, "latitude")?)))
-            .collect::<Result<_, String>>()?,
+            .filter(|row| fits_projection(row, fields))
+            .map(|row| (coordinate(row, lon_field), coordinate(row, lat_field)))
+            .collect(),
         None => Vec::new(),
     };
     Ok(Marks { coloring, size_entries, points, fit_points })
+}
+
+/// A text cell in a hover card: Vega-Lite's description joins a list with spaces, while the card an affixed
+/// size format writes concatenates it, which is `String(list)`.
+fn list_text(cell: &Value, affixed: bool) -> String {
+    if affixed { js_cell::string(cell) } else { js_cell::description(cell) }
+}
+
+/// A date in the card an affixed size format writes (`NativeTooltipAffixFeature`): `%b %-d, %Y`, where
+/// the Vega-Lite description writes `%b %d, %Y`.
+fn affixed_date_label(day: f64) -> Result<String, String> {
+    let padded = crate::families::heatmap::legend_date_label(day)?;
+    let (head, year) = padded.rsplit_once(", ").ok_or_else(|| format!("point_map: date label {padded:?} has no year"))?;
+    let (month, date) = head.rsplit_once(' ').ok_or_else(|| format!("point_map: date label {padded:?} has no day"))?;
+    Ok(format!("{month} {}, {year}", date.trim_start_matches('0')))
+}
+
+/// Whether the projection fit sees the row. A null coordinate is projected as zero and a text that is no
+/// number as `NaN`, but Vega-Lite leaves both out of the fit.
+fn fits_projection(row: &Map<String, Value>, fields: Option<(&str, &str)>) -> bool {
+    fields.is_some_and(|(lat_field, lon_field)| {
+        [lat_field, lon_field].into_iter().all(|field| !row.get(field).is_some_and(Value::is_null) && !coordinate(row, field).is_nan())
+    })
 }
 
 /// The circle's link: `link` with its `{{ color }}` placeholder read from the row.
@@ -678,70 +721,62 @@ fn href_of(
     Ok(Some(href))
 }
 
-/// A nominal color cell's text; Vega keys a null as the entry `null`. `None` for any other kind of cell.
-fn category_label(cell: Option<&Value>) -> Option<String> {
-    match cell {
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(Value::Null) => Some("null".to_string()),
-        _ => None,
-    }
-}
-
-/// The color channel over `rows`, which hold only the cells Vega-Lite draws (`kind` types the field).
+/// The color channel over `rows`, which hold only the cells Vega-Lite draws (`kind` types the field), and the
+/// domain entry each row's fill is read from (`None` where the scale gives the cell none).
 fn bind_color(
     payload: &Payload,
     r: &Resolved,
     rows: &[Map<String, Value>],
     field: &str,
     kind: VegaType,
-) -> Result<Coloring, Diagnostic> {
+) -> Result<(Coloring, Vec<Option<usize>>), Diagnostic> {
     let title = color_channel_title(field, &r.legend, &r.field_labels)?;
-    let extent = |values: Vec<f64>| -> Result<(f64, f64), Diagnostic> {
-        if values.is_empty() {
-            return Err(crate::refuse!("a point map color with no drawn row is not supported").into());
-        }
-        Ok(values.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| (lo.min(v), hi.max(v))))
+    // With no drawn value Vega's domain is empty and its ends are `NaN`.
+    let extent = |values: &[f64]| {
+        (values.iter().copied().reduce(f64::min).unwrap_or(f64::NAN), values.iter().copied().reduce(f64::max).unwrap_or(f64::NAN))
     };
     match kind {
         VegaType::Quantitative => {
             let values = rows.iter().map(|row| number(row, field, "color")).collect::<Result<Vec<_>, _>>()?;
-            let (lo, hi) = extent(values)?;
-            Ok(Coloring::Gradient { scale: ContinuousColor::blues(lo, hi), title })
+            let (lo, hi) = extent(&values);
+            Ok((Coloring::Gradient { scale: ContinuousColor::blues(lo, hi), title }, Vec::new()))
         }
         VegaType::Temporal => {
-            let days = rows.iter().map(|row| row.get(field).and_then(date_cell_day).expect("filtered in bind_marks")).collect();
-            let (lo, hi) = extent(days)?;
-            Ok(Coloring::Gradient { scale: ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi), title })
+            let days: Vec<f64> = rows.iter().map(|row| row.get(field).and_then(date_cell_day).expect("filtered in bind_marks")).collect();
+            let (lo, hi) = extent(&days);
+            Ok((Coloring::Gradient { scale: ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi), title }, Vec::new()))
         }
-        VegaType::Nominal => {
-            let mut domain: Vec<String> = Vec::new();
-            let mut has_null = false;
+        VegaType::Nominal | VegaType::Ordinal => {
+            // Vega's domain holds the first cell of each distinct `String(cell)`, sorted; a scale finds a cell by
+            // value, so a text `null` does not find the entry of a null.
+            let mut domain: Vec<Value> = Vec::new();
+            let mut keys: Vec<String> = Vec::new();
             for row in rows {
-                match (row.get(field), category_label(row.get(field))) {
-                    (Some(Value::Null), _) => has_null = true,
-                    (_, Some(label)) => {
-                        if !domain.contains(&label) {
-                            domain.push(label);
-                        }
-                    }
-                    _ => return Err(crate::refuse!("a point map nominal color value that is not text is not supported").into()),
+                let cell = row.get(field).ok_or_else(|| format!("point_map: a row lacks the color field {field:?}"))?;
+                if cell.is_array() {
+                    return Err(crate::refuse!("a point map color value that is a list is not supported").into());
+                }
+                let key = js_cell::string(cell);
+                if !keys.contains(&key) {
+                    keys.push(key);
+                    domain.push(cell.clone());
                 }
             }
-            domain.sort();
-            if has_null {
-                // Vega sorts a null ahead of every text; a text `null` would be a second entry of one name.
-                if domain.iter().any(|d| d == "null") {
-                    return Err(crate::refuse!("a point map nominal color holding both a null and the text null is not supported").into());
-                }
-                domain.insert(0, "null".to_string());
-            }
-            let palette = payload.series_palette(&r.palette);
-            // The board's slots apply only to a chart that carries its own palette.
-            let scale = if r.palette.is_empty() { None } else { category_scale_for(&r.category_colors, field) };
-            let fills = domain.iter().map(|v| series_color(v, &domain, &palette, scale)).collect::<Result<Vec<_>, _>>()?;
-            Ok(Coloring::Categories { domain, fills, title })
+            js_cell::sort_domain(&mut domain)?;
+            let labels: Vec<String> = domain.iter().map(js_cell::string).collect();
+            let fills = if kind == VegaType::Ordinal {
+                (0..labels.len())
+                    .map(|i| d3rs::color::rgb_text(d3rs::color::quantize_sample(&d3rs::vega_schemes::BLUES, labels.len(), i)))
+                    .collect()
+            } else {
+                let palette = payload.series_palette(&r.palette);
+                // The board's slots apply only to a chart that carries its own palette.
+                let scale = if r.palette.is_empty() { None } else { category_scale_for(&r.category_colors, field) };
+                labels.iter().map(|v| series_color(v, &labels, &palette, scale)).collect::<Result<Vec<_>, _>>()?
+            };
+            let slots = rows.iter().map(|row| domain.iter().position(|d| js_cell::same_value(d, &row[field]))).collect();
+            Ok((Coloring::Categories { domain: labels, fills, title }, slots))
         }
-        VegaType::Ordinal => Err(crate::refuse!("a point map color field that is date-like text is not supported").into()),
     }
 }
 
@@ -892,8 +927,8 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             // With every coordinate null nothing is fitted and Vega draws the mark at the origin too.
             Some((lon, lat)) => match fitted.as_ref().and_then(|f| f.forward([lon, lat])) {
                 None => Ok([0.0, 0.0]),
-                Some(xy) if xy[0].is_finite() && xy[1].is_finite() => Ok(xy),
-                Some(_) => Err(crate::refuse!("a point the projection places at a non-finite position is not supported")),
+                // Vega writes the position as `x || 0`: a `NaN` becomes 0, an infinity stays.
+                Some(xy) => Ok(xy.map(|c| if c.is_nan() { 0.0 } else { c })),
             },
         })
         .collect::<Result<_, String>>()?;
@@ -945,8 +980,13 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             .set("role", "graphics-symbol")
             .set("aria-roledescription", "circle")
             .set("transform", format!("translate({},{})", js_number_string(xy[0]), js_number_string(xy[1])))
-            .set("d", circle_path(p.area)?)
-            .set("fill", p.fill.as_str())
+            .set("d", circle_path(p.area)?);
+        // A cell the color scale does not know gets no fill attribute.
+        let attrs = match &p.fill {
+            Some(fill) => attrs.set("fill", fill.as_str()),
+            None => attrs,
+        };
+        let attrs = attrs
             .set("stroke-width", "2")
             .set("opacity", opacity.as_str());
         let path = Node::Path(attrs);
@@ -1132,6 +1172,7 @@ mod tests {
         assert_eq!(quantitative_text(Some(&Value::Null)).unwrap(), "null");
         assert_eq!(quantitative_text(Some(&json!("34.0"))).unwrap(), "34");
         assert_eq!(quantitative_text(Some(&json!("x"))).unwrap(), "NaN");
-        assert!(quantitative_text(Some(&json!([1]))).unwrap_err().ends_with("not supported"));
+        assert_eq!(quantitative_text(Some(&json!([1]))).unwrap(), "1");
+        assert_eq!(quantitative_text(Some(&json!([1, 2]))).unwrap(), "NaN");
     }
 }

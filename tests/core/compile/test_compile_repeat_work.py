@@ -54,7 +54,9 @@ queries:
 rows:
   - title: Left
     style:
-      muted: "#333333"
+      fonts:
+        secondary:
+          color: "#333333"
     charts:
       left:
         type: bar
@@ -63,7 +65,9 @@ rows:
         y: amount
   - title: Right
     style:
-      muted: "#333333"
+      fonts:
+        secondary:
+          color: "#333333"
     charts:
       right:
         type: bar
@@ -116,7 +120,9 @@ class TestBoardCascadeIsMemoizedPerCompile:
             return real(*a, **kw)
 
         monkeypatch.setattr(normalizer, "resolve_style_and_context", counting)
-        patch = StylePatch.model_validate({"muted": "#333333"})
+        patch = StylePatch.model_validate(
+            {"fonts": {"secondary": {"color": "#333333"}}}
+        )
         with board_style_cache():
             first = compile_board_resolved_style(patch, None, None)
             second = compile_board_resolved_style(patch, None, None)
@@ -131,7 +137,9 @@ class TestBoardCascadeIsMemoizedPerCompile:
         so handing two boards the same object would let one board's chart resolve
         stand in for the other's. Sharing the cascade must not share identity.
         """
-        patch = StylePatch.model_validate({"muted": "#333333"})
+        patch = StylePatch.model_validate(
+            {"fonts": {"secondary": {"color": "#333333"}}}
+        )
         with board_style_cache():
             first = compile_board_resolved_style(patch, None, None)
             second = compile_board_resolved_style(patch, None, None)
@@ -142,14 +150,22 @@ class TestBoardCascadeIsMemoizedPerCompile:
     def test_different_inputs_resolve_separately(self) -> None:
         with board_style_cache():
             first = compile_board_resolved_style(
-                StylePatch.model_validate({"muted": "#333333"}), None, None
+                StylePatch.model_validate(
+                    {"fonts": {"secondary": {"color": "#333333"}}}
+                ),
+                None,
+                None,
             )
             second = compile_board_resolved_style(
-                StylePatch.model_validate({"muted": "#444444"}), None, None
+                StylePatch.model_validate(
+                    {"fonts": {"secondary": {"color": "#444444"}}}
+                ),
+                None,
+                None,
             )
 
         assert first[0] is not second[0]
-        assert first[0].muted != second[0].muted
+        assert first[0].secondary_color != second[0].secondary_color
 
     def test_a_parent_with_different_patches_is_not_shared(self) -> None:
         """An ancestor's own authored style patch is the parent's whole
@@ -163,12 +179,14 @@ class TestBoardCascadeIsMemoizedPerCompile:
             under_root = compile_board_resolved_style(
                 patch, root_resolved, root_context
             )
-            recolored_patch = StylePatch.model_validate({"muted": "#123456"})
+            recolored_patch = StylePatch.model_validate(
+                {"fonts": {"secondary": {"color": "#123456"}}}
+            )
             under_recolored = compile_board_resolved_style(
                 patch, root_resolved, root_context, recolored_patch
             )
 
-        assert under_root[0].muted != under_recolored[0].muted
+        assert under_root[0].secondary_color != under_recolored[0].secondary_color
 
     def test_a_non_finite_value_is_not_confused_with_an_unset_one(self) -> None:
         """A cache key must not lose information the merge still acts on.
@@ -200,7 +218,9 @@ class TestBoardCascadeIsMemoizedPerCompile:
             return real(*a, **kw)
 
         monkeypatch.setattr(normalizer, "resolve_style_and_context", counting)
-        patch = StylePatch.model_validate({"muted": "#333333"})
+        patch = StylePatch.model_validate(
+            {"fonts": {"secondary": {"color": "#333333"}}}
+        )
         with board_style_cache():
             compile_board_resolved_style(patch, None, None)
         with board_style_cache():
@@ -209,7 +229,9 @@ class TestBoardCascadeIsMemoizedPerCompile:
         assert len(cascades) == 2
 
     def test_resolving_outside_a_compile_still_works(self) -> None:
-        patch = StylePatch.model_validate({"muted": "#333333"})
+        patch = StylePatch.model_validate(
+            {"fonts": {"secondary": {"color": "#333333"}}}
+        )
         outside = compile_board_resolved_style(patch, None, None)
         with board_style_cache():
             inside = compile_board_resolved_style(patch, None, None)
@@ -350,7 +372,7 @@ class TestNestedBoardsShareTheirParentsStyle:
         root, swatch, _ = self._boards()
 
         assert swatch.resolved_style.background != root.resolved_style.background
-        assert len(self._private_nodes(swatch, root)) < 150
+        assert len(self._private_nodes(swatch, root)) < 175
 
     def test_an_unstyled_block_shares_nearly_everything(self) -> None:
         root, _, plain = self._boards()

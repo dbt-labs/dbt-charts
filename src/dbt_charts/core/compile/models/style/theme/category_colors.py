@@ -130,6 +130,16 @@ def color_at(scale: CategoryColorScale, value: str, palette: Sequence[str]) -> s
     return palette[_slot_for(scale, value, palette)]
 
 
+def series_colors(
+    series: Sequence[str], palette: Sequence[str], scale: CategoryColorScale | None
+) -> dict[str, str]:
+    """The fill each series paints: its board-wide slot under ``scale``, else
+    the palette slot of its position in ``series``."""
+    if scale is not None:
+        return {s: color_at(scale, s, palette) for s in series}
+    return {s: palette[i % len(palette)] for i, s in enumerate(series)}
+
+
 def category_scale_for(
     category_colors: Sequence[CategoryColorScale], field: str
 ) -> CategoryColorScale | None:

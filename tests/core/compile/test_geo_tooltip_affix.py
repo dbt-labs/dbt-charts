@@ -28,7 +28,7 @@ _GEOSHAPE_KWARGS = {
     "lookup": "state_id",
     "value": "population",
 }
-_POINT_MAP_KWARGS = {"latitude": "lat", "longitude": "lng"}
+_POINT_MAP_KWARGS = {"latitude": "lat", "longitude": "lng", "projection": "albersUsa"}
 
 
 def _board_with_tooltip_alias_affix() -> ChartStyleContext:
@@ -104,7 +104,13 @@ def _geo_cards(chart: dict[str, Any]) -> list[str]:
     [
         {"type": "geoshape", "geo_source": "us-states", "lookup": "state_id"}
         | {"value": "pop"},
-        {"type": "point_map", "latitude": "lat", "longitude": "lng", "size": "pop"},
+        {
+            "type": "point_map",
+            "latitude": "lat",
+            "longitude": "lng",
+            "size": "pop",
+            "projection": "albersUsa",
+        },
     ],
     ids=["geoshape", "point_map"],
 )

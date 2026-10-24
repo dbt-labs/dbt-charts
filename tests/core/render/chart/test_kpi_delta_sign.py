@@ -61,4 +61,4 @@ def test_a_plain_percent_support_keeps_its_tone_or_muted_ink() -> None:
     _, ctx = _styles()
     assert _support_fill(0.12, "positive", "percent") == ctx.tones.positive
     assert _support_fill(-0.12, "positive", "percent") == ctx.tones.positive
-    assert _support_fill(0.12, None, "percent") == ctx.cascaded.muted
+    assert _support_fill(0.12, None, "percent") == ctx.cascaded.secondary_ink()

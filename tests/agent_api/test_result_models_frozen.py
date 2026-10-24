@@ -100,7 +100,7 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
         "success",
     ),
     (QueryBoardResult(success=True, name="n", path=PurePosixPath("x")), "success"),
-    (SearchResult(success=True, errors=[], results=[]), "success"),
+    (SearchResult(success=True, errors=[], results=[], sources=[]), "success"),
     (
         ListBoardsResult(success=True, directory=FilesystemProject(Path()).directory()),
         "success",

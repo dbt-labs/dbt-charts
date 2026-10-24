@@ -11,7 +11,7 @@ use serde_json::{json, Map, Value};
 use crate::codes;
 use crate::diagnostic::{py_repr, Diagnostic};
 use crate::families::multiples::{self, PartitionAxis};
-use crate::families::table::coerce_numeric_cell;
+use crate::families::table::bind::coerce_numeric_cell;
 use crate::families::temporal::{infer_vega_type, VegaType};
 use crate::Payload;
 

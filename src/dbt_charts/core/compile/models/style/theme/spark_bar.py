@@ -60,6 +60,17 @@ class SparkBarCountStyle(BaseModel):
     width: float = Field(description="Reserved width for bar count text in pixels.")
 
 
+class SparkBarMoreRowsStyle(BaseModel):
+    """The "+N" note under a truncated spark_bar."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    font: FontStyle = Field(
+        default_factory=FontStyle,
+        description='Font style of the "+N" note; the theme binds it to the secondary font.',
+    )
+
+
 class SparkBarChartStyle(BaseModel):
     """Produced by cascade from theme YAML."""
 
@@ -90,4 +101,7 @@ class SparkBarChartStyle(BaseModel):
     border: CornerStyle = Field(description="Spark_bar outer corner rounding.")
     subtitle: SubtitleStyle = Field(
         description="Spark_bar subtitle font-sizing constants."
+    )
+    more_rows: SparkBarMoreRowsStyle = Field(
+        description='The "+N" note shown when bars exceed max_bars.'
     )

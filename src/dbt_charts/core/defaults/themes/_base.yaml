@@ -41,6 +41,9 @@ style:
   # ramp.
   roles:
     ink: chrome[10]
+    accent: info.solid-hover
+
+  accent: accent
 
   opacity: 1.0
 
@@ -117,6 +120,12 @@ style:
       line_height: 1.4
     label:
       size: &size_label 11
+    # Secondary text ink: table row numbers, more-rows and empty-state notes,
+    # the spark_bar subtitle and more-rows note, and the KPI support row's
+    # no-tone fallback. Its color is the theme's `muted` role; sizes live on
+    # the slots.
+    secondary:
+      color: muted
     caption:
       size: 11
       color: "#999999"
@@ -159,6 +168,148 @@ style:
     subtitle:
       overflow: wrap-two
       font: subtitle
+
+  # Annotation defaults per type. Colors name theme roles (`muted`) so every
+  # theme rebinds them in one place. A mark leaf left unset falls back to
+  # `marks` below.
+  annotations:
+    rule:
+      marks:
+        rule:
+          opacity: 1
+          stroke:
+            color: muted
+            width: 1.5
+        text:
+          font:
+            size: 11
+            color: muted
+          halo: 0
+          halo_opacity: 0.75
+          box:
+            visible: false
+            fill: theme.background
+            opacity: 0.92
+            padding: 5
+            radius: 3
+            stroke: null
+          position:
+            edge: top
+            align: end
+            overlay: false
+          dx: 0
+          dy: 0
+    band:
+      marks:
+        rect:
+          fill: muted
+          opacity: 0.10
+        text:
+          font:
+            size: 11
+            color: muted
+          halo: 0
+          halo_opacity: 0.75
+          box:
+            visible: false
+            fill: theme.background
+            opacity: 0.92
+            padding: 5
+            radius: 3
+            stroke: null
+          # auto: top/center on a stripe spanning x, right/center on one spanning y
+          position:
+            edge: auto
+            align: auto
+            overlay: auto
+          dx: 0
+          dy: 0
+    note:
+      marks:
+        text:
+          font:
+            size: 11
+            style: italic
+            color: muted
+          halo: 0
+          halo_opacity: 0.75
+          box:
+            visible: false
+            fill: theme.background
+            opacity: 0.92
+            padding: 5
+            radius: 3
+            stroke: null
+          position:
+            edge: top
+            align: center
+            overlay: false
+          dx: 0
+          dy: 0
+          max_width: auto
+        line:
+          opacity: 1
+          curve: linear
+          # Distance between the anchor and the text of a connected note.
+          length: 20
+          stroke:
+            color: muted
+            width: 1.2
+        circle:
+          # Radius of a circle enclosing a note's anchor.
+          radius: auto
+          opacity: 1
+          stroke:
+            color: muted
+            width: 1.5
+        rect:
+          fill: theme.background
+          # Inset between a note's text and a box enclosing it.
+          padding: 4
+          opacity: 1
+          stroke:
+            color: muted
+            width: 1.5
+      frame:
+        text:
+          position:
+            edge: bottom
+            align: end
+            overlay: true
+    trend:
+      label:
+        max_share: 0.3
+      marks:
+        line:
+          opacity: 1
+          curve: linear
+          stroke:
+            color: theme.series
+            width: 1.5
+            dasharray: auto
+        area:
+          fill: theme.series
+          opacity: 0.15
+        text:
+          font:
+            size: 11
+            color: theme.series
+          halo: 0
+          halo_opacity: 0.75
+          box:
+            visible: false
+            fill: theme.background
+            opacity: 0.92
+            padding: 5
+            radius: 3
+            stroke: null
+          position:
+            edge: right
+            align: center
+            overlay: false
+          dx: 0
+          dy: 0
+          max_width: auto
 
   charts:
     # Each chart title leaf follows the card's width tier unless a tier sets it.
@@ -349,6 +500,7 @@ style:
       visible: true
       dimmed_opacity: 0.7
 
+
     legend:
       # `auto`: shown unless direct labeling retires it. A concrete value from
       # any tier wins.
@@ -422,7 +574,12 @@ style:
       title_row:
         height: 40.0
       more_rows:
-        font: label
+        font:
+          extends: secondary
+          size: *size_label
+          style: italic
+      row_numbers:
+        font: secondary
       paginator:
         # Right-aligned chevrons + page numbers below the table. Colors come
         # from the scaffold gray ramp so the control reads as foreground text
@@ -437,7 +594,7 @@ style:
         color_disabled: chrome[6]
       empty_state:
         font:
-          extends: label
+          extends: secondary
           size: 14.0
       spark:
         padding:
@@ -841,8 +998,13 @@ style:
       font: label
       subtitle:
         font:
-          extends: label
+          extends: secondary
           size: 10
+      more_rows:
+        font:
+          extends: secondary
+          size: 10
+          style: italic
       border:
         radius: 2.0
 
@@ -902,11 +1064,16 @@ style:
         # the lighter axis_x.grid.width is for category/temporal x only.
         grid:
           width: 1.5
+      # Quantitative and categorical axes don't name themselves, so scatter
+      # shows their title (column name / authored label). A temporal x is left
+      # on `auto`: its dates already say what it is, so only an authored
+      # `x_label` shows.
+      axis_quantitative:
         title:
-          visible: true  # scatter always shows x-axis title (column name / authored label)
-      axis_y:
+          visible: true
+      axis_band:
         title:
-          visible: true  # scatter always shows y-axis title (column name / authored label)
+          visible: true
       # Categorical color on scatter needs a key: a board-wide
       # `legend.visible: false` does not reach it.
       legend:
@@ -949,8 +1116,6 @@ style:
     # geo_source is a chart-root channel (chart.geo_source), not a style field.
     geoshape:
       aspect_ratio: 1.2
-      projection:
-        type: albersUsa
       color:
         gradient:
           palette: blues
@@ -963,8 +1128,6 @@ style:
     # Point map (scatter over geography) — renamed from 'geoshape'.
     point_map:
       aspect_ratio: 1.2
-      projection:
-        type: mercator
       marks:
         point:
           # Global marks.point.size is unset (a line's points are density-

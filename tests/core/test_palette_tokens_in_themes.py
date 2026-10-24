@@ -374,8 +374,10 @@ class TestChromeAccentTokens:
 
 
 class TestVividFourTierAnchorsTrackScaffold:
-    def test_muted_tracks_step_eight(self) -> None:
-        assert get_theme_style("vivid").muted == resolve_palette_color("dbt-grays.8")
+    def test_secondary_font_tracks_step_eight(self) -> None:
+        fonts = get_theme_style("vivid").fonts
+        assert fonts is not None
+        assert fonts["secondary"].color == resolve_palette_color("dbt-grays.8")
 
     def test_border_tracks_step_five(self) -> None:
         compiled = get_theme_style("vivid")

@@ -17,3 +17,6 @@ STROKE_FALLBACK_WIDTH: Final[float] = 2.5
 POINT_DIAMETER_RATIO: Final[float] = 1.7
 # Points switch on at this many pixels per distinct x; below it they bead into a caterpillar.
 POINT_MIN_PX_PER_POINT: Final[float] = 22.5
+
+# Samples a fitted trend is drawn from; a data set with fewer distinct x values is drawn through them.
+TREND_SAMPLES: Final[int] = 64

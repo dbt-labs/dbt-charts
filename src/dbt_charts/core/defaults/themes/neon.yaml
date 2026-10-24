@@ -27,9 +27,10 @@
 extends: _base
 notes: saturated, glowing colors
 style:
+  roles:
+    muted: &mid chrome[7]
+    accent: info.border
   background: chrome[12]
-  accent: info.border
-  muted: &mid chrome[7]
   font:
     color: &high chrome[3]
   palettes:
@@ -73,6 +74,15 @@ style:
     column:
       divider:
         color: *faint
+  annotations:
+    trend:
+      marks:
+        line:
+          stroke:
+            width: 2
+        area:
+          opacity: 0.20
+
   charts:
     color:
       categorical:

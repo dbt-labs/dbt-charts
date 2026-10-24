@@ -31,7 +31,6 @@ from pydantic import (
     create_model,
     model_validator,
 )
-from pydantic_core import PydanticUndefinedType
 
 from dbt_charts.core.compile.models.markers import Absent, ResetOnSet
 
@@ -179,11 +178,15 @@ def _patch_or_none(
     return Union[Annotated[patch_cls, shorthand], None]  # noqa: UP007
 
 
-def _has_required_fields(cls: type[BaseModel]) -> bool:
-    """Return True if any field on cls has no default (is required)."""
-    return any(
-        isinstance(fi.default, PydanticUndefinedType) and fi.default_factory is None
-        for fi in cls.model_fields.values()
+def _is_patch_shaped(cls: type[BaseModel]) -> bool:
+    """True for a patch model: a ``_PatchBase`` whose every field defaults to None.
+
+    A compiled class built on all-optional bases can lack required fields yet
+    still carry real defaults (a ``default_factory`` section); recursing into
+    it is what keeps its nested fields patchable.
+    """
+    return issubclass(cls, _PatchBase) and all(
+        fi.default is None for fi in cls.model_fields.values()
     )
 
 
@@ -233,21 +236,19 @@ def _make_patch_annotation(annotation: Any, *, is_recursive: bool) -> Any:
         if inner := _unwrap_optional_base_model(annotation):
             if _is_extra_allow_section(inner):
                 return dict[str, Any] | None
-            if issubclass(inner, _PatchBase) and not _has_required_fields(inner):
+            if _is_patch_shaped(inner):
                 return inner | None
             return _patch_or_none(inner)
         if _is_optional(annotation):
             # Union with None but inner is not a single BaseModel — keep as-is.
             return annotation
         # Bare BaseModel subclass → recurse to get its patch version.
-        # _PatchBase subclasses are typically all-Optional patch types — return as-is,
-        # UNLESS they add required fields (e.g. RootFontStyle adds emoji: Literal[...]).
+        # Patch-shaped types are returned as-is; a compiled type with a required
+        # field (RootFontStyle's emoji) or a real default is recursed into.
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
             if _is_extra_allow_section(annotation):
                 return dict[str, Any] | None
-            if issubclass(annotation, _PatchBase) and not _has_required_fields(
-                annotation
-            ):
+            if _is_patch_shaped(annotation):
                 return annotation | None
             return _patch_or_none(annotation)
     else:

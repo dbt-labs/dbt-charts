@@ -499,10 +499,12 @@ name = "mdsvg"
 version = "0.1.0"
 dependencies = [
  "d3rs",
+ "measure",
  "once_cell",
  "print",
  "regex",
  "roxmltree",
+ "scene",
  "serde",
  "serde_json",
  "sha2",
@@ -513,8 +515,10 @@ dependencies = [
 name = "measure"
 version = "0.0.1"
 dependencies = [
- "mdsvg",
+ "d3rs",
+ "once_cell",
  "rustybuzz",
+ "serde",
  "ttf-parser",
 ]
 

@@ -9,8 +9,8 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::pygments_re::is_py_space;
 use crate::unicode_unassigned::is_unassigned;
+use d3rs::py_str::is_py_space;
 
 /// `css.py:9` `CSS_BREAKING_CHARS_RE` = `[<>;{}"'\\*\x00-\x1f\x7f]`: not a
 /// color validator, only the characters that break out of a declaration or a

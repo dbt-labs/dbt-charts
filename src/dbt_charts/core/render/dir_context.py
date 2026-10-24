@@ -31,15 +31,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import PurePosixPath
 from typing import Any
 
 from dbt_charts.core.compile.config import get_inspector_config
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
+    Project,
     ProjectDirectory,
     ProjectPath,
     board_namespace_for_root,
+    package_board_roots,
 )
 
 # File extensions treated as renderable board files (.yml/.yaml/.md/.markdown).
@@ -318,3 +321,63 @@ def lazy_dir_context(
         "siblings": siblings,
         "tree": tree,
     }
+
+
+def directory_listing(
+    dir_handles: list[ProjectDirectory], url_path: str, project: Project
+) -> tuple[str, dict[str, str]]:
+    """The board text and variables of a directory's listing page.
+
+    *dir_handles* are every directory *url_path* names (host first); entries
+    merge per URL, the first directory's entry winning, so a host board shadows
+    the package board with the same slug. Render the text with the variables
+    as built-in variables.
+    """
+    listing_lines: list[str] = []
+    if url_path:
+        parent_parts = url_path.strip("/").split("/")[:-1]
+        parent_url = "/" + "/".join(parent_parts)
+        listing_lines.append(f"- [../]({parent_url})")
+
+    url_prefix = f"/{url_path}" if url_path else ""
+    merged: dict[str, DirEntry] = {}
+    for handle in dir_handles:
+        for found in list_dir_entries(handle, url_prefix):
+            merged.setdefault(found.url, found)
+    entries = sorted(merged.values(), key=lambda e: (not e.is_dir, e.name.lower()))
+    for entry in entries:
+        # /inspect/<template> links require ?model=...&column=... query params;
+        # advertising them as bare entries in the root listing 500s on click.
+        if entry.name == "inspect" and not url_path:
+            continue
+        if entry.is_dir:
+            listing_lines.append(f"- [{entry.name}/]({entry.url})")
+        else:
+            # list_dir_entries already restricts files to renderable board
+            # extensions, so non-board files never reach here.
+            listing_lines.append(f"- [{entry.name}]({entry.url})")
+
+    # The root listing additionally shows one virtual group per installed
+    # package that ships boards — a package root is a sibling subtree of
+    # charts/, not a child directory list_dir_entries can see.
+    if not url_path:
+        for root in sorted(package_board_roots(project), key=lambda r: r.namespace):
+            if f"/{root.namespace}/" not in merged:
+                listing_lines.append(f"- [{root.namespace}/](/{root.namespace}/)")
+
+    # ``directory_title``/``listing_markdown`` carry untrusted filenames, so they
+    # reach the board only as render-time Jinja variable values below -- never
+    # spliced into template text ahead of a render (same rule as
+    # ``expand_query_refs``'s docstring: a value substituted before the final
+    # pass is live template source by the time that pass reads it).
+    listing_variables = {
+        "directory_title": f"/{url_path}" if url_path else "/",
+        "listing_markdown": "\n".join(listing_lines),
+    }
+
+    board_text = (
+        files("dbt_charts.core.render")
+        .joinpath("templates/directory.yml")
+        .read_text(encoding="utf-8")
+    )
+    return board_text, listing_variables

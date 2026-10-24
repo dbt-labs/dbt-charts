@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 import pytest
 from jsonschema import Draft202012Validator
-from pydantic import ValidationError
+from pydantic import BeforeValidator, ValidationError
 
 from dbt_charts.core.compile.models.constraints import (
     AtLeastOneOf,
@@ -14,6 +14,7 @@ from dbt_charts.core.compile.models.constraints import (
     ConstrainedModel,
     Constraint,
     Forbids,
+    IsCall,
     IsList,
     IsSet,
     ItemsMatch,
@@ -26,6 +27,16 @@ from dbt_charts.core.compile.schema.renderers.json_schema import constraint_sche
 
 class _Inner(ConstrainedModel):
     c: str | None = None
+
+
+def _parse_call(value: Any) -> Any:
+    if isinstance(value, str) and value.endswith("()"):
+        return {"fn": value[:-2].strip()}
+    return value
+
+
+class _Call(ConstrainedModel):
+    fn: Literal["min", "max", "avg"]
 
 
 class _Probe(ConstrainedModel):
@@ -45,6 +56,12 @@ class _Probe(ConstrainedModel):
             "items", "^[0-9]+$", "{item!r} is not digits", when=(IsList("items"),)
         ),
         NotNull(("n",), "n is null: omit it"),
+        Requires(("b",), "min or max needs b", when=(IsCall("call", ("min", "max")),)),
+        Requires(
+            ("a",),
+            "other calls need a",
+            when=(IsSet("call"), IsCall("call", ("min", "max"), negate=True)),
+        ),
     )
 
     a: str | None = None
@@ -55,6 +72,7 @@ class _Probe(ConstrainedModel):
     items: list[str] | str | None = None
     n: str | None = None
     m: str | None = None
+    call: Annotated[_Call, BeforeValidator(_parse_call)] | None = None
 
 
 _VALIDATOR = Draft202012Validator(
@@ -88,6 +106,12 @@ _CASES: list[dict[str, Any]] = [
     {"a": "x", "m": "auto"},
     {"a": "x", "m": "v"},
     {"m": "auto"},
+    {"call": "min()"},
+    {"call": "min()", "b": "y"},
+    {"call": "max()", "b": "y"},
+    {"call": {"fn": "max"}, "b": "y"},
+    {"call": "avg()"},
+    {"call": "avg()", "a": "x"},
 ]
 
 

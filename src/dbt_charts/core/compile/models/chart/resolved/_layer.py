@@ -8,7 +8,7 @@ normalized chart package.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, runtime_checkable
 
@@ -123,10 +123,18 @@ class ResolvedLayerAxisY:
 
 @dataclass(frozen=True)
 class ResolvedBarLayer:
-    """Resolved bar-type overlay layer."""
+    """Resolved bar-type overlay layer.
+
+    Every layer type carries its ink, decided once at resolve (`_layer_ink.py`):
+    ``ink`` is the color a layer without a `color` channel paints on the shared
+    scale; a layer with one has no single ink, and ``series_inks`` holds the
+    color of each of its values.
+    """
 
     type: Literal["bar"]
     bar_mark: ResolvedBarMarkStyle
+    ink: str | None
+    series_inks: Mapping[str, str]
     axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
@@ -142,6 +150,8 @@ class ResolvedBarLayer:
     # narrative register. False when the format is a literal d3 spec authored
     # directly (not via a theme alias), matching base-chart provenance logic.
     label_is_house: bool = False
+    # False when the layer declines its legend entry (authored `legend: false`).
+    legend: bool = True
 
 
 @dataclass(frozen=True)
@@ -151,6 +161,8 @@ class ResolvedLineLayer:
     type: Literal["line"]
     line_mark: ResolvedLineMarkStyle
     point_mark: ResolvedPointMarkStyle
+    ink: str | None
+    series_inks: Mapping[str, str]
     axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
@@ -158,6 +170,8 @@ class ResolvedLineLayer:
     color: str | None = None
     query_name: str | None = None
     label_is_house: bool = False
+    # False when the layer declines its legend entry (authored `legend: false`).
+    legend: bool = True
 
 
 @dataclass(frozen=True)
@@ -168,6 +182,8 @@ class ResolvedAreaLayer:
     area_mark: ResolvedAreaMarkStyle
     line_mark: ResolvedAreaLineStyle
     point_mark: ResolvedPointMarkStyle
+    ink: str | None
+    series_inks: Mapping[str, str]
     axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
@@ -175,6 +191,8 @@ class ResolvedAreaLayer:
     color: str | None = None
     query_name: str | None = None
     label_is_house: bool = False
+    # False when the layer declines its legend entry (authored `legend: false`).
+    legend: bool = True
 
 
 @dataclass(frozen=True)
@@ -183,6 +201,8 @@ class ResolvedScatterLayer:
 
     type: Literal["scatter"]
     point_mark: ResolvedPointMarkStyle
+    ink: str | None
+    series_inks: Mapping[str, str]
     axis_y: ResolvedLayerAxisY = field(default_factory=ResolvedLayerAxisY)
     x: str | None = None
     y: str | None = None
@@ -190,6 +210,8 @@ class ResolvedScatterLayer:
     color: str | None = None
     query_name: str | None = None
     label_is_house: bool = False
+    # False when the layer declines its legend entry (authored `legend: false`).
+    legend: bool = True
 
 
 # Union alias used in resolved chart model fields.

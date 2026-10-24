@@ -47,6 +47,7 @@ from dbt_charts.cli.commands import (
     exposures as exposures_cmd,
     extension as extension_cmd,
     impact as impact_cmd,
+    import_source as import_source_cmd,
     init as init_cmd,
     inspect as inspect_cmd,
     mcp as mcp_cmd,
@@ -112,6 +113,14 @@ inspect_app = typer.Typer(
 artifact_app = typer.Typer(
     name="artifact",
     help="Emit a resolved-board artifact + recording, render one back, or print its JSON Schema.",
+    no_args_is_help=True,
+    pretty_exceptions_show_locals=False,
+    rich_markup_mode=_RICH_MARKUP_MODE,
+)
+
+import_app = typer.Typer(
+    name="import",
+    help="Import a board from another BI tool into a source bundle for migration.",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
     rich_markup_mode=_RICH_MARKUP_MODE,
@@ -435,7 +444,8 @@ def init_skills(
     on this machine picks up the skills without a per-repo install. Does not
     configure MCP or modify AGENTS.md / CLAUDE.md. Always overwrites an
     existing ``dct-*`` install; re-run after every upgrade to pick up new
-    skill bodies.
+    skill bodies. Commit a repository install: a teammate's agent sees only
+    the skills checked in, and nothing tells it to run ``dct init skills``.
 
     \b
     Examples:
@@ -1567,6 +1577,193 @@ def validate(
         json_output=json_output,
         strict=strict,
         warehouse=warehouse,
+    )
+
+
+app.add_typer(import_app, name="import", rich_help_panel="Dashboards")
+
+
+@import_app.command("looker")
+def import_looker(
+    dashboard: Annotated[
+        str, typer.Argument(help="Looker dashboard URL or numeric dashboard id.")
+    ],
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out", "-o", help="Bundle directory. Default: ./looker-<dashboard id>."
+        ),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--base-url",
+            envvar="LOOKER_BASE_URL",
+            help=(
+                "Looker API origin, e.g. https://acme.looker.com:19999. Required "
+                "for a bare id; for a URL it overrides the URL's origin (the API "
+                "port differs by instance)."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace a non-empty bundle directory.")
+    ] = False,
+) -> None:
+    """Fetch a Looker dashboard into a source bundle: outline, SQL, values, render.
+
+    Reads LOOKER_CLIENT_ID and LOOKER_CLIENT_SECRET from the environment;
+    nothing is cached or written to disk besides the bundle.
+
+    \b
+    Examples:
+      dct import looker https://acme.looker.com/dashboards/42
+      dct import looker 42 --base-url https://acme.looker.com:19999
+    """
+    import_source_cmd.import_looker_command(
+        dashboard, out=out, base_url=base_url, force=force
+    )
+
+
+@import_app.command("omni")
+def import_omni(
+    dashboard: Annotated[
+        str | None, typer.Argument(help="Omni dashboard URL or identifier.")
+    ] = None,
+    list_only: Annotated[
+        bool, typer.Option("--list", help="List dashboards instead of importing one.")
+    ] = False,
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out", "-o", help="Bundle directory. Default: ./omni-<dashboard id>."
+        ),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--base-url",
+            envvar="OMNI_BASE_URL",
+            help=(
+                "Omni origin, e.g. https://acme.omniapp.co. Required for a bare "
+                "id and for --list; for a URL it overrides the URL's origin."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace a non-empty bundle directory.")
+    ] = False,
+) -> None:
+    """Fetch an Omni dashboard into a source bundle: outline, SQL, values, renders.
+
+    Reads OMNI_API_KEY from the environment.
+
+    \b
+    Examples:
+      dct import omni --list
+      dct import omni https://acme.omniapp.co/dashboards/abc12345
+      dct import omni abc12345 --base-url https://acme.omniapp.co
+    """
+    import_source_cmd.import_omni_command(
+        dashboard, list_only=list_only, out=out, base_url=base_url, force=force
+    )
+
+
+@import_app.command("sigma")
+def import_sigma(
+    workbook: Annotated[
+        str | None,
+        typer.Argument(
+            help=(
+                "Sigma workbook URL, url id or workbook id. With --list, a "
+                "case-insensitive filter on workbook name and path instead."
+            )
+        ),
+    ] = None,
+    list_only: Annotated[
+        bool,
+        typer.Option("--list", help="List visible workbooks instead of importing."),
+    ] = False,
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out", "-o", help="Bundle directory. Default: ./sigma-<workbook url id>."
+        ),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--base-url",
+            envvar="SIGMA_API_BASE",
+            help=(
+                "Sigma API origin for your cloud region, e.g. "
+                "https://aws-api.sigmacomputing.com."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace a non-empty bundle directory.")
+    ] = False,
+) -> None:
+    """Fetch a Sigma workbook into a source bundle: outline, SQL, values, renders.
+
+    Reads SIGMA_CLIENT_ID and SIGMA_CLIENT_SECRET from the environment;
+    nothing is cached or written to disk besides the bundle.
+
+    \b
+    Examples:
+      dct import sigma https://app.sigmacomputing.com/acme/workbook/AbC123
+      dct import sigma AbC123 --base-url https://aws-api.sigmacomputing.com
+      dct import sigma --list revenue
+    """
+    import_source_cmd.import_sigma_command(
+        workbook, list_only=list_only, out=out, base_url=base_url, force=force
+    )
+
+
+@import_app.command("hex")
+def import_hex(
+    project: Annotated[
+        str | None, typer.Argument(help="Hex project URL or project id (a UUID).")
+    ] = None,
+    list_projects: Annotated[
+        bool,
+        typer.Option("--list", help="List the projects the token can view and exit."),
+    ] = False,
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            "--out", "-o", help="Bundle directory. Default: ./hex-<project id>."
+        ),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--base-url",
+            envvar="HEX_BASE_URL",
+            help=(
+                "Hex API origin. Default: the project URL's origin, else the "
+                "public https://app.hex.tech/api/v1."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace a non-empty bundle directory.")
+    ] = False,
+) -> None:
+    """Fetch a published Hex app into a source bundle: outline, SQL, chart renders.
+
+    Reads HEX_API_TOKEN from the environment (one token per workspace). Hex has
+    no whole-app screenshot, so png/ holds one render per chart cell of the
+    latest run, and an app without chart cells is refused.
+
+    \b
+    Examples:
+      dct import hex --list
+      dct import hex https://app.hex.tech/acme/hex/<project id>
+    """
+    import_source_cmd.import_hex_command(
+        project, list_projects=list_projects, out=out, base_url=base_url, force=force
     )
 
 

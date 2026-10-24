@@ -1,0 +1,18 @@
+{
+  "pageInfo": {
+    "hasNextPage": false,
+    "nextCursor": null,
+    "pageSize": 100,
+    "totalRecords": 3
+  },
+  "records": [
+    {
+      "identifier": "def67890",
+      "name": "Pipeline",
+      "hasDashboard": true,
+      "deleted": false,
+      "scope": "restricted",
+      "url": "https://acme.omniapp.test/dashboards/def67890"
+    }
+  ]
+}

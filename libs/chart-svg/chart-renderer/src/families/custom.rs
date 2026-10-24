@@ -174,7 +174,7 @@ fn font_weight(weight: Option<&Value>) -> Result<f32, Error> {
             let text = weight.as_str().expect("string kind");
             // A numeric string is read exactly: "600.5" is no whole weight.
             text.trim().parse::<f64>().ok().or_else(|| {
-                mdsvg::fonts::css_weight_axis(text)
+                measure::fonts::css_weight_axis(text)
                     .ok()
                     .flatten()
                     .map(f64::from)
@@ -518,7 +518,7 @@ fn render_template(r: &Resolved, job: &Job, fonts: &FontBook) -> Result<String, 
                 ));
             }
             let axis = font_weight(rest.first())?;
-            let measurer = mdsvg::fonts::cached_measurer(&font_path, 0, Some(axis));
+            let measurer = measure::fonts::cached_measurer(&font_path, 0, Some(axis));
             Ok(Value::from(measurer.measure(text, px)))
         },
     );
@@ -1067,7 +1067,7 @@ mod tests {
             "palette": ["#111111", "#222222"],
             "style": {
                 "title_font": {"size": 14.0, "weight": "600", "family": FAMILY, "color": "#222222", "case": "none"},
-                "tree": {"font": {"family": FAMILY, "size": 12.0, "color": "#222222"}, "muted": "#888888"},
+                "tree": {"font": {"family": FAMILY, "size": 12.0, "color": "#222222"}, "fonts": {"secondary": {"color": "#888888"}}},
             },
             "title_style": {
                 "font": {"size": 14.0, "weight": "600", "family": FAMILY, "color": "#222222", "case": "none"},
@@ -1183,7 +1183,7 @@ mod tests {
     #[test]
     fn helpers_and_namespaces_are_in_scope() {
         let template = "<text>{{ options.fill }} {{ channels.x }} {{ columns | join(',') }} {{ uid }} \
-                        {{ style.muted }} {{ variables.region }} {{ math.floor(2.7) }} {{ math.pi | round(2) }} \
+                        {{ style.fonts.secondary.color }} {{ variables.region }} {{ math.floor(2.7) }} {{ math.pi | round(2) }} \
                         {{ color_for('Ana', 'rep') }} {{ color_for('x') }} {{ color_for('y') }} {{ 1234.5 | format(',.0f') }}</text>";
         let svg = render(&payload(template, |_| {}), &test_fonts()).unwrap();
         assert!(

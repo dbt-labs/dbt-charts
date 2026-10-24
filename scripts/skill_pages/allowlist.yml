@@ -61,13 +61,13 @@ objects:
     keys: [items]
   style_root:
     path: AuthoredBoard.style
-    keys: [accent, background, border, charts, font, fonts, footer, formats, frame, gap, layout, margin, muted, opacity, padding, text, timestamp, title, variables]
+    keys: [accent, background, border, charts, font, fonts, footer, formats, frame, gap, layout, margin, opacity, padding, text, timestamp, title, variables]
 
   # --- styling ---
   s_root:
     path: StylePatch
     label: style
-    keys: [background, accent, muted, font, fonts, formats, palettes, border, frame, title, text, footer, charts]
+    keys: [background, accent, font, fonts, formats, palettes, border, frame, title, text, footer, charts]
     detail: [fonts, palettes, border]
   s_frame:
     path: StylePatch.frame

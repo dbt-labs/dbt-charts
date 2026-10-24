@@ -202,8 +202,8 @@ class TestTableProportionalSizing:
             svg,
             re.DOTALL,
         )
-        # Subtitle fill comes from board_style.muted, not title.subtitle.font.color.
-        subtitle_fill = resolve_style(stark_style).muted
+        # Subtitle fill comes from the secondary ink, not title.subtitle.font.color.
+        subtitle_fill = resolve_style(stark_style).secondary_color
         # The subtitle wraps, so its baseline lives on the first tspan.
         subtitle = re.search(
             rf'<text x="0" font-size="([0-9.]+)" fill="{re.escape(subtitle_fill)}" '

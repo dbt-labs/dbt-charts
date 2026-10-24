@@ -7,7 +7,7 @@ use d3rs::vega_schemes::BLUES;
 
 use crate::common::{FormatSlot, ScaleTarget};
 use crate::families::heatmap_facet::{GradientLegend, GradientPaint};
-use crate::families::table::{arm_denominators, resolve_hinge};
+use crate::families::table::bind::{arm_denominators, resolve_hinge};
 use crate::families::legend::{
     gradient_labeled_values, gradient_tick_count, unit_position, LegendConfig, GRADIENT_STOP_TICKS,
     VEGA_GRADIENT_THICKNESS, VEGA_LEGEND_TITLE_PADDING,
@@ -55,11 +55,9 @@ fn sequential_position(v: f64, lo: f64, hi: f64) -> f64 {
 
 /// What [`ContinuousColor::mid_pivoted`] makes of a scale.
 pub(crate) enum MidPivot {
-    /// The scale takes no `domainMid` pivot; build it with `gradient`.
+    /// The scale takes no `domainMid` pivot, or has no drawn value to pivot over; build it with `gradient`.
     NotPivoted,
     Scale(ContinuousColor),
-    /// The pivot lies outside the domain.
-    Outside,
 }
 
 /// A color scale over the data extent `[lo, hi]`; a date scale counts days.
@@ -132,8 +130,9 @@ impl ContinuousColor {
 
     /// `gradient_scale_to_vl`'s fallback for a Vega scheme pivoted at a numeric `hinge` over bounds the
     /// caller cannot resolve: Vega-Lite's `domainMid` over `kept`, the extent of the values the marks
-    /// draw, each authored bound extended (never clamped) to hold the pivot. A pivot outside the domain
-    /// makes Vega's piecewise domain non-monotonic, which no port models: the caller refuses it.
+    /// draw, each authored bound extended (never clamped) to hold the pivot. A pivot past a data-driven end
+    /// is spliced in as a new end of Vega's three-point domain (`configureDomain`), so the old end becomes the
+    /// middle. With no drawn value the domain is empty and the plain scale draws.
     pub(crate) fn mid_pivoted(scale: &ScaleTarget, kept: (f64, f64)) -> Result<MidPivot, String> {
         let Some(pivot) = scale.hinge.as_ref().and_then(serde_json::Value::as_f64) else { return Ok(MidPivot::NotPivoted) };
         if scale.min.is_some() && scale.max.is_some() {
@@ -145,9 +144,16 @@ impl ContinuousColor {
             Palette::Ramp(ramp) => (ramp, false),
             Palette::Array(colors) => (colors, true),
         };
-        if !(lo <= pivot && pivot <= hi) {
-            return Ok(MidPivot::Outside);
+        if lo.is_nan() || hi.is_nan() {
+            return Ok(MidPivot::NotPivoted);
         }
+        let (lo, pivot, hi) = if pivot > hi {
+            (lo, hi, pivot)
+        } else if pivot < lo {
+            (pivot, lo, hi)
+        } else {
+            (lo, pivot, hi)
+        };
         Ok(MidPivot::Scale(Self { ramp: Ramp::Halved { ramp, pivot, hcl }, lo, hi, dates: false, pivot: Some(pivot) }))
     }
 
@@ -183,11 +189,12 @@ impl ContinuousColor {
                 rgb_text(interpolate_rgb_piecewise(ramp, a + t * (b - a)))
             }
             Ramp::Halved { ramp, pivot, hcl } => {
-                let v = v.clamp(self.lo, self.hi);
-                // d3's `scaleDiverging`: each arm's own reciprocal width, zero for a collapsed one.
+                // d3's `scaleDiverging`: each arm's own reciprocal width, zero for a collapsed one, and the
+                // clamp on the position. An authored `min` past the pivot runs the domain backwards (`s`).
                 let arm = |width: f64| if width == 0.0 { 0.0 } else { 0.5 / width };
-                let k = if v < *pivot { arm(pivot - self.lo) } else { arm(self.hi - pivot) };
-                let t = 0.5 + (v - pivot) * k;
+                let s = if *pivot < self.lo { -1.0 } else { 1.0 };
+                let k = if s * v < s * pivot { arm(pivot - self.lo) } else { arm(self.hi - pivot) };
+                let t = (0.5 + (v - pivot) * k).clamp(0.0, 1.0);
                 if *hcl {
                     color_text(piecewise_hcl(&ramp.iter().copied().map(Color::opaque).collect::<Vec<_>>(), t))
                 } else {
@@ -568,9 +575,22 @@ impl GradientAt {
         unit: (f64, f64),
         (svg, x, y): (&mut String, f64, f64),
     ) -> Result<(), String> {
-        let at = Self::new(legend, color_format, color, unit)?;
-        svg.push_str(&print(&at.legend(legend, color, id, title, fonts)?.nodes(x, y, at.length)));
+        svg.push_str(&print(&Self::nodes(legend, color_format, color, (id, title), fonts, unit, (x, y))?));
         Ok(())
+    }
+
+    /// [`Self::paint`] as nodes.
+    pub(crate) fn nodes(
+        legend: &LegendConfig,
+        color_format: Option<&FormatSlot>,
+        color: &ContinuousColor,
+        (id, title): (&str, &str),
+        fonts: &FontBook,
+        unit: (f64, f64),
+        (x, y): (f64, f64),
+    ) -> Result<Vec<Node>, String> {
+        let at = Self::new(legend, color_format, color, unit)?;
+        Ok(at.legend(legend, color, id, title, fonts)?.nodes(x, y, at.length))
     }
 
     pub(crate) fn legend<'a>(
@@ -688,11 +708,23 @@ impl<'a> NumericLegends<'a> {
         cfg: &LegendConfig,
         fonts: &FontBook,
         unit: (f64, f64),
-        (x, y): (f64, f64),
+        at: (f64, f64),
     ) -> Result<(), String> {
+        svg.push_str(&print(&self.part_nodes(index, cfg, fonts, unit, at)?));
+        Ok(())
+    }
+
+    pub(crate) fn part_nodes(
+        &self,
+        index: usize,
+        cfg: &LegendConfig,
+        fonts: &FontBook,
+        unit: (f64, f64),
+        (x, y): (f64, f64),
+    ) -> Result<Vec<Node>, String> {
         let part = &self.parts[index];
         if part.gradient {
-            return GradientAt::paint(cfg, part.format, part.color, (&part.id, &part.title), fonts, unit, (svg, x, y));
+            return GradientAt::nodes(cfg, part.format, part.color, (&part.id, &part.title), fonts, unit, (x, y));
         }
         let (legend, ladder) = part.symbol_legend(cfg, fonts)?;
         let entries: Vec<_> = ladder
@@ -704,8 +736,7 @@ impl<'a> NumericLegends<'a> {
                 series_key: None,
             })
             .collect();
-        crate::families::legend::emit_vega_legend(
-            svg,
+        Ok(crate::families::legend::drawn_symbol_legend(
             &entries,
             &legend,
             cfg,
@@ -713,8 +744,9 @@ impl<'a> NumericLegends<'a> {
             x,
             y,
             false,
-        );
-        Ok(())
+        )
+        .into_iter()
+        .collect())
     }
 
     /// The stack of the base legend's box `base` and these, one `VEGA_LEGEND_GROUP_MARGIN` apart.
@@ -761,24 +793,24 @@ impl<'a> NumericLegends<'a> {
         unit: (f64, f64),
         origin: (f64, f64),
     ) -> Result<(), String> {
-        let stack = base.stack.as_ref().expect("a legend stacked with numeric legends carries its stack");
-        self.paint(svg, stack, cfg, fonts, unit, origin)
+        svg.push_str(&print(&self.nodes_after(base, cfg, fonts, unit, origin)?));
+        Ok(())
     }
 
-    /// Paints the numeric legends of `stack` from the stack origin `(x, y)`.
-    fn paint(
+    pub(crate) fn nodes_after(
         &self,
-        svg: &mut String,
-        stack: &LegendStack,
+        base: &crate::families::legend::VegaLegend,
         cfg: &LegendConfig,
         fonts: &FontBook,
         unit: (f64, f64),
         (x, y): (f64, f64),
-    ) -> Result<(), String> {
+    ) -> Result<Vec<Node>, String> {
+        let stack = base.stack.as_ref().expect("a legend stacked with numeric legends carries its stack");
+        let mut nodes = Vec::new();
         for (index, (dx, dy)) in stack.offsets.iter().skip(usize::from(stack.base_block)).enumerate() {
-            self.paint_part(index, svg, cfg, fonts, unit, (x + dx, y + dy))?;
+            nodes.extend(self.part_nodes(index, cfg, fonts, unit, (x + dx, y + dy))?);
         }
-        Ok(())
+        Ok(nodes)
     }
 }
 

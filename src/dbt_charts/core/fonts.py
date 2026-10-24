@@ -290,9 +290,21 @@ FONT_REGISTRY: tuple[VendoredFace, ...] = (
         web_file=None,
     ),
     VendoredFace(
+        family=DBT_SERIF_MEDIUM_FONT_FAMILY,
+        style="italic",
+        measure_file="SourceSerif4-MediumItalic.ttf",
+        web_file=None,
+    ),
+    VendoredFace(
         family=DBT_SERIF_SEMIBOLD_FONT_FAMILY,
         style="normal",
         measure_file="SourceSerif4-SemiBold.ttf",
+        web_file=None,
+    ),
+    VendoredFace(
+        family=DBT_SERIF_SEMIBOLD_FONT_FAMILY,
+        style="italic",
+        measure_file="SourceSerif4-SemiBoldItalic.ttf",
         web_file=None,
     ),
     VendoredFace(
@@ -316,9 +328,21 @@ FONT_REGISTRY: tuple[VendoredFace, ...] = (
         web_file=None,
     ),
     VendoredFace(
+        family=INTER_VARIABLE_MEDIUM_FONT_FAMILY,
+        style="italic",
+        measure_file="InterVariable-MediumItalic.ttf",
+        web_file=None,
+    ),
+    VendoredFace(
         family=INTER_VARIABLE_SEMIBOLD_FONT_FAMILY,
         style="normal",
         measure_file="InterVariable-SemiBold.ttf",
+        web_file=None,
+    ),
+    VendoredFace(
+        family=INTER_VARIABLE_SEMIBOLD_FONT_FAMILY,
+        style="italic",
+        measure_file="InterVariable-SemiBoldItalic.ttf",
         web_file=None,
     ),
     VendoredFace(

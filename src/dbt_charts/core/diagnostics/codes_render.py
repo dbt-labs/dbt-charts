@@ -1104,6 +1104,29 @@ ERR_CHART_PAINTED_NO_MARKS = REGISTRY.register(
     )
 )
 
+ERR_X_VALUE_NOT_A_DATE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-X-VALUE-NOT-A-DATE",
+        domain="render",
+        title="A time-axis x value is not a date",
+        message_template=(
+            "Chart {chart_id!r} plots x field {x_field!r} on a time axis, but "
+            "{value!r} is not a date or timestamp. Every x value must parse as "
+            "one; fix the query, or set `axis_x.type: ordinal` to draw the "
+            "values as categories."
+        ),
+        doc=(
+            "Fired when a line or area chart's x axis resolves to time (the "
+            "values are dates, or `axis_x.type: temporal` is authored) and an "
+            "x value does not parse as a date or timestamp. The chart orders "
+            "and positions every point by its parsed instant, so a value with "
+            "none cannot be drawn; the message names the first one."
+        ),
+        summary="Fired when a time-axis x value is not a date or timestamp.",
+        docs_topic="charts",
+    )
+)
+
 ERR_LAYER_COLOR_ALL_NULL = REGISTRY.register(
     ErrorCode(
         code="ERR-LAYER-COLOR-ALL-NULL",
@@ -3916,6 +3939,25 @@ ERR_ANNOTATION_MARGIN_UNSUPPORTED = REGISTRY.register(
     )
 )
 
+ERR_ANNOTATION_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ANNOTATION-UNSUPPORTED",
+        domain="render",
+        title="Annotations do not draw on this chart yet",
+        message_template=(
+            "Chart {chart_id!r}: annotations do not draw on {chart_type} charts yet."
+        ),
+        fix_template="Remove `annotations:` from this chart.",
+        doc=(
+            "Fired when a chart authors `annotations:` but renders through a path "
+            "that cannot draw them yet. The chart errors rather than render "
+            "without its annotations."
+        ),
+        summary="Fired when a chart's annotations cannot draw yet.",
+        docs_topic="charts",
+    )
+)
+
 WARN_ANNOTATION_NOTHING_DRAWN = REGISTRY.register(
     WarningCode(
         code="WARN-ANNOTATION-NOTHING-DRAWN",
@@ -3924,12 +3966,15 @@ WARN_ANNOTATION_NOTHING_DRAWN = REGISTRY.register(
         message_template="Chart {chart_id!r}: annotation {index} draws nothing: {reason}.",
         fix_template=(
             "Anchor the annotation inside the plotted domain, name a category the "
-            "chart shows, or remove it."
+            "chart shows, scope it to rows the chart plots, give a trend enough "
+            "rows for its fit, or remove it."
         ),
         doc=(
             "Fired when an annotation resolves but has nothing to draw: its "
-            "category or date names no slot on the axis, or its rule or band "
-            "falls outside the plot once clipped. The rest of the chart renders."
+            "category or date names no slot on the axis, its rule or band "
+            "falls outside the plot once clipped, its scope has no plotted rows, "
+            "or its trend has too few rows for the fit or interval. The rest of "
+            "the chart renders."
         ),
         summary="Fired when an annotation has nothing to draw on the plot.",
         docs_topic="charts",

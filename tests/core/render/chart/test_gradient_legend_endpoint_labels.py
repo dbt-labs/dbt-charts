@@ -68,6 +68,7 @@ def _geo_chart(**kwargs: object) -> ResolvedGeoshapeChart:
         id="geo1",
         type="geoshape",
         geo_source="fake-geo-source",
+        projection="mercator",
         lookup="state",
         value="pop",
         **kwargs,

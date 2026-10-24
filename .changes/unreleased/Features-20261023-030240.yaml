@@ -1,0 +1,3 @@
+kind: Features
+body: 'A layer can decline its legend entry with `legend: false`, and a constant reference line draws no automatic point marks.'
+time: 2026-10-23T03:02:40.699643-07:00

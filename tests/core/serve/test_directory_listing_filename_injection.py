@@ -77,8 +77,8 @@ def test_directory_listing_compiles_the_pristine_packaged_template(
     project = local_project(tmp_path)
 
     packaged_template = (
-        files("dbt_charts.core.serve.templates")
-        .joinpath("directory.yml")
+        files("dbt_charts.core.render")
+        .joinpath("templates/directory.yml")
         .read_text(encoding="utf-8")
     )
 

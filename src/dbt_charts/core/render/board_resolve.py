@@ -296,6 +296,7 @@ def build_resolved_board(
     *,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
+    hug_board: Board | EllipsisType = ...,
 ) -> tuple[ResolvedBoard, RenderCache]:
     with regional_scope(
         board.regional.format_locale,
@@ -310,6 +311,7 @@ def build_resolved_board(
             render_first,
             resolve_errors=resolve_errors,
             authored_slot_heights=authored_slot_heights,
+            hug_board=hug_board,
         )
 
 
@@ -321,6 +323,7 @@ def _build_resolved_board(
     *,
     resolve_errors: dict[str, ChartResolveFailure] | EllipsisType,
     authored_slot_heights: dict[str, float] | EllipsisType,
+    hug_board: Board | EllipsisType,
 ) -> tuple[ResolvedBoard, RenderCache]:
     """Build a data-resolved ResolvedBoard using the chart resolver.
 
@@ -348,6 +351,7 @@ def _build_resolved_board(
             chart_id -> the real px slot height assigned to every chart under
             an authored ancestor. See
             ``layout_sizing._snapshot_authored_slot_heights``.
+        hug_board: See ``calculate_data_aware_layout``.
 
     Returns:
         (ResolvedBoard with data-resolved ResolvedChart members,
@@ -390,6 +394,7 @@ def _build_resolved_board(
             resolved_variants=chart_variants,
             resolve_errors=chart_failures,
             authored_slot_heights=authored_slot_heights,
+            hug_board=hug_board,
         )
 
     frame = board.resolved_style.frame

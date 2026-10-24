@@ -494,6 +494,27 @@ class ProjectSession:
             result_cache=self.cache,
         )
 
+    def prefetch_board(
+        self,
+        board: BoardFile,
+        variables: dict[str, Any],
+        *,
+        builtin_variables: dict[str, Any] | None = None,
+    ) -> dict[str, Exception | None]:
+        """Run the hidden-tab queries a drawn render of *board* left cold.
+
+        See ``core.board.prefetch_dashboard``.
+        """
+        return _core_board.prefetch_dashboard(
+            board,
+            variables,
+            project=self.project,
+            adapter_registry=self.adapter_registry,
+            result_cache=self.cache,
+            file_materializer=self._file_materializer,
+            builtin_variables=builtin_variables,
+        )
+
     def render_board(
         self,
         board: BoardFile | None = None,

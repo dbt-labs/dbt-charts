@@ -397,7 +397,7 @@ pub(crate) fn render(
     let away = side_right && (moved || point_labels.is_some() || ax_y.labels.align.is_none() || (pinned_cell.get().is_none() && !baked));
     let base_pad = if moved { 2.0 } else { st.pad };
     let gutter = if side_right && !away && baked {
-        let measure_family = crate::common::measure_family_stand_in(st.family);
+        let measure_family = measure::stand_in_family(st.family);
         let drawn = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, false, if horizontal { "x" } else { "y" })?;
         let widest = drawn.iter().try_fold(0.0_f64, |acc, s| fonts.measure(s, measure_family, st.size).map(|w| acc.max(w)))?;
         widest.min(st.limit) + VALUE_AXIS_BREATHING_ROOM

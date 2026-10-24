@@ -60,7 +60,7 @@ charts:
       {% for r in rows %}
         <a href="{{ href(r) }}">
           <rect y="{{ loop.index0 * (options.bar_height + 8) }}" height="{{ options.bar_height }}"
-                width="{{ r[channels.y] / top * width }}" fill="{{ style.muted }}"/>
+                width="{{ r[channels.y] / top * width }}" fill="{{ style.fonts.secondary.color }}"/>
         </a>
       {% endfor %}
     title: Where visitors go
@@ -121,7 +121,7 @@ one it declares no channels or options and reads columns by name (`r.revenue`).
 | `options` | The chart's options with the header's defaults filled. |
 | `width`, `height` | The drawing box in pixels: inside the card padding, below the title. Draw from `(0, 0)` to `(width, height)`. |
 | `uid` | A prefix unique to this chart; use it for every `id` (`id="{{ uid }}-clip"`) so two charts on one board never collide. |
-| `style` | The board's merged style tree, every color a hex value: `style.font.family`, `style.font.color`, `style.muted`, `style.tones.positive`, `style.charts.color.categorical.palette`, `style.charts.axis.grid.color`, `style.palettes.<role>` (a list of colors, or a mapping of stops for a tone). |
+| `style` | The board's merged style tree, every color a hex value: `style.font.family`, `style.font.color`, `style.fonts.secondary.color`, `style.tones.positive`, `style.charts.color.categorical.palette`, `style.charts.axis.grid.color`, `style.palettes.<role>` (a list of colors, or a mapping of stops for a tone). |
 | `variables` | The board's variable values for this render (`variables.region`). |
 | `math` | `sin`, `cos`, `tan`, `asin`, `acos`, `atan2`, `sqrt`, `log`, `exp`, `floor`, `ceil`, `pi`, `tau`. Radians. Write a negative angle as `-1 * math.pi / 2`: `-math.pi` negates `math`. |
 | `d3` | d3's scales, ticks, path generators and pie layout, in snake_case (below). |

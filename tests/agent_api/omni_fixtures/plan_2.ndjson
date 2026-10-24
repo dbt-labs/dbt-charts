@@ -1,0 +1,2 @@
+{"jobs_submitted": {"job-1": "client-1"}}
+{"job_id": "job-1", "status": "PLANNED", "client_result_id": "client-1", "summary": {"display_sql": "SELECT DATE_TRUNC('MONTH', CONVERT_TIMEZONE('America/Los_Angeles', \"CREATED_AT\")) AS m FROM \"ANALYTICS\".\"ORDERS\" GROUP BY 1", "omni_sql": "ignored", "query_timezone": "America/Los_Angeles"}, "query": {}}

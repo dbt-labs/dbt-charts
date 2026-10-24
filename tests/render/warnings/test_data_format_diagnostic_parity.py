@@ -65,7 +65,7 @@ def _map_board() -> str:
         "      - {lat: 40.0, lng: -100.0, val: 10}\n"
         "      - {lat: 41.0, lng: -101.0, val: 20}\n"
         "charts:\n"
-        "  b: {query: q, type: point_map, latitude: lat, longitude: lng, size: val}\n"
+        "  b: {query: q, type: point_map, latitude: lat, longitude: lng, size: val, projection: albersUsa}\n"
         "rows:\n"
         "  - b\n"
     )
@@ -213,6 +213,7 @@ def test_render_first_is_unconditional_on_format(
         *,
         resolve_errors: dict[str, ChartResolveFailure] | EllipsisType = ...,
         authored_slot_heights: dict[str, float] | EllipsisType = ...,
+        hug_board: Board | EllipsisType = ...,
     ) -> tuple[ResolvedBoard, RenderCache]:
         seen_render_first[current_format] = render_first
         return real_build(
@@ -222,6 +223,7 @@ def test_render_first_is_unconditional_on_format(
             render_first,
             resolve_errors=resolve_errors,
             authored_slot_heights=authored_slot_heights,
+            hug_board=hug_board,
         )
 
     for current_format in ("svg", *_DATA_FORMATS):

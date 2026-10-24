@@ -64,7 +64,7 @@ class TestAxisYLabelAlignInvasion:
             {"category": "B", "series": "Y", "value": 4_000_000},
         ]
         resolved = _resolve_bar(
-            chart, partition(None, data), ctx, 800.0, 800.0, {}, None, None
+            chart, partition(None, data), ctx, 800.0, 800.0, {}, None, None, None
         )
         ay = resolved.style.axis_y
         # The bake sets domain=[0.0, 1.0] on the resolved axis scale.
@@ -110,7 +110,7 @@ class TestAxisYLabelAlignInvasion:
             {"category": "B", "series": "Y", "value": 4_000_000},
         ]
         resolved = _resolve_area(
-            chart, partition(None, data), ctx, 800.0, 800.0, {}, None, None
+            chart, partition(None, data), ctx, 800.0, 800.0, {}, None, None, None
         )
         ay = resolved.style.axis_y
         assert ay.scale is not None, "normalize-stack must bake a scale onto the axis"

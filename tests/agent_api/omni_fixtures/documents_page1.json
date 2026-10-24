@@ -1,0 +1,26 @@
+{
+  "pageInfo": {
+    "hasNextPage": true,
+    "nextCursor": "c2",
+    "pageSize": 100,
+    "totalRecords": 3
+  },
+  "records": [
+    {
+      "identifier": "abc12345",
+      "name": "Sales overview",
+      "hasDashboard": true,
+      "deleted": false,
+      "scope": "organization",
+      "url": "https://acme.omniapp.test/dashboards/abc12345"
+    },
+    {
+      "identifier": "wb000001",
+      "name": "Scratch workbook",
+      "hasDashboard": false,
+      "deleted": false,
+      "scope": "restricted",
+      "url": "https://acme.omniapp.test/w/wb000001"
+    }
+  ]
+}

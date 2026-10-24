@@ -39,7 +39,7 @@ _SUPER_SCHEMA_AVAILABLE: bool = (
     importlib.util.find_spec("dbt_charts_super_schema") is not None
 )
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -51,13 +51,16 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, Template, select_autoescape
 
 from dbt_charts._docs_site import docs_site_url
-from dbt_charts.core.board import BoardRenderResult, render_dashboard
+from dbt_charts.core.board import (
+    BoardRenderResult,
+    prefetch_dashboard,
+    render_dashboard,
+)
 from dbt_charts.core.compile.config import (
     get_project_markdown_metadata_table,
     get_project_server_config,
     resolve_cache_boot,
 )
-from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.template.variables import variables_from_query_pairs
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -81,26 +84,23 @@ from dbt_charts.core.inspect.renderer import (
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
     CHARTS_SUBDIR,
-    INDEX_CANDIDATE_NAMES,
     PROJECT_CONFIG_NAME,
     Project,
     ProjectDirectory,
     ProjectPath,
-    board_directory_candidates,
-    board_relpath_candidates,
     board_root_for_relpath,
     board_roots,
     board_slug,
-    package_board_roots,
     posix_relpath,
+    resolve_directory_url,
 )
 
 if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.router import RouteRouter
-from dbt_charts.core.render.dir_context import DirEntry, lazy_dir_context
-from dbt_charts.core.render.nav import nav_context
+from dbt_charts.core.render.dir_context import directory_listing
+from dbt_charts.core.render.nav import nav_content_left, render_nav_html
 from dbt_charts.core.render.svg_cache import (
     MemorySvgStore,
     RenderedSvgCache,
@@ -248,30 +248,6 @@ def _config_mtime(root: Path) -> float:
     return candidate.stat().st_mtime if candidate.exists() else 0.0
 
 
-def _ensure_within_project(candidate: Path, project_dir: Path) -> Path:
-    """Reject paths that escape the project root.
-
-    A ``..`` segment is rejected outright: a board URL never legitimately
-    contains one, and allowing it is unsafe when charts/ holds an intentional
-    symlink. Collapsing ``..`` textually (normpath) and following it on the
-    filesystem disagree — the OS dereferences the symlink first — so a request
-    like ``/tasks/%2e%2e/sibling/secret`` would read a file outside the root.
-    Forbidding ``..`` keeps the access path and the real path in agreement,
-    while intentional symlinks (whose own components contain no ``..``) still
-    serve. An absolute candidate must additionally live under the root.
-    """
-    if ".." in candidate.parts:
-        raise HTTPException(status_code=403, detail="Path outside project directory")
-    if candidate.is_absolute():
-        try:
-            candidate.relative_to(project_dir.resolve())
-        except ValueError as e:
-            raise HTTPException(
-                status_code=403, detail="Path outside project directory"
-            ) from e
-    return candidate
-
-
 def _build_link_context(
     board: ProjectPath,
     serve_storage_prefix: str | None = None,
@@ -289,105 +265,6 @@ def _build_link_context(
         # link rewriting still has a stable, if non-canonical, identity.
         slug = str(PurePosixPath(board.relpath).with_suffix(""))
     return LinkContext(root=root, current_board_slug=slug)
-
-
-def _resolve_folder_index_board(directory: ProjectDirectory) -> ProjectPath | None:
-    """Return the index board for a directory URL, if present.
-
-    Checks index.yml, index.yaml, index.md, and index.markdown in that order.
-    Used for both the project root (/) and nested folder URLs (/support/,
-    /reports/, etc.).
-    """
-    for name in INDEX_CANDIDATE_NAMES:
-        candidate = directory / name
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _directory_candidates(
-    charts_dir: Path,
-    clean_path: str,
-    project: FilesystemProject,
-) -> list[Path]:
-    """Build candidate directories to render for the request path.
-
-    A ``clean_path`` whose leading segment matches an installed package's
-    namespace (e.g. ``pkg_a`` or ``pkg_a/reports``) resolves under that
-    package's own ``charts/`` directory, not ``charts_dir`` — a package root
-    is a sibling subtree, not a child of the host ``charts/``. Root matching
-    itself comes from ``board_directory_candidates`` (shared with the alias
-    index's directory-listing check), so package-name matching is never
-    duplicated.
-    """
-    if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
-        return []
-    candidates: list[Path] = []
-    for root, rest in board_directory_candidates(clean_path, board_roots(project)):
-        base = charts_dir if not root.namespace else project.root / root.relpath
-        candidates.append(base / rest if rest else base)
-    return candidates
-
-
-def _existing_directories(project: FilesystemProject, clean_path: str) -> list[Path]:
-    """Every directory *clean_path* names, host first, then package roots.
-
-    The root lists even before ``charts/`` exists (``list_dir_entries`` returns
-    ``[]``), so the root URL always names the host directory.
-    """
-    directories: list[Path] = []
-    for dir_path in _directory_candidates(project.charts_dir, clean_path, project):
-        _ensure_within_project(dir_path, project.root)
-        if dir_path.is_dir() or not clean_path:
-            directories.append(dir_path)
-    return directories
-
-
-def _host_namespace_board(
-    project: FilesystemProject, clean_path: str
-) -> ProjectPath | None:
-    """The host board at a package's bare namespace slug (``charts/pkg_a.yml``).
-
-    It shadows the package's own index, which serves at the same ``/pkg_a/``.
-    """
-    if clean_path not in {r.namespace for r in package_board_roots(project)}:
-        return None
-    for relpath in board_relpath_candidates(clean_path, board_roots(project)[:1]):
-        if (
-            relpath.endswith(BOARD_CANDIDATE_SUFFIXES)
-            and project.path(relpath).exists()
-        ):
-            return project.path(relpath)
-    return None
-
-
-def _resolve_directory_url(
-    project: FilesystemProject, clean_path: str
-) -> ProjectPath | Path | None:
-    """Resolve a directory-shaped URL: its index board, else the directory to list.
-
-    The root URL prefers the project-root index board. A directory URL may name
-    several directories (a host ``charts/pkg_a/`` and the package's own root);
-    the first index board wins, host before package, and a host board at the
-    namespace slug beats the package's index. ``None`` means *clean_path* names
-    no directory, so it resolves as a board file.
-    """
-    if not clean_path:
-        root_index = _resolve_folder_index_board(project.directory())
-        if root_index is not None:
-            return root_index
-    directories = _existing_directories(project, clean_path)
-    namespace_board = _host_namespace_board(project, clean_path)
-    package_dirs = {project.root / r.relpath for r in package_board_roots(project)}
-    for dir_path in directories:
-        if namespace_board is not None and dir_path in package_dirs:
-            return namespace_board
-        index_board = _resolve_folder_index_board(
-            project.directory_for_fspath(dir_path)
-        )
-        if index_board is not None:
-            return index_board
-    return directories[0] if directories else None
 
 
 def _resolve_board_file_path(project: Project, clean_path: str) -> ProjectPath:
@@ -444,7 +321,7 @@ def _error_palette_for_theme(theme_name: str | None = None) -> dict[str, str]:
     return {
         "panel_bg": rstyle.background,
         "text": rstyle.font.color,
-        "muted": rstyle.muted,
+        "secondary": rstyle.secondary_color,
         "border": rstyle.border.color,
         "accent": rstyle.accent,
         "font_family": rstyle.font.family,
@@ -541,80 +418,6 @@ def _url_mount_dir(path: Path, project: FilesystemProject) -> str:
     return root.relpath if root is not None else ""
 
 
-def _render_nav_html(
-    nav_dir: ProjectDirectory,
-    url_mount_dir: str,
-    current_label: str,
-    board_theme: str | None,
-    content_left: str,
-    show_download: bool,
-) -> str:
-    """Build the top-of-page nav as a plain-HTML fragment for the page body.
-
-    The page is already served as HTML; the nav is page chrome injected just
-    below ``<body>``. It renders directly as HTML — no board, no SVG. Theme
-    colors are injected as CSS custom properties on the ``.dbt-nav`` wrapper,
-    so the nav tracks the served board's theme (including a per-board ``theme:``
-    override) without a hardcoded color table.
-
-    Args:
-        nav_dir: Directory whose contents populate the file-menu dropdown — the
-            served board's parent for board URLs; the directory itself for listings.
-        url_mount_dir: forwarded to ``lazy_dir_context``.
-        current_label: trigger label; also the value matched in the file menu
-            for highlighting and for deriving the trigger href (the URL of the
-            matching peer board, or empty for a directory listing where no peer
-            matches).
-        board_theme: served board's ``theme:`` value (None falls back to default).
-            Passed by the caller so the nav doesn't have to recompile the board.
-        show_download: whether to render the download-format menu (false for
-            listings, which have no exportable chart content).
-
-    Returns "" when there's nothing to show or it fails — the nav is chrome and
-    must never break the page it sits above.
-    """
-    from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.template_loader import render_template
-
-    try:
-        dir_ctx = lazy_dir_context(nav_dir, url_mount_dir=url_mount_dir)
-        current_url = next(
-            (
-                s["url"]
-                for s in dir_ctx["siblings"]
-                if not s["is_dir"] and s["label"] == current_label
-            ),
-            "",
-        )
-        ctx = nav_context(current_label, current_url, dir_ctx)
-        if ctx is None:
-            return ""
-
-        from dbt_charts.core.render.chrome_css import theme_to_css
-
-        rstyle = resolve_style(get_theme_style(board_theme))
-        return render_template(
-            "nav/nav-fragment.html",
-            **ctx,
-            content_left=content_left,
-            show_download=show_download,
-            theme_css=theme_to_css(rstyle),
-        )
-    except (DbtChartsError, ValueError, RuntimeError):
-        if logger.isEnabledFor(logging.DEBUG):
-            raise
-        logger.exception("Error rendering nav for %s", nav_dir.relpath)
-        return ""
-
-
-def _nav_content_left(board: Board | None) -> str:
-    if board is None:
-        return ""
-    frame = board.resolved_style.frame
-    return f"{float(frame.margin) + float(frame.card_padding):g}"
-
-
 def _error_nav(
     nav_dir: ProjectDirectory,
     url_mount_dir: str,
@@ -632,13 +435,14 @@ def _error_nav(
     """
     if not include_nav:
         return ""
-    return _render_nav_html(
+    return render_nav_html(
         nav_dir=nav_dir,
         url_mount_dir=url_mount_dir,
         current_label=current_label,
         board_theme=board_theme,
         content_left="",
         show_download=False,
+        show_actions=True,
     )
 
 
@@ -698,13 +502,14 @@ def _render_board_file(
     )
 
     nav_fragment = (
-        _render_nav_html(
+        render_nav_html(
             nav_dir=file_path.parent,
             url_mount_dir=url_mount_dir,
             current_label=file_fspath.stem,
             board_theme=board_theme,
-            content_left=_nav_content_left(compile_result.board),
+            content_left=nav_content_left(compile_result.board),
             show_download=True,
+            show_actions=True,
         )
         if include_nav
         else ""
@@ -736,7 +541,21 @@ def _render_board_file(
     if result.status == "ok":
         data = result.data
         html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
-        return HTMLResponse(content=html)
+        # Runs after the response is sent.
+        prefetch = BackgroundTasks()
+        if result.prefetch_query_names and result_cache is not None:
+            prefetch.add_task(
+                prefetch_dashboard,
+                board,
+                variables,
+                project=project,
+                adapter_registry=adapter_registry,
+                result_cache=result_cache,
+                max_workers=max_workers,
+                compile_result=compile_result,
+                clock=clock,
+            )
+        return HTMLResponse(content=html, background=prefetch)
 
     # Structured board errors and validation/chart errors all share the same
     # served error page.
@@ -989,7 +808,6 @@ def _render_directory_listing(
     package board with the same slug.
     """
     from dbt_charts.core.compile import compile
-    from dbt_charts.core.render.dir_context import list_dir_entries
 
     dir_handle = dir_handles[0]
 
@@ -1004,66 +822,24 @@ def _render_directory_listing(
     # The root directory has an empty name; "/" is how the nav trigger labels it.
     nav_label = dir_handle.name or "/"  # type-state: silent_fallback — root's label
 
-    listing_lines: list[str] = []
-    if url_path:
-        parent_parts = url_path.strip("/").split("/")[:-1]
-        parent_url = "/" + "/".join(parent_parts)
-        listing_lines.append(f"- [../]({parent_url or '/'})")
-
-    url_prefix = f"/{url_path}" if url_path else ""
-    merged: dict[str, DirEntry] = {}
-    for handle in dir_handles:
-        for found in list_dir_entries(handle, url_prefix):
-            merged.setdefault(found.url, found)
-    entries = sorted(merged.values(), key=lambda e: (not e.is_dir, e.name.lower()))
-    for entry in entries:
-        # /inspect/<template> links require ?model=...&column=... query params;
-        # advertising them as bare entries in the root listing 500s on click.
-        if entry.name == "inspect" and not url_path:
-            continue
-        if entry.is_dir:
-            listing_lines.append(f"- [{entry.name}/]({entry.url})")
-        else:
-            # list_dir_entries already restricts files to renderable board
-            # extensions, so non-board files never reach here.
-            listing_lines.append(f"- [{entry.name}]({entry.url})")
-
-    # The root listing additionally shows one virtual group per installed
-    # package that ships boards — a package root is a sibling subtree of
-    # charts/, not a child directory list_dir_entries can see.
-    if not url_path:
-        for root in sorted(package_board_roots(project), key=lambda r: r.namespace):
-            if f"/{root.namespace}/" not in merged:
-                listing_lines.append(f"- [{root.namespace}/](/{root.namespace}/)")
-
-    # ``directory_title``/``listing_markdown`` carry untrusted filenames, so they
-    # reach the board only as render-time Jinja variable values below -- never
-    # spliced into template text ahead of a render (same rule as
-    # ``expand_query_refs``'s docstring: a value substituted before the final
-    # pass is live template source by the time that pass reads it).
-    listing_variables = {
-        "directory_title": f"/{url_path}" if url_path else "/",
-        "listing_markdown": "\n".join(listing_lines),
-    }
+    board_text, listing_variables = directory_listing(dir_handles, url_path, project)
 
     try:
-        template_path = files("dbt_charts.core.serve.templates").joinpath(
-            "directory.yml"
-        )
-        compile_result = compile(template_path.read_text(encoding="utf-8"))
+        compile_result = compile(board_text)
         if compile_result.errors or compile_result.board is None:
             raise RuntimeError(
                 f"Directory board failed: {[e.message for e in compile_result.errors]}"
             )
 
         nav_fragment = (
-            _render_nav_html(
+            render_nav_html(
                 nav_dir=dir_handle,
                 url_mount_dir=url_mount_dir,
                 current_label=nav_label,
                 board_theme=None,
-                content_left=_nav_content_left(compile_result.board),
+                content_left=nav_content_left(compile_result.board),
                 show_download=False,
+                show_actions=True,
             )
             if include_nav
             else ""
@@ -1539,20 +1315,24 @@ def create_server(
 
         if clean_path == CHARTS_SUBDIR or clean_path.startswith(f"{CHARTS_SUBDIR}/"):
             raise HTTPException(status_code=404, detail="Not found")
+        if ".." in clean_path.split("/"):
+            raise HTTPException(
+                status_code=403, detail="Path outside project directory"
+            )
 
         # /foo.svg, /foo.png, /foo.pdf — render and serve in that format.
         for url_suffix, fmt in _URL_FORMAT_SUFFIXES.items():
             if clean_path.endswith(url_suffix):
                 base = clean_path[: -len(url_suffix)]
-                resolved = _resolve_directory_url(app.state.project, base)
-                if isinstance(resolved, Path):
+                resolved = resolve_directory_url(app.state.project, base)
+                if isinstance(resolved, list) and resolved:
                     raise HTTPException(
                         status_code=404,
                         detail=f"No board at /{base}/" if base else "No board at /",
                     )
                 file_path = (
                     resolved
-                    if resolved is not None
+                    if isinstance(resolved, ProjectPath)
                     else _resolve_board_file_path(app.state.project, base)
                 )
                 raw_variables = variables_from_query_pairs(
@@ -1627,7 +1407,7 @@ def create_server(
             return RedirectResponse(url=redirect_url, status_code=302)
 
         project: FilesystemProject = app.state.project
-        resolved = _resolve_directory_url(project, clean_path)
+        resolved = resolve_directory_url(project, clean_path)
         if isinstance(resolved, ProjectPath):
             return _render_board_file(
                 resolved,
@@ -1642,15 +1422,14 @@ def create_server(
                 download_format=download_format,
                 include_nav=app.state.server_nav and not embed,
             )
-        if resolved is not None:
+        if resolved:
             return _render_directory_listing(
-                [
-                    project.directory_for_fspath(d)
-                    for d in _existing_directories(project, clean_path)
-                ],
+                resolved,
                 clean_path,
                 project=project,
-                url_mount_dir=_url_mount_dir(resolved, project),
+                url_mount_dir=_url_mount_dir(
+                    project.root / resolved[0].relpath, project
+                ),
                 clock=clock,
                 result_cache=app.state.result_cache,
                 include_nav=app.state.server_nav,

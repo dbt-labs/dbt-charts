@@ -1,0 +1,3 @@
+kind: Fixes
+body: Table digits now use the numeral font set in style.fonts.numeral instead of following the table's body font.
+time: 2026-10-23T16:05:43.779565-07:00

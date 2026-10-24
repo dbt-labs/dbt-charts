@@ -725,7 +725,15 @@ class ResolvedStyle:
 
     background: str
     accent: str
-    muted: str
+    # ``fonts.secondary.color``: the ink the KPI support row falls back to when
+    # no conditional, slot, or tone color applies, and the dev server's error
+    # page's secondary text. Named fonts are expanded into slots, so the
+    # registry entry is carried here for the readers that have no slot to read.
+    secondary_color: str
+    # ``fonts.numeral.family``: the face a table sets its digits in. Named fonts
+    # are expanded into slots, so the registry entry is carried here for the
+    # reader that has no slot to read.
+    numeral_family: str
     # Semantic tone palette (positive/negative/warning/info) — board level,
     # shared by KPI support rows and table conditional glyphs.
     tones: KpiTonesStyle

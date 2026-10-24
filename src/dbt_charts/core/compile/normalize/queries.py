@@ -485,12 +485,15 @@ def normalize_query(
         source_name = (
             query.source if is_sql_query(query) or is_schema_query(query) else None
         )
-        query.cache = resolve_cache_policy(
-            cache_root if cache_root is not None else shipped_cache_root(),
-            source_cache_layer(sources, source_name, name),
-            board_cache,
-            authored_cache,
-        )
+        try:
+            query.cache = resolve_cache_policy(
+                cache_root if cache_root is not None else shipped_cache_root(),
+                source_cache_layer(sources, source_name, name),
+                board_cache,
+                authored_cache,
+            )
+        except CompilationError as e:
+            raise CompilationError(f"Query '{name}': {e.message}") from e
 
     return query
 

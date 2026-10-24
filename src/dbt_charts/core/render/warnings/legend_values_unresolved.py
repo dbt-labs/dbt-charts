@@ -100,7 +100,7 @@ def _layered_domain_and_aliases(
     if not base_y_is_quantitative:
         return domain, aliases
     for layer in chart.layers:
-        if layer.y is None:
+        if layer.y is None or not layer.legend:
             continue
         rows = _layer_rows(ctx, chart_id, layer.query_name, base_rows)
         layer_color_type = (

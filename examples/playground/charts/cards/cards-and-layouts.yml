@@ -231,9 +231,6 @@ charts:
       - category
     columns:
       - region
-    values:
-      - revenue
-      - units_sold
     style:
       columns:
         revenue:

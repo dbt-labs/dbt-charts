@@ -1,11 +1,12 @@
-"""Tests for accent/muted board-to-board cascade on Style/ResolvedStyle.
+"""Tests for accent/secondary-font board-to-board cascade on Style/ResolvedStyle.
 
-ADR-003/ADR-009: accent and muted are semantic color tokens defined on Style.
+ADR-003/ADR-009: accent is a semantic color token defined on Style, and the
+secondary text ink is the named font ``fonts.secondary``.
 They live at root level (1d) and cascade to sub-fields within a board
 (_apply_token_cascade). Board-to-board cascade via compile_board_resolved_style()
 (1c) is per-field, driven by each Style field's own Merge marker (see
 compile/models/markers.py and style/theme/style.py): most fields a parent
-board explicitly authors — muted, accent, font, or anything else without a
+board explicitly authors — fonts, accent, font, or anything else without a
 NotInherited marker — reach a nested board, falling back to that
 nested board's own theme for anything no ancestor authored. A field marked
 NotInherited (a per-board structural or root-only concern, not
@@ -38,11 +39,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 # ---------------------------------------------------------------------------
 
 
-def test_compiled_style_accepts_muted():
-    s = get_theme_style().model_copy(update={"muted": "#888888"})
-    assert s.muted == "#888888"
-
-
 def test_compiled_style_accepts_accent():
     s = get_theme_style().model_copy(update={"accent": "#ff0000"})
     assert s.accent == "#ff0000"
@@ -53,20 +49,19 @@ def test_compiled_style_accepts_accent():
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_style_muted_passthrough():
-    resolved = resolve_style(get_theme_style().model_copy(update={"muted": "#888888"}))
-    assert resolved.muted == "#888888"
-
-
 def test_resolve_style_accent_passthrough():
     resolved = resolve_style(get_theme_style().model_copy(update={"accent": "#3b82f6"}))
     assert resolved.accent == "#3b82f6"
 
 
-def test_resolve_style_muted_via_patch():
-    patch = StylePatch.model_validate({"muted": "#aabbcc"})
+def _secondary(color: str) -> dict:
+    return {"fonts": {"secondary": {"color": color}}}
+
+
+def test_resolve_style_secondary_color_via_patch():
+    patch = StylePatch.model_validate(_secondary("#aabbcc"))
     resolved = resolve_style(get_theme_style(), patch)
-    assert resolved.muted == "#aabbcc"
+    assert resolved.secondary_color == "#aabbcc"
 
 
 def test_resolve_style_accent_via_patch():
@@ -76,11 +71,8 @@ def test_resolve_style_accent_via_patch():
 
 
 def test_resolve_style_returns_resolved_style_type_with_tokens():
-    resolved = resolve_style(
-        get_theme_style().model_copy(update={"muted": "#888888", "accent": "#3b82f6"})
-    )
+    resolved = resolve_style(get_theme_style().model_copy(update={"accent": "#3b82f6"}))
     assert isinstance(resolved, ResolvedStyle)
-    assert resolved.muted == "#888888"
     assert resolved.accent == "#3b82f6"
 
 
@@ -91,13 +83,13 @@ def test_resolve_style_returns_resolved_style_type_with_tokens():
 # ---------------------------------------------------------------------------
 
 
-def test_muted_does_not_cascade_to_spark_bar_track():
-    """muted is the secondary-text token; the track fill stays theme-pinned."""
+def test_secondary_font_does_not_cascade_to_spark_bar_track():
+    """The secondary font is text ink; the track fill stays theme-pinned."""
     base = get_theme_style()
-    patched = base.model_copy(update={"muted": "#ff00ff"})
-    resolved = resolve_style(patched)
-    assert resolved.muted == "#ff00ff"
-    ctx = resolve_chart_style_context(patched)
+    patch = StylePatch.model_validate(_secondary("#ff00ff"))
+    resolved = resolve_style(base, patch)
+    assert resolved.secondary_color == "#ff00ff"
+    ctx = resolve_chart_style_context(base, patch)
     assert ctx.spark_bar.bar.background == base.charts.spark_bar.bar.background
 
 
@@ -144,9 +136,9 @@ def _compile_and_get_child_resolved(
     return child_board.resolved_style
 
 
-def test_muted_cascades_to_child_resolved_style():
-    child_rs = _compile_and_get_child_resolved(parent_style={"muted": "#aabbcc"})
-    assert child_rs.muted == "#aabbcc"
+def test_secondary_color_cascades_to_child_resolved_style():
+    child_rs = _compile_and_get_child_resolved(parent_style=_secondary("#aabbcc"))
+    assert child_rs.secondary_color == "#aabbcc"
 
 
 def test_accent_cascades_to_child_resolved_style():
@@ -154,12 +146,12 @@ def test_accent_cascades_to_child_resolved_style():
     assert child_rs.accent == "#3b82f6"
 
 
-def test_child_muted_overrides_parent():
+def test_child_secondary_color_overrides_parent():
     child_rs = _compile_and_get_child_resolved(
-        parent_style={"muted": "#aabbcc"},
-        child_style={"muted": "#cccccc"},
+        parent_style=_secondary("#aabbcc"),
+        child_style=_secondary("#cccccc"),
     )
-    assert child_rs.muted == "#cccccc"
+    assert child_rs.secondary_color == "#cccccc"
 
 
 def test_child_accent_overrides_parent():
@@ -182,15 +174,15 @@ def test_background_does_not_cascade_to_child_with_unrelated_style_patch():
     assert child_rs.background == "transparent"
 
 
-def test_muted_cascades_through_two_levels():
-    """grandparent muted propagates all the way to grandchild."""
+def test_secondary_color_cascades_through_two_levels():
+    """grandparent secondary font propagates all the way to grandchild."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
     from dbt_charts.core.compile.normalize.dispatch import normalize_board
 
     grandparent = AuthoredBoard.model_validate(
         {
             "title": "grandparent",
-            "style": {"muted": "#aabbcc"},
+            "style": _secondary("#aabbcc"),
             "rows": [{"title": "child", "rows": [{"title": "grandchild"}]}],
         }
     )
@@ -199,11 +191,11 @@ def test_muted_cascades_through_two_levels():
     assert child_board is not None
     grandchild_board = child_board.layout.items[0].board
     assert grandchild_board is not None
-    assert grandchild_board.resolved_style.muted == "#aabbcc"
+    assert grandchild_board.resolved_style.secondary_color == "#aabbcc"
 
 
 # ---------------------------------------------------------------------------
-# Ancestor-authored fields beyond muted/accent
+# Ancestor-authored fields beyond secondary font/accent
 # ---------------------------------------------------------------------------
 
 
@@ -419,7 +411,7 @@ def test_styled_nested_board_does_not_inherit_not_inherited_fields(field: str) -
     authored, read = _NOT_INHERITED_CASES[field]
     theme_default = read(resolve_style(get_theme_style()))
     child_rs = _compile_and_get_child_resolved(
-        parent_style={field: authored}, child_style={"muted": "#888888"}
+        parent_style={field: authored}, child_style=_secondary("#888888")
     )
     assert read(child_rs) == theme_default
 
@@ -430,7 +422,7 @@ def test_styled_nested_board_inherits_named_fonts() -> None:
             "fonts": {"mine": {"color": "#a1a1a1"}},
             "title": {"font": "mine"},
         },
-        child_style={"muted": "#888888"},
+        child_style=_secondary("#888888"),
     )
     assert child_rs.title.font.color == "#a1a1a1"
 
@@ -449,7 +441,7 @@ def test_unstyled_nested_board_resolves_like_a_styled_one() -> None:
     }
     unstyled = _compile_and_get_child_resolved(parent_style=parent_style)
     styled = _compile_and_get_child_resolved(
-        parent_style=parent_style, child_style={"muted": "#888888"}
+        parent_style=parent_style, child_style=_secondary("#888888")
     )
     assert unstyled.gap == styled.gap == 33
     assert unstyled.frame.card_padding == theme_default.frame.card_padding + 100

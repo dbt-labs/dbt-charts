@@ -36,7 +36,9 @@ from dbt_charts.core.compile.models.board.authored import (
 from dbt_charts.core.compile.models.chart.authored import (
     AUTHORED_CHART_VARIANTS,
     AuthoredChart,
+    CartesianLayer,
 )
+from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.config import ExecutionConfig
 from dbt_charts.core.compile.models.constraints import (
     Constraint,
@@ -117,6 +119,8 @@ class UnionSpec:
     # authored queries whose type tag may be inferred from variant-only keys.
     discriminator: str | None
     variants: dict[str, str]  # tag -> model name (e.g. "bar" -> "BarChart")
+    # Leads the discriminator property's description; None without a discriminator.
+    discriminator_description: str | None = None
 
 
 @dataclasses.dataclass
@@ -161,7 +165,26 @@ def schema_path_to_yaml(abs_path: str) -> str:
 _UNION_ALIASES = {
     AuthoredChart: "AuthoredChart",
     AuthoredQuery: "AuthoredQuery",
+    Annotation: "Annotation",
+    CartesianLayer: "CartesianLayer",
 }
+
+# Field-level `Annotated[A | B, Field(discriminator="type")]` aliases: the
+# variants are tagged by their own `type` Literal rather than by `Tag(...)`.
+_FIELD_DISCRIMINATED_ALIASES = {
+    "Annotation": (Annotation, "A rule, band, note or trend drawn on a chart."),
+    "CartesianLayer": (CartesianLayer, "A mark layered onto a cartesian chart."),
+}
+
+
+def _is_field_discriminated(
+    annotation: Any,  # type-state: explicit_any — arbitrary typing construct
+) -> bool:
+    """Whether ``annotation`` is ``Annotated[Union, Field(discriminator=...)]``."""
+    return get_origin(annotation) is Annotated and any(
+        isinstance(m, FieldInfo) and m.discriminator is not None
+        for m in annotation.__metadata__
+    )
 
 
 def _union_alias_variant_classes(
@@ -339,6 +362,12 @@ def _nested_model_names(annotation: Any) -> list[str]:
     stripped = _without_tag(annotation)
     if stripped in _UNION_ALIASES:
         return [_UNION_ALIASES[stripped]]
+    if _is_field_discriminated(stripped):
+        raise ValueError(
+            f"{stripped!r} is a field-level discriminated union missing from "
+            "_UNION_ALIASES and _FIELD_DISCRIMINATED_ALIASES; without it the "
+            "schema degrades to an undiscriminated anyOf"
+        )
     annotation = _unwrap_annotated(annotation)
     if annotation in _UNION_ALIASES:
         return [_UNION_ALIASES[annotation]]
@@ -1223,8 +1252,34 @@ def introspect() -> AuthorableSchema:
         union=UnionSpec(
             discriminator="type",
             variants=dict(AUTHORED_CHART_VARIANTS),
+            discriminator_description="Chart family selector.",
         ),
     )
+    for union_name, (alias, doc) in _FIELD_DISCRIMINATED_ALIASES.items():
+        discriminator = next(
+            m.discriminator
+            for m in get_args(alias)[1:]
+            if isinstance(m, FieldInfo) and isinstance(m.discriminator, str)
+        )
+        variants = {
+            tag: cls.__name__
+            for cls in _UNION_ALIAS_VARIANTS[union_name]
+            for tag in get_args(cls.model_fields[discriminator].annotation)
+        }
+        collected[union_name] = AuthorableModel(
+            name=union_name,
+            doc=doc,
+            fields=[],
+            union=UnionSpec(
+                discriminator=discriminator,
+                variants=variants,
+                discriminator_description=(
+                    _UNION_ALIAS_VARIANTS[union_name][0]
+                    .model_fields[discriminator]
+                    .description
+                ),
+            ),
+        )
     # Query tags are optional in YAML because normalize_query_value infers them
     # from variant-only keys. Keep the synthetic editor/schema node as a union of
     # the concrete shapes instead of flattening their fields; flattening turns a

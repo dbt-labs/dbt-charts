@@ -5,6 +5,8 @@ edition = "2021"
 description = "Text measurement from the shipped TTFs: `FontBook` and the `Measure` handle layout receives. Only layout code takes it; `scene` and `print` never see it."
 
 [dependencies]
-mdsvg = { path = "../mdsvg" }
+d3rs = { path = "../d3rs" }
 rustybuzz = "0.20"
 ttf-parser = "0.25"
+once_cell = "1"
+serde = { version = "1", features = ["derive"] }

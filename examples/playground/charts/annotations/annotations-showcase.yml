@@ -1,0 +1,771 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Annotations Showcase
+notes: |
+  Twelve charts, each with annotations: rules, bands, notes (point, callout,
+  enclosure, frame) and trends, on line, area, bar and scatter charts.
+  Annotations draw only on the Rust engine.
+
+source: examples_db
+
+queries:
+  monthly:
+    sql: |
+      SELECT
+        (date '2024-01-01' + to_months(i))::date AS month,
+        round(18 + 0.45 * i + 2.5 * sin(i * 0.9), 2) AS revenue
+      FROM range(24) AS t(i)
+      ORDER BY month
+    formats:
+      revenue: currency
+
+  by_segment:
+    sql: |
+      SELECT
+        (date '2024-01-01' + to_months(i))::date AS month,
+        s.segment,
+        round(s.base + s.slope * i + s.wobble * sin(i * 0.8 + s.phase), 2) AS revenue
+      FROM range(24) AS t(i)
+      CROSS JOIN (
+        VALUES
+          ('SMB', 6.0, 0.10, 0.8, 0.0),
+          ('Mid-market', 8.0, 0.25, 1.2, 1.0),
+          ('Enterprise', 10.0, 0.45, 2.0, 2.0)
+      ) AS s(segment, base, slope, wobble, phase)
+      ORDER BY month, segment
+    formats:
+      revenue: currency
+
+  recent:
+    sql: |
+      SELECT
+        (date_trunc('month', current_date) - to_months(17 - i))::date AS month,
+        round(40 + 2.2 * i + 5 * sin(i * 0.7), 1) AS orders
+      FROM range(18) AS t(i)
+      ORDER BY month
+
+  regions:
+    sql: |
+      SELECT * FROM (
+        VALUES
+          ('East', 14.2),
+          ('West', 17.8),
+          ('North', 9.6),
+          ('South', 12.4),
+          ('Central', 8.1),
+          ('International', 11.3)
+      ) AS t(region, bookings)
+
+  monthly_orders:
+    sql: |
+      SELECT
+        (date '2024-01-01' + to_months(i))::date AS month,
+        round(120 + 6 * i + 18 * sin(i * 0.9), 0) AS orders
+      FROM range(12) AS t(i)
+      ORDER BY month
+
+  accounts:
+    sql: |
+      SELECT
+        10 + 8 * i AS seats,
+        round(0.9 * power(10 + 8 * i, 0.95) * (1 + 0.3 * sin(i * 2.1)), 1) AS arr,
+        CASE i % 3 WHEN 0 THEN 'SMB' WHEN 1 THEN 'Mid-market' ELSE 'Enterprise' END AS segment
+      FROM range(48) AS t(i)
+      ORDER BY seats
+    formats:
+      arr: currency
+
+  subscriptions:
+    sql: |
+      SELECT
+        (date '2024-01-01' + to_months(i))::date AS month,
+        round(40 + 3 * i + 6 * sin(i * 0.9), 1) AS revenue,
+        round(0.045 + 0.012 * sin(i * 0.7) - 0.0006 * i, 4) AS churn_rate
+      FROM range(12) AS t(i)
+      ORDER BY month
+    formats:
+      revenue: currency_whole
+      churn_rate: percent_whole
+
+charts:
+  # 1. Line: dashed target, dotted event, a curved arrow, a circled dip.
+  goal_line:
+    query: monthly
+    type: line
+    title: 1. Revenue against goal ($M)
+    x: month
+    y: revenue
+    annotations:
+      - type: rule
+        y: 25
+        text: FY goal
+        style:
+          marks:
+            rule:
+              opacity: 0.9
+              stroke:
+                color: "#2e7d32"
+                width: 2
+                dasharray: "6 3"
+            text:
+              font:
+                color: "#2e7d32"
+                size: 13
+                weight: bold
+      - type: rule
+        x: "2024-07-01"
+        text: Pricing change
+        style:
+          marks:
+            rule:
+              stroke:
+                color: category[3]
+                width: 2.5
+                dasharray: "1 4"
+            text:
+              font:
+                style: italic
+                family: "Georgia, serif"
+                color: category[3]
+              dx: 4
+      - type: note
+        y: max()
+        text: Record high
+        connector: arrow
+        style:
+          marks:
+            line:
+              curve: natural
+              opacity: 0.85
+              length: 34
+              stroke:
+                color: "#c2410c"
+                width: 1.5
+            text:
+              font:
+                color: "#c2410c"
+                weight: 600
+      - type: note
+        x: "2025-01-01"
+        y: 20.95
+        text: Winter dip
+        connector: line
+        enclose: circle
+        style:
+          marks:
+            circle:
+              opacity: 0.8
+              radius: 9
+              stroke:
+                color: "#6d28d9"
+                width: 2
+                dasharray: "2 2"
+            text:
+              position:
+                edge: bottom
+                align: center
+                overlay: false
+
+  # 2. Line with a color channel: faint average rules behind the data.
+  segment_line:
+    query: by_segment
+    type: line
+    title: 2. Segment revenue and averages ($M)
+    x: month
+    y: revenue
+    color: segment
+    annotations:
+      - type: rule
+        y: avg()
+        series: each
+        text: "{{ series }} avg"
+        plane: background
+        style:
+          marks:
+            rule:
+              opacity: 0.7
+              stroke:
+                width: 1.5
+                dasharray: auto
+            text:
+              halo: 3
+              halo_opacity: 0.9
+              position:
+                edge: bottom
+                align: end
+                overlay: false
+
+  # 3. Area: a promo band with an outline, a trend with a custom interval.
+  promo_area:
+    query: monthly
+    type: area
+    title: 3. Summer promo and trend ($M)
+    x: month
+    y: revenue
+    annotations:
+      - type: band
+        x:
+          from: 2025-06-01
+          to: 2025-08-01
+        text: Summer promo
+        plane: foreground
+        style:
+          marks:
+            rect:
+              fill: category[2]
+              opacity: 0.3
+              stroke:
+                color: category[2]
+                width: 1.5
+                dasharray: "4 2"
+            text:
+              font:
+                weight: 700
+                size: 12
+              position:
+                edge: top
+                align: center
+                overlay: true
+      - type: trend
+        fit: linear()
+        interval: confidence(95)
+        text: Linear trend with a 95% band
+        style:
+          marks:
+            line:
+              opacity: 0.95
+              stroke:
+                color: "#f59e0b"
+                width: 2.5
+                dasharray: "10 4"
+            area:
+              fill: "#f59e0b"
+              opacity: 0.25
+            text:
+              max_width: 110
+              font:
+                color: "#b45309"
+                line_height: 1.2
+              box:
+                visible: true
+                fill: "#ffffff"
+                opacity: 0.9
+                padding: 4
+                radius: 4
+
+  # 4. Area: clock anchors, a boxed median label.
+  clock_area:
+    query: recent
+    type: bar
+    title: 4. Orders this month
+    x: month
+    y: orders
+    annotations:
+      - type: band
+        x: current(month)
+        text: Now
+        style:
+          marks:
+            rect:
+              fill: "#fde68a"
+              opacity: 0.6
+            text:
+              font:
+                weight: bold
+      - type: rule
+        y: median()
+        text: Median
+        style:
+          marks:
+            rule:
+              stroke:
+                color: "#ffffff"
+                width: 2
+                dasharray: "4 3"
+            text:
+              box:
+                visible: true
+                fill: "#ffffff"
+                opacity: 1
+                padding: 5
+                radius: 3
+                stroke:
+                  color: "#9ca3af"
+                  width: 1
+              position:
+                edge: top
+                align: start
+                overlay: false
+
+  # 5. Vertical bars: a band behind the bars, a quota, a wrapped frame note.
+  region_bars:
+    query: regions
+    type: bar
+    title: 5. Bookings by region
+    x: region
+    y: bookings
+    style:
+      orientation: vertical
+    annotations:
+      - type: band
+        x: East
+        text: Pilot
+        plane: background
+        style:
+          marks:
+            rect:
+              fill: "#fde68a"
+              opacity: 0.55
+              stroke:
+                color: "#d97706"
+                width: 1
+            text:
+              font:
+                weight: bold
+      - type: rule
+        y: 15
+        text: Quota
+        style:
+          marks:
+            rule:
+              stroke:
+                color: "#b91c1c"
+                width: 2
+                dasharray: "8 4"
+            text:
+              font:
+                color: "#b91c1c"
+                weight: 600
+      - type: note
+        text: Quota is per region, in $M. Bookings count signed contracts only.
+        style:
+          marks:
+            text:
+              max_width: 150
+              position:
+                edge: top
+                align: end
+                overlay: true
+
+  # 6. Horizontal bars: an enclosed note, a leader line, a halo over a bar.
+  region_bars_horizontal:
+    query: regions
+    type: bar
+    title: 6. Bookings by region, horizontal
+    x: region
+    y: bookings
+    annotations:
+      - type: band
+        x: South
+        text: Reorg
+        style:
+          marks:
+            rect:
+              fill: category[4]
+              opacity: 0.25
+            text:
+              position:
+                edge: right
+                align: center
+                overlay: true
+      - type: rule
+        y: avg()
+        text: Average
+        style:
+          marks:
+            rule:
+              stroke:
+                color: category[1]
+                width: 2
+                dasharray: auto
+            text:
+              font:
+                color: category[1]
+                weight: 600
+              halo: 4
+              halo_opacity: 1
+      - type: note
+        x: North
+        y: 9.6
+        text: Hiring gap
+        enclose: rect
+        connector: line
+        style:
+          marks:
+            line:
+              length: 36
+              stroke:
+                color: "#0369a1"
+            rect:
+              fill: "#e0f2fe"
+              opacity: 0.9
+              padding: 6
+              stroke:
+                color: "#0369a1"
+                width: 1.5
+                dasharray: "3 2"
+            text:
+              font:
+                color: "#0c4a6e"
+              dx: 135
+      - type: note
+        x: Central
+        y: 8.1
+        text: Needs a rep
+        connector: line
+        style:
+          marks:
+            line:
+              length: 14
+              stroke:
+                color: "#0369a1"
+                width: 1
+            text:
+              position:
+                edge: right
+                align: center
+                overlay: false
+
+  # 7. Date bars: a faint outage band, a bar-safe halo label, a trend interval.
+  monthly_bars:
+    query: monthly_orders
+    type: bar
+    title: 7. Orders by month
+    x: month
+    y: orders
+    annotations:
+      - type: band
+        x:
+          from: 2024-05-01
+          to: 2024-07-01
+        text: Outage
+        style:
+          marks:
+            rect:
+              fill: "#ef4444"
+              opacity: 0.15
+              stroke:
+                color: "#ef4444"
+                width: 1
+            text:
+              position:
+                edge: top
+                align: center
+                overlay: false
+      - type: rule
+        y: avg()
+        text: Avg {{ value | format }}
+        style:
+          marks:
+            rule:
+              stroke:
+                color: "#6b7280"
+                width: 1.5
+                dasharray: "5 3"
+            text:
+              font:
+                weight: bold
+                size: 12
+              halo: 4
+              halo_opacity: 1
+              position:
+                edge: top
+                align: end
+                overlay: true
+      - type: trend
+        fit: linear()
+        interval: prediction(90)
+        plane: foreground
+        style:
+          marks:
+            line:
+              stroke:
+                color: "#0d9488"
+                width: 3
+                dasharray: "2 3"
+            area:
+              fill: "#0d9488"
+              opacity: 0.2
+
+  # 8. Scatter: an outlined box band, an enclosed arrow note, a violet trend.
+  account_scatter:
+    query: accounts
+    type: scatter
+    title: 8. ARR by account size ($k)
+    x: seats
+    y: arr
+    annotations:
+      - type: band
+        x:
+          from: 100
+          to: 220
+        y:
+          from: 60
+          to: 160
+        text: Sweet spot
+        style:
+          marks:
+            rect:
+              fill: "#10b981"
+              opacity: 0.12
+              stroke:
+                color: "#047857"
+                width: 1.5
+                dasharray: "6 3"
+            text:
+              font:
+                color: "#047857"
+                weight: bold
+              position:
+                edge: right
+                align: end
+                overlay: false
+      - type: note
+        y: max()
+        text: Largest account
+        enclose: circle
+        connector: arrow
+        style:
+          marks:
+            circle:
+              radius: 14
+              opacity: 0.9
+              stroke:
+                color: "#be123c"
+                width: 2
+            line:
+              stroke:
+                color: "#be123c"
+            text:
+              font:
+                color: "#be123c"
+              dy: -4
+      - type: trend
+        fit: linear()
+        interval: confidence(95)
+        style:
+          marks:
+            line:
+              stroke:
+                color: "#7c3aed"
+                width: 2
+            area:
+              fill: "#7c3aed"
+              opacity: 0.18
+
+  # 9. Scatter with a color channel: a dashed middle band, a boxed callout.
+  segment_scatter:
+    query: accounts
+    type: scatter
+    title: 9. Segments and the middle 50% ($k)
+    x: seats
+    y: arr
+    color: segment
+    annotations:
+      - type: band
+        y:
+          from: percentile(25)
+          to: percentile(75)
+        series: total
+        text: Middle 50%
+        style:
+          marks:
+            rect:
+              fill: category[5]
+              opacity: 0.12
+              stroke:
+                color: category[5]
+                width: 1
+                dasharray: "2 2"
+            text:
+              position:
+                edge: left
+                align: start
+                overlay: true
+      - type: rule
+        y: avg()
+        series: each
+        text: "{{ series }} avg"
+        style:
+          marks:
+            rule:
+              stroke:
+                width: 1.5
+                dasharray: "6 3"
+            text:
+              position:
+                edge: bottom
+                align: start
+                overlay: false
+      - type: note
+        y: max()
+        series: total
+        text: Mid-market peaks here
+        connector: line
+        style:
+          marks:
+            line:
+              curve: natural
+              length: 30
+            text:
+              box:
+                visible: true
+                fill: "#fff7ed"
+                opacity: 0.95
+                padding: 6
+                radius: 6
+                stroke:
+                  color: "#ea580c"
+                  width: 1.5
+
+  # 10. Scatter on a log y axis: a smoothed curve, a dotted target.
+  account_scatter_log:
+    query: accounts
+    type: scatter
+    title: 10. ARR on a log scale ($k)
+    x: seats
+    y: arr
+    style:
+      axis_y:
+        scale:
+          continuous:
+            type: log
+    annotations:
+      - type: trend
+        fit: polynomial(2)
+        text: Curved fit
+        style:
+          marks:
+            line:
+              curve: natural
+              stroke:
+                color: "#0891b2"
+                width: 2.5
+            text:
+              font:
+                color: "#0e7490"
+                weight: 600
+      - type: rule
+        y: 100
+        text: 100k ARR
+        style:
+          marks:
+            rule:
+              stroke:
+                color: "#4b5563"
+                width: 2
+                dasharray: "1 4"
+            text:
+              position:
+                edge: top
+                align: start
+                overlay: false
+
+  # 11. Line: no annotation here sets a style; rule and band take the chart's
+  # own style.annotations defaults.
+  orders_defaults:
+    query: recent
+    type: line
+    title: 11. Orders with chart-level annotation defaults
+    x: month
+    y: orders
+    style:
+      annotations:
+        rule:
+          marks:
+            rule:
+              stroke:
+                color: "#be123c"
+                width: 2
+                dasharray: "8 3"
+            text:
+              font:
+                color: "#be123c"
+                weight: bold
+        band:
+          marks:
+            rect:
+              fill: "#0ea5e9"
+              opacity: 0.15
+    annotations:
+      - type: rule
+        y: 60
+        text: Capacity limit
+      - type: band
+        y:
+          from: 40
+          to: 50
+        text: Plan range
+      - type: note
+        y: max()
+        text: Peak month
+        connector: line
+
+  # 12. Bars with a churn line on its own right axis: y_column picks the scale
+  # and the rows each annotation reads.
+  revenue_churn:
+    query: subscriptions
+    type: bar
+    title: 12. Revenue and Churn
+    x: month
+    y: revenue
+    warnings_ignore:
+      - WARN-DUAL-AXIS-COMPETING-SCALES
+    layers:
+      - type: line
+        y: churn_rate
+        axis_y:
+          position: right
+          grid:
+            visible: false
+    annotations:
+      - type: rule
+        y: avg()
+        y_column: revenue
+        text: "Avg revenue {{ value | format }}"
+        style:
+          marks:
+            text:
+              position:
+                edge: top
+                align: start
+                overlay: false
+      - type: rule
+        y: 0.05
+        y_column: churn_rate
+        text: "Churn target {{ value | format }}"
+        style:
+          marks:
+            text:
+              position:
+                edge: top
+                align: start
+                overlay: false
+      - type: note
+        y: max()
+        y_column: churn_rate
+        text: Churn peak
+        connector: line
+        style:
+          marks:
+            text:
+              dy: 24
+
+rows:
+  - cols:
+      - goal_line
+      - segment_line
+  - cols:
+      - promo_area
+      - clock_area
+  - cols:
+      - region_bars
+      - region_bars_horizontal
+  - cols:
+      - monthly_bars
+      - account_scatter
+  - cols:
+      - segment_scatter
+      - account_scatter_log
+  - cols:
+      - orders_defaults
+      - revenue_churn

@@ -77,8 +77,6 @@ charts:
       - region
     columns:
       - category
-    values:
-      - revenue
     style:
       columns:
         Electronics:
@@ -99,15 +97,12 @@ charts:
       - region
     columns:
       - category
-    values:
-      - revenue
-      - units
     style:
       columns:
         revenue:
           format: currency_whole
         units:
-          format: integer
+          format: ",d"
 
   # 3 — Nested column dimensions. Two `columns` fields stack into a two-row
   # header: category (outer) over period (inner, the half of the month).
@@ -121,8 +116,6 @@ charts:
     columns:
       - category
       - period
-    values:
-      - revenue
 
   # 4 — A second plain cross-tab for contrast: products down the side, regions
   # across the top, unit counts in the cells.
@@ -135,8 +128,6 @@ charts:
       - product
     columns:
       - region
-    values:
-      - units
 
 rows:
   - cols:

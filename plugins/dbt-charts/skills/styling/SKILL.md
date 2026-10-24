@@ -19,7 +19,6 @@ For no border, omit `border`; `border: none` is rejected.
 `style`:
 - `background`: Working-surface background color (board and card fills)
 - `accent`: Accent color token cascaded to sparklines, bars, and focus rings
-- `muted`: Muted secondary-text color token (KPI support rows, table and spark subtitles)
 - `font` (mapping): Root font: literal family, size, weight, color; never a `fonts` name
 - `fonts` (map of mapping): Named fonts as ``<name>: {family, size, weight, color}``, never a bare family string; other font slots reference one as ``font: <name>`` or ``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 ramp in ``sizes`` and ``section`` the H2–H6 section-title sizes. Any other entry no slot references paints nothing
 - `formats` (map of text|{spec, prefix, suffix, notation, sign_placement, repeat}): Format alias map; None means no aliases at this cascade level
@@ -30,7 +29,7 @@ For no border, omit `border`; `border: none` is rejected.
 - `text` (mapping): Markdown and plain text content style
 - `footer` (mapping): Page footer chrome visibility
 - `charts` (mapping): Root of all chart-type styles and shared chart configuration
-Also exist: `box_shadow`, `opacity`, `placeholder`, `layout`, `variables`, `timestamp`, `tones`, `roles`, `padding`, `margin`, `gap`.
+Also exist: `box_shadow`, `opacity`, `placeholder`, `annotations`, `layout`, `variables`, `timestamp`, `tones`, `roles`, `padding`, `margin`, `gap`.
 
 `style.frame`:
 - `width` (number): Exact board width in pixels
@@ -93,7 +92,7 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `endpoint_labels` ({visible, label_offset, height}): Series names printed on stacked bars instead of in a legend
-Also exist: `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`.
 
 ### Axes
 
@@ -125,7 +124,7 @@ Also exist: `log`, `pow`, `symlog`.
 ### Marks
 
 `marks.bar`:
-- `band_width` (number): Bar width as a fraction of the band step (0–1)
+- `band_width` (number): Bar width as a fraction of the band step (0 to 1)
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Bar border style (color/width also serve as the bar stroke)
 - `labels` (mapping): Value label style for bar marks
 - `total_label` ({visible, format, dx, dy, font: {}}): Stack total label style
@@ -202,7 +201,7 @@ Also exist: `font`, `format`, `glyph`.
 - `pagination` ({enabled, page_rows}): Client-side pagination defaults for table charts
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
-- `row_numbers` ({visible, header, align}): Leading row-number column configuration
+- `row_numbers` ({visible, header, align, font: {}}): Leading row-number column configuration
 Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `header_overflow`, `paginator`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
 
 `table style.header`: `visible`, `height`, `font`, `font_compact`, `background`, `overflow`, `divider`.

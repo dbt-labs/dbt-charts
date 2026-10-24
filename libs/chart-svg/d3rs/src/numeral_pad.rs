@@ -2,7 +2,7 @@
 //! table a column of mixed fractional depths is aligned with and the gate that
 //! decides whether a column has a shared decimal position at all. The unit
 //! strings the table is built from are measured from a font
-//! (`mdsvg::reservation`).
+//! (`measure::reservation`).
 
 use std::collections::HashSet;
 

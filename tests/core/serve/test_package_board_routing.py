@@ -120,44 +120,44 @@ class TestHostBoardShadowsPackageBoard:
         assert "from pkg" in other.text
 
 
-class TestDirectoryCandidates:
-    """Unit coverage for _directory_candidates -- root matching now comes from
-    the shared board_directory_candidates (project.py), not a bespoke
-    partition("/") implementation, so this pins the caller-facing shape
-    through that refactor."""
+class TestResolveDirectoryUrl:
+    """Unit coverage for resolve_directory_url's package-root matching, which
+    comes from the shared board_directory_candidates (project.py)."""
 
     def test_host_clean_path_resolves_under_charts_dir(self, pkg_project: Path) -> None:
-        from dbt_charts.core.serve.server import _directory_candidates
+        from dbt_charts.core.project import resolve_directory_url
 
+        (pkg_project / "charts" / "sub").mkdir()
         project = FilesystemProject(pkg_project)
-        candidates = _directory_candidates(project.charts_dir, "sub", project)
-        assert project.charts_dir / "sub" in candidates
+        resolved = resolve_directory_url(project, "sub")
+        assert isinstance(resolved, list)
+        assert [d.relpath for d in resolved] == ["charts/sub"]
 
     def test_package_namespace_resolves_under_its_own_charts_dir(
         self, pkg_project: Path
     ) -> None:
-        from dbt_charts.core.serve.server import _directory_candidates
+        from dbt_charts.core.project import resolve_directory_url
 
         project = FilesystemProject(pkg_project)
-        candidates = _directory_candidates(project.charts_dir, "pkg_a", project)
-        pkg_dir = pkg_project / "dbt_packages" / "pkg_a" / "charts"
-        assert pkg_dir in candidates
+        resolved = resolve_directory_url(project, "pkg_a")
+        assert isinstance(resolved, list)
+        assert [d.relpath for d in resolved] == ["dbt_packages/pkg_a/charts"]
 
     def test_root_clean_path_resolves_to_charts_dir_alone(
         self, pkg_project: Path
     ) -> None:
-        from dbt_charts.core.serve.server import _directory_candidates
+        from dbt_charts.core.project import resolve_directory_url
 
         project = FilesystemProject(pkg_project)
-        candidates = _directory_candidates(project.charts_dir, "", project)
-        assert candidates == [project.charts_dir]
+        resolved = resolve_directory_url(project, "")
+        assert isinstance(resolved, list)
+        assert [d.relpath for d in resolved] == ["charts"]
 
     def test_charts_prefixed_path_yields_no_candidates(self, pkg_project: Path) -> None:
-        from dbt_charts.core.serve.server import _directory_candidates
+        from dbt_charts.core.project import resolve_directory_url
 
         project = FilesystemProject(pkg_project)
-        candidates = _directory_candidates(project.charts_dir, "charts/x", project)
-        assert candidates == []
+        assert resolve_directory_url(project, "charts/x") == []
 
 
 class TestAllBoardRootsMtimeSignature:

@@ -127,10 +127,10 @@ impl Expr {
 
 /// What each band of a discrete axis paints: the band itself, or an authored `labels.expr`'s rewrite of it
 /// (`labelExpr` runs on `datum.value`, the raw band) at the scale `axis` names.
-pub fn band_texts(axis: &'static str, domain: &[String], expr: Option<&str>) -> Result<Vec<String>, String> {
-    let Some(src) = expr else { return Ok(domain.to_vec()) };
+pub fn band_texts(axis: &'static str, domain: &[String], labels: &crate::common::AxisLabels) -> Result<Vec<String>, String> {
+    let Some(src) = labels.expr.as_deref() else { return domain.iter().map(|band| labels.cased(band)).collect() };
     let expr = Expr::parse(src).map(|e| e.on(axis)).map_err(|e| describe(&e, "the axis"))?;
-    domain.iter().enumerate().map(|(i, band)| expr.rewrite_band(band, i, domain.len())).collect()
+    domain.iter().enumerate().map(|(i, band)| labels.cased(&expr.rewrite_band(band, i, domain.len())?)).collect()
 }
 
 const THROWS_MARK: &str = "labels.expr throws on ";

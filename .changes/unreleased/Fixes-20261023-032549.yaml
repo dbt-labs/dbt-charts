@@ -1,0 +1,3 @@
+kind: Fixes
+body: Axis labels now honor labels.font.case upper and lower.
+time: 2026-10-23T03:25:49.621509-07:00

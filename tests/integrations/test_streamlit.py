@@ -7,6 +7,9 @@ Covers:
 - A value the viewer picks in the board is rendered on the next run
 - Values the app passes win over the viewer's
 - A failed board or missing board file raises and mounts nothing
+- st_project() serves a board or folder per URL under dct serve's nav, opens on
+  the root index board or listing, follows clicked links, and forwards the
+  session
 - import dbt_charts never imports streamlit or snowflake
 - A missing streamlit install raises an actionable ImportError
 """
@@ -19,6 +22,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -306,6 +310,262 @@ class TestLiveControls:
         assert frame.calls[0]["key"] != frame.calls[1]["key"]
 
 
+PROJECT_APP = """\
+import streamlit as st
+
+from dbt_charts.integrations.streamlit import st_project
+
+st_project(st.session_state.project_dir, st.session_state.session)
+"""
+
+
+VALUES_BOARD = """\
+title: {title}
+queries:
+  sales:
+    type: values
+    rows:
+      - {{month: Jan, revenue: 100}}
+charts:
+  rev:
+    query: sales
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - rev
+"""
+
+
+class _ClickingFrame(_FrameRecorder):
+    """A mounted board whose viewer clicks the given links, one per render."""
+
+    def __init__(self, clicks: list[str]) -> None:
+        super().__init__()
+        self.clicks = clicks
+
+    def __call__(self, *, key: str, data: dict[str, Any], **_callbacks: Any) -> Any:
+        super().__call__(key=key, data=data)
+        return SimpleNamespace(navigate=self.clicks.pop(0) if self.clicks else None)
+
+
+@pytest.fixture
+def clicks(monkeypatch: pytest.MonkeyPatch) -> _ClickingFrame:
+    """Records mounted boards inside an AppTest run, whose session state is real."""
+    from dbt_charts.integrations import streamlit as st_integration
+
+    recorder = _ClickingFrame([])
+    monkeypatch.setattr(st_integration, "_BOARD_FRAME", recorder)
+    return recorder
+
+
+def _write(project_dir: Path, relpath: str, text: str) -> None:
+    path = project_dir / relpath
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def _sales_project(project_dir: Path) -> Path:
+    _write(project_dir, "dbt_charts.yml", "")
+    _write(project_dir, "charts/overview.yml", VALUES_BOARD.format(title="Overview"))
+    _write(project_dir, "charts/sales/trend.yml", VALUES_BOARD.format(title="Trend"))
+    return project_dir
+
+
+def _run_project(
+    project_dir: Path,
+    board: str | None = None,
+    session: _FakeSession | None = None,
+    query: dict[str, str | list[str]] | None = None,
+    picked: dict[str, dict[str, Any]] | None = None,
+) -> Any:
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string(PROJECT_APP, default_timeout=60)
+    app.session_state.project_dir = str(project_dir)
+    app.session_state.session = session
+    for frame_key, variables in (picked or {}).items():
+        app.session_state[frame_key] = {"variables": variables}
+    if board is not None:
+        app.query_params["board"] = board
+    for key, value in (query or {}).items():
+        app.query_params[key] = value
+    app.run()
+    return app
+
+
+class TestStProject:
+    def test_a_board_renders_under_the_serve_nav(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        app = _run_project(_sales_project(tmp_path), board="/sales/trend")
+
+        assert not app.exception, app.exception
+        html = clicks.calls[0]["html"]
+        assert 'class="dbt-nav"' in html
+        assert 'href="/sales/"' in html
+        assert "Trend" in html
+        assert clicks.calls[0]["navigate"] is True
+
+    def test_the_nav_leaves_out_what_needs_dct_serve(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        """The data browser, view modes and downloads are dct serve routes."""
+        _run_project(_sales_project(tmp_path), board="/sales/trend")
+
+        assert 'class="dbt-nav-actions"' not in clicks.calls[0]["html"]
+
+    def test_opens_on_the_root_listing_without_an_index_board(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        app = _run_project(_sales_project(tmp_path))
+
+        assert not app.exception, app.exception
+        html = clicks.calls[0]["html"]
+        assert 'href="/sales/"' in html
+        assert 'href="/overview"' in html
+
+    def test_opens_on_the_root_index_board(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        project_dir = _sales_project(tmp_path)
+        _write(project_dir, "charts/index.yml", VALUES_BOARD.format(title="Home"))
+
+        _run_project(project_dir)
+
+        assert "Home" in clicks.calls[0]["html"]
+
+    def test_a_folder_opens_its_index_board(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        project_dir = _sales_project(tmp_path)
+        _write(
+            project_dir, "charts/sales/index.yml", VALUES_BOARD.format(title="Sales")
+        )
+
+        _run_project(project_dir, board="/sales/")
+
+        assert ">Sales<" in clicks.calls[0]["html"]
+
+    def test_a_clicked_link_opens_that_board(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        clicks.clicks.append("/sales/trend")
+
+        app = _run_project(_sales_project(tmp_path))
+
+        assert not app.exception, app.exception
+        assert app.query_params["board"] == ["/sales/trend"]
+        assert "Trend" in clicks.calls[-1]["html"]
+
+    def test_a_link_with_values_sets_the_target_board_variables(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        project_dir = _make_project(tmp_path)
+        session = _FakeSession(rows=[{"MONTH": "Jan", "REVENUE": 100}])
+        clicks.clicks.append("/board?year=2031")
+
+        app = _run_project(project_dir, board="/board", session=session)
+
+        assert app.query_params["board"] == ["/board"]
+        assert app.query_params["year"] == ["2031"]
+        assert "2031" in session.received_sql[-1]
+
+    def test_a_link_replaces_what_the_viewer_last_picked_on_that_board(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        session = _FakeSession(rows=[{"MONTH": "Jan", "REVENUE": 100}])
+        clicks.clicks.append("/board?year=2031")
+
+        _run_project(
+            _make_project(tmp_path),
+            board="/board",
+            session=session,
+            picked={"dbt_charts_board:/board": {"year": "2030"}},
+        )
+
+        assert "2031" in session.received_sql[-1]
+
+    def test_a_pick_beats_the_url_value_on_the_same_page(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        session = _FakeSession(rows=[{"MONTH": "Jan", "REVENUE": 100}])
+
+        _run_project(
+            _make_project(tmp_path),
+            board="/board",
+            session=session,
+            query={"year": "2031"},
+            picked={"dbt_charts_board:/board": {"year": "2030"}},
+        )
+
+        assert "2030" in session.received_sql[-1]
+
+    def test_a_repeated_url_key_keeps_every_value(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        session = _FakeSession(rows=[{"MONTH": "Jan", "REVENUE": 100}])
+        clicks.clicks.append("/board?year=2030&year=2031")
+
+        app = _run_project(_make_project(tmp_path), board="/board", session=session)
+
+        assert app.query_params["year"] == ["2030", "2031"]
+
+    def test_a_deep_link_keeps_every_value_of_a_repeated_key(
+        self, tmp_path: Path, clicks: _ClickingFrame, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.integrations import streamlit as st_integration
+
+        rendered: list[dict[str, Any]] = []
+        real_render = st_integration.ProjectSession.render_board
+
+        def _recording_render(self: Any, *args: Any, **kwargs: Any) -> Any:
+            rendered.append(kwargs.get("variables", {}))
+            return real_render(self, *args, **kwargs)
+
+        monkeypatch.setattr(
+            st_integration.ProjectSession, "render_board", _recording_render
+        )
+
+        _run_project(
+            _sales_project(tmp_path),
+            board="/sales/trend",
+            query={"region": ["west", "east"]},
+        )
+
+        assert rendered[0]["region"] == '["west", "east"]'
+
+    def test_a_folder_wins_over_a_board_of_the_same_name(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        """As under dct serve: /sales opens the folder, not charts/sales.yml."""
+        project_dir = _sales_project(tmp_path)
+        _write(project_dir, "charts/sales.yml", VALUES_BOARD.format(title="Lone"))
+
+        _run_project(project_dir, board="/sales")
+
+        assert "Directory /sales" in clicks.calls[0]["html"]
+
+    def test_an_unknown_path_raises_naming_it(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        app = _run_project(_sales_project(tmp_path), board="/sales/missing")
+
+        assert "/sales/missing" in str(app.exception[0].value)
+        assert not clicks.calls
+
+    def test_boards_render_through_the_session(
+        self, tmp_path: Path, clicks: _ClickingFrame
+    ) -> None:
+        project_dir = _make_project(tmp_path)
+        session = _FakeSession(rows=[{"MONTH": "Jan", "REVENUE": 100}])
+
+        _run_project(project_dir, board="/board", session=session)
+
+        assert session.received_sql
+        assert len(clicks.calls) == 1
+
+
 class TestStBoardFailure:
     def test_board_failure_raises_and_draws_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frame: _FrameRecorder
@@ -339,12 +599,28 @@ class TestStBoardFailure:
         assert not html_recorder.calls
 
 
+def _page(svg: str, chrome: str = "") -> str:
+    return (
+        f'<html><body>{chrome}<div class="dbt-charts-svg-container" data-dbt-board>'
+        f"\n            {svg}</div></body></html>"
+    )
+
+
 class TestIframeSize:
     def test_reads_width_and_height_from_root_svg(self) -> None:
         from dbt_charts.integrations.streamlit import _board_size
 
-        html = '<html><body><svg width="800" height="432.5" viewBox="0 0 800 432.5"></svg></body></html>'
+        html = _page('<svg width="800" height="432.5" viewBox="0 0 800 432.5"></svg>')
         assert _board_size(html) == (800, 433)
+
+    def test_skips_icons_in_the_page_chrome(self) -> None:
+        from dbt_charts.integrations.streamlit import _board_size
+
+        html = _page(
+            '<svg width="800" height="400"></svg>',
+            chrome='<a href="/"><svg viewBox="0 0 16 16"></svg></a>',
+        )
+        assert _board_size(html) == (800, 400)
 
     def test_raises_when_no_svg_present(self) -> None:
         from dbt_charts.integrations.streamlit import _board_size
@@ -356,7 +632,7 @@ class TestIframeSize:
         from dbt_charts.integrations.streamlit import _board_size
 
         with pytest.raises(ValueError, match="height"):
-            _board_size('<svg width="100" viewBox="0 0 100 100"></svg>')
+            _board_size(_page('<svg width="100" viewBox="0 0 100 100"></svg>'))
 
 
 def test_importing_dbt_charts_does_not_import_streamlit_or_snowflake() -> None:

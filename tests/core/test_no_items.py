@@ -96,6 +96,7 @@ def test_all_geo_sources_in_config():
 def test_resolve_geo_source_city_neighborhoods():
     """geo source fields for sf-neighborhoods must come from config, not a Python dict."""
     from dbt_charts.core.compile.config import get_config
+    from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
     from dbt_charts.core.compile.resolve.chart.geo import (
         _resolve_geo_projection,
         _resolve_geo_source_fields,
@@ -108,7 +109,11 @@ def test_resolve_geo_source_city_neighborhoods():
     )
 
     fields = _resolve_geo_source_fields(geo_info, "sf-neighborhoods", None, None)
-    proj_type, _ = _resolve_geo_projection(None, geo_info)
+    proj_type, _ = _resolve_geo_projection(
+        GeoshapeChart(id="g", type="geoshape", geo_source="sf-neighborhoods"),
+        "sf-neighborhoods",
+        geo_info,
+    )
 
     # URL must come from config — non-empty absolute URL, not a hardcoded literal.
     # Don't pin the domain; the underlying data provider may change.

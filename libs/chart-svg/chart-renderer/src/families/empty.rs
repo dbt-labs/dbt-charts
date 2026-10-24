@@ -48,7 +48,8 @@ pub fn render(chart_type: &str, payload: &Payload, fonts: &FontBook) -> Result<S
             ValueAxis::Point { pins_domain: chart_type == "scatter" },
         )?)?,
         "pie" => pie::render_empty(payload, fonts).and_then(stamp_view_root)?,
-        "table" => table::render_empty(payload, fonts)?,
+        // `table::bind` decides its own empty result.
+        "table" => table::render(payload, fonts)?,
         // A KPI has no empty drawing: no rows is `ERR-KPI-NO-DATA`.
         "kpi" => kpi::render(payload, fonts)?,
         // `spark_bar.py::_validate_spark_bar_value_field` returns on `not data`
@@ -93,8 +94,6 @@ pub(crate) struct Head {
     multiples: Option<crate::families::multiples::MultiplesConfig>,
     #[serde(default)]
     palette: Vec<String>,
-    #[serde(default)]
-    category_colors: Vec<crate::common::CategoryColorScale>,
     field_labels: crate::common::FieldLabels,
     #[serde(default)]
     y: Option<String>,
@@ -211,7 +210,7 @@ impl Head {
         Deserialize::deserialize(resolved).map_err(|e| format!("{family} payload: {e}"))
     }
 
-    /// The chart's own palette, which only a layered chart's claims read.
+    /// The chart's own palette.
     pub(crate) fn palette(&self) -> &[String] {
         &self.palette
     }
@@ -332,7 +331,7 @@ pub(crate) struct EmptyLegend<'a> {
     pub(crate) kind: LegendKind,
     pub(crate) title: String,
     base: Vec<(String, String)>,
-    scale: Option<LayerScale<'a>>,
+    scale: Option<LayerScale>,
     glyph: BaseGlyph,
     canvas: &'a str,
     scatter: Option<ScatterLegend>,
@@ -515,9 +514,7 @@ impl Head {
         let scale = if layers.is_empty() {
             None
         } else {
-            // A colorless dot plot has no shared color scale to claim a slot on: its layers paint the series fill.
-            let palette: &[String] = if dot_plot && layers.iter().all(|l| l.color().is_none()) { &[] } else { &self.palette };
-            let mut scale = LayerScale::new(palette, single_series_fill()?, &self.category_colors, &base, color.is_some());
+            let mut scale = LayerScale::new(&base, color.is_some());
             let empty: &[serde_json::Map<String, Value>] = &[];
             let pairs: Vec<_> = layers.iter().map(|l| (l, empty)).collect();
             claims = claim_layers(&mut scale, &pairs, &self.field_labels)?;

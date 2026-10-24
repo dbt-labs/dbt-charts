@@ -1,0 +1,3 @@
+kind: Fixes
+body: Bar value labels that do not fit inside their bar now sit just outside the bar end in the regular text color, and negative bars label on the bar's own side.
+time: 2026-10-22T23:50:25.985228-07:00

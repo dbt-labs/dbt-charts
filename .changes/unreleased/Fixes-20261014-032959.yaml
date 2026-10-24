@@ -1,0 +1,3 @@
+kind: Fixes
+body: PNG export now renders italic text in italic, including medium and semibold Inter and Source Serif 4.
+time: 2026-10-14T03:29:59.898439-07:00

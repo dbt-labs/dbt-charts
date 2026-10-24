@@ -575,7 +575,7 @@ def test_nav_failure_does_not_break_the_board(
     def _boom(*_args: object, **_kwargs: object) -> None:
         raise ValueError("Nav current file 'overview' is missing from file menu")
 
-    monkeypatch.setattr("dbt_charts.core.serve.server.nav_context", _boom)
+    monkeypatch.setattr("dbt_charts.core.render.nav.nav_context", _boom)
     with TestClient(
         create_server(FilesystemProject(_project(tmp_path))),
         raise_server_exceptions=False,

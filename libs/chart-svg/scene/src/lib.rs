@@ -53,6 +53,14 @@ impl Attrs {
         self.with(name, value, Escape::Quick)
     }
 
+    /// [`Attrs::quick`] when `value` is present, else unchanged.
+    pub fn quick_some(self, name: &'static str, value: Option<impl Into<String>>) -> Self {
+        match value {
+            Some(value) => self.quick(name, value),
+            None => self,
+        }
+    }
+
     fn with(mut self, name: impl Into<Cow<'static, str>>, value: impl Into<String>, escape: Escape) -> Self {
         self.0.push((name.into(), value.into(), escape));
         self
@@ -107,7 +115,19 @@ pub enum Node {
     Group { attrs: Attrs, children: Vec<Node> },
     Rect(Attrs),
     Path(Attrs),
+    Line(Attrs),
+    Circle(Attrs),
+    Polygon(Attrs),
+    Polyline(Attrs),
     Text(TextBlock),
+    /// `<text>` holding runs: `Tspan`s, `Title`s and the whitespace between them.
+    TextRuns { attrs: Attrs, children: Vec<Node> },
+    /// `<tspan>`: a styled run inside a `TextRuns`.
+    Tspan(TextBlock),
+    /// `<tspan>` holding runs of its own: a glyph's `Tspan` and the text after it.
+    TspanRuns { attrs: Attrs, children: Vec<Node> },
+    /// `<title>`: the full text a truncated run stands for.
+    Title(Chars),
     /// Character data between elements (the newlines a serializer writes).
     Chars(Chars),
     Defs(Vec<Node>),
@@ -115,6 +135,10 @@ pub enum Node {
     Link { attrs: Attrs, children: Vec<Node> },
     /// `<clipPath>`: what a group's `clip-path="url(#id)"` clips to.
     ClipPath { attrs: Attrs, children: Vec<Node> },
+    /// `<script>`: `Chars` and `Cdata` children.
+    Script { attrs: Attrs, children: Vec<Node> },
+    /// A CDATA section; a literal `]]>` in the text splits it into two sections.
+    Cdata(String),
     LinearGradient { attrs: Attrs, stops: Vec<Node> },
     Stop(Attrs),
     /// A generic element among typed nodes: markup whose shape layout does not

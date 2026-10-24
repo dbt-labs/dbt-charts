@@ -92,6 +92,7 @@ class TestOtherFamiliesResolveToo:
         compiled = GeoshapeChart(
             id="geo1",
             type="geoshape",
+            projection="mercator",
             geo_source="fake-geo-source",
             lookup="state",
             value="tier",

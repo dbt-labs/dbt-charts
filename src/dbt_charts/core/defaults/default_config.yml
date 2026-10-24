@@ -42,9 +42,14 @@ public_url: ""
 # and it matches the daily-pipeline reality — dashboards needing tighter
 # freshness override per source/board/query. ttl uses short-duration strings
 # (s/m/h/d/w, m = minutes, compound like 1h30m) or the keyword `forever`.
+#
+# prefetch: true loads the queries of tabs one click away into the cache in the
+# background after a board renders. Set it per source, board or query where a
+# warehouse is cheap enough to spend the extra queries.
 
 cache:
   ttl: 24h
+  prefetch: false
 
 
 # ============================================================================

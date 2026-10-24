@@ -1,8 +1,8 @@
 """Pins ``effective_measure_domain``'s reduction on an unauthored x-axis.
 
-Unlike y, resolve never bakes ``domain_min``/``domain_max`` or a zero-anchor
-floor for x (no ``resolve_measure_x_scale`` exists, and the smart-zero
-heuristic only ever runs against the y column). So on x the function reduces
+Unlike y, resolve never bakes ``domain_min``/``domain_max`` for x, and bakes a
+zero anchor only for a percent-formatted x (``test_scatter_x_zero_anchor.py``).
+So on a non-percent x the function reduces
 to "authored domain, else the data extent" — exactly what Vega-Lite auto-fits
 an unpinned axis to. This is the fact the quantitative-x zero rule
 (``BaselineFeature._apply_x_threshold``) depends on; a future x-side headroom bake

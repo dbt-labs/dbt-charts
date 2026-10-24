@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::pygments_re::is_py_space;
+use d3rs::py_str::is_py_space;
 
 /// `resolve_outside_fences`: `resolve` sees the text with every closed fence
 /// replaced by a token, and each token is put back afterwards.

@@ -11,7 +11,6 @@ _chart_patch_adapter = TypeAdapter(AuthoredChart)
 from dbt_charts.core.compile.models.vega_lite.contracts import (
     Axis,
     Mark,
-    Projection,
     Scale,
     TopLevelCompositeSpec,
     TopLevelParameter,
@@ -32,7 +31,6 @@ class TestContractStructure:
             VLConfig,
             Scale,
             Axis,
-            Projection,
             Transform,
             TopLevelParameter,
             TopLevelUnitSpec,

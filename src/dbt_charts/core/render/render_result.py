@@ -45,6 +45,12 @@ class RenderResult(BaseModel):
     render`` is a user asking to see the board, where a chart that draws
     nothing does matter. The same blank-chart board can legitimately be a
     success through one gate and a failure through the other.
+
+    ``query_ms`` is the wall time of the pre-render query pass — cache reads
+    and warehouse queries together. ``None`` when the render failed before
+    that pass ran. ``prefetch_query_names`` is what a drawn render left
+    unexecuted in the hidden tabs (inner tabs of a hidden tab included) whose cache policy sets ``prefetch``;
+    a host warms them with ``prefetch_tab_queries``.
     """
 
     output: str | bytes | None = None
@@ -53,3 +59,5 @@ class RenderResult(BaseModel):
     board_error: Diagnostic | None = None
     warnings: list[Diagnostic] = []
     suppressed_warnings: list[Diagnostic] = []
+    query_ms: float | None = None
+    prefetch_query_names: frozenset[str] = frozenset()

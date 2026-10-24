@@ -883,6 +883,7 @@ def test_geoshape_resolve_returns_resolved_geoshape_chart() -> None:
     compiled = GeoshapeChart(
         id="g",
         type="geoshape",
+        projection="mercator",
         query=_sql(),
         query_name="q",
         geo="geo_field",
@@ -902,6 +903,7 @@ def test_point_map_resolve_returns_resolved_point_map_chart() -> None:
     compiled = PointMapChart(
         id="pm",
         type="point_map",
+        projection="albersUsa",
         query=_sql(),
         query_name="q",
         latitude="lat",
@@ -911,24 +913,6 @@ def test_point_map_resolve_returns_resolved_point_map_chart() -> None:
     assert isinstance(resolved, ResolvedPointMapChart)
     assert isinstance(resolved.style, ResolvedPointMapStyle)
     assert resolved.style.point_map is not None
-
-
-def test_resolve_point_map_defaults_projection_to_albersusa() -> None:
-    """projection=None at compile time must bake to 'albersUsa' at resolve time."""
-    from dbt_charts.core.compile.resolve import resolve
-
-    compiled = PointMapChart(
-        id="pm2",
-        type="point_map",
-        query=_sql(),
-        query_name="q",
-        latitude="lat",
-        longitude="lon",
-        projection=None,
-    )
-    resolved = resolve(compiled, [{"lat": 37.7, "lon": -122.4}], _default_board_style())
-    assert isinstance(resolved, ResolvedPointMapChart)
-    assert resolved.projection == "albersUsa"
 
 
 def test_resolve_point_map_keeps_explicit_projection() -> None:
@@ -969,6 +953,7 @@ def test_geoshape_sub_dollar_color_measure_tooltip_avoids_si_milli() -> None:
     compiled = GeoshapeChart(
         id="g2",
         type="geoshape",
+        projection="mercator",
         query=_sql(),
         query_name="q",
         geo="geo_field",
@@ -1005,6 +990,7 @@ def test_geoshape_value_field_spelling_votes_not_color_channel() -> None:
     compiled = GeoshapeChart(
         id="g3",
         type="geoshape",
+        projection="mercator",
         query=_sql(),
         query_name="q",
         geo="geo_field",
@@ -1037,6 +1023,7 @@ def test_resolve_point_map_sub_dollar_size_measure_tooltip_avoids_si_milli() -> 
     compiled = PointMapChart(
         id="pm5",
         type="point_map",
+        projection="albersUsa",
         query=_sql(),
         query_name="q",
         latitude="lat",
@@ -1076,6 +1063,7 @@ def test_resolve_point_map_color_measure_never_votes_only_size_does() -> None:
     compiled = PointMapChart(
         id="pm6",
         type="point_map",
+        projection="albersUsa",
         query=_sql(),
         query_name="q",
         latitude="lat",
@@ -1115,6 +1103,7 @@ def test_resolve_point_map_negative_size_row_never_votes() -> None:
     compiled = PointMapChart(
         id="pm7",
         type="point_map",
+        projection="albersUsa",
         query=_sql(),
         query_name="q",
         latitude="lat",
@@ -1249,6 +1238,7 @@ def test_resolve_point_map_style_marks_point_override_propagates() -> None:
     compiled = PointMapChart(
         id="pm4",
         type="point_map",
+        projection="albersUsa",
         query=_sql(),
         query_name="q",
         latitude="lat",
@@ -2328,6 +2318,7 @@ def test_geoshape_tooltip_vote_ignores_an_int_beyond_float_range() -> None:
     compiled = GeoshapeChart(
         id="g4",
         type="geoshape",
+        projection="mercator",
         query=_sql(),
         query_name="q",
         geo="geo_field",

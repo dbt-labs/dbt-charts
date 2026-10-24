@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from types import EllipsisType
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -80,6 +80,7 @@ def resolve(
     link_open: LinkOpen = "page",
     x_date_range: tuple[date, date] | None = None,
     title_width: float | None = None,
+    rendered_at: datetime | None = None,
 ) -> ResolvedChart:
     """Dispatch a normalized chart → ResolvedChart.
 
@@ -115,6 +116,9 @@ def resolve(
             onto bar/line/area charts.
         title_width: Card width for bar/line/area title typography when ``width`` is
             the narrower spec width a support table leaves the plot; ``width`` when None.
+        rendered_at: The render's clock reading, which line, area and scatter
+            annotations resolve against. None for a resolve that draws nothing (a data-free
+            skeleton, a Vega-Lite spec), which resolves no annotations.
 
     Returns:
         The matching ResolvedXxxChart instance with palette/dashes/channels populated.
@@ -150,6 +154,7 @@ def resolve(
                     datasets,
                     automatic_link_candidate,
                     x_date_range,
+                    rendered_at,
                     display_text,
                 )
             case "histogram":
@@ -171,6 +176,7 @@ def resolve(
                     datasets,
                     automatic_link_candidate,
                     x_date_range,
+                    rendered_at,
                     display_text,
                 )
             case "area":
@@ -183,6 +189,7 @@ def resolve(
                     datasets,
                     automatic_link_candidate,
                     x_date_range,
+                    rendered_at,
                     display_text,
                 )
             case "scatter":
@@ -193,6 +200,7 @@ def resolve(
                     effective_width,
                     datasets,
                     automatic_link_candidate,
+                    rendered_at,
                     display_text,
                 )
             case "heatmap":

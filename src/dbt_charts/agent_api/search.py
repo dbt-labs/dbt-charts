@@ -16,6 +16,9 @@ from dbt_charts.agent_api.paging import (
     cursor_offset,
     paginate,
 )
+from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.normalize.queries import dialect_for_source
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
@@ -196,12 +199,50 @@ class FileHit(FileEntry):
     text: str = Field(description="The matching line.")
 
 
+class SourceEntry(BaseModel):
+    """A source a query may name: its SQL dialect, or its ``type`` when the
+    warehouse is only knowable at execute (file sources, ``dbt_profile``).
+    ``default`` marks the one source SQL that names none runs on."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    dialect: str | None = None
+    type: str | None = None
+    default: bool | None = None
+
+    @model_validator(mode="after")
+    def _one_of_dialect_or_type(self) -> SourceEntry:
+        if (self.dialect is None) == (self.type is None):
+            raise ValueError("a source entry carries exactly one of dialect or type")
+        return self
+
+
+def source_entries(config: ProjectSourcesConfig) -> list[SourceEntry]:
+    entries: list[SourceEntry] = []
+    for name in sorted(config.sources):
+        dialect = dialect_for_source(name, config.sources)
+        entries.append(
+            SourceEntry(
+                name=name,
+                dialect=dialect,
+                type=None if dialect is not None else config.sources[name]["type"],
+                default=True if name == config.implicit_source else None,
+            )
+        )
+    return entries
+
+
 class SearchResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     success: bool
     errors: list[Diagnostic]
     results: list[BoardMatch | BoardListing | FileHit | FileEntry]
+    sources: list[SourceEntry] | None = Field(
+        description="The sources this project's SQL may name, for execute_sql; "
+        "null when the project's `sources:` failed to load (the reason is in errors)."
+    )
     next: str | None = Field(
         default=None,
         description="Cursor for the next page; absent on the last page.",
@@ -226,11 +267,22 @@ def search_files(
     truncate before filtering — see ``search_file_hits``.
     """
     limit = max(0, min(limit, MAX_PAGE_LIMIT))
+    errors: list[Diagnostic] = []
+    sources: list[SourceEntry] | None
+    try:
+        sources = source_entries(project.sources)
+    except CompilationError as e:
+        # Searching never needed the sources, and `kind: config` is how an
+        # agent finds the broken file, so report it rather than fail.
+        errors.append(e.to_diagnostic(file=PROJECT_CONFIG_NAME))
+        sources = None
     if limit == 0:
-        return SearchResult(success=True, errors=[], results=[])
+        return SearchResult(success=True, errors=errors, results=[], sources=sources)
     hits = search_file_hits(project, kind=kind, path=path, text=text, tags=tags)
     page, next_cursor = paginate(hits, limit=limit, cursor=cursor)
-    return SearchResult(success=True, errors=[], results=page, next=next_cursor)
+    return SearchResult(
+        success=True, errors=errors, results=page, next=next_cursor, sources=sources
+    )
 
 
 def search_file_hits(

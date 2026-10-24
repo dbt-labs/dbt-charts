@@ -447,7 +447,7 @@ impl TimeX {
     ) -> Result<TemporalXAxis, String> {
         let usable = r.style.label_usable_ratio.ok_or("bar: label_usable_ratio absent (theme required for a date x axis)")?;
         let mut axis = TemporalXAxis::resolve(
-            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w, folded: matches!(self.law.grain, Grain::Part(_)) },
+            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w, extra_days: &[], folded: matches!(self.law.grain, Grain::Part(_)) },
             &self.scale_ax,
             svg_w * usable,
             title_text,
@@ -455,7 +455,7 @@ impl TimeX {
             fonts,
         )?;
         if self.grain.is_some() && r.style.axis_x.ticks.count.is_none() {
-            axis.show_injected_ticks();
+            axis.tick_under_labels();
         }
         if let Some(src) = r.style.axis_x.labels.expr.as_deref() {
             let expr = Expr::parse(src).map(|e| e.on("x")).map_err(|e| crate::labels_expr::describe(&e, src))?;

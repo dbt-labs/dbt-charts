@@ -14,15 +14,25 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{
-    auto_column_demand, build_cell_data, column_inputs, is_compact_column, natural_auto_width,
-    paginator_window, parse_column_width, pivot_for, resolve_row_roles, svg_font_family,
-    table_rows, visible_columns, ColumnInputs, page_slot_width, MeasureFonts, PageItem, Resolved, WidthHint,
-    PAGINATION_GROW_CAP, PAGINATOR_AUX_SLOT_RATIO,
-};
-use crate::common::measure_family_stand_in;
-use measure::FontBook;
+use super::bind::bind_chart;
+use super::layout::auto_column_demand;
+use super::layout::column_inputs;
+use super::layout::is_compact_column;
+use super::layout::natural_auto_width;
+use super::layout::paginator_window;
+use super::layout::parse_column_width;
+use super::svg_font_family;
+use super::Chart;
+use super::ColumnInputs;
+use super::MeasureFonts;
+use super::PageItem;
+use super::WidthHint;
+use super::PAGINATION_GROW_CAP;
+use super::PAGINATOR_AUX_SLOT_RATIO;
+use crate::layout::IntrinsicWidth;
 use d3rs::py_float::py_float_sum;
+use measure::FontBook;
+use measure::Measure;
 
 /// What the measure reads: the table's resolved chart, its rows, and the
 /// fonts to measure in.
@@ -53,7 +63,8 @@ pub struct MeasurePayload {
 impl<'de> Deserialize<'de> for MeasurePayload {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut payload = MeasurePayload::deserialize(deserializer)?;
-        payload.cell_text = crate::common::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
+        payload.cell_text =
+            crate::common::decode_cells(&mut payload.rows).map_err(serde::de::Error::custom)?;
         Ok(payload)
     }
 }
@@ -89,6 +100,62 @@ pub fn natural_content_width(
     content_headroom: f64,
     cell_pad: f64,
 ) -> Option<f64> {
+    hug_width(columns, |auto| {
+        let base: Vec<f64> = auto
+            .iter()
+            .map(|c| auto_column_demand(c.demand, c.word_floor, c.max_width))
+            .collect();
+        let is_text: Vec<bool> = auto
+            .iter()
+            .zip(&base)
+            .map(|(c, &d)| !is_compact_column(d, c.spark))
+            .collect();
+        let text_columns_exist = is_text.iter().any(|&t| t);
+        auto.iter()
+            .zip(base.iter().zip(&is_text))
+            .map(|(c, (&d, &text))| {
+                natural_auto_width(
+                    d,
+                    text,
+                    text_columns_exist,
+                    c.header_demand,
+                    c.max_width,
+                    content_headroom,
+                    cell_pad,
+                )
+            })
+            .collect()
+    })
+}
+
+/// The data-column budget below which a column would have to break a word: px
+/// pins as written, each auto column at its word floor (capped by its
+/// `max_width`; a spark column at its demand), `%` pins solving against the
+/// rest. `None` where [`natural_content_width`] has nothing to hug.
+fn minimum_content_width(columns: &[NaturalColumn]) -> Option<f64> {
+    hug_width(columns, |auto| {
+        auto.iter()
+            .map(|c| {
+                // The same 1px floor `auto_column_demand` gives the preferred
+                // width, so a minimum exists wherever a preferred width does.
+                if c.spark {
+                    c.demand.max(1.0)
+                } else {
+                    auto_column_demand(0.0, c.word_floor, c.max_width)
+                }
+            })
+            .collect()
+    })
+}
+
+/// The one hug solve: px pins as written, the auto columns at the widths
+/// `auto_widths` gives them, `%` pins solving against the rest
+/// (`S / (1 - p)`). `None` when `%` pins total 100% or more, or no column
+/// carries a width of its own.
+fn hug_width(
+    columns: &[NaturalColumn],
+    auto_widths: impl FnOnce(&[&NaturalColumn]) -> Vec<f64>,
+) -> Option<f64> {
     let mut pinned_px = 0.0_f64;
     let mut percent = 0.0_f64;
     let mut auto: Vec<&NaturalColumn> = Vec::new();
@@ -102,34 +169,8 @@ pub fn natural_content_width(
     if percent >= 1.0 {
         return None;
     }
-    let base: Vec<f64> = auto
-        .iter()
-        .map(|c| auto_column_demand(c.demand, c.word_floor, c.max_width))
-        .collect();
-    let is_text: Vec<bool> =
-        auto.iter().zip(&base).map(|(c, &d)| !is_compact_column(d, c.spark)).collect();
-    let text_columns_exist = is_text.iter().any(|&t| t);
-    let widths: Vec<f64> = auto
-        .iter()
-        .zip(base.iter().zip(&is_text))
-        .map(|(c, (&d, &text))| {
-            natural_auto_width(
-                d,
-                text,
-                text_columns_exist,
-                c.header_demand,
-                c.max_width,
-                content_headroom,
-                cell_pad,
-            )
-        })
-        .collect();
-    let rest = pinned_px + py_float_sum(&widths);
-    if rest <= 0.0 {
-        None
-    } else {
-        Some(rest / (1.0 - percent))
-    }
+    let rest = pinned_px + py_float_sum(&auto_widths(&auto));
+    (rest > 0.0).then(|| rest / (1.0 - percent))
 }
 
 /// The table width at which the row
@@ -152,8 +193,11 @@ pub fn paginator_band_width(
     let label = format!("{total_rows}\u{2013}{total_rows} / {total_rows}");
     // `get_font_measurer(font_family)`: every non-serif family
     // measures as Inter, whatever the table paints in.
-    let label_w =
-        fonts.measure(&label, measure_family_stand_in(font_family), font_size as f64)?;
+    let label_w = fonts.measure(
+        &label,
+        measure::stand_in_family(font_family),
+        font_size as f64,
+    )?;
     let aux_slot_w = item_width * PAGINATOR_AUX_SLOT_RATIO;
     // Windows differ in their ellipses and in the digit width of their page
     // labels, and the widest is not always at either end, so every page's
@@ -167,7 +211,12 @@ pub fn paginator_band_width(
                 PageItem::Page(p) => match slot_widths.get(&p) {
                     Some(w) => *w,
                     None => {
-                        let w = page_slot_width(fonts, font_family, font_size as f64, item_width, &p.to_string())?;
+                        let w = Measure { fonts }.page_slot(
+                            &p.to_string(),
+                            measure::stand_in_family(font_family),
+                            font_size as f64,
+                            item_width,
+                        )?;
                         slot_widths.insert(p, w);
                         w
                     }
@@ -182,10 +231,7 @@ pub fn paginator_band_width(
 }
 
 /// A column's `width:`/`max_width:` as `natural_content_width` reads them.
-fn natural_column(
-    col: &super::ColMeta,
-    inputs: &ColumnInputs,
-) -> Result<NaturalColumn, String> {
+fn natural_column(col: &super::ColMeta, inputs: &ColumnInputs) -> Result<NaturalColumn, String> {
     let width = col.cfg.width.as_ref();
     let pin = match parse_column_width(width, 1.0)? {
         Some(fraction) if is_percent(width) => Some(Pin::Percent(fraction)),
@@ -197,7 +243,7 @@ fn natural_column(
     } else {
         parse_column_width(col.cfg.max_width.as_ref(), 0.0)?
     };
-    let name = col.name;
+    let name = col.name.as_str();
     Ok(NaturalColumn {
         pin,
         max_width,
@@ -221,6 +267,13 @@ pub fn measure_natural_width(
     payload: &MeasurePayload,
     fonts: &FontBook,
 ) -> Result<Option<f64>, String> {
+    Ok(measure_in_scope(payload, fonts)?.map(|width| width.preferred))
+}
+
+fn measure_in_scope(
+    payload: &MeasurePayload,
+    fonts: &FontBook,
+) -> Result<Option<IntrinsicWidth>, String> {
     crate::number_locale::with_number_locale(&payload.format_locale, || {
         crate::time_locale::with_time_locale(&payload.time_locale, || {
             display_text::language::with_language(payload.language, || {
@@ -230,52 +283,37 @@ pub fn measure_natural_width(
     })
 }
 
-fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<Option<f64>, String> {
-    let _formats = super::BoardFormats::enter(payload.formats.as_ref(), payload.sub_unit_specs.as_ref());
-    let query_rows = &payload.rows;
-    if let Some((resolved, rows)) =
-        super::text_format::lower(&payload.resolved, query_rows)
-    {
-        let lowered = MeasurePayload {
-            resolved,
-            rows,
-            fonts_dir: payload.fonts_dir.clone(),
-            format_locale: payload.format_locale.clone(),
-            time_locale: payload.time_locale.clone(),
-            language: payload.language,
-            formats: payload.formats.clone(),
-            sub_unit_specs: payload.sub_unit_specs.clone(),
-            cell_text: payload.cell_text.clone(),
-        };
-        return measure_natural_width(&lowered, fonts);
-    }
-    let r: Resolved = Deserialize::deserialize(&payload.resolved)
-        .map_err(|e| format!("table payload: {e}"))?;
-    let th = &r.style.table;
-    if th.transpose && !query_rows.is_empty() {
-        let (resolved, rows) =
-            super::transposed_inputs(&payload.resolved, query_rows)
-                .map_err(|d| d.to_string())?;
-        let transposed = MeasurePayload {
-            resolved,
-            rows,
-            fonts_dir: payload.fonts_dir.clone(),
-            format_locale: payload.format_locale.clone(),
-            time_locale: payload.time_locale.clone(),
-            language: payload.language,
-            formats: payload.formats.clone(),
-            sub_unit_specs: payload.sub_unit_specs.clone(),
-            cell_text: Vec::new(),
-        };
-        return measure_natural_width(&transposed, fonts);
-    }
-    let pivot = pivot_for(&r, query_rows, &payload.cell_text).map_err(|d| d.to_string())?;
-    let rows = table_rows(query_rows, &pivot);
-    let (cols, _, _) = visible_columns(&r, rows, &pivot).map_err(|e| e.to_string())?;
+fn natural_width_in_scope(
+    payload: &MeasurePayload,
+    fonts: &FontBook,
+) -> Result<Option<IntrinsicWidth>, String> {
+    let chart = bind_chart(super::Source {
+        resolved: &payload.resolved,
+        rows: &payload.rows,
+        cell_text: &payload.cell_text,
+        formats: payload.formats.as_ref(),
+        sub_unit_specs: payload.sub_unit_specs.as_ref(),
+    })
+    .map_err(|d| d.to_string())?;
+    natural_width(&chart, fonts)
+}
 
+/// What a board can hug the table to: the narrowest it breaks no word at, and
+/// the width at which every column shows (`None` with nothing to hug).
+pub(super) fn natural_width(
+    chart: &Chart,
+    fonts: &FontBook,
+) -> Result<Option<IntrinsicWidth>, String> {
+    let _formats =
+        super::BoardFormats::enter(chart.formats.as_ref(), chart.sub_unit_specs.as_ref());
+    let th = &chart.resolved.style.table;
+    let (rows, cols, cell_data) = (&chart.rows[..], &chart.cols, &chart.cell_data);
     // Integer sizes, SVG-safe families.
     let body_family = svg_font_family(
-        th.font.family.as_deref().ok_or("table payload: style.table.font.family missing")?,
+        th.font
+            .family
+            .as_deref()
+            .ok_or("table payload: style.table.font.family missing")?,
     );
     let header_family = svg_font_family(
         th.header
@@ -284,43 +322,46 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
             .as_deref()
             .ok_or("table payload: style.table.header.font.family missing")?,
     );
-    let font_size = th.font.size.ok_or("table payload: style.table.font.size missing")?.trunc();
+    let font_size = th
+        .font
+        .size
+        .ok_or("table payload: style.table.font.size missing")?
+        .trunc();
     let header_size = th.header.font.size.map_or(font_size, f64::trunc);
     let cell_pad = th.column_layout.cell_padding.trunc();
     let outer_padding = th.outer_padding.trunc();
 
-    let row_role = th.row.role.as_deref();
-    let row_roles = resolve_row_roles(rows, row_role);
-    let cell_data = build_cell_data(rows, &cols, &th.symbol_mode, &row_roles)
-        .map_err(|e| e.to_string())?;
     let inputs = column_inputs(
-        &cols,
-        &cell_data,
+        cols,
+        cell_data,
         rows,
         fonts,
         &MeasureFonts {
-            body: measure_family_stand_in(&body_family),
-            header: measure_family_stand_in(&header_family),
+            body: measure::stand_in_family(&body_family),
+            header: measure::stand_in_family(&header_family),
         },
         font_size,
         header_size,
         th.header.visible,
         cell_pad,
     )?;
-    let natural: Vec<NaturalColumn> =
-        cols.iter().map(|c| natural_column(c, &inputs)).collect::<Result<_, _>>()?;
+    let natural: Vec<NaturalColumn> = cols
+        .iter()
+        .map(|c| natural_column(c, &inputs))
+        .collect::<Result<_, _>>()?;
     let Some(content_width) =
         natural_content_width(&natural, th.column_layout.content_headroom, cell_pad)
     else {
         return Ok(None);
     };
+    let min_content_width =
+        minimum_content_width(&natural).ok_or("table: a width to hug has no minimum width")?;
     let row_number_width = if th.row_numbers.visible {
-        super::row_number_column_width(
-            &th.row_numbers,
+        Measure { fonts }.row_number_column(
+            &th.row_numbers.header,
             rows.len(),
-            fonts,
-            measure_family_stand_in(&body_family),
-            measure_family_stand_in(&header_family),
+            measure::stand_in_family(&body_family),
+            measure::stand_in_family(&header_family),
             font_size,
             th.column_layout.cell_padding,
         )?
@@ -328,10 +369,15 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
         0.0
     };
     let columns_width = content_width + row_number_width + 2.0 * outer_padding;
+    let min_width = min_content_width + row_number_width + 2.0 * outer_padding;
 
     // Only the page size can paginate an unbounded table; a slot short enough
     // to paginate is not known here.
-    let page_rows = if th.pagination.enabled { th.pagination.page_rows } else { None };
+    let page_rows = if th.pagination.enabled {
+        th.pagination.page_rows
+    } else {
+        None
+    };
     match page_rows {
         Some(page_rows) if rows.len() > page_rows + PAGINATION_GROW_CAP => {
             // The size, else 11.
@@ -345,8 +391,95 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
                 page_rows,
                 th.outer_padding,
             )?;
-            Ok(Some(columns_width.max(band)))
+            Ok(Some(IntrinsicWidth {
+                min: min_width,
+                preferred: columns_width.max(band),
+            }))
         }
-        _ => Ok(Some(columns_width)),
+        _ => Ok(Some(IntrinsicWidth {
+            min: min_width,
+            preferred: columns_width,
+        })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auto(demand: f64, word_floor: f64, max_width: Option<f64>, spark: bool) -> NaturalColumn {
+        NaturalColumn {
+            pin: None,
+            max_width,
+            spark,
+            demand,
+            header_demand: 0.0,
+            word_floor,
+        }
+    }
+
+    fn pinned(pin: Pin) -> NaturalColumn {
+        NaturalColumn {
+            pin: Some(pin),
+            ..auto(0.0, 0.0, None, false)
+        }
+    }
+
+    #[test]
+    fn a_px_pin_counts_as_written() {
+        assert_eq!(
+            minimum_content_width(&[pinned(Pin::Px(100.0))]),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn a_percent_pin_solves_against_the_rest() {
+        let columns = [pinned(Pin::Px(100.0)), pinned(Pin::Percent(0.5))];
+        assert_eq!(minimum_content_width(&columns), Some(200.0));
+    }
+
+    #[test]
+    fn an_auto_column_counts_at_its_word_floor_not_its_demand() {
+        assert_eq!(
+            minimum_content_width(&[auto(200.0, 80.0, None, false)]),
+            Some(80.0)
+        );
+    }
+
+    #[test]
+    fn a_max_width_caps_the_word_floor() {
+        assert_eq!(
+            minimum_content_width(&[auto(200.0, 80.0, Some(50.0), false)]),
+            Some(50.0)
+        );
+    }
+
+    #[test]
+    fn a_spark_column_counts_at_its_demand() {
+        assert_eq!(
+            minimum_content_width(&[auto(60.0, 20.0, None, true)]),
+            Some(60.0)
+        );
+    }
+
+    #[test]
+    fn the_columns_add_up() {
+        let columns = [
+            pinned(Pin::Px(100.0)),
+            auto(200.0, 80.0, Some(50.0), false),
+            auto(200.0, 80.0, None, false),
+            auto(60.0, 20.0, None, true),
+        ];
+        assert_eq!(minimum_content_width(&columns), Some(290.0));
+    }
+
+    /// Whatever `natural_content_width` can hug, the minimum can too: an auto
+    /// column with no word floor still takes the 1px `auto_column_demand` floors it at.
+    #[test]
+    fn a_floorless_auto_column_still_has_a_minimum() {
+        let columns = [auto(0.0, 0.0, None, false)];
+        assert!(natural_content_width(&columns, 0.0, 0.0).is_some());
+        assert_eq!(minimum_content_width(&columns), Some(1.0));
     }
 }

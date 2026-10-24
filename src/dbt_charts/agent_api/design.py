@@ -709,7 +709,7 @@ def _widget_for(field: SchemaField) -> Widget | None:
     # Per arm, not on the whole `type_repr`, and every arm must be a scalar the
     # widget set can hold. A chart's `height` is `int | float | None`, so
     # matching the joined string against bare names sent the two most obvious
-    # numeric controls to a text box; `projection` is `str | Projection | None`,
+    # numeric controls to a text box; `projection` is `<name> | Projection | None`,
     # a model arm the IR does not report as nested, so a text box showed an
     # authored object as empty and one keystroke replaced it with a string.
     arms = union_arms(field.type_repr)

@@ -278,7 +278,6 @@ rows:
   - cols:
       - weekly_line_by_category
       - weekly_area_stacked
-  - cols:
-      - product_bar
-      - region_bar_grouped
+  - product_bar
+  - region_bar_grouped
   - weekly_bar_compact_formats

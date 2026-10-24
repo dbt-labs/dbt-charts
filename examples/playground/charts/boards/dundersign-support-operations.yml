@@ -26,25 +26,34 @@ variables:
 
 queries:
   # Priorities ordered urgent → low so the dropdown reads by urgency rather
-  # than alpha.
+  # than alpha, and in sentence case (Urgent/High/Normal/Low) to match every
+  # other surface this value reaches (legend, axis, table). The raw
+  # tickets.priority column is lowercase, so every query that filters or
+  # displays priority reads it through the tickets_cap CTE below instead of
+  # tickets directly — one capitalization, not a per-chart patch.
   priority_options:
     sql: |
       SELECT priority
-      FROM (VALUES ('urgent'), ('high'), ('normal'), ('low')) AS p(priority)
+      FROM (VALUES ('Urgent'), ('High'), ('Normal'), ('Low')) AS p(priority)
 
   # ── KPI rail ────────────────────────────────────────────────────────────
   # "Today" anchors to max(created_at) — the fixture stops on 2026-05-10
   # so a wall-clock NOW() would push 100% of tickets into the "90d+" band.
   kpi_data:
     sql: |
-      WITH bounds AS (
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      ),
+      bounds AS (
         SELECT MAX(created_at)::DATE AS today FROM tickets
       ),
       scoped AS (
         SELECT
           t.*,
           (bounds.today - t.created_at::DATE) AS age_days
-        FROM tickets t, bounds
+        FROM tickets_cap t, bounds
         WHERE {{ filter('priority', priority) }}
           AND {{ filter_date_range('created_at', date_range) }}
       )
@@ -71,27 +80,27 @@ queries:
       FROM scoped
 
   # ── Hero: queue counts by priority × age band ───────────────────────────
-  # Both categorical dimensions carry a "N · " ordering prefix so the VL
-  # nominal-scale domains read urgent → low and fresh → aging on the
-  # stacked-bar path.
+  # Rows arrive ordered urgent → low and fresh → aging; age_order drives the
+  # x-axis sort.
   queue_age_by_priority:
     sql: |
-      WITH bounds AS (
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      ),
+      bounds AS (
         SELECT MAX(created_at)::DATE AS today FROM tickets
       ),
       banded AS (
         SELECT
           priority,
-          -- Numeric prefix on each band so the legend (which Vega-Lite
-          -- sorts alphabetically on the color field) reads fresh→aging
-          -- left-to-right. Without the prefix, "180+ days" sorts before
-          -- "31–90 days" and the sequential palette inverts.
           CASE
-            WHEN (today - created_at::DATE) <=   7 THEN '1 · ≤7 days'
-            WHEN (today - created_at::DATE) <=  30 THEN '2 · 8–30 days'
-            WHEN (today - created_at::DATE) <=  90 THEN '3 · 31–90 days'
-            WHEN (today - created_at::DATE) <= 180 THEN '4 · 91–180 days'
-            ELSE                                        '5 · 180+ days'
+            WHEN (today - created_at::DATE) <=   7 THEN '≤7 days'
+            WHEN (today - created_at::DATE) <=  30 THEN '8–30 days'
+            WHEN (today - created_at::DATE) <=  90 THEN '31–90 days'
+            WHEN (today - created_at::DATE) <= 180 THEN '91–180 days'
+            ELSE                                        '180+ days'
           END AS age_band,
           CASE
             WHEN (today - created_at::DATE) <=   7 THEN 1
@@ -101,27 +110,16 @@ queries:
             ELSE                                        5
           END AS age_order,
           CASE priority
-            WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
-            WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
+            WHEN 'Urgent' THEN 1 WHEN 'High' THEN 2
+            WHEN 'Normal' THEN 3 WHEN 'Low'  THEN 4
           END AS priority_order
-        FROM tickets, bounds
+        FROM tickets_cap, bounds
         WHERE status = 'new'
           AND {{ filter('priority', priority) }}
           AND {{ filter_date_range('created_at', date_range) }}
       )
       SELECT
-        -- Numeric-prefix priority so the stacked-column color stack reads
-        -- urgent → low in urgency order. VL stacks color values
-        -- alphabetically by default; encoding the order into the string
-        -- is what keeps the stack stable. The same prefix shows in the
-        -- endpoint labels and the legend, and the same technique is used
-        -- for age_band above.
-        CASE priority
-          WHEN 'urgent' THEN '1 · Urgent'
-          WHEN 'high'   THEN '2 · High'
-          WHEN 'normal' THEN '3 · Normal'
-          WHEN 'low'    THEN '4 · Low'
-        END                                          AS priority,
+        priority,
         priority_order,
         age_band,
         age_order,
@@ -138,13 +136,18 @@ queries:
   # alphabetical.
   intake_by_priority:
     sql: |
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      )
       SELECT
         priority,
         COUNT(*)                                  AS tickets,
-        CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
-                      WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
+        CASE priority WHEN 'Urgent' THEN 1 WHEN 'High' THEN 2
+                      WHEN 'Normal' THEN 3 WHEN 'Low'  THEN 4
         END                                        AS sort_order
-      FROM tickets
+      FROM tickets_cap
       WHERE {{ filter('priority', priority) }}
         AND {{ filter_date_range('created_at', date_range) }}
       GROUP BY 1, 3
@@ -152,10 +155,15 @@ queries:
 
   intake_by_channel:
     sql: |
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      )
       SELECT
         via_channel                                AS channel,
         COUNT(*)                                  AS tickets
-      FROM tickets
+      FROM tickets_cap
       WHERE {{ filter('priority', priority) }}
         AND {{ filter_date_range('created_at', date_range) }}
       GROUP BY 1
@@ -164,10 +172,15 @@ queries:
 
   intake_by_type:
     sql: |
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      )
       SELECT
         ticket_type                                AS type,
         COUNT(*)                                  AS tickets
-      FROM tickets
+      FROM tickets_cap
       WHERE {{ filter('priority', priority) }}
         AND {{ filter_date_range('created_at', date_range) }}
       GROUP BY 1
@@ -176,10 +189,15 @@ queries:
 
   status_mix:
     sql: |
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      )
       SELECT
         status,
         COUNT(*)                                  AS tickets
-      FROM tickets
+      FROM tickets_cap
       WHERE {{ filter('priority', priority) }}
         AND {{ filter_date_range('created_at', date_range) }}
       GROUP BY 1
@@ -195,7 +213,12 @@ queries:
   # below (vs. paper's 50%/200px) to keep Subject on one line at 18 rows.
   open_queue:
     sql: |
-      WITH bounds AS (
+      WITH tickets_cap AS (
+        SELECT * EXCLUDE (priority),
+          UPPER(LEFT(priority, 1)) || SUBSTR(priority, 2) AS priority
+        FROM tickets
+      ),
+      bounds AS (
         SELECT MAX(created_at)::DATE AS today FROM tickets
       ),
       ranked AS (
@@ -208,10 +231,10 @@ queries:
           (bounds.today - created_at::DATE)         AS age_bar,
           created_at                                AS opened,
           CASE priority
-            WHEN 'urgent' THEN 1 WHEN 'high' THEN 2
-            WHEN 'normal' THEN 3 WHEN 'low'  THEN 4
+            WHEN 'Urgent' THEN 1 WHEN 'High' THEN 2
+            WHEN 'Normal' THEN 3 WHEN 'Low'  THEN 4
           END                                        AS prio_sort
-        FROM tickets, bounds
+        FROM tickets_cap, bounds
         WHERE status = 'new'
           AND {{ filter('priority', priority) }}
           AND {{ filter_date_range('created_at', date_range) }}
@@ -322,6 +345,11 @@ charts:
       # and the chart renders as bars instead of columns.
       orientation: vertical
       stack: zero
+      # Default stack order ranks series by descending value total (low →
+      # urgent → high → normal here), not the query's urgent → low sequence.
+      # "data" stacks in SQL row order instead, matching the title's claim
+      # and the ORDER BY priority_order in queue_age_by_priority.
+      stack_order: data
       axis_y:
         # Tick ladder is derived, not pinned, so it tracks the data.
         labels:
@@ -331,12 +359,6 @@ charts:
           # swap moves the measure axis to the bottom, where this same
           # align: right mis-applies.
           align: right
-      axis_x:
-        labels:
-          # Strip the "N · " ordering prefix from the age_band labels (the
-          # prefix exists in the SQL so VL's nominal scale domain orders
-          # fresh→aging on stacked bars).
-          expr: "datum.value ? slice(datum.value, 4) : ''"
 
   # ── Small-multiples row: four mini categorical breakdowns ──────────────
   # Same shape repeated four times — short horizontal bars at compact width.
@@ -407,16 +429,16 @@ charts:
     conditional_formatting:
       priority:
         when:
-        - eq: urgent
+        - eq: Urgent
           glyph: "■"
           glyph_color: "#a8423a"     # urgent crimson
-        - eq: high
+        - eq: High
           glyph: "■"
           glyph_color: "#d49656"     # editorial gold
-        - eq: normal
+        - eq: Normal
           glyph: "■"
           glyph_color: "#7a8a9a"     # cool slate
-        - eq: low
+        - eq: Low
           glyph: "■"
           glyph_color: "#a8b4a8"     # muted sage
       ticket_type:

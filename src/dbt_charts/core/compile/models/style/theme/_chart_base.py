@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.factories import (
+    build_patch_model,
     build_patch_model_ext,
 )
 from dbt_charts.core.compile.models.markers import (
@@ -35,6 +36,7 @@ from dbt_charts.core.compile.models.primitives import (
     FontStyle,
     StaticGradientColorStyle,
 )
+from dbt_charts.core.compile.models.style.theme.annotations import AnnotationsStyle
 from dbt_charts.core.compile.models.style.theme.board import (
     ChartTitleStyle,
     PaddingStyle,
@@ -45,7 +47,6 @@ from dbt_charts.core.compile.models.style.theme.legend import (
 )
 from dbt_charts.core.compile.models.style.theme.marks import (
     BasemapStyle,
-    ProjectionStyle,
     TotalStyle,
 )
 
@@ -63,6 +64,16 @@ if TYPE_CHECKING:
 
 else:
     ChartTitleStylePatch = build_patch_model_ext(ChartTitleStyle, is_recursive=True)
+
+
+# The same patch class the board's `style.annotations` slot generates (cached).
+if TYPE_CHECKING:
+
+    class AnnotationsStylePatch(AnnotationsStyle):
+        pass
+
+else:
+    AnnotationsStylePatch = build_patch_model(AnnotationsStyle)
 
 
 class _ChartStyleBase(BaseModel):
@@ -345,6 +356,23 @@ class _QuantitativeAxisChartStyleMixin(BaseModel):
     )
 
 
+class _AnnotatedChartStyleMixin(BaseModel):
+    """``annotations``: the families that draw annotations: bar, line, area, scatter."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # SkipInheritSlots: a sparse patch over `style.annotations`, which owns the
+    # inheritance; slot-filling it here would pin values over the board's.
+    annotations: Annotated[AnnotationsStylePatch | None, SkipInheritSlots()] = Field(
+        default=None,
+        description=(
+            "Default look of this chart's annotations per type (rule, band, note, "
+            "trend), over the board's `style.annotations`; an annotation's own "
+            "`style` wins over both."
+        ),
+    )
+
+
 class _RadialChartStyle(
     _PaintedChartStyleBaseAllOptional,
     _PieLegendedChartStyleBaseAllOptional,
@@ -390,9 +418,6 @@ class _GeoChartStyle(
     color: StaticGradientColorStyle | None = Field(  # type: ignore[assignment]
         default=None,
         description="Geo color: static paint or gradient scale only (no categorical arm).",
-    )
-    projection: ProjectionStyle = Field(
-        description="Vega-Lite projection configuration for this geo family."
     )
     basemap: BasemapStyle = Field(
         default_factory=BasemapStyle,

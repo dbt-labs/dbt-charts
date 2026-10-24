@@ -111,6 +111,6 @@ options:
   {% set lx = x - 6 - nw - 4 - text_width(v, label_size) if end else x + p.node_width + 6 %}
   {% set ly = (y + hgt / 2)|round(1) %}
   <text x="{{ lx|round(1) }}" y="{{ ly }}" dy="0.35em" font-weight="600">{{ n }}</text>
-  <text x="{{ (lx + nw + 4)|round(1) }}" y="{{ ly }}" dy="0.35em" fill="{{ style.muted }}">{{ v }}</text>
+  <text x="{{ (lx + nw + 4)|round(1) }}" y="{{ ly }}" dy="0.35em" fill="{{ style.fonts.secondary.color }}">{{ v }}</text>
 {% endfor %}
 </g>

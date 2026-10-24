@@ -42,7 +42,10 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _cartesian_style_tail,
     _with_color_tokens,
 )
-from dbt_charts.core.compile.resolve.style.axis_cascade import build_resolved_axis
+from dbt_charts.core.compile.resolve.style.axis_cascade import (
+    AxisOverrides,
+    build_resolved_axis,
+)
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
 
 __all__ = [
@@ -122,6 +125,7 @@ class CartesianPlan:
     primary: Any
     channels: dict[str, ResolvedStyleChannel]
     axes: BakedCartesianAxes
+    axis_overrides: AxisOverrides
 
 
 def plan_cartesian(
@@ -173,7 +177,9 @@ def plan_cartesian(
         y=y,
         temporal_band_axes=temporal_band_axes,
     )
-    return CartesianPlan(primary=primary, channels=channels, axes=baked)
+    return CartesianPlan(
+        primary=primary, channels=channels, axes=baked, axis_overrides=axis_overrides
+    )
 
 
 def build_cartesian_axes(

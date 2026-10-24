@@ -1,0 +1,5 @@
+kind: Features
+body: Annotate cartesian charts with rules, bands, notes and trend lines
+time: 2026-10-21T16:18:46.583502-07:00
+custom:
+    DbtChartsIssue: "23"

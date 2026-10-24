@@ -7,21 +7,26 @@ use d3rs::py_float::format_g;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::table::{
+use super::table::bind::{
     compute_scale_domain, font_weight_as_css, interpolate_scale_color, resolve_conditional_styles,
-    resolve_hinge, resolve_palette_stops, sanitized_color, WhenRule, VALID_FONT_WEIGHTS,
+    resolve_hinge, resolve_palette_stops, sanitized_color,
 };
+use super::table::{WhenRule, VALID_FONT_WEIGHTS};
 use super::table_dates;
 use crate::common::ScaleTarget;
 use crate::codes;
 use crate::common::{
-    format_kpi_parts, measure_family_stand_in, FormatParts, FormatSlot, PartsOptions,
+    format_kpi_parts, FormatParts, FormatSlot, PartsOptions,
 };
 use crate::diagnostic::{warn, Diagnostic};
+use crate::layout::{Insets, IntrinsicWidth, Layout, Rect};
 use crate::svg::py_float_str;
-use measure::FontBook;
-use crate::xml::{Attrs, Xml};
 use crate::{Payload, TonesStyle};
+use measure::weighted::weighted_width;
+use measure::wrap::wrap_label;
+use measure::{FontBook, Measure};
+use print::print;
+use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
 const CAP_HEIGHT_RATIO: f64 = 0.7;
 const DESCENDER_RATIO: f64 = 0.2;
 const AFFIX_ELEVATION: f64 = 0.37;
@@ -103,6 +108,9 @@ struct KpiChartStyle {
     label: LabelStyle,
     support: SupportStyle,
     content_padding: Padding,
+    /// The card height an inline or compact card wants, and the floor a
+    /// stacked card's slot starts from.
+    default_height: f64,
     #[serde(deserialize_with = "Option::deserialize")]
     background: Option<String>,
     /// Whole-card alignment of the value/label/support text column
@@ -254,13 +262,18 @@ impl SlotFont {
         Ok(SlotFont { family, size, weight, italic, decoration, case, color: font.color.clone() })
     }
 
-    fn attrs(&self) -> Attrs<'_> {
-        Attrs::new()
-            .set("font-family", self.family.as_str())
-            .set("font-size", py_float_str(self.size))
-            .set("font-weight", self.weight.as_str())
-            .set_if(self.italic, "font-style", "italic")
-            .set_if(self.decoration != "none", "text-decoration", self.decoration.as_str())
+    fn attrs(&self) -> Attrs {
+        let mut attrs = Attrs::new()
+            .quick("font-family", self.family.as_str())
+            .quick("font-size", py_float_str(self.size))
+            .quick("font-weight", self.weight.as_str());
+        if self.italic {
+            attrs = attrs.quick("font-style", "italic");
+        }
+        if self.decoration != "none" {
+            attrs = attrs.quick("text-decoration", self.decoration.as_str());
+        }
+        attrs
     }
 
     /// The text under the slot's case transform.
@@ -268,39 +281,8 @@ impl SlotFont {
         display_text::case::apply_case(text, &self.case)
     }
 
-    /// `get_weighted_font_measurer(
-    /// family, weight, italic=, numeric=)` (`font_measure.py:134-178`) at this
-    /// slot's size. The HVAR-exact `mdsvg` measurer, not `FontBook::measure`,
-    /// which instances the same axis ~0.004px apart.
-    fn measure(&self, book: &FontBook, text: &str, numeric: bool) -> Result<f64, String> {
-        let file = book.measurer(measure_font_file(&self.family, self.italic, numeric))?;
-        let axis = mdsvg::fonts::css_weight_axis(&self.weight)?;
-        Ok(mdsvg::fonts::cached_measurer(&file.font_path, 0, axis).measure(text, self.size))
-    }
-}
-
-/// `fonts.registry_family` (fonts.py:357-370): the first stack entry, with any
-/// `Source Serif` spelling naming the one vendored cut.
-fn registry_family(family: &str) -> &str {
-    let primary = family.split(',').next().unwrap_or_default().trim().trim_matches(|c| c == '\'' || c == '"');
-    if primary.starts_with("Source Serif") {
-        "Source Serif 4"
-    } else {
-        primary
-    }
-}
-
-/// The vendored font `get_weighted_font_measurer` measures with: the family's
-/// italic when one is registered (Inter Variable, Source Serif 4), else
-/// `get_font_path` (fonts.py:406-420) — Source Serif keeps its own file, a
-/// numeric run measures as dbt Sans Tabular, every other family as Inter.
-fn measure_font_file(family: &str, italic: bool, numeric: bool) -> &'static str {
-    match (registry_family(family), italic, numeric) {
-        ("Source Serif 4", true, _) => "Source Serif 4 Italic",
-        ("Inter Variable", true, _) => "Inter Variable Italic",
-        ("Source Serif 4", false, _) => "Source Serif 4",
-        (_, _, true) => "dbt Sans Tabular",
-        _ => "Inter Variable",
+    fn measure(&self, m: &Measure, text: &str, numeric: bool) -> Result<f64, String> {
+        weighted_width(m.fonts, &self.family, &self.weight, self.italic, numeric, self.size, text)
     }
 }
 
@@ -565,7 +547,7 @@ struct Colors {
     glyph_fill: String,
     label_fill: String,
     card_fill: Option<String>,
-    muted: String,
+    secondary: String,
 }
 
 fn resolve_colors(
@@ -574,7 +556,7 @@ fn resolve_colors(
     slots: &Slots,
     kpi: &KpiChartStyle,
     board_background: Option<&str>,
-    muted: &str,
+    secondary: &str,
 ) -> Result<Colors, String> {
     let col_format = r
         .format
@@ -625,7 +607,7 @@ fn resolve_colors(
         label_fill: own_fill(slots.label.color.as_deref(), card_ink)?,
         value_fill,
         card_fill,
-        muted: muted.to_string(),
+        secondary: secondary.to_string(),
     })
 }
 
@@ -648,7 +630,7 @@ fn resolve_support_row(
     kpi: &KpiChartStyle,
     slots: &Slots,
     tones: Option<&TonesStyle>,
-    muted: &str,
+    secondary: &str,
     chart_id: &str,
     formats: Option<&serde_json::Map<String, Value>>,
     sub_unit_specs: &SubUnitSpecs,
@@ -721,7 +703,7 @@ fn resolve_support_row(
         .clone()
         .or_else(|| row_color.clone())
         .or_else(|| tone_color.map(str::to_string))
-        .unwrap_or_else(|| muted.to_string());
+        .unwrap_or_else(|| secondary.to_string());
     let glyph_fill = styled
         .glyph_color
         .filter(|c| !c.is_empty())
@@ -729,7 +711,7 @@ fn resolve_support_row(
         .or(glyph_ink)
         .or_else(|| tone_color.map(str::to_string))
         .or(row_color)
-        .unwrap_or_else(|| muted.to_string());
+        .unwrap_or_else(|| secondary.to_string());
 
     Ok(Some(SupportRow { glyph, value_str, explainer, value_fill, glyph_fill }))
 }
@@ -742,34 +724,60 @@ struct Run<'a> {
 }
 
 /// Glyph, value, explainer — the explainer reads every support
-/// font field except color, it stays muted.
-fn support_runs<'a>(row: &'a SupportRow, slots: &'a Slots, muted: &'a str) -> Vec<Run<'a>> {
+/// font field except color, it stays secondary.
+fn support_runs<'a>(row: &'a SupportRow, slots: &'a Slots, secondary: &'a str) -> Vec<Run<'a>> {
     let mut runs = Vec::new();
     if !row.glyph.is_empty() {
-        runs.push(Run { font: &slots.support_glyph, fill: &row.glyph_fill, text: format!("{} ", row.glyph) });
+        runs.push(Run {
+            font: &slots.support_glyph,
+            fill: &row.glyph_fill,
+            text: format!("{} ", row.glyph),
+        });
     }
     if !row.value_str.is_empty() {
-        runs.push(Run { font: &slots.support, fill: &row.value_fill, text: row.value_str.clone() });
+        runs.push(Run {
+            font: &slots.support,
+            fill: &row.value_fill,
+            text: row.value_str.clone(),
+        });
     }
     if !row.explainer.is_empty() {
-        let spacer = if !row.value_str.is_empty() || !row.glyph.is_empty() { " " } else { "" };
-        runs.push(Run { font: &slots.support, fill: muted, text: format!("{spacer}{}", row.explainer) });
+        let spacer = if !row.value_str.is_empty() || !row.glyph.is_empty() {
+            " "
+        } else {
+            ""
+        };
+        runs.push(Run {
+            font: &slots.support,
+            fill: secondary,
+            text: format!("{spacer}{}", row.explainer),
+        });
     }
     runs
 }
 
-fn runs_width(runs: &[Run], book: &FontBook) -> Result<f64, String> {
-    runs.iter().map(|r| r.font.measure(book, &r.text, false)).sum()
+fn runs_width(runs: &[Run], m: &Measure) -> Result<f64, String> {
+    runs.iter().map(|r| r.font.measure(m, &r.text, false)).sum()
 }
 
 /// Cuts the explainer (the last support run) with an ellipsis until the row fits
 /// `available_width`, warning when it does. The glyph and value stay whole, so a
 /// row they overflow alone leaves the explainer as `…` and still overflows.
-fn fit_explainer(c: &Card, runs: &mut [Run], available_width: f64) -> Result<bool, String> {
-    let Some(support) = c.support.filter(|s| !s.explainer.is_empty()) else { return Ok(false) };
-    let Some((last, head)) = runs.split_last_mut() else { return Ok(false) };
-    let room = available_width - runs_width(head, c.book)?;
-    if last.font.measure(c.book, &last.text, false)? <= room {
+fn fit_explainer(
+    b: &Bound,
+    m: &Measure,
+    runs: &mut [Run],
+    available_width: f64,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<bool, String> {
+    let Some(support) = b.support.as_ref().filter(|s| !s.explainer.is_empty()) else {
+        return Ok(false);
+    };
+    let Some((last, head)) = runs.split_last_mut() else {
+        return Ok(false);
+    };
+    let room = available_width - runs_width(head, m)?;
+    if last.font.measure(m, &last.text, false)? <= room {
         return Ok(false);
     }
     let spacer = if last.text.starts_with(' ') { " " } else { "" };
@@ -778,49 +786,56 @@ fn fit_explainer(c: &Card, runs: &mut [Run], available_width: f64) -> Result<boo
     for keep in (0..chars.len()).rev() {
         let kept: String = chars[..keep].iter().collect();
         cut = format!("{spacer}{}\u{2026}", kept.trim_end());
-        if last.font.measure(c.book, &cut, false)? <= room {
+        if last.font.measure(m, &cut, false)? <= room {
             break;
         }
     }
     last.text = cut;
-    warn(Diagnostic::new(
+    diagnostics.push(Diagnostic::new(
         &codes::WARN_KPI_SUPPORT_TRUNCATED,
-        [("chart_id", json!(c.id)), ("authored_text", json!(support.explainer))],
+        [
+            ("chart_id", json!(b.id)),
+            ("authored_text", json!(support.explainer)),
+        ],
     ));
     Ok(true)
 }
 
 /// `extra` rides before the font attributes.
-fn emit_run_tspans(xml: &mut Xml, runs: &[Run], extra: &Attrs) {
-    for r in runs {
-        xml.leaf(
-            "tspan",
-            Attrs::new().extend(extra.clone()).extend(r.font.attrs()).set("fill", r.fill),
-            &r.text,
-        );
-    }
+fn run_tspans(runs: &[Run], extra: &Attrs) -> Vec<Node> {
+    runs.iter()
+        .map(|r| {
+            let attrs = extra.clone().extend(r.font.attrs()).quick("fill", r.fill);
+            tspan(attrs, r.text.as_str())
+        })
+        .collect()
 }
 
-// ── Public entrypoint ──────────────────────────────────────────────────────
+// ── Bind ───────────────────────────────────────────────────────────────────
 
-/// Everything an emitter reads, resolved once per card.
-struct Card<'a> {
-    id: &'a str,
+/// A KPI after `bind`: everything its payload, data and style decide, before
+/// any width does.
+pub struct Bound {
+    id: String,
+    variant: Variant,
+    kpi: KpiChartStyle,
+    slots: Slots,
+    colors: Colors,
+    value: ValueRun,
+    label_text: String,
+    support: Option<SupportRow>,
     /// The chart-root link, already resolved against the link context in Python
-    /// and scheme-checked here (`checked_href`), that wraps the card's value in `<a>`.
-    link: Option<crate::href::Anchor<'a>>,
-    kpi: &'a KpiChartStyle,
-    slots: &'a Slots,
-    colors: &'a Colors,
-    value: &'a ValueRun,
-    label_text: &'a str,
-    support: Option<&'a SupportRow>,
-    book: &'a FontBook,
+    /// and scheme-checked (`checked_href`), that wraps the card's value in `<a>`.
+    link: Option<CardLink>,
     /// The card padding this KPI's render box was shrunk by, if any —
-    /// `emit_card_chrome`'s rect reaches back out over it (`common::
-    /// card_box`), matching production's `card_box(w, h, inset)`
-    /// (`svg_utils.py:173`).
-    inset: Option<&'a crate::Padding>,
+    /// the card rect reaches back out over it (`common::card_box`), matching
+    /// production's `card_box(w, h, inset)` (`svg_utils.py:173`).
+    inset: Option<crate::Padding>,
+}
+
+struct CardLink {
+    url: String,
+    open: crate::href::LinkOpen,
 }
 
 /// The headline glyph + prefix + number + suffix,
@@ -833,21 +848,25 @@ struct ValueRun {
     is_numeric: bool,
 }
 
-pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     refuse_retired_keys(&payload.resolved)?;
-    let r: Resolved = Deserialize::deserialize(&payload.resolved)
-        .map_err(|e| format!("kpi payload: {e}"))?;
+    let r: Resolved =
+        Deserialize::deserialize(&payload.resolved).map_err(|e| format!("kpi payload: {e}"))?;
     let kpi = &r.style.kpi;
-    let w = payload.width;
-    let h = payload.height;
 
     let Some(first) = payload.rows.first() else {
-        return Err(Diagnostic::new(&codes::ERR_KPI_NO_DATA, [("chart_id", json!(r.id))]));
+        return Err(Diagnostic::new(
+            &codes::ERR_KPI_NO_DATA,
+            [("chart_id", json!(r.id))],
+        ));
     };
     if payload.rows.len() > 1 {
         return Err(Diagnostic::new(
             &codes::ERR_KPI_MULTIROW,
-            [("chart_id", json!(r.id)), ("row_count", json!(payload.rows.len()))],
+            [
+                ("chart_id", json!(r.id)),
+                ("row_count", json!(payload.rows.len())),
+            ],
         ));
     }
     // A non-finite cell is null after the seam; the card prints its `str()` text.
@@ -860,19 +879,27 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     let row = &row;
     let slots = Slots::resolve(kpi)?;
     let cell = column_cell(row, &r.value, &r.id)?;
-    let board_formats = payload.board_style.as_ref().and_then(|b| b.formats.as_ref());
+    let board_formats = payload
+        .board_style
+        .as_ref()
+        .and_then(|b| b.formats.as_ref());
     let sub_unit_specs = payload
         .board_style
         .as_ref()
         .and_then(|b| b.sub_unit_specs.as_ref())
         .ok_or("kpi: payload carries no board_style.sub_unit_specs (the board's plain-digit siblings of currency and number)")?;
 
-    let (prefix, number_str, suffix, is_numeric) =
-        format_value_parts(
-            cell, r.format.as_ref(), r.format_native, &r.id, true, false, board_formats,
-            sub_unit_specs,
-        )?;
-    let value_run = ValueRun {
+    let (prefix, number_str, suffix, is_numeric) = format_value_parts(
+        cell,
+        r.format.as_ref(),
+        r.format_native,
+        &r.id,
+        true,
+        false,
+        board_formats,
+        sub_unit_specs,
+    )?;
+    let value = ValueRun {
         glyph: slots.glyph.cased(r.glyph.as_deref().unwrap_or_default())?,
         prefix: slots.affix.cased(&prefix)?,
         number: slots.value.cased(&number_str)?,
@@ -883,46 +910,51 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     // text is emitted.
     let label_text = slots.label.cased(&r.label)?;
 
-    // Support-row and no-tone fills use the board-level `muted` token and tone
-    // palette (`ResolvedStyle.muted` / `.tones`), carried in the envelope's
+    // Support-row and no-tone fills use the board-level `secondary_color` token and tone
+    // palette (`ResolvedStyle.secondary_color` / `.tones`), carried in the envelope's
     // `board_style` slice.
     let board = payload.board_style.as_ref();
-    let muted = board
-        .and_then(|b| b.muted.as_deref())
-        .ok_or("kpi: payload carries no board_style.muted (the support row's and explainer's ink)")?;
+    let secondary = board.and_then(|b| b.secondary_color.as_deref()).ok_or(
+        "kpi: payload carries no board_style.secondary_color (the support row's and explainer's ink)",
+    )?;
     let tones = board.and_then(|b| b.tones.as_ref());
 
-    let colors = resolve_colors(&r, row, &slots, kpi, payload.background.as_deref(), muted)?;
-    let support = resolve_support_row(&r.support, row, kpi, &slots, tones, muted, &r.id, board_formats, sub_unit_specs)?;
+    let colors = resolve_colors(&r, row, &slots, kpi, payload.background.as_deref(), secondary)?;
+    let support = resolve_support_row(
+        &r.support,
+        row,
+        kpi,
+        &slots,
+        tones,
+        secondary,
+        &r.id,
+        board_formats,
+        sub_unit_specs,
+    )?;
     let (url, open) = match r.link.as_deref() {
         Some(url) => (Some(url), r.link_open),
         None => (r.text_link.as_deref(), crate::href::LinkOpen::Page),
     };
-    let link = open.anchor(url.map(crate::href::checked_href).transpose()?);
+    let link = url
+        .map(|url| {
+            Ok::<_, String>(CardLink {
+                url: crate::href::checked_href(url)?.to_string(),
+                open,
+            })
+        })
+        .transpose()?;
 
-    let card = Card {
-        id: &r.id,
+    Ok(Bound {
+        id: r.id,
+        variant: r.variant,
+        kpi: r.style.kpi,
+        slots,
+        colors,
+        value,
+        label_text,
+        support,
         link,
-        kpi,
-        slots: &slots,
-        colors: &colors,
-        value: &value_run,
-        label_text: &label_text,
-        support: support.as_ref(),
-        book: fonts,
-        inset: payload.padding.as_ref(),
-    };
-    let layout = resolve_layout(&card, w, h)?;
-    if layout.label_truncated {
-        warn(Diagnostic::new(
-            &codes::WARN_KPI_LABEL_TRUNCATED,
-            [("chart_id", json!(r.id)), ("authored_text", json!(layout.label_original))],
-        ));
-    }
-    Ok(match r.variant {
-        Variant::Inline => emit_inline(&card, &layout, h)?,
-        Variant::Compact => emit_compact(&card, w, h)?,
-        Variant::Stacked => emit_stacked(&card, &layout)?,
+        inset: payload.padding,
     })
 }
 
@@ -934,28 +966,26 @@ fn column_cell<'a>(
     row.get(column).ok_or_else(|| {
         Diagnostic::new(
             &codes::ERR_KPI_VALUE_COLUMN_NOT_FOUND,
-            [("chart_id", json!(chart_id)), ("value_column", json!(column))],
+            [
+                ("chart_id", json!(chart_id)),
+                ("value_column", json!(column)),
+            ],
         )
     })
 }
 
-// ── Layout ─────────────────────────────────────────
+// ── The vertical law ───────────────────────────────────────────────────────
 
-/// Vertical slot geometry for the stacked value / label / support
-/// layout.
-struct Layout {
-    width: f64,
-    height: f64,
-    content_x: f64,
+/// Vertical slot geometry for the stacked value / label / support layout,
+/// shared by `height_for_width` and `layout`.
+struct Vertical {
     value_baseline: f64,
     prefix_baseline: f64,
     glyph_baseline: f64,
     label_baseline_first: f64,
     label_line_height: f64,
-    label_lines: Vec<String>,
-    label_original: String,
-    label_truncated: bool,
     support_baseline: f64,
+    minimum_height: f64,
 }
 
 /// The prefix and glyph ride above the
@@ -967,10 +997,10 @@ fn affix_baselines(value_baseline: f64, slots: &Slots) -> (f64, f64) {
     )
 }
 
-fn resolve_layout(c: &Card, requested_width: f64, requested_height: f64) -> Result<Layout, String> {
-    let pad = &c.kpi.content_padding;
-    let overflow = c.kpi.label.overflow;
-    let slots = c.slots;
+fn vertical(b: &Bound) -> Vertical {
+    let pad = &b.kpi.content_padding;
+    let overflow = b.kpi.label.overflow;
+    let slots = &b.slots;
 
     let label_line_height = slots.label.size + 4.0;
     let cap_height = slots.value.size * CAP_HEIGHT_RATIO;
@@ -980,72 +1010,268 @@ fn resolve_layout(c: &Card, requested_width: f64, requested_height: f64) -> Resu
     let label_baseline_first = value_baseline + MINIMUM_TITLE_VALUE_GAP + label_cap_height;
     // A single-line overflow mode reserves one label line; the mode is
     // theme-wide, so every KPI on a board shifts by the same amount.
-    let label_slot_lines = if matches!(overflow, Overflow::Clip | Overflow::Truncate) { 1.0 } else { 2.0 };
+    let label_slot_lines = if matches!(overflow, Overflow::Clip | Overflow::Truncate) {
+        1.0
+    } else {
+        2.0
+    };
     let support_baseline = label_baseline_first + label_slot_lines * label_line_height;
 
-    let minimum_card_h = if c.support.is_some() {
+    let minimum_height = if b.support.is_some() {
         support_baseline + slots.support.size * DESCENDER_RATIO + pad.bottom
     } else {
         let label_slot_bottom = label_baseline_first + (label_slot_lines - 1.0) * label_line_height;
         label_slot_bottom + slots.label.size * DESCENDER_RATIO + pad.bottom
     };
-    let (label_lines, label_truncated) = wrap_label_lines(c, requested_width)?;
-    Ok(Layout {
-        width: requested_width,
-        height: requested_height.max(minimum_card_h),
-        content_x: pad.left,
+    Vertical {
         value_baseline,
         prefix_baseline,
         glyph_baseline,
         label_baseline_first,
         label_line_height,
-        label_lines,
-        label_original: c.label_text.to_string(),
-        label_truncated,
         support_baseline,
+        minimum_height,
+    }
+}
+
+/// The arrangement a card is drawn in at `width`: an inline card whose one row
+/// overflows the card stacks instead, unless it is a bare value that stacking
+/// would overflow the same.
+fn arrangement(b: &Bound, m: &Measure, width: f64) -> Result<Variant, String> {
+    if b.variant != Variant::Inline {
+        return Ok(b.variant);
+    }
+    let can_fall_back = !b.label_text.is_empty() || b.support.is_some();
+    let overflows = inline_run_width(b, m)? > width - b.kpi.content_padding.horizontal();
+    Ok(if can_fall_back && overflows {
+        Variant::Stacked
+    } else {
+        Variant::Inline
     })
+}
+
+/// The height a card draws in a cell `requested` tall: a stacked card grows to
+/// the minimum its slots need, inline and compact keep the cell's.
+fn card_height(arrangement: Variant, vertical: &Vertical, requested: f64) -> f64 {
+    match arrangement {
+        Variant::Stacked => requested.max(vertical.minimum_height),
+        Variant::Inline | Variant::Compact => requested,
+    }
+}
+
+/// The height the card draws at `width` in a cell of the theme's
+/// `default_height`, the box a card with no slot of its own takes.
+pub fn height_for_width(bound: &Bound, width: f64, measure: &Measure) -> Result<f64, Diagnostic> {
+    Ok(card_height(
+        arrangement(bound, measure, width)?,
+        &vertical(bound),
+        bound.kpi.default_height,
+    ))
+}
+
+// ── Width ──────────────────────────────────────────────────────────────────
+
+/// The width of the value run, each part in its own slot font; the number is
+/// measured as tabular figures, and the trailing `+2.0` mirrors the `dx="2"`
+/// kern before the suffix tspan.
+fn measure_value_run(b: &Bound, m: &Measure) -> Result<f64, String> {
+    let (run, slots) = (&b.value, &b.slots);
+    let mut width = 0.0;
+    if !run.glyph.is_empty() {
+        width += slots.glyph.measure(m, &format!("{} ", run.glyph), false)?;
+    }
+    if run.is_numeric && !run.prefix.is_empty() {
+        width += slots.affix.measure(m, &run.prefix, false)?;
+    }
+    width += slots.value.measure(m, &run.number, true)?;
+    if run.is_numeric && !run.suffix.is_empty() {
+        width += slots.affix.measure(m, &run.suffix, false)? + 2.0;
+    }
+    Ok(width)
+}
+
+/// One `INLINE_GAP` before each slot actually emitted; the support glyph /
+/// value / explainer chain reads as one joined string with no inner gap.
+fn inline_run_width(b: &Bound, m: &Measure) -> Result<f64, String> {
+    let mut run_width = measure_value_run(b, m)?;
+    if !b.label_text.is_empty() {
+        run_width += INLINE_GAP + b.slots.label.measure(m, &b.label_text, false)?;
+    }
+    let support_runs = b
+        .support
+        .as_ref()
+        .map(|s| support_runs(s, &b.slots, &b.colors.secondary))
+        .unwrap_or_default();
+    if !support_runs.is_empty() {
+        run_width += INLINE_GAP + runs_width(&support_runs, m)?;
+    }
+    Ok(run_width)
+}
+
+/// The top and bottom runs of the compact right column, and whether the label's
+/// `data-authored-kind` rides the top or the bottom one.
+struct CompactColumn<'a> {
+    top: Vec<Run<'a>>,
+    bottom: Vec<Run<'a>>,
+    kind_on_top: bool,
+    kind_on_bottom: bool,
+}
+
+fn compact_column(b: &Bound) -> CompactColumn<'_> {
+    let slots = &b.slots;
+    // Only the label names an authored key (`label:`), so only its <text>
+    // carries the leaf kind.
+    let label_runs: Vec<Run> = if b.label_text.is_empty() {
+        vec![]
+    } else {
+        vec![Run {
+            font: &slots.label,
+            fill: &b.colors.label_fill,
+            text: b.label_text.clone(),
+        }]
+    };
+    let mut support_runs = b
+        .support
+        .as_ref()
+        .map(|s| support_runs(s, slots, &b.colors.secondary))
+        .unwrap_or_default();
+    let has_label = !label_runs.is_empty();
+    let has_support = !support_runs.is_empty();
+    let (top, bottom, kind_on_top, kind_on_bottom) = match b.support.as_ref() {
+        _ if has_label && has_support => (label_runs, support_runs, true, false),
+        _ if has_label => (vec![], label_runs, false, true),
+        // Split case: glyph + value on top, the explainer (unspaced) on the
+        // value baseline.
+        Some(s) if !s.value_str.is_empty() && !s.explainer.is_empty() => {
+            support_runs.pop();
+            (
+                support_runs,
+                vec![Run {
+                    font: &slots.support,
+                    fill: &b.colors.secondary,
+                    text: s.explainer.clone(),
+                }],
+                false,
+                false,
+            )
+        }
+        _ => (vec![], support_runs, false, false),
+    };
+    CompactColumn {
+        top,
+        bottom,
+        kind_on_top,
+        kind_on_bottom,
+    }
+}
+
+/// Compact's value column and right column are one rigid block under
+/// `align`: the right column's x derives from the value run's own width.
+fn compact_block_width(
+    m: &Measure,
+    value_run_width: f64,
+    column: &CompactColumn,
+) -> Result<f64, String> {
+    let right_block_width = runs_width(&column.top, m)?.max(runs_width(&column.bottom, m)?);
+    let has_right_column = !column.top.is_empty() || !column.bottom.is_empty();
+    Ok(if has_right_column {
+        value_run_width + INLINE_GAP + right_block_width
+    } else {
+        value_run_width
+    })
+}
+
+/// The narrowest width that keeps the headline whole, and the width the card's
+/// own arrangement asks for: the widest of value, label and support when
+/// stacked, the one row when inline, the rigid block when compact.
+pub fn intrinsic(bound: &Bound, measure: &Measure) -> Result<Option<IntrinsicWidth>, Diagnostic> {
+    let padding = bound.kpi.content_padding.horizontal();
+    let value = measure_value_run(bound, measure)?;
+    let arrangement = match bound.variant {
+        Variant::Inline => inline_run_width(bound, measure)?,
+        Variant::Compact => compact_block_width(measure, value, &compact_column(bound))?,
+        Variant::Stacked => {
+            let label = if bound.label_text.is_empty() {
+                0.0
+            } else {
+                bound
+                    .slots
+                    .label
+                    .measure(measure, &bound.label_text, false)?
+            };
+            let support = bound
+                .support
+                .as_ref()
+                .map(|s| support_runs(s, &bound.slots, &bound.colors.secondary))
+                .unwrap_or_default();
+            value.max(label).max(runs_width(&support, measure)?)
+        }
+    };
+    Ok(Some(IntrinsicWidth {
+        min: padding + value,
+        preferred: padding + arrangement,
+    }))
 }
 
 /// The title-overflow wrap, reported as
 /// `(lines, truncated)`.
-fn wrap_label_lines(c: &Card, requested_width: f64) -> Result<(Vec<String>, bool), String> {
-    if c.label_text.is_empty() {
+fn wrap_label_lines(
+    b: &Bound,
+    m: &Measure,
+    requested_width: f64,
+) -> Result<(Vec<String>, bool), String> {
+    if b.label_text.is_empty() {
         return Ok((vec![], false));
     }
-    let pad = &c.kpi.content_padding;
-    let label = &c.slots.label;
+    let pad = &b.kpi.content_padding;
+    let label = &b.slots.label;
     // `compute_title_limit`: `int(width - left - right)`, none at or below zero.
     let limit = (requested_width - pad.left - pad.right) as i64;
     let (rendered, truncated) = if limit <= 0 || requested_width <= 0.0 {
-        (c.label_text.to_string(), false)
+        (b.label_text.clone(), false)
     } else {
-        prepare_title_text(c.label_text, c.kpi.label.overflow, limit as f64, label, c.book)?
+        prepare_title_text(&b.label_text, b.kpi.label.overflow, limit as f64, label, m)?
     };
     let lines: Vec<String> = rendered.lines().take(2).map(str::to_string).collect();
-    Ok((if lines.is_empty() { vec![c.label_text.to_string()] } else { lines }, truncated))
+    Ok((
+        if lines.is_empty() {
+            vec![b.label_text.clone()]
+        } else {
+            lines
+        },
+        truncated,
+    ))
 }
 
-/// `prepare_title_text` (title_overflow.py:33-46, 49-82): the unweighted measurer of
-/// the label's family (`get_font_measurer(font_family)`), whitespace-normalized
-/// wrap, joined with newlines.
+/// `prepare_title_text` (title_overflow.py:33-46, 49-82): the overflow mode's
+/// line budget over the wrap, joined with newlines.
 fn prepare_title_text(
     text: &str,
     overflow: Overflow,
     limit: f64,
     label: &SlotFont,
-    book: &FontBook,
+    m: &Measure,
 ) -> Result<(String, bool), String> {
-    let measurer = book.measurer(measure_family_stand_in(&label.family))?;
     let (max_lines, ellipsis) = match overflow {
         Overflow::Clip => (Some(1), false),
         Overflow::Truncate => (Some(1), true),
         Overflow::Wrap => (None, false),
         Overflow::WrapTwo => (Some(2), true),
     };
-    let (lines, truncated) =
-        mdsvg::fonts::wrap_text_precise(text, limit, label.size, &measurer, max_lines, ellipsis, true);
+    let (lines, truncated) = wrap_label(
+        m.fonts,
+        measure::stand_in_family(&label.family),
+        text,
+        limit,
+        label.size,
+        max_lines,
+        ellipsis,
+    )?;
     Ok(match overflow {
-        Overflow::Clip | Overflow::Truncate => (lines.first().cloned().unwrap_or_else(|| text.to_string()), truncated),
+        Overflow::Clip | Overflow::Truncate => (
+            lines.first().cloned().unwrap_or_else(|| text.to_string()),
+            truncated,
+        ),
         Overflow::Wrap => (lines.join("\n"), false),
         Overflow::WrapTwo => (lines.join("\n"), truncated),
     })
@@ -1061,11 +1287,15 @@ fn card_align<'a>(
     align: Option<&'a str>,
     available_width: f64,
     run_widths: &[f64],
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<&'a str> {
     match align {
         Some(a @ ("right" | "center")) => {
             if run_widths.iter().fold(0.0_f64, |m, &w| m.max(w)) > available_width {
-                warn(Diagnostic::new(&codes::WARN_KPI_ALIGN_OVERFLOW, [("chart_id", json!(chart_id))]));
+                diagnostics.push(Diagnostic::new(
+                    &codes::WARN_KPI_ALIGN_OVERFLOW,
+                    [("chart_id", json!(chart_id))],
+                ));
                 None
             } else {
                 Some(a)
@@ -1084,339 +1314,477 @@ fn run_x(content_x: f64, available_width: f64, run_width: f64, align: Option<&st
     }
 }
 
-// ── Value run ───────────────────────────────────────────────
+// ── Nodes ───────────────────────────────────────────────────
 
-/// Glyph, prefix, number and suffix, each in its own slot
-/// font and on its own baseline. Shared by all three variants.
-fn emit_value_tspans(xml: &mut Xml, c: &Card, value_baseline: f64, prefix_baseline: f64, glyph_baseline: f64) {
-    let (run, slots, colors) = (c.value, c.slots, c.colors);
-    fn tspan<'a>(font: &'a SlotFont, y: f64, fill: &'a str) -> Attrs<'a> {
-        Attrs::new().set("y", py_float_str(y)).extend(font.attrs()).set("fill", fill)
-    }
-    if !run.glyph.is_empty() {
-        xml.leaf("tspan", tspan(&slots.glyph, glyph_baseline, &colors.glyph_fill), &format!("{} ", run.glyph));
-    }
-    if run.is_numeric && !run.prefix.is_empty() {
-        xml.leaf("tspan", tspan(&slots.affix, prefix_baseline, &colors.affix_fill), &run.prefix);
-    }
-    xml.leaf("tspan", tspan(&slots.value, value_baseline, &colors.value_fill), &run.number);
-    if run.is_numeric && !run.suffix.is_empty() {
-        xml.leaf("tspan", tspan(&slots.affix, value_baseline, &colors.affix_fill).set("dx", "2"), &run.suffix);
-    }
+/// The parts of the card in document order, the newline the markup has always
+/// put between them written as text.
+#[derive(Default)]
+struct Parts(Vec<Node>);
+
+fn newline() -> Node {
+    Node::Chars(Chars::new("\n", Escape::Quick))
 }
 
-/// Each part in its own slot font; the number is
-/// measured as tabular figures, and the trailing `+2.0` mirrors the `dx="2"`
-/// kern before the suffix tspan.
-fn measure_value_run(c: &Card) -> Result<f64, String> {
-    let (run, slots, book) = (c.value, c.slots, c.book);
-    let mut width = 0.0;
-    if !run.glyph.is_empty() {
-        width += slots.glyph.measure(book, &format!("{} ", run.glyph), false)?;
-    }
-    if run.is_numeric && !run.prefix.is_empty() {
-        width += slots.affix.measure(book, &run.prefix, false)?;
-    }
-    width += slots.value.measure(book, &run.number, true)?;
-    if run.is_numeric && !run.suffix.is_empty() {
-        width += slots.affix.measure(book, &run.suffix, false)? + 2.0;
-    }
-    Ok(width)
+fn tspan(attrs: Attrs, text: impl Into<String>) -> Node {
+    Node::Tspan(TextBlock { attrs, text: Chars::new(text, Escape::Quick) })
 }
 
-// ── Card chrome, link, svg ───────────────────────
-
-fn emit_card_chrome(parts: &mut Parts, c: &Card, w: f64, h: f64) {
-    let Some(fill) = c.colors.card_fill.as_deref() else {
-        return;
-    };
-    let (x, y, w, h) = crate::common::card_box(w, h, c.inset);
-    parts.next().empty(
-        "rect",
-        Attrs::new()
-            .set("x", format_g(x))
-            .set("y", format_g(y))
-            .set("width", format_g(w))
-            .set("height", format_g(h))
-            .set("rx", format_g(c.kpi.border.radius))
-            .set("fill", fill),
-    );
-}
-
-fn open_link(parts: &mut Parts, c: &Card) {
-    if let Some(link) = c.link {
-        parts.next().open(
-            "a",
-            Attrs::new().set("href", link.url).set_some("data-dbt-link-open", link.open.open_attr()).set_some("target", link.open.target()),
-        );
-    }
-}
-
-fn close_link(parts: &mut Parts, c: &Card) {
-    if c.link.is_some() {
-        parts.next().close("a");
-    }
-}
-
-struct Parts {
-    xml: Xml,
-    started: bool,
+fn title(text: &str) -> Node {
+    Node::Title(Chars::new(text, Escape::Quick))
 }
 
 impl Parts {
-    fn new(width: f64, height: f64) -> Self {
-        let mut xml = Xml::new();
-        let (w, h) = (py_float_str(width), py_float_str(height));
-        xml.open(
-            "svg",
-            Attrs::new()
-                .set("xmlns", "http://www.w3.org/2000/svg")
-                .set("width", w.clone())
-                .set("height", h.clone())
-                .set("viewBox", format!("0 0 {w} {h}")),
-        );
-        Self { xml, started: false }
-    }
-
-    fn next(&mut self) -> &mut Xml {
-        if std::mem::replace(&mut self.started, true) {
-            self.xml.text("\n");
+    fn push(&mut self, node: Node) {
+        if !self.0.is_empty() {
+            self.0.push(newline());
         }
-        &mut self.xml
+        self.0.push(node);
     }
 
-    fn finish(mut self) -> String {
-        self.xml.close("svg");
-        self.xml.finish()
+    fn append(&mut self, other: Parts) {
+        if other.0.is_empty() {
+            return;
+        }
+        if !self.0.is_empty() {
+            self.0.push(newline());
+        }
+        self.0.extend(other.0);
+    }
+
+    /// `inner` inside the card's link when it has one.
+    fn append_linked(&mut self, b: &Bound, inner: Parts) {
+        let Some(link) = &b.link else {
+            return self.append(inner);
+        };
+        let mut attrs = Attrs::new().quick("href", link.url.as_str());
+        if let Some(open) = link.open.open_attr() {
+            attrs = attrs.quick("data-dbt-link-open", open);
+        }
+        if let Some(target) = link.open.target() {
+            attrs = attrs.quick("target", target);
+        }
+        let mut children = vec![newline()];
+        children.extend(inner.0);
+        children.push(newline());
+        self.push(Node::Link { attrs, children });
     }
 }
 
-fn text_row(x: f64, y: f64) -> Attrs<'static> {
-    Attrs::new().set("x", py_float_str(x)).set("y", py_float_str(y)).set("text-anchor", "start")
+/// Where the card's text runs sit under its width and the height it draws.
+struct Stack {
+    width: f64,
+    height: f64,
+    vertical: Vertical,
+    label_lines: Vec<String>,
+    label_truncated: bool,
+}
+
+fn text_row(x: f64, y: f64, children: Vec<Node>) -> Node {
+    Node::TextRuns {
+        attrs: Attrs::new()
+            .quick("x", py_float_str(x))
+            .quick("y", py_float_str(y))
+            .quick("text-anchor", "start"),
+        children,
+    }
+}
+
+/// The card fill reaches back out over the padding the render box was shrunk by.
+fn chrome(b: &Bound, parts: &mut Parts, w: f64, h: f64) {
+    let Some(fill) = b.colors.card_fill.as_deref() else {
+        return;
+    };
+    let (x, y, w, h) = crate::common::card_box(w, h, b.inset.as_ref());
+    parts.push(Node::Rect(
+        Attrs::new()
+            .quick("x", format_g(x))
+            .quick("y", format_g(y))
+            .quick("width", format_g(w))
+            .quick("height", format_g(h))
+            .quick("rx", format_g(b.kpi.border.radius))
+            .quick("fill", fill),
+    ));
+}
+
+fn value_tspan(font: &SlotFont, y: f64, fill: &str, text: String, extra: Attrs) -> Node {
+    let attrs = Attrs::new().quick("y", py_float_str(y)).extend(font.attrs()).quick("fill", fill);
+    tspan(attrs.extend(extra), text)
+}
+
+/// Glyph, prefix, number and suffix, each in its own slot
+/// font and on its own baseline. Shared by all three variants.
+fn value_tspans(
+    b: &Bound,
+    value_baseline: f64,
+    prefix_baseline: f64,
+    glyph_baseline: f64,
+) -> Vec<Node> {
+    let (run, slots, colors) = (&b.value, &b.slots, &b.colors);
+    let mut nodes = Vec::new();
+    if !run.glyph.is_empty() {
+        nodes.push(value_tspan(
+            &slots.glyph,
+            glyph_baseline,
+            &colors.glyph_fill,
+            format!("{} ", run.glyph),
+            Attrs::new(),
+        ));
+    }
+    if run.is_numeric && !run.prefix.is_empty() {
+        nodes.push(value_tspan(
+            &slots.affix,
+            prefix_baseline,
+            &colors.affix_fill,
+            run.prefix.clone(),
+            Attrs::new(),
+        ));
+    }
+    nodes.push(value_tspan(
+        &slots.value,
+        value_baseline,
+        &colors.value_fill,
+        run.number.clone(),
+        Attrs::new(),
+    ));
+    if run.is_numeric && !run.suffix.is_empty() {
+        nodes.push(value_tspan(
+            &slots.affix,
+            value_baseline,
+            &colors.affix_fill,
+            run.suffix.clone(),
+            Attrs::new().quick("dx", "2"),
+        ));
+    }
+    nodes
 }
 
 // ── Stacked variant ───────────────────────────────────────
 
-fn emit_stacked(c: &Card, layout: &Layout) -> Result<String, String> {
-    let slots = c.slots;
-    let mut parts = Parts::new(layout.width, layout.height);
-    emit_card_chrome(&mut parts, c, layout.width, layout.height);
+fn stacked(
+    b: &Bound,
+    m: &Measure,
+    st: &Stack,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Parts, String> {
+    let slots = &b.slots;
+    let v = &st.vertical;
+    let mut parts = Parts::default();
+    chrome(b, &mut parts, st.width, st.height);
 
     // Usable content width, shared by every row's align computation: value,
     // label and support each anchor to this same right edge / centerline,
     // measuring their own run width independently.
-    let available_width = layout.width - layout.content_x - c.kpi.content_padding.right;
-    let value_run_width = measure_value_run(c)?;
-    let mut support_runs = c.support.map(|s| support_runs(s, slots, &c.colors.muted)).unwrap_or_default();
-    let support_cut = fit_explainer(c, &mut support_runs, available_width)?;
+    let content_x = b.kpi.content_padding.left;
+    let available_width = st.width - content_x - b.kpi.content_padding.right;
+    let value_run_width = measure_value_run(b, m)?;
+    let mut support_runs = b
+        .support
+        .as_ref()
+        .map(|s| support_runs(s, slots, &b.colors.secondary))
+        .unwrap_or_default();
+    let support_cut = fit_explainer(b, m, &mut support_runs, available_width, diagnostics)?;
     // Alignment is a whole-card choice, so every run on the card is measured
     // before it is decided.
-    let label_widths = layout
+    let label_widths = st
         .label_lines
         .iter()
-        .map(|line| slots.label.measure(c.book, line, false))
+        .map(|line| slots.label.measure(m, line, false))
         .collect::<Result<Vec<_>, _>>()?;
     let mut run_widths = vec![value_run_width];
     run_widths.extend(&label_widths);
-    let support_width = if support_runs.is_empty() { None } else { Some(runs_width(&support_runs, c.book)?) };
+    let support_width = if support_runs.is_empty() {
+        None
+    } else {
+        Some(runs_width(&support_runs, m)?)
+    };
     run_widths.extend(support_width);
-    let align = card_align(c.id, c.kpi.align.as_deref(), available_width, &run_widths);
-    let value_x = run_x(layout.content_x, available_width, value_run_width, align);
+    let align = card_align(
+        &b.id,
+        b.kpi.align.as_deref(),
+        available_width,
+        &run_widths,
+        diagnostics,
+    );
+    let value_x = run_x(content_x, available_width, value_run_width, align);
 
-    open_link(&mut parts, c);
-    let xml = parts.next();
-    xml.open("text", text_row(value_x, layout.value_baseline));
-    emit_value_tspans(xml, c, layout.value_baseline, layout.prefix_baseline, layout.glyph_baseline);
-    xml.close("text");
-    close_link(&mut parts, c);
+    let value = text_row(
+        value_x,
+        v.value_baseline,
+        value_tspans(b, v.value_baseline, v.prefix_baseline, v.glyph_baseline),
+    );
+    let mut linked = Parts::default();
+    linked.push(value);
+    parts.append_linked(b, linked);
 
     // Label: a reserved slot, top-aligned within it. The slot is reserved even
     // when the label is empty — only the <text> is skipped.
-    if !layout.label_original.is_empty() {
+    if !b.label_text.is_empty() {
         let line_xs: Vec<f64> = label_widths
             .iter()
-            .map(|w| run_x(layout.content_x, available_width, *w, align))
+            .map(|w| run_x(content_x, available_width, *w, align))
             .collect();
-        let xml = parts.next();
-        xml.open(
-            "text",
-            Attrs::new()
-                .set("x", py_float_str(line_xs[0]))
-                .set("y", py_float_str(layout.label_baseline_first))
-                .set("data-authored-kind", "label")
-                .set("text-anchor", "start")
-                .extend(slots.label.attrs())
-                .set("fill", c.colors.label_fill.as_str()),
-        );
         // The full text rides a <title> when the rendered text differs from
         // it, whichever overflow mode cut it.
-        if layout.label_truncated {
-            xml.leaf("title", Attrs::new(), &layout.label_original);
+        let mut children = Vec::new();
+        if st.label_truncated {
+            children.push(title(&b.label_text));
         }
-        for (index, (line, line_x)) in layout.label_lines.iter().zip(&line_xs).enumerate() {
-            let line_y = layout.label_baseline_first + index as f64 * layout.label_line_height;
-            parts.next().leaf(
-                "tspan",
-                Attrs::new().set("x", py_float_str(*line_x)).set("y", py_float_str(line_y)),
-                line,
-            );
+        for (index, (line, line_x)) in st.label_lines.iter().zip(&line_xs).enumerate() {
+            let line_y = v.label_baseline_first + index as f64 * v.label_line_height;
+            children.push(newline());
+            children.push(tspan(
+                Attrs::new().quick("x", py_float_str(*line_x)).quick("y", py_float_str(line_y)),
+                line.as_str(),
+            ));
         }
-        parts.next().close("text");
+        children.push(newline());
+        let attrs = Attrs::new()
+            .quick("x", py_float_str(line_xs[0]))
+            .quick("y", py_float_str(v.label_baseline_first))
+            .quick("data-authored-kind", "label")
+            .quick("text-anchor", "start")
+            .extend(slots.label.attrs())
+            .quick("fill", b.colors.label_fill.as_str());
+        parts.push(Node::TextRuns { attrs, children });
     }
 
     if let Some(width) = support_width {
-        let support_x = run_x(layout.content_x, available_width, width, align);
-        let xml = parts.next();
-        xml.open("text", text_row(support_x, layout.support_baseline));
-        if let (true, Some(s)) = (support_cut, c.support) {
-            xml.leaf("title", Attrs::new(), &s.explainer);
+        let support_x = run_x(content_x, available_width, width, align);
+        let mut children = Vec::new();
+        if let (true, Some(s)) = (support_cut, b.support.as_ref()) {
+            children.push(title(&s.explainer));
         }
-        emit_run_tspans(xml, &support_runs, &Attrs::new());
-        xml.close("text");
+        children.extend(run_tspans(&support_runs, &Attrs::new()));
+        parts.push(text_row(support_x, v.support_baseline, children));
     }
-    Ok(parts.finish())
+    Ok(parts)
 }
 
 // ── Inline variant ────────────────────────────────────────
 
-fn emit_inline(c: &Card, layout: &Layout, requested_h: f64) -> Result<String, String> {
-    let (slots, kpi) = (c.slots, c.kpi);
+fn inline(
+    b: &Bound,
+    m: &Measure,
+    st: &Stack,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Parts, String> {
+    let (slots, kpi) = (&b.slots, &b.kpi);
     let pad = &kpi.content_padding;
-    let requested_w = layout.width;
+    let (width, height) = (st.width, st.height);
     let cap_height = slots.value.size * CAP_HEIGHT_RATIO;
     // Vertically center the value's cap-box in the card.
-    let value_baseline = (requested_h + cap_height) / 2.0;
+    let value_baseline = (height + cap_height) / 2.0;
     let (prefix_baseline, glyph_baseline) = affix_baselines(value_baseline, slots);
 
-    let support_runs = c.support.map(|s| support_runs(s, slots, &c.colors.muted)).unwrap_or_default();
-    // One INLINE_GAP before each slot actually emitted; the support glyph /
-    // value / explainer chain reads as one joined string with no inner gap.
-    let mut run_width = measure_value_run(c)?;
-    if !c.label_text.is_empty() {
-        run_width += INLINE_GAP + slots.label.measure(c.book, c.label_text, false)?;
-    }
-    if !support_runs.is_empty() {
-        run_width += INLINE_GAP + runs_width(&support_runs, c.book)?;
-    }
-    let available_width = requested_w - pad.horizontal();
-    // A bare value has nothing for the stacked arrangement to move to its own
-    // line: stacking would paint the same overflow, so it never falls back.
-    let can_fall_back = !c.label_text.is_empty() || c.support.is_some();
-    if run_width > available_width && can_fall_back {
-        warn(Diagnostic::new(
-            &codes::WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED,
-            [("chart_id", json!(c.id)), ("authored_text", json!("inline"))],
-        ));
-        return emit_stacked(c, layout);
-    }
+    let support_runs = b
+        .support
+        .as_ref()
+        .map(|s| support_runs(s, slots, &b.colors.secondary))
+        .unwrap_or_default();
+    let run_width = inline_run_width(b, m)?;
+    let available_width = width - pad.horizontal();
 
-    let mut parts = Parts::new(requested_w, requested_h);
-    emit_card_chrome(&mut parts, c, requested_w, requested_h);
-    open_link(&mut parts, c);
+    let mut parts = Parts::default();
+    chrome(b, &mut parts, width, height);
 
-    let align = card_align(c.id, kpi.align.as_deref(), available_width, &[run_width]);
+    let align = card_align(
+        &b.id,
+        kpi.align.as_deref(),
+        available_width,
+        &[run_width],
+        diagnostics,
+    );
     let row_x = run_x(pad.left, available_width, run_width, align);
-    let xml = parts.next();
-    xml.open("text", text_row(row_x, value_baseline));
-    emit_value_tspans(xml, c, value_baseline, prefix_baseline, glyph_baseline);
-    let baseline = Attrs::new().set("y", py_float_str(value_baseline));
-    let gap = Attrs::new().set("dx", py_float_str(INLINE_GAP));
-    if !c.label_text.is_empty() {
-        xml.leaf(
-            "tspan",
-            baseline
-                .clone()
-                .set("data-authored-kind", "label")
-                .extend(slots.label.attrs())
-                .set("fill", c.colors.label_fill.as_str())
-                .extend(gap.clone()),
-            c.label_text,
-        );
+    let mut children = value_tspans(b, value_baseline, prefix_baseline, glyph_baseline);
+    let baseline = Attrs::new().quick("y", py_float_str(value_baseline));
+    let gap = Attrs::new().quick("dx", py_float_str(INLINE_GAP));
+    if !b.label_text.is_empty() {
+        let attrs = baseline
+            .clone()
+            .quick("data-authored-kind", "label")
+            .extend(slots.label.attrs())
+            .quick("fill", b.colors.label_fill.as_str())
+            .extend(gap.clone());
+        children.push(tspan(attrs, b.label_text.as_str()));
     }
     if !support_runs.is_empty() {
-        emit_run_tspans(xml, &support_runs[..1], &baseline.clone().extend(gap));
-        emit_run_tspans(xml, &support_runs[1..], &baseline);
+        let first = baseline.clone().extend(gap);
+        children.extend(run_tspans(&support_runs[..1], &first));
+        children.extend(run_tspans(&support_runs[1..], &baseline));
     }
-    xml.close("text");
-    close_link(&mut parts, c);
-    Ok(parts.finish())
+    let mut linked = Parts::default();
+    linked.push(text_row(row_x, value_baseline, children));
+    parts.append_linked(b, linked);
+    Ok(parts)
 }
 
 // ── Compact variant ───────────────────────────────────────
 
-fn emit_compact(c: &Card, requested_w: f64, requested_h: f64) -> Result<String, String> {
-    let (slots, kpi) = (c.slots, c.kpi);
+fn compact(
+    b: &Bound,
+    m: &Measure,
+    st: &Stack,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Parts, String> {
+    let (slots, kpi) = (&b.slots, &b.kpi);
     let pad = &kpi.content_padding;
+    let (width, height) = (st.width, st.height);
     let cap_height = slots.value.size * CAP_HEIGHT_RATIO;
-    let value_baseline = (requested_h + cap_height) / 2.0;
+    let value_baseline = (height + cap_height) / 2.0;
     let (prefix_baseline, glyph_baseline) = affix_baselines(value_baseline, slots);
 
-    // Only the label names an authored key (`label:`), so only its <text>
-    // carries the leaf kind.
-    let label_runs: Vec<Run> = if c.label_text.is_empty() {
-        vec![]
-    } else {
-        vec![Run { font: &slots.label, fill: &c.colors.label_fill, text: c.label_text.to_string() }]
-    };
-    let mut support_runs = c.support.map(|s| support_runs(s, slots, &c.colors.muted)).unwrap_or_default();
-    let has_label = !label_runs.is_empty();
-    let has_support = !support_runs.is_empty();
-    let (top, bottom, kind_on_top, kind_on_bottom): (Vec<Run>, Vec<Run>, bool, bool) = match c.support {
-        _ if has_label && has_support => (label_runs, support_runs, true, false),
-        _ if has_label => (vec![], label_runs, false, true),
-        // Split case: glyph + value on top, the explainer (unspaced) on the
-        // value baseline.
-        Some(s) if !s.value_str.is_empty() && !s.explainer.is_empty() => {
-            support_runs.pop();
-            (
-                support_runs,
-                vec![Run { font: &slots.support, fill: &c.colors.muted, text: s.explainer.clone() }],
-                false,
-                false,
-            )
-        }
-        _ => (vec![], support_runs, false, false),
-    };
+    let has_label = !b.label_text.is_empty();
+    let has_support = b
+        .support
+        .as_ref()
+        .is_some_and(|s| !support_runs(s, slots, &b.colors.secondary).is_empty());
+    let column = compact_column(b);
 
-    // Compact's value column and right column are one rigid block under
-    // `align`: the right column's x derives from the value run's own width, so
-    // both shift by the same amount or the columns separate.
-    let value_run_width = measure_value_run(c)?;
-    let available_width = requested_w - pad.horizontal();
-    let right_block_width = runs_width(&top, c.book)?.max(runs_width(&bottom, c.book)?);
-    let has_right_column = !top.is_empty() || !bottom.is_empty();
-    let block_width = if has_right_column { value_run_width + INLINE_GAP + right_block_width } else { value_run_width };
-    let align = card_align(c.id, kpi.align.as_deref(), available_width, &[block_width]);
+    let value_run_width = measure_value_run(b, m)?;
+    let available_width = width - pad.horizontal();
+    let block_width = compact_block_width(m, value_run_width, &column)?;
+    let CompactColumn {
+        top,
+        bottom,
+        kind_on_top,
+        kind_on_bottom,
+    } = column;
+    let align = card_align(
+        &b.id,
+        kpi.align.as_deref(),
+        available_width,
+        &[block_width],
+        diagnostics,
+    );
     let block_x = run_x(pad.left, available_width, block_width, align);
     let right_column_x = block_x + value_run_width + INLINE_GAP;
 
     // The top line sits one top-line-font line-height above the baseline so the
     // bottom line stays flush with the value baseline: the label's when label
     // and support share the column, else a split-support piece's.
-    let top_line_size = if has_label && has_support { slots.label.size } else { slots.support.size };
+    let top_line_size = if has_label && has_support {
+        slots.label.size
+    } else {
+        slots.support.size
+    };
     let top_baseline = value_baseline - (top_line_size + 4.0);
 
-    let mut parts = Parts::new(requested_w, requested_h);
-    emit_card_chrome(&mut parts, c, requested_w, requested_h);
-    open_link(&mut parts, c);
-    let xml = parts.next();
-    xml.open("text", text_row(block_x, value_baseline));
-    emit_value_tspans(xml, c, value_baseline, prefix_baseline, glyph_baseline);
-    xml.close("text");
-    let right_column_text = |parts: &mut Parts, runs: &[Run], baseline: f64, is_label: bool| {
-        let xml = parts.next();
-        xml.open("text", text_row(right_column_x, baseline));
-        emit_run_tspans(xml, runs, &Attrs::new().set_if(is_label, "data-authored-kind", "label"));
-        xml.close("text");
-    };
+    let mut parts = Parts::default();
+    chrome(b, &mut parts, width, height);
+    let mut linked = Parts::default();
+    linked.push(text_row(
+        block_x,
+        value_baseline,
+        value_tspans(b, value_baseline, prefix_baseline, glyph_baseline),
+    ));
+    let right_column_text =
+        |parts: &mut Parts, runs: &[Run], baseline: f64, is_label: bool| {
+            let extra = if is_label {
+                Attrs::new().quick("data-authored-kind", "label")
+            } else {
+                Attrs::new()
+            };
+            parts.push(text_row(right_column_x, baseline, run_tspans(runs, &extra)));
+        };
     if !top.is_empty() {
-        right_column_text(&mut parts, &top, top_baseline, kind_on_top);
+        right_column_text(&mut linked, &top, top_baseline, kind_on_top);
     }
     if !bottom.is_empty() {
-        right_column_text(&mut parts, &bottom, value_baseline, kind_on_bottom);
+        right_column_text(&mut linked, &bottom, value_baseline, kind_on_bottom);
     }
-    close_link(&mut parts, c);
-    Ok(parts.finish())
+    parts.append_linked(b, linked);
+    Ok(parts)
+}
+
+// ── Layout ─────────────────────────────────────────────────
+
+/// `cell` is the card as drawn: its width and requested height. A stacked card
+/// grows to the minimum its slots need; an inline card that falls back to stacked
+/// does too, and a compact or fitting inline card keeps the requested height.
+pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let (label_lines, label_truncated) = wrap_label_lines(bound, measure, cell.width)?;
+    if label_truncated {
+        diagnostics.push(Diagnostic::new(
+            &codes::WARN_KPI_LABEL_TRUNCATED,
+            [
+                ("chart_id", json!(bound.id)),
+                ("authored_text", json!(bound.label_text)),
+            ],
+        ));
+    }
+    let arrangement = arrangement(bound, measure, cell.width)?;
+    if arrangement != bound.variant {
+        diagnostics.push(Diagnostic::new(
+            &codes::WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED,
+            [
+                ("chart_id", json!(bound.id)),
+                ("authored_text", json!("inline")),
+            ],
+        ));
+    }
+    let vertical = vertical(bound);
+    let height = card_height(arrangement, &vertical, cell.height);
+    let stack = Stack {
+        width: cell.width,
+        height,
+        vertical,
+        label_lines,
+        label_truncated,
+    };
+    let parts = match arrangement {
+        Variant::Inline => inline(bound, measure, &stack, &mut diagnostics)?,
+        Variant::Compact => compact(bound, measure, &stack, &mut diagnostics)?,
+        Variant::Stacked => stacked(bound, measure, &stack, &mut diagnostics)?,
+    };
+    let pad = &bound.kpi.content_padding;
+    let data_box = Rect {
+        x: pad.left,
+        y: pad.top,
+        width: cell.width - pad.horizontal(),
+        height: height - pad.top - pad.bottom,
+    };
+    let insets = Insets {
+        top: pad.top,
+        right: pad.right,
+        bottom: pad.bottom,
+        left: pad.left,
+    };
+    Ok(Layout {
+        data_box,
+        insets,
+        nodes: vec![Node::Svg {
+            extent: Extent {
+                width: cell.width,
+                height: height,
+            },
+            attrs: Attrs::new()
+                .quick("xmlns", "http://www.w3.org/2000/svg")
+                .quick("width", py_float_str(cell.width))
+                .quick("height", py_float_str(height))
+                .quick(
+                    "viewBox",
+                    format!("0 0 {} {}", py_float_str(cell.width), py_float_str(height)),
+                ),
+            children: parts.0,
+        }],
+        diagnostics,
+        title_pos: None,
+    })
+}
+
+pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+    let bound = bind(payload)?;
+    let measure = Measure { fonts };
+    let cell = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: payload.width,
+        height: payload.height,
+    };
+    let laid_out = layout(&bound, cell, &measure)?;
+    laid_out.diagnostics.into_iter().for_each(warn);
+    Ok(print(&laid_out.nodes))
 }
 
 #[cfg(test)]
@@ -1734,6 +2102,8 @@ mod render_tests {
         FontBook::load_dir(&dir).expect("test fonts load")
     }
 
+    /// The theme's `kpi.default_height`: under the stacked minimum, over nothing else.
+    const DEFAULT_HEIGHT: f64 = 40.0;
     const SANS: &str = "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif";
     const SERIF: &str = "'Source Serif 4', 'Noto Emoji', Georgia, 'Times New Roman', serif";
 
@@ -1772,6 +2142,7 @@ mod render_tests {
             "resolved_channels": {},
             "style": {"kpi": {
                 "variant": variant,
+                "default_height": DEFAULT_HEIGHT,
                 "font": slot(SANS, 11.0, json!(500.0), Some("#222222")),
                 "value": {
                     "font": slot(SERIF, 24.0, json!(500.0), None),
@@ -1804,7 +2175,7 @@ mod render_tests {
             "fonts_dir": null,
             "padding": null,
             "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
-                "muted": "#626366",
+                "secondary_color": "#626366",
                 "tones": {
                     "positive": "#00884d",
                     "negative": "#b3261e",
@@ -2128,6 +2499,12 @@ mod render_tests {
 
     // ── Support explainer overflow ───────
 
+    const EXPECTED_STACKED: (f64, f64) = (74.97447128471163, 114.12158736554012);
+    const EXPECTED_STACKED_SUPPORT: (f64, f64) = (74.97447128471163, 114.12158736554012);
+    const EXPECTED_INLINE: (f64, f64) = (74.97447128471163, 187.09605865025176);
+    const EXPECTED_INLINE_SUPPORT: (f64, f64) = (74.97447128471163, 295.1464900423406);
+    const EXPECTED_COMPACT: (f64, f64) = (74.97447128471163, 187.09605865025173);
+    const EXPECTED_COMPACT_SUPPORT: (f64, f64) = (74.97447128471163, 187.09605865025173);
     const LONG_EXPLAINER: &str = "of them with a public bug report latency (the rest embargoed)";
 
     fn support_overflow(width: f64) -> (String, Vec<Diagnostic>) {
@@ -2301,7 +2678,7 @@ mod render_tests {
             p.rows = vec![json!({"revenue": 1234.0, "growth_pct": growth}).as_object().unwrap().clone()];
             svg_of(&p)
         };
-        let (good, bad, muted) = ("#00884d", "#b3261e", "#626366");
+        let (good, bad, secondary) = ("#00884d", "#b3261e", "#626366");
         for (tone, up, down) in [
             (None, good, bad),
             (Some("positive"), good, bad),
@@ -2313,7 +2690,7 @@ mod render_tests {
             let svg = paint(Some("percent_delta"), tone, -0.125);
             assert!(svg.contains(&format!("fill=\"{down}\">−12.5%")), "{tone:?} down: {svg}");
             let svg = paint(Some("percent_delta"), tone, 0.0);
-            assert!(svg.contains(&format!("fill=\"{muted}\">+0.0%")), "{tone:?} zero: {svg}");
+            assert!(svg.contains(&format!("fill=\"{secondary}\">+0.0%")), "{tone:?} zero: {svg}");
         }
         let svg = paint(Some("percent_delta"), Some("warning"), -0.125);
         assert!(svg.contains("fill=\"#8a6d00\">−12.5%"), "warning is fixed: {svg}");
@@ -2324,7 +2701,7 @@ mod render_tests {
         let svg = paint(Some("percent"), Some("positive"), -0.125);
         assert!(svg.contains(&format!("fill=\"{good}\">−12.5%")), "non-delta keeps a fixed tone: {svg}");
         let svg = paint(None, None, -0.125);
-        assert!(svg.contains(&format!("fill=\"{muted}\">−12.5%")), "non-delta without tone is muted: {svg}");
+        assert!(svg.contains(&format!("fill=\"{secondary}\">−12.5%")), "non-delta without tone is secondary: {svg}");
     }
 
     #[test]
@@ -2333,9 +2710,9 @@ mod render_tests {
         assert!(svg.contains("fill=\"#626366\">+12.5%</tspan>"), "{svg}");
     }
 
-    /// The value reads cf > row ink > tone > muted; the
+    /// The value reads cf > row ink > tone > secondary; the
     /// glyph reads its rule glyph_color > cf > glyph ink > tone > row ink >
-    /// muted.
+    /// secondary.
     #[test]
     fn support_ink_precedence_value_and_glyph() {
         let paint = |tone: Option<&str>, row: Option<&str>, glyph: Option<&str>| {
@@ -2351,8 +2728,8 @@ mod render_tests {
         let svg = paint(Some("positive"), Some("#111111"), None);
         assert!(svg.contains("fill=\"#00884d\">▲ "), "tone beats row ink for the glyph: {svg}");
         let svg = paint(None, Some("#111111"), None);
-        assert!(svg.contains("fill=\"#111111\">▲ "), "row ink is the glyph's last resort before muted: {svg}");
-        assert!(svg.contains("fill=\"#626366\"> growth"), "the explainer stays muted: {svg}");
+        assert!(svg.contains("fill=\"#111111\">▲ "), "row ink is the glyph's last resort before secondary: {svg}");
+        assert!(svg.contains("fill=\"#626366\"> growth"), "the explainer stays secondary: {svg}");
     }
 
     #[test]
@@ -2491,7 +2868,7 @@ mod render_tests {
         let svg = svg_of(&p);
         let texts = compact_texts(&svg);
         assert_eq!(texts.len(), 3, "{svg}");
-        // The split explainer is unspaced and muted; the top line carries the glyph and value.
+        // The split explainer is unspaced and secondary; the top line carries the glyph and value.
         assert!(svg.contains("fill=\"#626366\">growth</tspan>"), "{svg}");
         let value_y = (120.0 + 24.0 * CAP_HEIGHT_RATIO) / 2.0;
         assert_eq!(texts[1].1, py_float_str(value_y - (11.0 + 4.0)));
@@ -2694,6 +3071,131 @@ mod render_tests {
             ),
             "{svg}"
         );
+    }
+
+    #[test]
+    fn height_for_width_is_the_height_a_stacked_card_grows_to() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        for p in [kpi_payload("stacked", 300.0), with_support(kpi_payload("stacked", 300.0))] {
+            let bound = bind(&p).unwrap();
+            let natural = height_for_width(&bound, 300.0, &measure).unwrap();
+            for requested in [0.0, natural, natural + 40.0] {
+                let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: requested };
+                let laid_out = layout(&bound, cell, &measure).unwrap();
+                let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+                    panic!("a card is one root");
+                };
+                assert_eq!(extent.height, requested.max(natural));
+                let Insets { top, bottom, .. } = laid_out.insets;
+                assert_eq!(top + laid_out.data_box.height + bottom, extent.height);
+            }
+        }
+    }
+
+    #[test]
+    fn an_inline_card_that_falls_back_grows_to_height_for_width() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let bound = bind(&with_support(kpi_payload("inline", 150.0))).unwrap();
+        let cell = Rect { x: 0.0, y: 0.0, width: 150.0, height: 10.0 };
+        let laid_out = layout(&bound, cell, &measure).unwrap();
+        let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+            panic!("a card is one root");
+        };
+        assert_eq!(extent.height, height_for_width(&bound, 150.0, &measure).unwrap());
+    }
+
+    /// The height `layout` draws the card in a `height`-tall cell.
+    fn drawn_height(bound: &Bound, width: f64, height: f64) -> f64 {
+        let fonts = test_fonts();
+        let cell = Rect { x: 0.0, y: 0.0, width, height };
+        let laid_out = layout(bound, cell, &Measure { fonts: &fonts }).unwrap();
+        let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+            panic!("a card is one root");
+        };
+        extent.height
+    }
+
+    #[test]
+    fn height_for_width_is_the_height_layout_draws_in_a_natural_height_cell() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        for variant in ["stacked", "inline", "compact"] {
+            for supported in [false, true] {
+                for width in [60.0, 150.0, 300.0, 700.0] {
+                    let mut p = kpi_payload(variant, width);
+                    if supported {
+                        p = with_support(p);
+                    }
+                    let bound = bind(&p).unwrap();
+                    let natural = height_for_width(&bound, width, &measure).unwrap();
+                    let at = format!("{variant} supported={supported} width={width}");
+                    assert_eq!(drawn_height(&bound, width, natural), natural, "{at}");
+                    assert_eq!(drawn_height(&bound, width, DEFAULT_HEIGHT), natural, "{at}");
+                    // The sizing path renders a card with no slot of its own at the
+                    // theme's default height and reads the box back.
+                    p.height = DEFAULT_HEIGHT;
+                    assert_eq!(extract_svg_height(&svg_of(&p)), natural, "{at}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_inline_or_compact_card_that_fits_wants_the_theme_default_height() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        for variant in ["inline", "compact"] {
+            let bound = bind(&kpi_payload(variant, 700.0)).unwrap();
+            assert_eq!(height_for_width(&bound, 700.0, &measure).unwrap(), DEFAULT_HEIGHT, "{variant}");
+        }
+    }
+
+    #[test]
+    fn an_inline_card_that_falls_back_wants_the_stacked_height() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let inline = bind(&with_support(kpi_payload("inline", 150.0))).unwrap();
+        let stacked = bind(&with_support(kpi_payload("stacked", 150.0))).unwrap();
+        let wanted = height_for_width(&inline, 150.0, &measure).unwrap();
+        assert_eq!(wanted, height_for_width(&stacked, 150.0, &measure).unwrap());
+        assert!(wanted > DEFAULT_HEIGHT);
+    }
+
+    #[test]
+    fn intrinsic_pins_the_headline_and_the_arrangement_per_variant() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let cases = [
+            (kpi_payload("stacked", 300.0), EXPECTED_STACKED),
+            (with_support(kpi_payload("stacked", 300.0)), EXPECTED_STACKED_SUPPORT),
+            (kpi_payload("inline", 300.0), EXPECTED_INLINE),
+            (with_support(kpi_payload("inline", 300.0)), EXPECTED_INLINE_SUPPORT),
+            (kpi_payload("compact", 300.0), EXPECTED_COMPACT),
+            (with_support(kpi_payload("compact", 300.0)), EXPECTED_COMPACT_SUPPORT),
+        ];
+        for (index, (p, (min, preferred))) in cases.into_iter().enumerate() {
+            let got = intrinsic(&bind(&p).unwrap(), &measure).unwrap().unwrap();
+            assert!(
+                (got.min - min).abs() < 1e-6 && (got.preferred - preferred).abs() < 1e-6,
+                "case {index}: {got:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_returns_the_warnings_it_decided_instead_of_sinking_them() {
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let mut p = with_support(kpi_payload("stacked", 200.0));
+        set(&mut p, "/support/label", json!(LONG_EXPLAINER));
+        let bound = bind(&p).unwrap();
+        let cell = Rect { x: 0.0, y: 0.0, width: 200.0, height: 0.0 };
+        let (laid_out, sunk) = crate::diagnostic::collect(|| layout(&bound, cell, &measure));
+        assert!(sunk.is_empty(), "{sunk:?}");
+        let codes: Vec<_> = laid_out.unwrap().diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(codes, ["WARN-KPI-SUPPORT-TRUNCATED"]);
     }
 
     fn extract_svg_height(svg: &str) -> f64 {

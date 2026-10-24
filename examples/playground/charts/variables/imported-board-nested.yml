@@ -18,17 +18,18 @@ queries:
     GROUP BY region
     ORDER BY revenue DESC
 
-  revenue_total:
-    columns:
-      - revenue
-    values:
-      - [847291.5]
+  revenue_total: |
+    SELECT SUM(revenue) AS revenue
+    FROM ecommerce_orders
 charts:
   total_revenue:
     label: Total Revenue
     query: revenue_total
     type: kpi
     value: revenue
+    style:
+      value:
+        format: currency
   category_summary:
     title: Revenue by Category
     query: category_summary_data
@@ -106,6 +107,7 @@ rows:
           region,
           SUM(revenue) AS revenue
         FROM ecommerce_orders
+        WHERE {{ filter('region', region_filter) }}
         GROUP BY region
         ORDER BY revenue DESC
     charts:

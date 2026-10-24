@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct init skills` now tells you to commit the installed `dct-*` skills so teammates'' agents get them, instead of telling you to gitignore them, and warns when a `.gitignore` rule would drop one.'
+time: 2026-10-23T14:27:17.079856-07:00

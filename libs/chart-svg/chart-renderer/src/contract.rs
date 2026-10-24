@@ -9,8 +9,8 @@
 use display_text::language::tr;
 use crate::families::axis_caption::AxisCaption;
 use crate::common::FormatSlot;
-use scene::Attrs;
-use print::xml_escape_attr;
+use scene::{Attrs, Node};
+use print::{print, xml_escape_attr};
 use std::fmt::Write as _;
 
 /// `_tooltip.py:56-73`'s exact codepoints -- `chart_interactivity.js`
@@ -37,7 +37,13 @@ pub const SWATCH: char = '\u{200B}'; // ZERO WIDTH SPACE
 /// tag ("rect", "rule"); `name` is cosmetic -- the extractor never reads
 /// the group's third class token.
 pub fn mark_group_open(out: &mut String, kind: &str, name: &str) -> Result<(), String> {
-    open_mark_group(out, kind, name, "")
+    out.push_str(&open_tag(mark_group(kind, name, Vec::new())?));
+    Ok(())
+}
+
+/// The `.role-mark` group of [`mark_group_open`], holding `children`.
+pub fn mark_group(kind: &str, name: &str, children: Vec<Node>) -> Result<Node, String> {
+    Ok(Node::group(mark_group_attrs(kind, name, false)?, children))
 }
 
 /// Open a value-label text mark set: the `.role-mark` group carrying the
@@ -48,20 +54,28 @@ pub fn mark_group_open(out: &mut String, kind: &str, name: &str) -> Result<(), S
 /// rail -- text marks with the same `role-mark` ancestor and a `key: value`
 /// label -- never recede with a datum.
 pub fn value_label_group_open(out: &mut String, name: &str) -> Result<(), String> {
-    open_mark_group(out, "text", name, " data-dbt-value-label=\"true\"")
+    out.push_str(&open_tag(value_label_group(name, Vec::new())?));
+    Ok(())
 }
 
-fn open_mark_group(out: &mut String, kind: &str, name: &str, stamp: &str) -> Result<(), String> {
+pub fn value_label_group(name: &str, children: Vec<Node>) -> Result<Node, String> {
+    Ok(Node::group(mark_group_attrs("text", name, true)?, children))
+}
+
+fn mark_group_attrs(kind: &str, name: &str, value_label: bool) -> Result<Attrs, String> {
     let container = tr(&format!("aria.container_{kind}"), None, &[])?;
-    let _ = write!(
-        out,
-        "<g class=\"mark-{kind} role-mark {name}\"{stamp} role=\"graphics-object\" \
-         aria-roledescription=\"{container}\">",
-        kind = xml_escape_attr(kind),
-        name = xml_escape_attr(name),
-        container = xml_escape_attr(&container),
-    );
-    Ok(())
+    Ok(Attrs::new()
+        .set("class", format!("mark-{kind} role-mark {name}"))
+        .set_if(value_label, "data-dbt-value-label", "true")
+        .set("role", "graphics-object")
+        .set("aria-roledescription", container))
+}
+
+/// The opening tags of a childless `group`, for a caller that writes the children as markup
+/// itself and closes with [`mark_group_close`].
+fn open_tag(group: Node) -> String {
+    let printed = print(&[group]);
+    printed.strip_suffix("</g>").expect("a childless group prints its end tag").to_string()
 }
 
 pub fn mark_group_close(out: &mut String) {
@@ -95,31 +109,59 @@ pub fn axis_group_open(
     caption: &AxisCaption,
     origin: (f64, f64),
 ) -> Result<(), String> {
+    let label = caption.describe(channel)?;
+    let frame = axis_frame(channel, &label, origin, caption.bare, Vec::new());
+    let printed = print(&[frame]);
+    out.push_str(printed.strip_suffix("</g></g></g>").expect("a childless axis frame prints three end tags"));
+    Ok(())
+}
+
+/// [`axis_group_open`]'s group around `children`; a bare axis (Vega-Lite drops it) is its
+/// `children` alone.
+pub fn axis_group(
+    channel: AxisChannel,
+    caption: &AxisCaption,
+    origin: (f64, f64),
+    children: Vec<Node>,
+) -> Result<Vec<Node>, String> {
+    let label = caption.describe(channel)?;
+    if caption.bare {
+        return Ok(children);
+    }
+    Ok(vec![axis_frame(channel, &label, origin, false, children)])
+}
+
+/// `.role-axis` around the axis's coordinate frame and the second `<g>` that undoes its
+/// translate; `mark_bare` stamps the opener a string-building caller later unwraps.
+fn axis_frame(channel: AxisChannel, label: &str, (ox, oy): (f64, f64), mark_bare: bool, children: Vec<Node>) -> Node {
     let key = match channel {
         AxisChannel::X => "x-axis",
         AxisChannel::Y => "y-axis",
     };
-    let label = xml_escape_attr(&caption.describe(channel)?);
-    let (ox, oy) = origin;
-    let bare = if caption.bare { BARE_AXIS_MARK } else { "" };
-    let _ = write!(
-        out,
-        "<g class=\"mark-group role-axis\"{bare} data-dct-role=\"{key}\" role=\"graphics-symbol\" \
-         aria-roledescription=\"axis\" aria-label=\"{label}\"><g transform=\"translate({ox:.3},{oy:.3})\">\
-         <g transform=\"translate({nx:.3},{ny:.3})\">",
-        nx = -ox,
-        ny = -oy,
-    );
-    Ok(())
+    let attrs = Attrs::new()
+        .set("class", "mark-group role-axis")
+        .set_if(mark_bare, BARE_AXIS_ATTR.0, BARE_AXIS_ATTR.1)
+        .set("data-dct-role", key)
+        .set("role", "graphics-symbol")
+        .set("aria-roledescription", "axis")
+        .set("aria-label", label);
+    let undo = Node::group(Attrs::new().set("transform", format!("translate({:.3},{:.3})", -ox, -oy)), children);
+    let frame = Node::group(Attrs::new().set("transform", format!("translate({ox:.3},{oy:.3})")), vec![undo]);
+    Node::group(attrs, vec![frame])
 }
 
 /// Marks the opener of an axis group Vega-Lite drops; [`axis_group_close`]
 /// unwraps it.
-const BARE_AXIS_MARK: &str = " data-dct-bare=\"1\"";
+const BARE_AXIS_ATTR: (&str, &str) = ("data-dct-bare", "1");
 
 /// Open the group Vega draws around an axis's gridlines; close with [`grid_group_close`].
 pub fn grid_group_open(out: &mut String) {
-    out.push_str("<g class=\"mark-rule role-axis-grid\" aria-hidden=\"true\">");
+    out.push_str(&open_tag(grid_group(Vec::new())));
+}
+
+/// The group Vega draws around an axis's gridlines, holding `children`.
+pub fn grid_group(children: Vec<Node>) -> Node {
+    Node::group(Attrs::new().set("class", "mark-rule role-axis-grid").set("aria-hidden", "true"), children)
 }
 
 pub fn grid_group_close(out: &mut String) {
@@ -128,7 +170,7 @@ pub fn grid_group_close(out: &mut String) {
 
 pub fn axis_group_close(out: &mut String) {
     let opener = out.rfind("<g class=\"mark-group role-axis\"").expect("an axis group is open");
-    if !out[opener..].starts_with(&format!("<g class=\"mark-group role-axis\"{BARE_AXIS_MARK}")) {
+    if !out[opener..].starts_with(&format!("<g class=\"mark-group role-axis\" {}=\"{}\"", BARE_AXIS_ATTR.0, BARE_AXIS_ATTR.1)) {
         out.push_str("</g></g></g>");
         return;
     }
@@ -149,16 +191,15 @@ pub enum LabelKey {
     Y,
 }
 
-/// Open the group Vega draws around an axis title, stamped with the authored
-/// key it edits (`converters/chart.py::_stamp_axis_title_kinds`). Close with
-/// [`mark_group_close`].
-pub fn axis_title_group_open(out: &mut String, key: Option<LabelKey>) {
-    let kind = match key {
-        Some(LabelKey::X) => authored_kind_attr("x_label"),
-        Some(LabelKey::Y) => authored_kind_attr("y_label"),
-        None => String::new(),
-    };
-    let _ = write!(out, "<g class=\"mark-text role-axis-title\" pointer-events=\"none\"{kind}>");
+/// The attributes of the group Vega draws around an axis title, stamped with the authored
+/// key it edits (`converters/chart.py::_stamp_axis_title_kinds`).
+pub fn axis_title_attrs(key: Option<LabelKey>) -> Attrs {
+    let attrs = Attrs::new().set("class", "mark-text role-axis-title").set("pointer-events", "none");
+    match key {
+        Some(LabelKey::X) => attrs.set("data-authored-kind", "x_label"),
+        Some(LabelKey::Y) => attrs.set("data-authored-kind", "y_label"),
+        None => attrs,
+    }
 }
 
 /// Vega's symbol-legend group (`role-legend`): the thumbnail strips it and
@@ -239,32 +280,35 @@ pub(crate) fn has_no_mark_labels(svg: &str) -> bool {
     true
 }
 
-/// Open the group Vega draws around a connected series' path (`kind` is `line`
+/// The group Vega draws around a connected series' path (`kind` is `line`
 /// or `area`): `chart_interactivity.js` tells a line/area chart, which restates
 /// a datum as a drop line and a dot, from a scatter by finding a `.mark-line`
 /// or `.mark-area` group. The path carries no description, so the group is
-/// bare, as Vega leaves it. Close with [`mark_group_close`].
-pub fn connected_group_open(out: &mut String, kind: &str, name: &str) {
-    let _ = write!(
-        out,
-        "<g class=\"mark-{kind} role-mark {name}\">",
-        kind = xml_escape_attr(kind),
-        name = xml_escape_attr(name)
-    );
+/// bare, as Vega leaves it.
+pub fn connected_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
+    Node::group(Attrs::new().set("class", format!("mark-{kind} role-mark {name}")), children)
 }
 
-/// Open the `.role-mark` group of a mark set declared `aria: false`. Vega
+/// Close with [`mark_group_close`].
+pub fn connected_group_open(out: &mut String, kind: &str, name: &str) {
+    out.push_str(&open_tag(connected_group(kind, name, Vec::new())));
+}
+
+/// The `.role-mark` group of a mark set declared `aria: false`. Vega
 /// writes `aria-hidden="true"` on that group and no `role`/`aria-label` on
 /// its items, so a screen reader skips the whole set; the runtime still
 /// resolves a hit on one of its items to the nearest labeled mark, which is
 /// why the group is kept rather than dropped.
+pub fn hidden_mark_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
+    Node::group(
+        Attrs::new().set("class", format!("mark-{kind} role-mark {name}")).set("aria-hidden", "true"),
+        children,
+    )
+}
+
+/// Close with [`mark_group_close`].
 pub fn hidden_mark_group_open(out: &mut String, kind: &str, name: &str) {
-    let _ = write!(
-        out,
-        "<g class=\"mark-{kind} role-mark {name}\" aria-hidden=\"true\">",
-        kind = xml_escape_attr(kind),
-        name = xml_escape_attr(name)
-    );
+    out.push_str(&open_tag(hidden_mark_group(kind, name, Vec::new())));
 }
 
 /// What a screen reader is told about one mark.
@@ -275,6 +319,23 @@ pub enum Reads<'a> {
     Hidden,
     /// Announced by this `aria-label`.
     Label(&'a str),
+}
+
+/// One mark as its own `.role-mark` group (`mark_group` / `hidden_mark_group`)
+/// around the node `item` builds from the attributes it carries for `reads` (the
+/// label, or nothing); a bare mark is its item alone.
+pub fn item_group(
+    kind: &str,
+    name: &str,
+    role: ItemRole,
+    reads: Reads,
+    item: impl FnOnce(Attrs) -> Node,
+) -> Result<Node, String> {
+    match reads {
+        Reads::Bare => Ok(item(Attrs::new())),
+        Reads::Hidden => Ok(hidden_mark_group(kind, name, vec![item(Attrs::new())])),
+        Reads::Label(label) => mark_group(kind, name, vec![item(aria_attrs(Some(label), role)?)]),
+    }
 }
 
 /// Paint one mark as its own `.role-mark` group (`mark_group_open` /
@@ -368,15 +429,18 @@ impl ItemRole {
 /// no label (an unlabeled mark is bare in production too, never an
 /// approximation).
 pub fn aria_attr(label: Option<&str>, role: ItemRole) -> Result<String, String> {
-    let Some(label) = label else { return Ok(String::new()) };
+    Ok(print::attributes(&aria_attrs(label, role)?))
+}
+
+/// [`aria_attr`] as attributes.
+pub fn aria_attrs(label: Option<&str>, role: ItemRole) -> Result<Attrs, String> {
+    let Some(label) = label else { return Ok(Attrs::new()) };
     let (description_id, key) = role.description_id_and_key();
-    let description = tr(description_id, None, &[])?;
-    Ok(format!(
-        " data-dct-role=\"{key}\" aria-label=\"{}\" role=\"graphics-symbol\" \
-         aria-roledescription=\"{}\"",
-        print::xml_escape_attr(label),
-        print::xml_escape_attr(&description),
-    ))
+    Ok(Attrs::new()
+        .set("data-dct-role", key)
+        .set("aria-label", label)
+        .set("role", "graphics-symbol")
+        .set("aria-roledescription", tr(description_id, None, &[])?))
 }
 
 /// The attributes a support-table cell carries; a cell nobody described stays bare.
@@ -492,27 +556,33 @@ pub enum GhostRun {
 /// resolves a hit on it and finds the real mark by its byte-identical label
 /// (`resolveSymbolMark`).
 pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], run: GhostRun) -> Result<(), String> {
-    mark_group_open(out, "rule", "ghost_marks")?;
-    for rule in rules {
-        let label = aria_attr(rule.aria, ItemRole::RuleMark)?;
-        let (x2, y2) = match run {
-            GhostRun::Down(floor) => (0.0, floor - rule.y),
-            GhostRun::ToLeftEdge => (-rule.x, 0.0),
-            GhostRun::ToOrigin => (-rule.x, -rule.y),
-        };
-        out.push_str(&crate::href::anchor_open(rule.anchor));
-        let _ = write!(
-            out,
-            "<line transform=\"translate({:.3},{:.3})\" x2=\"{x2:.3}\" y2=\"{y2:.3}\" stroke=\"{}\" \
-             opacity=\"0\"{label}/>",
-            rule.x,
-            rule.y,
-            xml_escape_attr(rule.stroke),
-        );
-        out.push_str(crate::href::anchor_close(rule.anchor));
-    }
-    mark_group_close(out);
+    out.push_str(&print(&[ghost_layer(rules, run)?]));
     Ok(())
+}
+
+/// [`mirror_ghost_layer`]'s group.
+pub fn ghost_layer(rules: &[GhostRule], run: GhostRun) -> Result<Node, String> {
+    let lines = rules
+        .iter()
+        .map(|rule| {
+            let (x2, y2) = match run {
+                GhostRun::Down(floor) => (0.0, floor - rule.y),
+                GhostRun::ToLeftEdge => (-rule.x, 0.0),
+                GhostRun::ToOrigin => (-rule.x, -rule.y),
+            };
+            let line = Node::Line(
+                Attrs::new()
+                    .set("transform", format!("translate({:.3},{:.3})", rule.x, rule.y))
+                    .set("x2", format!("{x2:.3}"))
+                    .set("y2", format!("{y2:.3}"))
+                    .set("stroke", rule.stroke)
+                    .set("opacity", "0")
+                    .extend(aria_attrs(rule.aria, ItemRole::RuleMark)?),
+            );
+            Ok(crate::href::linked(rule.anchor, line))
+        })
+        .collect::<Result<_, String>>()?;
+    mark_group("rule", "ghost_marks", lines)
 }
 
 /// Vega-Lite's own description of a mark: one `title: value` row per described
@@ -671,11 +741,28 @@ pub struct HeatmapTooltip<'a> {
     pub y: &'a str,
     pub value_title: &'a str,
     pub value_format: &'a FormatSlot,
-    pub value: f64,
+    pub value: HeatmapValue<'a>,
+}
+
+/// The color-encoded value of a heatmap cell: a measure prints through the
+/// tooltip format, a category prints its own name.
+#[derive(Clone, Copy)]
+pub enum HeatmapValue<'a> {
+    Number(f64),
+    Category(&'a str),
+}
+
+impl HeatmapValue<'_> {
+    pub fn text(&self, format: &FormatSlot) -> Result<String, String> {
+        match self {
+            Self::Number(n) => format.paint(*n),
+            Self::Category(name) => Ok((*name).to_string()),
+        }
+    }
 }
 
 pub fn heatmap_aria_label(t: &HeatmapTooltip) -> Result<String, String> {
-    let value_s = t.value_format.paint(t.value).map_err(|e| format!("heatmap: tooltip value {e}"))?;
+    let value_s = t.value.text(t.value_format).map_err(|e| format!("heatmap: tooltip value {e}"))?;
     Ok(format!("{ROLE_HEADER}{}; {ROLE_HEADER}{}; {}: {value_s}", t.x, t.y, t.value_title))
 }
 
@@ -721,7 +808,7 @@ pub fn tooltip_order_rank(order_domain: &[String], series: &str) -> i64 {
 /// The `data-authored-kind` a *leaf* text run carries -- `svg_utils.py`'s
 /// `authored_kind_attr`, verbatim.
 pub fn authored_kind_attr(kind: &str) -> String {
-    format!(" data-authored-kind=\"{}\"", print::xml_escape_attr(kind))
+    print::attributes(&Attrs::new().set("data-authored-kind", kind))
 }
 
 /// The chart-id tail of the id-namespace suffix every vl-convert-minted id
@@ -1302,7 +1389,7 @@ mod tests {
             y: "Accessories",
             value_title: "Revenue",
             value_format: &FormatSlot::from(",.2~f"),
-            value: 47_368.0,
+            value: HeatmapValue::Number(47_368.0),
         };
         assert_eq!(
             heatmap_aria_label(&t).unwrap(),
@@ -1319,7 +1406,7 @@ mod tests {
             y: "Accessories",
             value_title: "Revenue",
             value_format: &FormatSlot::from("not-a-real-spec"),
-            value: 47_368.0,
+            value: HeatmapValue::Number(47_368.0),
         };
         assert!(heatmap_aria_label(&t).is_err());
     }
@@ -1357,6 +1444,57 @@ mod tests {
         let mut out = String::new();
         axis_group_open(&mut out, AxisChannel::Y, &empty_caption(false), (0.0, 0.0)).unwrap();
         assert!(out.contains(" aria-label=\"Y-axis for a discrete scale with 0 values: \""), "{out}");
+    }
+
+    #[test]
+    fn the_group_builders_print_what_the_open_and_close_pairs_write() {
+        let mut open = String::new();
+        mark_group_open(&mut open, "rect", "marks").unwrap();
+        open.push_str("<rect/>");
+        mark_group_close(&mut open);
+        let built = mark_group("rect", "marks", vec![Node::Rect(Attrs::new())]).unwrap();
+        assert_eq!(print(&[built]), open);
+
+        let (origin, mut open) = ((2.5, -4.0), String::new());
+        axis_group_open(&mut open, AxisChannel::X, &empty_caption(false), origin).unwrap();
+        open.push_str("<rect/>");
+        axis_group_close(&mut open);
+        let built = axis_group(AxisChannel::X, &empty_caption(false), origin, vec![Node::Rect(Attrs::new())]).unwrap();
+        assert_eq!(print(&built), open);
+
+        let mut bare = String::new();
+        axis_group_open(&mut bare, AxisChannel::Y, &empty_caption(true), origin).unwrap();
+        bare.push_str("<rect/>");
+        axis_group_close(&mut bare);
+        let built = axis_group(AxisChannel::Y, &empty_caption(true), origin, vec![Node::Rect(Attrs::new())]).unwrap();
+        assert_eq!(print(&built), bare);
+        assert_eq!(bare, "<rect/>");
+
+        assert_eq!(
+            print(&[Node::group(axis_title_attrs(Some(LabelKey::Y)), vec![])]),
+            "<g class=\"mark-text role-axis-title\" pointer-events=\"none\" data-authored-kind=\"y_label\"></g>"
+        );
+    }
+
+    #[test]
+    fn aria_attrs_are_the_attribute_run_aria_attr_writes() {
+        assert_eq!(
+            aria_attr(Some("a \"b\""), ItemRole::RectMark).unwrap(),
+            print::attributes(&aria_attrs(Some("a \"b\""), ItemRole::RectMark).unwrap())
+        );
+        assert_eq!(aria_attr(None, ItemRole::Bar).unwrap(), "");
+    }
+
+    #[test]
+    fn a_ghost_layer_holds_one_invisible_rule_per_datum() {
+        let rules = [GhostRule { aria: Some("a: 1"), x: 10.0, y: 20.0, stroke: "#abc", anchor: None }];
+        let mut out = String::new();
+        mirror_ghost_layer(&mut out, &rules, GhostRun::ToOrigin).unwrap();
+        assert_eq!(print(&[ghost_layer(&rules, GhostRun::ToOrigin).unwrap()]), out);
+        assert!(
+            out.contains("<line transform=\"translate(10.000,20.000)\" x2=\"-10.000\" y2=\"-20.000\" stroke=\"#abc\" opacity=\"0\" data-dct-role=\"rule\" aria-label=\"a: 1\""),
+            "{out}"
+        );
     }
 
     // ── authored_kind_attr / safe_svg_id ────────────────────────────────

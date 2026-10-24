@@ -362,9 +362,9 @@ rows: [c1, c2]
         result = compile(yaml_content)
 
     paths = {
-        e.message.split("Full path: ")[-1].rstrip(".")
+        e.fields["field_path"]
         for e in result.errors
-        if e.code == "ERR-EXTRA-FIELD"
+        if e.code in ("ERR-EXTRA-FIELD", "ERR-RETIRED-FIELD")
     }
     assert any("c1" in path for path in paths), paths
     assert any("c2" in path for path in paths), (

@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
+import dbt_charts.core.render.warnings.annotation_nothing_drawn as annotation_nothing_drawn
 import dbt_charts.core.render.warnings.area_unstacked_reads_as_stacked as area_unstacked_reads_as_stacked
 import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collision
 import dbt_charts.core.render.warnings.axis_title_truncated as axis_title_truncated
@@ -124,6 +125,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
 # Reads only ctx.chart_results and/or resolved chart config; runs for every
 # chart whose query executed, regardless of whether it is on-screen.
 _DATA_DETECTORS: list[ModuleType] = [
+    annotation_nothing_drawn,
     area_unstacked_reads_as_stacked,
     category_color_pin_unseen,
     dual_axis_competing_scales,

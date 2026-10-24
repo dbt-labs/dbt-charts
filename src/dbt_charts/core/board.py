@@ -37,6 +37,7 @@ from dbt_charts.core.compile import (
     focus_on_chart,
 )
 from dbt_charts.core.compile.config import resolve_max_template_output_bytes
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.cache import CachePolicy
 from dbt_charts.core.compile.parse.source_map import stamp_diagnostics
@@ -81,6 +82,7 @@ from dbt_charts.core.render import RenderError, render
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.dir_context import lazy_dir_context
+from dbt_charts.core.render.renderer import prefetch_tab_queries
 from dbt_charts.core.render_format import RenderFormat
 
 # "failed" — no output produced (board_error, or validation_errors from a failed
@@ -122,6 +124,13 @@ class BoardRenderResult(BaseModel):
     # version) was written. `dct render` reports it so a re-render that skipped
     # the warehouse says so.
     warehouse_cache_hit_ats: list[datetime] = []
+    # Wall time of the pre-render query pass and the result-cache hits the
+    # render served; set on success.
+    query_ms: float | None = None
+    cache_hits: int | None = None
+    # Queries of the hidden tabs this render left unexecuted; a host
+    # runs them after responding with `prefetch_dashboard`.
+    prefetch_query_names: list[str] = []
 
 
 def raise_on_dashboard_failure(result: BoardRenderResult) -> None:
@@ -283,6 +292,83 @@ def _compile_failed(
         warnings=active,
         suppressed_warnings=[*result.suppressed_warnings, *suppressed],
     )
+
+
+def _board_executor(
+    result: CompileResult,
+    board: Board,
+    *,
+    project: Project,
+    adapter_registry: AdapterRegistry,
+    use_cache: bool,
+    result_cache: QueryResultCache | None,
+    file_materializer: FileSourceMaterializer | None,
+    clock: Callable[[], datetime],
+) -> Executor:
+    """The executor one board's queries run through.
+
+    Use the caller-supplied materializer when provided (e.g. Cloud with
+    Postgres cache). For local `dct serve` / CLI, hand the executor a lazy
+    factory so the in-process DuckDB-backed materializer is built only when a
+    file-source query actually misses the cache — a fully-cached render never
+    opens one.
+    """
+    return Executor(
+        board,
+        adapter_registry=adapter_registry,
+        query_registry=result.query_registry,
+        use_cache=use_cache,
+        result_cache=result_cache,
+        file_materializer=file_materializer,
+        file_materializer_factory=resolve_local_file_materializer_factory(
+            project, file_materializer
+        ),
+        clock=clock,
+    )
+
+
+def prefetch_dashboard(
+    board: BoardFile,
+    variables: VariableValues,
+    *,
+    project: Project,
+    adapter_registry: AdapterRegistry,
+    result_cache: QueryResultCache | None,
+    max_workers: int | None = None,
+    file_materializer: FileSourceMaterializer | None = None,
+    builtin_variables: VariableValues | None = None,
+    compile_result: CompileResult | None = None,
+    clock: Callable[[], datetime] = utc_now,
+) -> dict[str, Exception | None]:
+    """Warm the result cache with the tabs a drawn render of ``board`` skipped.
+
+    Compiles ``board`` and runs ``prefetch_tab_queries``: the queries of every
+    hidden tab (inner tabs of a hidden tab included) whose cache policy sets ``prefetch: true``. Pass
+    the ``compile_result`` the render got to skip recompiling. Returns each
+    query's outcome (``None`` or its exception). Raises ``CompilationError``
+    when ``board`` no longer compiles.
+    """
+    with template_output_budget(resolve_max_template_output_bytes()):
+        result = compile_result if compile_result is not None else compile_file(board)
+        if not result.success or result.board is None:
+            raise CompilationError("; ".join(e.message for e in result.errors))
+        executor = _board_executor(
+            result,
+            result.board,
+            project=project,
+            adapter_registry=adapter_registry,
+            use_cache=True,
+            result_cache=result_cache,
+            file_materializer=file_materializer,
+            clock=clock,
+        )
+        return prefetch_tab_queries(
+            result.board,
+            executor,
+            variables,
+            max_workers,
+            builtin_variables,
+        )
 
 
 @_with_template_output_budget
@@ -474,20 +560,14 @@ def render_dashboard(
                 variables
                 or {},  # type-state: silent_fallback — no values is an empty mapping, not masked bad input
             )
-        # Use the caller-supplied materializer when provided (e.g. Cloud with Postgres
-        # cache). For local `dct serve` / CLI, hand the executor a lazy factory so the
-        # in-process DuckDB-backed materializer is built only when a file-source query
-        # actually misses the cache — a fully-cached render never opens one.
-        executor = Executor(
+        executor = _board_executor(
+            result,
             compiled_board,
+            project=project,
             adapter_registry=adapter_registry,
-            query_registry=result.query_registry,
             use_cache=use_cache,
             result_cache=result_cache,
             file_materializer=file_materializer,
-            file_materializer_factory=resolve_local_file_materializer_factory(
-                project, file_materializer
-            ),
             clock=clock,
         )
         if scale is not None:
@@ -629,4 +709,7 @@ def render_dashboard(
         url=url,
         board_query_data_ages=executor.query_data_ages,
         warehouse_cache_hit_ats=executor.warehouse_cache_hit_ats,
+        query_ms=render_result.query_ms,
+        cache_hits=len(executor.cache_hit_ats),
+        prefetch_query_names=sorted(render_result.prefetch_query_names),
     )

@@ -840,3 +840,14 @@ def test_grammar_skill_is_installed_to_disk_for_cli_agents() -> None:
     from dbt_charts.agent_api.skill_install import skills_for_file_install
 
     assert _AUTHORING_SKILL in {s.name for s in skills_for_file_install()}
+
+
+def test_unknown_skill_points_each_surface_at_its_own_listing() -> None:
+    from dbt_charts.agent_api.skills import SkillNotFound, get_skill
+
+    with pytest.raises(SkillNotFound) as tool:
+        get_skill("no-such-skill", surface="tool")
+    assert "list_skills" in str(tool.value)
+    assert "dct" not in str(tool.value)
+    with pytest.raises(SkillNotFound, match="`dct skills`"):
+        get_skill("no-such-skill", surface="cli")

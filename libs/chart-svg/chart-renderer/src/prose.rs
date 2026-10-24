@@ -8,9 +8,8 @@
 //! forwarded, never re-derived here. So is the run's grid: `plan_board_prose`
 //! is a resolve-time decision, read off `ResolvedBoard.prose_plan`.
 
-
-use mdsvg::fonts::{FontSlot, FontSlots};
 use mdsvg::style::Style;
+use measure::fonts::{FontSlot, FontSlots};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -67,7 +66,7 @@ pub struct ProsePlan {
 /// renderer's simpler `measure::FontBook`).
 fn prose_char_ratio(regular: &FontSlot) -> f64 {
     let measurer =
-        mdsvg::fonts::cached_measurer(&regular.path, regular.font_number, regular.weight);
+        measure::fonts::cached_measurer(&regular.path, regular.font_number, regular.weight);
     measurer.measure(PROSE_SAMPLE, 1.0) / PROSE_SAMPLE.chars().count() as f64
 }
 
@@ -452,12 +451,12 @@ pub fn render_prose_svg(
         let w = num_full(width);
         let h = num_full(result.height);
         let body = if inset == 0.0 {
-            result.content()
+            print::print_content(&result.content())
         } else {
             format!(
                 r#"<g transform="translate({}, 0)">{}</g>"#,
                 num_full(px(inset)),
-                result.content()
+                print::print_content(&result.content())
             )
         };
         let svg = format!(
@@ -531,7 +530,8 @@ pub fn render_prose_svg(
                 Some(count),
             )?;
             if style_block.is_empty() {
-                style_block = rendered.style_block.clone();
+                style_block =
+                    print::print_content(&mdsvg::indented(std::slice::from_ref(&rendered.style)));
             }
             // A block narrower or wider than the column's measure re-aligns
             // itself within the span; the column itself is placed by `measure`.
@@ -541,7 +541,7 @@ pub fn render_prose_svg(
             col_elements.push(translate_group(
                 &num_full(px(dx)),
                 &num_full(px(y - lift)),
-                &rendered.elements,
+                &print::print_content(&mdsvg::indented(&rendered.elements)),
                 "",
             ));
             y += count as f64 * m.line_advance - lift;

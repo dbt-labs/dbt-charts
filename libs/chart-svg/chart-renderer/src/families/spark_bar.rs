@@ -24,7 +24,6 @@ use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
 use crate::{Payload, PlaceholderStyle, SparkBarTitle, TitleShift};
 
 // Engine constants for the "+ N more" row and the text rhythm.
-const MORE_ROWS_FONT_SIZE: f64 = 10.0;
 const MORE_ROWS_OFFSET_Y: f64 = 12.0;
 const MORE_ROWS_BOTTOM_PADDING: f64 = 8.0;
 const TEXT_BASELINE_OFFSET: f64 = 4.0;
@@ -61,6 +60,8 @@ struct SparkBarStyle {
     font: Font,
     border: BorderStyle,
     subtitle: SubtitleStyle,
+    #[serde(default)]
+    more_rows: Option<MoreRowsStyle>,
 }
 
 #[derive(Deserialize)]
@@ -84,6 +85,12 @@ struct BorderStyle {
 
 #[derive(Deserialize)]
 struct SubtitleStyle {
+    font: Font,
+}
+
+/// `style.spark_bar.more_rows`: the "+N" note's font slot.
+#[derive(Deserialize)]
+struct MoreRowsStyle {
     font: Font,
 }
 
@@ -310,9 +317,9 @@ pub struct Bound {
     text_color: String,
     body_family: String,
     font_size: f64,
-    muted: String,
     rows: Vec<Row>,
     more_count: usize,
+    more_rows: Option<MoreRows>,
     max_value: f64,
     signed: bool,
     shift: TitleShift,
@@ -328,6 +335,14 @@ struct Placeholder {
 struct Subtitle {
     text: String,
     size: f64,
+    color: String,
+}
+
+/// The "+N more" note's slot font, bound only when rows are cut.
+struct MoreRows {
+    size: f64,
+    color: String,
+    style: String,
 }
 
 struct Row {
@@ -344,9 +359,9 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let rows = &payload.rows;
     let tags = &payload.cell_text;
 
-    // `spark_bar.py:383`, `:387`: the body ink is asserted and the muted ink
-    // read with no fallback; the body size and family are the inherited
-    // `charts.font` slots every painted label uses (`:244-245`, `:271-272`).
+    // `spark_bar.py:383`: the body ink is asserted with no fallback; the body
+    // size and family are the inherited `charts.font` slots every painted
+    // label uses (`:244-245`, `:271-272`).
     let text_color = sc
         .font
         .color
@@ -365,10 +380,6 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         .board_style
         .as_ref()
         .ok_or("spark_bar: board_style absent (theme required)")?;
-    let muted = board_style
-        .muted
-        .clone()
-        .ok_or("spark_bar: board_style.muted absent (theme required)")?;
     let title_geometry = board_style
         .spark_bar_title
         .ok_or("spark_bar: payload carries no board_style.spark_bar_title (the title block's height and baseline)")?;
@@ -437,7 +448,10 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
                 sc.subtitle.font.size.ok_or(
                     "spark_bar: style.spark_bar.subtitle.font.size absent (theme required)",
                 )?;
-            Some(Subtitle { text, size })
+            let color = sc.subtitle.font.color.clone().ok_or(
+                "spark_bar: style.spark_bar.subtitle.font.color absent (theme required)",
+            )?;
+            Some(Subtitle { text, size, color })
         }
         _ => None,
     };
@@ -488,6 +502,28 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         });
     }
 
+    let more_count = rows.len() - visible.len();
+    let more_rows = if more_count > 0 {
+        let font = &sc
+            .more_rows
+            .as_ref()
+            .ok_or("spark_bar: style.spark_bar.more_rows absent (theme required)")?
+            .font;
+        Some(MoreRows {
+            size: font.size.ok_or(
+                "spark_bar: style.spark_bar.more_rows.font.size absent (theme required)",
+            )?,
+            color: font.color.clone().ok_or(
+                "spark_bar: style.spark_bar.more_rows.font.color absent (theme required)",
+            )?,
+            style: font.style.clone().ok_or(
+                "spark_bar: style.spark_bar.more_rows.font.style absent (theme required)",
+            )?,
+        })
+    } else {
+        None
+    };
+
     Ok(Bound {
         id: r.id,
         title,
@@ -498,9 +534,9 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         text_color,
         body_family,
         font_size,
-        muted,
         rows: bound_rows,
-        more_count: rows.len() - visible.len(),
+        more_count,
+        more_rows,
         max_value,
         signed,
         shift: payload.title_shift,
@@ -635,7 +671,7 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
                 py_float_str(title_baseline_y + title_size as f64),
                 Attrs::new()
                     .quick("font-size", py_float_str(subtitle.size))
-                    .quick("fill", bound.muted.as_str())
+                    .quick("fill", subtitle.color.as_str())
                     .quick("font-family", bound.body_family.as_str())
                     .quick("data-authored-kind", "subtitle"),
                 subtitle.text.clone(),
@@ -749,15 +785,15 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
         Vec::new()
     };
 
-    if bound.more_count > 0 {
+    if let Some(more_rows) = &bound.more_rows {
         content.push(text(
             py_float_str(chart_width / 2.0),
             fixed1(more_y),
             Attrs::new()
-                .quick("font-size", py_float_str(MORE_ROWS_FONT_SIZE))
-                .quick("fill", bound.muted.as_str())
+                .quick("font-size", py_float_str(more_rows.size))
+                .quick("fill", more_rows.color.as_str())
                 .quick("text-anchor", "middle")
-                .quick("font-style", "italic")
+                .quick("font-style", more_rows.style.as_str())
                 .quick("font-family", bound.body_family.as_str())
                 .quick("style", TABULAR_NUMS),
             format!("+{}", bound.more_count),
@@ -859,7 +895,8 @@ mod tests {
                     "max_bars": 10,
                     "font": {"family": "Inter, sans-serif", "color": "#222222", "size": 11.0},
                     "border": {"radius": 8.0},
-                    "subtitle": {"font": {"size": 10.0}}
+                    "subtitle": {"font": {"size": 10.0, "color": "#626366"}},
+                    "more_rows": {"font": {"size": 10.0, "color": "#626366", "style": "italic"}}
                 },
                 "title_font": {"family": "Inter, sans-serif", "color": "#494A4C", "size": 11.0, "weight": 600.0}
             }
@@ -873,7 +910,7 @@ mod tests {
             "fonts_dir": null,
             "padding": null,
             "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},
-                "muted": "#626366", "tones": null, "title_case": "title",
+                "secondary_color": "#626366", "tones": null, "title_case": "title",
                 "format_locale": crate::number_locale::en_us_wire(),
                 "time_locale": crate::time_locale::en_us_wire(),
                 "spark_bar_title": {"height": 24.0, "baseline_y": 16.0},
@@ -975,7 +1012,7 @@ mod tests {
     }
 
     // The title path: board_style.title_case transforms the authored title
-    // — the subtitle paints the board muted ink one
+    // — the subtitle paints its slot ink one
     // title-size below the title baseline, and the rows shift down by
     // title_height 24 + title size.
     #[test]
@@ -990,7 +1027,7 @@ mod tests {
         );
         assert!(
             svg.contains("y=\"27.0\"") && svg.contains("fill=\"#626366\""),
-            "subtitle at title_baseline 16 + title size 11, muted ink:\n{svg}"
+            "subtitle at title_baseline 16 + title size 11, slot ink:\n{svg}"
         );
         // title_height 24 + title size 11 = 35 -> first label baseline 35 + 9 + 4.
         assert!(
@@ -1228,12 +1265,41 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_board_muted_ink_refuses_by_name() {
+    fn an_absent_board_style_refuses_by_name() {
         refused_by(|p| p.board_style = None, "board_style");
+    }
+
+    #[test]
+    fn an_absent_subtitle_ink_refuses_by_name() {
         refused_by(
-            |p| p.board_style.as_mut().unwrap().muted = None,
-            "board_style.muted",
+            |p| {
+                p.resolved["style"]["spark_bar"]["subtitle"]["font"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("color");
+            },
+            "style.spark_bar.subtitle.font.color",
         );
+    }
+
+    #[test]
+    fn an_absent_more_rows_slot_field_refuses_by_name() {
+        for field in ["size", "color", "style"] {
+            let mut p = base_payload(
+                (0..12)
+                    .map(|i| json!({"region": format!("R{i}"), "revenue": i}))
+                    .collect(),
+            );
+            p.resolved["style"]["spark_bar"]["more_rows"]["font"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            let message = render(&p, &fonts()).unwrap_err().to_string();
+            assert_eq!(
+                message,
+                format!("spark_bar: style.spark_bar.more_rows.font.{field} absent (theme required)")
+            );
+        }
     }
 
     #[test]

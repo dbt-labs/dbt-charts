@@ -1,0 +1,3 @@
+kind: Fixes
+body: A heatmap colored by a category now shows the category name in its tooltip instead of NaN.
+time: 2026-10-22T22:56:48.523985-07:00

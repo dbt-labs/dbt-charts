@@ -12,7 +12,11 @@ from dbt_charts.core.compile.resolve.chart.tick_values import (
 )
 from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
-from dbt_charts.core.utils import CellValue, vega_infers_quantitative
+from dbt_charts.core.utils import (
+    CellValue,
+    vega_infers_quantitative,
+    vega_infers_temporal,
+)
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.resolved import (
@@ -326,34 +330,15 @@ def infer_vega_type_from_data(data: list[dict[str, Any]], field: str) -> str:
     if vega_infers_quantitative(data, field):
         return "quantitative"
 
-    all_temporal = True
-    all_date_like = True
-
-    for value in sample_values:
-        if value is None:
-            continue
-        if isinstance(value, (dt.date, dt.datetime)):
-            # date/datetime objects are always temporal; date_like too
-            pass
-        elif isinstance(value, str):
-            # Require an actual date-like structure: YYYY-MM-DD, YYYY/MM/DD,
-            # MM/DD/YYYY, or ISO timestamps. The old check (`count("-") >= 2`)
-            # was too broad and misidentified strings like "claude-opus-4-7"
-            # (3 hyphens, no digits in date positions) as temporal.
-            is_standard_date = bool(
-                re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}([T ][\d:.].*)?$", value)
-                or re.match(r"^\d{2}/\d{2}/\d{4}$", value)
-            )
-            if not is_standard_date:
-                all_temporal = False
-            if not is_standard_date and not is_date_like_string(value):
-                all_date_like = False
-        else:
-            all_temporal = False
-            all_date_like = False
-
-    if all_temporal:
+    if vega_infers_temporal(data, field):
         return "temporal"
+
+    all_date_like = all(
+        isinstance(value, (dt.date, dt.datetime))
+        or (isinstance(value, str) and is_date_like_string(value))
+        for value in sample_values
+        if value is not None
+    )
     if all_date_like:
         return "ordinal"
     return "nominal"

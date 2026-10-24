@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from dbt_charts.core.compile.models.primitives import FontStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
     _ChartStyleBase,
     _ChartStyleBaseAllOptional,
@@ -44,6 +45,20 @@ from dbt_charts.core.compile.models.style.theme._chart_base import (
     _PaintedChartStyleBaseAllOptional,
     _QuantitativeAxisChartStyleMixin,
     _RadialChartStyle,
+)
+from dbt_charts.core.compile.models.style.theme.annotations import (
+    AnnotationsStyle,
+    AnnotationTextBoxStyle,
+    AnnotationTextMarkStyle,
+    BandAnnotationMarksStyle,
+    BandAnnotationStyle,
+    NoteAnnotationMarksStyle,
+    NoteAnnotationStyle,
+    NoteAnnotationThemeStyle,
+    RuleAnnotationMarksStyle,
+    RuleAnnotationStyle,
+    TrendAnnotationMarksStyle,
+    TrendAnnotationStyle,
 )
 from dbt_charts.core.compile.models.style.theme.area import (
     AreaChartMarksStyle,
@@ -177,7 +192,6 @@ from dbt_charts.core.compile.models.style.theme.marks import (
     MarkLabelsStyle,
     PointLabelsStyle,
     PointMarkStyle,
-    ProjectionStyle,
     RectMarkStyle,
     RuleMarkStyle,
     SeriesLabelFontStyle,
@@ -253,6 +267,18 @@ from dbt_charts.core.compile.models.style.theme.variables import (
 )
 
 __all__ = [
+    "AnnotationTextBoxStyle",
+    "AnnotationTextMarkStyle",
+    "AnnotationsStyle",
+    "BandAnnotationMarksStyle",
+    "BandAnnotationStyle",
+    "NoteAnnotationMarksStyle",
+    "NoteAnnotationStyle",
+    "NoteAnnotationThemeStyle",
+    "RuleAnnotationMarksStyle",
+    "RuleAnnotationStyle",
+    "TrendAnnotationMarksStyle",
+    "TrendAnnotationStyle",
     "AreaChartMarksStyle",
     "AreaChartStyle",
     "AreaLayerStyle",
@@ -350,7 +376,6 @@ __all__ = [
     "PointMapChartMarksStyle",
     "PointMapChartStyle",
     "PointMarkStyle",
-    "ProjectionStyle",
     "RangeDefaults",
     "RectMarkStyle",
     "RootFontStyle",
@@ -421,6 +446,7 @@ __all__ = [
     "_GeoChartStyle",
     "_PaintedChartStyleBase",
     "_PaintedChartStyleBaseAllOptional",
+    "_AnnotatedChartStyleMixin",
     "_QuantitativeAxisChartStyleMixin",
     "_RadialChartStyle",
     "font_weight_as_css",

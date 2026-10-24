@@ -61,7 +61,7 @@ class TestDispatchToolCall:
             from dbt_charts.agent_api.search import SearchResult
 
             captured["project"] = project
-            return SearchResult(success=True, errors=[], results=[])
+            return SearchResult(success=True, errors=[], results=[], sources=[])
 
         monkeypatch.setattr(
             "dbt_charts.agent_api.search.search_files",

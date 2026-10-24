@@ -821,7 +821,13 @@ def test_spark_bar_subtitle_font_size_reads_directly_from_theme(make_chart):
     distinctive_size = 19.0
     base_ctx = resolve_chart_style_context(get_theme_style())
     spark_bar_override = base_ctx.spark_bar.model_copy(
-        update={"subtitle": SubtitleStyle(font=FontStyle(size=distinctive_size))}
+        update={
+            "subtitle": SubtitleStyle(
+                font=FontStyle(
+                    size=distinctive_size, color=base_ctx.spark_bar.subtitle.font.color
+                )
+            )
+        }
     )
     ctx_custom = dataclasses.replace(base_ctx, spark_bar=spark_bar_override)
 

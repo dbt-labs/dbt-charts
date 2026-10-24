@@ -46,7 +46,10 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
 )
 from dbt_charts.core.compile.models.style.theme.table import SupportTableStyle
-from dbt_charts.core.compile.models.vega_lite.contracts import Projection
+from dbt_charts.core.compile.models.vega_lite.contracts import (
+    Projection,
+    ProjectionType,
+)
 
 
 class _BaseResolvedChartFields(BaseModel):
@@ -302,7 +305,7 @@ class _GeoResolvedChartFields(_SharedResolvedChartFields, _FieldLabelsResolvedFi
     TopoJSON feature lookups, so those fields have no meaning there.
     """
 
-    projection: str | Projection | None = Field(
+    projection: ProjectionType | Projection | None = Field(
         default=None, description="Map projection name or config."
     )
 

@@ -223,11 +223,11 @@ struct BoardDoc {
     #[serde(default)]
     title_style: Option<mdsvg::style::Style>,
     #[serde(default)]
-    title_fonts: Option<mdsvg::fonts::FontSlots>,
+    title_fonts: Option<measure::fonts::FontSlots>,
     #[serde(default)]
     text_style: Option<mdsvg::style::Style>,
     #[serde(default)]
-    text_fonts: Option<mdsvg::fonts::FontSlots>,
+    text_fonts: Option<measure::fonts::FontSlots>,
     // `None` only on a board with no text.
     #[serde(default)]
     prose_plan: Option<crate::prose::ProsePlan>,
@@ -5605,7 +5605,7 @@ mod nested_box_sidecar_tests {
             "resolved": resolved, "chart_datasets": {}, "background": null, "fonts_dir": null,
             "render_timestamp_text": "", "render_time_iso": "2026-01-01T00:00:00Z",
             "defs_styles_block": "", "hover_attributes": "",
-            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"muted": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"secondary_color": null, "tones": null, "title_case": null, "continuous_height": null, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
             "chart_defaults": {
                 "default_chart_height": 300.0, "default_table_height": 250.0,
                 "min_height": 200.0, "max_height": 600.0,

@@ -1,5 +1,8 @@
-// Transliterated from libs/markdown-svg/tests/test_renderer.py and
-// tests/test_fonts.py::TestUsedFaces (renamed used_faces -> used_fonts).
+// Node and golden tests, from libs/markdown-svg/tests/test_renderer.py and
+// tests/test_fonts.py::TestUsedFaces (renamed used_faces -> used_fonts). The
+// byte assertions are goldens of what `print` makes of the renderer's nodes:
+// they pin this crate's output, not Python's. The node-shape tests at the end
+// pin what the renderer hands the scene before anything prints it.
 // Included into renderer.rs's `#[cfg(test)] mod tests`.
 //
 // Not ported here (need table rendering, `render_blocks`, or system-font-
@@ -16,7 +19,8 @@
 // table rendering).
 
 use super::*;
-use crate::fonts::{FontMeasurer, FontSlot};
+use measure::fonts::{FontMeasurer, FontSlot};
+use print::xml_escape_attr;
 use crate::parser::parse;
 use crate::style::TextAlign;
 use crate::types::contains_raw_html;
@@ -67,8 +71,37 @@ fn test_fonts() -> FontSlots {
     }
 }
 
+/// The printed form of a render's root: the goldens below assert on these bytes.
+fn svg_string(result: &RenderResult) -> String {
+    print::print(&[result.svg()])
+}
+
+fn svg_of(
+    renderer: &SVGRenderer,
+    blocks: &Document,
+    width: f64,
+    padding: f64,
+) -> Result<String, String> {
+    Ok(svg_string(&renderer.render_content(blocks, width, padding)?))
+}
+
+fn render_full(
+    markdown: &str,
+    width: f64,
+    padding: f64,
+    style: Style,
+    fonts: FontSlots,
+) -> Result<String, String> {
+    Ok(svg_string(&super::render(markdown, width, padding, style, fonts)?))
+}
+
+/// A window's elements as printed markup, one per line.
+fn elements_string(result: &RenderResult) -> String {
+    print::print_content(&indented(&result.elements))
+}
+
 fn render(markdown: &str, width: f64, style: Style) -> String {
-    super::render(markdown, width, 20.0, style, test_fonts()).unwrap()
+    render_full(markdown, width, 20.0, style, test_fonts()).unwrap()
 }
 
 fn render_default(markdown: &str) -> String {
@@ -241,14 +274,14 @@ fn render_default_width(markdown: &str, width: f64) -> String {
 
 #[test]
 fn test_custom_padding() {
-    let svg = super::render("Hello", 400.0, 30.0, Style::default(), test_fonts()).unwrap();
+    let svg = render_full("Hello", 400.0, 30.0, Style::default(), test_fonts()).unwrap();
     assert!(svg.contains("<svg"));
 }
 
 // --- TestMeasure ---
 
-fn measure(markdown: &str, width: f64) -> Size {
-    super::measure(markdown, width, 20.0, Style::default(), test_fonts()).unwrap()
+fn measure(markdown: &str, width: f64) -> RenderResult {
+    super::render(markdown, width, 20.0, Style::default(), test_fonts()).unwrap()
 }
 
 #[test]
@@ -283,7 +316,7 @@ fn test_renderer_with_style() {
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     let blocks = parse("Hello");
-    let svg = renderer.render(&blocks, 400.0, 20.0).unwrap();
+    let svg = svg_of(&renderer, &blocks, 400.0, 20.0).unwrap();
     assert!(svg.contains("#123456"));
 }
 
@@ -291,7 +324,7 @@ fn test_renderer_with_style() {
 fn test_renderer_measure() {
     let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
     let blocks = parse("Hello");
-    let size = renderer.measure(&blocks, 400.0, 20.0).unwrap();
+    let size = renderer.render_content(&blocks, 400.0, 20.0).unwrap();
     assert_eq!(size.width, 400.0);
     assert!(size.height > 0.0);
 }
@@ -530,7 +563,7 @@ fn used_font_slots() -> FontSlots {
 
 fn render_used_fonts(markdown: &str) -> HashSet<&'static str> {
     let renderer = SVGRenderer::new(Style::default(), used_font_slots()).unwrap();
-    renderer.render(&parse(markdown), 300.0, 0.0).unwrap();
+    svg_of(&renderer, &parse(markdown), 300.0, 0.0).unwrap();
     renderer.used_fonts()
 }
 
@@ -569,8 +602,8 @@ fn test_bold_italic_reaches_the_bold_italic_slot() {
 #[test]
 fn test_accumulates_across_calls() {
     let renderer = SVGRenderer::new(Style::default(), used_font_slots()).unwrap();
-    renderer.render(&parse("Plain"), 300.0, 0.0).unwrap();
-    renderer.render(&parse("*Emphasized*"), 300.0, 0.0).unwrap();
+    svg_of(&renderer, &parse("Plain"), 300.0, 0.0).unwrap();
+    svg_of(&renderer, &parse("*Emphasized*"), 300.0, 0.0).unwrap();
     let fonts = renderer.used_fonts();
     assert!(fonts.contains("regular") && fonts.contains("italic"));
 }
@@ -967,7 +1000,7 @@ fn test_chip_width_tracks_the_scaled_size() {
 #[test]
 fn test_chip_box_is_sized_off_the_code_size_not_the_host() {
     let chip_box = |style: Style| -> (String, String) {
-        let svg = super::render("Use `code` here", 400.0, 20.0, style, test_fonts()).unwrap();
+        let svg = render_full("Use `code` here", 400.0, 20.0, style, test_fonts()).unwrap();
         let re = regex::Regex::new(r#"<rect [^>]*y="([\d.]+)"[^>]*height="([\d.]+)""#).unwrap();
         let m = re
             .captures(&svg)
@@ -1106,7 +1139,7 @@ fn render_refuses_a_css_breaking_style_value_instead_of_painting_it() {
         hr_color: "red;".to_string(),
         ..Style::default()
     };
-    let err = super::render("hello", 400.0, 20.0, style, test_fonts()).unwrap_err();
+    let err = render_full("hello", 400.0, 20.0, style, test_fonts()).unwrap_err();
     assert!(err.starts_with("ERR-STYLE-CSS-VALUE-INVALID: "), "{err}");
 }
 
@@ -1220,16 +1253,15 @@ fn test_long_inline_code_with_no_mono_font_refuses_instead_of_zero_width() {
     };
     let renderer = SVGRenderer::new(Style::default(), fonts).unwrap();
     let long_code = "a".repeat(50);
-    let err = renderer
-        .render(&parse(&format!("Use `{long_code}` here")), 80.0, 20.0)
+    let err = svg_of(&renderer, &parse(&format!("Use `{long_code}` here")), 80.0, 20.0)
         .unwrap_err();
     assert!(err.contains("monospace"));
 }
 
 // --- TestHeadingMarginPxOverrides ---
 
-fn measure_with(markdown: &str, width: f64, padding: f64, style: Style) -> Size {
-    super::measure(markdown, width, padding, style, test_fonts()).unwrap()
+fn measure_with(markdown: &str, width: f64, padding: f64, style: Style) -> RenderResult {
+    super::render(markdown, width, padding, style, test_fonts()).unwrap()
 }
 
 #[test]
@@ -1596,7 +1628,7 @@ fn test_chip_rect_y_aligns_with_cap_height_not_full_em() {
         code_font_scale: 1.0,
         ..Style::default()
     };
-    let svg = super::render("`word`", 400.0, 20.0, style, test_fonts()).unwrap();
+    let svg = render_full("`word`", 400.0, 20.0, style, test_fonts()).unwrap();
 
     let rect_y: f64 = regex::Regex::new(r#"<rect[^>]*y="([^"]+)""#)
         .unwrap()
@@ -1639,7 +1671,7 @@ fn test_chip_rect_bottom_includes_descender_allowance() {
         code_font_scale: 1.0, // see the sibling test — isolate anchoring from sizing
         ..Style::default()
     };
-    let svg = super::render("`word`", 400.0, 20.0, style, test_fonts()).unwrap();
+    let svg = render_full("`word`", 400.0, 20.0, style, test_fonts()).unwrap();
 
     let rect_caps = regex::Regex::new(r#"<rect[^>]*y="([^"]+)"[^>]*height="([^"]+)""#)
         .unwrap()
@@ -1688,7 +1720,7 @@ fn test_paragraph_baseline_splits_the_leading() {
         ..Style::default()
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-    let svg = renderer.render(&parse("Body copy."), 400.0, 0.0).unwrap();
+    let svg = svg_of(&renderer, &parse("Body copy."), 400.0, 0.0).unwrap();
 
     let expected = expected_baseline_offset(&renderer.measurer, 14.0, 1.4);
     assert!((baselines(&svg)[0] - expected).abs() < 0.01);
@@ -1710,12 +1742,10 @@ fn test_heading_baseline_splits_the_leading_below_its_margin() {
     };
     let renderer = SVGRenderer::new(style.clone(), test_fonts()).unwrap();
     // After a paragraph, so the heading draws the margin this test offsets by.
-    let lead = renderer
-        .measure(&parse("Body."), 400.0, 0.0)
+    let lead = renderer.render_content(&parse("Body."), 400.0, 0.0)
         .unwrap()
         .height;
-    let svg = renderer
-        .render(&parse("Body.\n\n# Heading"), 400.0, 0.0)
+    let svg = svg_of(&renderer, &parse("Body.\n\n# Heading"), 400.0, 0.0)
         .unwrap();
 
     let font_size = style.get_heading_size(1);
@@ -1735,8 +1765,7 @@ fn test_line_advance_is_unchanged_by_where_the_baseline_sits() {
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     // Narrow enough to wrap, so the two baselines are lines of one paragraph.
-    let svg = renderer
-        .render(&parse("One two three four five"), 60.0, 0.0)
+    let svg = svg_of(&renderer, &parse("One two three four five"), 60.0, 0.0)
         .unwrap();
 
     let ys = baselines(&svg);
@@ -1761,7 +1790,7 @@ fn test_heading_baseline_reports_the_line_the_heading_was_drawn_on() {
             ..Style::default()
         };
         let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-        let svg = renderer.render(&parse("# Heading"), 400.0, 0.0).unwrap();
+        let svg = svg_of(&renderer, &parse("# Heading"), 400.0, 0.0).unwrap();
 
         let drawn = baselines(&svg)[0];
         assert!(
@@ -1783,8 +1812,7 @@ fn test_heading_line_box_is_the_block_without_its_margins() {
         ..Style::default()
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-    let block = renderer
-        .measure(&parse("# Heading"), 400.0, 0.0)
+    let block = renderer.render_content(&parse("# Heading"), 400.0, 0.0)
         .unwrap()
         .height;
 
@@ -1824,8 +1852,7 @@ fn test_a_list_marker_sits_on_its_item_s_own_baseline() {
             ..Style::default()
         };
         let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-        let svg = renderer
-            .render(&parse("1. First item"), 400.0, 0.0)
+        let svg = svg_of(&renderer, &parse("1. First item"), 400.0, 0.0)
             .unwrap();
 
         let ys = baselines(&svg);
@@ -1851,7 +1878,7 @@ fn test_a_bullet_is_centered_on_its_item_s_text() {
         ..Style::default()
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-    let svg = renderer.render(&parse("- First item"), 400.0, 0.0).unwrap();
+    let svg = svg_of(&renderer, &parse("- First item"), 400.0, 0.0).unwrap();
 
     let cy: f64 = regex::Regex::new(r#"<circle[^>]*\bcy="([\d.]+)""#)
         .unwrap()
@@ -1876,7 +1903,7 @@ fn test_a_heading_opening_a_document_sits_at_the_top_of_the_box() {
         ..Style::default()
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-    let svg = renderer.render(&parse("# Heading"), 400.0, 0.0).unwrap();
+    let svg = svg_of(&renderer, &parse("# Heading"), 400.0, 0.0).unwrap();
 
     assert!((baselines(&svg)[0] - renderer.first_baseline(&parse("# Heading"), 400.0).unwrap()).abs() < 0.01);
 
@@ -1890,7 +1917,7 @@ fn test_a_heading_opening_a_document_sits_at_the_top_of_the_box() {
         test_fonts(),
     )
     .unwrap();
-    let wider_svg = wider.render(&parse("# Heading"), 400.0, 0.0).unwrap();
+    let wider_svg = svg_of(&wider, &parse("# Heading"), 400.0, 0.0).unwrap();
     assert!(
         (baselines(&wider_svg)[0] - baselines(&svg)[0]).abs() < 0.01,
         "the opening heading is still carrying its own top margin"
@@ -1908,16 +1935,13 @@ fn test_a_heading_after_a_paragraph_keeps_its_leading_margin() {
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
 
-    let opener = renderer
-        .measure(&parse("# Heading"), 400.0, 0.0)
+    let opener = renderer.render_content(&parse("# Heading"), 400.0, 0.0)
         .unwrap()
         .height;
-    let with_paragraph = renderer
-        .measure(&parse("Body text.\n\n# Heading"), 400.0, 0.0)
+    let with_paragraph = renderer.render_content(&parse("Body text.\n\n# Heading"), 400.0, 0.0)
         .unwrap()
         .height;
-    let paragraph = renderer
-        .measure(&parse("Body text."), 400.0, 0.0)
+    let paragraph = renderer.render_content(&parse("Body text."), 400.0, 0.0)
         .unwrap()
         .height;
 
@@ -1944,12 +1968,12 @@ fn test_the_collapsed_margin_comes_off_the_block_s_height() {
 
     let drawn_height = SVGRenderer::new(drawn, test_fonts())
         .unwrap()
-        .measure(&blocks, 400.0, 0.0)
+        .render_content(&blocks, 400.0, 0.0)
         .unwrap()
         .height;
     let none_height = SVGRenderer::new(none, test_fonts())
         .unwrap()
-        .measure(&blocks, 400.0, 0.0)
+        .render_content(&blocks, 400.0, 0.0)
         .unwrap()
         .height;
     assert!((drawn_height - none_height).abs() < 0.01);
@@ -1966,16 +1990,13 @@ fn test_a_heading_opening_a_blockquote_collapses_too() {
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
 
-    let quoted = renderer
-        .measure(&parse("> # Heading"), 400.0, 0.0)
+    let quoted = renderer.render_content(&parse("> # Heading"), 400.0, 0.0)
         .unwrap()
         .height;
-    let after = renderer
-        .measure(&parse("> Body text.\n> # Heading"), 400.0, 0.0)
+    let after = renderer.render_content(&parse("> Body text.\n> # Heading"), 400.0, 0.0)
         .unwrap()
         .height;
-    let body = renderer
-        .measure(&parse("> Body text."), 400.0, 0.0)
+    let body = renderer.render_content(&parse("> Body text."), 400.0, 0.0)
         .unwrap()
         .height;
 
@@ -1998,7 +2019,7 @@ fn hide_overflow_clip_id_matches_python() {
         ..Style::default()
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-    let render = |md: &str| renderer.render(&parse(md), 400.0, 0.0).unwrap();
+    let render = |md: &str| svg_of(&renderer, &parse(md), 400.0, 0.0).unwrap();
     let clip_id = |svg: &str| {
         let start = svg.find("code-clip-").expect("no clip id emitted");
         svg[start..start + "code-clip-".len() + 8].to_string()
@@ -2081,8 +2102,8 @@ fn test_render_block_window_renders_only_the_requested_lines() {
     let tail = renderer
         .render_block_window(block, 300.0, 2, Some(total - 2))
         .unwrap();
-    assert_eq!(head.elements.matches("<text").count(), 2);
-    assert_eq!(tail.elements.matches("<text").count(), total - 2);
+    assert_eq!(elements_string(&head).matches("<text").count(), 2);
+    assert_eq!(elements_string(&tail).matches("<text").count(), total - 2);
 }
 
 #[test]
@@ -2110,27 +2131,14 @@ fn test_render_block_window_lines_concatenate_to_the_whole_block() {
     let block = &blocks[0];
     let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_count;
 
-    let whole = words(
-        &renderer
-            .render_block_window(block, 300.0, 0, Some(total))
-            .unwrap()
-            .elements,
-    );
-    let split = format!(
-        "{} {}",
-        words(
-            &renderer
-                .render_block_window(block, 300.0, 0, Some(2))
-                .unwrap()
-                .elements
-        ),
-        words(
-            &renderer
-                .render_block_window(block, 300.0, 2, Some(total - 2))
-                .unwrap()
-                .elements
-        )
-    );
+    let window = |start: usize, count: usize| {
+        let result = renderer
+            .render_block_window(block, 300.0, start, Some(count))
+            .unwrap();
+        words(&elements_string(&result))
+    };
+    let whole = window(0, total);
+    let split = format!("{} {}", window(0, 2), window(2, total - 2));
     assert_eq!(split, whole);
 }
 
@@ -2144,11 +2152,9 @@ fn test_render_block_window_starts_at_the_top_of_its_own_box() {
         .render_block_window(block, 300.0, total - 2, Some(2))
         .unwrap();
 
-    let idx = tail
-        .elements
-        .find("y=\"")
-        .expect("the window must render text");
-    let rest = &tail.elements[idx + 3..];
+    let elements = elements_string(&tail);
+    let idx = elements.find("y=\"").expect("the window must render text");
+    let rest = &elements[idx + 3..];
     let end = rest.find('"').unwrap();
     let first_y: f64 = rest[..end].parse().unwrap();
     assert!(
@@ -2223,7 +2229,7 @@ fn test_empty_heading_font_family_inherits_body_family() {
 fn heading_lines(heading: Option<FontSlot>, markdown: &str) -> (usize, HashSet<&'static str>) {
     let fonts = FontSlots { heading, ..test_fonts() };
     let renderer = SVGRenderer::new(Style::default(), fonts).unwrap();
-    let svg = renderer.render(&parse(markdown), 200.0, 0.0).unwrap();
+    let svg = svg_of(&renderer, &parse(markdown), 200.0, 0.0).unwrap();
     (svg.matches("<text ").count(), renderer.used_fonts())
 }
 
@@ -2260,7 +2266,7 @@ fn test_heading_measurement_uses_a_static_heading_typeface_with_a_weight() {
     let renderer = SVGRenderer::new(Style::default(), fonts).unwrap();
     let sample = "measured heading text width against body";
     let expected =
-        crate::fonts::cached_measurer(&inter_path(heading_file), 0, None).measure(sample, 14.0);
+        measure::fonts::cached_measurer(&inter_path(heading_file), 0, None).measure(sample, 14.0);
     let body = renderer
         .measure_text(sample, 14.0, false, false, false, None, false)
         .unwrap();
@@ -2413,8 +2419,8 @@ fn test_every_authored_font_family_is_css_escaped_at_every_site() {
 fn unfetched(markdown: &str, width: f64, style: Style) -> (String, f64) {
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     let blocks = parse(markdown);
-    let svg = renderer.render(&blocks, width, 20.0).unwrap();
-    let height = renderer.measure(&blocks, width, 20.0).unwrap().height;
+    let svg = svg_of(&renderer, &blocks, width, 20.0).unwrap();
+    let height = renderer.render_content(&blocks, width, 20.0).unwrap().height;
     (svg, height)
 }
 
@@ -2598,17 +2604,18 @@ fn image_block_in_a_blockquote_sits_inside_the_rule() {
 
 #[test]
 fn image_block_with_size_fetching_on_is_refused_by_name() {
-    let err = SVGRenderer::new(Style::default(), test_fonts())
+    let renderer = SVGRenderer::new(Style::default(), test_fonts())
         .unwrap()
-        .with_fetch_image_sizes(true)
-        .render(&parse("![Logo](u.png)"), 400.0, 20.0)
+        .with_fetch_image_sizes(true);
+    let err = renderer
+        .render_content(&parse("![Logo](u.png)"), 400.0, 20.0)
         .unwrap_err();
     assert_eq!(err, "mdsvg-rs: image size fetch not supported");
 }
 
 #[test]
 fn image_block_defaults_to_the_fallback_ratio_without_fetching() {
-    let svg = super::render("![Logo](u.png)", 400.0, 20.0, Style::default(), test_fonts())
+    let svg = render_full("![Logo](u.png)", 400.0, 20.0, Style::default(), test_fonts())
         .unwrap();
     assert_eq!(
         image_lines(&svg)[0],
@@ -2623,7 +2630,7 @@ fn image_with(md: &str, style: Style, fetch_image_sizes: bool) -> Result<String,
     let renderer = SVGRenderer::new(style, test_fonts())
         .unwrap()
         .with_fetch_image_sizes(fetch_image_sizes);
-    let svg = renderer.render(&parse(md), 400.0, 20.0)?;
+    let svg = svg_of(&renderer, &parse(md), 400.0, 20.0)?;
     Ok(image_lines(&svg)[0].replace(SVG_412X128, "SVG"))
 }
 
@@ -2705,7 +2712,7 @@ fn image_block_enforcing_the_aspect_ratio_never_fetches() {
         image_enforce_aspect_ratio: true,
         ..Style::default()
     };
-    let svg = super::render("![Logo](u.png)", 400.0, 20.0, style, test_fonts()).unwrap();
+    let svg = render_full("![Logo](u.png)", 400.0, 20.0, style, test_fonts()).unwrap();
     assert_eq!(
         image_lines(&svg)[0],
         r#"  <image x="20" y="20" width="360" height="202.5" href="u.png" preserveAspectRatio="xMidYMid meet"/>"#
@@ -2719,8 +2726,7 @@ fn image_block_with_a_non_positive_fallback_ratio_is_refused_by_name() {
         ..Style::default()
     };
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
-    let err = renderer
-        .render(&parse("![Logo](u.png)"), 400.0, 20.0)
+    let err = svg_of(&renderer, &parse("![Logo](u.png)"), 400.0, 20.0)
         .unwrap_err();
     assert_eq!(err, "mdsvg-rs: image non-positive fallback aspect ratio not supported");
 }
@@ -2735,9 +2741,7 @@ fn fenced_code_with_an_unported_language_refuses_by_name_while_highlighting_is_o
     };
     let md = "```json\n{\"x\": 1}\n```";
     let want = "mdsvg-rs: fenced code highlighting for language `json` not ported";
-    let err = super::render(md, 400.0, 20.0, style.clone(), test_fonts()).unwrap_err();
-    assert_eq!(err, want);
-    let err = super::measure(md, 400.0, 20.0, style, test_fonts()).unwrap_err();
+    let err = render_full(md, 400.0, 20.0, style, test_fonts()).unwrap_err();
     assert_eq!(err, want);
 }
 
@@ -2748,9 +2752,9 @@ fn fenced_code_paints_plain_without_a_language_or_without_highlighting() {
         ..Style::default()
     };
     // No fence language: Python takes the plain branch even with highlighting on.
-    assert!(super::render("```\nkey: value\n```", 400.0, 20.0, on.clone(), test_fonts()).is_ok());
+    assert!(render_full("```\nkey: value\n```", 400.0, 20.0, on.clone(), test_fonts()).is_ok());
     // An alias Pygments does not know is the plain block, not a refusal.
-    let plain = super::render("```nosuchlang\nkey: value\n```", 400.0, 20.0, on, test_fonts());
+    let plain = render_full("```nosuchlang\nkey: value\n```", 400.0, 20.0, on, test_fonts());
     assert!(plain.unwrap().contains(">key: value</text>"));
     assert!(render("```yaml\nkey: value\n```", 400.0, Style::default()).contains("key: value"));
 }
@@ -2797,8 +2801,8 @@ fn raw_html_as_paragraph(html: &str) -> Vec<AnyBlock> {
 fn render_blocks_at(blocks: &Document, width: f64) -> (String, f64) {
     let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
     (
-        renderer.render(blocks, width, 20.0).unwrap(),
-        renderer.measure(blocks, width, 20.0).unwrap().height,
+        svg_of(&renderer, blocks, width, 20.0).unwrap(),
+        renderer.render_content(blocks, width, 20.0).unwrap().height,
     )
 }
 
@@ -2935,7 +2939,7 @@ fn nothing_wraps_at_max_content_and_something_wraps_below() {
         let natural = max_content(&markdown);
         let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
         let blocks = parse(&markdown);
-        let height = |width: f64| renderer.measure(&blocks, width, 0.0).unwrap().height;
+        let height = |width: f64| renderer.render_content(&blocks, width, 0.0).unwrap().height;
         let unwrapped = height(10_000.0);
         assert_eq!(height(natural.ceil()), unwrapped, "{name}");
         assert!(height(natural * 0.8) > unwrapped, "{name}");
@@ -2980,7 +2984,7 @@ fn a_solid_horizontal_rule_is_the_unchanged_filled_rect() {
 #[test]
 fn a_hidden_horizontal_rule_keeps_its_space_and_paints_nothing() {
     let height = |style: Style| {
-        super::measure(HR_MARKDOWN, 300.0, 20.0, style, test_fonts()).unwrap().height
+        super::render(HR_MARKDOWN, 300.0, 20.0, style, test_fonts()).unwrap().height
     };
     let hidden = Style { hr_visible: false, ..Style::default() };
     assert_eq!(height(hidden.clone()), height(Style::default()));
@@ -3037,7 +3041,7 @@ fn hidden_table_gridlines_paint_no_stroke_and_keep_the_height() {
     let hidden = Style { table_border_visible: false, ..Style::default() };
     assert!(!divider_svg(GRID_MARKDOWN, hidden.clone()).contains("stroke="));
     let height = |style: Style| {
-        super::measure(GRID_MARKDOWN, 300.0, 20.0, style, test_fonts()).unwrap().height
+        super::render(GRID_MARKDOWN, 300.0, 20.0, style, test_fonts()).unwrap().height
     };
     assert_eq!(height(hidden), height(Style::default()));
 }
@@ -3121,8 +3125,8 @@ fn inline(md: &str, style: Style, width: f64) -> Result<(Vec<String>, f64, f64),
     }
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     let blocks = parse(&source);
-    let svg = renderer.render(&blocks, width, 20.0)?;
-    let height = renderer.measure(&blocks, width, 20.0)?.height;
+    let svg = svg_of(&renderer, &blocks, width, 20.0)?;
+    let height = renderer.render_content(&blocks, width, 20.0)?.height;
     let max_content = renderer.max_content_width(&blocks)?;
     let lines = svg
         .lines()
@@ -3322,7 +3326,7 @@ fn from_font_path(style: Style) -> SVGRenderer {
 fn stacked_line_heights_sum_like_cpython() {
     let style = Style { base_font_size: 11.0, line_height: 1.35, ..Style::default() };
     let size = from_font_path(style)
-        .measure(&parse(&["alpha"; 11].join(" ")), 60.0, 0.0)
+        .render_content(&parse(&["alpha"; 11].join(" ")), 60.0, 0.0)
         .unwrap();
     assert_eq!(size.height, 89.10000000000001);
 }
@@ -3330,12 +3334,15 @@ fn stacked_line_heights_sum_like_cpython() {
 #[test]
 fn a_bare_font_path_measures_a_heading_at_the_files_own_weight() {
     let md = format!("# H ![x]({SVG_120X40_URI}){{height=40}} z");
-    let from_path = from_font_path(Style::default()).render(&parse(&md), 400.0, 0.0).unwrap();
+    let from_path = svg_of(&from_font_path(Style::default()), &parse(&md), 400.0, 0.0).unwrap();
     assert!(from_path.contains(r#"<image x="28.68" y="0" width="120" height="40""#), "{from_path}");
-    let reweighted = SVGRenderer::new(Style::default(), test_fonts())
-        .unwrap()
-        .render(&parse(&md), 400.0, 0.0)
-        .unwrap();
+    let reweighted = svg_of(
+        &SVGRenderer::new(Style::default(), test_fonts()).unwrap(),
+        &parse(&md),
+        400.0,
+        0.0,
+    )
+    .unwrap();
     assert!(!reweighted.contains(r#"<image x="28.68""#));
 }
 
@@ -3396,7 +3403,7 @@ fn inline_image_fetch_and_fallback_refusals_match_the_block_image() {
         .unwrap()
         .with_fetch_image_sizes(true);
     assert_eq!(
-        fetched.render(&parse("See ![x](u.png) here"), 400.0, 20.0).unwrap_err(),
+        fetched.render_content(&parse("See ![x](u.png) here"), 400.0, 20.0).unwrap_err(),
         "mdsvg-rs: image size fetch not supported"
     );
     let style = Style {
@@ -3463,7 +3470,7 @@ fn a_numeric_weight_is_read_with_its_surrounding_whitespace_stripped() {
 fn table_columns_are_content_sized_and_the_long_cell_absorbs_wrapping() {
     let long = "This cell holds a great deal of explanatory text that must wrap ".repeat(2);
     let md = format!("| Region | Units | Notes |\n|---|---|---|\n| West | 812 | {long} |\n");
-    let svg = super::render(&md, 400.0, 0.0, Style::default(), test_fonts()).unwrap();
+    let svg = svg_string(&super::render(&md, 400.0, 0.0, Style::default(), test_fonts()).unwrap());
     let rule_xs: Vec<f64> = svg
         .lines()
         .filter(|l| l.contains("<line") && l.contains(r#"y1="0""#))
@@ -3474,7 +3481,7 @@ fn table_columns_are_content_sized_and_the_long_cell_absorbs_wrapping() {
     assert!(widths[2] > widths[0] && widths[2] > widths[1], "{widths:?}");
 
     let short = "| Region | Units |\n|---|---|\n| West | 812 |\n";
-    let svg = super::render(short, 600.0, 0.0, Style::default(), test_fonts()).unwrap();
+    let svg = svg_string(&super::render(short, 600.0, 0.0, Style::default(), test_fonts()).unwrap());
     let outer = svg
         .lines()
         .find(|l| l.contains("<rect") && l.contains(r#"fill="none""#))
@@ -3486,7 +3493,7 @@ fn table_columns_are_content_sized_and_the_long_cell_absorbs_wrapping() {
 #[test]
 fn a_ragged_table_row_is_clamped_to_the_header_width() {
     let md = "| A | B |\n|---|---|\n| 1 | 2 | 3 |\n| 4 |\n";
-    let svg = super::render(md, 300.0, 0.0, Style::default(), test_fonts()).unwrap();
+    let svg = svg_string(&super::render(md, 300.0, 0.0, Style::default(), test_fonts()).unwrap());
     let rules = svg.lines().filter(|l| l.contains("<line") && l.contains(r#"y1="0""#)).count();
     assert_eq!(rules, 1, "{svg}");
 }
@@ -3529,4 +3536,135 @@ fn a_whitespace_run_is_never_a_table_cell_token() {
         narrowest("| A |\n|---|\n| l   l |\n"),
         narrowest("| A |\n|---|\n| l |\n"),
     );
+}
+
+// --- Node shapes: what the renderer hands the scene, before anything prints it ---
+
+fn laid_out(markdown: &str) -> RenderResult {
+    super::render(markdown, 400.0, 0.0, Style::default(), test_fonts()).unwrap()
+}
+
+fn attr<'a>(element: &'a Element, name: &str) -> &'a str {
+    element
+        .attrs
+        .iter()
+        .find(|(key, _, _)| *key == name)
+        .unwrap_or_else(|| panic!("<{}> has no {name}: {:?}", element.tag, element.attrs))
+        .1
+}
+
+fn child_elements(element: &Element) -> Vec<&Element> {
+    element
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            Child::Element(inner) => Some(inner),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_heading_is_one_text_element_holding_its_words_unescaped() {
+    let result = laid_out("# Tom & \"Jerry\" <3");
+    let [text] = result.elements.as_slice() else {
+        panic!("one heading, one element: {:?}", result.elements);
+    };
+    assert_eq!(text.tag, "text");
+    assert!(has_md_class(attr(text, "class"), "heading"));
+    assert_eq!(attr(text, "text-anchor"), "start");
+    let [tspan] = child_elements(text)[..] else {
+        panic!("one weighted run: {text:?}");
+    };
+    assert_eq!(attr(tspan, "style"), "font-weight: bold");
+    assert_eq!(tspan.children, vec![quoted("Tom & \"Jerry\" <3")]);
+    let printed = print::print(&[scene::Node::Element(text.clone())]);
+    assert!(printed.ends_with(">Tom &amp; &quot;Jerry&quot; &lt;3</tspan></text>"), "{printed}");
+}
+
+#[test]
+fn an_unordered_list_is_a_bullet_then_a_text_per_item() {
+    let result = laid_out("- one\n- two");
+    let tags: Vec<&str> = result.elements.iter().map(|e| e.tag.as_str()).collect();
+    assert_eq!(tags, ["circle", "text", "circle", "text"]);
+    assert_eq!(attr(&result.elements[0], "r"), "1.5");
+    assert!(result.elements[0].children.is_empty());
+    assert_eq!(result.elements[3].children, vec![quoted("two")]);
+}
+
+#[test]
+fn a_code_fence_keeps_its_tab_raw_in_a_preserved_text() {
+    let result = laid_out("```\na\tb\n```");
+    let tags: Vec<&str> = result.elements.iter().map(|e| e.tag.as_str()).collect();
+    assert_eq!(tags, ["rect", "text"]);
+    let line = &result.elements[1];
+    assert_eq!(attr(line, "xml:space"), "preserve");
+    assert_eq!(line.children, vec![quoted("a\tb")]);
+    let printed = print::print(&[scene::Node::Element(line.clone())]);
+    assert!(printed.ends_with(">a&#9;b</text>"), "{printed}");
+}
+
+#[test]
+fn a_link_is_an_anchor_around_a_styled_tspan_with_its_href_raw() {
+    let result = laid_out("[docs](https://e.com/?a=1&b=2)");
+    let text = &result.elements[0];
+    let [anchor] = child_elements(text)[..] else {
+        panic!("one anchor: {text:?}");
+    };
+    assert_eq!(anchor.tag, "a");
+    assert_eq!(attr(anchor, "href"), "https://e.com/?a=1&b=2");
+    let [tspan] = child_elements(anchor)[..] else {
+        panic!("one tspan: {anchor:?}");
+    };
+    assert!(attr(tspan, "style").contains("text-decoration: underline"));
+    assert_eq!(tspan.children, vec![quoted("docs")]);
+}
+
+#[test]
+fn inline_code_is_a_chip_rect_then_a_text_with_a_monospace_tspan() {
+    let result = laid_out("use `a<b` here");
+    let tags: Vec<&str> = result.elements.iter().map(|e| e.tag.as_str()).collect();
+    assert_eq!(tags, ["rect", "text"]);
+    let tspans = child_elements(&result.elements[1]);
+    let [code] = tspans[..] else {
+        panic!("one styled run: {tspans:?}");
+    };
+    assert!(attr(code, "style").contains("font-family:"));
+    assert_eq!(code.children, vec![quoted("a<b")]);
+}
+
+#[test]
+fn the_style_block_is_an_element_of_one_rule_line_per_class() {
+    let result = laid_out("x");
+    assert_eq!(result.style.tag, "style");
+    let rules: Vec<&str> = result
+        .style
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            Child::Text(Chars { text, escape: Escape::Mdsvg }) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rules.len(), 6);
+    assert!(rules[0].starts_with("    .md-") && rules[0].contains("-text { font-family: "), "{}", rules[0]);
+}
+
+#[test]
+fn the_root_carries_the_extent_the_layout_reserved() {
+    let result = laid_out("# Title\n\nBody text.");
+    let Node::Svg { extent, attrs, .. } = result.svg() else {
+        panic!("the root is an svg");
+    };
+    assert_eq!(extent, Extent { width: 400.0, height: result.height });
+    let value = |name: &str| attrs.iter().find(|(key, _, _)| *key == name).unwrap().1.to_string();
+    assert_eq!(value("width"), "400");
+    assert_eq!(value("viewBox"), format!("0 0 400 {}", fmt(result.height)));
+}
+
+#[test]
+fn an_empty_cell_still_prints_an_open_and_close_text() {
+    let result = laid_out("| h |\n|---|\n|   |");
+    let printed = print::print(&[result.svg()]);
+    assert!(printed.contains("text-anchor=\"start\"></text>"), "{printed}");
 }

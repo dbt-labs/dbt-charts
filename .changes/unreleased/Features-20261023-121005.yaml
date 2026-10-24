@@ -1,0 +1,3 @@
+kind: Features
+body: Snowflake sources accept workload_identity_provider and workload_identity_entra_resource for workload identity authentication.
+time: 2026-10-23T12:10:05.64459-07:00

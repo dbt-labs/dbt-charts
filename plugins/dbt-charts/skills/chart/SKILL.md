@@ -79,7 +79,7 @@ Jinja helpers in query SQL:
 - `width` (int|number): Chart width in pixels
 - `height` (int|number): Explicit chart height in pixels
 - `style` (mapping): Appearance overrides for this chart alone
-Also exist: `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `y_start`.
+Also exist: `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `y_start`, `annotations`.
 
 Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more than the column name can.
 
@@ -122,7 +122,7 @@ For a shape no built-in type draws, read the custom-chart-build skill.
 - `label`: Name for this layer's measure wherever the layer is identified
 - `color`: Column whose values split this layer into colored series
 - `style` ({marks: {}}): Only `marks`: a line layer's color is `marks: {line: {stroke: {color: '#hex'}}}`, a scatter's `marks: {point: {color: '#hex'}}`
-Also exist: `axis_y`, `y_start`.
+Also exist: `axis_y`, `legend`, `y_start`.
 Layer types: `bar`, `line`, `area`, `scatter`.
 
 - y_start sets each bar's start, so it can't be stacked; remove style.stack or y_start.
@@ -181,7 +181,7 @@ Built-in names, on 1234567.891 and 0.2534: `currency` $1.23M, `currency_whole` $
 
 ## Style
 
-Keys of `style`: `frame`, `background`, `accent`, `muted`, `font`, `border`, `box_shadow`, `opacity`, `title`, `text`, `placeholder`, `charts`, `layout`, `variables`, `footer`, `timestamp`, `formats`, `fonts`, `palettes`, `tones`, `roles`, `padding`, `margin`, `gap`.
+Keys of `style`: `frame`, `background`, `accent`, `font`, `border`, `box_shadow`, `opacity`, `title`, `text`, `placeholder`, `charts`, `annotations`, `layout`, `variables`, `footer`, `timestamp`, `formats`, `fonts`, `palettes`, `tones`, `roles`, `padding`, `margin`, `gap`.
 
 ## Themes and dark variants
 

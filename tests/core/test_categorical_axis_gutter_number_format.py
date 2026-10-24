@@ -70,3 +70,18 @@ def test_authored_label_expr_falls_back_to_raw_values() -> None:
     expr_gutter = _categorical_axis_gutter_px(expr_ax, data, "bucket")
 
     assert expr_gutter == bare_gutter
+
+
+def test_font_case_upper_widens_the_gutter_to_the_painted_text() -> None:
+    data = [{"bucket": "mmmm wwww", "value": 10}]
+    bare_ax = _plan(data).axes.x.style
+    lower_font = bare_ax.labels.font.model_copy(update={"case": "none"})
+    upper_font = bare_ax.labels.font.model_copy(update={"case": "upper"})
+
+    def gutter(font) -> float:
+        labels = bare_ax.labels.model_copy(update={"font": font, "format": None})
+        return _categorical_axis_gutter_px(
+            bare_ax.model_copy(update={"labels": labels}), data, "bucket"
+        )
+
+    assert gutter(upper_font) > gutter(lower_font)

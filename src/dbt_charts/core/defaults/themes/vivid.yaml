@@ -18,9 +18,9 @@ notes: colorful accents, bold sans type
 style:
   palettes:
     sequence: dbt-seq-blue
+  roles:
+    muted: &mid chrome[8]
   background: dbt-grays.white
-  accent: info.solid-hover
-  muted: &mid chrome[8]
   font:
     color: &high chrome[10]   # body prose = content
   border:

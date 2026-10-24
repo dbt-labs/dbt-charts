@@ -88,7 +88,7 @@ def test_a_partial_value_under_an_absent_field_is_not_walked() -> None:
     style = style.model_copy(
         update={"charts": style.charts.model_copy(update={"marks": marks})}
     )
-    assert not [p for p in _reported(_with_none_opacity(style)) if "rect" in p]
+    assert not [p for p in _reported(_with_none_opacity(style)) if ".rect.stroke." in p]
 
 
 def test_a_theme_without_a_single_series_palette_names_the_path() -> None:

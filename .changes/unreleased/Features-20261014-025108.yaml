@@ -1,0 +1,3 @@
+kind: Features
+body: Secondary text is now the named font style.fonts.secondary, replacing style.muted (existing boards migrate automatically), and table row numbers, table and spark_bar notes, and the spark_bar subtitle each have their own font slot.
+time: 2026-10-14T02:51:08.969867-07:00

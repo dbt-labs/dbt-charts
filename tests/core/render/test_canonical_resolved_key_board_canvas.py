@@ -77,6 +77,7 @@ def test_two_scopes_with_matching_chart_canvas_but_different_board_canvas_resolv
 
     chart = _translucent_bar_chart()
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    executor.rendered_at = None
     executor.render_with_range_filters.return_value = None
     executor.execute_query.return_value = []
     render_ctx = SizingRenderCtx(

@@ -1042,3 +1042,44 @@ class TestDirContextThroughCallers:
 
         assert result.status == "ok"
         assert "has_dir=no" in str(result.data)
+
+
+class TestDirectoryListing:
+    """The listing page a host shows for a directory with no index board."""
+
+    def test_lists_folders_first_then_boards_under_an_up_link(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.compile import compile
+        from dbt_charts.core.render.dir_context import directory_listing
+
+        (tmp_path / "charts" / "sales" / "emea").mkdir(parents=True)
+        (tmp_path / "charts" / "sales" / "trend.yml").write_text("title: Trend\n")
+        project = local_project(tmp_path)
+
+        board_text, variables = directory_listing(
+            [project.directory("charts/sales")], "sales", project
+        )
+
+        assert variables == {
+            "directory_title": "/sales",
+            "listing_markdown": "- [../](/)\n- [emea/](/sales/emea/)\n"
+            "- [trend.yml](/sales/trend)",
+        }
+        assert compile(board_text).board is not None
+
+    def test_the_root_listing_has_no_up_link(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.dir_context import directory_listing
+
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "overview.yml").write_text("title: Overview\n")
+        project = local_project(tmp_path)
+
+        _, variables = directory_listing([project.directory("charts")], "", project)
+
+        assert variables == {
+            "directory_title": "/",
+            "listing_markdown": "- [overview.yml](/overview)",
+        }

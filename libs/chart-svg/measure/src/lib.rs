@@ -3,7 +3,7 @@
 //! Family resolution is by normalized-name substring against the font
 //! filenames, the first entry of the CSS family list names the face (the body
 //! face when nothing matches). A codepoint the face has no glyph for books
-//! the advance `mdsvg::fonts::FontMeasurer::measure` books (an emoji cluster
+//! the advance `crate::fonts::FontMeasurer::measure` books (an emoji cluster
 //! at one emoji advance, otherwise `unmapped_advance_em`), as in production.
 //!
 //! `bind` never receives a [`Measure`]; only `layout`, `intrinsic` and
@@ -11,8 +11,23 @@
 //! is split onto the contract; spark_bar sizes its columns from style
 //! constants and measures nothing, so the handle is all it takes.
 
+pub mod east_asian_width;
 pub mod font_files;
+pub mod fonts;
+pub mod reservation;
+pub mod weighted;
 pub mod wrap;
+mod column_demand;
+mod label_widths;
+mod pager;
+mod row_numbers;
+mod stand_in;
+#[cfg(test)]
+mod table_metrics_tests;
+mod word_floor;
+
+pub use column_demand::SAMPLE_ROWS;
+pub use stand_in::stand_in_family;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -48,25 +63,25 @@ pub struct Face {
 
 /// `font_measure.py::centered_baseline_offset`: how far below a container's
 /// vertical center a centered line's baseline sits.
-pub fn centered_baseline_offset(measurer: &mdsvg::fonts::FontMeasurer, font_size: f64) -> f64 {
+pub fn centered_baseline_offset(measurer: &crate::fonts::FontMeasurer, font_size: f64) -> f64 {
     (measurer.ascent_em() - measurer.descent_em()) / 2.0 * font_size
 }
 
 /// The advance, in font units, of the cluster that starts at
 /// `codepoints[i]`, and how many codepoints it spans. A mapped glyph is its
 /// own advance; an emoji cluster or an unmapped codepoint books what
-/// `mdsvg::fonts::FontMeasurer::measure` books, never an `Err` — production
+/// `crate::fonts::FontMeasurer::measure` books, never an `Err` — production
 /// does not fail a chart over one rare character.
 fn cluster_advance(face: &ttf_parser::Face<'_>, codepoints: &[u32], i: usize) -> (f64, usize) {
     let upem = face.units_per_em() as f64;
-    let cluster = mdsvg::fonts::emoji_cluster_length(codepoints, i);
+    let cluster = crate::fonts::emoji_cluster_length(codepoints, i);
     if cluster > 0 {
-        return (upem * mdsvg::fonts::EMOJI_ADVANCE_EM, cluster);
+        return (upem * crate::fonts::EMOJI_ADVANCE_EM, cluster);
     }
     let ch = char::from_u32(codepoints[i]).expect("came from chars()");
     match face.glyph_index(ch).and_then(|g| face.glyph_hor_advance(g)) {
         Some(advance) => (advance as f64, 1),
-        None => (upem * mdsvg::fonts::unmapped_advance_em(codepoints[i]), 1),
+        None => (upem * crate::fonts::unmapped_advance_em(codepoints[i]), 1),
     }
 }
 
@@ -248,20 +263,20 @@ impl FontBook {
     }
 
     /// The mdsvg measurer for the face `family_list` resolves to, so a law
-    /// ported over `mdsvg::fonts` (truncation, baseline centering) runs on
+    /// ported over `fonts` (truncation, baseline centering) runs on
     /// the face every other measurement here uses.
     pub fn measurer(
         &self,
         family_list: &str,
-    ) -> Result<std::sync::Arc<mdsvg::fonts::FontMeasurer>, String> {
+    ) -> Result<std::sync::Arc<crate::fonts::FontMeasurer>, String> {
         let i = self
             .face_for(family_list)
             .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
-        Ok(mdsvg::fonts::cached_measurer(&self.faces[i].path, 0, None))
+        Ok(crate::fonts::cached_measurer(&self.faces[i].path, 0, None))
     }
 
     /// The font file `family_list` resolves to, for a weighted
-    /// `mdsvg::fonts::cached_measurer` built where this book cannot travel
+    /// `crate::fonts::cached_measurer` built where this book cannot travel
     /// (a template helper outliving the render call).
     pub fn font_path(&self, family_list: &str) -> Result<String, String> {
         let i = self

@@ -24,9 +24,11 @@ from mcp.types import (
 import dbt_charts
 from dbt_charts.agent_api import ProjectSession
 from dbt_charts.agent_api.boards import CompiledBoard, get_board
+from dbt_charts.agent_api.skills import get_skill
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.ai.mcp.server import (
     _BASE_RESOURCES,
+    ENTRY_SKILL_NAME,
     _is_domain_error,
     _read_resource_content,
     create_server,
@@ -906,3 +908,10 @@ class TestRunServerOwnsProjectSessionWithRefresh:
             f"dispatch_tool_call must call project_session.refresh() exactly once "
             f"before the handler runs; got {refresh_calls!r}, result={result!r}"
         )
+
+
+def test_instructions_point_the_host_at_the_entry_skill(mcp_server) -> None:
+    """A host gets no system prompt from us; without `instructions` it lists
+    skills to find where to start."""
+    assert f"get_skill(name={ENTRY_SKILL_NAME!r})" in mcp_server.instructions
+    assert get_skill(ENTRY_SKILL_NAME, surface="tool").name == ENTRY_SKILL_NAME

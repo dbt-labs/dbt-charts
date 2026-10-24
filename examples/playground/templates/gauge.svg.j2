@@ -61,8 +61,8 @@ options:
 {% endif %}
   <text x="{{ cx }}" y="{{ (cy - 4)|round(1) }}" text-anchor="middle" font-size="{{ (r * 0.34)|round(1) }}" font-weight="600" fill="{{ style.font.color }}">{{ v | format(p.value_format) }}<title>{{ p.label or value_col }}: {{ v | format(p.value_format) }}</title></text>
 {% if p.label %}
-  <text x="{{ cx }}" y="{{ (cy + 20)|round(1) }}" text-anchor="middle" font-size="{{ style.font.size }}" fill="{{ style.muted }}">{{ p.label }}</text>
+  <text x="{{ cx }}" y="{{ (cy + 20)|round(1) }}" text-anchor="middle" font-size="{{ style.font.size }}" fill="{{ style.fonts.secondary.color }}">{{ p.label }}</text>
 {% endif %}
-  <text x="{{ (cx - (r + ri) / 2)|round(1) }}" y="{{ (cy + 16)|round(1) }}" text-anchor="middle" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.muted }}">{{ p.min | format(p.value_format) }}</text>
-  <text x="{{ (cx + (r + ri) / 2)|round(1) }}" y="{{ (cy + 16)|round(1) }}" text-anchor="middle" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.muted }}">{{ p.max | format(p.value_format) }}</text>
+  <text x="{{ (cx - (r + ri) / 2)|round(1) }}" y="{{ (cy + 16)|round(1) }}" text-anchor="middle" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.fonts.secondary.color }}">{{ p.min | format(p.value_format) }}</text>
+  <text x="{{ (cx + (r + ri) / 2)|round(1) }}" y="{{ (cy + 16)|round(1) }}" text-anchor="middle" font-size="{{ style.charts.axis.labels.font.size }}" fill="{{ style.fonts.secondary.color }}">{{ p.max | format(p.value_format) }}</text>
 </g>

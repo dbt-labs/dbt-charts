@@ -1,0 +1,85 @@
+{
+  "queries": [
+    {
+      "id": "p1",
+      "name": "Closed Won",
+      "queryIdentifierMapKey": "1",
+      "url": "https://acme.omniapp.test/w/abc12345?key=1",
+      "query": {
+        "limit": 1000,
+        "table": "orders",
+        "fields": [
+          "orders.total_revenue"
+        ],
+        "pivots": [],
+        "filters": {
+          "orders.status": {
+            "kind": "EQUALS",
+            "type": "string",
+            "values": [
+              "Closed Won"
+            ],
+            "is_negative": false
+          }
+        },
+        "sorts": [],
+        "calculations": [],
+        "modelId": "model-1"
+      }
+    },
+    {
+      "id": "p2",
+      "name": "Revenue by month",
+      "queryIdentifierMapKey": "2",
+      "url": "https://acme.omniapp.test/w/abc12345?key=2",
+      "query": {
+        "limit": 1000,
+        "table": "orders",
+        "fields": [
+          "orders.created_at[month]",
+          "orders.region",
+          "orders.total_revenue",
+          "calc_1"
+        ],
+        "pivots": [
+          "orders.region"
+        ],
+        "filters": {},
+        "sorts": [
+          {
+            "column_name": "orders.created_at[month]",
+            "sort_descending": false
+          }
+        ],
+        "calculations": [
+          {
+            "label": "Running total",
+            "calc_name": "calc_1",
+            "sql_expression": {
+              "type": "call"
+            }
+          }
+        ],
+        "modelId": "model-1"
+      }
+    },
+    {
+      "id": "p3",
+      "name": "Retired tile",
+      "queryIdentifierMapKey": "3",
+      "url": "https://acme.omniapp.test/w/abc12345?key=3",
+      "query": {
+        "limit": 1000,
+        "table": "orders",
+        "fields": [
+          "orders.id"
+        ],
+        "pivots": [],
+        "filters": {},
+        "sorts": [],
+        "calculations": [],
+        "modelId": "model-1"
+      }
+    }
+  ]
+}

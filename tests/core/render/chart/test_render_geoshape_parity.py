@@ -45,6 +45,7 @@ def _v2_chart(
         id="geo1",
         type="geoshape",
         geo_source=geo_source,
+        projection="mercator",
         lookup=lookup_field,
         value=value_field,
     )

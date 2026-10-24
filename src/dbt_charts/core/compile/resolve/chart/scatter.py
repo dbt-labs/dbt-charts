@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import column_format, declared_column_format
@@ -18,6 +19,13 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
     ResolvedScatterStyle,
+)
+from dbt_charts.core.compile.resolve.chart._annotations import (
+    NO_ANNOTATIONS,
+    annotation_chart,
+    point_radius,
+    resolve_annotations,
+    unfilled_ring,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _NO_RAIL_ENDPOINT_LABELS,
@@ -36,6 +44,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
+    _bake_percent_x_zero,
     _bake_y_zero,
     _CartesianTickResolution,
     _check_bar_layer_spans,
@@ -55,6 +64,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
+    _resolve_layer_inks,
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
@@ -83,6 +93,7 @@ from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_ANNOTATION_INVALID,
     ERR_SCATTER_MULTI_Y_NOT_NUMERIC,
 )
 
@@ -98,6 +109,7 @@ def _resolve_scatter(
     width: float,
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
+    rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedScatterChart:
     data = dataset.all_rows()
@@ -208,10 +220,96 @@ def _resolve_scatter(
     _reject_non_positive_log_x_data(
         normalized.id, plan.axes.x.style, normalized.x, data
     )
+    # Scatter's tooltip_format tracks an explicit chart-authored measure format
+    # (axis_y labels.format or the y column's declared format) — falls back to
+    # the board default tooltip.format when the author didn't override it, same
+    # as bar/line/area.
+    # emitters/scatter.py paints tooltip_format on the y encoding
+    # unconditionally, but x only ever gets it through the structured
+    # tooltip's plain (non-faceted, non-layered) scatter branch
+    # (_scatter_roles's own applies-to gate: `not chart.layers and
+    # chart.multiples is None`) -- a faceted or layered scatter never paints
+    # x with this format at all, so x must not vote there, or a sub-$1 x
+    # column drags a correctly-SI'd y column to two decimals with nothing
+    # painting the x side to justify it. A nominal y (dot plot) or nominal x
+    # naturally contributes no values regardless -- the sub-$1 floor never
+    # fires on a non-numeric column.
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
+    if (
+        x_ch_type == "quantitative"
+        and normalized.multiples is None
+        and not normalized.layers
+    ):
+        tooltip_format_values = [
+            *tooltip_format_values,
+            *quantitative_channel_values(data, normalized.x),
+        ]
+    measure_tooltip_format = _measure_tooltip_format(
+        normalized,
+        primary,
+        chart_style_context,
+        y_ch_type,
+        values=tooltip_format_values,
+    )
+    single_series_fill = _effective_single_series_fill(
+        chart_style_context,
+        primary,
+        rhythm_slot=normalized.rhythm_slot,
+        has_layers=bool(normalized.layers),
+    )
+    inks = _resolve_layer_inks(
+        normalized,
+        chart_style_context,
+        scatter,
+        primary,
+        channels,
+        data,
+        datasets,
+        single_series_fill,
+        measure_quantitative=y_ch_type == "quantitative",
+    )
+    annotations = NO_ANNOTATIONS
+    if rendered_at is not None and normalized.annotations:
+        if y_ch_type == "temporal":
+            raise CompilationError.from_code(
+                ERR_ANNOTATION_INVALID,
+                chart_id=normalized.id,
+                index=0,
+                reason="annotations on a scatter need a numeric or category y",
+            )
+        annotations = resolve_annotations(
+            normalized.annotations,
+            annotation_chart(
+                normalized,
+                x_ch_type,
+                y_ch_type,
+                False,
+                single_series_fill,
+                False,
+                inks,
+            ),
+            dataset,
+            datasets,
+            chart_local_style_context,
+            rendered_at,
+        )
+        y_continuous = ay_merged.scale.continuous if ay_merged.scale else None
+        if (
+            y_continuous is not None
+            and y_continuous.type == "log"
+            and (refused := annotations.index_of_y(lambda value: value <= 0))
+            is not None
+        ):
+            raise CompilationError.from_code(
+                ERR_ANNOTATION_INVALID,
+                chart_id=normalized.id,
+                index=refused,
+                reason="annotation values on a log y axis must be positive",
+            )
     # _zero_anchor_floats spans every wide measure's own values, or the
     # single y field's -- the one shared extent the zero-anchor decision and
     # the tick ladder both read from (mirrors line.py's multi-metric bake).
-    _zero_floats = _zero_anchor_floats(normalized.y, data)
+    _zero_floats = _zero_anchor_floats(normalized.y, data) + list(annotations.y_values)
     if y_field_scatter or wide_measure_series:
         if _zero_floats:
             if y_ch_type == "quantitative":
@@ -237,6 +335,7 @@ def _resolve_scatter(
             ay_merged,
             (
                 _shared_y_values(data, y_field_scatter, normalized, datasets)
+                + list(annotations.y_values)
                 if y_field_scatter
                 else _zero_floats
             ),
@@ -252,46 +351,21 @@ def _resolve_scatter(
     # No tick_values on the categorical axis -- the non-compacting bake
     # can't fire regardless, but the format is required, not defaulted
     # (see build_resolved_axis's docstring).
-    # Scatter's tooltip_format tracks an explicit chart-authored measure format
-    # (axis_y labels.format or the y column's declared format) — falls back to
-    # the board default tooltip.format when the author didn't override it, same
-    # as bar/line/area.
-    # emitters/scatter.py paints tooltip_format on the y encoding
-    # unconditionally, but x only ever gets it through the structured
-    # tooltip's plain (non-faceted, non-layered) scatter branch
-    # (_scatter_roles's own applies-to gate: `not chart.layers and
-    # chart.multiples is None`) -- a faceted or layered scatter never paints
-    # x with this format at all, so x must not vote there, or a sub-$1 x
-    # column drags a correctly-SI'd y column to two decimals with nothing
-    # painting the x side to justify it. A nominal y (dot plot) or nominal x
-    # naturally contributes no values regardless -- the sub-$1 floor never
-    # fires on a non-numeric column.
-    tooltip_format_values = quantitative_channel_values(data, normalized.y)
-    if (
-        x_ch_type == "quantitative"
-        and normalized.multiples is None
-        and not normalized.layers
-    ):
-        tooltip_format_values = [
-            *tooltip_format_values,
-            *quantitative_channel_values(data, normalized.x),
-        ]
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         "scatter",
         chart_style_context,
-        plan.axes.x,
+        replace(
+            plan.axes.x,
+            style=_bake_percent_x_zero(
+                plan.axes.x.style, plan.axes.x.format, x_ch_type == "quantitative"
+            ),
+        ),
         replace(plan.axes.y, style=ay_merged),
         ax_edge=None,
         ticks=scatter_ticks,
         column_forming=True,
-        measure_tooltip_format=_measure_tooltip_format(
-            normalized,
-            primary,
-            chart_style_context,
-            y_ch_type,
-            values=tooltip_format_values,
-        ),
+        measure_tooltip_format=measure_tooltip_format,
         tooltip_format_values=tooltip_format_values,
         ax_is_quantitative=x_ch_type == "quantitative",
         ay_is_quantitative=y_ch_type == "quantitative",
@@ -326,6 +400,7 @@ def _resolve_scatter(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        inks,
         normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
@@ -382,16 +457,24 @@ def _resolve_scatter(
         shape=normalized.shape,
         style=ResolvedScatterStyle(
             point_mark=scatter_point_mark,
-            single_series_fill=_effective_single_series_fill(
-                chart_style_context,
-                primary,
-                rhythm_slot=normalized.rhythm_slot,
-                has_layers=bool(normalized.layers),
-            ),
+            single_series_fill=single_series_fill,
             title_font=_tf,
             label_is_house=scatter_label_is_house,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             **style_tail,
         ),
         layers=resolved_layers,
+        annotations=annotations.render(
+            ay,
+            style_tail["axis_x"],
+            resolved_layers,
+            point_radius(
+                scatter_point_mark.size,
+                ring=unfilled_ring(scatter_point_mark),
+                size_channel=None
+                if normalized.size is None
+                else [row.get(normalized.size) for row in data],
+            ),
+        ),
+        annotation_gaps=annotations.gaps,
     )

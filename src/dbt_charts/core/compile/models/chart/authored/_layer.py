@@ -159,6 +159,10 @@ class TypedLayerBase(ConstrainedModel):
         default=None,
         description="This layer's own y axis: which side it sits on, its title, scale, ticks, grid.",
     )
+    legend: bool = Field(
+        default=True,
+        description="Set false to drop this layer's legend entry.",
+    )
 
     @model_validator(mode="before")
     @classmethod

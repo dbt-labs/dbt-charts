@@ -17,7 +17,7 @@
         color-scheme: light;
         --panel-bg: {{ palette.panel_bg }};
         --text: {{ palette.text }};
-        --muted: {{ palette.muted }};
+        --secondary: {{ palette.secondary }};
         --border: {{ palette.border }};
         --accent: {{ palette.accent }};
         --font-family: {{ palette.font_family | safe }};
@@ -61,7 +61,7 @@
       }
       .message {
         margin: 0 0 14px;
-        color: var(--muted);
+        color: var(--secondary);
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         font-size: 0.97rem;
         line-height: 1.5;
@@ -78,7 +78,7 @@
       }
       .location {
         font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        color: var(--muted);
+        color: var(--secondary);
         margin: 0 0 14px;
       }
       .doc-link {

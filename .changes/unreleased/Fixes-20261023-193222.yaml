@@ -1,0 +1,3 @@
+kind: Fixes
+body: A map projection must be one of the 17 Vega projection names with known parameters, and a map with no projection and no geo source to supply one now reports a clear error instead of silently using mercator.
+time: 2026-10-23T19:32:22.646769054Z

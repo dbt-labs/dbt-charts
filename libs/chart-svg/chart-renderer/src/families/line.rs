@@ -138,12 +138,6 @@
 //!   stacked area with a visible endpoint rail (production's
 //!   ERR-ENDPOINT-LABELS-NEGATIVE-STACK)
 //! - a log measure axis on a stacked area
-//! - a null value in a year-shaped x column — `common::is_year_shaped`
-//!   skips nulls when classifying the domain's SHAPE (every non-null value
-//!   is still in `[1700, 2100]`), but a null value can't anchor to a
-//!   calendar year (`row_str` renders it `""`), so `year_shaped_iso_
-//!   domain` fails and this refuses by name rather than falling through to
-//!   even nominal spacing
 //!
 //! An authored bucketed `time_unit` on nominal strings is an `Err`-only
 //! over-refusal: production draws a band step there.
@@ -185,10 +179,9 @@ use crate::families::legend::{
 use crate::families::temporal::{
     authored_tick_count, authored_tick_interval, bare_temporal_ticks, complete_buckets,
     days_from_civil, inline_label, interval_tick_days, next_bucket,
-    interval_tick_labels, native_tick_interval, none_tick_labels, parse_iso_date,
+    frac_of, interval_tick_labels, native_tick_interval, none_tick_labels, parse_iso_date,
     resolve_vega_x_labels, temporal_label_half_width, time_unit_floor,
     x_values_are_temporal_candidates, VegaType,
-    year_shaped_iso_domain,
     AuthoredTickCadence, AuthoredTimeFormat, BareTick, ResolvedVegaLabels, TemporalLabel,
     TimePart, TimeUnit, UtcTickInterval,
 };
@@ -261,6 +254,8 @@ pub(crate) struct LineResolved {
     pub canvas: String,
     pub x: String,
     pub y: String,
+    #[serde(default)]
+    pub annotations: Vec<crate::annotation::Annotation>,
     #[serde(default)]
     pub x_label: Option<String>,
     #[serde(default)]
@@ -429,15 +424,129 @@ fn mirror_ghost_x(primary_reserve: f64) -> f64 {
     0.5 - primary_reserve
 }
 
+/// A temporal x value, parsed once. Every date computation reads these fields, never the text.
+#[derive(Clone, Copy)]
+pub(crate) struct XInstant {
+    /// The UTC instant in days (offset applied, millisecond precision): the ordering tiebreak and the last x.
+    pub at: f64,
+    /// Where a vertex sits: the grain's floor of the text's own wall date, the part's cycle position, else `at`.
+    pub pos: f64,
+    /// Vega's `timeunit` yields NaN for a year below 100 over a calendar grain.
+    pub nan: bool,
+}
+
+impl XInstant {
+    fn parse(text: &str, grain: Option<TimeUnit>, part: Option<TimePart>, band: bool) -> Option<Self> {
+        let at = crate::families::temporal::date_text_day(text)?;
+        let (y, m, d) = parse_iso_date(text)?;
+        let floor = grain.map(|tu| crate::families::temporal::floor_day(days_from_civil(y, m, d), tu));
+        let pos = match (floor, part) {
+            (Some(day), _) => day as f64,
+            (None, Some(part)) => part.instant(at),
+            (None, None) => at,
+        };
+        let nan = !band && floor.is_some_and(|day| crate::families::temporal::civil_from_days(day).0 < 100);
+        Some(Self { at, pos, nan })
+    }
+}
+
+/// Each distinct x text parsed once, with the ISO text the date math reads it as (a labeled bucket
+/// or year rewritten to its start, a part axis at the instant its cycle maps it to).
+struct XParsed {
+    grain: Option<TimeUnit>,
+    part: Option<TimePart>,
+    band: bool,
+    rewritten: HashMap<String, String>,
+    parsed: HashMap<String, (XInstant, String)>,
+}
+
+impl XParsed {
+    /// Parses `key` unless it is held already; `None` when it is no date.
+    fn add(&mut self, key: &str) -> Option<()> {
+        if self.parsed.contains_key(key) {
+            return Some(());
+        }
+        let text = self.rewritten.get(key).map_or(key, String::as_str);
+        let instant = XInstant::parse(text, self.grain, self.part, self.band)?;
+        let iso = if self.part.is_some() { crate::families::temporal::instant_iso(instant.pos) } else { text.to_string() };
+        self.parsed.insert(key.to_string(), (instant, iso));
+        Some(())
+    }
+
+    /// Left to right: by vertex position, then by instant. Every key is parsed already.
+    fn sort(&self, domain: &mut [String]) {
+        domain.sort_by(|a, b| {
+            let (a, b) = (self.parsed[a].0, self.parsed[b].0);
+            a.pos.total_cmp(&b.pos).then(a.at.total_cmp(&b.at))
+        });
+    }
+}
+
+/// The instants of an x domain, index-aligned with it.
+#[derive(Clone)]
+pub(crate) struct TemporalX {
+    pub at: Vec<f64>,
+    pub pos: Vec<f64>,
+    pub nan: Vec<bool>,
+    pub iso: Vec<String>,
+}
+
+impl TemporalX {
+    /// `None` when a value of `domain` is no date.
+    fn of(domain: &[String], parsed: &XParsed) -> Option<Self> {
+        let entries = domain.iter().map(|key| parsed.parsed.get(key)).collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            at: entries.iter().map(|(i, _)| i.at).collect(),
+            pos: entries.iter().map(|(i, _)| i.pos).collect(),
+            nan: entries.iter().map(|(i, _)| i.nan).collect(),
+            iso: entries.iter().map(|(_, iso)| iso.clone()).collect(),
+        })
+    }
+
+    /// The scale's extent over the rows that have a position; `None` for under two or a zero span.
+    fn extent(&self) -> Option<(f64, f64)> {
+        let finite: Vec<f64> = self.pos.iter().zip(&self.nan).filter(|&(_, &nan)| !nan).map(|(&pos, _)| pos).collect();
+        crate::families::temporal::extent_of(&finite)
+    }
+
+    /// The domain with one more instant at its end (the end of the last bucket a bar occupies).
+    fn extended(&self, end_day: f64, end_iso: String) -> Self {
+        let mut out = self.clone();
+        out.at.push(end_day);
+        out.pos.push(end_day);
+        out.nan.push(false);
+        out.iso.push(end_iso);
+        out
+    }
+}
+
+/// `rows` with each x cell replaced by its position on the rendered axis, so a "last x" read of the
+/// raw cells follows the axis (the latest instant on a time axis, the last category on a band one)
+/// instead of comparing text. A row whose x is not in `domain` is dropped.
+fn x_ranked_rows(
+    rows: &[serde_json::Map<String, Value>],
+    x_field: &str,
+    domain: &[String],
+) -> Vec<serde_json::Map<String, Value>> {
+    let rank: HashMap<&str, usize> = domain.iter().enumerate().map(|(at, x)| (x.as_str(), at)).collect();
+    rows.iter()
+        .filter_map(|row| {
+            let at = *rank.get(row_str(row, x_field).as_str())?;
+            let mut ranked = row.clone();
+            ranked.insert(x_field.to_string(), Value::from(at));
+            Some(ranked)
+        })
+        .collect()
+}
+
 /// support_table per_series row order for a non-stacked line/non-stacked
 /// area — port of `_series_order_strip`'s "Line / non-stacked area" branch
 /// (support_table_attachment.py:2693-2718): ascending by each series' own
 /// y value at the chart's LAST x (ties broken alphabetically), so
 /// series_order[0] sits at the visual bottom of the chart, matching how the
 /// strip reads top-to-bottom against the chart's own top-to-bottom line
-/// order. "Last x" is the max of the raw `x_field` values, as Python compares
-/// them: numerically for a quantitative x, lexically for the ISO date/week
-/// strings the other x domains carry.
+/// order. "Last x" is the greatest `x_field` value of the rows it is handed, which
+/// callers rank by axis position (`x_ranked_rows`).
 fn last_y_ascending_order(
     rows: &[serde_json::Map<String, serde_json::Value>],
     x_field: &str,
@@ -778,6 +887,10 @@ pub(crate) struct FacetPanelOpts<'a> {
     /// single-chart wrapper and the composer's own probe pass (where
     /// `left_mark_overhang` isn't measured yet).
     pub(crate) value_axis_right_overhang: f64,
+    /// This panel's canonical key, the `panel` an annotation names.
+    pub(crate) panel_key: &'a str,
+    /// This panel's place in `multiples::regroup` order; keeps clip ids unique.
+    pub(crate) panel_ordinal: usize,
     /// `axis_y.mirror` resolves truthy and this facet's shared x is
     /// non-quantitative with no detected temporal cadence — the SAME
     /// "genuinely nominal" test the single-chart fit arm gates on
@@ -887,45 +1000,6 @@ enum LineXAxisBody {
     /// `left_reach`: how far the leftmost label's ink reaches left of the plot origin
     /// (`PanelXAxis::label_left_reach`).
     Nominal { labels: Vec<String>, xs: Vec<f64>, left_reach: f64, angle: f64, align: Option<&'static str> },
-}
-
-/// The torn edge from `x1` to `x2`: troughs on `edge`, crests `amplitude`
-/// toward `inward` (-1 up, +1 down), so the wave never leaves the plot.
-/// `sharpness` blends each quarter-wave from a sine toward its straight
-/// chord. The wave count is whole so both ends rest on the edge.
-fn torn_path(x1: f64, x2: f64, edge: f64, inward: f64, tear: &crate::common::TornBaseline) -> String {
-    // Cubic control ratios approximating `sin` on [0, π/2].
-    const STEEP_TO_FLAT: [(f64, f64); 2] = [(0.326_115, 0.512_261), (0.638_087, 1.0)];
-    let periods = ((x2 - x1) / tear.wavelength).round().max(1.0);
-    let q = (x2 - x1) / periods / 4.0;
-    let mid = edge + inward * tear.amplitude / 2.0;
-    let crest = edge + inward * tear.amplitude;
-    let s = tear.sharpness;
-    let mut d = format!("M{x1:.2},{edge:.2}");
-    for k in 0..(periods as usize * 4) {
-        let (ax, bx) = (x1 + q * k as f64, x1 + q * (k + 1) as f64);
-        let (ay, by) = match k % 4 {
-            0 => (edge, mid),
-            1 => (mid, crest),
-            2 => (crest, mid),
-            _ => (mid, edge),
-        };
-        // Quarters 1 and 3 run steep→flat; 0 and 2 are their reverses.
-        let ctrl = |i: usize| {
-            let (fx, fy) = if k % 2 == 1 {
-                STEEP_TO_FLAT[i]
-            } else {
-                let (rx, ry) = STEEP_TO_FLAT[1 - i];
-                (1.0 - rx, 1.0 - ry)
-            };
-            let chord = (i + 1) as f64 / 3.0;
-            let (fx, fy) = (fx + s * (chord - fx), fy + s * (chord - fy));
-            (ax + fx * (bx - ax), ay + fy * (by - ay))
-        };
-        let ((c1x, c1y), (c2x, c2y)) = (ctrl(0), ctrl(1));
-        let _ = write!(d, "C{c1x:.2},{c1y:.2} {c2x:.2},{c2y:.2} {bx:.2},{by:.2}");
-    }
-    d
 }
 
 /// Vega's `tickRound` (default true) snaps a gridline/tick to a whole
@@ -1185,6 +1259,18 @@ impl LineResolved {
         r.link_x_labeled = crate::families::temporal::has_labeled_bucket(&payload.rows, &r.x);
         Ok(r)
     }
+}
+
+/// `ERR-X-VALUE-NOT-A-DATE`: a time axis's x value that parses as no date or timestamp.
+fn x_value_not_a_date(chart_id: &str, x_field: &str, value: &str) -> Diagnostic {
+    Diagnostic::new(
+        &crate::codes::ERR_X_VALUE_NOT_A_DATE,
+        [
+            ("chart_id", serde_json::json!(chart_id)),
+            ("value", serde_json::json!(value)),
+            ("x_field", serde_json::json!(x_field)),
+        ],
+    )
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
@@ -1619,7 +1705,10 @@ fn render_facet(
             .iter()
             .enumerate()
             .map(|(panel_i, panel)| -> Result<(String, facet_compose::PanelGeometry), Diagnostic> {
+                let panel_key = serde_json::to_string(&panel.key).expect("a panel key re-serializes");
                 let facet_opts = FacetPanelOpts {
+                    panel_key: &panel_key,
+                    panel_ordinal: panel_i,
                     suppress_x_axis: true,
                     // Real Vega's shared value axis (`row_footer`) appears once per ROW, at
                     // that row's last column; a multi-column row reserves its gutter once at
@@ -1742,6 +1831,33 @@ fn render_facet(
     };
     let chrome = (chrome.title.is_some() || !chrome.legends.is_empty()).then_some(chrome);
     Ok(facet_compose::compose_facet_with_chrome(payload, fonts, &spec, chrome.as_ref(), &render_pass)?)
+}
+
+/// d3's `count` ticks over a numeric point domain's span, each with its
+/// fraction of the point range: interpolated between the two points it falls
+/// between, so a tick sits where the line passes that value.
+fn quantitative_x_ticks(domain: &[String], count: usize) -> Result<Vec<(String, f64)>, String> {
+    let numbers = domain
+        .iter()
+        .map(|v| v.parse::<f64>().map_err(|_| format!("quantitative x value {v:?} is not a number")))
+        .collect::<Result<Vec<f64>, String>>()?;
+    let (Some(lo), Some(hi)) = (numbers.iter().copied().reduce(f64::min), numbers.iter().copied().reduce(f64::max))
+    else {
+        return Ok(Vec::new());
+    };
+    if numbers.len() < 2 || lo == hi {
+        return Ok(Vec::new());
+    }
+    let last = (numbers.len() - 1) as f64;
+    Ok(d3rs::ticks::d3_ticks(lo, hi, count)
+        .into_iter()
+        .filter_map(|t| {
+            let j = numbers.windows(2).position(|w| (w[0].min(w[1])..=w[0].max(w[1])).contains(&t))?;
+            let (a, b) = (numbers[j], numbers[j + 1]);
+            let at = if a == b { j as f64 } else { j as f64 + (t - a) / (b - a) };
+            Some((crate::annotation::model::Scalar::Number(t).text(), at / last))
+        })
+        .collect())
 }
 
 /// One panel's worth of axes + marks + grid + title/legend chrome for a
@@ -1981,11 +2097,47 @@ pub(crate) fn render_line_panel(
     let y_field = &r.y;
     let fam = if draw_areas { "area" } else { "line" };
 
+    // The one x-type law (`x_type::resolve_cartesian_x_type`) decides the grain
+    // and whether x is a category; the labeled-bucket and year rewrites run
+    // ahead of it exactly as production's emitters apply them.
+    let law_rows = crate::families::temporal::normalize_labeled_temporal(&payload.rows, x_field)?;
+    let law = crate::families::x_type::resolve_cartesian_x_type(
+        &law_rows,
+        x_field,
+        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        fam,
+        // A multi-measure chart's axis is built without the curve.
+        curve_name == Some("step") && r.wide_measures.is_empty(),
+        &r.panel_axes.iter().map(|a| a.field.as_str()).collect::<Vec<_>>(),
+    )?;
+    // The law's rewrite of each labeled bucket or year to its ISO start; the raw label stays the join key.
+    let rewritten: HashMap<String, String> = law_rows
+        .iter()
+        .zip(&payload.rows)
+        .map(|(normalized, raw)| (row_str(raw, x_field), row_str(normalized, x_field)))
+        .filter(|(raw, normalized)| raw != normalized)
+        .collect();
     // A null x on a date axis is no bucket: production's ordinal scaffold places rows
     // by their bucket and drops the rest, though the row still counts toward the y domain.
     let x_is_dates = is_year_shaped(domain_rows, x_field)
+        || law.vl_type == VegaType::Temporal
         || matches!(crate::families::temporal::infer_vega_type(domain_rows, x_field), VegaType::Temporal | VegaType::Ordinal);
-    let x_domain_unsorted: Vec<String> = {
+    let law_grain_tu: Option<TimeUnit> = match law.grain {
+        crate::families::x_type::Grain::Calendar(tu) => Some(tu),
+        _ => None,
+    };
+    // A time-part axis (`monthofyear`, ...) collapses every date onto the part's own cycle.
+    let x_part: Option<TimePart> = match law.grain {
+        crate::families::x_type::Grain::Part(part) => Some(part),
+        _ => None,
+    };
+    // A band x: nominal or ordinal after the x-type law, which a literal `step` flips a
+    // calendar grain onto, an authored `axis_x.type: ordinal` forces and a fiscal start
+    // flips a year or quarter grain to. `pin_sorted_domain` sorts exactly these; a
+    // quantitative or temporal x ignores the sort.
+    let x_is_band = matches!(law.vl_type, VegaType::Nominal | VegaType::Ordinal);
+    let mut x_parsed = XParsed { grain: law_grain_tu, part: x_part, band: x_is_band, rewritten, parsed: HashMap::new() };
+    let mut x_domain_unsorted: Vec<String> = {
         let mut seen = HashSet::new();
         let mut domain = Vec::new();
         for row in domain_rows.iter().filter(|row| !x_is_dates || row.get(x_field).is_some_and(|v| !v.is_null())) {
@@ -1996,6 +2148,16 @@ pub(crate) fn render_line_panel(
         }
         domain
     };
+    // First value no date parses from; a time axis refuses it, any other reads its dates only when all parse.
+    let x_unparsed: Option<String> = x_domain_unsorted.iter().find(|key| x_parsed.add(key).is_none()).cloned();
+    if law.vl_type == VegaType::Temporal {
+        if let Some(value) = &x_unparsed {
+            return Err(x_value_not_a_date(&r.id, x_field, value));
+        }
+        // A line or area mark draws its vertices along the x it plots, so a temporal axis
+        // seats its buckets left to right whatever order the query returned them in.
+        x_parsed.sort(&mut x_domain_unsorted);
+    }
 
     // Temporal label cadence — detect grain from x domain ISO dates.
     // `None` means non-temporal (raw string labels used as-is).
@@ -2016,32 +2178,7 @@ pub(crate) fn render_line_panel(
     // predicate both this cadence gate and the categorical-sort gate below
     // read — never a second, narrower reimplementation.
     let x_is_year_shaped = is_year_shaped(&payload.rows, x_field);
-    // `year_shaped_iso_domain` is production's own row-rewrite
-    // (`normalize_labeled_temporal`, `time_unit_detect.py:937-945`) — every
-    // downstream reader of a year-shaped x's calendar POSITION or LABEL
-    // (never its identity: `data`/layer-row lookups and the support-table
-    // strip below keep reading the raw domain, matching production's own
-    // continued use of the ORIGINAL value for anything but date math) uses
-    // this instead of the raw domain.
-    let year_shaped_iso: Option<Vec<String>> = x_is_year_shaped.then(|| year_shaped_iso_domain(&domain_strs));
-    // The one x-type law (`x_type::resolve_cartesian_x_type`) decides the grain
-    // and whether x is a category; the labeled-bucket and year rewrites run
-    // ahead of it exactly as production's emitters apply them.
-    let law_rows = crate::families::temporal::normalize_labeled_temporal(&payload.rows, x_field)?;
-    let law = crate::families::x_type::resolve_cartesian_x_type(
-        &law_rows,
-        x_field,
-        &crate::families::x_type::XAxis::of(&r.style.axis_x),
-        fam,
-        // A multi-measure chart's axis is built without the curve.
-        curve_name == Some("step") && r.wide_measures.is_empty(),
-        &r.panel_axes.iter().map(|a| a.field.as_str()).collect::<Vec<_>>(),
-    )?;
-    // A time-part axis (`monthofyear`, ...) collapses every date onto the part's own cycle.
-    let x_part: Option<TimePart> = match law.grain {
-        crate::families::x_type::Grain::Part(part) => Some(part),
-        _ => None,
-    };
+
     let view_w = if facet.is_some() {
         svg_w
     } else {
@@ -2051,33 +2188,10 @@ pub(crate) fn render_line_panel(
         };
         payload.view_width(scale)?
     };
-    // An authored `axis_x.type: temporal` over values no date parses from sends every mark to
-    // NaN, which production's no-marks guard raises on (`rendering.py`).
-    if curve_name == Some("step")
-        && law.vl_type == VegaType::Temporal
-        && r.style.axis_x.resolved_authored_type() == Some("temporal")
-        && !x_is_quantitative
-        && !law_rows.iter().any(|row| row.get(x_field).and_then(Value::as_str).is_some_and(|text| crate::families::x_type::parse_date(text).is_some()))
-        && domain_rows.iter().any(|row| row_num(row, y_field).is_some_and(|v| v != 0.0))
-    {
-        return Err(payload.painted_no_marks());
-    }
-    // A labeled bucket ("2024-Q1") reads through its ISO start at every date-math site, like a
-    // year-shaped x, while the raw label stays the join key.
-    let year_shaped_iso: Option<Vec<String>> = year_shaped_iso.or_else(|| {
-        let rewritten: std::collections::HashMap<&str, &str> = law_rows
-            .iter()
-            .zip(&payload.rows)
-            .filter_map(|(normalized, raw)| Some((raw.get(x_field)?.as_str()?, normalized.get(x_field)?.as_str()?)))
-            .filter(|(raw, normalized)| raw != normalized)
-            .collect();
-        (!rewritten.is_empty()).then(|| domain_strs.iter().map(|d| rewritten.get(d).map_or_else(|| (*d).to_string(), |n| (*n).to_string())).collect())
-    });
-    let law_grain_tu: Option<TimeUnit> = match law.grain {
-        crate::families::x_type::Grain::Calendar(tu) => Some(tu),
-        _ => None,
-    };
     let detected_data_tu = law_grain_tu;
+    // Vega's `timeunit` transform yields NaN for a year below 100 over a calendar grain (JavaScript's
+    // Date constructor reads 0-99 as 19xx).
+    let nan_x = |date: &str| detected_data_tu.is_some() && !x_is_band && crate::families::temporal::timeunit_nan(date);
     // The tooltip header detects the grain on its own (`header_tooltip_field`), so
     // it keeps one the axis dropped for being over the scaffold budget.
     let header_tu = match law.fill_grain {
@@ -2165,14 +2279,6 @@ pub(crate) fn render_line_panel(
     // resolves temporal (unaffected by the band flip) despite `detected_
     // data_tu.is_none()`, must not engage band positions.
     let mirror_wants_band = mirror_wants_band && x_is_categorical;
-    // A band x: nominal or ordinal after the x-type law, which a literal `step` flips a
-    // calendar grain onto, an authored `axis_x.type: ordinal` forces and a fiscal start
-    // flips a year or quarter grain to. `pin_sorted_domain` sorts exactly these; a
-    // quantitative or temporal x ignores the sort.
-    let x_is_band = matches!(law.vl_type, VegaType::Nominal | VegaType::Ordinal);
-    // Vega's `timeunit` transform yields NaN for a year below 100 over a calendar grain (JavaScript's
-    // Date constructor reads 0-99 as 19xx).
-    let nan_x = |date: &str| detected_data_tu.is_some() && !x_is_band && crate::families::temporal::timeunit_nan(date);
     let x_domain: Vec<String> = if x_is_band {
         dimension_sort_domain(
             &payload.rows,
@@ -2224,24 +2330,43 @@ pub(crate) fn render_line_panel(
     if let (true, Some(layer_only)) = (x_is_categorical, &x_union.paint_order) {
         crate::families::cartesian::warn_x_domain_paint_order(&r.id, x_field, layer_only);
     }
-    let x_domain = x_union.domain;
-    // A part axis draws its points in the part's order (Vega-Lite sorts a line by the x it plots),
-    // each at the instant its date maps to.
-    let (x_domain, part_iso): (Vec<String>, Option<Vec<String>>) = match x_part {
-        Some(part) => {
-            let mut keyed = x_domain
-                .into_iter()
-                .map(|date| {
-                    let day = crate::families::temporal::date_text_day(&date).ok_or_else(|| format!("{fam}: x value {date:?} is not an ISO date"))?;
-                    Ok((part.instant(day), date))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let iso = keyed.iter().map(|(instant, _)| crate::families::temporal::instant_iso(*instant)).collect();
-            (keyed.into_iter().map(|(_, date)| date).collect(), Some(iso))
-        }
-        None => (x_domain, None),
+    // A point scale seats an annotation number past the data as it seats data.
+    let past_the_data = if x_is_quantitative {
+        crate::annotation::x_numbers_outside(&x_union.domain, &r.annotations).map_err(|e| format!("{fam}: {e}"))?
+    } else {
+        Vec::new()
     };
+    debug_assert!(law.vl_type != VegaType::Temporal || past_the_data.is_empty(), "a temporal x is never widened by number");
+    let mut x_domain = if past_the_data.is_empty() {
+        x_union.domain
+    } else {
+        crate::families::layers::extend_domain_in_base_order(&x_union.domain, &past_the_data)
+            .ok_or_else(|| format!("{fam}: an annotation past the x data needs an x domain in numeric order"))?
+    };
+    // A layer's own x values join the shared scale at their place in time, whichever order the layer lists them.
+    let x_known = x_parsed.parsed.len();
+    if law.vl_type == VegaType::Temporal {
+        for (layer_rows, layer_x) in &layer_x_columns {
+            let normalized = crate::families::temporal::normalize_labeled_temporal(layer_rows, layer_x)?;
+            x_parsed.rewritten.extend(
+                layer_rows
+                    .iter()
+                    .zip(normalized.iter())
+                    .map(|(raw, normalized)| (row_str(raw, layer_x), row_str(normalized, layer_x)))
+                    .filter(|(raw, normalized)| raw != normalized),
+            );
+        }
+    }
+    let x_unparsed: Option<String> = x_domain.iter().find(|key| x_parsed.add(key).is_none()).cloned();
+    if law.vl_type == VegaType::Temporal {
+        if let Some(value) = &x_unparsed {
+            return Err(x_value_not_a_date(&r.id, x_field, value));
+        }
+        if x_parsed.parsed.len() > x_known {
+            x_parsed.sort(&mut x_domain);
+        }
+    }
+    let x_time: Option<TemporalX> = TemporalX::of(&x_domain, &x_parsed);
 
     // Band-aware step: `curve: step` — the LITERAL name, never
     // `step-before`/`step-after` — is production's `step_band.is_band_step`
@@ -2423,7 +2548,7 @@ pub(crate) fn render_line_panel(
         spatial_domain.clone()
     } else {
         let last_value = match color_field {
-            Some(cf) => crate::common::last_nonnull_value_per_series(domain_rows, x_field, y_field, cf)?,
+            Some(cf) => crate::common::last_nonnull_value_per_series(&x_ranked_rows(domain_rows, x_field, &x_domain), x_field, y_field, cf)?,
             None => HashMap::new(),
         };
         let mut domain = spatial_domain.clone();
@@ -2471,7 +2596,7 @@ pub(crate) fn render_line_panel(
     } else if is_stacked {
         baseline_order.clone()
     } else if let Some(cf) = color_field {
-        last_y_ascending_order(domain_rows, x_field, y_field, cf, &spatial_domain)?
+        last_y_ascending_order(&x_ranked_rows(domain_rows, x_field, &x_domain), x_field, y_field, cf, &spatial_domain)?
     } else {
         Vec::new()
     };
@@ -3041,6 +3166,14 @@ pub(crate) fn render_line_panel(
     let x_label_pad = ax_x.labels.padding.unwrap_or(6.0);
     let x_tick_len = ax_x.ticks.length.unwrap_or(6.0);
     let x_family = ax_x.labels.font.family.as_deref().unwrap_or("sans-serif");
+    // A quantitative x on the point scale ticks where a linear axis over the
+    // same numbers would (the theme's baked `tickCount`), not at every point.
+    let quant_x_ticks: Option<Vec<(String, f64)>> = match ax_x.ticks.count {
+        Some(count) if x_is_quantitative && !use_band_positions => {
+            Some(quantitative_x_ticks(&x_domain, count as usize).map_err(|e| format!("{fam}: {e}"))?)
+        }
+        _ => None,
+    };
     // L1-L4's overlap remedies (Vega arms only — the legacy arm never reads
     // these). `label_usable_ratio` itself is required, but only where a
     // temporal axis actually needs it, so its `.ok_or` stays local to each
@@ -3161,7 +3294,7 @@ pub(crate) fn render_line_panel(
         }
         let mut out: Vec<(String, f64)> = Vec::new();
         for (label, entry_rows, x, y) in entries {
-            let Some(value) = crate::common::last_nonnull_value(entry_rows, x, y)? else { continue };
+            let Some(value) = crate::common::last_nonnull_value(&x_ranked_rows(entry_rows, x, &x_domain), x, y)? else { continue };
             match out.iter_mut().find(|(l, _)| *l == label) {
                 Some(slot) => slot.1 = value,
                 None => out.push((label, value)),
@@ -3199,19 +3332,7 @@ pub(crate) fn render_line_panel(
         out
     } else {
         let cf = color_field.expect("a rail names its series by a color field");
-        // The walk-back reads the axis's own order, not raw x: a slope over
-        // "Before"/"After" would otherwise anchor on the first column
-        // (`_anchor_rows`).
-        let rank: HashMap<&str, usize> = x_domain.iter().enumerate().map(|(i, x)| (x.as_str(), i)).collect();
-        let ranked: Vec<serde_json::Map<String, Value>> = rows
-            .iter()
-            .filter_map(|row| {
-                let i = *rank.get(row_str(row, x_field).as_str())?;
-                let mut ranked = row.clone();
-                ranked.insert(x_field.to_string(), Value::from(i));
-                Some(ranked)
-            })
-            .collect();
+        let ranked = x_ranked_rows(rows, x_field, &x_domain);
         let last_value = crate::common::last_nonnull_value_per_series(&ranked, x_field, y_field, cf)?;
         spatial_domain
             .iter()
@@ -3295,14 +3416,7 @@ pub(crate) fn render_line_panel(
     // The layers' shared `color:{datum}` scale: each overlay claims its label
     // (or, grouped by color, its values) after the base's own entries. A label
     // repeated over a color-split base raises; elsewhere the ordinal scale dedupes it.
-    let mut layer_scale = crate::families::layers::LayerScale::new(
-        &r.palette,
-        &single_fill,
-        &r.category_colors,
-        &layer_base_entries,
-        is_multi,
-    )
-    .with_rail(layered_rail);
+    let mut layer_scale = crate::families::layers::LayerScale::new(&layer_base_entries, is_multi).with_rail(layered_rail);
     // Per overlay: its legend label, color domain, and the color its own claim
     // took, which an ungrouped layer paints as a literal even when its label
     // repeats an earlier entry (the legend keeps that entry).
@@ -3432,10 +3546,7 @@ pub(crate) fn render_line_panel(
     // Vega's OWN — see `temporal::bare_temporal_ticks`.
     let bare_temporal = detected_data_tu.is_none()
         && (x_is_temporal_candidate || x_is_year_shaped)
-        && crate::families::temporal::utc_domain_extent(
-            year_shaped_iso.as_deref().or(part_iso.as_deref()).unwrap_or(x_domain.as_slice()),
-        )
-        .is_some();
+        && x_time.as_ref().is_some_and(|time| time.extent().is_some());
     // Any axis that draws a continuous scale's own ticks: a bare time scale, or a linear number one.
     let continuous_axis = bare_temporal || quant_x.is_some();
 
@@ -3820,36 +3931,26 @@ pub(crate) fn render_line_panel(
     // Production's temporal x is a continuous UTC scale — positions are time
     // fractions of the bucket-timestamp span (Feb 1 sits at 31/151 of a
     // Jan-Jun domain, not 1/5). Day-number fractions reproduce vega's ms
-    // fractions exactly for the date-grained buckets TimeUnit models; an
-    // unparseable domain keeps the point fractions (legacy status quo, and
-    // the non-temporal case).
+    // fractions exactly for the date-grained buckets TimeUnit models.
     //
     // L9: on `utcyearweek` the scale domain and every mark's own position
     // floor to the Sunday week start (d3 `utcWeek.floor`, Vega-Lite's
-    // `timeUnit` transform on the encoding field) — `x_domain_floored`
+    // `timeUnit` transform on the encoding field) — `x_time_ext.pos`
     // drives vertex/gridline positions. Production's axis `values` stay the
     // RAW (unfloored) dates (`label_opener_values`), positioned against
     // that SAME floored extent — `label_extent` below, consumed by
-    // `label_x_at`. Every other grain floors to itself (`week_floor` is
-    // only meaningful for `YearWeek`), so `label_extent` and `utc_fracs`
-    // agree everywhere else.
-    // A year-shaped x reads through `year_shaped_iso` (`x_domain_for_
-    // temporal` below) at every DATE-MATH site instead of the raw
-    // `x_domain` — the one substitution production's own row-rewrite needs:
-    // this base, both `resolve_vega_x_labels` calls (fit/rail arms),
-    // `resolve_temporal_labels` (the legacy arm), and the tooltip header's
-    // own per-datum lookup (`point_aria`, indexed by domain position, not
-    // by the raw string). Every non-date reader of `x_domain` (`data`/
-    // layer-row lookups, the support-table strip, legend identity) keeps
-    // reading the raw domain unchanged — that IS the join key, and changing
-    // it would break the lookup, not just the date math.
-    let x_domain_dates: &[String] = year_shaped_iso.as_deref().or(part_iso.as_deref()).unwrap_or(x_domain.as_slice());
+    // `label_x_at`. Every other grain floors to itself, so `label_extent`
+    // and `utc_fracs` agree everywhere else.
+    // Every DATE-MATH site reads the instants parsed once (`x_time`); the raw
+    // `x_domain` stays the join key for `data`/layer-row lookups, the
+    // support-table strip and legend identity, and `x_time.iso` the date
+    // text a labeled bucket or year reads as.
     // A bar layer spans its time bucket, so a continuous temporal x scale runs on to
     // the end of the last bucket a bar occupies when that passes every other datum
     // (VL's `timeUnit` `_end` field joins the domain).
     let bucketed_bars = detected_data_tu.is_some() && has_bar_layer && !x_is_band;
-    let bucketed_bar_end: Option<String> = match detected_data_tu {
-        Some(tu) if bucketed_bars => {
+    let bucketed_bar_end: Option<(f64, String)> = match (detected_data_tu, &x_time) {
+        (Some(tu), Some(time)) if bucketed_bars => {
             let mut last_end = None;
             for overlay in overlays {
                 let OverlayLayer::Bar(bl) = overlay else { continue };
@@ -3861,19 +3962,22 @@ pub(crate) fn render_line_panel(
                     }
                 }
             }
-            let last_datum = x_domain_dates.iter().filter_map(|d| parse_iso_date(d)).max();
-            last_end.filter(|end| Some(*end) > last_datum).map(|(y, m, d)| format!("{y:04}-{m:02}-{d:02}"))
+            let last_datum = time.pos.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            last_end
+                .map(|(y, m, d)| (days_from_civil(y, m, d) as f64, format!("{y:04}-{m:02}-{d:02}")))
+                .filter(|(end, _)| *end > last_datum)
         }
         _ => None,
     };
-    let x_domain_extended: Vec<String>;
-    let x_domain_for_temporal: &[String] = match &bucketed_bar_end {
-        Some(end) => {
-            x_domain_extended = x_domain_dates.iter().cloned().chain([end.clone()]).collect();
-            &x_domain_extended
-        }
-        None => x_domain_dates,
-    };
+    let x_time_ext: Option<TemporalX> = x_time.as_ref().map(|time| match &bucketed_bar_end {
+        Some((end, iso)) => time.extended(*end, iso.clone()),
+        None => time.clone(),
+    });
+    // A grain over values no date parses from has no bucket to floor them to.
+    if let (Some(_), None, Some(value)) = (detected_data_tu, &x_time, &x_unparsed) {
+        return Err(format!("line: unparseable temporal x value {value:?}").into());
+    }
+    let x_domain_for_temporal: &[String] = x_time_ext.as_ref().map_or(x_domain.as_slice(), |time| time.iso.as_slice());
     let color_title = match color_field {
         Some(cf) => description_color_title(fam, cf, &r.legend, &r.field_labels)?,
         None => String::new(),
@@ -3909,7 +4013,6 @@ pub(crate) fn render_line_panel(
             _ => Ok(domain.to_vec()),
         }
     };
-    let x_domain_floored: Vec<String> = floor_to_grain(x_domain_for_temporal)?;
     // A tooltip heads the row's own date, not the instant a part maps it to.
     let header_dates: &[String] = if x_part.is_some() { &x_domain } else { x_domain_for_temporal };
     // The buckets the Vega arms' labels name. Production enumerates the whole
@@ -3939,13 +4042,14 @@ pub(crate) fn render_line_panel(
         }
         // A one-instant date domain ticks that instant under d3's multi-scale format.
         _ if x_is_temporal_candidate && !x_is_band && detected_data_tu.is_none() && x_domain.len() == 1 => {
-            match crate::families::temporal::date_text_day(&x_domain[0]) {
-                Some(day) => vec![crate::families::temporal::multi_format_at(day).map_err(|e| format!("{fam}: {e}"))?],
+            match &x_time {
+                Some(time) => vec![crate::families::temporal::multi_format_at(time.at[0]).map_err(|e| format!("{fam}: {e}"))?],
                 None => x_domain.clone(),
             }
         }
         _ => x_domain.clone(),
     };
+    let x_shown: Vec<String> = x_shown.iter().map(|text| ax_x.labels.cased(text)).collect::<Result<_, _>>()?;
     // A date axis speaks the expression at each tick's instant; one that throws
     // there fails Vega's whole view, whichever dates the ticks land on.
     if let Some(expr) = x_expr.as_ref().filter(|_| detected_data_tu.is_some() || bare_temporal) {
@@ -3965,33 +4069,38 @@ pub(crate) fn render_line_panel(
         }
     }
     let speak_bare = |ticks: Vec<BareTick>| -> Result<Vec<BareTick>, String> {
-        match &x_expr {
-            None => Ok(ticks),
-            Some(expr) => crate::families::temporal::speak_bare(ticks, expr),
-        }
+        ax_x.labels.cased_ticks(match &x_expr {
+            None => ticks,
+            Some(expr) => crate::families::temporal::speak_bare(ticks, expr)?,
+        })
     };
     // A NaN row stays out of the scale domain, its marks sit at x 0 and its line or area is
     // undefined there.
-    let x_nan: Vec<bool> = x_domain_floored.iter().map(|date| nan_x(date)).collect();
+    let x_nan: Vec<bool> = x_time_ext.as_ref().map_or_else(|| vec![false; x_domain_for_temporal.len()], |time| time.nan.clone());
     let finite_of = |domain: &[String]| -> Vec<String> {
         domain.iter().zip(&x_nan).filter(|&(_, &nan)| !nan).map(|(date, _)| date.clone()).collect()
     };
     let label_domain: Vec<String> = match detected_data_tu.or(bare_layout_tu) {
         Some(_) if x_ordinal_calendar => {
-            let mut buckets = x_domain_for_temporal.to_vec();
-            buckets.sort();
-            buckets
+            let time = x_time_ext.as_ref().expect("an ordinal calendar axis reads parsed instants");
+            let mut order: Vec<usize> = (0..time.pos.len()).collect();
+            order.sort_by(|&a, &b| time.pos[a].total_cmp(&time.pos[b]));
+            order.into_iter().map(|i| time.iso[i].clone()).collect()
         }
         Some(data_tu) => {
-            complete_buckets(&finite_of(x_domain_for_temporal), data_tu, ax_x.fiscal_year_start_month)
+            let widened: Vec<String> = finite_of(x_domain_for_temporal)
+                .into_iter()
+                .chain(crate::annotation::x_dates_outside(x_domain_for_temporal, &r.annotations))
+                .collect();
+            complete_buckets(&widened, data_tu, ax_x.fiscal_year_start_month)
         }
         _ => x_domain_for_temporal.to_vec(),
     };
     let speak_labels = |tls: Vec<TemporalLabel>| -> Result<Vec<TemporalLabel>, String> {
-        match &x_expr {
-            None => Ok(tls),
-            Some(expr) => crate::families::temporal::speak_labels(tls, &label_domain, expr, detected_data_tu, x_ordinal_calendar),
-        }
+        ax_x.labels.cased_labels(match &x_expr {
+            None => tls,
+            Some(expr) => crate::families::temporal::speak_labels(tls, &label_domain, expr, detected_data_tu, x_ordinal_calendar)?,
+        })
     };
     let label_domain_floored: Vec<String> = floor_to_grain(&label_domain)?;
     // An ordinal calendar axis positions its labels on the band or point scale
@@ -4005,7 +4114,6 @@ pub(crate) fn render_line_panel(
     } else {
         (0..label_domain.len()).collect()
     };
-    let x_finite_floored = finite_of(&x_domain_floored);
     let x_is_continuous_date = (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar;
     // `{{ x }}` of a date: a real date on a time scale prints `%Y-%m-%d`; one Vega keeps a string
     // (an ordinal band) is an invalid date.
@@ -4040,11 +4148,9 @@ pub(crate) fn render_line_panel(
     let href_at = |i: usize, data_key: &str| hrefs.get(&(x_domain[i].clone(), data_key.to_string())).map(String::as_str);
     let data_key_of = |paint_key: &str| if is_multi { paint_key.to_string() } else { String::new() };
     let utc_fracs: Option<Vec<f64>> = if (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar {
-        match crate::families::temporal::utc_position_fractions(&x_finite_floored) {
-            Some(fracs) => {
-                let mut finite = fracs.into_iter();
-                Some(x_nan.iter().map(|&nan| if nan { 0.0 } else { finite.next().expect("one fraction per finite date") }).collect())
-            }
+        let time = x_time_ext.as_ref().expect("a time scale reads parsed instants");
+        match time.extent() {
+            Some(extent) => Some(time.pos.iter().zip(&x_nan).map(|(&pos, &nan)| if nan { 0.0 } else { frac_of(pos, extent) }).collect()),
             // d3 centers a degenerate domain; a domain with no finite date maps nothing.
             None if x_nan.contains(&true) => Some(x_nan.iter().map(|&nan| if nan { 0.0 } else { 0.5 }).collect()),
             None => None,
@@ -4059,18 +4165,22 @@ pub(crate) fn render_line_panel(
     };
     // An authored scale domain is the extent the continuous axis spans.
     let authored_extent = crate::families::scatter_axis::authored_day_domain(ax_x, fam)?;
+    // Annotation dates widen the extent as data does; the points stay the data's own.
     let label_extent: Option<(f64, f64)> = if (detected_data_tu.is_some() || bare_temporal) && !x_ordinal_calendar {
-        crate::families::temporal::utc_domain_extent(&x_finite_floored).map(|data| authored_extent.unwrap_or(data))
+        x_time_ext
+            .as_ref()
+            .expect("a time scale reads parsed instants")
+            .extent()
+            .map(|data| authored_extent.unwrap_or_else(|| crate::annotation::widen_extent(data, &r.annotations)))
     } else {
         None
     };
     let bare_extent = label_extent.or(quant_extent);
     let utc_fracs: Option<Vec<f64>> = match (utc_fracs, label_extent, authored_extent) {
-        (Some(_), Some(extent), Some(_)) => x_domain_floored
-            .iter()
-            .zip(&x_nan)
-            .map(|(d, &nan)| if nan { Some(0.0) } else { crate::families::temporal::utc_fraction_at(d, extent) })
-            .collect(),
+        (Some(_), Some(extent), _) if authored_extent.is_some() || crate::annotation::x_day_bounds(&r.annotations).next().is_some() => {
+            let time = x_time_ext.as_ref().expect("a time scale reads parsed instants");
+            Some(time.pos.iter().zip(&x_nan).map(|(&pos, &nan)| if nan { 0.0 } else { frac_of(pos, extent) }).collect())
+        }
         (fracs, ..) => fracs,
     };
     // NaN rows leave the label domain a subset of the rows, so a label's index names a finite
@@ -4096,7 +4206,7 @@ pub(crate) fn render_line_panel(
                 "line: label_usable_ratio absent (theme required for a temporal x axis)",
             )?;
             let slot_w = x_slot_w;
-            let mut measure = |t: &str| ax_x.labels.font.measure_weighted(fonts, t, x_font_size);
+            let mut measure = |t: &str| ax_x.labels.measure(fonts, t, x_font_size);
             Some(resolve_vega_x_labels(
                 &label_domain,
                 data_tu,
@@ -4121,14 +4231,12 @@ pub(crate) fn render_line_panel(
     let part_layout: Option<crate::families::temporal::GenericLayout> = match x_part {
         Some(part) if bare_temporal => {
             let label_usable_ratio = label_usable_ratio_opt.ok_or("line: label_usable_ratio absent (theme required for a temporal x axis)")?;
-            let mut sorted: Vec<String> = x_domain.clone();
-            sorted.sort();
-            let texts = crate::families::temporal::part_band_texts(&sorted, part, ax_x.labels.time_unit.as_deref(), authored_time_format)
+            let texts = crate::families::temporal::part_band_texts(&x_domain, part, ax_x.labels.time_unit.as_deref(), authored_time_format)
                 .map_err(|e| format!("{fam}: {e}"))?;
             let gap = ax_x.labels.font.measure_weighted(fonts, " ", x_font_size)?;
             let widths = texts
                 .iter()
-                .map(|t| ax_x.labels.font.measure_weighted(fonts, t, x_font_size).map(|w| w + gap))
+                .map(|t| ax_x.labels.measure(fonts, t, x_font_size).map(|w| w + gap))
                 .collect::<Result<Vec<_>, _>>()?;
             Some(crate::families::temporal::generic_layout(
                 &widths,
@@ -4163,7 +4271,7 @@ pub(crate) fn render_line_panel(
                     } else {
                         let mut widest = 0.0_f64;
                         for value in &x_shown {
-                            widest = widest.max(labels.font.measure_weighted(fonts, value, font_size)?);
+                            widest = widest.max(labels.measure(fonts, value, font_size)?);
                         }
                         vega_fit::label_block_height(widest, font_size, angle)
                     }
@@ -4185,6 +4293,7 @@ pub(crate) fn render_line_panel(
             (Some(data_tu), Some(res), Some(extent))
                 if x_tick_cadence.is_none()
                     && res.visibility_tu == data_tu
+                    && res.year_step == 1
                     && res.format_tu == data_tu =>
             {
                 let interval = native_tick_interval(data_tu);
@@ -4195,10 +4304,12 @@ pub(crate) fn render_line_panel(
                     Some(interval)
                 } else {
                     let why = "on the endpoint-rail arm, whose x ink is closed form over the rows";
-                    let mut row_days: Vec<i64> = x_domain_floored
+                    let mut row_days: Vec<i64> = x_time_ext
+                        .as_ref()
+                        .expect("a time scale reads parsed instants")
+                        .pos
                         .iter()
-                        .filter_map(|d| parse_iso_date(d))
-                        .map(|(y, m, d)| days_from_civil(y, m, d))
+                        .map(|&pos| pos as i64)
                         .collect();
                     row_days.sort_unstable();
                     if interval_tick_days((extent.0 as i64, extent.1 as i64), interval) != row_days {
@@ -4345,7 +4456,7 @@ pub(crate) fn render_line_panel(
     // drawn and never sizes the gutter) with the Inter stand-in — same
     // contract as bar.rs's val_gutter.
     let gutter_of = |drawn: &[f64]| -> Result<f64, String> {
-        let mf = crate::common::measure_family_stand_in(y_fam);
+        let mf = measure::stand_in_family(y_fam);
         let mut max_w = 0.0_f64;
         for (i, &tv) in drawn.iter().enumerate() {
             let lbl = ax_y.labels.apply_expr("y", tv, format_y_label(tv, ruler, tick_label, labels_format, i, drawn.len())?, i, drawn.len())?;
@@ -4446,9 +4557,10 @@ pub(crate) fn render_line_panel(
         y_sides.as_ref().map_or_else(Default::default, |sides| sides.scaled(overlays, &overlay_rows, x_field, ax_y));
     let layer_axes: Vec<LayerAxis> = scaled
         .iter()
-        .map(|p| {
+        .enumerate()
+        .map(|(i, p)| {
             p.axis(
-                p.value_extent(p.rows.iter()),
+                crate::annotation::widen_y(p.value_extent(p.rows.iter()), &r.annotations, crate::annotation::YAxis::Layer(i), None, false),
                 &LayerAxisFrame {
                     family: fam,
                     ax_y,
@@ -4491,6 +4603,50 @@ pub(crate) fn render_line_panel(
     };
     // A band scale seats the last datum half a band inside the plot edge.
     let datum_slack = |w: f64| if use_band_positions { x_band_geometry(w).bandwidth() / 2.0 } else { bucket_slack(w) };
+    // A quantitative x's numbers, or a category x's dates: what a value
+    // anchor interpolates against on the point scale.
+    let annotation_ordinals: Option<Vec<f64>> = if x_is_quantitative {
+        x_domain.iter().map(|v| v.parse::<f64>().ok()).collect()
+    } else {
+        x_time.as_ref().map(|time| time.at.clone())
+    };
+    // The chart's own ink past the plot, set by the fit's ink closure on every
+    // pass; the last write is the drawn size's.
+    let annotation_reach = std::cell::Cell::new(crate::annotation::Reach::default());
+    // The annotation maps at a plot size: the scales the marks draw with.
+    let annotation_ctx = |pw: f64, ph: f64| {
+        use crate::annotation::{AnnotationCtx, AxisMap, Orientation, PlotRect};
+        let x = match label_extent {
+            Some((lo, hi)) => AxisMap::Time { extent: (lo as f64, hi as f64), range: (x_scale_pad, pw - x_scale_pad) },
+            None => {
+                let points = PointScale::new(x_domain.clone(), x_scale_pad, pw - x_scale_pad);
+                let positions = (0..x_domain.len())
+                    .map(|i| if use_band_positions { x_band_geometry(pw).edge(i, 0.5) } else { points.position_at(i) })
+                    .collect();
+                AxisMap::Point { domain: x_domain.clone(), positions, days: annotation_ordinals.clone(), range: (0.0, pw) }
+            }
+        };
+        let y = if is_log {
+            AxisMap::Log { domain: (y_min, y_max), range: (ph, 0.0) }
+        } else {
+            AxisMap::Linear { domain: (y_min, y_max), range: (ph, 0.0) }
+        };
+        let layer_y = crate::families::layers::layer_y_maps(&y, &layer_axes, overlays.len(), ph);
+        AnnotationCtx {
+            annotations: &r.annotations,
+            chart_id: &r.id,
+            panel: facet.map(|f| f.panel_key),
+            plot: PlotRect { x: 0.0, y: 0.0, w: pw, h: ph },
+            reach: annotation_reach.get(),
+            x,
+            y,
+            layer_y,
+            orientation: Orientation::Vertical,
+            fonts,
+            canvas,
+            clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
+        }
+    };
     // A nominal x lays its labels out by the ordinal overlap ladder, judged at the width the
     // emitters were given: the card's, or the panel width the facet spec declared.
     let crowding_w = match facet {
@@ -4910,6 +5066,7 @@ pub(crate) fn render_line_panel(
                                     data_tu,
                                     resolved.format_tu,
                                     resolved.visibility_tu,
+                                    resolved.year_step,
                                     ax_x.fiscal_year_start_month,
                                     authored_time_format,
                                 )
@@ -5050,11 +5207,18 @@ pub(crate) fn render_line_panel(
                             let (align, baseline) = nominal_label_anchor(angle, x_edge, x_label_align);
                             fit_x_angle = angle;
                             let mut reach = 0.0_f64;
-                            for (i, xv) in x_shown.iter().enumerate() {
+                            let at: Vec<(&str, Option<f64>)> = match &quant_x_ticks {
+                                Some(ticks) => ticks.iter().map(|(t, f)| (t.as_str(), Some(*f))).collect(),
+                                None => x_shown.iter().map(|v| (v.as_str(), None)).collect(),
+                            };
+                            for (i, (xv, frac)) in at.into_iter().enumerate() {
                                 let w = fonts.measure_shaped(xv, x_family, x_font_size)?;
                                 labels_meta.push((i, w, crate::text::line_count(xv)));
-                                let x =
-                                    if use_band_positions { band_center(i) } else { pos_at(i, false) };
+                                let x = match frac {
+                                    Some(f) => frac_pos(f),
+                                    None if use_band_positions => band_center(i),
+                                    None => pos_at(i, false),
+                                };
                                 let ti = crate::common::rotated_category_label_ink(
                                     x, row_y, w.min(x_limit), x_font_size, align, baseline, angle, crate::text::line_count(xv) - 1,
                                 );
@@ -5079,6 +5243,8 @@ pub(crate) fn render_line_panel(
                                 .first()
                                 .zip(fracs.last())
                                 .map(|(&a, &b)| (frac_pos(a), frac_pos(b)))
+                        } else if let Some(ticks) = &quant_x_ticks {
+                            ticks.first().zip(ticks.last()).map(|(a, b)| (frac_pos(a.1), frac_pos(b.1)))
                         } else if x_ordinal_calendar {
                             let xs = labels_meta.iter().map(|&(i, _, _)| label_at(i, false));
                             xs.clone().reduce(f64::min).zip(xs.reduce(f64::max))
@@ -5249,6 +5415,11 @@ pub(crate) fn render_line_panel(
                             b.union(&style.ink(label_x, y, *w, spot));
                         }
                     }
+                    // Annotation text clears the ink so far: axes, titles, marks.
+                    annotation_reach.set(crate::annotation::Reach::past(b, pw, ph));
+                    if let Some(ab) = crate::annotation::bounds(&annotation_ctx(pw, ph)) {
+                        b.union(&ab);
+                    }
                     if let Some(lg) = &vega_legend_box {
                         // `legendParams` anchors a side legend on `xBounds` and a
                         // top/bottom one on `yBounds` (`legend.js:41-64`): the
@@ -5327,6 +5498,7 @@ pub(crate) fn render_line_panel(
                         }
                         let max_rows = labels_meta.iter().map(|&(_, _, rows)| rows).max().unwrap_or(1);
                         let x_axis_y2 = row_y + x_font_size + (max_rows - 1) as f64 * (x_font_size + 2.0) + x_title_extra;
+                        let x_bounds = (x_bounds.0, x_bounds.1.max(crate::annotation::text_x2(&annotation_ctx(pw, ph))));
                         legend_pos = legend_origin(&r.legend.position, x_bounds, (scope_top, x_axis_y2), (pw, ph), size);
                         if let Some(reach) = legend_fit_bounds(&r.legend.position, legend_pos, size) {
                             b.union(&reach);
@@ -5546,6 +5718,7 @@ pub(crate) fn render_line_panel(
                                 data_tu,
                                 resolved.format_tu,
                                 resolved.visibility_tu,
+                                resolved.year_step,
                                 ax_x.fiscal_year_start_month,
                                 authored_time_format,
                             )
@@ -5916,10 +6089,18 @@ pub(crate) fn render_line_panel(
         let right_ink = if rail_right { right_ink.max(y_tick_eff + y_gutter + y_title_extra) } else { right_ink };
         // The legend sits past pane0's right bound: the stroke's ceil'd reach,
         // or a right value axis's ink when that reaches further.
-        let legend_right_x = if rail_right { line_stroke_w.max(right_ink) } else { line_stroke_w }.ceil() + VEGA_LEGEND_OFFSET;
-        let right_reach = match &vega_legend_box {
-            Some(lg) if show_legend_right => legend_right_x + lg.box_w,
-            _ => right_ink,
+        // Annotation text past the plot's right edge sits between the pane and
+        // the rail or legend, in the pane's own ink.
+        let annotation_right = |pane_w: f64| {
+            crate::annotation::bounds(&annotation_ctx(pane_w, svg_h)).map_or(0.0, |b| (b.x2 - pane_w).max(0.0))
+        };
+        let legend_right_x_at = |pane_w: f64| {
+            let reach = if rail_right { line_stroke_w.max(right_ink) } else { line_stroke_w };
+            reach.max(annotation_right(pane_w)).ceil() + VEGA_LEGEND_OFFSET
+        };
+        let right_reach_at = |pane_w: f64| match &vega_legend_box {
+            Some(lg) if show_legend_right => legend_right_x_at(pane_w) + lg.box_w,
+            _ => right_ink.max(annotation_right(pane_w)),
         };
         // C2: pane 0's own right bound, in plot-relative coordinates — the
         // union Vega's `gridLayout` reads. The title group anchors at the
@@ -5979,9 +6160,9 @@ pub(crate) fn render_line_panel(
             let (_, visible, ink, _) = bare_labels_at(pane_w)?;
             Ok(ink.iter().zip(&visible).filter(|(_, &v)| v).map(|(ti, _)| (ti.x2 - pane_w).max(0.0)).fold(0.0, f64::max))
         };
-        let pane0_x2 = |pane_w: f64| match title_x2 {
-            Some(tx) => (pane_w + right_reach).max(tx).max(stub_x2),
-            None => (pane_w + right_reach).max(stub_x2),
+        let pane0_x2 = |pane_w: f64| {
+            let x2 = (pane_w + right_reach_at(pane_w)).max(stub_x2);
+            title_x2.map_or(x2, |tx| x2.max(tx))
         };
         // Parity over the labels as placed at a pane height: right-aligned
         // at the gutter's far side, middle baseline.
@@ -6070,7 +6251,17 @@ pub(crate) fn render_line_panel(
         // Production probes the concat child at `effective_height` (the
         // card height), so the probe's mask AND its overhang distances
         // are the full payload height's.
-        let top_ink = top_ink_at(&mask_probe, &tick_values, svg_h);
+        // Annotation text above the plot takes the top margin the way a tick
+        // label's overhang does: probed at the card size, then re-measured
+        // at the final plot box, where y-anchored text can reach higher.
+        let ann_top = |pw: f64, ph: f64| {
+            if rail_strip_rows.is_some() {
+                0.0
+            } else {
+                crate::annotation::bounds(&annotation_ctx(pw, ph)).map_or(0.0, |b| (-b.y1).max(0.0))
+            }
+        };
+        let top_ink = top_ink_at(&mask_probe, &tick_values, svg_h).max(ann_top(svg_w, svg_h));
         // L10(b): production's `_correct_concat_overshoot` probes pane0 at
         // its UNCORRECTED width (the full card width — pane0 initially
         // spans the whole target). Vega's own gridLayout (the bundled
@@ -6213,14 +6404,14 @@ pub(crate) fn render_line_panel(
         // the final ladder thins or drops shrinks the canvas below
         // `svg_h` on its own, with no title-wrap disagreement in play at
         // all (`themes_4/trend`: 432 -> 426, matching production).
-        let top_ink = top_ink_at(&mask_final, &tick_values, plot_h);
+        let top_ink = top_ink_at(&mask_final, &tick_values, plot_h).max(ann_top(plot_w, plot_h));
         let y_visible = Some(mask_final);
         if let Some(lg) = &vega_legend_box {
             let size = (lg.box_w, lg.box_h());
             legend_pos = if r.legend.position.overlay {
                 legend_overlay_origin(&r.legend.position, (plot_w, plot_h), size)
             } else if show_legend_right {
-                (plot_w + legend_right_x, 0.0)
+                (plot_w + legend_right_x_at(plot_w), 0.0)
             } else if show_legend_bottom {
                 (0.0, (plot_h + x_band).ceil() + VEGA_LEGEND_OFFSET)
             } else {
@@ -6914,6 +7105,7 @@ pub(crate) fn render_line_panel(
         None if x_tick_fracs.is_some() => {
             x_tick_fracs.iter().flatten().map(|&f| frac_x_at(f)).collect()
         }
+        None if quant_x_ticks.is_some() => quant_x_ticks.iter().flatten().map(|&(_, f)| frac_x_at(f)).collect(),
         None => match (&tick_indices, &temporal_labels) {
             (Some(idxs), _) => idxs.iter().map(|&i| temporal_label_x_at(i)).collect(),
             (None, Some(tls)) => tls.iter().map(|tl| temporal_label_x_at(tl.domain_idx)).collect(),
@@ -6921,32 +7113,45 @@ pub(crate) fn render_line_panel(
         },
     };
 
-    // X gridlines (vertical at each axis tick position).
-    let xg = &ax_x.grid;
-    if xg.visible.unwrap_or(false) {
-        crate::contract::grid_group_open(&mut svg);
-        let gc = crate::common::required_ink(xg.color.as_deref(), "line", "axis_x.grid.color")?;
-        let gw = xg.width.unwrap_or(1.0);
-        for &x in &axis_tick_xs {
-            let gx = x_rule_at(x);
-            let _ = write!(
-                svg,
-                "<line x1=\"{gx:.3}\" y1=\"{ad:.1}\" x2=\"{gx:.3}\" y2=\"{:.3}\" \
-                 stroke=\"{gc}\" stroke-width=\"{gw}\"/>",
-                plot_h + ad, gc = xml_escape_attr(gc)
-            );
-        }
-        crate::contract::grid_group_close(&mut svg);
-    }
-
     // Y gridlines (horizontal at each tick)
     let yg = &ax_y.grid;
     let (y_lo, y_hi) = (y_min.min(y_max), y_min.max(y_max));
     // Area fills from its floor like a bar, so only a line chart tears.
     let tear = yg.torn_baseline.as_ref().filter(|t| t.visible && !draw_areas);
     let torn_y = tear
-        .filter(|_| y_lo > 0.0 || y_hi < 0.0)
-        .map(|_| rule_at(y_scale.position(if y_lo > 0.0 { y_lo } else { y_hi })));
+        .and_then(|_| crate::torn::torn_edge_value(y_lo, y_hi))
+        .map(|edge| rule_at(y_scale.position(edge)));
+    // The tear's cubics, which the x gridlines below run down onto.
+    let torn = tear.zip(torn_y).map(|(t, ty)| {
+        let inward = crate::torn::torn_inward(ty, ad, plot_h);
+        let tick_rules: Vec<f64> = axis_tick_xs.iter().map(|&x| x_rule_at(x)).collect();
+        (inward, crate::torn::torn_cubics(ad, plot_w + ad, ty, inward, &tick_rules, t))
+    });
+    // X gridlines (vertical at each axis tick position). Under a tear each
+    // ends on the wave at its own x instead of poking through it.
+    let xg = &ax_x.grid;
+    if xg.visible.unwrap_or(false) {
+        crate::contract::grid_group_open(&mut svg);
+        let gc = crate::common::required_ink(xg.color.as_deref(), "line", "axis_x.grid.color")?;
+        let gw = xg.width.unwrap_or(1.0);
+        let y1_prec = if torn.is_some() { 3 } else { 1 };
+        for &x in &axis_tick_xs {
+            let gx = x_rule_at(x);
+            let (gy1, gy2) = match &torn {
+                Some((inward, cubics)) if *inward < 0.0 => (ad, crate::torn::torn_across_at(cubics, gx)),
+                Some((_, cubics)) => (crate::torn::torn_across_at(cubics, gx), plot_h + ad),
+                None => (ad, plot_h + ad),
+            };
+            let _ = write!(
+                svg,
+                "<line x1=\"{gx:.3}\" y1=\"{gy1:.y1_prec$}\" x2=\"{gx:.3}\" y2=\"{gy2:.3}\" \
+                 stroke=\"{gc}\" stroke-width=\"{gw}\"/>",
+                gc = xml_escape_attr(gc)
+            );
+        }
+        crate::contract::grid_group_close(&mut svg);
+    }
+
     if yg.visible.unwrap_or(false) {
         crate::contract::grid_group_open(&mut svg);
         let gc = crate::common::required_ink(yg.color.as_deref(), "line", "axis_y.grid.color")?;
@@ -6983,14 +7188,14 @@ pub(crate) fn render_line_panel(
         }
     }
 
-    if let (Some(ty), Some(tear)) = (torn_y, tear) {
-        let gc = crate::common::required_ink(yg.color.as_deref(), "line", "axis_y.grid.color")?;
-        let gw = yg.width.unwrap_or(1.5);
-        let inward = if ty > ad + plot_h / 2.0 { -1.0 } else { 1.0 };
+    if let Some((_, cubics)) = &torn {
+        // The vertical gridlines' ink, whether or not they are drawn.
+        let gc = crate::common::required_ink(xg.color.as_deref(), "line", "axis_x.grid.color")?;
+        let gw = xg.width.unwrap_or(1.0);
         let _ = write!(
             svg,
             "<path class=\"torn-baseline\" d=\"{}\" fill=\"none\" stroke=\"{gc}\" stroke-width=\"{gw}\"/>",
-            torn_path(ad, plot_w + ad, ty, inward, tear), gc = xml_escape_attr(gc)
+            crate::torn::torn_path(cubics, false), gc = xml_escape_attr(gc)
         );
     }
 
@@ -7034,6 +7239,23 @@ pub(crate) fn render_line_panel(
     // once the layer's own ink is down, below.
     if !draw_areas && !has_layers {
         emit_baseline_rules(&mut svg)?;
+    }
+
+    // Annotations paint in the plot group's own frame. A fixed-margin arm
+    // reserved no room for their text, so text past the plot is refused there;
+    // the rail arm reserves the top (without a support_table strip).
+    let annotations = annotation_ctx(plot_w, plot_h);
+    if shape != Shape::Fit {
+        let reserved = crate::annotation::Reserved {
+            top: shape == Shape::RailConcat && r.support_table.is_none(),
+            right: shape == Shape::RailConcat,
+        };
+        crate::annotation::refuse_margin_ink(&annotations, reserved)?;
+    }
+    // An area keeps its tints under the whole area stack; a line's tints go
+    // between the data's halo (lines and points) and the main lines (below).
+    if draw_areas {
+        crate::annotation::paint(&annotations, crate::annotation::Plane::Background, &mut svg)?;
     }
 
     // Paint order for area charts: backdrop areas → halo lines → colored areas → zero rule → main lines.
@@ -7107,7 +7329,6 @@ pub(crate) fn render_line_panel(
             }
         }
     }
-
     // Colored areas (area only, fill=series_color, opacity=area_opacity).
     // Stacked: one combined fill+stroke path per series — `stroke` is the
     // resolved `line_mark.stroke` (production's stack-mode swap already put
@@ -7202,7 +7423,7 @@ pub(crate) fn render_line_panel(
     // `x_domain_for_temporal[i]`, never the raw `x_domain[i]` a caller might
     // otherwise pass: a year-shaped x's raw value (`"2019.0"` for a
     // warehouse-Decimal year) isn't `parse_iso_date`-parseable, matching the
-    // same seam `x_domain_floored`/`resolve_vega_x_labels`/`resolve_
+    // same seam `x_time_ext`/`resolve_vega_x_labels`/`resolve_
     // temporal_labels` already read — `data`'s own lookup keys stay on the
     // RAW domain (the join identity), only this header text reads the
     // anchored one.
@@ -7361,6 +7582,12 @@ pub(crate) fn render_line_panel(
             }
             crate::contract::mark_group_close(&mut svg);
         }
+    }
+
+    // A line's tints sit above all of the data's halo (lines and points) and
+    // below the rules and the main lines.
+    if !draw_areas {
+        crate::annotation::paint(&annotations, crate::annotation::Plane::Background, &mut svg)?;
     }
 
     // Main lines — a stacked area's perimeter stroke already painted above,
@@ -7578,9 +7805,7 @@ pub(crate) fn render_line_panel(
                 return Ok((left, width, left + width / 2.0));
             }
             if let (Some(tu), Some(extent)) = (detected_data_tu.filter(|_| bucketed_bars), label_extent) {
-                let start = time_unit_floor(x_text, tu)
-                    .and_then(|floored| parse_iso_date(&floored))
-                    .ok_or_else(|| format!("line: unparseable temporal x value {x_text:?}"))?;
+                let start = crate::families::temporal::civil_from_days(x_time.as_ref().expect("a bucketed bar axis reads parsed instants").pos[i] as i64);
                 let (ds, de) = (days_from_civil(start.0, start.1, start.2) as f64, {
                     let end = next_bucket(start, tu);
                     days_from_civil(end.0, end.1, end.2) as f64
@@ -7591,7 +7816,11 @@ pub(crate) fn render_line_panel(
                 return Ok((left, width, at(ds)));
             }
             // A continuous x: the ladder reads the gap between the layer's own closest x values.
-            let numeric = |text: &str| text.parse::<f64>().ok().or_else(|| parse_iso_date(text).map(|(y, m, d)| days_from_civil(y, m, d) as f64));
+            let time = x_time.as_ref().filter(|_| law.vl_type == VegaType::Temporal);
+            let numeric = |text: &str| match time {
+                Some(time) => x_domain.iter().position(|d| d == text).map(|i| time.at[i]),
+                None => text.parse::<f64>().ok().or_else(|| parse_iso_date(text).map(|(y, m, d)| days_from_civil(y, m, d) as f64)),
+            };
             let values: Vec<f64> = x_domain.iter().filter_map(|d| numeric(d)).collect();
             let (lo, hi) = values.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &v| (lo.min(v), hi.max(v)));
             let min_step = crate::families::bar::min_gap(layer_rows.iter().filter_map(|row| numeric(&row_str(row, layer_x))).collect());
@@ -7791,7 +8020,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         let f = value_labels.and_then(|ml| ml.font.as_ref());
         let color = f.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
         let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "400".into());
-        let font_style = f.map(crate::common::Font::style_attr).unwrap_or_default();
+        let font_style = f.and_then(|f| f.style.as_deref());
         if tooltip_labels {
             crate::contract::value_label_group_open(&mut svg, "layer_4_marks")?;
         }
@@ -7801,31 +8030,30 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             // label and point carry byte-identical aria-labels).
             let aria =
                 if tooltip_labels { Some(point_aria(series, *i, *v)?) } else { None };
-            let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
+            let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
             let spot = label_spot(*i);
             let label_x = spot.edge.map_or_else(|| fit_x_at(*i), |frac| band_edge(*i, frac));
             let anchor = r.link_open.anchor(all_hrefs.get(&(x_domain[*i].clone(), series.to_string())).map(String::as_str));
-            svg.push_str(&crate::href::anchor_open(anchor));
-            crate::common::write_value_label(
-                &mut svg,
+            let label = crate::common::value_label(
                 label_x + spot.dx,
                 y_scale.position(*at) + spot.dy + measure::baseline_shift(spot.baseline, value_label_size),
                 spot.align,
                 &value_label_family,
                 value_label_size,
                 &weight,
-                &font_style,
+                font_style,
                 // No authored label color: the text mark inherits the series' color.
                 if fill.is_empty() || f.and_then(|f| f.color.as_deref()).is_some() { color } else { fill },
-                &label_attr,
+                label_attrs,
                 text,
             );
-            svg.push_str(crate::href::anchor_close(anchor));
+            svg.push_str(&print::print(&[crate::href::linked(anchor, label)]));
         }
         if tooltip_labels {
             crate::contract::mark_group_close(&mut svg);
         }
     }
+    crate::annotation::paint(&annotations, crate::annotation::Plane::Foreground, &mut svg)?;
 
     // The single-chart x-axis chrome (tick marks, labels, title) — built
     // once here at this panel's own resolved `plot_w`/temporal ladder, then
@@ -7883,17 +8111,20 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         } else {
             // Non-temporal: `label_x_at` already folds in `fit_x_at`'s own
             // band-position centering (`use_band_positions`).
-            let xs: Vec<f64> = (0..x_domain.len()).map(label_x_at).collect();
+            let (domain, xs): (Vec<String>, Vec<f64>) = match &quant_x_ticks {
+                Some(ticks) => ticks.iter().map(|(t, f)| (t.clone(), frac_x_at(*f))).unzip(),
+                None => (x_shown.clone(), (0..x_domain.len()).map(label_x_at).collect()),
+            };
             let angle = nominal_x_angle()?;
             let (align, baseline) = nominal_label_anchor(angle, x_edge, x_label_align);
             let mut left_reach = 0.0_f64;
-            for (xv, &x) in x_shown.iter().zip(&xs) {
+            for (xv, &x) in domain.iter().zip(&xs) {
                 let w = fonts.measure_shaped(xv, x_family, x_font_size)?.min(x_limit);
                 left_reach = left_reach.max(
                     -crate::common::rotated_category_label_ink(x, 0.0, w, x_font_size, align, baseline, angle, 0).x1,
                 );
             }
-            LineXAxisBody::Nominal { labels: x_shown.clone(), xs, left_reach, angle, align: x_label_align }
+            LineXAxisBody::Nominal { labels: domain, xs, left_reach, angle, align: x_label_align }
         },
     };
     if crate::labels_expr::view::active() && facet.is_none() {
@@ -8405,6 +8636,9 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             );
         }
     }
+    if let Some(ab) = crate::annotation::bounds(&annotation_ctx(plot_w, plot_h)) {
+        ink.union(&vega_fit::Bounds::new(plot_left + ab.x1, plot_top + ab.y1, plot_left + ab.x2, plot_top + ab.y2));
+    }
     let geometry = LinePanelGeometry {
         content_start,
         svg_end,
@@ -8832,6 +9066,250 @@ mod tests {
         })
     }
 
+
+    use serde_json::Value;
+
+    const ANNOTATION_CONTRACT: &str = include_str!("../../../fixtures/annotations/contract.json");
+
+    /// Contract entry `index`, re-anchored onto `make_line_payload`'s dates and values.
+    fn annotation(index: usize, x: Value, y: Value) -> Value {
+        let all: Vec<Value> = serde_json::from_str(ANNOTATION_CONTRACT).unwrap();
+        let mut a = all.into_iter().find(|a| a["index"] == index).unwrap();
+        a["x"] = x;
+        a["y"] = y;
+        a
+    }
+
+    fn annotated_line(annotations: Vec<Value>) -> String {
+        let mut json = make_line_payload(false, false);
+        json["resolved"]["annotations"] = Value::Array(annotations);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        render(&payload, &test_fonts()).expect("renders")
+    }
+
+    fn value(v: Value) -> Value {
+        serde_json::json!({"kind": "value", "value": v})
+    }
+
+    fn first_line_x(svg: &str) -> f64 {
+        let d = svg.split("<path d=\"M").nth(1).unwrap();
+        d.split(',').next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn annotations_paint_behind_and_over_the_marks() {
+        let svg = annotated_line(vec![
+            annotation(3, serde_json::json!({"kind": "range", "from": "2026-01-05", "to": "2026-01-10"}), Value::Null),
+            annotation(0, Value::Null, value(serde_json::json!(140.0))),
+        ]);
+        let background = svg.find("annotations-background").expect("a background group");
+        let foreground = svg.find("annotations-foreground").expect("a foreground group");
+        let mark = svg.find("layer_3_marks").expect("the line mark");
+        assert!(background < mark && mark < foreground, "{svg}");
+        assert!(svg.contains("<clipPath id=\"line-ann0\">"), "{svg}");
+    }
+
+    #[test]
+    fn a_line_stack_runs_halo_tint_rule_line_text() {
+        let mut rule = annotation(0, Value::Null, value(serde_json::json!(140.0)));
+        rule["plane"] = "background".into();
+        let svg = annotated_line(vec![
+            rule,
+            annotation(3, serde_json::json!({"kind": "range", "from": "2026-01-05", "to": "2026-01-10"}), Value::Null),
+        ]);
+        let at = |needle: &str| svg.find(needle).unwrap_or_else(|| panic!("{needle} missing: {svg}"));
+        let halo = at("layer_1_marks");
+        let tint = at("<rect x=\"308\"");
+        let rule = at("<line x1=\"0\" y1=\"65\"");
+        let main = at("layer_3_marks");
+        let text = at("annotations-text\"><g data");
+        assert!(halo < tint && tint < rule && rule < main && main < text, "{svg}");
+    }
+
+    #[test]
+    fn point_halos_paint_under_a_background_tint() {
+        let mut json = make_line_payload(false, false);
+        json["resolved"]["style"]["point_mark"] =
+            serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+        json["resolved"]["annotations"] = Value::Array(vec![annotation(
+            3,
+            serde_json::json!({"kind": "range", "from": "2026-01-05", "to": "2026-01-10"}),
+            Value::Null,
+        )]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let tint = svg.find("annotations-background").expect("the band tint");
+        let halo_line = svg.find("layer_1_marks").expect("the line halo");
+        let last_halo_point = svg.rfind("layer_1_marks").unwrap();
+        assert!(halo_line < tint && last_halo_point < tint, "{svg}");
+        assert!(tint < svg.find("layer_3_marks").unwrap(), "{svg}");
+    }
+
+    /// A haloed, point-marked line with a note on the 2026-01-08 datum, carrying
+    /// the visible dot's radius resolve bakes for `size: 100`.
+    fn note_on_a_point(edit: impl FnOnce(&mut Value)) -> String {
+        let mut note = annotation(7, value(serde_json::json!("2026-01-08")), value(serde_json::json!(150.0)));
+        note["style"]["circle"]["point_radius"] = 5.0.into();
+        edit(&mut note);
+        let mut json = make_line_payload(false, false);
+        json["resolved"]["style"]["point_mark"] =
+            serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+        json["resolved"]["annotations"] = Value::Array(vec![note]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        render(&payload, &test_fonts()).expect("renders")
+    }
+
+    fn num_attr(tag: &str, name: &str) -> f64 {
+        let rest = tag.split(&format!(" {name}=\"")).nth(1).unwrap();
+        rest.split('"').next().unwrap().parse().unwrap()
+    }
+
+    /// The enclosing circle's (cx, cy, r) in the annotation layer.
+    fn enclosure(svg: &str) -> (f64, f64, f64) {
+        let tag = svg.split("<circle cx=").nth(1).unwrap_or_else(|| panic!("no circle: {svg}"));
+        let tag = format!(" cx={tag}");
+        (num_attr(&tag, "cx"), num_attr(&tag, "cy"), num_attr(&tag, "r"))
+    }
+
+    #[test]
+    fn a_connector_arrow_tips_the_visible_dot_edge_not_the_halo() {
+        let ringed = note_on_a_point(|n| n["enclose"] = "circle".into());
+        let (cx, cy, _) = enclosure(&ringed);
+        let svg = note_on_a_point(|_| {});
+        let arrow = svg.split("annotations-foreground").nth(1).unwrap();
+        let d = arrow.split("Z\"").next().unwrap().rsplit("<path d=\"M").next().unwrap();
+        let (x, y) = d.split('L').next().unwrap().split_once(',').unwrap();
+        let (x, y): (f64, f64) = (x.parse().unwrap(), y.parse().unwrap());
+        let gap = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+        assert!((gap - 5.0).abs() < 0.05, "tip {gap}px from the datum: {svg}");
+    }
+
+    #[test]
+    fn no_annotations_paint_nothing() {
+        let svg = annotated_line(Vec::new());
+        assert!(!svg.contains("annotations"), "{svg}");
+        assert!(!svg.contains("-ann0"), "{svg}");
+    }
+
+    #[test]
+    fn an_annotation_date_past_the_data_widens_the_time_extent() {
+        let plain = first_line_x(&annotated_line(Vec::new()));
+        let band = annotation(3, serde_json::json!({"kind": "range", "from": "2025-12-01", "to": "2025-12-15"}), Value::Null);
+        let widened = first_line_x(&annotated_line(vec![band]));
+        assert!(widened > plain + 1.0, "the first point moves right: {plain} -> {widened}");
+    }
+
+    #[test]
+    fn rule_text_above_the_top_tick_reserves_top_margin() {
+        let top = |svg: &str| -> f64 {
+            let g = svg.split("<g transform=\"translate(").nth(1).unwrap();
+            g.split(')').next().unwrap().split(',').nth(1).unwrap().parse().unwrap()
+        };
+        let plain = annotated_line(Vec::new());
+        let ruled = annotated_line(vec![annotation(0, Value::Null, value(serde_json::json!(150.0)))]);
+        assert!(top(&ruled) > top(&plain) + 5.0, "{} -> {}", top(&plain), top(&ruled));
+    }
+
+    #[test]
+    fn a_facet_panel_s_ink_holds_its_annotation_text() {
+        let _en = crate::time_locale::en_us_scope();
+        let top_ink = |annotations: Vec<Value>| -> (f64, f64) {
+            let mut json = make_line_payload(false, false);
+            json["resolved"]["annotations"] = Value::Array(annotations);
+            let payload: Payload = serde_json::from_value(json).unwrap();
+            let r: LineResolved = serde_json::from_value(payload.resolved.clone()).unwrap();
+            let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
+                suppress_x_axis: false,
+                paint_value_axis: true,
+                fold_axis_gutter: false,
+                value_axis_right_overhang: 0.0,
+                mirror_band_x: false,
+                shared_domain_rows: &payload.rows,
+                independent_scale: false,
+            };
+            let (_, plot, geom) = render_panel(&payload, &r, &test_fonts(), 480.0, 240.0, Some(&opts));
+            let pad_t = payload.padding.as_ref().map(|p| p.top).unwrap_or(0.0);
+            (geom.ink.y1, pad_t + plot.top)
+        };
+        let (plain, plain_top) = top_ink(Vec::new());
+        let (ruled, ruled_top) = top_ink(vec![annotation(0, Value::Null, value(serde_json::json!(150.0)))]);
+        // The plain panel's ink reaches above its plot only by half a tick label.
+        let tick_reach = plain_top - plain;
+        assert!(ruled < ruled_top - tick_reach - 5.0, "the rule's text above the plot is panel ink: {ruled} vs plot top {ruled_top}");
+    }
+
+    /// The wide rail payload with a trend on `revenue`, its text at `position`.
+    fn rail_with_trend(position: Value) -> Result<String, crate::diagnostic::Diagnostic> {
+        let mut trend = annotation(12, Value::Null, Value::Null);
+        trend["series"] = Value::Null;
+        trend["text"] = "trend".into();
+        trend["trend"] = serde_json::json!({"line": [["2026-01-01", 100.0], ["2026-01-08", 150.0]], "interval": null});
+        trend["style"]["text"]["position"] = position;
+        let mut json = make_wide_line_payload();
+        json["resolved"]["annotations"] = Value::Array(vec![trend]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        render(&payload, &test_fonts())
+    }
+
+    /// The `x` of the `<text>` element reading `label`, and the canvas width.
+    fn text_x(svg: &str, label: &str) -> f64 {
+        let at = svg.find(&format!(">{label}</text>")).unwrap_or_else(|| panic!("no {label}: {svg}"));
+        let tag = &svg[svg[..at].rfind("<text").unwrap()..at];
+        tag.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn a_trend_label_outside_the_line_end_sits_between_the_plot_and_the_rail() {
+        let outside = serde_json::json!({"edge": "right", "align": "center", "overlay": false});
+        let with_text = rail_with_trend(outside).expect("margin text beside a rail renders");
+        let rail_at = with_text.find(">Revenue<").unwrap();
+        let rail_x: f64 = with_text[..rail_at].rsplit("translate(").next().unwrap().split(',').next().unwrap().parse().unwrap();
+        // The pane's origin is 41px in; the text is wider than 20px and starts at its edge.
+        assert!(41.0 + text_x(&with_text, "trend") + 20.0 < rail_x, "{rail_x}: {with_text}");
+    }
+
+    /// The plot's clip width: what the margin ink negotiation left it.
+    fn plot_width(svg: &str) -> f64 {
+        svg.split("<clipPath id=\"c-ann0\"><rect x=\"0\" y=\"0\" width=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn overlay_trend_text_on_the_right_edge_ends_inside_the_plot() {
+        let overlay = serde_json::json!({"edge": "right", "align": "center", "overlay": true});
+        let outside = serde_json::json!({"edge": "right", "align": "center", "overlay": false});
+        let (inside, beside) = (rail_with_trend(overlay).expect("inside text needs no margin"), rail_with_trend(outside).unwrap());
+        assert!(text_x(&inside, "trend") <= plot_width(&inside) + 41.0, "{inside}");
+        assert!(plot_width(&inside) > plot_width(&beside), "overlay text reserves no margin");
+    }
+
+    #[test]
+    fn a_side_legend_clears_trend_text_outside_the_plot() {
+        for rail in [false, true] {
+            assert_legend_clears_trend_text(rail);
+        }
+    }
+
+    fn assert_legend_clears_trend_text(rail: bool) {
+        let mut json = make_multi_series_line_payload_with_bottom_legend();
+        json["resolved"]["legend"]["position"]["edge"] = "right".into();
+        json["resolved"]["style"]["endpoint_labels"]["visible"] = rail.into();
+        let mut trend = annotation(12, Value::Null, Value::Null);
+        trend["series"] = Value::Null;
+        trend["text"] = "a trend label wider than the gap".into();
+        trend["style"]["text"]["max_width"] = Value::Null;
+        trend["trend"] = serde_json::json!({"line": [["2026-01-01", 50.0], ["2026-01-08", 100.0]], "interval": null});
+        trend["style"]["text"]["position"] = serde_json::json!({"edge": "right", "align": "center", "overlay": false});
+        json["resolved"]["annotations"] = Value::Array(vec![trend]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let label = svg.split("role-legend-label").nth(1).unwrap();
+        let legend_x: f64 = label.split("<text x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+        // 32 characters at 11px span about 170px.
+        assert!(legend_x > text_x(&svg, "a trend label wider than the gap") + 170.0, "rail {rail}: legend at {legend_x}: {svg}");
+    }
+
     // ── `render_line_panel` seam ─────────────────────────────────────────
 
     /// Right y, 3 NOMINAL x points (never a temporal-shaped string —
@@ -8932,6 +9410,8 @@ mod tests {
         let fonts = test_fonts();
         let r = LineResolved::from_payload(&payload).unwrap();
         let opts = FacetPanelOpts {
+            panel_key: "",
+            panel_ordinal: 0,
             suppress_x_axis: true,
             paint_value_axis: true,
             fold_axis_gutter: false,
@@ -8964,6 +9444,8 @@ mod tests {
         let fonts = test_fonts();
         let r = LineResolved::from_payload(&payload).unwrap();
         let opts_on = FacetPanelOpts {
+            panel_key: "",
+            panel_ordinal: 0,
             suppress_x_axis: false,
             paint_value_axis: true,
             fold_axis_gutter: false,
@@ -9008,6 +9490,8 @@ mod tests {
             let fonts = test_fonts();
             let r = LineResolved::from_payload(&payload).unwrap();
             let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: false,
@@ -9043,6 +9527,8 @@ mod tests {
         let fonts = test_fonts();
         let r = LineResolved::from_payload(&payload).unwrap();
         let opts_folded = FacetPanelOpts {
+            panel_key: "",
+            panel_ordinal: 0,
             suppress_x_axis: true,
             paint_value_axis: true,
             fold_axis_gutter: true,
@@ -9110,6 +9596,8 @@ mod tests {
         let fonts = test_fonts();
         let r = LineResolved::from_payload(&payload).unwrap();
         let own_opts = FacetPanelOpts {
+            panel_key: "",
+            panel_ordinal: 0,
             suppress_x_axis: false,
             paint_value_axis: true,
             fold_axis_gutter: false,
@@ -9841,12 +10329,8 @@ mod tests {
                 axis_temporal_type: true,
                 expect: SortExpect::Ignores,
             },
-            // An authored `axis_x.type: temporal` forces
-            // `vl_type = "temporal"` in production regardless of the
-            // data, and `pin_sorted_domain` no-ops on a temporal x —
-            // unlike `type: ordinal` above, this ignores the sort rather
-            // than refusing, since a plain-category x with no authored
-            // type already ignores nothing this port cannot draw.
+            // An authored `axis_x.type: temporal` over values no date
+            // parses from refuses by name.
             ShapeCase {
                 name: "plain_categories_authored_temporal",
                 values: [s("Feb"), s("Mar"), s("Jan")],
@@ -9855,7 +10339,7 @@ mod tests {
                 fiscal_4: false,
                 axis_ordinal_type: false,
                 axis_temporal_type: true,
-                expect: SortExpect::Ignores,
+                expect: SortExpect::Refuses("ERR-X-VALUE-NOT-A-DATE"),
             },
             // `2023-W53` matches `_BUCKET_FAMILIES`' `iso_week`
             // regex SHAPE (`01`-`53`), but 2023 has only 52 ISO weeks, so
@@ -10066,6 +10550,7 @@ mod tests {
             "y": "trend",
             "label": "Trend",
             "color": null,
+            "ink": "#779bc9",
             "query_name": query_name
         })
     }
@@ -10173,7 +10658,7 @@ mod tests {
                 "labels": {"visible": false, "position": "middle", "field": null, "format": null, "dx": null, "dy": null, "font": null}
             },
             "axis_y": {"position": null},
-            "x": null, "y": "trend", "label": "Trend", "color": null, "query_name": null
+            "x": null, "y": "trend", "label": "Trend", "color": null, "ink": "#779bc9", "query_name": null
         }]);
         json
     }
@@ -10242,7 +10727,7 @@ mod tests {
                     "labels": {"visible": labels, "position": "middle", "field": null, "format": null, "dx": null, "dy": null, "font": null}
                 },
                 "axis_y": {"position": null},
-                "x": null, "y": "trend", "label": "Trend", "color": null, "query_name": "trend_query"
+                "x": null, "y": "trend", "label": "Trend", "color": null, "ink": "#779bc9", "query_name": "trend_query"
             }]);
             p["datasets"]["trend_query"] = serde_json::json!([
                 {"week": "2026-01-01", "trend": 110.0},
@@ -10250,7 +10735,7 @@ mod tests {
             ]);
             if labels {
                 p["board_style"] = serde_json::json!({
-                    "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "muted": null, "tones": null,
+                    "font": TEST_FONT, "text_mark_font": {"family": TEST_FONT, "size": 11.0}, "secondary_color": null, "tones": null,
                     "title_case": null, "continuous_height": null,
                     "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()
                 });
@@ -10375,6 +10860,8 @@ mod tests {
         let svg = render_layered(|p| {
             p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470"]);
             p["resolved"]["layers"][0]["color"] = serde_json::json!("region");
+            p["resolved"]["layers"][0]["ink"] = serde_json::Value::Null;
+            p["resolved"]["layers"][0]["series_inks"] = serde_json::json!({"East": "#779bc9", "West": "#608470"});
             p["datasets"] = serde_json::json!({"trend_query": [
                 {"week": "2026-01-01", "trend": 110.0, "region": "East"},
                 {"week": "2026-01-08", "trend": 140.0, "region": "East"},
@@ -10389,6 +10876,8 @@ mod tests {
     fn render_grouped_layer(edit: impl FnOnce(&mut serde_json::Value)) -> String {
         render_layered(|p| {
             p["resolved"]["layers"][0]["color"] = serde_json::json!("region");
+            p["resolved"]["layers"][0]["ink"] = serde_json::Value::Null;
+            p["resolved"]["layers"][0]["series_inks"] = serde_json::json!({"East": "#779bc9", "West": "#608470"});
             edit(&mut p["resolved"]["layers"][0]);
             p["datasets"] = serde_json::json!({"trend_query": [
                 {"week": "2026-01-01", "trend": 110.0, "region": "East"},
@@ -10418,16 +10907,18 @@ mod tests {
         assert_eq!(svg.matches("fill=\"#cc0000\"").count(), 4, "{svg}");
     }
 
-    /// An unauthored layer takes the first palette color the scale has not
-    /// taken (`_free_palette_color`), not the next positional slot: an authored
-    /// literal ahead of it claims no palette color.
+    /// A layer paints the ink resolve baked for it: an authored literal ahead
+    /// of it claims no palette color, so the layer after it holds slot 1.
     #[test]
-    fn an_unauthored_layer_after_an_authored_one_takes_the_first_free_palette_color() {
+    fn a_layer_after_an_authored_one_paints_its_baked_ink() {
         let svg = render_layered(|p| {
             p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470"]);
             let mut authored = line_layer_json(Some("trend_query"));
             authored["line_mark"]["stroke"]["color"] = serde_json::json!("#cc0000");
-            p["resolved"]["layers"] = serde_json::json!([authored, scatter_layer_json()]);
+            authored["ink"] = serde_json::json!("#cc0000");
+            let mut scatter = scatter_layer_json();
+            scatter["ink"] = serde_json::json!("#779bc9");
+            p["resolved"]["layers"] = serde_json::json!([authored, scatter]);
         })
         .expect("renders");
         assert!(svg.matches("fill=\"#779bc9\"").count() >= 2, "marker points and legend swatch: {svg}");
@@ -10471,7 +10962,7 @@ mod tests {
             "type": "scatter",
             "point_mark": {"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}},
             "axis_y": {"position": null},
-            "x": null, "y": "trend", "label": "Marker", "color": null, "query_name": "trend_query"
+            "x": null, "y": "trend", "label": "Marker", "color": null, "ink": "#608470", "query_name": "trend_query"
         })
     }
 
@@ -10483,7 +10974,10 @@ mod tests {
             p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470", "#775770"]);
             let mut second = line_layer_json(Some("trend_query"));
             second["label"] = serde_json::json!("Second");
-            p["resolved"]["layers"] = serde_json::json!([line_layer_json(Some("trend_query")), second, scatter_layer_json()]);
+            second["ink"] = serde_json::json!("#608470");
+            let mut scatter = scatter_layer_json();
+            scatter["ink"] = serde_json::json!("#775770");
+            p["resolved"]["layers"] = serde_json::json!([line_layer_json(Some("trend_query")), second, scatter]);
         })
         .expect("renders");
         for fill in ["#779bc9", "#608470", "#775770"] {
@@ -10532,6 +11026,8 @@ mod tests {
         plain["label"] = serde_json::json!("West");
         let mut grouped = line_layer_json(Some("trend_query"));
         grouped["color"] = serde_json::json!("region");
+        grouped["ink"] = serde_json::Value::Null;
+        grouped["series_inks"] = serde_json::json!({"East": "#608470", "West": "#779bc9"});
         render_layered(|p| {
             p["resolved"]["layers"] = serde_json::json!([plain, grouped]);
             p["datasets"] = serde_json::json!({"trend_query": [
@@ -10555,7 +11051,7 @@ mod tests {
             },
             "point_mark": {"size": null, "color": null, "filled": true, "fill": null, "stroke_width": 2.0, "labels": {"visible": false}},
             "axis_y": {"position": null},
-            "x": null, "y": "trend", "label": label, "color": null, "query_name": "trend_query"
+            "x": null, "y": "trend", "label": label, "color": null, "ink": "#779bc9", "query_name": "trend_query"
         })
     }
 
@@ -10571,20 +11067,6 @@ mod tests {
         assert!(widened.contains(">Mar<") && !own.contains(">Mar<"), "{widened}");
     }
 
-    /// `ERR_LAYERED_NO_PALETTE`: a grouped layer needs palette colors to claim.
-    #[test]
-    fn a_color_grouped_line_layer_over_an_empty_palette_is_rejected_by_code() {
-        let err = render_layered(|p| {
-            p["resolved"]["palette"] = serde_json::json!([]);
-            p["resolved"]["layers"][0]["color"] = serde_json::json!("region");
-            p["datasets"] = serde_json::json!({"trend_query": [
-                {"week": "2026-01-01", "trend": 110.0, "region": "East"},
-                {"week": "2026-01-08", "trend": 140.0, "region": "East"}
-            ]});
-        })
-        .unwrap_err();
-        assert!(err.contains("ERR-LAYERED-NO-PALETTE") || err.contains("no color palette"), "{err}");
-    }
 
     /// The palette errors belong to the layered path: a multi-series line
     /// without layers renders on an empty palette or past a short one.
@@ -10608,18 +11090,6 @@ mod tests {
         .expect("an unrelated board slot past the palette renders");
     }
 
-    #[test]
-    fn a_layer_over_a_color_split_base_with_an_empty_palette_is_rejected_by_code() {
-        let err = render_layered(|p| {
-            p["resolved"]["palette"] = serde_json::json!([]);
-            p["resolved"]["color"] = serde_json::json!("region");
-            for (i, row) in p["rows"].as_array_mut().unwrap().iter_mut().enumerate() {
-                row["region"] = serde_json::json!(if i % 2 == 0 { "East" } else { "West" });
-            }
-        })
-        .unwrap_err();
-        assert!(err.contains("ERR-LAYERED-NO-PALETTE") || err.contains("no color palette"), "{err}");
-    }
 
     /// A scatter layer over an area base keeps the circle legend glyph of the
     /// base's rows.
@@ -10638,6 +11108,8 @@ mod tests {
     fn an_area_layer_with_its_own_color_stacks_its_groups() {
         let mut layer = area_layer_json(0.16, "Area");
         layer["color"] = serde_json::json!("region");
+        layer["ink"] = serde_json::Value::Null;
+        layer["series_inks"] = serde_json::json!({"East": "#779bc9", "West": "#608470"});
         let svg = render_layered(|p| {
             p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470"]);
             p["resolved"]["layers"] = serde_json::json!([layer]);
@@ -10773,6 +11245,8 @@ mod tests {
             layer["line_mark"]["stroke"]["width"] = serde_json::json!(5.0);
             if grouped {
                 layer["color"] = serde_json::json!("region");
+                layer["ink"] = serde_json::Value::Null;
+                layer["series_inks"] = serde_json::json!({"East": "#779bc9", "West": "#608470"});
             }
             let svg = render_layered(|p| {
                 p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470"]);
@@ -10797,6 +11271,8 @@ mod tests {
     fn a_null_color_value_on_a_color_grouped_line_layer_is_a_series_with_no_stroke() {
         let svg = render_layered(|p| {
             p["resolved"]["layers"][0]["color"] = serde_json::json!("region");
+            p["resolved"]["layers"][0]["ink"] = serde_json::Value::Null;
+            p["resolved"]["layers"][0]["series_inks"] = serde_json::json!({"West": "#779bc9"});
             p["datasets"] = serde_json::json!({"trend_query": [
                 {"week": "2026-01-01", "trend": 110.0, "region": null},
                 {"week": "2026-01-08", "trend": 140.0, "region": "West"}
@@ -10828,7 +11304,11 @@ mod tests {
     fn a_line_layer_after_a_scatter_layer_takes_the_next_slot_and_paints_after_it() {
         let svg = render_layered(|p| {
             p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470", "#775770"]);
-            p["resolved"]["layers"] = serde_json::json!([scatter_layer_json(), line_layer_json(Some("trend_query"))]);
+            let mut scatter = scatter_layer_json();
+            scatter["ink"] = serde_json::json!("#779bc9");
+            let mut line = line_layer_json(Some("trend_query"));
+            line["ink"] = serde_json::json!("#608470");
+            p["resolved"]["layers"] = serde_json::json!([scatter, line]);
         })
         .expect("renders");
         let (marker, trend) = (svg.find(">Marker<").expect("marker legend"), svg.find(">Trend<").expect("trend legend"));
@@ -10851,6 +11331,8 @@ mod tests {
     fn a_scatter_layer_with_its_own_color_paints_each_point_in_its_values_color() {
         let mut layer = scatter_layer_json();
         layer["color"] = serde_json::json!("region");
+        layer["ink"] = serde_json::Value::Null;
+        layer["series_inks"] = serde_json::json!({"East": "#779bc9", "West": "#608470"});
         layer["point_mark"]["color"] = serde_json::json!("#cc0000");
         let svg = render_layered(|p| {
             p["resolved"]["palette"] = serde_json::json!(["#40639c", "#779bc9", "#608470"]);
@@ -16468,6 +16950,146 @@ mod tests {
         );
     }
 
+    /// Vega-Lite sorts a line's vertices along its temporal x, so query row
+    /// order never reaches the path.
+    #[test]
+    fn temporal_line_walks_vertices_in_time_order_not_row_order() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_line_payload(true, false);
+        json["rows"] = serde_json::json!([
+            {"week": "2026-03-01", "signups": 130.0},
+            {"week": "2026-01-01", "signups": 100.0},
+            {"week": "2026-02-01", "signups": 150.0},
+        ]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let xs = path_vertex_xs(&svg);
+        assert_eq!(xs.len(), 3, "{svg}");
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "vertices ascend in x: {xs:?}");
+    }
+
+    /// A linked line's path carries its first datum in time order.
+    #[test]
+    fn temporal_line_path_links_its_first_datum_in_time_order() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_line_payload(true, false);
+        json["resolved"]["link"] = serde_json::json!("/p/{{ y }}");
+        json["resolved"]["link_open"] = serde_json::json!("page");
+        json["rows"] = serde_json::json!([
+            {"week": "2026-03-01", "signups": 130.0},
+            {"week": "2026-01-01", "signups": 100.0},
+            {"week": "2026-02-01", "signups": 150.0},
+        ]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let path_at = svg.find("d=\"M").unwrap();
+        let href = svg[..path_at].rsplit("href=\"").next().unwrap().split('"').next().unwrap();
+        assert_eq!(href, "/p/100", "{svg}");
+    }
+
+    /// A stacked area's edges also walk its temporal x in time order.
+    #[test]
+    fn temporal_stacked_area_walks_vertices_in_time_order_not_row_order() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_stacked_area_payload("zero");
+        json["rows"] = serde_json::json!([
+            {"week": "2026-01-15", "series": "A", "signups": 120.0},
+            {"week": "2026-01-01", "series": "A", "signups": 100.0},
+            {"week": "2026-01-08", "series": "A", "signups": 150.0},
+            {"week": "2026-01-08", "series": "B", "signups": 60.0},
+            {"week": "2026-01-15", "series": "B", "signups": 50.0},
+            {"week": "2026-01-01", "series": "B", "signups": 40.0},
+        ]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render_inner(&payload, &test_fonts(), true).expect("renders");
+        let edges = stacked_area_edges(&svg);
+        assert_eq!(edges.len(), 2, "{svg}");
+        for (top, _) in &edges {
+            assert!(top.windows(2).all(|w| w[0].0 < w[1].0), "top edge ascends in x: {top:?}");
+        }
+    }
+
+    /// Every temporal x value is parsed once; one that is no date refuses by name.
+    #[test]
+    fn a_temporal_x_value_that_does_not_parse_is_refused_by_name() {
+        let p = plain_x_curve_payload(&["2024-01-01", "nope", "2024-03-01"], "linear", Some("temporal"));
+        let err = render(&serde_json::from_value(p).unwrap(), &test_fonts()).expect_err("an unparseable temporal x refuses");
+        let text = err.to_string();
+        assert!(text.contains("ERR-X-VALUE-NOT-A-DATE"), "{text}");
+        for param in ["chart_id=\"line\"", "x_field=\"week\"", "value=\"nope\""] {
+            assert!(text.contains(param), "{param}: {text}");
+        }
+    }
+
+    /// The last x is the latest instant, not the greatest text: `13:00+05:00` is 08:00Z.
+    #[test]
+    fn mixed_offset_timestamps_rank_last_x_by_instant() {
+        use serde_json::json;
+        let rows = json!([
+            {"week": "2022-01-01T12:00:00+00:00", "series": "B", "signups": 2.0},
+            {"week": "2022-01-01T13:00:00+05:00", "series": "A", "signups": 5.0},
+            {"week": "2022-01-01T13:00:00+05:00", "series": "B", "signups": 3.0},
+            {"week": "2022-01-01T12:00:00+00:00", "series": "A", "signups": 1.0},
+        ]);
+        let mut legend = make_multi_series_line_payload_with_bottom_legend();
+        legend["rows"] = rows.clone();
+        legend["resolved"]["style"]["axis_x"]["is_quantitative"] = json!(false);
+        let svg = render(&serde_json::from_value::<Payload>(legend).unwrap(), &test_fonts()).expect("renders");
+        let label_at = |svg: &str, name: &str| svg.rfind(&format!(">{name}<")).unwrap_or_else(|| panic!("{name} missing: {svg}"));
+        assert!(label_at(&svg, "B") < label_at(&svg, "A"), "legend lists the larger last value (B=2 at 12:00Z) first: {svg}");
+        let xs = path_vertex_xs(&svg);
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "path ascends: {xs:?}");
+
+        let mut strip = make_rail_strip_payload();
+        strip["rows"] = rows;
+        strip["resolved"]["style"]["axis_x"]["is_quantitative"] = json!(false);
+        strip["resolved"]["support_table"] = json!({"entries": [{"per_series": "signups", "format": ",d"}]});
+        let svg = render(&serde_json::from_value::<Payload>(strip).unwrap(), &test_fonts()).expect("renders");
+        assert!(label_at(&svg, "A") < label_at(&svg, "B"), "strip rows ascend by the value at 12:00Z (A=1, B=2): {svg}");
+    }
+
+    /// A layer's labeled bucket joins the base's by its date, not by where it was listed.
+    #[test]
+    fn a_layer_only_labeled_bucket_merges_by_date() {
+        let mut p = make_layered_line_payload();
+        p["resolved"]["layers"] = serde_json::json!([line_layer_json(Some("trend_query"))]);
+        p["rows"] = serde_json::json!([
+            {"week": "2024-Q1", "signups": 100.0},
+            {"week": "2024-Q2", "signups": 150.0},
+            {"week": "2024-Q3", "signups": 130.0},
+        ]);
+        p["datasets"] = serde_json::json!({
+            "trend_query": [
+                {"week": "2024-Q1", "trend": 110.0},
+                {"week": "2023-Q4", "trend": 90.0},
+                {"week": "2024-Q2", "trend": 140.0}
+            ]
+        });
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let paths: Vec<Vec<f64>> = svg
+            .match_indices("<path d=\"M")
+            .map(|(i, _)| &svg[i..])
+            .filter(|tag| {
+                let tag = tag.split("/>").next().unwrap();
+                tag.contains("fill=\"none\"") && !tag.contains("stroke=\"#ffffff\"")
+            })
+            .map(|tag| {
+                tag["<path d=\"M".len()..]
+                    .split('"')
+                    .next()
+                    .unwrap()
+                    .split(['M', 'L'])
+                    .map(|pair| pair.split(',').next().unwrap().parse().unwrap())
+                    .collect()
+            })
+            .collect();
+        assert_eq!(paths.len(), 2, "base and layer paths: {svg}");
+        for xs in &paths {
+            assert!(xs.windows(2).all(|w| w[0] < w[1]), "ascends: {paths:?}");
+        }
+        assert!(paths[1][0] < paths[0][0], "2023-Q4 sits left of the base's first bucket: {paths:?}");
+    }
+
     /// L9: on a weekly (`utcyearweek`) x axis the LINE'S OWN vertices always
     /// float to the Sunday week start — but whether the LABELS follow the
     /// raw (unfloored) date or the same floored position depends on the
@@ -17839,10 +18461,10 @@ mod tests {
         let left_margin = gx - 16.0; // fixture's own pad_l
 
         // The same measurement the render uses for the primary's own
-        // gutter: `measure_family_stand_in` maps every non-Source-Serif
+        // gutter: `measure::stand_in_family` maps every non-Source-Serif
         // family (including the tabular numeric one) onto "Inter" — the
         // stand-in `gutter_of` actually measures with, not the drawn font.
-        let mf = crate::common::measure_family_stand_in("'dbt Sans Tabular', Inter, system-ui, sans-serif");
+        let mf = measure::stand_in_family("'dbt Sans Tabular', Inter, system-ui, sans-serif");
         let widest = ["0", "10,000", "20,000", "30,000", "40,000"]
             .iter()
             .map(|s| fonts.measure(s, mf, 11.0).unwrap())
@@ -17909,7 +18531,7 @@ mod tests {
         let left_margin = gx - 16.0; // fixture's own pad_l
 
         let labels = ["0", "10,000", "20,000", "30,000", "40,000"];
-        let mf = crate::common::measure_family_stand_in(&y_family);
+        let mf = measure::stand_in_family(&y_family);
         let gutter = labels.iter().map(|s| fonts.measure(s, mf, 11.0).unwrap()).fold(0.0_f64, f64::max)
             + VALUE_AXIS_BREATHING_ROOM;
         let widest = labels.iter().map(|s| fonts.measure_shaped(s, &y_family, 11.0).unwrap()).fold(0.0_f64, f64::max);
@@ -18560,6 +19182,7 @@ mod tests {
         let mut json = make_line_payload(true, false);
         json["rows"] = rows;
         json["resolved"]["style"]["axis_x"]["ticks"]["count"] = serde_json::json!(count);
+        json["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(false);
         serde_json::from_value(json).unwrap()
     }
 
@@ -19655,16 +20278,15 @@ mod tests {
         }
     }
 
-    /// Strings no calendar parses under an authored `type: temporal`: production
-    /// resolves the x temporal (`type_inference.py:285-289`), Vega-Lite cannot place
-    /// them on a time scale, every mark is degenerate and the no-marks guard raises.
+    /// Strings no calendar parses under an authored `type: temporal` have no instant to place a
+    /// mark at: the chart refuses by name.
     #[test]
-    fn curve_step_on_an_authored_temporal_x_of_non_dates_raises_the_no_marks_error() {
+    fn curve_step_on_an_authored_temporal_x_of_non_dates_is_refused_by_name() {
         for areas in [false, true] {
             let p = plain_x_curve_payload(&["Feb", "Mar", "Jan"], "step", Some("temporal"));
             let err = render_inner(&serde_json::from_value(p).unwrap(), &test_fonts(), areas)
                 .expect_err("an authored-temporal x of non-dates under curve=step must raise");
-            assert!(err.to_string().contains("ERR-CHART-PAINTED-NO-MARKS"), "{err}");
+            assert!(err.to_string().contains("ERR-X-VALUE-NOT-A-DATE"), "{err}");
         }
     }
 
@@ -19709,7 +20331,7 @@ mod tests {
     /// x-axis labels at all: `resolve_temporal_labels` still read the raw
     /// `x_domain` (`"2019.0"`, not `parse_iso_date`-parseable), silently
     /// returning an empty label set. Fixed by threading `x_domain_for_
-    /// temporal` through it, the same seam `x_domain_floored`/`resolve_
+    /// temporal` through it, the same seam `x_time_ext`/`resolve_
     /// vega_x_labels` already use.
     #[test]
     fn fit_arm_temporal_labels_render_for_integral_float_years() {
@@ -19782,7 +20404,7 @@ mod tests {
         let fonts = test_fonts();
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
         let plot_w = rail_plot_w(&svg);
-        let mf = crate::common::measure_family_stand_in(TEST_FONT);
+        let mf = measure::stand_in_family(TEST_FONT);
         let drawn_widest = fonts.measure("300M", mf, 11.0).unwrap();
         let candidate_widest = fonts.measure("400M", mf, 11.0).unwrap();
         assert!(candidate_widest > drawn_widest, "fixture assumption: {candidate_widest} vs {drawn_widest}");
@@ -19816,7 +20438,7 @@ mod tests {
         let svg = render(&payload, &fonts).expect("renders");
         assert!(svg.contains(">8G<"), "the drawn ladder's own widest is 8G: {svg}");
         assert!(!svg.contains(">7.8G<"), "7.8G is never drawn, only measured: {svg}");
-        let mf = crate::common::measure_family_stand_in(TEST_FONT);
+        let mf = measure::stand_in_family(TEST_FONT);
         let drawn_widest = fonts.measure("8G", mf, 11.0).unwrap();
         let cover_widest = fonts.measure("7.8G", mf, 11.0).unwrap();
         assert!(cover_widest > drawn_widest, "fixture assumption: {cover_widest} vs {drawn_widest}");
@@ -19856,7 +20478,7 @@ mod tests {
         // drive, a SEPARATE code path (`estimated_gutter_of`).
         assert!(svg.contains(">1.6M<"), "{svg}");
         assert!(!svg.contains(">1600000<"), "{svg}");
-        let mf = crate::common::measure_family_stand_in(TEST_FONT);
+        let mf = measure::stand_in_family(TEST_FONT);
         let plain_widest = fonts.measure("1600000", mf, 11.0).unwrap();
         let si_widest = fonts.measure("1.6M", mf, 11.0).unwrap();
         assert!(si_widest < plain_widest, "fixture assumption: {si_widest} vs {plain_widest}");
@@ -20800,6 +21422,8 @@ mod tests {
             let fonts = test_fonts();
             let r = LineResolved::from_payload(&payload).unwrap();
             let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: true,
@@ -20860,6 +21484,8 @@ mod tests {
             let fonts = test_fonts();
             let r = LineResolved::from_payload(&payload).unwrap();
             let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: true,
@@ -20904,6 +21530,8 @@ mod tests {
             ]))
             .unwrap();
             let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: true,
@@ -20939,6 +21567,8 @@ mod tests {
             let r_untitled = LineResolved::from_payload(&untitled).unwrap();
             let r_titled = LineResolved::from_payload(&titled).unwrap();
             let opts_untitled = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: true,
@@ -20990,6 +21620,8 @@ mod tests {
             let r_small = LineResolved::from_payload(&small).unwrap();
             let r_huge = LineResolved::from_payload(&huge).unwrap();
             let opts_small = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: true,
@@ -21026,6 +21658,8 @@ mod tests {
             assert!(svg_single.contains(">Month<"), "single-chart draws the x title: {svg_single}");
             assert!(svg_single.contains(">Signups<"), "single-chart draws the y title: {svg_single}");
             let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: false,
                 fold_axis_gutter: true,
@@ -21295,6 +21929,8 @@ mod tests {
             let fonts = test_fonts();
             let r = LineResolved::from_payload(&payload).unwrap();
             let opts = FacetPanelOpts {
+                panel_key: "",
+                panel_ordinal: 0,
                 suppress_x_axis: true,
                 paint_value_axis: true,
                 fold_axis_gutter: true,
@@ -21505,6 +22141,9 @@ mod tests {
             let mut layer = super::line_layer_json(None);
             layer["y"] = json!("signups");
             layer["color"] = json!("month");
+            layer["ink"] = json!(null);
+            let months: std::collections::BTreeSet<&str> = p["rows"].as_array().unwrap().iter().filter_map(|r| r["month"].as_str()).collect();
+            layer["series_inks"] = months.iter().map(|m| (m.to_string(), json!("#779bc9"))).collect::<serde_json::Map<_, _>>().into();
             p["resolved"]["layers"] = json!([layer]);
             render_facet_payload(p).expect("renders");
         }
@@ -21825,7 +22464,7 @@ mod tests {
             )
             .expect("renders");
             let tag = tear(&svg).unwrap_or_else(|| panic!("no tear: {svg}"));
-            assert!(tag.contains("stroke=\"#D0D3D9\""), "drawn in the y-grid ink: {tag}");
+            assert!(tag.contains("stroke=\"#D0D3D9\""), "the tear is stroked: {tag}");
             assert!(gridline_ys(&svg).is_empty(), "{svg}");
         }
 
@@ -21928,6 +22567,289 @@ mod tests {
             assert!(cross.abs() > 0.5, "a sine quarter bows off its chord");
         }
 
+        fn torn_grid_payload(mutate: impl FnOnce(&mut serde_json::Value)) -> Payload {
+            torn_payload(|j| {
+                j["resolved"]["style"]["axis_x"]["grid"]["visible"] = json!(true);
+                mutate(j);
+            })
+        }
+
+        fn tear_key(j: &mut serde_json::Value, key: &str, value: f64) {
+            j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"][key] = json!(value);
+        }
+
+        /// x of every vertical gridline in the plot group.
+        fn x_gridline_xs(svg: &str) -> Vec<f64> {
+            plot_lines(svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).map(|l| l.0).collect()
+        }
+
+        /// The x of every point where the tear rests on its edge.
+        fn tear_trough_xs(tag: &str) -> Vec<f64> {
+            let n = path_numbers(tag);
+            let edge = n[1];
+            std::iter::once((n[0], n[1]))
+                .chain(n[2..].chunks(6).map(|s| (s[4], s[5])))
+                .filter(|p| (p.1 - edge).abs() < 1e-6)
+                .map(|p| p.0)
+                .collect()
+        }
+
+        #[test]
+        fn troughs_land_on_the_x_gridlines() {
+            let svg = render(&torn_grid_payload(|j| tear_key(j, "wavelength", 30.0)), &test_fonts()).expect("renders");
+            let xs = x_gridline_xs(&svg);
+            let troughs = tear_trough_xs(&tear(&svg).unwrap());
+            assert!(xs.len() >= 2, "{svg}");
+            for x in xs {
+                assert!(troughs.iter().any(|t| (t - x).abs() < 0.01), "no trough on gridline {x}: {troughs:?}");
+            }
+        }
+
+        /// A tear drawn at `wavelength` over `rows` daily points.
+        fn rhythm_svg(rows: usize, wavelength: f64) -> String {
+            render(
+                &torn_grid_payload(|j| {
+                    tear_key(j, "wavelength", wavelength);
+                    let daily: Vec<_> = (0..rows)
+                        .map(|i| json!({"week": format!("2026-01-{:02}", 1 + i), "signups": 100.0 + 5.0 * i as f64}))
+                        .collect();
+                    j["rows"] = json!(daily);
+                }),
+                &test_fonts(),
+            )
+            .expect("renders")
+        }
+
+        /// Gridline xs, trough xs and the tear tag of `rhythm_svg`.
+        fn rhythm(rows: usize, wavelength: f64) -> (Vec<f64>, Vec<f64>, String) {
+            let svg = rhythm_svg(rows, wavelength);
+            let tag = tear(&svg).unwrap();
+            (x_gridline_xs(&svg), tear_trough_xs(&tag), tag)
+        }
+
+        /// The period, in px, of `gap` times a span or 1/subdivision that lands
+        /// closest to `wavelength` in log space.
+        fn nearest_period(gap: f64, wavelength: f64) -> f64 {
+            let mut options: Vec<f64> = (1..=64).flat_map(|n| [gap / n as f64, gap * n as f64]).collect();
+            options.sort_by(|a, b| (a / wavelength).ln().abs().total_cmp(&(b / wavelength).ln().abs()));
+            options[0]
+        }
+
+        #[test]
+        fn one_period_per_column_when_the_wavelength_matches_the_gap() {
+            let (xs, troughs, _) = rhythm(3, 267.0);
+            let gap = xs[1] - xs[0];
+            assert!(troughs.iter().filter(|&&t| t >= xs[0] - 0.01 && t <= xs[1] + 0.01).count() == 2, "{troughs:?} {xs:?} {gap}");
+        }
+
+        #[test]
+        fn a_column_is_subdivided_when_that_lands_nearer_the_wavelength() {
+            // gap/wavelength ≈ 1.45: two teeth per column (0.73×) beat one (1.45×) in log space.
+            let (xs, troughs, _) = rhythm(3, 184.0);
+            let inside = troughs.iter().filter(|&&t| t >= xs[0] - 0.01 && t <= xs[1] + 0.01).count();
+            assert_eq!(inside, 3, "{troughs:?} vs {xs:?}");
+        }
+
+        #[test]
+        fn narrow_columns_span_several_gridlines_instead_of_cramming_teeth() {
+            let wavelength = 240.0;
+            let (xs, troughs, tag) = rhythm(10, wavelength);
+            let gap = (xs[xs.len() - 1] - xs[0]) / (xs.len() - 1) as f64;
+            let period = nearest_period(gap, wavelength);
+            assert!(gap < wavelength / 2.0, "the column must be narrow for this to mean anything: {gap}");
+            assert!((troughs[1] - troughs[0] - period).abs() < 1.0, "period {period} from gap {gap}: {troughs:?}");
+            assert!((period / wavelength).ln().abs() < 2f64.sqrt().ln() + 1e-9, "{period} vs {wavelength}");
+            let x2 = tear_vertices(&tag).last().unwrap().0;
+            for t in &troughs {
+                assert!(xs.iter().any(|x| (x - t).abs() < 0.01) || (t - x2).abs() < 0.01, "trough {t} off the grid: {xs:?}");
+            }
+            let edge = tear_edge(&tag);
+            assert_eq!(*tear_ys(&tag).last().unwrap(), edge, "the leftover span still rests on the edge: {tag}");
+        }
+
+        /// Every `(x, y)` the tear passes through at a cubic boundary.
+        fn tear_vertices(tag: &str) -> Vec<(f64, f64)> {
+            let n = path_numbers(tag);
+            std::iter::once((n[0], n[1])).chain(n[2..].chunks(6).map(|s| (s[4], s[5]))).collect()
+        }
+
+        fn assert_gridlines_end_on_the_tear(svg: &str) {
+            let tag = tear(svg).unwrap();
+            let vertices = tear_vertices(&tag);
+            let verticals: Vec<_> = plot_lines(svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
+            assert!(!verticals.is_empty(), "{svg}");
+            for l in verticals {
+                let v = vertices.iter().find(|v| (v.0 - l.0).abs() < 0.01).unwrap_or_else(|| panic!("no tear vertex at {l:?}"));
+                assert!((l.3 - v.1).abs() < 0.01, "gridline {l:?} should end on the tear at y {}", v.1);
+            }
+        }
+
+        #[test]
+        fn a_gridline_mid_tooth_ends_on_the_wave_where_it_crosses_it() {
+            // 10 daily points at wavelength 240 span 4 columns: the tear's stops
+            // are every 4th gridline, and the trailing stretch is uneven, so most
+            // gridlines fall inside a tooth rather than on a trough.
+            let svg = rhythm_svg(10, 240.0);
+            let tag = tear(&svg).unwrap();
+            let n = path_numbers(&tag);
+            let edge = tear_edge(&tag);
+            let vertices = tear_vertices(&tag);
+            let cubics: Vec<[(f64, f64); 4]> = n[2..]
+                .chunks(6)
+                .scan((n[0], n[1]), |from, c| {
+                    let cubic = [*from, (c[0], c[1]), (c[2], c[3]), (c[4], c[5])];
+                    *from = (c[4], c[5]);
+                    Some(cubic)
+                })
+                .collect();
+            // The wave's y at `x`, by dense sampling of the cubic that spans it.
+            let wave_y = |x: f64| {
+                let c = cubics.iter().find(|c| c[0].0 <= x && x <= c[3].0).unwrap();
+                (0..=100_000)
+                    .map(|i| {
+                        let (t, u) = (i as f64 / 100_000.0, 1.0 - i as f64 / 100_000.0);
+                        let at = |f: fn(&(f64, f64)) -> f64| {
+                            u * u * u * f(&c[0]) + 3.0 * u * u * t * f(&c[1]) + 3.0 * u * t * t * f(&c[2]) + t * t * t * f(&c[3])
+                        };
+                        (at(|p| p.0), at(|p| p.1))
+                    })
+                    .min_by(|a, b| (a.0 - x).abs().total_cmp(&(b.0 - x).abs()))
+                    .unwrap()
+                    .1
+            };
+            let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
+            let mid_tooth: Vec<_> = verticals.iter().filter(|l| !vertices.iter().any(|v| (v.0 - l.0).abs() < 0.01)).collect();
+            assert!(mid_tooth.len() >= 3, "stops every 4th gridline leave several gridlines off a trough: {verticals:?}");
+            let flank = mid_tooth.iter().filter(|l| l.3 > edge - 4.0 + 0.1).count();
+            assert!(flank >= 2, "gridlines on a flank stop short of the crest: {mid_tooth:?}");
+            for l in mid_tooth {
+                assert!(l.3 >= edge - 4.0 - 0.01 && l.3 < edge, "{l:?} must lie on the tooth, edge {edge}");
+                assert!((l.3 - wave_y(l.0)).abs() < 0.02, "{l:?} should end at the wave's y {}", wave_y(l.0));
+            }
+        }
+
+        /// The x of every cubic start that rests on `edge`.
+        fn trough_xs(cubics: &[crate::torn::Cubic], edge: f64) -> Vec<f64> {
+            cubics.iter().filter(|c| (c[0].1 - edge).abs() < 1e-9).map(|c| c[0].0).chain(cubics.last().map(|c| c[3].0)).collect()
+        }
+
+        #[test]
+        fn no_tooth_is_squeezed_beside_a_plot_end_whatever_the_fractional_width() {
+            // Regular 100 px columns at wavelength 100: a tick `lead` px from an
+            // end leaves a stretch that is a fraction of a period, so it either
+            // carries a tooth of at least period/√2 or no stop at all.
+            let tear = crate::common::TornBaseline { visible: true, amplitude: 4.0, wavelength: 100.0, sharpness: 1.0 };
+            for lead in [5.0, 30.0, 51.0, 56.0, 60.0, 69.0, 71.0, 120.0] {
+                let ticks = [lead, lead + 100.0, lead + 200.0];
+                let x2 = ticks[2] + lead;
+                let widths: Vec<f64> = trough_xs(&crate::torn::torn_cubics(0.0, x2, 0.0, -1.0, &ticks, &tear), 0.0)
+                    .windows(2)
+                    .map(|w| w[1] - w[0])
+                    .collect();
+                assert!(widths.iter().all(|&w| w > 70.0), "lead {lead}: {widths:?}");
+            }
+        }
+
+        #[test]
+        fn band_step_edges_do_not_squeeze_a_whole_tooth_into_half_a_column() {
+            // Band-step ticks sit half a step inside the plot, so the first and
+            // last stretches are half an interior period wide.
+            let mut j = make_band_step_line_payload(None);
+            j["resolved"]["style"]["axis_x"]["grid"] =
+                json!({"visible": true, "threshold": null, "width": 1.0, "color": "#EDEFF2", "opacity": 1.0});
+            j["resolved"]["style"]["axis_y"]["grid"] = json!({
+                "visible": true, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0,
+                "torn_baseline": {"visible": true, "amplitude": 4.0, "wavelength": 170.0, "sharpness": 1.0}
+            });
+            j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [50.0, 200.0]}});
+            let svg = render(&serde_json::from_value(j).unwrap(), &test_fonts()).expect("renders");
+            let troughs = tear_trough_xs(&tear(&svg).unwrap());
+            let widths: Vec<f64> = troughs.windows(2).map(|w| w[1] - w[0]).collect();
+            // A tooth never drops below period/√2: ~126 px of this fixture's ~179 px column.
+            assert!(widths.iter().all(|&w| w > 125.0), "no squeezed tooth: {troughs:?}");
+        }
+
+        #[test]
+        fn x_gridlines_end_on_the_tear_at_their_own_x() {
+            let svg = render(&torn_grid_payload(|j| tear_key(j, "wavelength", 30.0)), &test_fonts()).expect("renders");
+            assert_gridlines_end_on_the_tear(&svg);
+        }
+
+        #[test]
+        fn x_gridlines_end_on_a_top_edge_tear() {
+            let svg = render(
+                &torn_grid_payload(|j| {
+                    j["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [200.0, 50.0]}});
+                }),
+                &test_fonts(),
+            )
+            .expect("renders");
+            let tag = tear(&svg).unwrap();
+            let vertices = tear_vertices(&tag);
+            let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
+            assert!(!verticals.is_empty(), "{svg}");
+            for l in verticals {
+                let v = vertices.iter().find(|v| (v.0 - l.0).abs() < 0.01).unwrap();
+                assert!((l.1 - v.1).abs() < 0.01, "gridline {l:?} should start on the tear at y {}", v.1);
+            }
+        }
+
+        #[test]
+        fn x_gridlines_run_to_the_edge_without_a_tear() {
+            let svg = render(
+                &torn_grid_payload(|j| j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["visible"] = json!(false)),
+                &test_fonts(),
+            )
+            .expect("renders");
+            let bottom = gridline_ys(&svg).into_iter().fold(f64::MIN, f64::max);
+            let verticals: Vec<_> = plot_lines(&svg).into_iter().filter(|l| l.0 == l.2 && l.3 - l.1 > 100.0).collect();
+            assert!(!verticals.is_empty(), "{svg}");
+            for l in verticals {
+                assert_eq!(l.3, bottom, "{l:?}");
+            }
+        }
+
+        fn x_grid(j: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+            j["resolved"]["style"]["axis_x"]["grid"][key] = value;
+        }
+
+        #[test]
+        fn the_tear_strokes_with_the_x_grid_ink() {
+            for visible in [true, false] {
+                let svg = render(
+                    &torn_payload(|j| {
+                        x_grid(j, "color", json!("#112233"));
+                        x_grid(j, "width", json!(2.5));
+                        x_grid(j, "visible", json!(visible));
+                    }),
+                    &test_fonts(),
+                )
+                .expect("renders");
+                let tag = tear(&svg).unwrap();
+                assert!(tag.contains("stroke=\"#112233\"") && tag.contains("stroke-width=\"2.5\""), "visible={visible}: {tag}");
+            }
+        }
+
+        #[test]
+        fn drawn_x_gridlines_with_no_resolved_ink_are_refused() {
+            let err = render(
+                &torn_payload(|j| {
+                    x_grid(j, "visible", json!(true));
+                    x_grid(j, "color", json!(null));
+                    j["resolved"]["style"]["axis_y"]["grid"]["torn_baseline"]["visible"] = json!(false);
+                }),
+                &test_fonts(),
+            )
+            .expect_err("no ink");
+            assert!(err.contains("axis_x.grid"), "{err}");
+        }
+
+        #[test]
+        fn a_tear_with_no_resolved_x_grid_ink_is_refused() {
+            let err = render(&torn_payload(|j| x_grid(j, "color", json!(null))), &test_fonts()).expect_err("no ink");
+            assert!(err.contains("axis_x.grid.color"), "{err}");
+        }
+
         #[test]
         fn an_area_chart_ignores_it() {
             let _en = crate::time_locale::en_us_scope();
@@ -21988,7 +22910,7 @@ mod tests {
         let bare = plot_w(json!({"spec": ",.0f", "raw": "integer"}));
         let affixed = plot_w(json!({"spec": ",.0f", "prefix": "US$", "raw": "integer"}));
         let fonts = test_fonts();
-        let family = crate::common::measure_family_stand_in(TEST_FONT);
+        let family = measure::stand_in_family(TEST_FONT);
         let widened = fonts.measure("US$200", family, 11.0).unwrap() - fonts.measure("200", family, 11.0).unwrap();
         assert!(((bare - affixed) - widened).abs() <= 1.0, "plot narrowed {} not {widened}", bare - affixed);
     }
@@ -22027,5 +22949,18 @@ mod tests {
         let labels = crate::common::FieldLabels::default();
         assert_eq!(crate::families::line::description_color_title("area", "my_seg", &legend, &labels).unwrap(), "my_seg");
         assert_eq!(crate::families::line::description_color_title("line", "my_seg", &legend, &labels).unwrap(), "My Seg");
+    }
+
+    #[test]
+    fn a_quantitative_x_ticks_at_round_steps_where_the_line_passes_them() {
+        let widened: Vec<String> = (0..=40).map(|i| i.to_string()).collect();
+        let ticks = super::quantitative_x_ticks(&widened, 6).unwrap();
+        let texts: Vec<&str> = ticks.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, ["0", "5", "10", "15", "20", "25", "30", "35", "40"]);
+        assert!((ticks[1].1 - 5.0 / 40.0).abs() < 1e-9);
+        let uneven: Vec<String> = ["0", "1", "10"].map(String::from).to_vec();
+        let ticks = super::quantitative_x_ticks(&uneven, 2).unwrap();
+        assert_eq!(ticks.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(), ["0", "5", "10"]);
+        assert!((ticks[1].1 - (1.0 + 4.0 / 9.0) / 2.0).abs() < 1e-9, "5 sits between the points 1 and 10");
     }
 }

@@ -27,31 +27,35 @@
 //! static `background`/`font.color`, a timestamp in a date lane under an
 //! authored `format:`, and a strftime directive that depends on the host locale or time zone.
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
-
-use d3rs::py_float::{float_repr, py_float_sum};
-use mdsvg::pygments_re::{is_py_space, is_py_word};
-use serde::Deserialize;
-use serde_json::{json, Value};
-
+use crate::BoardStyle;
+use crate::Padding;
+use crate::Payload;
+use crate::TitleShift;
+use crate::TonesStyle;
 use crate::codes;
-use crate::common::{
-    ScaleTarget,
-    card_box, css_color, format_kpi_parts, format_numeric_auto, py_rstrip, tag_at, CellRow,
-    CellTag, Divider, Font, FormatParts, FormatSlot, PartsOptions, ScaledColumn, SUFFIX_GAP,
-    TAB_FONT, TAB_STYLE,
-};
-use crate::diagnostic::{py_repr, py_str, warn, Diagnostic};
-use crate::svg::num_full;
+use crate::common::CellRow;
+use crate::common::Divider;
+use crate::common::Font;
+use crate::common::FormatSlot;
+use crate::common::ScaleTarget;
+use crate::diagnostic::Diagnostic;
+use crate::diagnostic::warn;
+use crate::layout::Rect;
 use measure::FontBook;
-use crate::xml::{Attrs, Xml};
-use crate::{Payload, TitleShift, TonesStyle};
-use super::table_dates;
+use measure::Measure;
+use print::print;
+use serde::Deserialize;
+use serde_json::Value;
+use serde_json::json;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
+pub mod bind;
+pub mod layout;
 mod text_format;
 pub mod width;
+
 #[cfg(test)]
 mod coded_error_tests;
 
@@ -461,11 +465,20 @@ struct RowNumbersTheme {
     /// `right` or `left`: where the index and its header sit in the column.
     #[serde(default = "default_row_numbers_align")]
     align: String,
+    /// The index text's font; read only while `visible`, which refuses its
+    /// color's absence by name.
+    #[serde(default)]
+    font: Option<Font>,
 }
 
 impl Default for RowNumbersTheme {
     fn default() -> Self {
-        Self { visible: false, header: default_row_numbers_header(), align: default_row_numbers_align() }
+        Self {
+            visible: false,
+            header: default_row_numbers_header(),
+            align: default_row_numbers_align(),
+            font: None,
+        }
     }
 }
 
@@ -475,24 +488,6 @@ fn default_row_numbers_header() -> String {
 
 fn default_row_numbers_align() -> String {
     "right".to_string()
-}
-
-/// Sized from the total row count's digits, never
-/// the page's, so the column is the same width on every page.
-fn row_number_column_width(
-    rn: &RowNumbersTheme,
-    total_rows: usize,
-    fonts: &FontBook,
-    body_family: &str,
-    header_family: &str,
-    font_size: f64,
-    cell_padding: f64,
-) -> Result<f64, String> {
-    let digits = total_rows.max(1).to_string().len().max(rn.header.chars().count());
-    let text_w = fonts
-        .measure(&"9".repeat(digits), body_family, font_size)?
-        .max(fonts.measure(&rn.header, header_family, font_size)?);
-    Ok(text_w + cell_padding.trunc() * 2.0)
 }
 
 /// `TableDividerStyle`: a divider that also chooses how far
@@ -738,31 +733,6 @@ impl Drop for BoardFormats {
     }
 }
 
-/// What the board redefined `name` to (`style.formats`), if it did.
-fn board_alias_format(name: &str) -> Result<Option<FormatSlot>, String> {
-    BOARD_FORMATS.with(|slot| {
-        slot.borrow()
-            .0
-            .get(name)
-            .map(|alias| {
-                Deserialize::deserialize(alias)
-                    .map_err(|e| format!("table: board format {name:?}: {e}"))
-            })
-            .transpose()
-    })
-}
-
-/// The board's plain-digit sibling of each adaptive member
-/// (`board_style.sub_unit_specs`); `None` outside a payload scope.
-fn board_sub_unit_specs() -> Option<BTreeMap<String, String>> {
-    BOARD_FORMATS.with(|slot| slot.borrow().1.clone())
-}
-
-/// The spec the board redefined `name` to.
-fn board_alias(name: &str) -> Result<Option<String>, String> {
-    Ok(board_alias_format(name)?.map(|format| format.spec))
-}
-
 /// `TableColumnConfig.format` (`FormatAlias | str | FormatConfig`) as the
 /// resolved `ResolvedFormat` slot: a bare string or an object, read by the one
 /// `FormatSlot` parser. The table paints `spec`, `prefix`, `suffix` and
@@ -794,18 +764,6 @@ where
         ));
     }
     Ok(Some(slot))
-}
-
-/// A column's symbol mode: its format's `repeat`, else the table's
-/// (`column_symbol_mode`, `compile/format.py:488`). The one read of a column
-/// `repeat`, shared by the prefix/unit lane and the shared-scale magnitude
-/// word gate.
-fn column_symbol_mode<'a>(format: Option<&FormatSlot>, table_mode: &'a str) -> &'a str {
-    match format.and_then(|f| f.repeat.as_deref()) {
-        None => table_mode,
-        Some("anchor") => "anchors",
-        Some(_) => "all",
-    }
 }
 
 // ── Conditional formatting: chart-level when-rules + per-column scale ─────────
@@ -922,682 +880,10 @@ pub(crate) const VALID_FONT_WEIGHTS: &[&str] = &[
     "normal", "bold", "100", "200", "300", "400", "500", "600", "700", "800", "900",
 ];
 
-/// `font_weight_as_css` (theme/board.py): a whole-number JSON float prints
-/// as its bare integer string ("700"), a fractional one prints via Rust's
-/// own `Display` (matching Python's `str(w)`), a JSON string passes
-/// through unchanged.
-pub(crate) fn font_weight_as_css(w: &Value) -> String {
-    match w {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => {
-            let f = n.as_f64().unwrap_or(0.0);
-            if f.fract() == 0.0 {
-                format!("{}", f as i64)
-            } else {
-                float_repr(f)
-            }
-        }
-        _ => String::new(),
-    }
-}
-
-/// Merge one matched (or default) rule's style keys
-/// into `result`, last-match-wins per key. A rule that sets `glyph` clears
-/// any `glyph_color` an earlier rule left behind — a later rule swapping
-/// the glyph without naming its own color must not inherit the previous
-/// rule's ink. `tone` only ever supplies `glyph_color`, and only when the
-/// rule didn't set `glyph_color` itself, resolved when `tones` is present;
-/// `tones` absent is a by-design SKIP here (
-/// comment: "a reachable, by-design skip"), never an error — a caller that
-/// actually needs the resolved color reads
-/// `RuleOverrides::tone_needs_board_tones` and refuses itself
-/// (`resolve_cell_style`).
-fn apply_rule_outputs(
-    rule: &WhenRule,
-    result: &mut RuleOverrides,
-    tones: Option<&TonesStyle>,
-) -> Result<(), String> {
-    if let Some(bg) = &rule.background {
-        result.background = Some(bg.clone());
-    }
-    if let Some(font) = &rule.font {
-        if let Some(c) = &font.color {
-            result.color = Some(c.clone());
-        }
-        if let Some(w) = &font.weight {
-            result.weight = Some(font_weight_as_css(w));
-        }
-        if let Some(s) = &font.style {
-            result.style = Some(s.clone());
-        }
-        if let Some(d) = &font.decoration {
-            result.decoration = Some(d.clone());
-        }
-    }
-    if let Some(g) = &rule.glyph {
-        result.glyph = Some(g.clone());
-        result.glyph_color = None;
-    }
-    if let Some(gc) = &rule.glyph_color {
-        result.glyph_color = Some(gc.clone());
-    } else if let Some(tone) = &rule.tone {
-        match tones {
-            Some(tones) => {
-                let hex = tones
-                    .resolve(tone)
-                    .ok_or_else(|| format!("conditional rule tone '{tone}' not recognized"))?;
-                result.glyph_color = Some(hex.to_string());
-            }
-            None => result.tone_needs_board_tones = true,
-        }
-    }
-    Ok(())
-}
-
-/// Whether `a` and `b` compare equal — a scalar-only port of Python's `==`:
-/// numbers compare by value (`1 == 1.0`), everything else must match type
-/// AND value. `value` is `None` for both a missing key and an explicit JSON
-/// `null` (production's `row.get(col)`), so a `None` operand is treated as
-/// `Value::Null`.
-fn json_loose_eq(value: Option<&Value>, want: &Value) -> bool {
-    let value = value.unwrap_or(&Value::Null);
-    match (value, want) {
-        (Value::Null, Value::Null) => true,
-        (Value::Bool(a), Value::Bool(b)) => a == b,
-        (Value::Number(a), Value::Number(b)) => a.as_f64() == b.as_f64(),
-        (Value::String(a), Value::String(b)) => a == b,
-        (Value::Array(a), Value::Array(b)) => a == b,
-        (Value::Object(a), Value::Object(b)) => a == b,
-        _ => false,
-    }
-}
-
-fn is_bool_value(v: Option<&Value>) -> bool {
-    matches!(v, Some(Value::Bool(_)))
-}
-
-/// `match_predicate` — the single active predicate on `rule` against
-/// `value`. Errors only on a rule with no predicate op set (unreachable on
-/// a Pydantic-validated payload; `_validate_exactly_one_predicate` requires
-/// exactly one) and an `in` list holding a non-scalar candidate (JS/Python
-/// equality on nested arrays/objects is not modeled here).
-fn match_predicate(rule: &WhenRule, value: Option<&Value>) -> Result<bool, String> {
-    if rule.default == Some(true) {
-        return Ok(true);
-    }
-    if let Some(want_null) = rule.is_null {
-        return Ok(value.is_none() == want_null);
-    }
-    if let Some(eq) = &rule.eq {
-        if is_bool_value(value) != matches!(eq, Value::Bool(_)) {
-            return Ok(false);
-        }
-        return Ok(json_loose_eq(value, eq));
-    }
-    if let Some(ne) = &rule.ne {
-        if is_bool_value(value) != matches!(ne, Value::Bool(_)) {
-            return Ok(true);
-        }
-        return Ok(!json_loose_eq(value, ne));
-    }
-    if let Some(candidates) = &rule.in_ {
-        for c in candidates {
-            if !matches!(c, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) {
-                return Err(
-                    "conditional rule 'in' with a non-scalar candidate not supported"
-                        .into(),
-                );
-            }
-        }
-        return Ok(candidates.iter().any(|c| {
-            is_bool_value(value) == matches!(c, Value::Bool(_)) && json_loose_eq(value, c)
-        }));
-    }
-    let Some(v) = coerce_numeric_cell(value) else { return Ok(false) };
-    if let Some(lt) = rule.lt {
-        return Ok(v < lt);
-    }
-    if let Some(lte) = rule.lte {
-        return Ok(v <= lte);
-    }
-    if let Some(gt) = rule.gt {
-        return Ok(v > gt);
-    }
-    if let Some(gte) = rule.gte {
-        return Ok(v >= gte);
-    }
-    if let Some((lo, hi)) = rule.between {
-        return Ok(lo <= v && v <= hi);
-    }
-    Err("conditional rule has no active predicate".into())
-}
-
-/// `resolve_conditional_styles`: every non-default rule that matches
-/// contributes (last-match-wins per key); a trailing `default: true` rule
-/// fires only when nothing else matched. Empty `rules` short-circuits to
-/// "no overrides", same as production's `if not when_rules: return {}`.
-pub(crate) fn resolve_conditional_styles(
-    rules: &[WhenRule],
-    value: Option<&Value>,
-    tones: Option<&TonesStyle>,
-) -> Result<RuleOverrides, String> {
-    let mut result = RuleOverrides::default();
-    let mut matched_any = false;
-    let mut default_rule: Option<&WhenRule> = None;
-    for rule in rules {
-        if rule.default == Some(true) {
-            default_rule = Some(rule);
-            continue;
-        }
-        if match_predicate(rule, value)? {
-            matched_any = true;
-            apply_rule_outputs(rule, &mut result, tones)?;
-        }
-    }
-    if !matched_any {
-        if let Some(rule) = default_rule {
-            apply_rule_outputs(rule, &mut result, tones)?;
-        }
-    }
-    Ok(result)
-}
-
-/// `resolve_cell_glyph_from_overrides`: a matched rule's `glyph` wins
-/// (with its own `glyph_color`, possibly `None`); otherwise the column's
-/// static `glyph`/`glyph_color`. `tones` is `None` here — glyph-only
-/// callers (the two measurement sites) never need a tone-resolved color,
-/// only the glyph string itself.
-fn resolve_cell_glyph(
-    cfg: &ColConfig,
-    when_rules: &[WhenRule],
-    value: Option<&Value>,
-) -> Result<Option<String>, String> {
-    let overrides =
-        resolve_conditional_styles(when_rules, value, None).map_err(|e| format!("table: {e}"))?;
-    if overrides.glyph.is_some() {
-        return Ok(overrides.glyph);
-    }
-    Ok(cfg.glyph.clone())
-}
-
-/// `glyph_run`: the run painted ahead of a text cell's value — the glyph
-/// plus its separating space, or empty. The one spelling every measurement
-/// site (wrap layout) and the text-cell paint site share.
-fn glyph_run(glyph: Option<&str>) -> String {
-    glyph.map_or_else(String::new, |g| format!("{g} "))
-}
-
-/// Cheap gate ahead of the
-/// per-cell `resolve_cell_glyph` call, which otherwise evaluates every
-/// `when` rule against every sampled value at each of this file's five
-/// glyph-aware measurement sites.
-fn glyph_possible(col: &ColMeta) -> bool {
-    !col.when_rules.is_empty() || col.cfg.glyph.is_some()
-}
-
-/// Compose a cell's glyph run in front of `rendered` and measure the whole
-/// string — one of the two shapes every glyph-aware measurement site in
-/// this file shares ("every width measurement composes this in front of the
-/// cell text"); the
-/// other, additive shape (`glyph width + widest token width`, summed
-/// separately rather than concatenated) belongs to
-/// `measure_column_word_floors`'s own per-cell computation, which composes
-/// it locally instead of sharing this helper.
-fn measure_cell_with_glyph(
-    fonts: &FontBook,
-    col: &ColMeta,
-    raw_value: Option<&Value>,
-    rendered: &str,
-    family: &str,
-    size: f64,
-) -> Result<f64, String> {
-    if !glyph_possible(col) {
-        return fonts.measure(rendered, family, size);
-    }
-    let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
-    let full = format!("{}{rendered}", glyph_run(glyph.as_deref()));
-    fonts.measure(&full, family, size)
-}
-
-fn expand_hex(c: &str) -> String {
-    let h = c.trim_start_matches('#');
-    if h.len() == 3 {
-        let mut out = String::with_capacity(7);
-        out.push('#');
-        for ch in h.chars() {
-            out.push(ch);
-            out.push(ch);
-        }
-        out
-    } else {
-        format!("#{h}")
-    }
-}
-
-fn parse_hex(c: &str) -> (i64, i64, i64) {
-    let h = expand_hex(c);
-    let h = h.trim_start_matches('#');
-    let r = i64::from_str_radix(&h[0..2], 16).unwrap_or(0);
-    let g = i64::from_str_radix(&h[2..4], 16).unwrap_or(0);
-    let b = i64::from_str_radix(&h[4..6], 16).unwrap_or(0);
-    (r, g, b)
-}
-
-/// Linear interpolation between two hex colors, rounding
-/// each channel `int(a + (b-a)*t + 0.5)` — Python's `int()` truncation of a
-/// value nudged up by 0.5, i.e. round-half-up, not `f64::round`'s
-/// round-half-away-from-zero (identical for positive channel values, which
-/// every RGB channel here is).
-fn lerp_color(c1: &str, c2: &str, t: f64) -> String {
-    let (r1, g1, b1) = parse_hex(c1);
-    let (r2, g2, b2) = parse_hex(c2);
-    let r = (r1 as f64 + (r2 - r1) as f64 * t + 0.5) as i64;
-    let g = (g1 as f64 + (g2 - g1) as f64 * t + 0.5) as i64;
-    let b = (b1 as f64 + (b2 - b1) as f64 * t + 0.5) as i64;
-    format!("#{r:02x}{g:02x}{b:02x}")
-}
-
-/// `resolve_palette_stops`: an inline literal hex list passes through; a
-/// named palette's baked `resolved_stops` is used otherwise. Refuses a
-/// named-palette scheme with no baked stops (a caller bug in production,
-/// per `resolve_palette_stops`'s own docstring — reachable here only from a
-/// hand-built payload).
-pub(super) fn resolve_palette_stops(target: &ScaleTarget) -> Result<Vec<String>, String> {
-    if let Value::Array(items) = &target.palette {
-        if items.is_empty() {
-            return Err("table: scale palette must not be empty".into());
-        }
-        return items
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .map(String::from)
-                    .ok_or_else(|| "table: scale palette entry is not a string".to_string())
-            })
-            .collect();
-    }
-    match &target.resolved_stops {
-        Some(stops) if !stops.is_empty() => Ok(stops.clone()),
-        _ => Err("table: scale palette without resolved stops not supported".into()),
-    }
-}
-
-/// `resolve_hinge`: `None` for sequential; a degenerate domain (`lo == hi`)
-/// falls back to sequential regardless of what was authored; an explicit
-/// float short-circuits; `"auto"` runs the zero-crossing → percent-crosses-
-/// one → midpoint decision tree.
-pub(super) fn resolve_hinge(hinge: Option<&Value>, lo: f64, hi: f64, col_format: Option<&str>) -> Option<f64> {
-    let hinge = hinge?;
-    if lo == hi {
-        return None;
-    }
-    if let Some(f) = hinge.as_f64() {
-        return Some(f);
-    }
-    if hinge.as_str() != Some("auto") {
-        return None;
-    }
-    if lo < 0.0 && 0.0 <= hi {
-        return Some(0.0);
-    }
-    let is_percent = col_format.is_some_and(|f| f.contains('%'));
-    if is_percent && lo < 1.0 && 1.0 < hi {
-        return Some(1.0);
-    }
-    Some((lo + hi) / 2.0)
-}
-
-/// `diverging_arm_denominators`: the distance each arm's ramp runs over, one
-/// shared wider-arm width when asymmetric.
-pub(super) fn arm_denominators(pivot: f64, (lo, hi): (f64, f64), asymmetric: bool) -> (f64, f64) {
-    let (neg, pos) = (pivot - lo, hi - pivot);
-    if asymmetric {
-        let wider = neg.max(pos).max(1e-12);
-        return (wider, wider);
-    }
-    (neg.max(1e-12), pos.max(1e-12))
-}
-
-/// Interpolate at normalized position `t` (clamped to
-/// `[0, 1]`) along one arm's stop list.
-fn interpolate_arm(t: f64, stops: &[String]) -> String {
-    let t = t.clamp(0.0, 1.0);
-    let n_segments = stops.len() - 1;
-    let segment = t * n_segments as f64;
-    let i = (segment as usize).min(n_segments - 1);
-    lerp_color(&stops[i], &stops[i + 1], segment - i as f64)
-}
-
-/// `interpolate_scale_color`: sequential (`hinge: None`) linearly
-/// interpolates the whole palette across `[min_val, max_val]`; diverging
-/// splits the (odd-length, >= 3 stop) palette at its middle stop and maps
-/// each side of `hinge` onto its own arm, `arm_mode` deciding whether the
-/// two arms share one intensity unit (`asymmetric`, the longer arm) or each
-/// stretches fully to its own extreme (`symmetric`).
-pub(super) fn interpolate_scale_color(
-    value: f64,
-    min_val: f64,
-    max_val: f64,
-    palette: &[String],
-    hinge: Option<f64>,
-    arm_mode: &str,
-) -> Result<String, String> {
-    let palette: Vec<String> = palette.iter().map(|c| expand_hex(c)).collect();
-    let Some(hinge) = hinge else {
-        if min_val == max_val {
-            return Ok(palette[palette.len() / 2].clone());
-        }
-        let t = ((value - min_val) / (max_val - min_val)).clamp(0.0, 1.0);
-        let n_segments = palette.len() - 1;
-        let segment = t * n_segments as f64;
-        let i = (segment as usize).min(n_segments - 1);
-        return Ok(lerp_color(&palette[i], &palette[i + 1], segment - i as f64));
-    };
-    if palette.len() < 3 || palette.len().is_multiple_of(2) {
-        return Err(format!(
-            "table: diverging palette must have an odd number of stops >= 3, got {}",
-            palette.len()
-        ));
-    }
-    let hinge = hinge.clamp(min_val, max_val);
-    let (neg_denom, pos_denom) = arm_denominators(hinge, (min_val, max_val), arm_mode == "asymmetric");
-    let mid = palette.len() / 2;
-    let mut neg_stops: Vec<String> = palette[..=mid].to_vec();
-    neg_stops.reverse();
-    let pos_stops: Vec<String> = palette[mid..].to_vec();
-    let clamped = value.clamp(min_val, max_val);
-    if clamped <= hinge {
-        Ok(interpolate_arm((hinge - clamped) / neg_denom, &neg_stops))
-    } else {
-        Ok(interpolate_arm((clamped - hinge) / pos_denom, &pos_stops))
-    }
-}
-
-/// `compute_scale_domain`: explicit `min`/`max` win outright; otherwise the
-/// domain is `rows`' own numeric extent for `field` (`(0, 1)` when no row
-/// has a numeric value — production's "no numerics" fallback). `rows` must
-/// already exclude summary/total rows (`scale_rows` in production — a
-/// grand-total value would otherwise skew the gradient toward one end).
-pub(super) fn compute_scale_domain(
-    rows: &[&serde_json::Map<String, Value>],
-    field: &str,
-    min: Option<f64>,
-    max: Option<f64>,
-) -> (f64, f64) {
-    if let (Some(lo), Some(hi)) = (min, max) {
-        return (lo, hi);
-    }
-    let values: Vec<f64> =
-        rows.iter().filter_map(|r| coerce_numeric_cell(r.get(field))).collect();
-    if values.is_empty() {
-        return (min.unwrap_or(0.0), max.unwrap_or(1.0));
-    }
-    let lo = min.unwrap_or_else(|| values.iter().cloned().fold(f64::INFINITY, f64::min));
-    let hi = max.unwrap_or_else(|| values.iter().cloned().fold(f64::NEG_INFINITY, f64::max));
-    (lo, hi)
-}
-
-/// `resolve_table_style_value`: a spec naming a row field
-/// takes that row's value (null or empty is no value), anything else is the
-/// literal.
-fn resolve_style_input(spec: &str, row: &serde_json::Map<String, Value>) -> Option<String> {
-    match row.get(spec) {
-        None => Some(spec.to_string()),
-        Some(Value::Null) => None,
-        Some(Value::String(s)) if s.is_empty() => None,
-        Some(v) => Some(py_str(v)),
-    }
-}
-
-/// `is_sanitizable_color` + `sanitize_color` (colors.py:499-524) for a value
-/// that is present: 3- or 6-digit hex passes, `transparent`/`none` (any case)
-/// is `transparent`, and anything else is not a color.
-pub(crate) fn sanitized_color(color: &str) -> Option<String> {
-    let hex = color.strip_prefix('#').is_some_and(|d| {
-        matches!(d.len(), 3 | 6) && d.chars().all(|c| c.is_ascii_hexdigit())
-    });
-    if hex {
-        Some(color.to_string())
-    } else if matches!(color.to_ascii_lowercase().as_str(), "transparent" | "none") {
-        Some("transparent".to_string())
-    } else {
-        None
-    }
-}
-
-/// A column's static `font.color` and `font.weight` for one row: each resolves column-ID-first like `background`. The color is `None`
-/// when unauthored or unusable (the caller keeps the body color — the branch is
-/// taken either way, so the link color never shows through); the weight is
-/// `None` unless it resolves to a valid CSS weight.
-fn column_font_lanes(
-    col: &ColMeta,
-    row: &serde_json::Map<String, Value>,
-) -> (Option<String>, Option<String>) {
-    let Some(font) = &col.cfg.font else { return (None, None) };
-    let color = font
-        .color
-        .as_deref()
-        .filter(|c| !c.is_empty())
-        .and_then(|spec| resolve_style_input(spec, row))
-        .and_then(|raw| sanitized_color(&raw));
-    let weight = font
-        .weight
-        .as_ref()
-        .filter(|w| !matches!(w, Value::Null) && !matches!(w, Value::String(s) if s.is_empty()))
-        .and_then(|w| resolve_style_input(&font_weight_as_css(w), row))
-        .filter(|w| VALID_FONT_WEIGHTS.contains(&w.as_str()));
-    (color, weight)
-}
-
-/// `resolve_cell_conditional_styles` + the outer `overrides` call
-/// The scale layer (skipped for a summary/total row,
-/// `null_color` on a null value, the interpolated color on a numeric one)
-/// supplies the base `background`; a matching when-rule then overrides
-/// `background`/`color`/`weight`/`style`/`decoration` on top, and supplies
-/// `glyph`/`glyph_color` unconditionally (production's `resolve_cell_glyph_
-/// from_overrides` always reads the WITH-tones `overrides`, never the
-/// scale-path's own tones-less recomputation — see this file's module doc
-/// for why one call covers both). One evaluation path, so both paint sites
-/// (the numeric lane and the text cell) and this file's two glyph-only
-/// measurement sites (via `resolve_cell_glyph`, tones-free) agree.
-fn resolve_cell_style(
-    col: &ColMeta,
-    row: &serde_json::Map<String, Value>,
-    value: Option<&Value>,
-    scale_rows: &[&serde_json::Map<String, Value>],
-    row_role: RowRole,
-    tones: Option<&TonesStyle>,
-) -> Result<RuleOverrides, String> {
-    // With a scale the column's static fill and ink are read unresolved
-    // (`resolve_cell_conditional_styles`): a field reference is no color there.
-    // Without one the fill resolves per row and the ink is `column_font_lanes`'.
-    let scale = col.cfg.scale.as_ref();
-    let mut background: Option<String> = col.cfg.background.as_deref().and_then(|spec| match scale {
-        Some(_) => sanitized_color(spec),
-        None => resolve_style_input(spec, row).and_then(|raw| sanitized_color(&raw)),
-    });
-    let mut scaled_color: Option<String> = scale
-        .and_then(|_| col.cfg.font.as_ref()?.color.as_deref())
-        .and_then(sanitized_color);
-    if let (Some(scale), false) = (scale, is_summary_role(row_role)) {
-        for (target, slot) in
-            [(scale.background.as_ref(), &mut background), (scale.color.as_ref(), &mut scaled_color)]
-        {
-            let Some(target) = target else { continue };
-            match value {
-                None => {
-                    if target.null_color.is_some() {
-                        *slot = target.null_color.clone();
-                    }
-                }
-                Some(v) => {
-                    if let Some(num) = coerce_numeric_cell(Some(v)) {
-                        let (lo, hi) =
-                            compute_scale_domain(scale_rows, col.name, target.min, target.max);
-                        let palette = resolve_palette_stops(target)?;
-                        let col_format = col
-                            .cfg
-                            .format
-                            .as_ref()
-                            .map(|f| f.spec.as_str())
-                            .map(|f| crate::common::predefined_number_spec(f).unwrap_or(f));
-                        let hinge = resolve_hinge(target.hinge.as_ref(), lo, hi, col_format);
-                        *slot = Some(interpolate_scale_color(num, lo, hi, &palette, hinge, &target.arm_mode)?);
-                    }
-                }
-            }
-        }
-    }
-
-    let overrides = resolve_conditional_styles(&col.when_rules, value, tones)
-        .map_err(|e| format!("table: {e}"))?;
-    // The one caller that actually paints `glyph_color` — a matched tone
-    // rule that needed board tones and had none is a genuinely malformed
-    // payload here (production's own `tones` is a required board field,
-    // never structurally absent at a real render), unlike a glyph-only
-    // caller (`resolve_cell_glyph`), which never even looks at this flag.
-    if overrides.tone_needs_board_tones {
-        return Err("table: conditional rule tone with no board tones".into());
-    }
-    if overrides.background.is_some() {
-        background = overrides.background;
-    }
-    let (glyph, glyph_color) = if overrides.glyph.is_some() {
-        (overrides.glyph, overrides.glyph_color)
-    } else {
-        (col.cfg.glyph.clone(), col.cfg.glyph_color.clone())
-    };
-
-    Ok(RuleOverrides {
-        background,
-        color: overrides.color.or(scaled_color),
-        weight: overrides.weight,
-        style: overrides.style,
-        decoration: overrides.decoration,
-        glyph,
-        glyph_color,
-        tone_needs_board_tones: false,
-    })
-}
-
-// ── Per-cell links ─────────────────────────────────────────────────────────────
-
-/// `\w+` per Python's `re` on a `str` pattern: `str.isalnum()` or `_` per
-/// character, over the interpreter's Unicode data.
-fn is_word(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(is_py_word)
-}
-
-/// Parses the text between `{{`/`}}` against `_TEMPLATE_RE`'s inner grammar
-/// (`\s*(\w+)(?:\s*\|\s*(\w+))?\s*`) — `None` when the
-/// whole span doesn't match, exactly like a regex non-match: the `{{ }}` is
-/// then left as literal text rather than treated as a placeholder.
-fn parse_template_inner(inner: &str) -> Option<(String, Option<String>)> {
-    let trimmed = inner.trim_matches(is_py_space);
-    match trimmed.split_once('|') {
-        Some((col, filt)) => {
-            let (col, filt) = (col.trim_matches(is_py_space), filt.trim_matches(is_py_space));
-            (is_word(col) && is_word(filt)).then(|| (col.to_string(), Some(filt.to_string())))
-        }
-        None => is_word(trimmed).then(|| (trimmed.to_string(), None)),
-    }
-}
-
-/// Python's `urllib.parse.quote_plus` for a UTF-8 string with the default
-/// (empty) `safe` set: RFC 3986 unreserved bytes (`A-Za-z0-9_.-~`) pass
-/// through, a space becomes `+`, everything else percent-encodes per byte.
-fn urlencode_plus(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => {
-                out.push(b as char)
-            }
-            b' ' => out.push('+'),
-            _ => {
-                let _ = write!(out, "%{b:02X}");
-            }
-        }
-    }
-    out
-}
-
-/// An explicit
-/// `link:` string that names a data column verbatim substitutes that
-/// column's own value for THIS row (`None`/absent → no link). Otherwise
-/// every `{{ col }}` / `{{ col | urlencode }}` placeholder substitutes
-/// `row[col]`'s string form — `urlencode` percent-encodes it
-/// (`urlencode_plus`, matching `quote_plus`), any other filter name is an
-/// `Err` (never a silent pass-through), and a `None` placeholder anywhere
-/// makes the WHOLE row's link `None` (production's `has_none` short-
-/// circuit). A template-free string with no `{{ }}` match anywhere is the
-/// href verbatim, same as production's `_TEMPLATE_RE.search()` miss. An
-/// all-templates-resolved-to-empty-string result is also `None`
-/// (`resolved or None`) — mirrored here as
-/// `out.is_empty()`.
-fn resolve_cell_link(
-    link: &str,
-    row: &serde_json::Map<String, Value>,
-    all_data_columns: &[String],
-) -> Result<Option<String>, Diagnostic> {
-    if all_data_columns.iter().any(|c| c == link) {
-        // `str(val)` is returned as-is, but the caller's `if cell_link:`
-        // drops an empty string — so an empty column value is no link.
-        return Ok(row
-            .get(link)
-            .filter(|v| !v.is_null())
-            .map(py_str)
-            .filter(|s| !s.is_empty()));
-    }
-
-    let mut out = String::new();
-    let mut has_template = false;
-    let mut has_none = false;
-    let mut i = 0usize;
-    while i < link.len() {
-        if let Some(rest) = link[i..].strip_prefix("{{") {
-            if let Some(close_rel) = rest.find("}}") {
-                let inner = &rest[..close_rel];
-                if let Some((col_name, filter_name)) = parse_template_inner(inner) {
-                    has_template = true;
-                    match row.get(col_name.as_str()) {
-                        None | Some(Value::Null) => has_none = true,
-                        Some(v) => {
-                            let raw = py_str(v);
-                            match filter_name.as_deref() {
-                                None => out.push_str(&raw),
-                                Some("urlencode") => out.push_str(&urlencode_plus(&raw)),
-                                Some(other) => {
-                                    return Err(Diagnostic::new(
-                                        &codes::ERR_TABLE_LINK_FILTER_UNKNOWN,
-                                        [("filter_name", json!(other))],
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    i += 2 + close_rel + 2;
-                    continue;
-                }
-            }
-        }
-        let ch = link[i..].chars().next().expect("i < link.len()");
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-
-    if !has_template {
-        return Ok(Some(link.to_string()));
-    }
-    if has_none {
-        return Ok(None);
-    }
-    Ok((!out.is_empty()).then_some(out))
-}
-
 #[cfg(test)]
 mod resolve_cell_link_tests {
     use super::*;
+    use super::bind::resolve_cell_link;
     use serde_json::json;
 
     fn row(v: Value) -> serde_json::Map<String, Value> {
@@ -1741,417 +1027,11 @@ const COMPACT_DEMAND_CEILING: f64 = 220.0;
 /// of the budget in proportional allocation.
 const PROPORTIONAL_CAP: f64 = 0.6;
 
-/// Python's `sum(d.values())` over a column map.
-fn sum_values(map: &BTreeMap<String, f64>) -> f64 {
-    py_float_sum(&map.values().copied().collect::<Vec<_>>())
-}
-
-/// Proportional shares with an iterative
-/// 60%-of-budget cap; capped excess redistributes among the uncapped.
-fn proportional_allocate(demands: &BTreeMap<String, f64>, budget: f64) -> BTreeMap<String, f64> {
-    if demands.len() <= 1 {
-        return demands.keys().map(|k| (k.clone(), budget)).collect();
-    }
-    let cap = budget * PROPORTIONAL_CAP;
-    let mut active = demands.clone();
-    let mut fixed: BTreeMap<String, f64> = BTreeMap::new();
-    let mut remaining = budget;
-    while !active.is_empty() {
-        let total = sum_values(&active);
-        if total <= 0.0 {
-            let per_col = remaining / active.len() as f64;
-            for k in active.keys() {
-                fixed.insert(k.clone(), per_col);
-            }
-            break;
-        }
-        let to_fix: Vec<String> = active
-            .iter()
-            .filter(|(_, &d)| (d / total) * remaining > cap)
-            .map(|(k, _)| k.clone())
-            .collect();
-        if to_fix.is_empty() {
-            for (k, &d) in &active {
-                fixed.insert(k.clone(), (d / total) * remaining);
-            }
-            break;
-        }
-        for k in &to_fix {
-            fixed.insert(k.clone(), cap);
-            active.remove(k);
-        }
-        remaining -= py_float_sum(&vec![cap; to_fix.len()]);
-    }
-    fixed
-}
-
-/// Sorted walk clustering on the
-/// cluster-extremes ratio (min/new >= threshold), snap each cluster to its
-/// max, then one uniform rescale back to budget.
-fn cluster_and_equalize_widths(
-    widths: &BTreeMap<String, f64>,
-    budget: f64,
-    threshold: f64,
-) -> BTreeMap<String, f64> {
-    if widths.len() <= 1 {
-        return widths.clone();
-    }
-    let mut sorted: Vec<(&String, f64)> = widths.iter().map(|(k, &v)| (k, v)).collect();
-    sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-    let mut clusters: Vec<Vec<&String>> = Vec::new();
-    let mut cluster: Vec<&String> = Vec::new();
-    let mut cluster_min = sorted[0].1;
-    for (col, w) in &sorted {
-        if !cluster.is_empty() && cluster_min / (w + 1e-9) < threshold {
-            clusters.push(std::mem::take(&mut cluster));
-            cluster_min = *w;
-        }
-        cluster.push(col);
-    }
-    clusters.push(cluster);
-
-    let mut snapped: BTreeMap<String, f64> = BTreeMap::new();
-    for cl in &clusters {
-        let cluster_max = cl.iter().map(|c| widths[*c]).fold(0.0_f64, f64::max);
-        for c in cl {
-            snapped.insert((*c).clone(), cluster_max);
-        }
-    }
-    let total = sum_values(&snapped);
-    if total > 0.0 {
-        let scale = budget / total;
-        for v in snapped.values_mut() {
-            *v *= scale;
-        }
-    }
-    snapped
-}
-
-/// Proportional shares, iterative
-/// max_width cap redistribution, cluster-equalize the uncapped, floors
-/// (clamped at max_width) applied last.
-fn allocate_text_columns(
-    text_demands: &BTreeMap<String, f64>,
-    text_budget: f64,
-    max_widths: &BTreeMap<String, Option<f64>>,
-    word_floors: &BTreeMap<String, f64>,
-    width_similarity_threshold: f64,
-) -> BTreeMap<String, f64> {
-    if text_demands.len() == 1 {
-        let (col, _) = text_demands.iter().next().unwrap();
-        let mw = max_widths.get(col).copied().flatten();
-        let floor = word_floors.get(col).copied().unwrap_or(0.0);
-        let effective_floor = mw.map_or(floor, |m| floor.min(m));
-        let allocated = mw.map_or(text_budget, |m| text_budget.min(m));
-        return BTreeMap::from([(col.clone(), allocated.max(effective_floor))]);
-    }
-
-    let mut to_allocate = proportional_allocate(text_demands, text_budget);
-    let mut final_text: BTreeMap<String, f64> = BTreeMap::new();
-    loop {
-        let mut free: BTreeMap<String, f64> = BTreeMap::new();
-        let mut leftover = 0.0_f64;
-        for (col, &w) in &to_allocate {
-            match max_widths.get(col).copied().flatten() {
-                Some(mw) if w > mw => {
-                    final_text.insert(col.clone(), mw);
-                    leftover += w - mw;
-                }
-                _ => {
-                    free.insert(col.clone(), w);
-                }
-            }
-        }
-        if leftover == 0.0 || free.is_empty() {
-            final_text.extend(free);
-            break;
-        }
-        let total_free = sum_values(&free);
-        if total_free > 0.0 {
-            let new_total = total_free + leftover;
-            for v in free.values_mut() {
-                *v = *v / total_free * new_total;
-            }
-        }
-        to_allocate = free;
-    }
-
-    let non_capped: BTreeMap<String, f64> = final_text
-        .iter()
-        .filter(|(c, _)| max_widths.get(*c).copied().flatten().is_none())
-        .map(|(c, &v)| (c.clone(), v))
-        .collect();
-    if non_capped.len() > 1 {
-        let equalized = cluster_and_equalize_widths(
-            &non_capped,
-            sum_values(&non_capped),
-            width_similarity_threshold,
-        );
-        final_text.extend(equalized);
-    }
-
-    for col in text_demands.keys() {
-        let floor = word_floors.get(col).copied().unwrap_or(0.0);
-        let mw = max_widths.get(col).copied().flatten();
-        let effective_floor = mw.map_or(floor, |m| floor.min(m));
-        let cur = final_text.get_mut(col).unwrap();
-        if effective_floor > 0.0 && *cur < effective_floor {
-            *cur = effective_floor;
-        }
-    }
-    final_text
-}
-
-/// Cover each column's header gap
-/// first (proportionally when the surplus can't cover them all), then
-/// spread any residual proportionally to current width.
-fn grow_toward_header_width(
-    widths: &mut BTreeMap<String, f64>,
-    header_demands: &BTreeMap<String, f64>,
-    surplus: f64,
-) {
-    let gaps: BTreeMap<String, f64> = widths
-        .iter()
-        .filter_map(|(col, &w)| {
-            let target = header_demands.get(col).copied().unwrap_or(0.0);
-            (target > w).then(|| (col.clone(), target - w))
-        })
-        .collect();
-    let total_gap = sum_values(&gaps);
-    if total_gap > surplus {
-        for (col, gap) in &gaps {
-            *widths.get_mut(col).unwrap() += surplus * (gap / total_gap);
-        }
-        return;
-    }
-    for (col, gap) in &gaps {
-        *widths.get_mut(col).unwrap() += gap;
-    }
-    let residual = surplus - total_gap;
-    if residual <= 0.1 {
-        return;
-    }
-    let total = sum_values(widths);
-    let keys: Vec<String> = widths.keys().cloned().collect();
-    for col in keys {
-        let share = widths[&col] / total;
-        *widths.get_mut(&col).unwrap() += residual * share;
-    }
-}
-
-/// An auto column's demand
-/// raised to its word floor — folded in, not applied afterwards, because a
-/// column narrower than its widest token splits that word mid-glyph. A
-/// declared `max_width` is the hard bound; a floor never overrides it.
-fn auto_column_demand(demand: f64, floor: f64, cap: Option<f64>) -> f64 {
-    let floor_bounded = cap.map_or(floor, |m| floor.min(m));
-    demand.max(floor_bounded).max(1.0)
-}
-
-/// Compact when the demand fits
-/// the ceiling OR the column owns a spark config (spark columns own their own
-/// width regardless of measured demand).
-fn is_compact_column(demand: f64, spark: bool) -> bool {
-    spark || demand <= COMPACT_DEMAND_CEILING
-}
-
-/// The least width that shows
-/// an auto column in full — its demand raised to the word floor, compact
-/// columns inflated by `content_headroom` when text columns exist, at least
-/// the one-line header plus both cell paddings. Only a text column is capped
-/// by `max_width`: the allocator pins a compact column at its demand
-/// regardless of it.
-fn natural_auto_width(
-    demand: f64,
-    is_text: bool,
-    text_columns_exist: bool,
-    header_demand: f64,
-    cap: Option<f64>,
-    content_headroom: f64,
-    cell_pad: f64,
-) -> f64 {
-    let factor = if text_columns_exist { 1.0 + content_headroom } else { 1.0 };
-    let width = if is_text { demand } else { demand * factor };
-    let width = width.max(header_demand + 2.0 * cell_pad);
-    match cap {
-        Some(cap) if is_text => width.min(cap),
-        _ => width,
-    }
-}
-
-/// Port of `calculate_column_layout`'s smart phase (demands present,
-/// multiple auto-columns). `pins` are resolved `width:` values; `caps` are
-/// resolved `max_width:` values (None = uncapped). Returns final widths for
-/// every column, pins included.
-#[allow(clippy::too_many_arguments)]
-fn calculate_column_layout_port(
-    columns: &[String],
-    force_compact: &BTreeSet<String>,
-    pins: &BTreeMap<String, f64>,
-    caps: &BTreeMap<String, Option<f64>>,
-    available_width: f64,
-    demands: &BTreeMap<String, f64>,
-    header_demands: &BTreeMap<String, f64>,
-    word_floors: &BTreeMap<String, f64>,
-    width_similarity_threshold: f64,
-    content_headroom: f64,
-    cell_pad: f64,
-) -> BTreeMap<String, f64> {
-    let mut col_widths: BTreeMap<String, f64> = pins.clone();
-    let auto_columns: Vec<&String> = columns.iter().filter(|c| !pins.contains_key(*c)).collect();
-    let explicit_total = sum_values(pins);
-    let available_for_auto = (available_width - explicit_total).max(0.0);
-
-    if auto_columns.is_empty() {
-        return col_widths;
-    }
-    if auto_columns.len() == 1 {
-        // Production's fallback branch: single auto-column takes the budget.
-        col_widths.insert(auto_columns[0].clone(), available_for_auto);
-        return col_widths;
-    }
-
-    let mut auto_demands: BTreeMap<String, f64> = BTreeMap::new();
-    for col in &auto_columns {
-        let floor = word_floors.get(*col).copied().unwrap_or(0.0);
-        let cap = caps.get(*col).copied().flatten();
-        let d = demands.get(*col).copied().unwrap_or(1.0);
-        auto_demands.insert((*col).clone(), auto_column_demand(d, floor, cap));
-    }
-    let compact_keys: Vec<String> = auto_demands
-        .iter()
-        .filter(|(k, &d)| is_compact_column(d, force_compact.contains(*k)))
-        .map(|(k, _)| k.clone())
-        .collect();
-    let text_keys: Vec<String> = auto_demands
-        .keys()
-        .filter(|k| !compact_keys.contains(k))
-        .cloned()
-        .collect();
-
-    //when the budget covers every auto column's
-    // natural width, each is allocated that width first.
-    let natural: BTreeMap<String, f64> = auto_demands
-        .iter()
-        .map(|(col, &d)| {
-            let width = natural_auto_width(
-                d,
-                text_keys.contains(col),
-                !text_keys.is_empty(),
-                header_demands.get(col).copied().unwrap_or(0.0),
-                caps.get(col).copied().flatten(),
-                content_headroom,
-                cell_pad,
-            );
-            (col.clone(), width)
-        })
-        .collect();
-    let has_room = available_for_auto >= sum_values(&natural);
-    if has_room {
-        auto_demands = natural;
-    }
-
-    let raw_compact_total = py_float_sum(&compact_keys.iter().map(|c| auto_demands[c]).collect::<Vec<_>>());
-    let headroom_factor = if has_room {
-        1.0
-    } else if !text_keys.is_empty() && raw_compact_total > 0.0 {
-        let requested = 1.0 + content_headroom;
-        let max_factor = available_for_auto / raw_compact_total;
-        requested.min(max_factor.max(1.0))
-    } else {
-        1.0
-    };
-    let mut compact_pinned: BTreeMap<String, f64> = compact_keys
-        .iter()
-        .map(|c| (c.clone(), auto_demands[c] * headroom_factor))
-        .collect();
-    let compact_total = sum_values(&compact_pinned);
-    let text_budget = (available_for_auto - compact_total).max(0.0);
-
-    if text_keys.is_empty() {
-        if compact_total >= available_for_auto {
-            let scale = available_for_auto / compact_total;
-            for (c, w) in &compact_pinned {
-                col_widths.insert(c.clone(), w * scale);
-            }
-        } else {
-            grow_toward_header_width(
-                &mut compact_pinned,
-                header_demands,
-                available_for_auto - compact_total,
-            );
-            col_widths.extend(compact_pinned);
-        }
-    } else {
-        let text_demands: BTreeMap<String, f64> =
-            text_keys.iter().map(|c| (c.clone(), auto_demands[c])).collect();
-        let max_widths: BTreeMap<String, Option<f64>> = text_keys
-            .iter()
-            .map(|c| (c.clone(), caps.get(c).copied().flatten()))
-            .collect();
-        let text_result = allocate_text_columns(
-            &text_demands,
-            text_budget,
-            &max_widths,
-            word_floors,
-            width_similarity_threshold,
-        );
-        let text_used = sum_values(&text_result);
-        col_widths.extend(text_result);
-
-        let remainder = available_for_auto - compact_total - text_used;
-        if remainder > 0.1 && !compact_pinned.is_empty() {
-            grow_toward_header_width(&mut compact_pinned, header_demands, remainder);
-        }
-        col_widths.extend(compact_pinned);
-    }
-    col_widths
-}
-
-/// `fractional_digit_count` (`numeral_scale.py:431`): the digits after the
-/// active locale's decimal mark. Only digits count, so a trailing non-digit
-/// (an accounting `)`) does not corrupt the depth.
-pub(crate) fn count_decimals(s: &str) -> usize {
-    d3rs::numeral_pad::fractional_digit_count(s, &crate::number_locale::active_number_locale().locale.decimal)
-}
-
-/// Select the trailing decimal-alignment pad for `num_str` from a pre-built
-/// `pad_table` — production's `decimal_pad_for` (numeral_scale.py:434-455).
-/// `precision = pad_table.len() - 2`; a whole number (no fractional digits)
-/// takes the `precision + 1` slot, a value with `frac` fractional digits
-/// takes `precision - frac`. An empty `pad_table` means the column bakes no
-/// alignment at all — every call site can call this unconditionally, the
-/// Python caller's own `if pad_table` guard folded in here. A value deeper
-/// than the table was built for is `Err`, named, matching production's
-/// `IndexError`.
-pub(crate) fn decimal_pad_for<'a>(
-    pad_table: &'a [String],
-    num_str: &str,
-) -> Result<&'a str, String> {
-    if pad_table.is_empty() {
-        return Ok("");
-    }
-    // `build_decimal_pad_table` always emits precision + 2 entries; a
-    // one-entry table names no precision at all.
-    let precision = pad_table.len().checked_sub(2).ok_or_else(|| {
-        format!("decimal_pad_for: pad_table with {} entry names no precision", pad_table.len())
-    })?;
-    let frac = count_decimals(num_str);
-    if frac > precision {
-        return Err(format!(
-            "decimal_pad_for: pad_table precision {precision} < value {num_str:?}'s {frac} fractional digits"
-        ));
-    }
-    let idx = if frac > 0 { precision - frac } else { precision + 1 };
-    Ok(pad_table[idx].as_str())
-}
-
 
 // ── Column analysis ───────────────────────────────────────────────────────────
 
-struct ColMeta<'a> {
-    name: &'a str,
+struct ColMeta {
+    name: String,
     header: String,
     cfg: ColConfig,
     is_numeric: bool,
@@ -2172,47 +1052,6 @@ enum RowRole {
     Value,
     Summary,
     Total,
-}
-
-fn is_summary_role(role: RowRole) -> bool {
-    matches!(role, RowRole::Summary | RowRole::Total)
-}
-
-/// A JSON number or numeric string
-/// coerces to `f64`, anything else (including `null`) is not numeric. JSON
-/// cannot encode NaN/±Infinity, so the `Value::Number` arm's own guard has
-/// no reachable input — every `Value::Number` this parses is finite. The
-/// string arm can still parse to a non-finite value (`"inf"`, `"1e999"`),
-/// which production's own guard (`math.isfinite(result)`) rejects too.
-pub(crate) fn coerce_numeric_cell(value: Option<&Value>) -> Option<f64> {
-    match value? {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse().ok().filter(|v: &f64| v.is_finite()),
-        _ => None,
-    }
-}
-
-fn resolve_row_roles(
-    rows: &[serde_json::Map<String, Value>],
-    row_role_col: Option<&str>,
-) -> Vec<RowRole> {
-    rows.iter()
-        .map(|row| {
-            let Some(col) = row_role_col else { return RowRole::Value };
-            // Column-ID-first (`resolve_table_style_value`): a name that is not a
-            // column of the row is the literal role every row takes.
-            let role_text = match row.get(col) {
-                Some(Value::String(s)) => s.as_str(),
-                Some(_) => return RowRole::Value,
-                None => col,
-            };
-            match role_text.trim().to_lowercase().as_str() {
-                "summary" => RowRole::Summary,
-                "total" => RowRole::Total,
-                _ => RowRole::Value,
-            }
-        })
-        .collect()
 }
 
 /// Formatted cell value: the number/text plus optional prefix and suffix
@@ -2241,582 +1080,6 @@ struct Cell {
     is_null: bool,
 }
 
-/// A suffix token that carries the number's magnitude rather than a unit like
-/// "%": production's `magnitude_suffixes()` (`compile/format_value.py:104`)
-/// gates `suffix_gap` on it. A magnitude suffix sits 3px off the number, a
-/// unit suffix touches it directly. The set is d3's raw SI letters and both
-/// registers' words of the ACTIVE locale, bare; `m` (d3 milli) is a distinct,
-/// non-magnitude prefix production gives a 0px gap.
-pub(crate) fn is_magnitude_suffix(s: &str) -> bool {
-    let bare = s.trim();
-    crate::number_locale::active_number_locale().magnitude_suffixes().any(|suffix| suffix == bare)
-}
-
-/// The string production measures a numeric/date cell by — one rule, used at
-/// both of its measurement sites (`measure_column_demands` and
-/// `_has_overflow`): `format_table_cell_value`'s DISPLAY string, in which a
-/// magnitude word sits behind the gap it carries (`text/magnitude_words.py`:
-/// a no-break space or none) though the lanes paint the two apart. A
-/// shared-scale column measures its scaled digit string
-/// (`prefix + number + suffix`), since that, not the whole-precision SI
-/// string, is what its cells paint.
-/// Affixes are the UNGATED ones: production formats every sampled cell as its
-/// own anchor, so `symbol_mode: anchors` never narrows what is measured.
-fn measured_cell_text(cell: &Cell) -> String {
-    compose_measured_text(cell, &cell.text)
-}
-
-/// `measured_cell_text` without the decimal pad: the fit cascade measures the
-/// text `format_table_cell_value` returns, not the padded lane text the demand
-/// and floor passes read (`_has_overflow` vs `_rendered_cell_text`).
-fn unpadded_cell_text(cell: &Cell) -> String {
-    let number = cell.text.strip_suffix(cell.pad.as_str()).expect("pad is the tail of text");
-    match &cell.fit_affixes {
-        Some((prefix, suffix)) => format!("{prefix}{number}{suffix}"),
-        None => compose_measured_text(cell, number),
-    }
-}
-
-fn compose_measured_text(cell: &Cell, number: &str) -> String {
-    let prefix = cell.full_prefix.as_deref().unwrap_or("");
-    let suffix = cell.full_suffix.as_deref().unwrap_or("");
-    format!("{prefix}{number}{suffix}")
-}
-
-/// Production's `_compute_lane_positions` band arithmetic
-/// Shared with `pie.rs`'s attached table: the
-/// number tspan is end-anchored so its CENTER sits on the cell's content
-/// midpoint (`number_x = midpoint + max_num_w / 2`), the prefix sits
-/// `SUFFIX_GAP` left of the number's left edge when any row shows one, and a
-/// K/M/B magnitude suffix sits `SUFFIX_GAP` right of the number — a unit
-/// suffix ("%") touches it. If the composed band then pokes past ONE side of
-/// the content area while the other side has headroom, the whole band shifts
-/// by the smaller of the overflow and that headroom.
-/// Returns `(prefix_x, number_x, suffix_x)`, each an absolute x.
-pub(crate) fn numeric_lane_positions(
-    cell_x: f64,
-    cell_w: f64,
-    cell_pad: f64,
-    max_num_w: f64,
-    max_prefix_w: f64,
-    max_suffix_w: f64,
-    is_magnitude: bool,
-) -> (f64, f64, f64) {
-    let content_area_left = cell_x + cell_pad;
-    let content_area_right = cell_x + cell_w - cell_pad;
-    let midpoint = (content_area_left + content_area_right) / 2.0;
-    let mut number_x = midpoint + max_num_w / 2.0;
-    let suffix_gap = if is_magnitude { SUFFIX_GAP } else { 0.0 };
-    let prefix_gap = if max_prefix_w > 0.0 { SUFFIX_GAP } else { 0.0 };
-    let mut suffix_x = number_x + suffix_gap;
-    let mut prefix_x = number_x - max_num_w - prefix_gap;
-    let overflow_left = content_area_left - (prefix_x - max_prefix_w);
-    let overflow_right = (suffix_x + max_suffix_w) - content_area_right;
-    let shift = if overflow_left > 0.0 && overflow_right < 0.0 {
-        overflow_left.min(-overflow_right)
-    } else if overflow_right > 0.0 && overflow_left < 0.0 {
-        -(overflow_right.min(-overflow_left))
-    } else {
-        0.0
-    };
-    prefix_x += shift;
-    number_x += shift;
-    suffix_x += shift;
-    (prefix_x, number_x, suffix_x)
-}
-
-/// One column's cell demand: p95 of the fully-formatted cell strings +
-/// 2*cell_padding (production measure_column_demands), each cell measured
-/// by `measured_cell_text` with its glyph run composed in front, when the
-/// column can paint one.
-fn column_demand(
-    cells: &[Cell],
-    rows: &[serde_json::Map<String, Value>],
-    col: &ColMeta,
-    fonts: &FontBook,
-    measure_family: &str,
-    font_size: f64,
-    pad: f64,
-) -> Result<f64, String> {
-    let mut widths: Vec<f64> = Vec::with_capacity(cells.len().min(50));
-    for (ri, cell) in cells.iter().enumerate().take(50) {
-        let rendered = measured_cell_text(cell);
-        let raw_value = rows[ri].get(col.name).filter(|v| !v.is_null());
-        widths.push(measure_cell_with_glyph(
-            fonts,
-            col,
-            raw_value,
-            &rendered,
-            measure_family,
-            font_size,
-        )?);
-    }
-    if widths.is_empty() {
-        return Ok(2.0 * pad);
-    }
-    widths.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let idx = ((widths.len() as f64 * 0.95) as usize).min(widths.len() - 1);
-    Ok(widths[idx] + 2.0 * pad)
-}
-
-/// The d3 type letter of `spec` when it has one, `None` when the spec does not
-/// parse (the formatter reports that itself).
-fn percent_type(spec: &str) -> Option<char> {
-    d3rs::format::parse_parts(spec).ok().map(|p| p.type_)
-}
-
-/// A non-anchor row of a `symbol_mode: anchors` column keeps no prefix, and a
-/// suffix only when it opens with a magnitude word (`table.py:2657-2663`): the
-/// authored suffix is peeled off first, since it is never a magnitude
-/// ("EUR" starts with E).
-fn non_anchor_suffix(suffix: String, explicit_suffix: &str) -> Option<String> {
-    let computed = suffix.strip_suffix(py_rstrip(explicit_suffix)).unwrap_or(&suffix);
-    let magnitude = crate::number_locale::active_number_locale()
-        .magnitude_suffixes()
-        .any(|word| computed.starts_with(word));
-    (magnitude && !suffix.is_empty()).then_some(suffix)
-}
-
-/// A refusal raised under a numeric column names the table; a registered
-/// code keeps its own params.
-fn in_table(refusal: Diagnostic) -> Diagnostic {
-    if refusal.code == codes::ERR_ENGINE_REFUSED.id {
-        return Diagnostic::refused(format!("table: {refusal}"));
-    }
-    refusal
-}
-
-/// A numeric column's cells: magnitudes through the column's formatter, every
-/// other non-null cell (a sentinel such as "N/A", a date) as text
-/// (`format_table_cell_value`'s non-numeric arm).
-fn format_numeric_col(
-    rows: &[serde_json::Map<String, Value>],
-    col: &ColMeta,
-    symbol_mode: &str,
-    row_roles: &[RowRole],
-) -> Result<Vec<Cell>, Diagnostic> {
-    let mut cells = format_magnitudes(rows, col, symbol_mode, row_roles)?;
-    for (cell, row) in cells.iter_mut().zip(rows) {
-        let raw = row.get(col.name);
-        if numeric_value(raw).is_some() || raw.is_none_or(Value::is_null) {
-            continue;
-        }
-        let text = match raw {
-            Some(Value::String(s)) if s.trim().is_empty() => continue,
-            Some(Value::String(s)) => format_temporal_cell(col, s)?.unwrap_or_else(|| s.clone()),
-            Some(other) => py_str(other),
-            None => continue,
-        };
-        *cell = Cell { text, ..Default::default() };
-    }
-    Ok(cells)
-}
-
-fn format_magnitudes(
-    rows: &[serde_json::Map<String, Value>],
-    col: &ColMeta,
-    symbol_mode: &str,
-    row_roles: &[RowRole],
-) -> Result<Vec<Cell>, Diagnostic> {
-    let n = rows.len();
-    // Collect raw f64 values (None = null/missing).
-    let raw: Vec<Option<f64>> = rows.iter().map(|r| numeric_value(r.get(col.name))).collect();
-    // A column with no format prints the engine's `number`, which the board may
-    // have redefined.
-    let number_alias = match col.cfg.format {
-        None => board_alias_format("number")?,
-        Some(_) => None,
-    };
-    let format_cfg = col.cfg.format.as_ref().or(number_alias.as_ref());
-
-    // A column with no `format:` takes the theme's `number` (SI) format
-    // (`format_kpi_parts(..., default_number=True)`). `raw` names the
-    // predefined format whose house rules and sub-unit fallback the spec alone
-    // cannot recover; a bare predefined name in `spec` resolves to it.
-    let fmt_name = format_cfg
-        .map_or("number", |fmt| {
-            fmt.raw
-                .as_deref()
-                .filter(|raw| crate::common::predefined_number_spec(raw).is_some())
-                .unwrap_or(&fmt.spec)
-        });
-    let (explicit_prefix, explicit_suffix) =
-        format_cfg.map_or(("", ""), |fmt| (fmt.prefix.as_str(), fmt.suffix.as_str()));
-    let parts = FormatParts {
-        spec: Some(crate::common::predefined_number_spec(fmt_name).unwrap_or(fmt_name)),
-        raw: Some(fmt_name),
-        prefix: explicit_prefix,
-        suffix: explicit_suffix,
-        notation: format_cfg.and_then(|fmt| fmt.notation.as_deref()),
-        ..FormatParts::default()
-    };
-    let shared = col.cfg.shared_scale.as_ref();
-    let pad_table = &col.cfg.decimal_pad_table;
-    let sub_unit_specs = board_sub_unit_specs();
-
-    // symbol_mode == "anchors" limits a numeric cell's currency prefix and
-    // unit suffix to the first row plus any summary/total row — mirrors
-    // table.py's `is_anchor_row`/`symbol_mode == "anchors"` gate. A magnitude
-    // suffix carries the number's value, so it stays on every row. Under
-    // "all" (the default) every row is its own anchor.
-    let is_symbol_anchor = |i: usize| -> bool {
-        symbol_mode != "anchors" || i == 0 || is_summary_role(row_roles[i])
-    };
-
-    // A shared scale's anchor row is the first one that can carry the
-    // magnitude word (table.py:1981-1988): a zero never does.
-    let magnitude_anchor_row = raw.iter().position(|v| v.is_some_and(|x| x != 0.0)).unwrap_or(0);
-    let scaled = |is_anchor: bool| {
-        shared.map(|ss| ScaledColumn {
-            exponent: ss.exponent,
-            digit_spec: ss.digit_spec.as_str(),
-            repeat: ss.mode == SuffixMode::Repeat,
-            is_anchor,
-        })
-    };
-
-    (0..n)
-        .map(|i| {
-            let Some(v) = raw[i] else {
-                return Ok(Cell { text: NULL_DISPLAY.to_string(), is_null: true, ..Default::default() });
-            };
-            let cell = match rows[i].get(col.name) {
-                Some(Value::Number(n)) => Some(n),
-                _ => None,
-            };
-            // Production paints `$` as its own lane but MEASURES the cell
-            // through d3 with the `$` still in the spec, where it displaces a
-            // `%`/`p` suffix; one Cell cannot carry both strings, so that
-            // pair refuses instead of painting either.
-            let spec = parts.spec.expect("every numeric column has a spec");
-            if spec.contains('$') && matches!(percent_type(spec), Some('%' | 'p')) {
-                return Err(Diagnostic::refused(format!(
-                    "table: format {spec:?}: `$` with a `%` or `p` type is not supported"
-                )));
-            }
-            let lanes = format_kpi_parts(
-                v,
-                &parts,
-                &PartsOptions {
-                    keep_affix_gaps: true,
-                    anchored: symbol_mode == "anchors",
-                    shared_scale: scaled(
-                        symbol_mode != "anchors" || is_summary_role(row_roles[i]) || i == magnitude_anchor_row,
-                    ),
-                    sub_unit_specs: sub_unit_specs.as_ref(),
-                    cell,
-                    ..PartsOptions::default()
-                },
-            )
-            .map_err(in_table)?;
-            // The decimal pad aligns the number lane on the locale's mark.
-            let pad = decimal_pad_for(pad_table, &lanes.number)?;
-            let (prefix, suffix) = if is_symbol_anchor(i) {
-                ((!lanes.prefix.is_empty()).then_some(lanes.prefix), (!lanes.suffix.is_empty()).then_some(lanes.suffix))
-            } else {
-                (None, non_anchor_suffix(lanes.suffix, explicit_suffix))
-            };
-            // Width measurement reads the cell as every row's own anchor, in
-            // the locale's own currency placement: a shared-scale cell as its
-            // lanes (`_rendered_cell_text`), any other as `format_value`
-            // wraps it, authored whitespace included.
-            let measured = format_kpi_parts(
-                v,
-                &parts,
-                &PartsOptions {
-                    keep_affix_gaps: true,
-                    shared_scale: scaled(true),
-                    sub_unit_specs: sub_unit_specs.as_ref(),
-                    cell,
-                    ..PartsOptions::default()
-                },
-            )
-            .map_err(in_table)?;
-            let (full_prefix, full_suffix) = if shared.is_some() {
-                (measured.prefix, measured.suffix)
-            } else {
-                (measured.measured_prefix, measured.measured_suffix)
-            };
-            let fit_affixes = match shared {
-                Some(_) => {
-                    let fit = format_kpi_parts(
-                        v,
-                        &parts,
-                        &PartsOptions {
-                            keep_affix_gaps: true,
-                            anchored: symbol_mode == "anchors",
-                            shared_scale: scaled(true),
-                            cell,
-                            ..PartsOptions::default()
-                        },
-                    )
-                    .map_err(in_table)?;
-                    Some((fit.prefix, fit.suffix))
-                }
-                None => None,
-            };
-            Ok(Cell {
-                text: format!("{}{pad}", lanes.number),
-                pad: pad.to_string(),
-                prefix,
-                suffix,
-                full_prefix: (!full_prefix.is_empty()).then_some(full_prefix),
-                full_suffix: (!full_suffix.is_empty()).then_some(full_suffix),
-                fit_affixes,
-                is_null: false,
-            })
-        })
-        .collect()
-}
-
-/// The number a lane cell paints: a number, or a string `float()` reads that is
-/// not date-shaped (`"2024"` is a date, never a magnitude).
-fn numeric_value(raw: Option<&Value>) -> Option<f64> {
-    match raw {
-        Some(Value::Number(n)) => n.as_f64(),
-        Some(Value::String(s)) if !is_date_like_str(s) => s.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-/// A number, any cell of a column with an
-/// authored `format:` (a null or blank one included), or a string `float()`
-/// reads.
-fn is_numeric_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
-    match raw {
-        Some(Value::Bool(_)) => false,
-        Some(Value::Number(_)) => true,
-        _ if col.cfg.format.is_some() => true,
-        Some(Value::String(s)) => s.trim().parse::<f64>().is_ok(),
-        _ => false,
-    }
-}
-
-/// The cells painted in the tabular
-/// numeric stack.
-fn wants_tabular_font(col: &ColMeta, raw: Option<&Value>) -> bool {
-    is_numeric_cell(col, raw) || is_date_like_cell(raw)
-}
-
-/// A string in a right-aligned date lane that is neither date-like nor
-/// numeric, with no authored format (a timestamp, say): production paints it
-/// through the text branch in the body font, end-anchored at the lane's
-/// `number_x`, not as a lane cell.
-fn is_plain_date_lane_cell(col: &ColMeta, raw: Option<&Value>) -> bool {
-    col.is_date
-        && matches!(raw, Some(Value::String(s)) if !s.trim().is_empty())
-        && !wants_tabular_font(col, raw)
-}
-
-/// The strftime spec a temporal cell paints through: the authored `format:`
-/// (`date_short`/`time_short` are the engine's two predefined time specs,
-/// `PREDEFINED_TIME_SPECS`), else `date_short`.
-fn temporal_spec(col: &ColMeta) -> Result<String, String> {
-    let authored = col.cfg.format.as_ref().map(|f| f.spec.as_str()).filter(|s| !s.is_empty());
-    let name = authored.unwrap_or("date_short");
-    let Some(engine_spec) = d3rs::format::predefined_time_spec(name) else {
-        return Ok(name.to_string());
-    };
-    Ok(board_alias(name)?.unwrap_or_else(|| engine_spec.to_string()))
-}
-
-/// `format_table_cell_value`'s temporal path for a
-/// string cell: an ISO date or timestamp paints through the strftime spec,
-/// `Ok(None)` for any other string (verbatim, `str(value)`). A non-strftime
-/// spec meeting a temporal value is production's
-/// `ERR_TABLE_FORMAT_KIND_MISMATCH`; a directive `table_dates::strftime` does
-/// not reach errs by name.
-fn format_temporal_cell(col: &ColMeta, s: &str) -> Result<Option<String>, Diagnostic> {
-    let spec_owned = temporal_spec(col)?;
-    let spec = spec_owned.as_str();
-    let refuse = |why: String| format!("table: column '{}' format {spec:?}: {why}", col.name);
-    let parsed = table_dates::parse_temporal(s.trim());
-    if matches!(parsed, Ok(None)) {
-        return Ok(None);
-    }
-    if !table_dates::is_time_format(spec) {
-        return Err(format_kind_mismatch(
-            spec,
-            "use a strftime spec (e.g. '%-d %b %Y') or remove format: to use date_short",
-        ));
-    }
-    let invalid = |reason: String| {
-        Diagnostic::new(
-            &codes::ERR_TABLE_TEMPORAL_FORMAT_INVALID,
-            [("cell", json!(s)), ("spec", json!(spec)), ("reason", json!(reason))],
-        )
-    };
-    table_dates::validate_spec(spec).map_err(&invalid)?;
-    let moment = match parsed {
-        Ok(Some(moment)) => moment,
-        Ok(None) => unreachable!("returned above"),
-        Err(table_dates::TemporalError::Invalid(reason)) => return Err(invalid(reason)),
-        Err(table_dates::TemporalError::Unported(why)) => return Err(refuse(why).into()),
-    };
-    let date = table_dates::strftime(moment, spec).map_err(refuse)?;
-    // The format's own affixes ride around the date (`format_table_cell_value`).
-    let affixes = col.cfg.format.as_ref();
-    let prefix = affixes.map(|f| f.prefix.as_str()).unwrap_or("");
-    let suffix = affixes.map(|f| f.suffix.as_str()).unwrap_or("");
-    Ok(Some(format!("{prefix}{date}{suffix}")))
-}
-
-fn format_kind_mismatch(fmt: &str, remedy: &str) -> Diagnostic {
-    Diagnostic::new(
-        &codes::ERR_TABLE_FORMAT_KIND_MISMATCH,
-        [("fmt", json!(fmt)), ("remedy", json!(remedy))],
-    )
-}
-
-/// Format a date-lane column (invariant #11: right-aligned + date-like
-/// content). Every temporal string paints through `format_temporal_cell`; every
-/// other string (US/short/quarter/year-month/year shapes, and an impossible
-/// calendar date) falls through verbatim. A shape production would format that
-/// the port does not reach (a number under an authored format) errs by name.
-fn format_date_col(
-    rows: &[serde_json::Map<String, Value>],
-    col: &ColMeta,
-) -> Result<Vec<Cell>, Diagnostic> {
-    let authored = col.cfg.format.as_ref();
-    let spec_owned = temporal_spec(col)?;
-    let spec = spec_owned.as_str();
-    let refuse = |why: String| format!("table: date column '{}' format {spec:?}: {why}", col.name);
-    rows.iter()
-        .map(|row| -> Result<Cell, Diagnostic> {
-            match row.get(col.name) {
-            Some(Value::String(s)) if !s.trim().is_empty() => {
-                let text = match format_temporal_cell(col, s)? {
-                    // A timestamp is not `is_date_like`, so under an authored
-                    // format it takes the numeric lane's paint path
-                    // Which this lane never draws.
-                    Some(_) if authored.is_some() && !is_date_like_str(s) => {
-                        return Err(Diagnostic::from(refuse(format!(
-                            "the timestamp {s:?} under an authored format paints on the numeric \
-                             lane, which is not supported"
-                        ))));
-                    }
-                    Some(text) => text,
-                    None if authored.is_some() && s.trim().parse::<f64>().is_ok() => {
-                        // A year-shaped string stays verbatim under a strftime
-                        // spec; any other numeric-looking string would take the
-                        // numeric formatter production picks by spec kind.
-                        if !(table_dates::is_time_format(spec) && is_date_like_str(s)) {
-                            return Err(Diagnostic::from(refuse(format!(
-                                "numeric cell {s:?} under an authored format is not supported"
-                            ))));
-                        }
-                        s.clone()
-                    }
-                    None => s.clone(),
-                };
-                Ok(Cell { text, ..Default::default() })
-            }
-            // Invariant #11: a number mixed into an otherwise date-shaped
-            // lane (`is_date` fires when *any* cell is date-like) still
-            // carries a real value — production renders it on the numeric
-            // lane it establishes, not the null sentinel.
-            Some(Value::Number(n)) => {
-                let v = n
-                    .as_f64()
-                    .ok_or_else(|| format!("table: date column '{}' has non-finite number", col.name))?;
-                if authored.is_some() {
-                    return Err(Diagnostic::from(refuse(format!("numeric cell {v} under an authored format is not supported"))));
-                }
-                let lanes = format_numeric_auto(v)?;
-                Ok(Cell {
-                    text: lanes.number,
-                    suffix: (!lanes.suffix.is_empty()).then_some(lanes.suffix),
-                    full_suffix: (!lanes.measured_suffix.is_empty()).then_some(lanes.measured_suffix),
-                    ..Default::default()
-                })
-            }
-            _ => Ok(Cell { text: NULL_DISPLAY.to_string(), is_null: true, ..Default::default() }),
-            }
-        })
-        .collect()
-}
-
-/// Port of production's `_DATE_RE` (core/utils.py:29): the seven
-/// recognized date shapes. Pattern-based, not semantic — production's
-/// regex accepts any `\d{2}/\d{2}/\d{4}`, impossible dates included.
-fn is_date_like_str(s: &str) -> bool {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let s = s.trim();
-    let b = s.as_bytes();
-    let all_digits = |x: &[u8]| !x.is_empty() && x.iter().all(u8::is_ascii_digit);
-    // ^\d{4}$ and ^\d{4}-\d{2}(-\d{2})?$
-    if all_digits(b) && b.len() == 4 {
-        return true;
-    }
-    if b.len() >= 7 && all_digits(&b[..4]) && b[4] == b'-' && all_digits(&b[5..7]) {
-        if b.len() == 7 {
-            return true;
-        }
-        if b.len() == 10 && b[7] == b'-' && all_digits(&b[8..10]) {
-            return true;
-        }
-    }
-    // ^\d{2}/\d{2}/\d{4}$
-    if b.len() == 10
-        && all_digits(&b[..2])
-        && b[2] == b'/'
-        && all_digits(&b[3..5])
-        && b[5] == b'/'
-        && all_digits(&b[6..10])
-    {
-        return true;
-    }
-    // ^Q[1-4]\s+\d{4}$
-    if let Some(rest) = s.strip_prefix('Q') {
-        let mut it = rest.splitn(2, char::is_whitespace);
-        if let (Some(q), Some(y)) = (it.next(), it.next()) {
-            if matches!(q, "1" | "2" | "3" | "4") && all_digits(y.trim_start().as_bytes()) && y.trim_start().len() == 4 {
-                return true;
-            }
-        }
-    }
-    // Month-name forms: "Mar 15", "Mar 15, 2024", "Mar 15 2024", "15 Mar 2024"
-    let parts: Vec<&str> = s.split_whitespace().collect();
-    let is_month = |t: &str| MONTHS.contains(&t);
-    let is_day = |t: &str| {
-        let t = t.trim_end_matches(',');
-        (1..=2).contains(&t.len()) && all_digits(t.as_bytes())
-    };
-    let is_year = |t: &str| t.len() == 4 && all_digits(t.as_bytes());
-    match parts.as_slice() {
-        [m, d] if is_month(m) && is_day(d) && !d.ends_with(',') => true,
-        [m, d, y] if is_month(m) && is_day(d) && is_year(y) => true,
-        [d, m, y] if is_day(d) && !d.ends_with(',') && is_month(m) && is_year(y) => true,
-        _ => false,
-    }
-}
-
-/// The date-lane membership test: a string cell matching any recognized
-/// date shape (production's `is_date_like`, string arm).
-pub(crate) fn is_date_like_cell(value: Option<&Value>) -> bool {
-    matches!(value, Some(Value::String(s)) if is_date_like_str(s))
-}
-
-/// Round-half-to-even, matching Python's `round()` — used for the row-rule
-/// reserve (`max(1, int(round(w)))`), which Rust's `f64::round`
-/// (half-away-from-zero) disagrees with at an exact `.5` (e.g. `2.5` rounds to
-/// 2 in Python, 3 in Rust).
-fn python_round(x: f64) -> f64 {
-    let floor = x.floor();
-    let diff = x - floor;
-    if diff < 0.5 {
-        floor
-    } else if diff > 0.5 {
-        floor + 1.0
-    } else if (floor as i64) % 2 == 0 {
-        floor
-    } else {
-        floor + 1.0
-    }
-}
-
 /// A coordinate as Python's `str()` writes it: an `Int` prints bare (`81`), a
 /// `Float` always carries its `.0` (`81.0`). Production's `_divider_segment`
 /// interpolates whatever number its caller computed, so the same line is `81`
@@ -2827,96 +1090,8 @@ enum PyNum {
     Float(f64),
 }
 
-impl PyNum {
-    fn value(self) -> f64 {
-        match self {
-            PyNum::Int(v) | PyNum::Float(v) => v,
-        }
-    }
-
-    fn text(self) -> String {
-        match self {
-            PyNum::Int(v) => format!("{v}"),
-            PyNum::Float(v) => float_repr(v),
-        }
-    }
-}
-
-/// One horizontal divider segment. A solid line
-/// is a `<rect>` (integer `y` + integer height = exact pixel coverage at any
-/// browser scale); a dashed one needs a stroked `<line>` centered on the same
-/// band. `class` rides before `shape-rendering` on the rect and last on the
-/// line.
-fn emit_divider_segment(
-    xml: &mut Xml,
-    x1: f64,
-    x2: f64,
-    y: PyNum,
-    thickness: PyNum,
-    divider: &Divider,
-    class: Option<&str>,
-) {
-    if divider.dasharray.is_none() {
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", float_repr(x1))
-                .set("y", y.text())
-                .set("width", float_repr(x2 - x1))
-                .set("height", thickness.text())
-                .set("fill", divider.color.as_str())
-                .set_some("class", class)
-                .set("shape-rendering", "crispEdges"),
-        );
-        return;
-    }
-    let mid = float_repr(y.value() + thickness.value() / 2.0);
-    xml.empty(
-        "line",
-        Attrs::new()
-            .set("x1", float_repr(x1))
-            .set("y1", mid.as_str())
-            .set("x2", float_repr(x2))
-            .set("y2", mid.as_str())
-            .set("stroke", divider.color.as_str())
-            .set("stroke-width", thickness.text())
-            .set_some("stroke-dasharray", divider.dasharray.as_deref())
-            .set_some("class", class),
-    );
-}
-
 /// Minimum gap between adjacent per-column header rules (`_RULE_GAP`).
 const HEADER_RULE_GAP: f64 = 4.0;
-
-/// One column's header rule span.
-/// A column with a lane (`lane` =
-/// its `content_left`/`content_right`) centers on the cell
-/// midpoint at `max(label_w, lane width)` (`:1194-1197`); any other column
-/// starts at `cell_x + pad` and spans `max(label_w, cw - 2*pad)` (`:1201-1202`).
-/// The span clamps to `cell_x + 4 .. cell_x + cw - 4` (`:1173-1174`,
-/// `:1205-1206`) and paints only when `x2 > x1` (`:1207`).
-fn header_rule_span(
-    cell_x: f64,
-    cell_w: f64,
-    pad: f64,
-    label_w: f64,
-    lane: Option<(f64, f64)>,
-) -> Option<(f64, f64)> {
-    let (x1, x2) = match lane {
-        Some((content_left, content_right)) => {
-            let rule_w = label_w.max(content_right - content_left);
-            let center = cell_x + cell_w / 2.0;
-            (center - rule_w / 2.0, center + rule_w / 2.0)
-        }
-        None => {
-            let x1 = cell_x + pad;
-            (x1, x1 + label_w.max(cell_w - 2.0 * pad))
-        }
-    };
-    let x1 = x1.max(cell_x + HEADER_RULE_GAP);
-    let x2 = x2.min(cell_x + cell_w - HEADER_RULE_GAP);
-    (x2 > x1).then_some((x1, x2))
-}
 
 // ── Column width allocation ───────────────────────────────────────────────────
 
@@ -2930,64 +1105,6 @@ enum WidthHint {
     Text(String),
 }
 
-/// Resolve a column width hint to pixels: a positive number is used
-/// directly; a non-positive number means "no pin" (`None`); a `"NN%"` string
-/// resolves to `available_width * pct/100` (non-positive pct likewise `None`);
-/// any other string parses as a literal px number.
-///
-/// A `"NNpx"` string is a CSS width the authored type admits
-/// (`TableColumnConfig.width: int | str`) but production's `float()` cannot
-/// read: its `except ValueError: return None` leaves the column UNPINNED, and
-/// so does this port — same result, so the same painted table. Any other
-/// unparseable string (a bad `"NN%"`, a bad literal) is a bug production
-/// silently drops; this renderer raises instead of quietly auto-sizing a
-/// width the author actually wrote (no-magic, validate-and-error-fast).
-fn parse_column_width(hint: Option<&WidthHint>, available_width: f64) -> Result<Option<f64>, String> {
-    let Some(hint) = hint else { return Ok(None) };
-    match hint {
-        WidthHint::Number(n) => Ok((*n > 0.0).then_some(*n)),
-        WidthHint::Text(s) => {
-            let s = s.trim();
-            if s.is_empty() {
-                return Ok(None);
-            }
-            if let Some(pct_str) = s.strip_suffix('%') {
-                let pct: f64 = pct_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("table: invalid column width {s:?}"))?;
-                return Ok((pct > 0.0).then(|| available_width * (pct / 100.0)));
-            }
-            if s.len() > 2
-                && s.is_char_boundary(s.len() - 2)
-                && s[s.len() - 2..].eq_ignore_ascii_case("px")
-                && s[..s.len() - 2].trim().parse::<f64>().is_ok()
-            {
-                return Ok(None);
-            }
-            let px: f64 = s
-                .parse()
-                .map_err(|_| format!("table: invalid column width {s:?}"))?;
-            Ok((px > 0.0).then_some(px))
-        }
-    }
-}
-
-
-// Max token length included in the min-word floor. Tokens longer than this are
-// opaque IDs/base64 chunks that would force an unreachable floor.
-const MAX_FLOOR_TOKEN_LEN: usize = 40;
-
-// Only the first N rows are sampled for the floor.
-const WORD_FLOOR_SAMPLE_ROWS: usize = 50;
-
-/// Whether a token is eligible to set a min-word floor. Skips URLs and tokens over `MAX_FLOOR_TOKEN_LEN`,
-/// "opaque IDs and base64 chunks would force a floor no column could reach".
-fn is_floor_candidate_token(token: &str) -> bool {
-    !token.starts_with("http://")
-        && !token.starts_with("https://")
-        && token.chars().count() <= MAX_FLOOR_TOKEN_LEN
-}
 
 // ── Pivot reshape ──────────────────────────────────────────────────────────────
 
@@ -3017,304 +1134,10 @@ struct PivotResult {
     values: Vec<String>,
 }
 
-/// The leaf
-/// columns one source row fills — one per measure when there are several,
-/// else the bare column tuple.
-fn pivot_leaf_keys<S: AsRef<str>>(col_tuple: &[String], values: &[S]) -> Vec<String> {
-    let tuple = col_tuple.join(PIVOT_LEAF_SEP);
-    if values.len() > 1 {
-        values.iter().map(|m| format!("{tuple}{PIVOT_LEAF_SEP}{}", m.as_ref())).collect()
-    } else {
-        vec![tuple]
-    }
-}
-
-/// Group-header descriptor rows above the leaf header row.
-fn build_pivot_levels(
-    col_tuples: &[Vec<String>],
-    n_col_dims: usize,
-    n_measures: usize,
-) -> Vec<Vec<PivotLevel>> {
-    let n_col_tuples = col_tuples.len();
-    let leaves_per_tuple = if n_measures > 1 { n_measures } else { 1 };
-    let n_group_dim_levels = if n_measures > 1 { n_col_dims } else { n_col_dims - 1 };
-
-    let mut levels = Vec::with_capacity(n_group_dim_levels);
-    for dim_idx in 0..n_group_dim_levels {
-        let mut level: Vec<PivotLevel> = Vec::new();
-        let mut i = 0;
-        while i < n_col_tuples {
-            let label = col_tuples[i][dim_idx].clone();
-            let mut j = i;
-            while j < n_col_tuples && col_tuples[j][dim_idx] == label {
-                j += 1;
-            }
-            let first_leaf = i * leaves_per_tuple;
-            let n_span_leaves = (j - i) * leaves_per_tuple;
-            level.push((label, first_leaf, n_span_leaves));
-            i = j;
-        }
-        levels.push(level);
-    }
-    levels
-}
-
-/// Whether a `style.columns` entry authors `visible: false`.
-fn is_hidden(cfg: &Value) -> bool {
-    cfg.get("visible") == Some(&Value::Bool(false))
-}
-
-/// `_transpose_data_for_render`'s two input errors: a transposed table reads
-/// exactly one row, and a `visible: false` entry must name one of its columns.
-fn check_transpose_input(
-    columns: &serde_json::Map<String, Value>,
-    rows: &[serde_json::Map<String, Value>],
-) -> Result<(), Diagnostic> {
-    if rows.len() != 1 {
-        return Err(Diagnostic::new(&codes::ERR_TABLE_TRANSPOSE_ROW_COUNT, [("row_count", json!(rows.len()))]));
-    }
-    let row = &rows[0];
-    let unaddressed: Vec<&String> = columns
-        .iter()
-        .filter(|(key, cfg)| is_hidden(cfg) && !row.contains_key(*key))
-        .map(|(key, _)| key)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    if unaddressed.is_empty() {
-        return Ok(());
-    }
-    let available: BTreeSet<&String> = row.keys().collect();
-    Err(Diagnostic::new(
-        &codes::ERR_TABLE_TRANSPOSE_VISIBLE_UNKNOWN_COLUMN,
-        [("unaddressed", json!(unaddressed)), ("available", json!(available))],
-    ))
-}
-
-/// A transposed table: its one row becomes N `(label, value)` rows, each value
-/// formatted as its source column would print it, drawn as a two-column table
-/// headed by the board language's "Metric" and "Value" words (`_transpose_data_for_render`).
-fn transposed_inputs(
-    resolved: &Value,
-    rows: &[serde_json::Map<String, Value>],
-) -> Result<(Value, Vec<serde_json::Map<String, Value>>), Diagnostic> {
-    let mut flat = resolved.clone();
-    flat["style"]["table"]["transpose"] = json!(false);
-    let flat_resolved: Resolved =
-        Deserialize::deserialize(&flat).map_err(|e| format!("table payload: {e}"))?;
-    check_transpose_input(&flat_resolved.columns, rows)?;
-    let (cols, ..) = visible_columns(&flat_resolved, rows, &None)?;
-    let row_roles = resolve_row_roles(rows, flat_resolved.style.table.row.role.as_deref());
-    let cell_data = build_cell_data(rows, &cols, "all", &row_roles)?;
-    let pivoted = cols
-        .iter()
-        .zip(&cell_data)
-        .map(|(col, cells)| {
-            let label = match col.cfg.label.clone() { Some(label) => label, None => display_text::slug_to_text(col.name)? };
-            let text = unpadded_cell_text(&cells[0]);
-            let mut row = serde_json::Map::new();
-            row.insert("__metric__".into(), json!(label));
-            row.insert("__value__".into(), json!(text));
-            Ok(row)
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    flat["columns"] = json!({
-        "__metric__": {"label": display_text::language::tr("table.metric", None, &[])?, "width": "40%", "link_open": "page", "header_link_open": "page"},
-        "__value__": {"label": display_text::language::tr("table.value", None, &[])?, "align": "right", "link_open": "page", "header_link_open": "page"},
-    });
-    flat["conditional_formatting"] = Value::Null;
-    flat["spanners"] = Value::Null;
-    Ok((flat, pivoted))
-}
-
-/// A `visible: false` entry must address a post-pivot column or a measure key
-/// the pivot fanned out; anything else is a typo that would silently hide
-/// nothing (`_prepare_columns`).
-fn check_visible_addressable(
-    chart_id: &str,
-    columns: &serde_json::Map<String, Value>,
-    rows: &[serde_json::Map<String, Value>],
-    row_role: Option<&str>,
-    fanned_measures: &BTreeSet<&str>,
-) -> Result<(), Diagnostic> {
-    let Some(first) = rows.first() else {
-        return Ok(());
-    };
-    let addressable: BTreeSet<&str> = first
-        .keys()
-        .map(String::as_str)
-        .chain(fanned_measures.iter().copied())
-        .filter(|k| Some(*k) != row_role)
-        .collect();
-    let style_inputs: BTreeSet<&str> = columns
-        .values()
-        .flat_map(|cfg| {
-            [
-                cfg.get("background"),
-                cfg.get("font").and_then(|f| f.get("color")),
-                cfg.get("font").and_then(|f| f.get("weight")),
-            ]
-        })
-        .filter_map(|v| v.and_then(Value::as_str))
-        .collect();
-    let unaddressed: BTreeSet<&str> = columns
-        .iter()
-        .filter(|(key, cfg)| {
-            is_hidden(cfg)
-                && !addressable.contains(key.as_str())
-                && !style_inputs.contains(key.as_str())
-                && Some(key.as_str()) != row_role
-        })
-        .map(|(key, _)| key.as_str())
-        .collect();
-    if unaddressed.is_empty() {
-        return Ok(());
-    }
-    let shown: BTreeSet<String> = addressable.iter().map(|k| k.replace(PIVOT_LEAF_SEP, " / ")).collect();
-    Err(Diagnostic::new(
-        &codes::ERR_TABLE_VISIBLE_UNKNOWN_COLUMN,
-        [("chart_id", json!(chart_id)), ("unaddressed", json!(unaddressed)), ("addressable", json!(shown))],
-    ))
-}
-
-/// The authored spanners as `(label, first_idx, n)`
-/// over the visible columns. A spanner whose columns are all hidden is
-/// dropped; an unknown or non-adjacent one is an error.
-fn authored_spanner_level(
-    chart_id: &str,
-    spanners: &[Spanner],
-    queried: &[&str],
-    visible: &[&str],
-) -> Result<Vec<PivotLevel>, Diagnostic> {
-    for spanner in spanners {
-        let unknown: Vec<&String> = spanner.columns.iter().filter(|c| !queried.contains(&c.as_str())).collect();
-        if !unknown.is_empty() {
-            return Err(Diagnostic::new(
-                &codes::ERR_TABLE_SPANNER_UNKNOWN_COLUMN,
-                [
-                    ("chart_id", json!(chart_id)),
-                    ("label", json!(spanner.label)),
-                    ("unknown", json!(unknown)),
-                    ("columns", json!(queried)),
-                ],
-            ));
-        }
-    }
-    let mut level = Vec::new();
-    for spanner in spanners {
-        let mut idxs: Vec<usize> = spanner
-            .columns
-            .iter()
-            .filter_map(|c| visible.iter().position(|v| v == c))
-            .collect();
-        idxs.sort_unstable();
-        let (Some(first), Some(last)) = (idxs.first(), idxs.last()) else {
-            continue;
-        };
-        if last - first + 1 != idxs.len() {
-            return Err(Diagnostic::new(
-                &codes::ERR_TABLE_SPANNER_NOT_ADJACENT,
-                [
-                    ("chart_id", json!(chart_id)),
-                    ("label", json!(spanner.label)),
-                    ("spanner_columns", json!(spanner.columns)),
-                    ("visible_columns", json!(visible)),
-                ],
-            ));
-        }
-        level.push((spanner.label.clone(), *first, idxs.len()));
-    }
-    Ok(level)
-}
-
-/// `_render_swatch_cell`'s `sanitize_color`: a hex color as written, or
-/// `transparent`/`none` as `transparent`; `None` for anything else. The hex
-/// pattern's `$` (colors.py:25) also matches before one final `\n`, which
-/// stays in the returned color.
-fn swatch_color(value: &Value) -> Option<&str> {
-    let s = value.as_str()?;
-    let hex = s
-        .strip_suffix('\n')
-        .unwrap_or(s)
-        .strip_prefix('#')
-        .is_some_and(|h| matches!(h.len(), 3 | 6) && h.bytes().all(|b| b.is_ascii_hexdigit()));
-    if hex {
-        Some(s)
-    } else {
-        matches!(s.to_ascii_lowercase().as_str(), "transparent" | "none").then_some("transparent")
-    }
-}
-
 /// Painted swatch square size;
 /// `SWATCH_CELL_DEMAND` adds 4px of breathing room to the square.
 const SWATCH_SIZE: f64 = 14.0;
 const SWATCH_CELL_DEMAND: f64 = 18.0;
-
-fn is_swatch(col: &ColMeta) -> bool {
-    col.cfg.swatch == Some(true)
-}
-
-/// A typo'd `columns`/`values`/`rows`
-/// field, an empty measure set, or a literal row role used where a column
-/// belongs, raised before any reshape. With `values` omitted the measures are
-/// `infer_pivot_measure_names`'s: every field `rows`, `columns` and the role
-/// column leave unclaimed. Reshaping with them is refused by the caller.
-fn validate_pivot_fields(
-    data: &[serde_json::Map<String, Value>],
-    rows: &[String],
-    columns: &[String],
-    values: Option<&[String]>,
-    row_role: Option<&str>,
-) -> Result<(Vec<String>, Vec<String>), Diagnostic> {
-    let first = data.first().ok_or("table: a pivot needs rows to reshape")?;
-    if values.is_none() && rows.is_empty() {
-        return Err(Diagnostic::new(&codes::ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS, []));
-    }
-    let observed: BTreeSet<&String> = first.keys().collect();
-    let not_found = |field_path: &str, field: &str| {
-        Diagnostic::new(
-            &codes::ERR_TABLE_PIVOT_FIELD_NOT_FOUND,
-            [("channel", json!(field_path)), ("field", json!(field)), ("observed", json!(observed))],
-        )
-    };
-    if let Some(field) = columns.iter().find(|c| !first.contains_key(*c)) {
-        return Err(not_found("pivot.column", field));
-    }
-    if let Some(role) = row_role.filter(|r| !first.contains_key(*r) && matches!(*r, "value" | "summary" | "total")) {
-        return Err(Diagnostic::new(
-            &codes::ERR_TABLE_PIVOT_ROW_ROLE_LITERAL,
-            [("row_role", json!(role)), ("observed", json!(observed))],
-        ));
-    }
-    // `infer_pivot_measure_names`: explicit, else every query column that
-    // `rows`, `columns` and the role marker do not claim.
-    let claimed = |k: &String| rows.contains(k) || columns.contains(k) || Some(k.as_str()) == row_role;
-    let effective_values: Vec<String> = match values {
-        Some(v) => v.to_vec(),
-        None => first.keys().filter(|k| !claimed(k)).cloned().collect(),
-    };
-    if let Some(field) = effective_values.iter().find(|v| !first.contains_key(*v)) {
-        return Err(not_found("pivot.value", field));
-    }
-    if effective_values.is_empty() {
-        return Err(Diagnostic::new(&codes::ERR_TABLE_PIVOT_NO_MEASURES, [("observed", json!(observed))]));
-    }
-    let effective_rows: Vec<String> = if rows.is_empty() {
-        first
-            .keys()
-            .filter(|k| {
-                !columns.contains(k) && !effective_values.contains(k) && Some(k.as_str()) != row_role
-            })
-            .cloned()
-            .collect()
-    } else {
-        if let Some(field) = rows.iter().find(|r| !first.contains_key(*r)) {
-            return Err(not_found("pivot.row", field));
-        }
-        rows.to_vec()
-    };
-    Ok((effective_rows, effective_values))
-}
 
 /// How one pivot dimension's values order: chronological, ascending, or not at
 /// all (first-seen).
@@ -3323,618 +1146,15 @@ enum DimOrder {
     Number(std::collections::HashMap<String, f64>),
 }
 
-/// A pivot dimension whose every non-null value is a
-/// calendar instant sorts chronologically, one whose every non-null value is a
-/// number sorts ascending, any other keeps query order (the author's lever for
-/// business-ordered categories and a trailing "Total"). Nulls sort last in a
-/// sorted dimension; an unsorted dimension beside a sorted one is keyed by
-/// first appearance so outer groups stay contiguous.
-fn order_col_tuples(
-    col_tuples: Vec<Vec<String>>,
-    columns: &[String],
-    data: &[serde_json::Map<String, Value>],
-    tags: &[CellRow],
-) -> Vec<Vec<String>> {
-    let instant_of = |v: &Value| -> Option<(u32, u32, u32, u32, u32, u32, u32)> {
-        let Value::String(s) = v else { return None };
-        if let Ok(Some(moment)) = table_dates::parse_temporal(s) {
-            return Some(moment.instant());
-        }
-        let (y, m, d) = crate::families::temporal::parse_bucket_string(s)?;
-        Some((u32::try_from(y).ok()?, m, d, 0, 0, 0, 0))
-    };
-    let dim_orders: Vec<Option<DimOrder>> = columns
-        .iter()
-        .map(|col| {
-            let mut non_null: Vec<(String, Value)> = Vec::new();
-            for (i, row) in data.iter().enumerate() {
-                let tag = tags.get(i).and_then(|t| t.get(col));
-                let value = dim_value(row.get(col).unwrap_or(&Value::Null), tag);
-                let text = dim_str(&value, tag);
-                if !value.is_null() && !non_null.iter().any(|(t, _)| *t == text) {
-                    non_null.push((text, value));
-                }
-            }
-            if non_null.is_empty() {
-                return None;
-            }
-            let instants: Vec<_> = non_null.iter().filter_map(|(t, v)| instant_of(v).map(|i| (t.clone(), i))).collect();
-            if instants.len() == non_null.len() {
-                return Some(DimOrder::Instant(instants.into_iter().collect()));
-            }
-            let numbers: Vec<_> = non_null
-                .iter()
-                .filter_map(|(t, v)| match v {
-                    Value::Number(n) => n.as_f64().filter(|f| !f.is_nan()).map(|f| (t.clone(), f)),
-                    _ => None,
-                })
-                .collect();
-            (numbers.len() == non_null.len()).then(|| DimOrder::Number(numbers.into_iter().collect()))
-        })
-        .collect();
-    if dim_orders.iter().all(Option::is_none) {
-        return col_tuples;
-    }
-    let first_seen: Vec<std::collections::HashMap<String, usize>> = (0..columns.len())
-        .map(|dim| {
-            let mut seen = std::collections::HashMap::new();
-            for tuple in &col_tuples {
-                let next = seen.len();
-                seen.entry(tuple[dim].clone()).or_insert(next);
-            }
-            seen
-        })
-        .collect();
-    let compare = |a: &Vec<String>, b: &Vec<String>| -> std::cmp::Ordering {
-        for (dim, order) in dim_orders.iter().enumerate() {
-            let (x, y) = (a[dim].as_str(), b[dim].as_str());
-            let ordering = match order {
-                Some(DimOrder::Instant(keys)) => match (keys.get(x), keys.get(y)) {
-                    (Some(p), Some(q)) => p.cmp(q),
-                    (p, q) => p.is_none().cmp(&q.is_none()),
-                },
-                Some(DimOrder::Number(keys)) => match (keys.get(x), keys.get(y)) {
-                    (Some(p), Some(q)) => p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal),
-                    (p, q) => p.is_none().cmp(&q.is_none()),
-                },
-                None => first_seen[dim][x].cmp(&first_seen[dim][y]),
-            };
-            if ordering != std::cmp::Ordering::Equal {
-                return ordering;
-            }
-        }
-        std::cmp::Ordering::Equal
-    };
-    let mut ordered = col_tuples;
-    ordered.sort_by(compare);
-    ordered
-}
-
-/// A pivot dimension value's label: the wire's `str()` text for a tagged cell (a
-/// Decimal prints `2.50`, not `2.5`), else Python's `str()` of the cell.
-fn dim_str(cell: &Value, tag: Option<&CellTag>) -> String {
-    tag.map_or_else(|| py_str(cell), |tag| tag.text.clone())
-}
-
-/// A pivot dimension value as a key and a sort input: a tagged non-finite value
-/// is its text, which leaves the dimension unsortable; anything else is the cell.
-fn dim_value(cell: &Value, tag: Option<&CellTag>) -> Value {
-    match tag {
-        Some(tag) if tag.non_finite.is_some() => Value::String(tag.text.clone()),
-        _ => cell.clone(),
-    }
-}
-
 /// A row-dimension cell as a Python dict key: `None`, a
 /// number under Python's cross-type equality (`True == 1 == 1.0`, an int
 /// and a float equal only when exactly equal), or a string.
-use crate::common::{py_scalar_key, PyKey};
-
-/// A list or object cell is unhashable: production's row-key lookup raises
-/// `TypeError`, so it is refused by name.
-fn py_key(column: &str, cell: &Value) -> Result<PyKey, Diagnostic> {
-    if matches!(cell, Value::Array(_) | Value::Object(_)) {
-        return Err(format!(
-            "table: pivot row dimension '{column}' holds a list or object cell, which Python cannot key a wide row by"
-        )
-        .into());
-    }
-    Ok(py_scalar_key(cell))
-}
-
-/// Reshape long-form rows into a wide pivot matrix.
-/// `pivot_table_data`: leaf columns in each dimension's canonical order
-/// (`order_col_tuples`).
-fn pivot_table_data(
-    data: &[serde_json::Map<String, Value>],
-    tags: &[CellRow],
-    row_dims: &[String],
-    columns: &[String],
-    values: &[String],
-    row_role: Option<&str>,
-) -> Result<PivotResult, Diagnostic> {
-    if data.is_empty() {
-        return Err("table: pivot on empty data not supported".into());
-    }
-    // An absent cascading role column is harmless; only a present one rides
-    // onto the wide rows.
-    let role_col = row_role.filter(|r| data[0].contains_key(*r));
-    let role_of = |row: &serde_json::Map<String, Value>| -> &'static str {
-        match resolve_row_roles(std::slice::from_ref(row), role_col)[0] {
-            RowRole::Value => "value",
-            RowRole::Summary => "summary",
-            RowRole::Total => "total",
-        }
-    };
-    let row_repr = |entry: &serde_json::Map<String, Value>| {
-        row_dims
-            .iter()
-            .map(|k| format!("{k}={}", py_repr(entry.get(k).unwrap_or(&Value::Null))))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-
-    let n_measures = values.len();
-
-    // Distinct col-tuples in first-seen order, then canonically ordered.
-    let mut col_tuples: Vec<Vec<String>> = Vec::new();
-    let mut seen: std::collections::HashSet<Vec<String>> = std::collections::HashSet::new();
-    for (i, row) in data.iter().enumerate() {
-        let tuple: Vec<String> = columns.iter().map(|c| dim_str(row.get(c).unwrap_or(&Value::Null), tag_at(tags, i, c))).collect();
-        if seen.insert(tuple.clone()) {
-            col_tuples.push(tuple);
-        }
-    }
-
-    let col_tuples = order_col_tuples(col_tuples, columns, data, tags);
-    let leaf_cols: Vec<String> =
-        col_tuples.iter().flat_map(|ct| pivot_leaf_keys(ct, values)).collect();
-
-    let mut row_order: Vec<Vec<PyKey>> = Vec::new();
-    let mut row_map: std::collections::HashMap<Vec<PyKey>, serde_json::Map<String, Value>> =
-        std::collections::HashMap::new();
-    let mut filled: std::collections::HashMap<Vec<PyKey>, std::collections::HashSet<String>> =
-        std::collections::HashMap::new();
-    for (i, row) in data.iter().enumerate() {
-        let row_key = row_dims
-            .iter()
-            .map(|k| py_key(k, &dim_value(row.get(k).unwrap_or(&Value::Null), tag_at(tags, i, k))))
-            .collect::<Result<Vec<_>, _>>()?;
-        if !row_map.contains_key(&row_key) {
-            let mut m = serde_json::Map::new();
-            for k in row_dims {
-                m.insert(k.clone(), dim_value(row.get(k).unwrap_or(&Value::Null), tag_at(tags, i, k)));
-            }
-            if let Some(role) = role_col {
-                m.insert(role.to_string(), row.get(role).cloned().unwrap_or(Value::Null));
-            }
-            for leaf in &leaf_cols {
-                m.insert(leaf.clone(), Value::Null);
-            }
-            row_order.push(row_key.clone());
-            row_map.insert(row_key.clone(), m);
-        } else if role_col.is_some() {
-            let stored_role = role_of(&row_map[&row_key]);
-            let this_role = role_of(row);
-            if this_role != stored_role {
-                return Err(Diagnostic::new(
-                    &codes::ERR_TABLE_PIVOT_ROW_ROLE_CONFLICT,
-                    [
-                        ("row", json!(row_repr(&row_map[&row_key]))),
-                        ("stored_role", json!(stored_role)),
-                        ("this_role", json!(this_role)),
-                    ],
-                ));
-            }
-        }
-        let col_tuple: Vec<String> = columns.iter().map(|c| dim_str(row.get(c).unwrap_or(&Value::Null), tag_at(tags, i, c))).collect();
-        let entry = row_map.get_mut(&row_key).expect("row_key just inserted");
-        let row_filled = filled.entry(row_key).or_default();
-        // A single measure fills one leaf per row; `zip` pairs it with `values[0]`.
-        for (leaf, m) in pivot_leaf_keys(&col_tuple, values).into_iter().zip(values) {
-            if !row_filled.insert(leaf.clone()) {
-                let tuple_repr = match col_tuple.as_slice() {
-                    [one] => format!("({},)", py_repr(&json!(one))),
-                    many => format!(
-                        "({})",
-                        many.iter().map(|c| py_repr(&json!(c))).collect::<Vec<_>>().join(", ")
-                    ),
-                };
-                return Err(Diagnostic::new(
-                    &codes::ERR_TABLE_PIVOT_DUPLICATE_CELL,
-                    [("row", json!(row_repr(entry))), ("pivot_column", json!(tuple_repr)), ("measure", json!(m))],
-                ));
-            }
-            entry.insert(leaf, row.get(m).cloned().unwrap_or(Value::Null));
-        }
-    }
-    let wide_rows: Vec<_> = row_order
-        .into_iter()
-        .map(|k| row_map.remove(&k).expect("row key was inserted above"))
-        .collect();
-
-    let single_dim = columns.len() == 1;
-    let levels = if single_dim && n_measures == 1 {
-        Vec::new()
-    } else {
-        build_pivot_levels(&col_tuples, columns.len(), n_measures)
-    };
-
-    let mut col_order = row_dims.to_vec();
-    col_order.extend(leaf_cols);
-
-    Ok(PivotResult {
-        rows: wide_rows,
-        n_row_dims: row_dims.len(),
-        col_order,
-        levels,
-        single_measure: if n_measures == 1 { Some(values[0].clone()) } else { None },
-        values: values.to_vec(),
-    })
-}
-
-// ── Pagination row-budget probes ───────────────────────────────────────────────
-
-/// The 1-based page a board variable names: absent or unreadable is page 1.
-fn page_variable(variables: &serde_json::Map<String, Value>, name: &str) -> usize {
-    let page = match variables.get(name) {
-        Some(Value::Number(n)) => n.as_i64().or_else(|| n.as_f64().map(|f| f.trunc() as i64)),
-        Some(Value::String(s)) => s.trim().parse::<i64>().ok(),
-        Some(Value::Bool(b)) => Some(i64::from(*b)),
-        _ => None,
-    };
-    page.map_or(1, |p| p.max(1) as usize)
-}
-
-/// Largest page size whose EVERY contiguous page-sized window of
-/// `row_heights` fits `available`.
-/// Checking only the leading rows would let a short page 1 pick a size
-/// that overflows a later, taller page.
-fn largest_safe_page_rows(row_heights: &[f64], available: f64, max_page_rows: usize) -> usize {
-    let n = row_heights.len();
-    if n == 0 {
-        return 1;
-    }
-    for size in (1..=max_page_rows.min(n)).rev() {
-        let every_window_fits = (0..n)
-            .step_by(size)
-            .all(|s| row_heights[s..n.min(s + size)].iter().sum::<f64>() <= available);
-        if every_window_fits {
-            return size;
-        }
-    }
-    1
-}
-
-/// Max over every contiguous page-sized window of `row_heights` —
-/// A static multi-page export paints every page
-/// onto one shared canvas, so the control bar anchors below the TALLEST
-/// page's rows, not page 1's.
-fn max_page_sum(row_heights: &[f64], page_rows: usize) -> f64 {
-    if row_heights.is_empty() || page_rows == 0 {
-        return 0.0;
-    }
-    let n = row_heights.len();
-    (0..n)
-        .step_by(page_rows)
-        .map(|s| row_heights[s..n.min(s + page_rows)].iter().sum::<f64>())
-        .fold(0.0, f64::max)
-}
 
 // ── Static pagination control bar ──────────────────────────────────────────────
 
 enum PageItem {
     Page(i64),
     Ellipsis,
-}
-
-/// Windowed page sequence: numeric pages with an ellipsis for gaps.
-/// The paginator window (sibling=1, boundary=1).
-///
-/// Only called when `render` has already established `total_pages >= 2`
-/// (the static-export branch only draws controls when the table actually
-/// overflows one page) — a `total <= 1` guard here would be dead code.
-fn paginator_window(page: i64, total: i64) -> Vec<PageItem> {
-    let mut must_show: Vec<i64> = Vec::new();
-    for p in 1..=PAGINATOR_BOUNDARY_COUNT.min(total) {
-        must_show.push(p);
-    }
-    for p in (total - PAGINATOR_BOUNDARY_COUNT + 1).max(1)..=total {
-        must_show.push(p);
-    }
-    for p in (page - PAGINATOR_SIBLING_COUNT).max(1)..=(page + PAGINATOR_SIBLING_COUNT).min(total) {
-        must_show.push(p);
-    }
-    must_show.sort_unstable();
-    must_show.dedup();
-
-    let mut items = Vec::new();
-    let mut prev = 0;
-    for p in must_show {
-        if p > prev + 1 {
-            items.push(PageItem::Ellipsis);
-        }
-        items.push(PageItem::Page(p));
-        prev = p;
-    }
-    items
-}
-
-/// Remove every `/*{# ... #}*/`-fenced comment from JavaScript source, port
-/// of `comment_stripping.strip_js_comments`. Replaces each fenced span with
-/// a single space so adjacent tokens never merge — a plain scan (find the
-/// literal `/*{#` marker, then its matching `#}*/` close) is exactly as
-/// correct as production's own non-greedy regex here: the 4-character
-/// marker is not something real code contains by coincidence, so no
-/// string/regex-literal awareness is needed either way.
-fn strip_js_comments(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut rest = source;
-    while let Some(start) = rest.find("/*{#") {
-        out.push_str(&rest[..start]);
-        let after_marker = &rest[start + 4..];
-        match after_marker.find("#}*/") {
-            Some(end) => {
-                out.push(' ');
-                rest = &after_marker[end + 4..];
-            }
-            None => {
-                // Unterminated fence: production's DOTALL regex would never
-                // match without a close either, so the marker (and
-                // everything after) passes through untouched.
-                out.push_str(&rest[start..]);
-                rest = "";
-                break;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The static-export pagination toggle script, wrapped for inline SVG
-/// execution. `table_pagination.js` is vendored
-/// under `chart-renderer/assets/` (pinned byte-equal to production's own
-/// copy by `tests/test_table_pagination_asset.py`, a chart-svg pytest, not
-/// a runtime import — this crate stays self-contained per `libs/README.md`)
-/// rather than read from `dbt-charts/src/` at build or run time.
-fn embed_table_pagination_script(xml: &mut Xml) {
-    let stripped = strip_js_comments(include_str!("../../assets/table_pagination.js"));
-    xml.open("script", Attrs::new().set("type", "text/javascript"));
-    xml.text("\n");
-    xml.cdata(&format!("\n{stripped}\n"));
-    xml.text("\n");
-    xml.close("script");
-}
-
-/// A page number's slot: `item_width` holds a two-digit label, and each
-/// further digit widens it by its own measured width so the spacing around the
-/// ellipsis and chevrons does not shrink.
-pub(super) fn page_slot_width(
-    fonts: &FontBook,
-    body_family: &str,
-    font_size: f64,
-    item_width: f64,
-    label: &str,
-) -> Result<f64, String> {
-    let family = crate::common::measure_family_stand_in(body_family);
-    let label_w = fonts.measure(label, family, font_size)?;
-    let two_digit_w = fonts.measure("00", family, font_size)?;
-    Ok(item_width + (label_w - two_digit_w).max(0.0))
-}
-
-/// Static-export pagination control bar: right-anchored chevrons + windowed
-/// page numbers, each clickable item carrying a `data-dbt-page-target` hit
-/// rect `table_pagination.js` reads (`data-dbt-page-var` too on a live host).
-#[allow(clippy::too_many_arguments)]
-fn render_pagination_controls(
-    xml: &mut Xml,
-    theme: &PaginatorTheme,
-    body_family: &str,
-    page: i64,
-    total_pages: i64,
-    last_enabled_page: i64,
-    page_var_name: &str,
-    table_width: f64,
-    y: f64,
-    row_start: usize,
-    row_end: usize,
-    total_rows: usize,
-    padding: f64,
-    interactive: bool,
-    fonts: &FontBook,
-) -> Result<(), String> {
-    let window = paginator_window(page, total_pages);
-    enum Role {
-        Prev,
-        Next,
-        Page,
-        Ellipsis,
-    }
-    impl Role {
-        fn as_str(&self) -> &'static str {
-            match self {
-                Role::Prev => "prev",
-                Role::Next => "next",
-                Role::Page => "page",
-                Role::Ellipsis => "ellipsis",
-            }
-        }
-    }
-    let prev_target = if page > 1 { page - 1 } else { 0 };
-    let next_target = if page < last_enabled_page { page + 1 } else { 0 };
-
-    let mut sequence: Vec<(Role, String, i64)> =
-        vec![(Role::Prev, PAGINATOR_PREV_CHEVRON.to_string(), prev_target)];
-    for item in window {
-        match item {
-            PageItem::Ellipsis => {
-                sequence.push((Role::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), 0))
-            }
-            PageItem::Page(p) => {
-                sequence.push((Role::Page, p.to_string(), if p <= last_enabled_page { p } else { 0 }))
-            }
-        }
-    }
-    sequence.push((Role::Next, PAGINATOR_NEXT_CHEVRON.to_string(), next_target));
-
-    let font_size = theme.font.size_or(11.0) as i64;
-    // Production passes the table body family; paginator.font contributes
-    // only its size.
-    let font_family = body_family;
-    let text_y = y + 18.0;
-    // Hit rect hugs the glyph tightly so cursor:pointer matches the visible
-    // character — adjacent rects never touch, so the gap between items
-    // never feels clickable.
-    let rect_w = font_size as f64 + 6.0;
-    let rect_h = (font_size as f64 * 1.8).max(18.0);
-    let rect_y = y + 4.0;
-    let aux_slot_w = theme.item_width * PAGINATOR_AUX_SLOT_RATIO;
-
-    let slot_widths = sequence
-        .iter()
-        .map(|(role, glyph, _)| match role {
-            Role::Prev | Role::Next | Role::Ellipsis => Ok(aux_slot_w),
-            Role::Page => {
-                page_slot_width(fonts, body_family, font_size as f64, theme.item_width, glyph)
-            }
-        })
-        .collect::<Result<Vec<f64>, String>>()?;
-    let total_width: f64 = slot_widths.iter().sum();
-    let sequence_left = table_width - total_width;
-
-    // Slot centers, except an ellipsis sits midway between its neighbors' ink
-    // edges so the gap on each side is equal whatever the digit counts.
-    let measure_family = crate::common::measure_family_stand_in(body_family);
-    let mut centers: Vec<f64> = Vec::with_capacity(sequence.len());
-    let mut slot_left = sequence_left;
-    for slot_w in &slot_widths {
-        centers.push(slot_left + slot_w / 2.0);
-        slot_left += slot_w;
-    }
-    for i in 0..sequence.len() {
-        if matches!(sequence[i].0, Role::Ellipsis) {
-            let (prev, next) = (&sequence[i - 1].1, &sequence[i + 1].1);
-            let prev_edge =
-                centers[i - 1] + fonts.measure(prev, measure_family, font_size as f64)? / 2.0;
-            let next_edge =
-                centers[i + 1] - fonts.measure(next, measure_family, font_size as f64)? / 2.0;
-            centers[i] = (prev_edge + next_edge) / 2.0;
-        }
-    }
-
-    // A muted "{row_start}–{row_end} / {total_rows}" label at
-    // `padding`, left of the page sequence —: an
-    // unlabeled "‹ 1 2 … 37 ›" reads as "37 pages of dashboards", not "this
-    // table has 37 pages of rows". Dropped entirely (never shrunk) if it
-    // would collide with the right-anchored sequence — production gates on
-    // the sequence's own left edge.
-    let label_text = format!("{row_start}\u{2013}{row_end} / {total_rows}");
-    // `get_font_measurer(font_family)`: every non-serif
-    // family measures as Inter, whatever the label paints in.
-    let label_w = fonts.measure(
-        &label_text,
-        crate::common::measure_family_stand_in(body_family),
-        font_size as f64,
-    )?;
-    if padding + label_w <= sequence_left {
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("class", "dbt-paginator-label")
-                .set("x", format!("{padding:.1}"))
-                .set("y", format!("{text_y:.1}"))
-                .set("font-size", font_size.to_string())
-                .set("fill", theme.color_inactive.as_str())
-                .set("font-family", font_family)
-                .set("font-weight", theme.weight_inactive.to_string())
-                .set("style", "font-variant-numeric: tabular-nums;"),
-            &label_text,
-        );
-    }
-
-    xml.open("g", Attrs::new().set("class", "dbt-paginator").set("data-paginator", page_var_name));
-    for (i, (role, glyph, target)) in sequence.iter().enumerate() {
-        let center_x = centers[i];
-
-        let is_active_page = matches!(role, Role::Page) && *target == page;
-        let is_disabled_chevron = matches!(role, Role::Prev | Role::Next) && *target == 0;
-        let is_ellipsis = matches!(role, Role::Ellipsis);
-
-        let is_disabled_page = matches!(role, Role::Page) && *target == 0;
-        let (color, weight, clickable) = if is_active_page {
-            (theme.color_active.as_str(), theme.weight_active, false)
-        } else if is_disabled_chevron {
-            (theme.color_disabled.as_str(), theme.weight_chevron, false)
-        } else if is_disabled_page {
-            (theme.color_disabled.as_str(), theme.weight_inactive, false)
-        } else if matches!(role, Role::Prev | Role::Next) {
-            (theme.color_active.as_str(), theme.weight_chevron, true)
-        } else if is_ellipsis {
-            (theme.color_inactive.as_str(), theme.weight_inactive, false)
-        } else {
-            (theme.color_inactive.as_str(), theme.weight_inactive, true)
-        };
-
-        if clickable {
-            let rect_x = center_x - rect_w / 2.0;
-            // A live host commits the variable the control names; an export
-            // names only the target its inline script toggles.
-            xml.empty(
-                "rect",
-                Attrs::new()
-                    .set("class", "dbt-page-target")
-                    .set("x", format!("{rect_x:.1}"))
-                    .set("y", format!("{rect_y:.1}"))
-                    .set("width", format!("{rect_w:.1}"))
-                    .set("height", format!("{rect_h:.1}"))
-                    .set("fill", "transparent")
-                    .set_if(interactive, "data-dbt-page-var", page_var_name)
-                    .set("data-dbt-page-target", target.to_string()),
-            );
-        }
-
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", format!("{center_x:.1}"))
-                .set("y", format!("{text_y:.1}"))
-                .set("font-size", font_size.to_string())
-                .set("fill", color)
-                .set("text-anchor", "middle")
-                .set("font-family", font_family)
-                .set("font-weight", weight.to_string())
-                .set("class", "dbt-paginator-glyph")
-                .set("style", "font-variant-numeric: tabular-nums;")
-                .set("data-paginator-role", role.as_str())
-                .set_if(is_active_page, "data-pagination-current", page_var_name),
-            glyph,
-        );
-    }
-    xml.close("g");
-    Ok(())
-}
-
-// ── In-cell spark marks ──────────
-
-/// Clamp `value` against
-/// `max_value`, honoring sign only when `signed`. `signed=false` reproduces
-/// the plain edge clamp (negatives clamp to zero, matches every `bar`/
-/// `bar-normalize` call site in this renderer — a `bar` column with any
-/// negative detail value refuses before paint, `bar-normalize` never
-/// consults sign at all). `signed=true` clamps symmetrically to
-/// `[-max_value, max_value]` and reports which side of zero the value
-/// landed on — `render_spark_columns`'s own has_negative branch below.
-/// Returns `(fraction in [0, 1], is_negative)`.
-fn signed_fraction(value: f64, max_value: f64, signed: bool) -> (f64, bool) {
-    if !signed {
-        let clamped = value.max(0.0).min(max_value);
-        let fraction = if max_value > 0.0 { clamped / max_value } else { 0.0 };
-        return (fraction, false);
-    }
-    let clamped = value.max(-max_value).min(max_value);
-    let fraction = if max_value > 0.0 { clamped.abs() / max_value } else { 0.0 };
-    (fraction, clamped < 0.0)
 }
 
 /// What a `bar`'s optional value label needs beyond the mark itself.
@@ -3944,599 +1164,9 @@ struct BarLabel<'a> {
     family: &'a str,
 }
 
-/// Python's `f"{v:g}"`: six significant digits, trailing zeros dropped,
-/// exponent form past `1e6` and under `1e-4`.
-fn py_g(v: f64) -> String {
-    if v == 0.0 {
-        return "0".to_string();
-    }
-    let exp = v.abs().log10().floor() as i32;
-    if !(-4..6).contains(&exp) {
-        let text = format!("{v:.5e}");
-        let (mantissa, e) = text.split_once('e').expect("exponent form");
-        let mantissa = if mantissa.contains('.') { mantissa.trim_end_matches('0').trim_end_matches('.') } else { mantissa };
-        let e: i32 = e.parse().expect("exponent");
-        return format!("{mantissa}e{}{:02}", if e < 0 { '-' } else { '+' }, e.abs());
-    }
-    let text = format!("{v:.*}", (5 - exp).max(0) as usize);
-    if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_string() } else { text }
-}
-
-/// A signed column grows each bar from
-/// its midline (`has_negative`); `width`/`height` print bare — production's
-/// `int(...)`-computed size is a genuine Python int, and this renderer's
-/// `spark_width`/`spark_height` mirror that with `f64::trunc()`.
-/// `border_radius` is a theme float, so it takes `py_float`.
-#[allow(clippy::too_many_arguments)]
-fn render_spark_bar(
-    value: f64,
-    max_value: f64,
-    width: f64,
-    height: f64,
-    color: &str,
-    normalize: bool,
-    background: &str,
-    border_radius: f64,
-    has_negative: bool,
-    label: Option<(&BarLabel, &SparkBarLabelTheme)>,
-) -> String {
-    let (fraction, is_negative) = signed_fraction(value, max_value, has_negative);
-    let (fill_x, fill_width) = if has_negative {
-        let half_width = width / 2.0;
-        let fill_width = fraction * half_width;
-        (format!("{:.1}", if is_negative { half_width - fill_width } else { half_width }), fill_width)
-    } else {
-        ("0".to_string(), fraction * width)
-    };
-    let radius_s = float_repr(border_radius);
-    let mut xml = Xml::new();
-    if normalize {
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", "0")
-                .set("y", "0")
-                .set("width", width.to_string())
-                .set("height", height.to_string())
-                .set("fill", background)
-                .set("rx", radius_s.as_str()),
-        );
-    }
-    if fill_width > 0.0 {
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", fill_x)
-                .set("y", "0")
-                .set("width", format!("{fill_width:.1}"))
-                .set("height", height.to_string())
-                .set("fill", color)
-                .set("rx", radius_s.as_str()),
-        );
-    }
-    if let Some((label, theme)) = label {
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", float_repr(width - theme.inset_x))
-                .set("y", float_repr(height / 2.0))
-                .set("font-size", float_repr(label.font_size))
-                .set("fill", theme.fill.as_str())
-                .set("fill-opacity", float_repr(theme.fill_opacity))
-                .set("text-anchor", "end")
-                .set("dominant-baseline", "central")
-                .set("font-family", label.family)
-                .set("style", "font-variant-numeric: tabular-nums lining-nums;"),
-            &label.text,
-        );
-    }
-    xml.finish()
-}
-
-/// `spark.type: column`: one
-/// bottom-anchored vertical bar, or midline-anchored in a signed column.
-#[allow(clippy::too_many_arguments)]
-fn render_spark_column(
-    value: f64,
-    max_value: f64,
-    width: f64,
-    height: f64,
-    color: &str,
-    border_radius: f64,
-    has_negative: bool,
-) -> String {
-    let (fraction, is_negative) = signed_fraction(value, max_value, has_negative);
-    let (fill_y, fill_height) = if has_negative {
-        let half_height = height / 2.0;
-        let fill_height = fraction * half_height;
-        (if is_negative { half_height } else { half_height - fill_height }, fill_height)
-    } else {
-        let fill_height = fraction * height;
-        (height - fill_height, fill_height)
-    };
-    let mut xml = Xml::new();
-    if fill_height > 0.0 {
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", "0")
-                .set("y", format!("{fill_y:.1}"))
-                .set("width", width.to_string())
-                .set("height", format!("{fill_height:.1}"))
-                .set("fill", color)
-                .set("rx", float_repr(border_radius)),
-        );
-    }
-    xml.finish()
-}
-
-/// Per-cell layout decided from
-/// the array's OWN values — min-rebased when every value is non-negative
-/// (baseline at the array's own minimum), zero-midline the moment any value
-/// is negative (min-rebasing would erase the negative: `(v-min)/range`
-/// scales `-40 -30 -20 -10` identically to `10 20 30 40`). `x`/`y`/`width`/
-/// `height` are genuine `:.1f` rounds (not the bare-float T1 law); `rx` is
-/// the theme's bare `columns.border.radius` float, so `py_float`.
-/// `negative_fill` is the tone a negative bar takes when `negative_color` is on.
-fn render_spark_columns(
-    values: &[f64],
-    width: f64,
-    height: f64,
-    color: &str,
-    negative_fill: Option<&str>,
-    theme: &SparkColumnsTheme,
-) -> String {
-    let plot_height = height - 2.0 * theme.padding;
-    let num_bars = values.len() as f64;
-    let total_gap = theme.gap * (num_bars - 1.0);
-    let bar_width = (width - total_gap) / num_bars;
-    let radius_s = float_repr(theme.border.radius);
-    // A non-finite value keeps its x-slot but draws no bar and adds nothing to
-    // the domain (the null rule of `coerce_numeric_cell`).
-    let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
-    let has_negative = finite.iter().any(|v| *v < 0.0);
-    let mut xml = Xml::new();
-    let mut bar = |x: f64, y: f64, bar_height: f64, fill: &str| {
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", format!("{x:.1}"))
-                .set("y", format!("{y:.1}"))
-                .set("width", format!("{bar_width:.1}"))
-                .set("height", format!("{bar_height:.1}"))
-                .set("fill", fill.to_string())
-                .set("rx", radius_s.as_str()),
-        );
-    };
-    if has_negative {
-        let max_abs = finite.iter().fold(0.0_f64, |acc, v| acc.max(v.abs()));
-        let half = plot_height / 2.0;
-        let mid_y = theme.padding + half;
-        for (i, &val) in values.iter().enumerate() {
-            if !val.is_finite() {
-                continue;
-            }
-            let x = i as f64 * (bar_width + theme.gap);
-            let (fraction, is_negative) = signed_fraction(val, max_abs, true);
-            let bar_height = theme.min_bar_height.max(fraction * half);
-            let y = if is_negative { mid_y } else { mid_y - bar_height };
-            let fill = if is_negative { negative_fill.unwrap_or(color) } else { color };
-            bar(x, y, bar_height, fill);
-        }
-    } else {
-        let min_val = finite.iter().copied().fold(f64::INFINITY, f64::min);
-        let max_val = finite.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let value_range = max_val - min_val;
-        for (i, &val) in values.iter().enumerate() {
-            if !val.is_finite() {
-                continue;
-            }
-            let x = i as f64 * (bar_width + theme.gap);
-            let bar_height = if value_range > 0.0 {
-                theme.min_bar_height.max(((val - min_val) / value_range) * plot_height)
-            } else {
-                plot_height / 2.0
-            };
-            let y = height - theme.padding - bar_height;
-            bar(x, y, bar_height, color);
-        }
-    }
-    xml.finish()
-}
-
 /// `render_spark_line`'s `stroke_width: float = 1.5` default;
 /// `render_spark` (:623-680) never passes another.
 const SPARK_LINE_STROKE_WIDTH: &str = "1.5";
-
-/// A dashed rule across the vertical
-/// middle, drawn for a zero-value `line` or `columns` cell.
-fn render_empty_spark(width: f64, height: f64, theme: &SparkEmptyTheme) -> String {
-    let y = float_repr(height / 2.0);
-    let mut xml = Xml::new();
-    xml.empty(
-        "line",
-        Attrs::new()
-            .set("x1", float_repr(theme.inset_x))
-            .set("y1", y.as_str())
-            .set("x2", float_repr(width - theme.inset_x))
-            .set("y2", y.as_str())
-            .set("stroke", theme.stroke.color.as_str())
-            .set("stroke-width", float_repr(theme.stroke.width))
-            .set("stroke-dasharray", theme.stroke.dasharray.as_str()),
-    );
-    xml.finish()
-}
-
-/// A rule inset `inset_x` from
-/// each side at mid-height, and a dot of `marker_radius` at the width midpoint,
-/// drawn for a one-value `line` cell.
-fn render_single_value_line(
-    width: f64,
-    height: f64,
-    color: &str,
-    theme: &SparkSingleValueTheme,
-) -> String {
-    let y = float_repr(height / 2.0);
-    let mut xml = Xml::new();
-    xml.empty(
-        "line",
-        Attrs::new()
-            .set("x1", float_repr(theme.inset_x))
-            .set("y1", y.as_str())
-            .set("x2", float_repr(width - theme.inset_x))
-            .set("y2", y.as_str())
-            .set("stroke", color)
-            .set("stroke-width", SPARK_LINE_STROKE_WIDTH),
-    );
-    xml.empty(
-        "circle",
-        Attrs::new()
-            .set("cx", float_repr(width / 2.0))
-            .set("cy", y.as_str())
-            .set("r", float_repr(theme.marker_radius))
-            .set("fill", color),
-    );
-    xml.finish()
-}
-
-/// `render_spark_area`: the `line`'s polyline under a filled
-/// polygon closed along the plot's bottom edge.
-#[allow(clippy::too_many_arguments)]
-fn render_spark_area(
-    values: &[f64],
-    width: f64,
-    height: f64,
-    color: &str,
-    fill_opacity: f64,
-    last_visible: bool,
-    padding: &SparkPaddingTheme,
-) -> String {
-    let points = spark_points(values, width, height, padding);
-    let bottom_y = height - padding.bottom;
-    let first_x = padding.left;
-    let last_x = padding.left + (width - (padding.left + padding.right));
-    let mut xml = Xml::new();
-    xml.empty(
-        "polygon",
-        Attrs::new()
-            .set(
-                "points",
-                format!(
-                    "{} {} {}",
-                    py_float_str_pair(first_x, bottom_y),
-                    joined_points(&points),
-                    py_float_str_pair(last_x, bottom_y)
-                ),
-            )
-            .set("fill", color)
-            .set("fill-opacity", float_repr(fill_opacity)),
-    );
-    emit_spark_line(&mut xml, values, &points, color, last_visible, false);
-    xml.finish()
-}
-
-/// Python's `f"{x},{y}"` for two floats.
-fn py_float_str_pair(x: f64, y: f64) -> String {
-    format!("{},{}", float_repr(x), float_repr(y))
-}
-
-/// `_normalize_points` for a
-/// series of two or more values: x is `padding.left + i/(n-1) * plot_width`,
-/// y maps `[min, max]` onto the plot height (a flat series sits on
-/// `padding.top + plot_height/2`), both printed `:.1f`.
-fn spark_points(values: &[f64], width: f64, height: f64, padding: &SparkPaddingTheme) -> Vec<(String, String)> {
-    let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
-    let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let value_range = max_val - min_val;
-    let plot_width = width - (padding.left + padding.right);
-    let plot_height = height - (padding.top + padding.bottom);
-    let last_index = (values.len() - 1) as f64;
-    values
-        .iter()
-        .enumerate()
-        .map(|(i, &val)| {
-            let x = padding.left + (i as f64 / last_index) * plot_width;
-            let y = if value_range > 0.0 {
-                padding.top + (1.0 - (val - min_val) / value_range) * plot_height
-            } else {
-                padding.top + plot_height / 2.0
-            };
-            (format!("{x:.1}"), format!("{y:.1}"))
-        })
-        .collect()
-}
-
-fn joined_points(points: &[(String, String)]) -> String {
-    points.iter().map(|(x, y)| format!("{x},{y}")).collect::<Vec<_>>().join(" ")
-}
-
-/// The polyline through `points`. The optional dots follow it: the last point
-/// with `r="2.5"`, then the first minimum and first maximum with `r="2"`
-/// (the same index twice for a flat series).
-fn emit_spark_line(
-    xml: &mut Xml,
-    values: &[f64],
-    points: &[(String, String)],
-    color: &str,
-    last_visible: bool,
-    min_max_visible: bool,
-) {
-    xml.empty(
-        "polyline",
-        Attrs::new()
-            .set("points", joined_points(points))
-            .set("fill", "none")
-            .set("stroke", color)
-            .set("stroke-width", SPARK_LINE_STROKE_WIDTH)
-            .set("stroke-linecap", "round")
-            .set("stroke-linejoin", "round"),
-    );
-    let mut dot = |index: usize, radius: &str| {
-        let (x, y) = &points[index];
-        xml.empty(
-            "circle",
-            Attrs::new()
-                .set("cx", x.as_str())
-                .set("cy", y.as_str())
-                .set("r", radius)
-                .set("fill", color),
-        );
-    };
-    if last_visible {
-        dot(points.len() - 1, "2.5");
-    }
-    if min_max_visible {
-        let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-        let first_of = |target: f64| {
-            values.iter().position(|&v| v == target).expect("min and max come from the values")
-        };
-        dot(first_of(min_val), "2");
-        dot(first_of(max_val), "2");
-    }
-}
-
-fn render_spark_line(
-    values: &[f64],
-    width: f64,
-    height: f64,
-    color: &str,
-    last_visible: bool,
-    min_max_visible: bool,
-    padding: &SparkPaddingTheme,
-) -> String {
-    let points = spark_points(values, width, height, padding);
-    let mut xml = Xml::new();
-    emit_spark_line(&mut xml, values, &points, color, last_visible, min_max_visible);
-    xml.finish()
-}
-
-/// The cell's series as a `line` spark reads it:
-/// `None` is an empty series, a list is itself, anything else is one value.
-fn spark_series(value: &Value) -> &[Value] {
-    match value {
-        Value::Null => &[],
-        Value::Array(items) => items,
-        single => std::slice::from_ref(single),
-    }
-}
-
-/// `SparkConfig.thresholds` as `_get_threshold_color` walks it: ascending by
-/// numeric key. Keys reach the payload as JSON object keys (strings).
-fn parse_spark_thresholds(column: &str, thresholds: &Value) -> Result<Vec<(f64, String)>, String> {
-    let Value::Object(map) = thresholds else {
-        return Err(format!("table: spark thresholds on column '{column}' is not a mapping"));
-    };
-    let mut parsed: Vec<(f64, String)> = map
-        .iter()
-        .map(|(key, color)| {
-            let at = key.parse::<f64>().map_err(|_| {
-                format!("table: spark thresholds on column '{column}' has non-numeric key '{key}'")
-            })?;
-            let Value::String(color) = color else {
-                return Err(format!(
-                    "table: spark thresholds on column '{column}' key '{key}' is not a color string"
-                ));
-            };
-            Ok((at, color.clone()))
-        })
-        .collect::<Result<_, String>>()?;
-    parsed.sort_by(|a, b| a.0.total_cmp(&b.0));
-    Ok(parsed)
-}
-
-/// Start at the theme bar color and
-/// take each threshold the value reaches (`value >= threshold`) in ascending
-/// key order, so the highest reached wins.
-fn spark_threshold_color<'a>(value: f64, thresholds: &'a [(f64, String)], default: &'a str) -> &'a str {
-    thresholds.iter().filter(|(at, _)| value >= *at).last().map_or(default, |(_, c)| c)
-}
-
-/// A spark cell's sizing: `padding = 8`;
-/// `spark_width`/`spark_height` default to `int(cell_width - 2*padding)` /
-/// `int(row_height - padding)` (production's `int()` truncates, matching
-/// `f64::trunc()` for the positive extents every corpus cell carries), then
-/// capped at `int(cell_width - padding)` / `int(row_height - 4)`. Returns
-/// `None` (draw nothing — the caller falls through to the ordinary cell
-/// paint) when a `bar`/`bar-normalize` cell has no numeric value to show, or
-/// `Err` naming a cell the mark cannot draw: a `columns` cell that is not an
-/// array or holds a non-number, or a multi-point `line` series holding a
-/// non-number (production raises there). `line` reads its series the way
-/// `render_spark` does (`spark_series`).
-fn render_spark_cell<'a>(
-    column: &str,
-    value: &Value,
-    spark: &SparkConfig,
-    cell_width: f64,
-    row_height: f64,
-    theme: &SparkTheme,
-    column_max: Option<f64>,
-    layout: &SparkLayout<'a>,
-) -> Result<Option<(String, f64, f64)>, String> {
-    let padding = 8.0;
-    let default_width = if spark.spark_type == "column" {
-        theme.column.width.trunc()
-    } else {
-        (cell_width - padding * 2.0).trunc()
-    };
-    let default_height = (row_height - padding).trunc();
-    let spark_width =
-        spark.width.unwrap_or(default_width).min((cell_width - padding).trunc());
-    let spark_height =
-        spark.height.unwrap_or(default_height).min((row_height - 4.0).trunc());
-    // A bar's fill: an authored color, else the bucket its (clamped) value
-    // reaches; a negative value under `negative_color` takes the tone instead.
-    let bar_color = |v: f64, max_value: f64, is_negative: bool| -> Result<String, String> {
-        if is_negative && spark.negative_color == Some(true) {
-            if let Some(tone) = layout.negative_tone {
-                return Ok(tone.to_string());
-            }
-        }
-        let thresholds = match (&spark.color, &spark.thresholds) {
-            (None, Some(t)) => parse_spark_thresholds(column, t)?,
-            _ => Vec::new(),
-        };
-        Ok(match &spark.color {
-            Some(color) => color.clone(),
-            None => spark_threshold_color(v.max(0.0).min(max_value), &thresholds, &theme.bar.color).to_string(),
-        })
-    };
-
-    match spark.spark_type.as_str() {
-        "bar" | "bar-normalize" => {
-            let Some(v) = coerce_numeric_cell(Some(value)) else { return Ok(None) };
-            let normalize = spark.spark_type == "bar-normalize";
-            let max_value = spark
-                .max
-                .or(if normalize { None } else { column_max })
-                .unwrap_or(theme.bar.default_max);
-            let signed = layout.has_negative && !normalize;
-            let (_, is_negative) = signed_fraction(v, max_value, signed);
-            let color = bar_color(v, max_value, is_negative)?;
-            let border_radius = spark.border_radius.unwrap_or(theme.bar.border.radius);
-            let background = spark.background.as_deref().unwrap_or(&theme.bar.background);
-            let label = (spark.value_visible == Some(true)).then(|| {
-                let mut text = if v.fract() == 0.0 { py_g(v) } else { format!("{v:.1}") };
-                if let Some(suffix) = &spark.value_suffix {
-                    text.push_str(suffix);
-                }
-                BarLabel { text, font_size: layout.font_size, family: layout.body_family }
-            });
-            let content = render_spark_bar(
-                v, max_value, spark_width, spark_height, &color, normalize, background,
-                border_radius, signed, label.as_ref().map(|l| (l, &theme.bar.label)),
-            );
-            Ok(Some((content, spark_width, spark_height)))
-        }
-        "column" => {
-            let Some(v) = coerce_numeric_cell(Some(value)) else { return Ok(None) };
-            let max_value = spark.max.unwrap_or(theme.bar.default_max);
-            let (_, is_negative) = signed_fraction(v, max_value, layout.has_negative);
-            let color = bar_color(v, max_value, is_negative)?;
-            let border_radius = spark.border_radius.unwrap_or(theme.bar.border.radius);
-            let content = render_spark_column(
-                v, max_value, spark_width, spark_height, &color, border_radius, layout.has_negative,
-            );
-            Ok(Some((content, spark_width, spark_height)))
-        }
-        "columns" => {
-            let Value::Array(items) = value else {
-                return Err("table: spark columns cell is not an array".into());
-            };
-            if items.is_empty() {
-                return Ok(Some((
-                    render_empty_spark(spark_width, spark_height, &theme.empty),
-                    spark_width,
-                    spark_height,
-                )));
-            }
-            // A missing element (a null, or a NaN the wire decoded to one) leaves
-            // its slot empty.
-            let values: Vec<f64> = items
-                .iter()
-                .map(|v| match v {
-                    Value::Null => Ok(f64::NAN),
-                    other => other
-                        .as_f64()
-                        .ok_or_else(|| "table: spark columns array element is not a number".to_string()),
-                })
-                .collect::<Result<_, _>>()?;
-            let color = spark.color.as_deref().unwrap_or(&theme.color);
-            let negative_fill = (spark.negative_color == Some(true)).then_some(layout.negative_tone).flatten();
-            let content =
-                render_spark_columns(&values, spark_width, spark_height, color, negative_fill, &theme.columns);
-            Ok(Some((content, spark_width, spark_height)))
-        }
-        "line" | "area" => {
-            let color = spark.color.as_deref().unwrap_or(&theme.color);
-            let is_area = spark.spark_type == "area";
-            // A missing element (a null, or a NaN the wire decoded to one) is
-            // skipped; the line runs through its neighbors.
-            let values: Vec<f64> = spark_series(value)
-                .iter()
-                .filter(|v| !v.is_null())
-                .map(|v| {
-                    v.as_f64().ok_or_else(|| {
-                        format!(
-                            "table: spark {} column '{column}' array element is not a number",
-                            spark.spark_type
-                        )
-                    })
-                })
-                .collect::<Result<_, _>>()?;
-            let content = match values.as_slice() {
-                [] => render_empty_spark(spark_width, spark_height, &theme.empty),
-                [_] => render_single_value_line(spark_width, spark_height, color, &theme.single_value),
-                many => {
-                    let values = many;
-                    if is_area {
-                        render_spark_area(
-                            &values,
-                            spark_width,
-                            spark_height,
-                            color,
-                            spark.fill_opacity.unwrap_or(theme.area.fill_opacity),
-                            spark.last_visible == Some(true),
-                            &theme.padding,
-                        )
-                    } else {
-                        render_spark_line(
-                            &values,
-                            spark_width,
-                            spark_height,
-                            color,
-                            spark.last_visible == Some(true),
-                            spark.min_max_visible == Some(true),
-                            &theme.padding,
-                        )
-                    }
-                }
-            };
-            Ok(Some((content, spark_width, spark_height)))
-        }
-        other => Err(format!("table: spark type '{other}' not supported")),
-    }
-}
 
 /// What a spark cell reads from beyond its own config: the column's signed
 /// layout, the negative tone, and the table font a `bar`'s label inherits.
@@ -4545,83 +1175,6 @@ struct SparkLayout<'a> {
     negative_tone: Option<&'a str>,
     font_size: f64,
     body_family: &'a str,
-}
-
-// ── Main render ───────────────────────────────────────────────────────────────
-
-/// Format every column's cells over `rows`, called with
-/// whatever row slice its caller passes. A numeric column's `symbol_mode:
-/// anchors` prefix/suffix (`format_numeric_col`'s `is_symbol_anchor`) reads
-/// `i == 0` relative to THIS slice — production's own `row_idx == 0`/
-/// `shared_scale_anchor_row` are computed the same way, over whichever
-/// `rows` `_render_data_rows`'s caller handed it: the caller decides whether that is the whole table
-/// or one page. `render()`'s single global call feeds MEASUREMENT (which
-/// reads only the anchor-independent `.full_prefix`/`.full_suffix`) and the
-/// non-paginated paint path; the paginated `static_multi_page` loop below
-/// calls this AGAIN per page, over that page's own row slice, so each
-/// page's own row 0 anchors independently — matching production's
-/// `page_visible_data`/`_paint_data_rows` call, never the whole dataset's.
-fn build_cell_data(
-    rows: &[serde_json::Map<String, Value>],
-    cols: &[ColMeta],
-    symbol_mode: &str,
-    row_roles: &[RowRole],
-) -> Result<Vec<Vec<Cell>>, Diagnostic> {
-    cols.iter()
-        .map(|col| {
-            if col.is_numeric {
-                if let Some(spec) = col.cfg.format.as_ref().map(|f| f.spec.as_str()) {
-                    if table_dates::is_time_format(spec) {
-                        return Err(format_kind_mismatch(
-                            spec,
-                            "use a d3-format numeric spec (e.g. '.1f') or remove format: to use \
-                             the theme default",
-                        ));
-                    }
-                }
-                Ok(format_numeric_col(rows, col, column_symbol_mode(col.cfg.format.as_ref(), symbol_mode), row_roles)?)
-            } else if col.is_date {
-                format_date_col(rows, col)
-            } else {
-                // Text-column cells go through production's
-                // format_table_cell_value too: a None or whitespace-only
-                // string renders the em-dash, never a blank cell.
-                rows.iter()
-                    .map(|row| {
-                        Ok(match row.get(col.name) {
-                            Some(Value::String(v)) if !v.trim().is_empty() => {
-                                if let Some(text) = format_temporal_cell(col, v)? {
-                                    return Ok(Cell { text, ..Default::default() });
-                                }
-                                Cell { text: v.clone(), ..Default::default() }
-                            }
-                            Some(Value::Null) | None | Some(Value::String(_)) => Cell {
-                                text: NULL_DISPLAY.to_string(),
-                                is_null: true,
-                                ..Default::default()
-                            },
-                            // A list rule, checked ahead of
-                            // every other shape: a spark `columns` cell's own
-                            // array measures/paints as "[N items]" — never the
-                            // raw JSON array text — so its column's demand (and
-                            // therefore compact-pinned width) matches
-                            // production exactly.
-                            Some(Value::Array(items)) => Cell {
-                                text: format!("[{} items]", items.len()),
-                                ..Default::default()
-                            },
-                            // `str(True)`.
-                            Some(Value::Bool(b)) => Cell {
-                                text: (if *b { "True" } else { "False" }).to_string(),
-                                ..Default::default()
-                            },
-                            Some(other) => Cell { text: other.to_string(), ..Default::default() },
-                        })
-                    })
-                    .collect()
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()
 }
 
 /// One table's resolved body — everything `render_data_rows` paints a
@@ -4637,7 +1190,7 @@ struct TableBody<'a> {
     summary_gap_unit: f64,
     rows_start_y: f64,
     th: &'a TableTheme,
-    cols: &'a [ColMeta<'a>],
+    cols: &'a [ColMeta],
     col_x: &'a [f64],
     col_ws: &'a [f64],
     content_w: f64,
@@ -4660,7 +1213,7 @@ struct TableBody<'a> {
     link_color: Option<&'a str>,
     bar_auto_max: &'a BTreeMap<String, f64>,
     /// Spark `bar`/`column` columns holding a negative detail value: drawn from a midline.
-    signed_columns: &'a BTreeSet<&'a str>,
+    signed_columns: &'a BTreeSet<String>,
     tones: Option<&'a TonesStyle>,
     // Chart-root row-detail link template (`Resolved.link`) — `Some` only
     // when `links.auto`/FK-drill synthesized one; drives the whole-row band
@@ -4679,813 +1232,6 @@ struct TableBody<'a> {
     /// Cut elements per column (header and cells alike) in first-cut order,
     /// flushed once into WARN-TABLE-TEXT-TRUNCATED.
     truncations: &'a RefCell<Vec<(String, usize)>>,
-}
-
-/// Count one cut element for column `name`, keeping columns in first-cut
-/// order: production's warning lists them in the order its sink recorded them.
-fn count_cut(truncations: &RefCell<Vec<(String, usize)>>, name: &str) {
-    let mut t = truncations.borrow_mut();
-    match t.iter_mut().find(|(n, _)| n == name) {
-        Some((_, count)) => *count += 1,
-        None => t.push((name.to_string(), 1)),
-    }
-}
-
-impl TableBody<'_> {
-    /// Cut `text` to column `ci`'s content area less the glyph run, counting
-    /// a cut into WARN-TABLE-TEXT-TRUNCATED. Whitespace normalization alone
-    /// counts as a cut, as in production's `display_value != pre_trunc`.
-    fn cut_cell(&self, ci: usize, text: &str, glyph: Option<&str>) -> Result<String, Diagnostic> {
-        let glyph_w =
-            self.fonts.measure(&glyph_run(glyph), self.measure_family, self.font_size)?;
-        let measurer = self.fonts.measurer(self.measure_family)?;
-        let cut = mdsvg::fonts::truncate_text_precise(
-            text,
-            self.col_ws[ci] - 2.0 * self.pad - glyph_w,
-            self.font_size,
-            &measurer,
-            true,
-            true,
-        );
-        if cut != text && !self.chart_id.is_empty() {
-            count_cut(self.truncations, self.cols[ci].name);
-        }
-        Ok(cut)
-    }
-
-    /// Paint one page's worth of data rows (and their deferred row rules)
-    /// into `svg`, called once per page.
-    /// `cell_data` is sized to THIS CALL's own page (`page_n_shown`, indexed
-    /// by the LOCAL row index `local_ri`, never the global `ri`) — the
-    /// non-paginated caller passes the one global `build_cell_data` result
-    /// at `page_offset == 0`, where local and global indices coincide; the
-    /// paginated `static_multi_page` loop recomputes its own
-    /// `build_cell_data` call per page so each page's `symbol_mode: anchors`
-    /// prefix/suffix anchors at ITS OWN row 0, not the whole table's (see
-    /// `build_cell_data`'s own doc). `scale_rows`, the stripe alternation,
-    /// and the summary-gap accumulator are likewise recomputed FRESH from
-    /// this page's own slice every call, mirroring production's
-    /// `enumerate(rows)`-local semantics — never sliced
-    /// out of a precomputed global array.
-    fn render_data_rows(
-        &self,
-        xml: &mut Xml,
-        page_offset: usize,
-        page_n_shown: usize,
-        cell_data: &[Vec<Cell>],
-    ) -> Result<(), Diagnostic> {
-        let Self {
-            rows,
-            row_roles,
-            row_heights,
-            summary_gap_unit,
-            rows_start_y,
-            th,
-            cols,
-            col_x,
-            col_ws,
-            content_w,
-            rn_w,
-            row_numbers,
-            row_number_ink,
-            wrapped_lines,
-            prefix_xs,
-            number_xs,
-            suffix_xs,
-            outer,
-            pad,
-            row_h,
-            font_size,
-            body_family,
-            tab_family,
-            body_color,
-            link_color,
-            bar_auto_max,
-            signed_columns,
-            tones,
-            link,
-            link_open,
-            filter_variables,
-            link_context,
-            ..
-        } = *self;
-        let row_text_baseline = |ri: usize| row_heights[ri] / 2.0 + th.text_baseline_offset;
-        let all_data_columns: Vec<String> =
-            rows.get(page_offset).map(|r| r.keys().cloned().collect()).unwrap_or_default();
-        // Row-band anchor name: the first column whose
-        // config carries neither `spark` nor `swatch`. Falls back to the first
-        // column when every column is one of them.
-        let row_link_label_col: Option<&str> = link.and_then(|_| {
-            cols.iter()
-                .find(|c| c.cfg.spark.is_none() && !is_swatch(c))
-                .or_else(|| cols.first())
-                .map(|c| c.name)
-        });
-        // Cumulative row-top offset and summary-gap accumulator, computed
-        // LOCALLY from this page's own row slice — mirrors production's own
-        // per-call `enumerate(rows)` accumulation exactly:
-        // a page that starts mid-run of summary rows carries NO gap for its own
-        // first row, since there is no previous row in ITS OWN slice to compare
-        // against (`local_ri > 0` guards it below, same as production's
-        // `row_idx > 0`).
-        let mut page_row_y_offset = vec![0.0_f64; page_n_shown];
-        let mut page_summary_gap_at = vec![0.0_f64; page_n_shown];
-        {
-            let mut acc = 0.0_f64;
-            let mut gap_acc = 0.0_f64;
-            for local_ri in 0..page_n_shown {
-                let ri = page_offset + local_ri;
-                if local_ri > 0 && is_summary_role(row_roles[ri]) && !is_summary_role(row_roles[ri - 1]) {
-                    gap_acc += summary_gap_unit;
-                }
-                page_row_y_offset[local_ri] = acc;
-                page_summary_gap_at[local_ri] = gap_acc;
-                acc += row_heights[ri];
-            }
-        }
-
-        // Scale domain input — the VISIBLE (page-1) detail rows only
-        // (production's `scale_rows`, built inside
-        // `_render_data_rows` from whichever slice its two callers pass —
-        // `page_visible_data`/`visible_data`, never the full dataset): a
-        // grand-total cell is often 10-100x any single detail value, which
-        // would crush the detail-row gradient toward one end of the palette,
-        // and a row past the page/slot the table never draws must not skew the
-        // domain the rows it DOES draw interpolate against either.
-        let scale_rows: Vec<&serde_json::Map<String, Value>> = rows[page_offset..page_offset + page_n_shown]
-            .iter()
-            .zip(row_roles[page_offset..page_offset + page_n_shown].iter())
-            .filter(|(_, role)| !is_summary_role(**role))
-            .map(|(row, _)| row)
-            .collect();
-
-        // Body row dividers: `style.row.divider`. Never
-        // drawn below the last row on the page or the row right before a
-        // summary/total row; its reserved height comes out of THAT row's own
-        // fill (stripe/role background), not extra row height — the line sits
-        // inside the existing row band, so the table never grows.
-        let row_divider = &th.row.divider.line;
-        let row_rule_width = row_divider.width;
-        let mut row_rules = Xml::new();
-        let outer_s = float_repr(outer);
-        let content_w_s = float_repr(content_w);
-        // The row link covers the data columns, never the index gutter.
-        let (band_x_s, band_w_s) = (float_repr(outer + rn_w), float_repr(content_w - rn_w));
-
-        // Data rows.
-        for local_ri in 0..page_n_shown {
-            let ri = page_offset + local_ri;
-            let this_row_h = row_heights[ri];
-            let row_y = rows_start_y + page_row_y_offset[local_ri] + page_summary_gap_at[local_ri];
-            let text_y = row_y + row_text_baseline(ri);
-            let text_y_s = float_repr(text_y);
-            let role = row_roles[ri];
-            let is_summary = is_summary_role(role);
-
-            let is_last_row = local_ri == page_n_shown - 1;
-            let next_is_summary =
-                local_ri + 1 < page_n_shown && is_summary_role(row_roles[ri + 1]);
-            let will_draw_row_rule =
-                row_divider.visible && !is_last_row && !next_is_summary && !is_summary;
-            let rule_reserve_px =
-                if will_draw_row_rule { python_round(row_rule_width).max(1.0) } else { 0.0 };
-            let fill_height = this_row_h - rule_reserve_px;
-
-            // Alternating stripe on odd rows (1, 3, …) — suppressed on
-            // summary/total rows, which stand out against a clean background
-            // (a summary row takes no stripe).
-            if local_ri % 2 == 1 && !is_summary {
-                if let Some(stripe_color) = th
-                    .row
-                    .stripe
-                    .as_ref()
-                    .and_then(|s| s.color.as_ref())
-                    .filter(|c| !c.eq_ignore_ascii_case("transparent"))
-                {
-                    // Content span (`_compute_content_span(..., cell_pad=0)`,
-                    // Not `svg_w` — an all-pinned table
-                    // summing under `table_w` must not paint its stripe past
-                    // its own last column, same defect the header rule fix
-                    // above already addressed for the rule sites.
-                    xml.empty(
-                        "rect",
-                        Attrs::new()
-                            .set("x", outer_s.as_str())
-                            .set("y", row_y.to_string())
-                            .set("width", content_w_s.as_str())
-                            .set("height", fill_height.to_string())
-                            .set("fill", stripe_color.as_str()),
-                    );
-                }
-            }
-
-            // Per-role background fill and divider from row.roles.summary /
-            // row.roles.total. Single line above a summary
-            // row; double line (1px gap) above a total row.
-            let role_theme = match role {
-                RowRole::Total => Some(&th.row.roles.total),
-                RowRole::Summary => Some(&th.row.roles.summary),
-                RowRole::Value => None,
-            };
-            if let Some(rt) = role_theme {
-                if let Some(bg) = sanitize_color(rt.background.as_deref())? {
-                    // Content span, not `svg_w` — same
-                    // fix as the row stripe above.
-                    xml.empty(
-                        "rect",
-                        Attrs::new()
-                            .set("x", outer_s.as_str())
-                            .set("y", row_y.to_string())
-                            .set("width", content_w_s.as_str())
-                            .set("height", fill_height.to_string())
-                            .set("fill", bg),
-                    );
-                }
-                // The line above a summary row; a total row draws two with a
-                // 1px gap, from its own divider, never
-                // the summary's.
-                let summary_divider = &rt.divider;
-                if summary_divider.visible {
-                    // `line_h` is `max(1, int(width))` — it truncates, distinct
-                    // from the row line's `python_round` below — and `row_y` is
-                    // `int(round(...))`, so
-                    // `y_upper`/`y_lower`/`y_single` are production ints too:
-                    // all stay bare, never `py_float`-wrapped like the
-                    // genuinely-float row line's `y` below.
-                    let line_h = summary_divider.width.trunc().max(1.0);
-                    let (rule_x1, rule_x2) = (outer + pad, outer + content_w - pad);
-                    let thickness = PyNum::Int(line_h);
-                    if matches!(role, RowRole::Total) {
-                        let gap = 1.0;
-                        let y_upper = row_y - line_h - gap - line_h;
-                        let y_lower = row_y - line_h;
-                        for y_line in [y_upper, y_lower] {
-                            emit_divider_segment(xml, rule_x1, rule_x2, PyNum::Int(y_line), thickness, summary_divider, None);
-                        }
-                    } else {
-                        emit_divider_segment(
-                            xml,
-                            rule_x1,
-                            rule_x2,
-                            PyNum::Int(row_y - line_h),
-                            thickness,
-                            summary_divider,
-                            None,
-                        );
-                    }
-                }
-            }
-
-            // Summary/total rows: heavier font weight. A
-            // per-role font.weight takes precedence, and a TOTAL row falls back
-            // to the SUMMARY role's weight before the medium 500 default (no
-            // fallback to a flat `summary_font_weight`; this renderer doesn't
-            // model one, only the per-role override).
-            let row_font_weight: Option<String> = if is_summary {
-                let own_weight = || -> Option<String> {
-                    let f = role_theme?.font.as_ref()?;
-                    f.weight.is_some().then(|| f.weight_str()).filter(|w| VALID_FONT_WEIGHTS.contains(&w.as_str()))
-                };
-                let summary_weight = || -> Option<String> {
-                    let f = th.row.roles.summary.font.as_ref()?;
-                    f.weight.is_some().then(|| f.weight_str()).filter(|w| VALID_FONT_WEIGHTS.contains(&w.as_str()))
-                };
-                let w = own_weight().or_else(|| matches!(role, RowRole::Total).then(summary_weight).flatten());
-                Some(w.unwrap_or_else(|| "500".to_string()))
-            } else {
-                None
-            };
-
-            // Row-scoped link band: one `<a>` per value
-            // row wrapping a transparent hover rect behind the whole row —
-            // never a per-cell fallthrough (a plain dimension cell stays
-            // text; a cell's OWN `link:`, painted below, is a separate
-            // anchor on top). Summary/total rows never get one. Emitted
-            // BEFORE the per-column loop so document order matches
-            // production's own paint order. Geometry mirrors the row
-            // stripe/role rects just above (`outer_s`/`content_w_s`): this
-            // renderer has no row-number gutter to exclude, so
-            // `_compute_content_span`'s own gutter-excluding span collapses
-            // to that same one already computed for every other horizontal
-            // row element.
-            let mut row_has_band = false;
-            if let (Some(link_tpl), false) = (link, is_summary) {
-                if let Some(row_href) = resolve_cell_link(link_tpl, &rows[ri], &all_data_columns)?
-                    .map(|href| link_context.map_or(href.clone(), |ctx| crate::href::resolve_href(&href, ctx)))
-                {
-                    row_has_band = true;
-                    let link_color = css_color(link_color.ok_or("table: a link needs board_style.font_color")?)?;
-                    let row_href_checked = crate::href::checked_href_diagnostic(&row_href)?;
-                    let row_label = row_link_label_col
-                        .and_then(|c| rows[ri].get(c))
-                        .map(py_str)
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(|| row_href.clone());
-                    // The row's hover scope: the band tints while the pointer
-                    // is anywhere in the row, a cell's own link included.
-                    xml.open("g", Attrs::new().set("class", "dbt-table-row"));
-                    xml.open(
-                        "a",
-                        Attrs::new()
-                            .set("href", row_href_checked)
-                            .set("aria-label", row_label)
-                            .set_some("data-dbt-link-open", link_open.open_attr()).set_some("target", link_open.target()),
-                    );
-                    xml.empty(
-                        "rect",
-                        Attrs::new()
-                            .set("class", "dbt-table-row-link")
-                            .set("fill", "transparent")
-                            .set("style", format!("--dbt-link: {link_color}"))
-                            .set("x", band_x_s.as_str())
-                            .set("y", row_y.to_string())
-                            .set("width", band_w_s.as_str())
-                            .set("height", this_row_h.to_string()),
-                    );
-                    xml.close("a");
-                }
-            }
-            // In a banded row, content that is not itself a link must not
-            // swallow the band's pointer events. The host
-            // stylesheet keeps `.dbt-chart text` pointer-active, so this is a
-            // class its `.dbt-pointer-inert` / `text.dbt-table-cell-inert`
-            // rules read, never a `pointer-events` attribute they would outrank.
-            let cell_pe_class = row_has_band.then_some("dbt-pointer-inert");
-
-            // The index counts data rows across pages; a summary or total row
-            // leaves it blank.
-            if let (Some(ink), false) = (row_number_ink, is_summary) {
-                let (x, anchor) = if row_numbers.align == "right" {
-                    (outer + rn_w - pad, "end")
-                } else {
-                    (outer + pad, "start")
-                };
-                xml.leaf(
-                    "text",
-                    Attrs::new()
-                        .set("x", float_repr(x))
-                        .set("y", text_y_s.as_str())
-                        .set("font-size", font_size.to_string())
-                        .set("fill", ink)
-                        .set("text-anchor", anchor)
-                        .set("font-family", TAB_FONT)
-                        .set("data-col", "0"),
-                    &(ri + 1).to_string(),
-                );
-            }
-            for (ci, col) in cols.iter().enumerate() {
-                let cx = col_x[ci];
-                let cell = &cell_data[ci][local_ri];
-                // The index in the drawn column list, the row-number column first.
-                let data_col = ci + usize::from(row_numbers.visible);
-
-                if is_swatch(col) {
-                    let value = rows[ri].get(col.name).unwrap_or(&Value::Null);
-                    let Some(color) = swatch_color(value) else {
-                        return Err(Diagnostic::new(
-                            &codes::ERR_TABLE_SWATCH_NOT_COLOR,
-                            [
-                                ("chart_id", json!(self.chart_id)),
-                                ("swatch_column", json!(col.name)),
-                                ("row_index", json!(ri)),
-                                ("value", value.clone()),
-                            ],
-                        ));
-                    };
-                    let swatch_x = python_round(cx + 4.0) as i64;
-                    let swatch_y_s = float_repr(row_y + (this_row_h - SWATCH_SIZE) / 2.0);
-                    xml.open(
-                        "g",
-                        Attrs::new()
-                            .set("transform", format!("translate({swatch_x}, {swatch_y_s})"))
-                            .set_some("class", cell_pe_class),
-                    );
-                    xml.empty(
-                        "rect",
-                        Attrs::new()
-                            .set("width", SWATCH_SIZE.to_string())
-                            .set("height", SWATCH_SIZE.to_string())
-                            .set("rx", "3")
-                            .set("fill", color),
-                    );
-                    xml.close("g");
-                    continue;
-                }
-
-                // Spark cell placement law: a
-                // `None`/absent cell value, or a cell whose spark content comes
-                // back empty (a plain `bar` clamped to <= 0 — see the
-                // `content.is_empty()` check below), draws no mark and falls
-                // through to the ordinary cell paint below (only the empty-
-                // content case is reached by this corpus). `spark_x = px(cell_x
-                // + 4)` — an int, bare; `spark_y = row_y + (this_row_h -
-                // spark_height) / 2` centers the mark in the row's own
-                // (possibly grown) band — `this_row_h` is production's
-                // `per_row_height` — and is a genuine float, so
-                // `py_float`. Only the SIZING call below reads the NOMINAL row
-                // height (`row_h`, not `this_row_h`): the mark's visual size
-                // stays pinned to it so a wrapped row growing taller doesn't
-                // grow its spark, but the mark still centers in the row's
-                // actual (grown) band.
-                if let Some(spark) = &col.cfg.spark {
-                    if let Some(value) = rows[ri].get(col.name) {
-                        if !value.is_null() {
-                            // `column` is the only ported-elsewhere mark whose
-                            // width feeds its own centered alignment; the three
-                            // marks this renderer supports all fill the cell
-                            // width from the left-edge anchor, so the reported
-                            // width is unused here.
-                            // `if spark_content:` is a
-                            // truthiness check, not a `None` check: a plain
-                            // `bar` cell whose fill clamps to <= 0 returns
-                            // `Some(("", w, h))` (no track's
-                            // `fill_width > 0` gate) — falsy in Python, so
-                            // production falls through to the ordinary cell
-                            // paint below rather than drawing an empty mark.
-                            let spark_layout = SparkLayout {
-                                has_negative: signed_columns.contains(col.name),
-                                negative_tone: tones.map(|t| t.negative.as_str()),
-                                font_size,
-                                body_family,
-                            };
-                            if let Some((content, spark_w, spark_h)) = render_spark_cell(
-                                col.name,
-                                value,
-                                spark,
-                                col_ws[ci],
-                                row_h,
-                                &th.spark,
-                                bar_auto_max.get(col.name).copied(),
-                                &spark_layout,
-                            )? {
-                                if !content.is_empty() {
-                                    // The narrow `column` mark centers under its header
-                                    // on a lane column, else sits at the cell padding;
-                                    // every other mark fills the cell from `cx + 4`.
-                                    let spark_x = if spark.spark_type == "column" {
-                                        if col.is_numeric || col.is_date {
-                                            python_round(cx + (col_ws[ci] - spark_w) / 2.0) as i64
-                                        } else {
-                                            python_round(cx + pad) as i64
-                                        }
-                                    } else {
-                                        python_round(cx + 4.0) as i64
-                                    };
-                                    let spark_y_s = float_repr(row_y + (this_row_h - spark_h) / 2.0);
-                                    xml.open(
-                                        "g",
-                                        Attrs::new()
-                                            .set("transform", format!("translate({spark_x}, {spark_y_s})"))
-                                            .set_some("class", cell_pe_class),
-                                    );
-                                    xml.raw(&content);
-                                    xml.close("g");
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Overlay scale + when conditional formatting: computed once per cell, ahead of every render branch
-                // below, since production paints the background rect before
-                // deciding which text shape to draw.
-                let raw_value = rows[ri].get(col.name).filter(|v| !v.is_null());
-                let cell_style = resolve_cell_style(col, &rows[ri], raw_value, &scale_rows, role, tones)?;
-                let (column_font_color, column_font_weight) = column_font_lanes(col, &rows[ri]);
-                if let Some(bg) = &cell_style.background {
-                    let cx_s = float_repr(cx);
-                    let cw_s = float_repr(col_ws[ci]);
-                    xml.empty(
-                        "rect",
-                        Attrs::new()
-                            .set("x", cx_s)
-                            .set("y", row_y.to_string())
-                            .set("width", cw_s)
-                            .set("height", fill_height.to_string())
-                            .set("fill", bg.as_str())
-                            .set_some("class", cell_pe_class),
-                    );
-                }
-                // Per-cell link: a column `link:` is
-                // resolved per row, ahead of the color/weight cascade below —
-                // production's own `cell_link` local plays the same role.
-                // `if link_raw:` — an empty `link:` string is falsy in
-                // production and never reaches the resolver.
-                let cell_link: Option<String> = match &col.cfg.link {
-                    Some(link_tpl) if !link_tpl.is_empty() => {
-                        resolve_cell_link(link_tpl, &rows[ri], &all_data_columns)?
-                            .map(|href| link_context.map_or(href.clone(), |ctx| crate::href::resolve_href(&href, ctx)))
-                    }
-                    _ => rows[ri]
-                        .get(col.name)
-                        .filter(|v| !v.is_null() && filter_variables.iter().any(|f| f == col.name))
-                        .map(|v| {
-                            format!(
-                                "?{}={}",
-                                urlencode_plus(col.name),
-                                urlencode_plus(&py_str(v))
-                            )
-                        }),
-                };
-
-                // Color cascade: conditional → column font.color → link color
-                // → body color. The link color is the BOARD's own font color
-                // (`board_style.font_color`), required when a link exists.
-                // An authored column color that cannot be used still stands in
-                // for the link color: the cell then takes the body color.
-                let column_color_authored =
-                    col.cfg.font.as_ref().and_then(|f| f.color.as_deref()).is_some_and(|c| !c.is_empty());
-                let fill_color = cell_style
-                    .color
-                    .as_deref()
-                    .or(column_font_color.as_deref())
-                    .unwrap_or(if cell_link.is_some() && !column_color_authored {
-                        link_color.ok_or("table: a link needs board_style.font_color")?
-                    } else {
-                        body_color
-                    });
-                // Weight cascade: conditional → column
-                // font.weight → summary/total role weight
-                // (`row_font_weight_attr`) → 500 for a linked cell → nothing.
-                let cell_font_weight: Option<String> = cell_style
-                    .weight
-                    .clone()
-                    .filter(|w| VALID_FONT_WEIGHTS.contains(&w.as_str()))
-                    .or_else(|| column_font_weight.clone().filter(|w| VALID_FONT_WEIGHTS.contains(&w.as_str())))
-                    .or_else(|| row_font_weight.clone())
-                    .or_else(|| cell_link.is_some().then(|| "500".to_string()));
-                let font_style = cell_style.style.as_ref();
-                let font_decoration = cell_style.decoration.as_ref();
-
-                // A formatless null fails production's per-cell
-                // `_is_numeric_cell` gate and takes the
-                // non-lane branch, which places it by the column's RESOLVED
-                // `align` field — None for a plain
-                // numeric column (fill_table_column_defaults leaves it unset;
-                // the three-lane invariant is unconditional on `align` for
-                // numeric-VALUED cells only), "right" for a date lane. So a
-                // plain column's null paints START-anchored at content left,
-                // an align-right column's null END-anchors at the lane's own
-                // number_x — both in the BODY font with no tabular styling
-                // (`_wants_tabular_font(None, no-format)` is False,
-                // A null in a column WITH an explicit
-                // format: stays on the tabular lane path unchanged. This
-                // branch pre-dates conditional formatting and does not (yet)
-                // honor a rule's color/glyph — no corpus row has a null cell in
-                // a CF-active numeric column (see AGENTS.md).
-                // Anchor wrapper (2712): opens before every
-                // shape branch below since production paints the background
-                // rect outside the anchor but the cell's own text inside it,
-                // and closes after all of them share one `</g></a>` — a linked
-                // cell's `<text>` also carries the `dbt-table-link-text` class
-                // production stamps on it.
-                let link_href = cell_link.as_deref().map(crate::href::checked_href_diagnostic).transpose()?;
-                if let Some(href) = link_href {
-                    // Only the column's own `link:` follows its mode; the
-                    // `?col=value` filter link is implied, so it is page.
-                    let open = if col.cfg.link.as_deref().is_some_and(|l| !l.is_empty()) {
-                        col.cfg.link_open
-                    } else {
-                        crate::href::LinkOpen::Page
-                    };
-                    xml.open("a", Attrs::new().set("href", href).set_some("data-dbt-link-open", open.open_attr()).set_some("target", open.target()));
-                    xml.open(
-                        "g",
-                        Attrs::new()
-                            .set("class", "dbt-table-link")
-                            .set("style", format!("color: {}", css_color(fill_color)?)),
-                    );
-                }
-                // The link-text class for a wired cell; else, in a banded row,
-                // the inert-cell class.
-                let cell_link_class = if cell_link.is_some() {
-                    Some("dbt-table-link-text")
-                } else if row_has_band {
-                    Some("dbt-table-cell-inert")
-                } else {
-                    None
-                };
-
-                let cell_raw = rows[ri].get(col.name);
-                let plain_in_date_lane = is_plain_date_lane_cell(col, cell_raw);
-                let tabular_text = wants_tabular_font(col, cell_raw);
-                let null_body_font = cell.is_null && col.cfg.format.is_none();
-                if (col.is_numeric || col.is_date) && null_body_font {
-                    let (x, anchor) = match col.cfg.align.as_deref() {
-                        Some("center") => (cx + col_ws[ci] / 2.0, "middle"),
-                        Some("right") => (number_xs[ci], "end"),
-                        _ => (cx + pad, "start"),
-                    };
-                    xml.leaf(
-                        "text",
-                        Attrs::new()
-                            .set_some("class", cell_link_class)
-                            .set("x", float_repr(x))
-                            .set("y", text_y_s.as_str())
-                            .set("font-size", font_size.to_string())
-                            .set("fill", fill_color)
-                            .set("text-anchor", anchor)
-                            .set("font-family", body_family)
-                            .set_some("font-weight", row_font_weight.as_deref())
-                            .set("data-col", data_col.to_string()),
-                        &cell.text,
-                    );
-                } else if (col.is_numeric || col.is_date)
-                    && !plain_in_date_lane
-                    && !is_date_like_cell(cell_raw)
-                    && is_numeric_cell(col, cell_raw)
-                {
-                    // The thumbnail redraw reads the raw number off the cell.
-                    let lane_value = coerce_numeric_cell(rows[ri].get(col.name))
-                        .filter(|v| v.is_finite())
-                        .map(|v| match rows[ri].get(col.name) {
-                            Some(Value::Number(n)) if !n.is_f64() => n.to_string(),
-                            _ => format!("{v:?}"),
-                        });
-                    xml.open(
-                        "text",
-                        Attrs::new()
-                            .set_some("class", cell_link_class)
-                            .set("y", text_y_s.as_str())
-                            .set("font-size", font_size.to_string())
-                            .set("fill", fill_color)
-                            .set("font-family", tab_family)
-                            .set("style", TAB_STYLE)
-                            .set_some("font-weight", cell_font_weight.as_deref())
-                            .set_some("font-style", font_style)
-                            .set_some("text-decoration", font_decoration)
-                            .set("data-col", data_col.to_string())
-                            .set_some("data-value", lane_value),
-                    );
-                    // Prefix tspan: end-anchored at prefix_x (left of the
-                    // number), its own tspan — invariant #11's symbol lane. A
-                    // glyph replaces the format prefix entirely and carries its own
-                    // `fill` only when BOTH a glyph and a glyph_color are set —
-                    // otherwise it inherits the enclosing `<text>`'s fill.
-                    let full_prefix = cell_style.glyph.as_deref().or(cell.prefix.as_deref());
-                    if let Some(prefix) = full_prefix {
-                        xml.leaf(
-                            "tspan",
-                            Attrs::new()
-                                .set("x", float_repr(prefix_xs[ci]))
-                                .set("text-anchor", "end")
-                                .set_some(
-                                    "fill",
-                                    cell_style.glyph.as_ref().and(cell_style.glyph_color.as_deref()),
-                                ),
-                            prefix,
-                        );
-                    }
-                    // A date-like cell leaves the lane branch for the cutting text
-                    // branch, so a date wider than its column is cut, not spilled.
-                    let number_text = if col.is_date && !(is_numeric_cell(col, cell_raw) && !is_date_like_cell(cell_raw)) {
-                        self.cut_cell(ci, &cell.text, cell_style.glyph.as_deref())?
-                    } else {
-                        cell.text.clone()
-                    };
-                    xml.leaf(
-                        "tspan",
-                        Attrs::new().set("x", float_repr(number_xs[ci])).set("text-anchor", "end"),
-                        &number_text,
-                    );
-                    if let Some(suffix) = &cell.suffix {
-                        xml.leaf(
-                            "tspan",
-                            Attrs::new().set("x", float_repr(suffix_xs[ci])).set("text-anchor", "start"),
-                            suffix,
-                        );
-                    }
-                    xml.close("text");
-                } else {
-                    // Column-level `align`: center is the
-                    // cell midpoint, right the padded right edge; a text cell
-                    // has no lane, so nothing else moves it.
-                    // A right-aligned or date-shaped cell of a lane column sits
-                    // on the lane's number edge.
-                    let in_lane = col.is_numeric || col.is_date;
-                    let (tx, anchor) = match col.cfg.align.as_deref() {
-                        Some("center") => (cx + col_ws[ci] / 2.0, "middle"),
-                        align if in_lane && (align == Some("right") || is_date_like_cell(cell_raw)) => {
-                            (number_xs[ci], "end")
-                        }
-                        Some("right") => (cx + col_ws[ci] - pad, "end"),
-                        _ => (cx + pad, "start"),
-                    };
-                    let (cell_family, tabular_style) =
-                        if tabular_text { (tab_family, Some(TAB_STYLE)) } else { (body_family, None) };
-                    let tx_s = float_repr(tx);
-                    // Glyph for non-three-lane cells (text/date/null): a leading
-                    // colored tspan, first line only for a wrapped cell.
-                    let glyph_prefix = cell_style.glyph.as_deref();
-                    let emit_glyph_prefix = |xml: &mut Xml| {
-                        if let Some(glyph) = glyph_prefix {
-                            xml.leaf(
-                                "tspan",
-                                Attrs::new().set_some("fill", cell_style.glyph_color.as_deref()),
-                                &format!("{glyph} "),
-                            );
-                        }
-                    };
-                    match &wrapped_lines[ci][ri] {
-                        Some(lines) => {
-                            // Vertically center the wrapped block in the (grown)
-                            // row: `first_y = row_y + (per_row_height
-                            // - total_text_h) / 2 + font_size`.
-                            let line_height = font_size + th.text_baseline_offset;
-                            let total_text_h = lines.len() as f64 * line_height;
-                            let first_y = row_y + (this_row_h - total_text_h) / 2.0 + font_size;
-                            xml.open(
-                                "text",
-                                Attrs::new()
-                                    .set_some("class", cell_link_class)
-                                    .set("x", tx_s.as_str())
-                                    .set("font-size", font_size.to_string())
-                                    .set("fill", fill_color)
-                                    .set("text-anchor", anchor)
-                                    .set("font-family", cell_family)
-                                    .set_some("font-weight", cell_font_weight.as_deref())
-                                    .set_some("font-style", font_style)
-                                    .set_some("text-decoration", font_decoration)
-                                    .set("data-col", data_col.to_string()),
-                            );
-                            for (li, line) in lines.iter().enumerate() {
-                                let ly = first_y + li as f64 * line_height;
-                                xml.open("tspan", Attrs::new().set("x", tx_s.as_str()).set("y", float_repr(ly)));
-                                if li == 0 {
-                                    emit_glyph_prefix(xml);
-                                }
-                                xml.text(line);
-                                xml.close("tspan");
-                            }
-                            xml.close("text");
-                        }
-                        None => {
-                            // The non-wrapping cell branch: a
-                            // numeric/date-like cell, or any cell of a `wrap: false`
-                            // table, is cut to its content area less the glyph.
-                            let text = if !th.wrap || tabular_text {
-                                self.cut_cell(ci, &cell.text, cell_style.glyph.as_deref())?
-                            } else {
-                                cell.text.clone()
-                            };
-                            xml.open(
-                                "text",
-                                Attrs::new()
-                                    .set_some("class", cell_link_class)
-                                    .set("x", tx_s.as_str())
-                                    .set("y", text_y_s.as_str())
-                                    .set("font-size", font_size.to_string())
-                                    .set("fill", fill_color)
-                                    .set("text-anchor", anchor)
-                                    .set("font-family", cell_family)
-                                    .set_some("style", tabular_style)
-                                    .set_some("font-weight", cell_font_weight.as_deref())
-                                    .set_some("font-style", font_style)
-                                    .set_some("text-decoration", font_decoration)
-                                    .set("data-col", data_col.to_string()),
-                            );
-                            emit_glyph_prefix(xml);
-                            xml.text(&text);
-                            xml.close("text");
-                        }
-                    }
-                }
-                if cell_link.is_some() {
-                    xml.close("g");
-                    xml.close("a");
-                }
-            }
-            if row_has_band {
-                xml.close("g");
-            }
-
-            if will_draw_row_rule {
-                // `rule_y = row_y + per_row_height - rule_reserve_px`
-                // is an int in production: `row_y` is `int(round(...))` and
-                // every per-row height is an int, so it prints bare like the
-                // summary/total lines' `y`.
-                let rule_y = row_y + this_row_h - rule_reserve_px;
-                // On a linked table the divider must not catch the pointer,
-                // or it reopens a dead strip in the band beneath it
-                // Unlinked tables stay byte-identical.
-                let rule_class = link.is_some().then_some("dbt-pointer-inert");
-                emit_divider_segment(
-                    &mut row_rules,
-                    outer + pad,
-                    outer + content_w - pad,
-                    PyNum::Int(rule_y),
-                    PyNum::Int(rule_reserve_px),
-                    row_divider,
-                    rule_class,
-                );
-            }
-        }
-        // Row rules paint after every row's own fill/text, on top of them —
-        // Deferred row rules flush after the rows.
-        xml.raw(&row_rules.finish());
-        Ok(())
-    }
 }
 
 /// The title and subtitle band above a table's header, and the drawing that
@@ -5516,199 +1262,6 @@ struct TitleBand {
     area_h: f64,
 }
 
-/// The lines a title or subtitle draws in `limit` px, and whether the pre-pass
-/// cut it; no limit leaves the text whole, and an empty result falls back to
-/// the text (`splitlines() or [text]`).
-fn wrap_title(
-    text: &str,
-    mode: Option<&str>,
-    limit: Option<f64>,
-    font_size: f64,
-    family: &str,
-    fonts: &FontBook,
-) -> Result<(Vec<String>, bool), String> {
-    let Some(limit) = limit.filter(|_| !text.is_empty()) else {
-        return Ok((vec![text.to_string()], false));
-    };
-    let (lines, truncated) = crate::common::prepare_title_lines(text, mode, limit, font_size, family, fonts)?;
-    Ok((if lines.is_empty() { vec![text.to_string()] } else { lines }, truncated))
-}
-
-fn title_band(
-    title: Option<&str>,
-    subtitle: Option<&str>,
-    title_style: Option<&TableTitleStyle>,
-    title_font: Option<&Font>,
-    th: &TableTheme,
-    table_width: f64,
-    shift: TitleShift,
-    fonts: &FontBook,
-) -> Result<TitleBand, String> {
-    // Size/weight/family come from the width-tiered `style.title_font`
-    // (production's `table_style.title_font`), not `title_style.font` (the
-    // untiered base) — a narrow table renders a smaller title tier, which
-    // also feeds the subtitle-band math below. Color still comes from
-    // `title_style.font.color` (table.py's `colors["title_color"]`), which
-    // the width tier does not touch. Production reads the font and asserts
-    // both inks for every table, titled or not (`table.py:4384-4393`,
-    // `:4443-4447`), so an absent slot refuses by name.
-    let title_font = title_font.ok_or("table: style.title_font absent (theme required)")?;
-    let title_font_size =
-        title_font.size.ok_or("table: style.title_font.size absent (theme required)")?;
-    let title_family =
-        title_font.family.as_deref().ok_or("table: style.title_font.family absent (theme required)")?;
-    if title_font.weight.is_none() {
-        return Err("table: style.title_font.weight absent (theme required)".into());
-    }
-    let title_weight = title_font.weight_str();
-    let title_style = title_style.ok_or("table: title_style absent (theme required)")?;
-    let title_color =
-        title_style.font.color.as_deref().ok_or("table: title_style.font.color absent (theme required)")?;
-    let subtitle_style =
-        title_style.subtitle.as_ref().ok_or("table: title_style.subtitle absent (theme required)")?;
-    let subtitle_color = subtitle_style
-        .font
-        .color
-        .as_deref()
-        .ok_or("table: title_style.subtitle.font.color absent (theme required)")?;
-
-    let has_title = title.is_some_and(|t| !t.is_empty());
-    // Production cases the title before measuring/painting
-    // (compute_table_title_block_layout); the subtitle is
-    // NOT cased there — prepare_title_text runs on the authored subtitle.
-    let cased_title: Option<String> = match title {
-        Some(t) => {
-            match title_style.font.case.as_deref() {
-                Some(c) if c != "none" => Some(display_text::case::apply_case(t, c)?),
-                _ => Some(t.to_string()),
-            }
-        }
-        None => None,
-    };
-    // Title baseline = round(font_size * 0.8), the title ascent ratio, fitted against Vega-Lite's own title baseline
-    // at all three width-tiered sizes (11/14/18px) production can pick.
-    let title_text_y = crate::sizing::title_ascent(title_font_size);
-    // `int(title_bottom - padding + 8)` with
-    // `title_bottom = baseline + font_size * 0.5` (the first two terms are the
-    // padding-free `title_text_y`), which is `font_size + 13` only at 18px.
-    // `compute_title_limit(table_width, outer_padding)`: `int(width - 2*pad)`.
-    let limit = {
-        let l = (table_width - 2.0 * th.outer_padding.trunc()).trunc();
-        (table_width > 0.0 && l > 0.0).then_some(l.max(1.0))
-    };
-    let title_line_h = title_font_size.trunc() + 2.0;
-    let (title_lines, title_truncated) = match cased_title.as_deref().filter(|_| has_title) {
-        Some(t) => wrap_title(
-            t,
-            title_style.overflow.as_deref(),
-            limit,
-            title_font_size.trunc(),
-            crate::common::measure_family_stand_in(title_family),
-            fonts,
-        )?,
-        None => (Vec::new(), false),
-    };
-    let last_title_text_y = title_text_y + (title_lines.len().max(1) - 1) as f64 * title_line_h;
-    let natural_title_area_h_raw = if has_title {
-        (last_title_text_y + title_font_size * 0.5 + 8.0).floor()
-    } else {
-        0.0
-    };
-
-    let has_subtitle = has_title && subtitle.is_some();
-    // `table.py:340-355`: the size is asserted only when a subtitle paints;
-    // production's own unpainted value is 0.0.
-    let subtitle_font_size = if has_subtitle {
-        subtitle_style
-            .font
-            .size
-            .ok_or("table: theme must supply title.subtitle.font.size")?
-    } else {
-        0.0
-    };
-    let subtitle_family = if has_subtitle {
-        svg_font_family(
-            th.font.family.as_deref().ok_or("table: a subtitle needs style.table.font.family")?,
-        )
-    } else {
-        String::new()
-    };
-    // Mirrors table.py's `_subtitle_baseline_below_title`: title_subtitle_gap
-    // is pure whitespace between the title's descent and the subtitle's
-    // ascent, not a baseline-to-baseline distance — both descent and ascent
-    // are derived from their own font size via the same 0.8 ascent ratio the
-    // title baseline itself approximates (title_text_y above).
-    let (subtitle_lines, subtitle_truncated) = match subtitle.filter(|_| has_subtitle) {
-        Some(sub) => wrap_title(
-            sub,
-            subtitle_style.overflow.as_deref(),
-            limit,
-            subtitle_font_size,
-            crate::common::measure_family_stand_in(&subtitle_family),
-            fonts,
-        )?,
-        None => (Vec::new(), false),
-    };
-    let subtitle_baseline_below = |title_baseline: f64| {
-        python_round(title_baseline + title_font_size * 0.2 + th.title_subtitle_gap + subtitle_font_size * 0.8)
-    };
-    let subtitle_text_y = subtitle_baseline_below(last_title_text_y);
-    // `title.py`'s title_bottom/subtitle_bottom tail term (+8) plus the
-    // subtitle's own descent (font_size * 0.5). Raw/gap-free, same scale as
-    // `natural_title_area_h_raw` and `th.title_row.height` below.
-    let subtitle_area_h_raw = subtitle_text_y
-        + (subtitle_lines.len().max(1) - 1) as f64 * (subtitle_font_size + 2.0)
-        + subtitle_font_size * 0.5
-        + 8.0;
-
-    // The title_row.height floor only fires with a subtitle present — see
-    // TitleRowTheme's doc comment. Without one, natural_title_area_h_raw is
-    // unchanged from before this feature existed. All three arms are raw
-    // (gap-free); the gap is folded in once after the max(), never inside
-    // an individual arm — otherwise whichever new term (subtitle_area_h_raw,
-    // title_row.height) wins the max silently drops the compensation every
-    // other arm relies on.
-    // Production truncates each arm of the max to int (`int(title_row.height)`, `int(subtitle_bottom - padding + 8)`):
-    // the subtitle arm lands on x.5 at the shipped 11px subtitle size, and
-    // painting the band un-truncated shifts every header/row/rule 0.5px
-    // below production.
-    let title_area_h = if has_subtitle {
-        natural_title_area_h_raw
-            .max(th.title_row.height.floor())
-            .max(subtitle_area_h_raw.floor())
-    } else {
-        natural_title_area_h_raw
-    };
-
-    // The row's title shift (`:4455`): the baselines move down
-    // `title_dy` — the subtitle's rounded afresh from the moved title baseline,
-    // as `_subtitle_baseline_below_title` does — and the header and rows move
-    // down `body_dy`. The band's own natural height above stays the unshifted
-    // `compute_table_title_block_layout` height.
-    let subtitle_drawn_y = subtitle_baseline_below(last_title_text_y + shift.title_dy);
-    Ok(TitleBand {
-        has_title,
-        cased_title,
-        authored_title: title.map(str::to_string),
-        subtitle: subtitle.map(str::to_string),
-        has_subtitle,
-        font_size: title_font_size,
-        family: title_family.to_string(),
-        color: title_color.to_string(),
-        weight: title_weight,
-        text_y: title_text_y + shift.title_dy,
-        title_lines,
-        subtitle_lines,
-        title_truncated,
-        subtitle_truncated,
-        subtitle_font_size,
-        subtitle_family,
-        subtitle_color: subtitle_color.to_string(),
-        subtitle_text_y: subtitle_drawn_y,
-        area_h: title_area_h + shift.body_dy,
-    })
-}
-
 /// The title fields of a table's resolved chart: what `title_band` reads, so a
 /// row's sizing pass asks the band the renderer paints from instead of
 /// measuring the title a second way.
@@ -5722,104 +1275,11 @@ struct TitleOnly {
     style: ResolvedStyle,
 }
 
-/// A titled table's `(ascent, tail)` in the row's title band, measured from the
-/// table's own top edge (`title_band.py:116-132`): the baseline sits
-/// `int(outer_padding)` plus `title_ascent` below it, and the body starts where
-/// `compute_table_title_block_layout`'s block ends. `width` is the table's slot
-/// width, which wraps the title.
-pub fn title_geometry(resolved: &Value, width: f64, fonts: &FontBook) -> Result<(f64, f64), String> {
-    let r = TitleOnly::deserialize(resolved).map_err(|e| format!("table title: {e}"))?;
-    let th = &r.style.table;
-    let band = title_band(
-        r.title.as_deref(),
-        r.subtitle.as_deref(),
-        r.title_style.as_ref(),
-        r.style.title_font.as_ref(),
-        th,
-        width,
-        TitleShift::default(),
-        fonts,
-    )?;
-    Ok((th.outer_padding.trunc() + band.text_y, band.area_h - band.text_y))
-}
-
-impl TitleBand {
-    fn warn_truncations(&self, chart_id: &str) {
-        crate::common::warn_title_truncations(
-            chart_id,
-            (self.cased_title.as_deref(), self.title_truncated),
-            (self.subtitle.as_deref(), self.subtitle_truncated),
-        );
-    }
-}
-
-fn emit_title_band(xml: &mut Xml, band: &TitleBand, outer: f64) {
-    let (title_font_size, title_weight) = (band.font_size, &band.weight);
-    let (title_color, title_family) = (&band.color, &band.family);
-    // The band starts at `current_y = padding`, so both
-    // baselines sit `outer_padding` below the band's own origin.
-    let (title_text_y, subtitle_text_y) = (outer + band.text_y, outer + band.subtitle_text_y);
-    let (subtitle_font_size, subtitle_color, subtitle_family) =
-        (band.subtitle_font_size, &band.subtitle_color, &band.subtitle_family);
-    if let (true, Some(title_text)) = (band.has_title, band.cased_title.as_deref()) {
-        xml.open(
-            "text",
-            Attrs::new()
-                .set("x", outer.to_string())
-                .set("y", float_repr(title_text_y))
-                .set("font-size", title_font_size.to_string())
-                .set("font-weight", title_weight.as_str())
-                .set("fill", title_color.as_str())
-                .set("font-family", title_family.as_str())
-                .set("data-authored-kind", "title"),
-        );
-        // The full text rides along when the drawn lines differ from it.
-        if band.title_lines.join("\n") != title_text {
-            xml.leaf("title", Attrs::new(), band.authored_title.as_deref().unwrap_or(title_text));
-        }
-        let title_line_h = title_font_size.trunc() + 2.0;
-        for (i, line) in band.title_lines.iter().enumerate() {
-            xml.leaf(
-                "tspan",
-                Attrs::new()
-                    .set("x", outer.to_string())
-                    .set("y", float_repr(title_text_y + i as f64 * title_line_h)),
-                line,
-            );
-        }
-        xml.close("text");
-        if let (true, Some(subtitle_text)) = (band.has_subtitle, band.subtitle.as_deref()) {
-            xml.open(
-                "text",
-                Attrs::new()
-                    .set("x", outer.to_string())
-                    .set("font-size", float_repr(subtitle_font_size))
-                    .set("fill", subtitle_color.as_str())
-                    .set("font-family", subtitle_family.as_str())
-                    .set("data-authored-kind", "subtitle"),
-            );
-            if band.subtitle_lines.join(" ") != subtitle_text {
-                xml.leaf("title", Attrs::new(), subtitle_text);
-            }
-            for (i, line) in band.subtitle_lines.iter().enumerate() {
-                xml.leaf(
-                    "tspan",
-                    Attrs::new()
-                        .set("x", outer.to_string())
-                        .set("y", float_repr(subtitle_text_y + i as f64 * (subtitle_font_size + 2.0))),
-                    line,
-                );
-            }
-            xml.close("text");
-        }
-    }
-}
-
 /// The slice of a table's resolved model a zero-row render reads. A query with
 /// no rows leaves `rows`, `columns` and `column_defaults` null, so the full
 /// [`Resolved`] cannot deserialize it.
 #[derive(Deserialize)]
-struct EmptyResolved {
+pub(crate) struct EmptyResolved {
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     id: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
@@ -5837,460 +1297,12 @@ struct EmptyState {
     font: Font,
 }
 
-/// A table over no rows: an em dash centered in a canvas that holds
-/// the title band and the header band. The canvas
-/// height is `_resolve_visible_rows`' content height with `rows_height == 0` —
-/// the no-slot path and the slot path's grow-by-2
-/// shortcut agree on it — plus nothing for the pager (one
-/// page, `pagination_active` false) or a summary gap (no
-/// rows). A slot shorter than that content takes the
-/// pagination-reserve branch instead, which is not ported.
-///
-/// A table with resolved columns draws their header band too, so it takes the
-/// ordinary render, as does one with row numbers.
-pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r: EmptyResolved = Deserialize::deserialize(&payload.resolved)
-        .map_err(|e| format!("table payload: {e}"))?;
-    if r.columns.as_ref().is_some_and(|c| !c.is_empty()) || r.style.table.row_numbers.visible {
-        return render(payload, fonts).map_err(|d| d.to_string());
-    }
-    let th = &r.style.table;
-    let band = title_band(
-        r.title.as_deref(),
-        r.subtitle.as_deref(),
-        r.title_style.as_ref(),
-        r.style.title_font.as_ref(),
-        th,
-        payload.width,
-        payload.title_shift,
-        fonts,
-    )?;
-    if let Some(id) = r.id.as_deref() {
-        band.warn_truncations(id);
-    }
-    // `:655`: a hidden header collapses both the band and the
-    // header/body gap.
-    let (header_height, header_body_gap) = if th.header.visible {
-        (th.header.height.trunc(), (th.row.height * 0.25).trunc())
-    } else {
-        (0.0, 0.0)
-    };
-    let table_height = band.area_h
-        + header_height
-        + header_body_gap
-        + th.outer_padding.trunc()
-        + th.bottom_padding.trunc();
-    // `height: 0.0` is the sizer's unbounded measure (`height=None`); a bounded
-    // slot grows by the title shift's `body_dy`.
-    let slot_h = if payload.height > 0.0 { payload.height + payload.title_shift.body_dy } else { payload.height };
-    if slot_h > 0.0 && slot_h < table_height {
-        return Err(format!(
-            "table: empty result set in a {slot_h}px slot shorter than its {table_height}px content \
-             not supported"
-        ));
-    }
-    let muted = payload
-        .board_style
-        .as_ref()
-        .and_then(|b| b.muted.as_deref())
-        .ok_or("table: empty result set needs board_style.muted")?;
-    let empty_state = th
-        .empty_state
-        .as_ref()
-        .ok_or("table: empty result set needs style.table.empty_state")?;
-    let size = empty_state
-        .font
-        .size
-        .ok_or("table: empty result set needs style.table.empty_state.font.size")?;
-    let family = svg_font_family(
-        th.font.family.as_deref().ok_or("table: empty result set needs style.table.font.family")?,
-    );
-    let width = payload.width;
-    let (w_s, h_s) = (num_full(width), num_full(table_height));
-    let mut xml = Xml::new();
-    xml.open(
-        "svg",
-        Attrs::new()
-            .set("xmlns", "http://www.w3.org/2000/svg")
-            .set("width", w_s.as_str())
-            .set("height", h_s.as_str())
-            .set("viewBox", format!("0 0 {w_s} {h_s}")),
-    );
-    // The card rect only when the table authors a background.
-    if let Some(bg) = th
-        .background
-        .as_deref()
-        .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("transparent"))
-    {
-        let (bx, by, bw, bh) = card_box(width, table_height, payload.padding.as_ref());
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", num_full(bx))
-                .set("y", num_full(by))
-                .set("width", num_full(bw))
-                .set("height", num_full(bh))
-                .set("fill", bg)
-                .set("rx", "4"),
-        );
-    }
-    emit_title_band(&mut xml, &band, th.outer_padding.trunc());
-    xml.leaf(
-        "text",
-        Attrs::new()
-            .set("x", float_repr(width / 2.0))
-            .set("y", float_repr(table_height / 2.0))
-            .set("font-size", float_repr(size))
-            .set("fill", muted)
-            .set("text-anchor", "middle")
-            .set("font-family", family.as_str()),
-        "\u{2014}",
-    );
-    xml.close("svg");
-    Ok(xml.finish())
-}
-
-/// The visible columns of the table, in paint order, with each one's resolved
-/// config — `_prepare_columns`. Returns the pivot's visible
-/// row-dimension count and its group-header levels remapped onto the visible
-/// leaves (both empty for a flat table). Shared by the render and the
-/// natural-width measure, which size the same columns.
-fn visible_columns<'a>(
-    r: &'a Resolved,
-    rows: &'a [serde_json::Map<String, Value>],
-    pivot: &'a Option<PivotResult>,
-) -> Result<(Vec<ColMeta<'a>>, usize, Vec<Vec<PivotLevel>>), Diagnostic> {
-    let row_role = r.style.table.row.role.as_deref();
-    let chart_id = r.id.as_deref().unwrap_or_default();
-    // Visible-column set mirrors production's `_render_table_svg_core`
-    // When style.columns was authored, ITS keys are
-    // the whole visible list — any query column the author didn't name
-    // (a measure like `nrr`, or the row.role marker column) stays hidden,
-    // never a "missing config" error. Only when nothing was authored does
-    // the visible set fall back to every query column, minus row.role. A
-    // pivot's own leaf/row-dim column order (`pivot_table_data`'s output)
-    // overrides both — the raw query columns (and r.columns' own keys,
-    // which still list the pre-pivot dimension fields) are never the
-    // visible set once a pivot reshape ran.
-    let col_names: Vec<&str> = if let Some(p) = &pivot {
-        p.col_order.iter().map(|s| s.as_str()).collect()
-    } else if !r.columns.is_empty() {
-        r.columns.keys().map(|k| k.as_str()).collect()
-    } else if let Some(first) = rows.first() {
-        first
-            .keys()
-            .map(|k| k.as_str())
-            .filter(|&k| Some(k) != row_role)
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    if col_names.is_empty() && !r.style.table.row_numbers.visible {
-        return Err("table: no columns".into());
-    }
-
-    let header_font_case = r
-        .style
-        .table
-        .header
-        .font
-        .case
-        .as_deref()
-        .ok_or("table: header requires table.header.font.case")?;
-
-    // Build column metadata.
-    let cols: Vec<ColMeta> = col_names
-        .iter()
-        .enumerate()
-        .map(|(idx, &name)| {
-            // A pivot leaf column's own config key is the measure name
-            // (multi-measure) or the innermost dimension value
-            // (multi-dim single-measure) — the part after the last
-            // separator — never the full synthesized leaf key. A
-            // single-dim single-measure leaf (no separator) and any
-            // row-dim column look themselves up directly, same as a plain
-            // query column.
-            let config_key = match name.rfind(PIVOT_LEAF_SEP) {
-                Some(idx) => &name[idx + PIVOT_LEAF_SEP.len()..],
-                None => name,
-            };
-            let is_leaf = pivot.as_ref().is_some_and(|p| idx >= p.n_row_dims);
-            // col_names is derived above either from r.columns' own keys (every
-            // name is present by construction) or, when r.columns is empty,
-            // from the query's own columns — production's "no column-level
-            // config" fallback (ResolvedTableChart.columns docstring), so an
-            // absent entry there is a plain-query column, not an error.
-            //
-            // Single-dim single-measure pivot only: a leaf-keyed entry
-            // (config_key == name, e.g. "Electronics") wins when present;
-            // absent that, a measure-keyed entry fans out to every leaf —
-            // same authoring shape as the multi-measure branch — but its
-            // `label` doesn't fan (`_fanned_leaf_config`,
-            // `measure_identity=False`): the header still names the leaf.
-            // Every single-measure pivot leaf — single-dim (config_key ==
-            // name) AND multi-dim (leaf carries no measure suffix, so a
-            // measure-keyed lookup can never hit on its own) — fans the
-            // measure's entry when no leaf-keyed entry exists
-            let raw_cfg = r.columns.get(config_key).or_else(|| {
-                if is_leaf {
-                    pivot.as_ref()?.single_measure.as_deref().and_then(|m| r.columns.get(m))
-                } else {
-                    None
-                }
-            });
-            let fan_out_via_measure = raw_cfg.is_some() && r.columns.get(config_key).is_none();
-            // A pivot with `pivot.levels` non-empty is the multi-dim-or-
-            // multi-measure shape: EVERY leaf carrying a config — fanned via the
-            // measure fallback or matched directly under its own leaf-part
-            // key — goes through `_fanned_leaf_config`. Only the single-dim
-            // single-measure shape (empty `levels`) lets a leaf-keyed direct
-            // match skip it and keep its own authored width.
-            let levels_nonempty = pivot.as_ref().is_some_and(|p| !p.levels.is_empty());
-            let is_fanned_leaf = is_leaf && (fan_out_via_measure || levels_nonempty);
-            let mut cfg: ColConfig = match raw_cfg {
-                Some(v) => Deserialize::deserialize(v)
-                    .map_err(|e| format!("table: column '{config_key}' config parse error: {e}"))?,
-                None => ColConfig::default(),
-            };
-            if fan_out_via_measure {
-                cfg.label = None;
-                cfg.header_link = None;
-            }
-            if is_fanned_leaf {
-                // The sizing slot never fans: a per-column width multiplied
-                // across N leaves would inflate the table
-                // (`_fanned_leaf_config` nulls both
-                // `width` and `max_width` before `fill_table_column_defaults`
-                // runs, so a leaf's own `max_width` doesn't block the
-                // `column_defaults.width` fill below either).
-                cfg.width = None;
-                cfg.max_width = None;
-            }
-            // column_defaults fills each field independently (never gated on
-            // another field).
-            if let Some(defaults) = &r.column_defaults {
-                if cfg.format.is_none() {
-                    cfg.format = defaults.format.clone();
-                }
-                if cfg.width.is_none() && cfg.max_width.is_none() {
-                    cfg.width = defaults.width.clone();
-                }
-                if cfg.align.is_none() {
-                    cfg.align = defaults.align.clone();
-                }
-                if cfg.background.is_none() {
-                    cfg.background = defaults.background.clone();
-                }
-                if cfg.font.is_none() {
-                    cfg.font = defaults.font.as_ref().map(|f| ColumnFont { color: f.color.clone(), weight: f.weight.clone() });
-                }
-            }
-
-            // A pivot leaf is built at render time, so its align verdict is too:
-            // `classify_date_column_align` (right iff every non-null value is date-like).
-            if is_leaf && cfg.align.is_none() {
-                let mut values = rows
-                    .iter()
-                    .filter_map(|row| row.get(name))
-                    .filter(|v| !v.is_null() && !matches!(v, Value::String(s) if s.trim().is_empty()))
-                    .peekable();
-                if values.peek().is_some() && values.all(|v| is_date_like_cell(Some(v))) {
-                    cfg.align = Some("right".to_string());
-                }
-            }
-
-            // Chart-level `conditional_formatting` looks itself up under the
-            // same key `cfg` did (`config_key`) — a pivot leaf's own
-            // measure/dimension suffix, mirroring production's measure-keyed
-            // remap for the shapes this corpus exercises.
-            let when_rules: Vec<WhenRule> = r
-                .conditional_formatting
-                .as_ref()
-                .and_then(|m| m.get(config_key))
-                .map(|f| f.when.clone())
-                .unwrap_or_default();
-
-            // A column has a numeric lane when some cell is a magnitude;
-            // a text or date cell beside them is painted on its own terms.
-            let is_numeric = rows.iter().any(|row| numeric_value(row.get(name)).is_some());
-
-            // Date lane (invariant #11): a non-numeric column with date-like
-            // content that is right-aligned, or that mixes in a cell the
-            // numeric lane would take (an authored `format:` makes every cell
-            // one). Trusts the resolved `align` verdict as
-            // *whether* the column right-aligns; a plain right-aligned text
-            // column with no date-shaped content (e.g. a pie attachment's
-            // percent-string column) never earns this lane.
-            let has_date_like = rows.iter().any(|row| is_date_like_cell(row.get(name)));
-            let has_lane_cell = rows.iter().any(|row| {
-                let v = row.get(name);
-                !is_date_like_cell(v)
-                    && (cfg.format.is_some() || matches!(v, Some(Value::String(s)) if s.trim().parse::<f64>().is_ok()))
-            });
-            let is_date = !is_numeric
-                && has_date_like
-                && (cfg.align.as_deref() == Some("right") || has_lane_cell);
-
-            // Production cases the AUTHORED label too: `display_name =
-            // (label or slug_to_text(col))` then `apply_case(display_name,
-            // header_case)` — an authored lowercase
-            // label is not exempt from the header font case.
-            let raw_label = match cfg.label.clone().filter(|s| !s.is_empty()) {
-                Some(l) => l,
-                None => display_text::slug_to_text(config_key)?,
-            };
-            let header = display_text::case::apply_case(&raw_label, header_font_case)?;
-
-            Ok(ColMeta { name, header, cfg, is_numeric, is_date, when_rules })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    // `visible: false` is the sole mechanism that removes a column from the
-    // rendered set. Production applies this filter to the
-    // *post-pivot* column list too, then remaps every group-span descriptor
-    // onto the surviving leaves — hiding a leaf narrows
-    // the span that covers it instead of leaving a phantom column in its
-    // index math.
-    // `pivot` itself stays untouched — its col_order Strings are still
-    // borrowed by every ColMeta::name in `cols` below — so the post-filter
-    // shape is tracked in these two standalone locals instead of mutating
-    // PivotResult in place.
-    // Measure keys a pivot fanned onto its leaves (`_addressed_via_expansion`).
-    let mut fanned_measures: BTreeSet<&str> = BTreeSet::new();
-    if let Some(p) = &pivot {
-        let values: &[String] = &p.values;
-        let leaves = col_names.iter().skip(p.n_row_dims).copied();
-        if p.levels.is_empty() {
-            let measure = values.first().filter(|m| r.columns.contains_key(*m));
-            if let Some(m) = measure {
-                if leaves.clone().any(|leaf| !r.columns.contains_key(leaf)) {
-                    fanned_measures.insert(m);
-                }
-            }
-        } else {
-            for leaf in leaves {
-                let last = leaf.rsplit(PIVOT_LEAF_SEP).next().unwrap_or(leaf);
-                if r.columns.contains_key(last) {
-                    fanned_measures.insert(last);
-                } else if !values.iter().any(|v| v == last) && values.len() == 1 {
-                    if let Some(m) = values.first().filter(|m| r.columns.contains_key(*m)) {
-                        fanned_measures.insert(m);
-                    }
-                }
-            }
-        }
-    }
-    check_visible_addressable(chart_id, &r.columns, rows, row_role, &fanned_measures)?;
-    let visible_flags: Vec<bool> = cols.iter().map(|c| c.cfg.visible != Some(false)).collect();
-    let (pivot_n_row_dims, pivot_levels_visible): (usize, Vec<Vec<PivotLevel>>) = match &pivot {
-        Some(p) => {
-            let n_leaves_total = cols.len() - p.n_row_dims;
-            let mut leaf_map: Vec<Option<usize>> = Vec::with_capacity(n_leaves_total);
-            let mut next_new = 0usize;
-            for i in 0..n_leaves_total {
-                if visible_flags[p.n_row_dims + i] {
-                    leaf_map.push(Some(next_new));
-                    next_new += 1;
-                } else {
-                    leaf_map.push(None);
-                }
-            }
-            let remapped_levels: Vec<Vec<PivotLevel>> = p
-                .levels
-                .iter()
-                .map(|level| {
-                    level
-                        .iter()
-                        .filter_map(|(label, first_leaf, n_leaves)| {
-                            let new_indices: Vec<usize> = (*first_leaf..first_leaf + n_leaves)
-                                .filter_map(|old| leaf_map[old])
-                                .collect();
-                            match (new_indices.first(), new_indices.last()) {
-                                (Some(&new_first), Some(&new_last)) => {
-                                    Some((label.clone(), new_first, new_last - new_first + 1))
-                                }
-                                _ => None,
-                            }
-                        })
-                        .collect()
-                })
-                .collect();
-            let new_n_row_dims = visible_flags[..p.n_row_dims].iter().filter(|&&v| v).count();
-            (new_n_row_dims, remapped_levels)
-        }
-        None => (0, Vec::new()),
-    };
-    let cols: Vec<ColMeta> =
-        cols.into_iter().zip(visible_flags).filter(|(_, v)| *v).map(|(c, _)| c).collect();
-    if cols.is_empty() {
-        return Err("table: no visible columns".into());
-    }
-    Ok((cols, pivot_n_row_dims, pivot_levels_visible))
-}
-
 /// One column's header as `resolve_wrapped_headers` lays it out.
 struct WrappedHeader {
     lines: Vec<String>,
     /// Text was cut (wrap-two past two lines): the full label rides in a
     /// `<title>`.
     truncated: bool,
-}
-
-/// The effective header overflow mode for `col`: the column's own, else the
-/// chart's promoted one, else the table style's, else the theme's
-/// (`resolve_header_overflow`).
-fn header_overflow_mode<'a>(
-    r: &'a Resolved,
-    th: &'a TableTheme,
-    col: &'a ColMeta,
-) -> Result<&'a str, String> {
-    col.cfg
-        .header_overflow
-        .as_deref()
-        .or(r.header_overflow.as_deref())
-        .or(th.header_overflow.as_deref())
-        .or(th.header.overflow.as_deref())
-        .ok_or_else(|| {
-            format!("table payload: no header overflow mode for column '{}'", col.name)
-        })
-}
-
-/// `resolve_wrapped_headers`: each header on one
-/// line when it fits the cell's content area `int(cw - 2*pad)` under real glyph
-/// metrics, else wrapped by the column's overflow mode. Only `wrap-two` (the
-/// theme default) and `wrap` are drawn; a header that needs `clip` or
-/// `truncate` refuses by name.
-fn wrapped_headers(
-    cols: &[ColMeta],
-    col_ws: &[f64],
-    pad: f64,
-    header_font_size: f64,
-    header_measure_family: &str,
-    r: &Resolved,
-    th: &TableTheme,
-    fonts: &FontBook,
-) -> Result<Vec<WrappedHeader>, String> {
-    let mut out = Vec::with_capacity(cols.len());
-    for (col, &cw) in cols.iter().zip(col_ws) {
-        let content_area = (cw - pad * 2.0).trunc().max(1.0);
-        if fonts.measure(&col.header, header_measure_family, header_font_size)? <= content_area {
-            out.push(WrappedHeader { lines: vec![col.header.clone()], truncated: false });
-            continue;
-        }
-        let mode = header_overflow_mode(r, th, col)?;
-        let (lines, truncated) = crate::common::prepare_title_lines(
-            &col.header,
-            Some(mode),
-            content_area,
-            header_font_size,
-            header_measure_family,
-            fonts,
-        )?;
-        let lines = if lines.is_empty() { vec![col.header.clone()] } else { lines };
-        out.push(WrappedHeader { lines, truncated });
-    }
-    Ok(out)
 }
 
 /// The two families a table's text is measured in: production's
@@ -6310,1475 +1322,125 @@ struct ColumnInputs {
     word_floors: BTreeMap<String, f64>,
 }
 
-/// The widest eligible
-/// whitespace token of `text`.
-fn widest_token_width(fonts: &FontBook, text: &str, family: &str, size: f64) -> Result<f64, String> {
-    let mut widest = 0.0_f64;
-    for token in text.split_whitespace().filter(|t| is_floor_candidate_token(t)) {
-        widest = widest.max(fonts.measure(token, family, size)?);
-    }
-    Ok(widest)
+/// What the size-independent work derives from a table's chart and rows:
+/// formatted cells, resolved columns and the per-column scans.
+struct Chart {
+    resolved: Resolved,
+    /// The pivot's reshaped rows, else the query's.
+    rows: Vec<serde_json::Map<String, Value>>,
+    cols: Vec<ColMeta>,
+    /// Whether a pivot reshaped the rows and drew the header groups.
+    pivoted: bool,
+    pivot_n_row_dims: usize,
+    pivot_levels_visible: Vec<Vec<PivotLevel>>,
+    row_roles: Vec<RowRole>,
+    /// Every numeric/date-lane cell, formatted over the full dataset: this feeds
+    /// measurement, which reads only the anchor-independent text and affixes.
+    cell_data: Vec<Vec<Cell>>,
+    /// Spark `bar` auto-max and midline scan, over the full dataset minus
+    /// summary rows (a grand-total value would otherwise re-anchor every detail
+    /// row's bar scale).
+    bar_auto_max: BTreeMap<String, f64>,
+    signed_columns: BTreeSet<String>,
+    /// Spark columns own their width regardless of measured demand.
+    force_compact: BTreeSet<String>,
+    formats: Option<serde_json::Map<String, Value>>,
+    sub_unit_specs: Option<BTreeMap<String, String>>,
 }
 
-/// `_column_demands` over `measure_column_demands` and
-/// `measure_column_word_floors`: every string is
-/// the FORMATTED painted cell text (prefix+number+suffix for numeric lanes),
-/// measured with the Inter stand-in (get_font_path's non-numeric branch
-/// measures every non-serif family as Inter — the same documented deliberate
-/// under-measure kpi.rs mirrors) at body size; demand = p95 + 2*pad, floor =
-/// widest token across the sampled cells' formatted text AND the header label
-/// (header at header size) + 2*pad, applied to every column, numerics
-/// included.
-#[allow(clippy::too_many_arguments)]
-fn column_inputs(
-    cols: &[ColMeta],
-    cell_data: &[Vec<Cell>],
-    rows: &[serde_json::Map<String, Value>],
-    fonts: &FontBook,
-    families: &MeasureFonts,
+/// The inputs `bind_chart` reads: a chart's resolved model, its rows and the
+/// board's format tables.
+#[derive(Clone, Copy)]
+struct Source<'a> {
+    resolved: &'a Value,
+    rows: &'a [serde_json::Map<String, Value>],
+    cell_text: &'a [CellRow],
+    formats: Option<&'a serde_json::Map<String, Value>>,
+    sub_unit_specs: Option<&'a BTreeMap<String, String>>,
+}
+
+/// A table's type and color, read once off its theme and the board.
+struct Look {
     font_size: f64,
+    body_family: String,
+    /// `style.fonts.numeral` as authored: the family numerals measure in, and
+    /// paint in (a Source Serif family gains the bundled-web alias).
+    numeral_family: String,
+    body_color: String,
+    /// A linked cell's ink: the board's own text color.
+    link_color: Option<String>,
     header_size: f64,
-    header_visible: bool,
+    header_family: String,
+    header_color: String,
+    header_weight: String,
     pad: f64,
-) -> Result<ColumnInputs, String> {
-    let mut demands: BTreeMap<String, f64> = BTreeMap::new();
-    let mut header_demands: BTreeMap<String, f64> = BTreeMap::new();
-    let mut word_floors: BTreeMap<String, f64> = BTreeMap::new();
-    for (col, cells) in cols.iter().zip(cell_data.iter()) {
-        // A swatch cell holds a color, not text: the painted square sets the
-        // width (`SWATCH_CELL_DEMAND`).
-        if is_swatch(col) {
-            demands.insert(col.name.to_string(), SWATCH_CELL_DEMAND + 2.0 * pad);
-            header_demands.insert(col.name.to_string(), SWATCH_CELL_DEMAND);
-            word_floors.insert(col.name.to_string(), SWATCH_CELL_DEMAND + 2.0 * pad);
-            continue;
-        }
-        demands.insert(
-            col.name.to_string(),
-            column_demand(cells, rows, col, fonts, families.body, font_size, pad)?,
-        );
-        // A hidden header paints no label, so it demands no width and sets
-        // no floor.
-        header_demands.insert(
-            col.name.to_string(),
-            if header_visible {
-                fonts.measure(&col.header, families.header, header_size)?
-            } else {
-                0.0
-            },
-        );
-
-        // Widest unbreakable token: header label's tokens at header size,
-        // cell tokens at body size (`_measure_min_word_width`,
-        //), with the URL/40-char candidate exclusions.
-        // Cells are tokenized by what they paint (`_rendered_cell_text`,
-        //): a currency column's floor carries its
-        // painted "$24.7M", never the raw "24730000.0".
-        let texts: Vec<String> = cells
-            .iter()
-            .take(WORD_FLOOR_SAMPLE_ROWS)
-            .map(measured_cell_text)
-            .collect();
-        let mut token_w = if header_visible {
-            widest_token_width(fonts, &col.header, families.header, header_size)?
-        } else {
-            0.0
-        };
-        for text in &texts {
-            token_w = token_w.max(widest_token_width(fonts, text, families.body, font_size)?);
-        }
-        // A cell that paints a glyph competes with its own `glyph run +
-        // widest token` — the glyph shares a line with the word after it
-        // and cannot break away from it.
-        // Measured PER CELL and maxed separately from the glyph-free
-        // token_w above, then folded in at the end: the widest token and
-        // the widest glyph run can belong to different cells (or, for the
-        // header, to no painted cell at all), so pairing them column-wide
-        // would reserve a first-line unit nothing renders.
-        if glyph_possible(col) {
-            let mut glyph_term = 0.0_f64;
-            for (row, text) in rows.iter().zip(&texts) {
-                let raw_value = row.get(col.name).filter(|v| !v.is_null());
-                let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
-                let glyph_w =
-                    fonts.measure(&glyph_run(glyph.as_deref()), families.body, font_size)?;
-                glyph_term =
-                    glyph_term.max(glyph_w + widest_token_width(fonts, text, families.body, font_size)?);
-            }
-            token_w = token_w.max(glyph_term);
-        }
-        word_floors.insert(col.name.to_string(), token_w + 2.0 * pad);
-    }
-    Ok(ColumnInputs { demands, header_demands, word_floors })
+    outer: f64,
+    row_h: f64,
 }
 
-/// Chart-level pivot: reshape long → wide. Scoped to the corpus's shapes —
-/// see `pivot_table_data`'s doc comment for what's out of scope. Shared by
-/// the render and the natural-width measure, which size the same columns.
-fn pivot_for(
-    r: &Resolved,
-    query_rows: &[serde_json::Map<String, Value>],
-    cell_text: &[CellRow],
-) -> Result<Option<PivotResult>, Diagnostic> {
-    let row_role = r.style.table.row.role.as_deref();
-    match &r.pivot_columns {
-        // An empty result has nothing to reshape: the header shows the resolved
-        // columns, as a flat table does.
-        Some(columns) if !columns.is_empty() && !query_rows.is_empty() => {
-            let (row_dims, values) = validate_pivot_fields(
-                query_rows,
-                r.rows.as_deref().unwrap_or_default(),
-                columns,
-                r.values.as_deref(),
-                row_role,
-            )?;
-            // The row-detail template names BASE columns; a pivot reshapes
-            // the rows into leaf columns, so no row could resolve it.
-            if r.link.is_some() {
-                return Err("table: a chart-root link on a pivot table not supported".into());
-            }
-            Ok(Some(pivot_table_data(query_rows, cell_text, &row_dims, columns, &values, row_role)?))
-        }
-        _ => Ok(None),
-    }
+/// What a drawn table reads of its payload beyond the chart: the board it sits
+/// in, its card padding, its variables and the title shift its row asks for.
+struct Drawn {
+    look: Look,
+    /// The group-header rows above the leaf header: the pivot's, else the
+    /// authored spanners'.
+    header_levels: Vec<Vec<PivotLevel>>,
+    board_style: Option<BoardStyle>,
+    padding: Option<Padding>,
+    variables: serde_json::Map<String, Value>,
+    filter_variables: Vec<String>,
+    interactive_controls: bool,
+    link_context: Option<crate::href::LinkContext>,
+    title_shift: TitleShift,
+    pagination_control_height: f64,
 }
 
-/// The rows the table lays out: the pivot's reshaped rows, else the query's.
-fn table_rows<'a>(
-    query_rows: &'a [serde_json::Map<String, Value>],
-    pivot: &'a Option<PivotResult>,
-) -> &'a [serde_json::Map<String, Value>] {
-    match pivot {
-        Some(p) => &p.rows,
-        None => query_rows,
+/// A table after `bind`: the rows it draws, or a result with nothing to draw.
+pub enum Bound {
+    Rows(Rows),
+    /// A query with no rows and no columns to head: the title band over an em dash.
+    Empty(Blank),
+}
+
+pub struct Rows {
+    chart: Chart,
+    drawn: Drawn,
+}
+
+/// What an empty table draws from: the slice of its resolved model, its card
+/// padding and its row's title shift.
+pub struct Blank {
+    resolved: EmptyResolved,
+    padding: Option<Padding>,
+    title_shift: TitleShift,
+}
+
+impl Bound {
+    fn title_shift(&self) -> TitleShift {
+        match self {
+            Bound::Rows(rows) => rows.drawn.title_shift,
+            Bound::Empty(blank) => blank.title_shift,
+        }
     }
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    let _formats = BoardFormats::enter(
-        payload.board_style.as_ref().and_then(|b| b.formats.as_ref()),
-        payload.board_style.as_ref().and_then(|b| b.sub_unit_specs.as_ref()),
-    );
-    let query_rows = &payload.rows;
-    if let Some((resolved, rows)) = text_format::lower(&payload.resolved, query_rows) {
-        let lowered = payload.with_inputs(resolved, rows);
-        return render(&lowered, fonts);
-    }
-    let r: Resolved = Deserialize::deserialize(&payload.resolved)
-        .map_err(|e| format!("table payload: {e}"))?;
-
-    let pagination_control_height = payload
-        .board_style
-        .as_ref()
-        .and_then(|b| b.pagination_control_height)
-        .ok_or("table: the payload carries no board_style.pagination_control_height")?;
-
-    let tones = payload.board_style.as_ref().and_then(|b| b.tones.as_ref());
-
-    let row_role = r.style.table.row.role.as_deref();
-    let chart_id = r.id.as_deref().unwrap_or_default();
-    if r.style.table.transpose && !query_rows.is_empty() {
-        let (resolved, rows) = transposed_inputs(&payload.resolved, query_rows)?;
-        let flat = payload.with_inputs(resolved, rows);
-        return render(&flat, fonts);
-    }
-
-    let pivot = pivot_for(&r, query_rows, &payload.cell_text)?;
-    let rows = table_rows(query_rows, &pivot);
-    let n_rows = rows.len();
-
-    let (cols, pivot_n_row_dims, mut pivot_levels_visible) = visible_columns(&r, rows, &pivot)?;
-
-    // Authored spanners apply only when no pivot built the header groups.
-    if let (None, Some(spanners), false) =
-        (&pivot, r.spanners.as_deref().filter(|s| !s.is_empty()), rows.is_empty())
-    {
-        let queried: Vec<&str> =
-            rows[0].keys().map(String::as_str).filter(|k| Some(*k) != row_role).collect();
-        let visible: Vec<&str> = cols.iter().map(|c| c.name).collect();
-        let level = authored_spanner_level(chart_id, spanners, &queried, &visible)?;
-        if !level.is_empty() {
-            pivot_levels_visible = vec![level];
-        }
-    }
-
-    let th = &r.style.table;
-    let header_visible = th.header.visible;
-
-    let mut font_size = th.font.size_or(11.0);
-    let body_family = svg_font_family(th.font.family_or("sans-serif"));
-    // A static `color` replaces the font's; every authored table color is
-    // validated up front.
-    let body_color = sanitize_color(th.color.as_ref().and_then(|c| c.static_color.as_deref()))?
-        .or(th.font.color.as_deref())
-        .unwrap_or("#222222");
-    sanitize_color(th.row.stripe.as_ref().and_then(|s| s.color.as_deref()))?;
-    let link_color = sanitize_color(payload.board_style.as_ref().and_then(|b| b.font_color.as_deref()))?;
-    // A serif body sets its numerals in the same serif (`_table_numeric_cell_font`).
-    let tab_family: &str = if body_family.contains("Source Serif") { &body_family } else { TAB_FONT };
-    let mut header_size = th.header.font.size_or(font_size);
-    let header_family =
-        th.header.font.family.as_deref().map(svg_font_family).unwrap_or_else(|| body_family.clone());
-    let header_color = sanitize_color(th.header.font.color.as_deref())?.unwrap_or(body_color);
-    let header_weight = match th.header.font_compact.as_ref().filter(|c| c.weight.is_some()) {
-        Some(compact) if font_size.trunc() <= 11.0 => compact.weight_str(),
-        _ => th.header.font.weight_str(),
-    };
-    let pad = th.column_layout.cell_padding.trunc();
-    let outer = th.outer_padding;
-
-    // Pagination is resolved AFTER the fit cascade, wrap layout, and title/
-    // header geometry — production's own order (column widths → fit cascade →
-    // `_compute_wrap_layout` → `_resolve_visible_rows`). See the
-    // "Visible-rows resolution" block below; only the row-height binding the
-    // cascade mutates lives up here.
-    let mut row_h = th.row.height;
-
-    let row_roles = resolve_row_roles(rows, row_role);
-
-    // Spark `bar` auto-max + midline refusal,
-    // scanned over the FULL dataset minus summary
-    // rows (a grand-total value would otherwise re-anchor every detail
-    // row's bar scale). `bar-normalize`/`columns` are excluded: normalize
-    // always uses an explicit `max:`/theme default, and `columns` decides
-    // its own layout from its own cell array (render_spark_columns below),
-    // not a table-column-wide scan.
-    let mut bar_auto_max: BTreeMap<String, f64> = BTreeMap::new();
-    let mut signed_columns: BTreeSet<&str> = BTreeSet::new();
-    for col in &cols {
-        let Some(spark) = &col.cfg.spark else { continue };
-        if !matches!(spark.spark_type.as_str(), "bar" | "column") {
-            continue;
-        }
-        let detail_values: Vec<f64> = rows
-            .iter()
-            .zip(row_roles.iter())
-            .filter(|(_, role)| !is_summary_role(**role))
-            .filter_map(|(row, _)| coerce_numeric_cell(row.get(col.name)))
-            .collect();
-        if detail_values.iter().any(|v| *v < 0.0) {
-            signed_columns.insert(col.name);
-        }
-        if spark.spark_type == "bar" && spark.max.is_none() {
-            if let Some(max_abs) =
-                detail_values.iter().map(|v| v.abs()).fold(None, |acc: Option<f64>, v| {
-                    Some(acc.map_or(v, |a| a.max(v)))
-                })
-            {
-                bar_auto_max.insert(col.name.to_string(), max_abs);
-            }
-        }
-    }
-
-    // Spark columns own their width regardless of measured demand.
-    let force_compact: BTreeSet<String> =
-        cols.iter().filter(|c| c.cfg.spark.is_some()).map(|c| c.name.to_string()).collect();
-
-    // Format all numeric/date-lane cells, over the FULL dataset — this
-    // array feeds MEASUREMENT (column demand/word-floor/wrap, all reading
-    // `.text`/`.full_prefix`/`.full_suffix`, never the anchor-masked
-    // `.prefix`/`.suffix`), so it stays global regardless of pagination —
-    // see `build_cell_data`'s own doc for why a paginated PAINT call
-    // recomputes its own copy instead of slicing this one.
-    let cell_data: Vec<Vec<Cell>> = build_cell_data(rows, &cols, &th.symbol_mode, &row_roles)?;
-
-    // ── Demands / floors / header demands — production's inputs ──
-    // Every string is the FORMATTED painted cell text
-    // (prefix+number+suffix for numeric lanes), measured with the Inter
-    // stand-in (get_font_path's non-numeric branch measures every
-    // non-serif family as Inter — the same documented deliberate
-    // under-measure kpi.rs mirrors) at body size; demand = p95 + 2*pad,
-    // floor = widest token across cells AND the header label (header at
-    // header size) + 2*pad, applied to every column, numerics included.
-    let table_w = payload.width - 2.0 * outer;
-    // Degenerate slot (the harness's unsized nested-board items arrive as
-    // 0×0): refuse with a named error rather than allocating every column
-    // to zero and emitting an invalid-size SVG.
-    if table_w <= 0.0 {
-        return Err(format!(
-            "table: available width ({table_w:.1}px) too small to allocate columns"
-        ).into());
-    }
-    let measure_family = crate::common::measure_family_stand_in(&body_family);
-    let header_measure_family = crate::common::measure_family_stand_in(&header_family);
-    let tab_measure_family = if body_family.contains("Source Serif") { measure_family } else { TAB_FONT };
-
-    // The row-number column takes its width off the top; the data columns
-    // allocate into what is left.
-    let initial_font_size = font_size;
-    let rn = &th.row_numbers;
-    let row_number_width = |font_now: f64| -> Result<f64, String> {
-        if !rn.visible {
-            return Ok(0.0);
-        }
-        row_number_column_width(
-            rn,
-            n_rows,
-            fonts,
-            measure_family,
-            header_measure_family,
-            font_now.trunc(),
-            pad,
-        )
-    };
-    let mut rn_w = row_number_width(font_size)?;
-
-    let column_names: Vec<String> = cols.iter().map(|c| c.name.to_string()).collect();
-    // Phase 1 (explicit `width:` pins and `max_width:` caps), the demands, and
-    // the allocation, at the fonts and padding it is asked for.
-    let allocate = |font_now: f64,
-                    header_now: f64,
-                    pad_now: f64,
-                    budget: f64|
-     -> Result<(ColumnInputs, BTreeMap<String, f64>, BTreeMap<String, Option<f64>>, Vec<f64>), Diagnostic> {
-        let inputs = column_inputs(
-            &cols,
-            &cell_data,
-            rows,
-            fonts,
-            &MeasureFonts { body: measure_family, header: header_measure_family },
-            font_now,
-            header_now,
-            th.header.visible,
-            pad_now,
-        )?;
-        let mut pins: BTreeMap<String, f64> = BTreeMap::new();
-        let mut caps: BTreeMap<String, Option<f64>> = BTreeMap::new();
-        for col in &cols {
-            if let Some(w) = parse_column_width(col.cfg.width.as_ref(), budget)? {
-                pins.insert(col.name.to_string(), w);
-            }
-            caps.insert(
-                col.name.to_string(),
-                parse_column_width(col.cfg.max_width.as_ref(), budget)?,
-            );
-        }
-        if std::env::var("TABLE_DEBUG").is_ok() {
-            eprintln!("RUST demands: {:?}", inputs.demands);
-            eprintln!("RUST word_floors: {:?}", inputs.word_floors);
-        }
-        let width_map = calculate_column_layout_port(
-            &column_names,
-            &force_compact,
-            &pins,
-            &caps,
-            budget,
-            &inputs.demands,
-            &inputs.header_demands,
-            &inputs.word_floors,
-            th.column_layout.width_similarity_threshold,
-            th.column_layout.content_headroom,
-            pad_now,
-        );
-        let col_ws = column_names.iter().map(|n| width_map[n]).collect();
-        Ok((inputs, pins, caps, col_ws))
-    };
-    let (mut inputs, mut pins, mut caps, mut col_ws) = allocate(font_size, header_size, pad, table_w - rn_w)?;
-
-    // ── Fit cascade: allocation ran at the theme's cell padding; if any
-    // numeric/date cell or short header overflows its content area (text
-    // cells too under `wrap: false`; wrapped text cells never overflow),
-    // padding steps down to max(pad/2, 6), then the body font to 11px (row
-    // height −4, floored at 16; header follows the body when it inherits
-    // it). Overflow is measured against `measured_cell_text` — the same
-    // string the demand pass measures — with the Inter stand-in, minus the
-    // 4px breathing room.
-    // A glyph-possible column
-    // composes `glyph_run + rendered` before measuring, same as the demand
-    // pass.
-    let overflows = |pad_now: f64, font_now: f64, header_now: f64| -> Result<bool, String> {
-        for ((col, cells), cw) in cols.iter().zip(cell_data.iter()).zip(col_ws.iter()) {
-            if is_swatch(col) {
-                continue;
-            }
-            let content_area = cw - 2.0 * pad_now - 4.0;
-            if header_visible
-                && cols.len() > 1
-                && col.header.chars().count() <= 12
-                && fonts.measure(&col.header, measure_family, header_now).unwrap_or(0.0)
-                    > content_area
-            {
-                return Ok(true);
-            }
-            // Wrapped text cells never overflow; unwrapped ones drive the cascade.
-            if th.wrap && !(col.is_numeric || col.is_date) {
-                continue;
-            }
-            for (ri, cell) in cells.iter().enumerate().take(50) {
-                let rendered = unpadded_cell_text(cell);
-                let raw_value = rows[ri].get(col.name).filter(|v| !v.is_null());
-                let w = measure_cell_with_glyph(fonts, col, raw_value, &rendered, measure_family, font_now)?;
-                if w > content_area {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
-    };
-    let mut eff_pad = pad;
-    if overflows(eff_pad, font_size, header_size)? {
-        eff_pad = (pad / 2.0).floor().max(6.0);
-        if overflows(eff_pad, font_size, header_size)? {
-            let header_inherits_body = th.header.font.size.is_none();
-            font_size = 11.0;
-            row_h = (row_h - 4.0).max(16.0);
-            header_size = if header_inherits_body { font_size } else { 11.0 };
-        }
-    }
-    let pad = eff_pad;
-    // After the cascade stepped the body font down, the row-number column
-    // narrows with it and the data columns are allocated again into the new
-    // budget.
-    if rn.visible && font_size < initial_font_size {
-        rn_w = row_number_width(font_size)?;
-        (inputs, pins, caps, col_ws) = allocate(font_size, header_size, pad, table_w - rn_w)?;
-    }
-    let ColumnInputs { demands, header_demands, .. } = inputs;
-
-
-    // Content edge for horizontal elements that span every column (row
-    // stripes/rules, summary/total rules) — production's
-    // The cell-content edge from
-    // the first column's content start to the last column's content end,
-    // NOT the table's outer slot. Identical to `table_w` whenever
-    // `Σcol_ws == table_w`, which explicit pins can break — an all-pinned
-    // table summing under `table_w` must not paint its rule past its own
-    // last column.
-    if std::env::var("TABLE_DEBUG").is_ok() {
-        let named: Vec<(String, f64)> = cols
-            .iter()
-            .map(|c| c.name.to_string())
-            .zip(col_ws.iter().cloned())
-            .collect();
-        eprintln!("RUST col_ws: {named:?}");
-    }
-    let content_w: f64 = rn_w + col_ws.iter().sum::<f64>();
-
-    // Columns whose honored widths sum past the slot record
-    // WARN-TABLE-COLUMNS-OVERFLOW, and the body is clipped to the card box
-    // (see the emit below) so it never paints over a neighboring slot. Pins
-    // alone, word floors and numeric-lane reservations can each push the
-    // total over `table_w`.
-    // Sub-pixel epsilon: the surplus/deficit branches divide and sum floats
-    // per column, so a table that mathematically fits exactly (`Σcol_ws ==
-    // table_w`) can land a few ULPs over `table_w` from summation error
-    // alone; the `==` boundary must still count as "fits".
-    const OVERFLOW_EPSILON: f64 = 1e-6;
-    let content_overflows = content_w > table_w + OVERFLOW_EPSILON;
-    if content_overflows {
-        warn(Diagnostic::new(
-            &codes::WARN_TABLE_COLUMNS_OVERFLOW,
-            [
-                ("chart_id", json!(chart_id)),
-                ("needed_width", json!(content_w + 2.0 * outer)),
-                ("available_width", json!(payload.width)),
-            ],
-        ));
-    }
-
-    // Precompute per-column x offsets and midpoints.
-    let col_x: Vec<f64> = {
-        let mut xs = Vec::with_capacity(col_ws.len());
-        let mut x = outer + rn_w;
-        for &w in &col_ws {
-            xs.push(x);
-            x += w;
-        }
-        xs
-    };
-
-    // Text wrapping: a text
-    // column's cell that overflows its content width word-wraps onto extra
-    // lines rather than clipping/truncating, and the row grows to fit the
-    // tallest wrapped cell. `wrapped_lines[ci][ri]` is `None` for a
-    // single-line cell (render path falls back to the plain one-line text).
-    let mut row_heights: Vec<f64> = vec![row_h; n_rows];
-    let mut wrapped_lines: Vec<Vec<Option<Vec<String>>>> = Vec::with_capacity(cols.len());
-    if th.wrap {
-        let line_height = font_size + th.text_baseline_offset;
-        for (ci, col) in cols.iter().enumerate() {
-            if col.is_numeric || col.is_date || is_swatch(col) {
-                wrapped_lines.push(vec![None; n_rows]);
-                continue;
-            }
-            let content_w = col_ws[ci] - 2.0 * pad;
-            let mut col_lines: Vec<Option<Vec<String>>> = Vec::with_capacity(n_rows);
-            for (ri, cell) in cell_data[ci].iter().enumerate() {
-                if cell.text.is_empty() || content_w <= 0.0 {
-                    col_lines.push(None);
-                    continue;
-                }
-                // The glyph shares the first line with the text it
-                // precedes, so the wrap search runs against the width left
-                // over after it — subtracted only past the guard above, so
-                // a glyph never pushes a cell through it.
-                let raw_value = rows[ri].get(col.name).filter(|v| !v.is_null());
-                let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
-                let glyph_w =
-                    fonts.measure(&glyph_run(glyph.as_deref()), measure_family, font_size)?;
-                let cell_content_w = content_w - glyph_w;
-                if fonts.measure(&cell.text, measure_family, font_size)? <= cell_content_w {
-                    col_lines.push(None);
-                    continue;
-                }
-                // A date-like or numeric cell is cut with an ellipsis at paint
-                // time instead of wrapping.
-                if wants_tabular_font(col, rows[ri].get(col.name)) {
-                    col_lines.push(None);
-                    continue;
-                }
-                // `wrap_text_precise`: whitespace words, a
-                // word wider than the column split at its last fitting seam.
-                let (lines, _) = crate::common::wrap_text_measured(
-                    &cell.text,
-                    cell_content_w,
-                    font_size,
-                    measure_family,
-                    fonts,
-                    None,
-                    false,
-                )?;
-                if lines.len() > 1 {
-                    let grown = python_round(
-                        lines.len() as f64 * line_height - th.text_baseline_offset + 2.0 * pad,
-                    );
-                    row_heights[ri] = row_heights[ri].max(grown);
-                    col_lines.push(Some(lines));
-                } else {
-                    col_lines.push(None);
-                }
-            }
-            wrapped_lines.push(col_lines);
-        }
-    } else {
-        wrapped_lines.extend((0..cols.len()).map(|_| vec![None; n_rows]));
-    }
-    // For numeric/date-lane columns: fixed per-column lane positions
-    // (`numeric_lane_positions`, invariant #11) so prefix/number/suffix each
-    // render as their own tspan, every column's numbers sharing one rhythm.
-    let mut prefix_xs: Vec<f64> = vec![0.0; cols.len()];
-    let mut number_xs: Vec<f64> = vec![0.0; cols.len()];
-    let mut suffix_xs: Vec<f64> = vec![0.0; cols.len()];
-    // `_compute_lane_positions`' `(content_left, content_right)`: the lane's full extent, prefix left edge to suffix right edge. A
-    // column earns a lane entry only when it measured content
-    // (`max_content_w > 0`).
-    let mut lane_extents: Vec<Option<(f64, f64)>> = vec![None; cols.len()];
-    for (ci, col) in cols.iter().enumerate() {
-        if !col.is_numeric && !col.is_date {
-            continue;
-        }
-        let cells = &cell_data[ci];
-        // Production measures the number lane with `num_str.removeprefix
-        // ("-")` — ASCII hyphen-minus only. Every numeric
-        // formatter in this repo (`_with_minus`, d3-format, d3rs's own
-        // MINUS) emits U+2212 MINUS SIGN for negatives, never ASCII "-", so
-        // that removeprefix never actually matches real cell text: it's a
-        // no-op, and production's "unsigned" measurement still counts the
-        // minus glyph's width. Stripping U+2212 here (production's own bug,
-        // faithfully NOT fixed) would narrow the lane and shift the number
-        // left of production's position — port the no-op, not the intent.
-        let mut max_num_w = 0.0_f64;
-        let mut max_prefix_w = 0.0_f64;
-        let mut max_suffix_w = 0.0_f64;
-        for (ri, c) in cells.iter().enumerate() {
-            // Production's lane pass skips a null: its placeholder is painted
-            // outside the lane and must not widen it.
-            if c.is_null {
-                continue;
-            }
-            // Only a magnitude, or a date-shaped cell (every cell of a
-            // right-aligned date column), sizes the lane; a sentinel beside
-            // magnitudes does not.
-            let raw_lane = rows[ri].get(col.name);
-            let is_magnitude = numeric_value(raw_lane).is_some() && is_numeric_cell(col, raw_lane);
-            let is_date_cell = is_date_like_cell(raw_lane)
-                || (col.is_date
-                    && col.cfg.align.as_deref() == Some("right")
-                    && matches!(raw_lane, Some(Value::String(s)) if !s.trim().is_empty()));
-            if !(is_magnitude || is_date_cell) {
-                continue;
-            }
-            let unsigned = c.text.trim_start_matches('-');
-            let lane_font = if is_plain_date_lane_cell(col, rows[ri].get(col.name)) {
-                measure_family
-            } else {
-                tab_measure_family
-            };
-            let measured = fonts.measure(unsigned, lane_font, font_size)?;
-            // A date cell is wrapped/truncated to its column when painted, so
-            // its lane width is clamped to the content area.
-            let raw_cell = rows[ri].get(col.name);
-            let numeric_lane_cell = is_numeric_cell(col, raw_cell) && !is_date_like_cell(raw_cell);
-            max_num_w = max_num_w.max(if col.is_date && !numeric_lane_cell {
-                measured.min(col_ws[ci] - 2.0 * pad)
-            } else {
-                measured
-            });
-            // A glyph replaces the format prefix in the prefix lane, so the
-            // lane is measured on whichever the cell will actually render
-            // (`effective_prefix = cell_glyph or _p`).
-            let raw_value = rows[ri].get(col.name).filter(|v| !v.is_null());
-            let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
-            let effective_prefix = glyph.as_deref().or(c.prefix.as_deref());
-            if let Some(p) = effective_prefix {
-                max_prefix_w = max_prefix_w.max(fonts.measure(p, tab_measure_family, font_size)?);
-            }
-            if let Some(sfx) = c.suffix.as_deref() {
-                max_suffix_w = max_suffix_w.max(fonts.measure(sfx, tab_measure_family, font_size)?);
-            }
-        }
-        // Magnitude gap is date-column-exempt ( hard-zeroes it
-        // there — a date column's suffix, if any, is never a K/M/B magnitude).
-        let is_magnitude = !col.is_date
-            && cells
-                .iter()
-                .find_map(|c| c.suffix.as_deref())
-                .is_some_and(|suffix| is_magnitude_suffix(suffix));
-        let (prefix_x, num_x, suffix_x) = numeric_lane_positions(
-            col_x[ci],
-            col_ws[ci],
-            pad,
-            max_num_w,
-            max_prefix_w,
-            max_suffix_w,
-            is_magnitude,
-        );
-        number_xs[ci] = num_x;
-        prefix_xs[ci] = prefix_x;
-        suffix_xs[ci] = suffix_x;
-        if max_num_w > 0.0 {
-            lane_extents[ci] = Some((prefix_x - max_prefix_w, suffix_x + max_suffix_w));
-        }
-    }
-
-    // ── Layout geometry ───────────────────────────────────────────────────────
-
-    let band = title_band(
-        r.title.as_deref(),
-        r.subtitle.as_deref(),
-        r.title_style.as_ref(),
-        r.style.title_font.as_ref(),
-        th,
-        payload.width,
-        payload.title_shift,
-        fonts,
-    )?;
-    if !chart_id.is_empty() {
-        band.warn_truncations(chart_id);
-    }
-    let title_area_h = band.area_h;
-    // `render_table_svg`: the slot grows by the band's
-    // `body_dy` so no row is squeezed out to make room; `if height` leaves an
-    // unbounded measure unbounded.
-    let slot_h = if payload.height > 0.0 { payload.height + payload.title_shift.body_dy } else { payload.height };
-
-    // The `header_body_gap` (`int(row_height * 0.25)`) is
-    // whitespace added AFTER the header row, before the first data row
-    // — the header itself is never shifted by it.
-    let mut header_body_gap = if header_visible { (row_h * 0.25).floor() } else { 0.0 };
-    let header_y = title_area_h;
-    // Header band: the
-    // theme's `int(header.height)`, floored at `2*int(outer_padding) + lines *
-    // (int(header_size) + text_baseline_offset)` — so `header.height: 0` still
-    // holds one header line. `resolve_wrapped_headers` sets `lines` to the
-    // tallest header: a label that does not fit `int(cw - 2*pad)` wraps (a
-    // column sized to its own header never fits it, the truncation losing the
-    // fraction).
-    let header_font_size = header_size.trunc();
-    let header_line_h = header_font_size + th.text_baseline_offset;
-    let theme_header_h = th.header.height.trunc();
-    let header_lines = if header_visible {
-        wrapped_headers(
-            &cols,
-            &col_ws,
-            pad,
-            header_font_size,
-            header_measure_family,
-            &r,
-            th,
-            fonts,
-        )?
-    } else {
-        Vec::new()
-    };
-    let truncations: RefCell<Vec<(String, usize)>> = RefCell::new(Vec::new());
-    if !chart_id.is_empty() {
-        for (col, header) in cols.iter().zip(&header_lines) {
-            if header.truncated {
-                count_cut(&truncations, col.name);
-            }
-        }
-    }
-    // Cramping: headers wrapped because the columns' demand exceeds the budget
-    // they were divided into. A table that also overflows
-    // its slot is WARN-TABLE-COLUMNS-OVERFLOW's case.
-    let wrapped_count = header_lines.iter().filter(|h| h.lines.len() > 1).count();
-    if wrapped_count > 0 && !content_overflows {
-        let mut demand = 0.0_f64;
-        let mut relative_fraction = 0.0_f64;
-        for col in &cols {
-            if let Some(&pinned) = pins.get(col.name) {
-                demand += pinned;
-                if matches!(&col.cfg.width, Some(WidthHint::Text(s)) if s.trim().ends_with('%')) {
-                    relative_fraction += pinned / table_w;
-                }
-                continue;
-            }
-            let mut col_demand = demands[col.name].max(header_demands[col.name] + 2.0 * pad);
-            let relative_cap = matches!(&col.cfg.max_width, Some(WidthHint::Text(s)) if s.trim().ends_with('%'));
-            if let (Some(Some(cap)), false) = (caps.get(col.name), relative_cap) {
-                col_demand = col_demand.min(*cap);
-            }
-            demand += col_demand;
-        }
-        let shortfall = demand - table_w;
-        // The fix is sized from the root board's width: a render outside a
-        // board has none to suggest, so it warns of nothing.
-        let board_width = payload.board_style.as_ref().and_then(|b| b.board_width);
-        if let (true, Some(board_width)) = (shortfall >= 1.0 && relative_fraction < 1.0, board_width) {
-            let needed_budget = (demand - relative_fraction * table_w) / (1.0 - relative_fraction);
-            let growth = (needed_budget - table_w).max(0.0) * board_width / table_w;
-            let suggested_width = ((board_width + growth) / 50.0).ceil() * 50.0;
-            warn(Diagnostic::new(
-                &codes::WARN_TABLE_CRAMPED,
-                [
-                    ("chart_id", json!(chart_id)),
-                    ("wrapped_headers", json!(wrapped_count)),
-                    ("column_count", json!(cols.len())),
-                    ("needed_width", json!(demand)),
-                    ("available_width", json!(table_w)),
-                    ("suggested_width", json!(suggested_width)),
-                ],
-            ));
-        }
-    }
-    let max_header_lines = header_lines.iter().map(|h| h.lines.len()).max().unwrap_or(1);
-    let header_floor = 2.0 * outer.trunc() + max_header_lines as f64 * header_line_h;
-    let header_h = if header_visible { theme_header_h.max(header_floor).trunc() } else { 0.0 };
-    // A multi-dim or multi-measure pivot draws N group-header rows above the
-    // leaf header row, each the same height as the leaf row. Every other table has zero group levels,
-    // so `leaf_header_y == header_y` and geometry is unchanged.
-    let pivot_levels: &[Vec<PivotLevel>] = if header_visible { &pivot_levels_visible } else { &[] };
-    let n_group_levels = pivot_levels.len();
-    let group_row_height = header_h;
-    let leaf_header_y = header_y + group_row_height * n_group_levels as f64;
-    // Production's header placement: text baseline at
-    // header_h - text_baseline_offset, rule at header_h - rule width, and
-    // the header/body gap added once before the first data row.
-    let header_text_y = leaf_header_y + header_h - th.text_baseline_offset;
-    let header_divider = &th.header.divider;
-    // The per-column rule loop walks every column, the synthetic row-number
-    // column included, and sizes it from its internal key's
-    // slug text — a column this engine does not draw.
-    if header_divider.line.visible && !header_divider.continuous && th.row_numbers.visible {
-        return Err(
-            "table: style.header.divider.continuous: false with style.row_numbers.visible: true \
-             is not supported"
-                .into(),
-        );
-    }
-    // `int(current_y + header_height - header_rule_width)`.
-    let rule_y = (leaf_header_y + header_h - header_divider.line.width).trunc();
-    let mut rows_start_y = leaf_header_y + header_h + header_body_gap;
-
-    // ── Visible-rows resolution (visible rows) ──────────
-    //
-    // Static export: every host that can act on live pagination controls
-    // (dct serve, Cloud) ships variables.js; a rasterized SVG never does, so
-    // production always takes the `static_multi_page` branch — every page
-    // pre-renders into its own toggle group, only the variable's page visible.
-    // With a slot height and pagination enabled, the SLOT
-    // decides: the grow-by-2 short-circuit renders every row at content
-    // height when they all fit; otherwise the page size is however many rows
-    // fit the slot after reserving the control band, and the SVG height pins
-    // to the slot itself (`table_height = height` — the sizer already
-    // budgeted the control band, so it is never added on top).
-    // Without a slot height, the canvas derives from the
-    // page-clamped rows plus the control band. Production passes
-    // `row_heights` only when wrap is on (`wrap_cells and data`).
-    // `page_rows: null` is unlimited: the slot alone bounds the page.
-    let page_rows = th.pagination.page_rows.unwrap_or(n_rows.max(1));
-    let have_heights = th.wrap && n_rows > 0;
-    let mut n_shown = n_rows;
-    let mut true_total_pages = 1usize;
-    // svg height echoes the slot instead of deriving from content
-    let mut slot_pinned = false;
-    // uniform row-height squeeze fired: rebuild the row-height-derived state
-    let mut squeezed: Option<f64> = None;
-
-    if th.pagination.enabled && slot_h > 0.0 {
-        // header_height in production's budget is the post-pivot-bump total.
-        let header_total_h = group_row_height * n_group_levels as f64 + header_h;
-        // `outer` is in the budget (production subtracts `padding`,
-        // But this renderer's canvas formula never spends it
-        // vertically — production offsets all content by `padding`
-        // where this renderer starts at y=0. Latent: every
-        // shipped theme sets `table.outer_padding: 0.0`, so the budget and
-        // the paint agree on the corpus; don't "fix" one side alone.
-        let available = slot_h
-            - title_area_h
-            - header_total_h
-            - header_body_gap
-            - outer
-            - th.bottom_padding;
-        let safe_page_rows = |avail: f64| -> usize {
-            if have_heights {
-                largest_safe_page_rows(&row_heights, avail, page_rows)
-            } else {
-                // production: min(max(1, int(avail / row_height)), page_rows)
-                (((avail / row_h) as i64).max(1) as usize).min(page_rows)
-            }
+    let bound = bind::bind(payload)?;
+    let measure = Measure { fonts };
+    let laid_out = if payload.height > 0.0 {
+        // The slot grows by the title band's shift so no row is squeezed out.
+        let cell = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: payload.width,
+            height: payload.height + bound.title_shift().body_dy,
         };
-        let total_data_h: f64 = row_heights.iter().sum();
-        if total_data_h <= available && n_rows <= page_rows + PAGINATION_GROW_CAP {
-            // Grow-by-2 short-circuit: every row fits at natural height and
-            // the overflow is within the cap — one page, content height.
-        } else {
-            slot_pinned = true;
-            let probe = safe_page_rows(available);
-            let mut effective = probe;
-            if n_rows > probe {
-                let overflow = n_rows - probe;
-                if !have_heights && overflow <= ANTI_DANGLE_MAX_OVERFLOW {
-                    let sq = (available / n_rows as f64).floor().max(ANTI_DANGLE_MIN_ROW_H);
-                    if sq / row_h >= 1.0 - ANTI_DANGLE_MAX_SQUEEZE
-                        && sq * n_rows as f64 <= available
-                    {
-                        squeezed = Some(sq);
-                    }
-                }
-                if squeezed.is_none() {
-                    // Controls will render — re-pick with the reduced budget.
-                    effective = safe_page_rows(available - pagination_control_height);
-                }
-            }
-            if squeezed.is_none() {
-                // The slot, not the table, chose the page size.
-                let requested = page_rows.min(n_rows);
-                if th.pagination.page_rows.is_some() && effective < requested {
-                    warn(Diagnostic::new(
-                        &codes::WARN_TABLE_PAGE_SQUEEZED,
-                        [
-                            ("chart_id", json!(chart_id)),
-                            ("drawn_rows", json!(effective)),
-                            ("page_rows", json!(requested)),
-                            ("total_rows", json!(n_rows)),
-                        ],
-                    ));
-                }
-                n_shown = effective.min(n_rows);
-                true_total_pages =
-                    if n_rows > 0 { n_rows.div_ceil(effective) } else { 1 };
-            }
-        }
-    } else if th.pagination.enabled && n_rows > page_rows + PAGINATION_GROW_CAP {
-        n_shown = page_rows;
-        true_total_pages = n_rows.div_ceil(page_rows);
-    }
-
-    if let Some(sq) = squeezed {
-        // Production returns the squeezed height as `effective_row_height`
-        // and the caller rebinds `row_height` to it before painting, so the
-        // header/body gap and every row band derive from the squeezed value
-        // Wrap is off whenever this fires, so the uniform
-        // rebuild loses no wrap-grown heights.
-        row_h = sq;
-        row_heights = vec![row_h; n_rows];
-        header_body_gap = if header_visible { (row_h * 0.25).floor() } else { 0.0 };
-        rows_start_y = leaf_header_y + header_h + header_body_gap;
-    }
-
-    // True page count (uncapped) vs. the count the static export pre-renders.
-    // The pager shows the true count with pages past the cap disabled.
-    let paginated = true_total_pages > 1;
-    let static_multi_page = paginated && !chart_id.is_empty() && !payload.interactive_controls;
-    let total_pages = true_total_pages.min(STATIC_MULTI_PAGE_MAX_PAGES);
-
-    // Extra breathing room before the first summary/total row
-    // (`int(row_height * 0.4)`) so the double rule doesn't
-    // crowd the last detail row. Accumulates once per value→summary/total
-    // transition; `summary_gap_at[i]` is the total gap already applied by
-    // row i (added to every row from the transition onward).
-    let summary_gap_unit = (row_h * 0.4) as i64 as f64;
-    let mut summary_gap_at = vec![0.0_f64; n_rows];
-    {
-        let mut acc = 0.0_f64;
-        for i in 0..n_rows {
-            if i > 0 && is_summary_role(row_roles[i]) && !is_summary_role(row_roles[i - 1]) {
-                acc += summary_gap_unit;
-            }
-            summary_gap_at[i] = acc;
-        }
-    }
-
-    // Bottom of the last painted row — matches production's `indicator_y`
-    // The y the pagination control bar anchors below. When
-    // pages have unequal (wrap-grown) heights, the bar anchors below the
-    // TALLEST page's rows (production's `_max_page_sum` rows_height) so it
-    // sits at one y across every pre-rendered page.
-    // Outside a static export a paginated table draws the one page its
-    // variable names (`_extract_page_from_variables`), clamped to the last.
-    let current_page = if paginated && !static_multi_page {
-        page_variable(&payload.variables, &format!("{chart_id}_page")).min(true_total_pages)
+        layout::layout(&bound, cell, &measure)?
     } else {
-        1
+        layout::lay_out(&bound, payload.width, None, &measure)?
     };
-    let live_offset = (current_page - 1) * n_shown;
-    let live_shown = n_shown.min(n_rows.saturating_sub(live_offset));
-    let live_rows = live_offset..live_offset + live_shown;
-    let last_gap = if current_page == 1 {
-        summary_gap_at.get(n_shown.wrapping_sub(1)).copied().unwrap_or(0.0)
-    } else {
-        let transitions = live_rows
-            .clone()
-            .skip(1)
-            .filter(|&i| is_summary_role(row_roles[i]) && !is_summary_role(row_roles[i - 1]))
-            .count();
-        transitions as f64 * summary_gap_unit
-    };
-    // The pager sits off the page actually drawn; the canvas is sized for the
-    // tallest page so the card does not resize between pages.
-    let shown_rows_h: f64 = row_heights[live_rows.clone()].iter().sum();
-    let indicator_y = rows_start_y + shown_rows_h + last_gap + th.bottom_padding;
-    // A zero-row table holds one row of body for its "No data" label, so the
-    // label sits below the header instead of over it.
-    let canvas_rows_h: f64 = if n_rows == 0 {
-        row_h
-    } else if paginated && have_heights {
-        max_page_sum(&row_heights, n_shown)
-    } else {
-        shown_rows_h
-    };
-    // Every page paints into one canvas, so it holds the gap of whichever
-    // page needs the most (`_max_page_summary_gap`).
-    let canvas_gap = if static_multi_page {
-        (0..n_rows.div_ceil(n_shown.max(1)))
-            .map(|page| {
-                let window = page * n_shown..((page + 1) * n_shown).min(n_rows);
-                window
-                    .clone()
-                    .skip(1)
-                    .filter(|&i| is_summary_role(row_roles[i]) && !is_summary_role(row_roles[i - 1]))
-                    .count() as f64
-                    * summary_gap_unit
-            })
-            .fold(0.0, f64::max)
-    } else {
-        last_gap
-    };
-    let canvas_y = rows_start_y + canvas_rows_h + canvas_gap + th.bottom_padding;
-    // Slot-pinned (bounded pagination): the canvas is exactly the slot —
-    // production echoes `height` back as table_height and never re-adds the
-    // control band. Otherwise the canvas derives from
-    // content, plus the control band when the paginator renders (an explicit
-    // slot height already reserves it via the sizer, so this
-    // renderer must not double-add it — mirrors the row/summary-rule
-    // reserve's own slot-pinned carve-outs above).
-    let svg_h = if slot_pinned {
-        slot_h
-    } else {
-        canvas_y
-            + if paginated { pagination_control_height } else { 0.0 }
-    };
-    let svg_w = payload.width;
-
-    // ── Emit SVG ──────────────────────────────────────────────────────────────
-
-    let mut xml = Xml::new();
-    xml.open(
-        "svg",
-        Attrs::new()
-            .set("xmlns", "http://www.w3.org/2000/svg")
-            .set("width", svg_w.to_string())
-            .set("height", svg_h.to_string())
-            .set("viewBox", format!("0 0 {svg_w} {svg_h}")),
-    );
-    // Hosts inline this content into the board without the root <svg>'s
-    // viewport, so an overflowing table must clip itself: unclipped, its
-    // columns paint over whatever sits beside it in a `cols` row. The clip id
-    // is the geometry itself: chart ids repeat across a board tree, and two
-    // clips sharing an id must share a shape.
-    if content_overflows {
-        let (bx, by, bw, bh) = card_box(svg_w, svg_h, payload.padding.as_ref());
-        let (bx, by, bw, bh) = (num_full(bx), num_full(by), num_full(bw), num_full(bh));
-        let clip_id = format!("table-clip-{bx}-{by}-{bw}-{bh}");
-        xml.open("defs", Attrs::new());
-        xml.open("clipPath", Attrs::new().set("id", clip_id.as_str()));
-        xml.empty(
-            "rect",
-            Attrs::new().set("x", bx.as_str()).set("y", by.as_str()).set("width", bw.as_str()).set("height", bh.as_str()),
-        );
-        xml.close("clipPath");
-        xml.close("defs");
-        xml.open("g", Attrs::new().set("clip-path", format!("url(#{clip_id})")));
-    }
-    // Omit the rect when the table's OWN background is
-    // unset or the literal string "transparent" — never `payload.background`
-    // (the card/page canvas), which paints regardless of what the table
-    // itself authored and would opaque over card chrome production leaves
-    // showing through.
-    if let Some(bg) = th.background.as_deref().filter(|b| !b.eq_ignore_ascii_case("transparent")) {
-        // `card_box` (`common.rs`, `svg_utils.card_box` — `render/
-        // svg_utils.py:173`) reaches the rect back out over `payload.
-        // padding`, the same law kpi.rs's own card-fill rect ports —
-        // production calls it with `inset=payload.padding`.
-        let (bx, by, bw, bh) = card_box(svg_w, svg_h, payload.padding.as_ref());
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", num_full(bx))
-                .set("y", num_full(by))
-                .set("width", num_full(bw))
-                .set("height", num_full(bh))
-                .set("fill", bg)
-                .set("rx", "4"),
-        );
-    }
-
-    emit_title_band(&mut xml, &band, outer);
-
-    let header_fill = sanitize_color(th.header.background.as_deref())?
-        .filter(|b| !b.eq_ignore_ascii_case("transparent"));
-
-    // Pivot group-header rows (multi-dim / multi-measure only). Mirrors
-    // The pivot group header: one row per descriptor level,
-    // outermost dim on top, each span centered over the leaf columns it
-    // covers, with its own separator rule along the span's bottom edge.
-    if !pivot_levels.is_empty() {
-        let header_measurer = fonts.measurer(crate::common::measure_family_stand_in(&header_family))?;
-        for (level_idx, level) in pivot_levels.iter().enumerate() {
-            let row_y = header_y + group_row_height * level_idx as f64;
-            if let Some(fill) = header_fill {
-                // The full table
-                // width less the outer padding on both sides.
-                xml.empty(
-                    "rect",
-                    Attrs::new()
-                        .set("x", num_full(outer))
-                        .set("y", num_full(row_y))
-                        .set("width", num_full(table_w - 2.0 * outer))
-                        .set("height", num_full(group_row_height))
-                        .set("fill", fill),
-                );
-            }
-            let label_y = row_y
-                + group_row_height / 2.0
-                + measure::centered_baseline_offset(&header_measurer, header_size.trunc());
-            for (label, first_leaf, n_leaves) in level {
-                let abs_first = pivot_n_row_dims + first_leaf;
-                let abs_last = abs_first + n_leaves - 1;
-                let x_left = col_x[abs_first];
-                let x_right = col_x[abs_last] + col_ws[abs_last];
-                let center_x = (x_left + x_right) / 2.0;
-                if x_right > x_left + pad {
-                    // The span rule is `_render_header_group_rows`' own fixed
-                    // `_RULE_H = 1.0` line: it follows neither
-                    // the header divider's `visible` nor its width. Its color
-                    // is the header font color — `colors.get("label_color")
-                    // or colors["color"]`, `label_color =
-                    // tc.header.font.color`.
-                    let rule_w = 1.0;
-                    let span_rule_y = row_y + group_row_height - rule_w;
-                    let (span_rule_x_s, span_rule_y_s, span_rule_w_s, rule_w_s) = (
-                        float_repr(x_left + pad),
-                        float_repr(span_rule_y),
-                        float_repr(x_right - x_left - 2.0 * pad),
-                        float_repr(rule_w),
-                    );
-                    xml.empty(
-                        "rect",
-                        Attrs::new()
-                            .set("x", span_rule_x_s)
-                            .set("y", span_rule_y_s)
-                            .set("width", span_rule_w_s)
-                            .set("height", rule_w_s)
-                            .set("fill", header_color)
-                            .set("shape-rendering", "crispEdges"),
-                    );
-                }
-                let (center_x_s, label_y_s) = (float_repr(center_x), float_repr(label_y));
-                xml.leaf(
-                    "text",
-                    Attrs::new()
-                        .set("x", center_x_s)
-                        .set("y", label_y_s)
-                        .set("font-size", header_size.to_string())
-                        .set("font-weight", header_weight.as_str())
-                        .set("fill", header_color)
-                        .set("text-anchor", "middle")
-                        .set("font-family", header_family.as_str()),
-                    label,
-                );
-            }
-        }
-    }
-
-    // `_render_header_section`'s fill: the header band across
-    // the cell-content span (`cell_pad=0`), under the rule.
-    if let (true, Some(fill)) = (header_visible, header_fill) {
-        xml.empty(
-            "rect",
-            Attrs::new()
-                .set("x", num_full(outer))
-                .set("y", num_full(leaf_header_y))
-                .set("width", num_full(content_w))
-                .set("height", num_full(header_h))
-                .set("fill", fill),
-        );
-    }
-
-    if header_visible && header_divider.line.visible && header_divider.continuous {
-        // Header divider: one unbroken line across the
-        // content span, not `table_w` — an all-pinned table summing under
-        // `table_w` must not paint it past its own last column.
-        emit_divider_segment(
-            &mut xml,
-            outer + pad,
-            outer + content_w - pad,
-            PyNum::Int(rule_y),
-            PyNum::Float(header_divider.line.width),
-            &header_divider.line,
-            None,
-        );
-    } else if header_visible && header_divider.line.visible {
-        // One rule under each column, each through the
-        // continuous form's own segment. The label is the WIDEST wrapped line
-        // by character count (`max(lines, key=len)` — the
-        // first of equals), measured at the header size with the header
-        // measurer.
-        for (ci, header) in header_lines.iter().enumerate() {
-            let widest_line = header
-                .lines
-                .iter()
-                .reduce(|widest, line| {
-                    if line.chars().count() > widest.chars().count() { line } else { widest }
-                })
-                .expect("a header has at least one line");
-            let label_w = fonts.measure(widest_line, header_measure_family, header_font_size)?;
-            let Some((x1, x2)) =
-                header_rule_span(col_x[ci], col_ws[ci], pad, label_w, lane_extents[ci])
-            else {
-                continue;
-            };
-            emit_divider_segment(
-                &mut xml,
-                x1,
-                x2,
-                PyNum::Int(rule_y),
-                PyNum::Float(header_divider.line.width),
-                &header_divider.line,
-                None,
-            );
-        }
-    }
-
-    // Header labels, bottom-aligned: every header's last line sits at the
-    // same baseline.
-    let header_text_y_s = float_repr(header_text_y);
-    if let (true, true) = (rn.visible, header_visible) {
-        let (x, anchor) = if rn.align == "right" { (outer + rn_w - pad, "end") } else { (outer + pad, "start") };
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", float_repr(x))
-                .set("y", header_text_y_s.as_str())
-                .set("font-size", header_size.to_string())
-                .set("font-weight", header_weight.as_str())
-                .set("fill", header_color)
-                .set("text-anchor", anchor)
-                .set("font-family", header_family.as_str()),
-            &rn.header,
-        );
-    }
-    for ((ci, col), header) in cols.iter().enumerate().zip(&header_lines) {
-        let cx = col_x[ci];
-        let cw = col_ws[ci];
-        // Center-on-midpoint invariant: a lane column and
-        // an `align: center` column center their header on the cell midpoint;
-        // every other header, a right-aligned text column included, stays left.
-        let (x, anchor) = if col.is_numeric || col.is_date || col.cfg.align.as_deref() == Some("center") {
-            (cx + cw / 2.0, "middle")
-        } else {
-            (cx + pad, "start")
-        };
-        let x_s = float_repr(x);
-        let header_attrs = || {
-            Attrs::new()
-                .set("font-size", header_size.to_string())
-                .set("font-weight", header_weight.as_str())
-                .set("fill", header_color)
-                .set("text-anchor", anchor)
-                .set("font-family", header_family.as_str())
-        };
-        if let Some(link) = &col.cfg.header_link {
-            xml.open(
-                "a",
-                Attrs::new()
-                    .set("href", crate::href::checked_href_diagnostic(link)?)
-                    .set_some("data-dbt-link-open", col.cfg.header_link_open.open_attr()).set_some("target", col.cfg.header_link_open.target()),
-            );
-        }
-        if header.lines.len() > 1 {
-            xml.open("text", Attrs::new().set("x", x_s.as_str()).extend(header_attrs()));
-            if header.truncated {
-                xml.leaf("title", Attrs::new(), &col.header);
-            }
-            let start_y = header_text_y - (header.lines.len() - 1) as f64 * header_line_h;
-            for (li, line) in header.lines.iter().enumerate() {
-                let ly = float_repr(start_y + li as f64 * header_line_h);
-                xml.leaf("tspan", Attrs::new().set("x", x_s.as_str()).set("y", ly), line);
-            }
-            xml.close("text");
-        } else {
-            xml.open(
-                "text",
-                Attrs::new().set("x", x_s.as_str()).set("y", header_text_y_s.as_str()).extend(header_attrs()),
-            );
-            if header.truncated {
-                xml.leaf("title", Attrs::new(), &col.header);
-            }
-            xml.text(&header.lines[0]);
-            xml.close("text");
-        }
-        if col.cfg.header_link.is_some() {
-            xml.close("a");
-        }
-    }
-
-    let body = TableBody {
-        rows,
-        row_roles: &row_roles,
-        row_heights: &row_heights,
-        summary_gap_unit,
-        rows_start_y,
-        th,
-        cols: &cols,
-        col_x: &col_x,
-        col_ws: &col_ws,
-        content_w,
-        wrapped_lines: &wrapped_lines,
-        prefix_xs: &prefix_xs,
-        number_xs: &number_xs,
-        suffix_xs: &suffix_xs,
-        outer,
-        pad,
-        row_h,
-        font_size,
-        body_family: &body_family,
-        tab_family,
-        rn_w,
-        row_numbers: rn,
-        row_number_ink: if rn.visible {
-            Some(
-                payload
-                    .board_style
-                    .as_ref()
-                    .and_then(|b| b.muted.as_deref())
-                    .ok_or("table: row numbers need board_style.muted")?,
-            )
-        } else {
-            None
-        },
-        body_color,
-        link_color,
-        bar_auto_max: &bar_auto_max,
-        signed_columns: &signed_columns,
-        tones,
-        link: r.link.as_deref(),
-        link_open: r.link_open,
-        filter_variables: &payload.filter_variables,
-        link_context: payload.link_context.as_ref(),
-        fonts,
-        measure_family,
-        chart_id,
-        truncations: &truncations,
-    };
-    if static_multi_page {
-        // Every page's rows and paginator are pre-rendered into their own
-        // `<g data-dbt-table-page>` toggle group; `table_pagination.js`
-        // (embedded verbatim below) flips which one is visible on click —
-        // The static multi-page loop.
-        // `rows_per_page` is page 1's own row count (`n_shown`), the SAME
-        // for every page except a possibly-shorter last one (squeezed —
-        // every row on one page — never coexists with `paginated`).
-        let page_var_name = format!("{chart_id}_page");
-        let rendered_pages = total_pages;
-        let rows_per_page = n_shown;
-        // A deep-linked page past what the export pre-renders has nothing to
-        // show: the last rendered page stands in rather than hiding every group.
-        let initial_page = page_variable(&payload.variables, &page_var_name).min(rendered_pages);
-        for page_n in 1..=rendered_pages {
-            let page_offset = (page_n - 1) * rows_per_page;
-            let page_n_shown = rows_per_page.min(n_rows - page_offset);
-            // This page's own pager y — each pre-rendered toggle group
-            // carries its own rows height, not the tallest page's, so the
-            // pager sits right below ITS rows when toggled visible.
-            let page_rows_h: f64 =
-                row_heights[page_offset..page_offset + page_n_shown].iter().sum();
-            let page_indicator_y = rows_start_y + page_rows_h + th.bottom_padding;
-
-            // Recomputed per page, over THIS page's own row slice — never
-            // sliced out of the global `cell_data` above, which anchors
-            // `symbol_mode: anchors` at the WHOLE table's row 0. Production
-            // does the same: `_paint_data_rows`/`_render_data_rows` runs
-            // its `row_idx == 0`/`shared_scale_anchor_row` logic on
-            // `page_visible_data`, one page at a time (// `build_cell_data`'s own doc above).
-            let page_cell_data = build_cell_data(
-                &rows[page_offset..page_offset + page_n_shown],
-                &cols,
-                &th.symbol_mode,
-                &row_roles[page_offset..page_offset + page_n_shown],
-            )?;
-            let display = if page_n == initial_page { "" } else { "none" };
-            xml.open(
-                "g",
-                Attrs::new()
-                    .set("class", "dbt-table-page")
-                    .set("data-dbt-table-page", chart_id)
-                    .set("data-page", page_n.to_string())
-                    .set("style", format!("display:{display}")),
-            );
-            body.render_data_rows(&mut xml, page_offset, page_n_shown, &page_cell_data)?;
-            render_pagination_controls(
-                &mut xml,
-                &th.paginator,
-                &body_family,
-                page_n as i64,
-                true_total_pages as i64,
-                rendered_pages as i64,
-                &page_var_name,
-                svg_w,
-                page_indicator_y,
-                page_offset + 1,
-                page_offset + page_n_shown,
-                n_rows,
-                outer,
-                false,
-                fonts,
-            )?;
-            xml.close("g");
-        }
-        // Every static multi-page render reports how it paginated. The pager
-        // itself shows the true page count, so the file never needs a cap
-        // note and the user-facing warning stays silent.
-        warn(
-            Diagnostic::new(
-                &codes::WARN_STATIC_PAGINATION_CAPPED,
-                [
-                    ("chart_id", json!(chart_id)),
-                    ("page_rows", json!(rows_per_page)),
-                    ("total_rows", json!(n_rows)),
-                    ("rendered_pages", json!(rendered_pages)),
-                    ("total_pages", json!(true_total_pages)),
-                ],
-            )
-            .with_sink_param("cap_note_dropped", json!(false)),
-        );
-        embed_table_pagination_script(&mut xml);
-    } else {
-        // The page this render shows: every anchor (`symbol_mode: anchors`,
-        // scale domain) is that page's own, as the static loop does.
-        let page_cell_data;
-        let page_cells = if current_page == 1 {
-            &cell_data
-        } else {
-            page_cell_data = build_cell_data(
-                &rows[live_rows.clone()],
-                &cols,
-                &th.symbol_mode,
-                &row_roles[live_rows.clone()],
-            )?;
-            &page_cell_data
-        };
-        body.render_data_rows(&mut xml, live_offset, live_shown, page_cells)?;
-
-        if n_rows > live_shown {
-            if paginated && !chart_id.is_empty() {
-                render_pagination_controls(
-                    &mut xml,
-                    &th.paginator,
-                    &body_family,
-                    current_page as i64,
-                    true_total_pages as i64,
-                    true_total_pages as i64,
-                    &format!("{chart_id}_page"),
-                    svg_w,
-                    indicator_y,
-                    live_offset + 1,
-                    live_offset + live_shown,
-                    n_rows,
-                    outer,
-                    payload.interactive_controls,
-                    fonts,
-                )?;
-            } else {
-                let more_size = th
-                    .more_rows
-                    .as_ref()
-                    .and_then(|m| m.font.size)
-                    .ok_or("table: truncated rows need style.table.more_rows.font.size")?;
-                let muted = payload
-                    .board_style
-                    .as_ref()
-                    .and_then(|b| b.muted.as_deref())
-                    .ok_or("table: truncated rows need board_style.muted")?;
-                xml.leaf(
-                    "text",
-                    Attrs::new()
-                        .set("x", float_repr(svg_w / 2.0))
-                        .set("y", float_repr(indicator_y))
-                        .set("font-size", float_repr(more_size))
-                        .set("fill", muted)
-                        .set("text-anchor", "middle")
-                        .set("font-style", "italic")
-                        .set("font-family", body_family.as_str()),
-                    &format!("+{}", n_rows - live_shown),
-                );
-            }
-        }
-    }
-
-    let truncations = truncations.into_inner();
-    if !truncations.is_empty() {
-        let fields: Vec<&str> = truncations.iter().map(|(name, _)| name.as_str()).collect();
-        let count: usize = truncations.iter().map(|(_, n)| n).sum();
-        warn(Diagnostic::new(
-            &codes::WARN_TABLE_TEXT_TRUNCATED,
-            [
-                ("chart_id", json!(chart_id)),
-                ("authored_field", json!(fields.join(", "))),
-                ("truncation_count", json!(count)),
-            ],
-        ));
-    }
-    if n_rows == 0 {
-        let muted = payload
-            .board_style
-            .as_ref()
-            .and_then(|b| b.muted.as_deref())
-            .ok_or("table: empty result set needs board_style.muted")?;
-        let size = th
-            .empty_state
-            .as_ref()
-            .and_then(|e| e.font.size)
-            .ok_or("table: empty result set needs style.table.empty_state.font.size")?;
-        xml.leaf(
-            "text",
-            Attrs::new()
-                .set("x", crate::svg::py_float_str(svg_w / 2.0))
-                .set("y", crate::svg::py_float_str(rows_start_y + row_h / 2.0))
-                .set("font-size", crate::svg::py_float_str(size))
-                .set("fill", muted)
-                .set("text-anchor", "middle")
-                .set("font-family", body_family.as_str()),
-            "\u{2014}",
-        );
-    }
-    if content_overflows {
-        xml.close("g");
-    }
-    xml.close("svg");
-    Ok(xml.finish())
+    laid_out.diagnostics.into_iter().for_each(warn);
+    Ok(print(&laid_out.nodes))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -7799,6 +1461,24 @@ pub(crate) mod tests {
         (svg.expect("renders"), warnings.iter().map(|w| w.code).collect())
     }
     use super::*;
+    use crate::tree::Tree;
+    use super::layout::title_geometry;
+    use super::layout::strip_js_comments;
+    use super::layout::signed_fraction;
+    use super::layout::render_spark_columns;
+    use super::layout::render_spark_cell;
+    use super::layout::render_spark_bar;
+    use super::layout::paginator_window;
+    use super::layout::numeric_lane_positions;
+    use super::layout::max_page_sum;
+    use super::layout::largest_safe_page_rows;
+    use super::layout::header_rule_span;
+    use super::layout::embed_table_pagination_script;
+    use super::bind::resolve_row_roles;
+    use super::bind::format_numeric_col;
+    use super::bind::coerce_numeric_cell;
+    use d3rs::py_float::float_repr;
+    use crate::common::TAB_FONT;
     use serde_json::json;
 
     fn test_fonts() -> FontBook {
@@ -8853,9 +2533,9 @@ pub(crate) mod tests {
 
     #[test]
     fn embed_table_pagination_script_strips_wraps_and_escapes() {
-        let mut xml = Xml::new();
-        embed_table_pagination_script(&mut xml);
-        let embedded = xml.finish();
+        let mut tree = Tree::new();
+        embed_table_pagination_script(&mut tree);
+        let embedded = print(&tree.finish());
         assert!(
             embedded.starts_with("<script type=\"text/javascript\">\n<![CDATA[\n"),
             "opens with the CDATA wrapper: {embedded}"
@@ -9142,7 +2822,7 @@ pub(crate) mod tests {
                 let w = fonts
                     .measure(
                         glyph,
-                        crate::common::measure_family_stand_in(&attr(t, "font-family")),
+                        measure::stand_in_family(&attr(t, "font-family")),
                         attr(t, "font-size").parse().unwrap(),
                     )
                     .unwrap();
@@ -9184,11 +2864,12 @@ pub(crate) mod tests {
         let columns = json!({"company": {"label": "Company"}, "revenue": {"label": "Revenue"}});
         let mut payload = make_payload(columns, rows, None, 20);
         payload.resolved["id"] = json!("");
-        payload.resolved["style"]["table"]["more_rows"] = json!({"font": {"size": 11.0}});
-        payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
+        payload.resolved["style"]["table"]["more_rows"] =
+            json!({"font": {"size": 11.0, "color": "#626366", "style": "italic"}});
         payload.height = 300.0;
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert!(svg.contains("font-style=\"italic\""), "overflow note painted:\n{svg}");
+        assert!(svg.contains("fill=\"#626366\""), "the note takes its own slot's ink:\n{svg}");
         assert!(!svg.contains("more rows"), "no English overflow note:\n{svg}");
         assert!(svg.contains(">+25</text>"), "bare +N:\n{svg}");
     }
@@ -11791,7 +5472,7 @@ pub(crate) mod tests {
     fn a_per_column_rule_measures_the_cased_label() {
         let fonts = test_fonts();
         let svg = render(&per_column_payload("Region", "days to close", None), &fonts).expect("renders");
-        let family = crate::common::measure_family_stand_in("Inter, sans-serif");
+        let family = measure::stand_in_family("Inter, sans-serif");
         let cased = fonts.measure("Days to Close", family, 11.0).unwrap();
         let raw = fonts.measure("days to close", family, 11.0).unwrap();
         assert!((cased - raw).abs() > 0.01, "the probe needs cased and raw widths to differ");
@@ -12409,7 +6090,7 @@ pub(crate) mod tests {
             json!({"amount": 0.0023}).as_object().unwrap().clone(),
         ];
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot::from("currency")),
@@ -12506,7 +6187,7 @@ pub(crate) mod tests {
         // bar-normalize): no background track, fill_x bare "0", fill_width
         // genuine `:.1f`, height bare (a Python int), rx `py_float` of the
         // theme's 0.0 border radius.
-        let got = render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false, None);
+        let got = print(&render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false, None));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"160.1\" height=\"16\" fill=\"#222222\" rx=\"0.0\"/>"
@@ -12518,7 +6199,7 @@ pub(crate) mod tests {
         // Ground truth: render_spark_bar(61, max_value=100, width=214,
         // height=16, normalize=True) — track first (fill="e5e7eb"), then
         // the fill rect on top.
-        let got = render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false, None);
+        let got = print(&render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false, None));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\" rx=\"0.0\"/>\
@@ -12530,7 +6211,7 @@ pub(crate) mod tests {
     fn spark_bar_zero_fill_draws_the_track_but_no_fill_rect() {
         // The `fill_width > 0` gate: a zero value draws
         // the normalize track alone.
-        let got = render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false, None);
+        let got = print(&render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false, None));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\" rx=\"0.0\"/>"
@@ -12544,7 +6225,7 @@ pub(crate) mod tests {
         // minimum (61 -> the shortest bar, at `min_bar_height`).
         let values = [271.0, 284.0, 133.0, 50.0, 112.0, 101.0, 596.0, 61.0];
         let theme = test_spark_theme();
-        let got = render_spark_columns(&values, 228.8, 16.0, "#6366f1", None, &theme.columns);
+        let got = print(&render_spark_columns(&values, 228.8, 16.0, "#6366f1", None, &theme.columns));
         assert_eq!(
             got,
             "<rect x=\"0.0\" y=\"9.1\" width=\"27.7\" height=\"4.9\" fill=\"#6366f1\" rx=\"1.0\"/>\
@@ -12566,7 +6247,7 @@ pub(crate) mod tests {
         // positive / down for negative.
         let values = [-40.0, -30.0, 20.0, 10.0];
         let theme = test_spark_theme();
-        let got = render_spark_columns(&values, 100.0, 24.0, "#6366f1", None, &theme.columns);
+        let got = print(&render_spark_columns(&values, 100.0, 24.0, "#6366f1", None, &theme.columns));
         assert_eq!(
             got,
             "<rect x=\"0.0\" y=\"12.0\" width=\"24.2\" height=\"10.0\" fill=\"#6366f1\" rx=\"1.0\"/>\
@@ -12581,13 +6262,13 @@ pub(crate) mod tests {
     #[test]
     fn a_nan_element_in_spark_columns_does_not_erase_the_real_bars() {
         let theme = test_spark_theme();
-        let signed = render_spark_columns(&[f64::NAN, -5.0, 5.0], 100.0, 24.0, "#6366f1", None, &theme.columns);
+        let signed = print(&render_spark_columns(&[f64::NAN, -5.0, 5.0], 100.0, 24.0, "#6366f1", None, &theme.columns));
         assert_eq!(signed.matches("<rect").count(), 2);
         assert!(!signed.contains("height=\"1.0\""), "{signed}");
         let positive =
-            render_spark_columns(&[f64::NAN, 10.0, 20.0, 30.0], 100.0, 24.0, "#6366f1", None, &theme.columns);
+            print(&render_spark_columns(&[f64::NAN, 10.0, 20.0, 30.0], 100.0, 24.0, "#6366f1", None, &theme.columns));
         assert_eq!(positive.matches("<rect").count(), 3);
-        let infinite = render_spark_columns(&[f64::NEG_INFINITY, 10.0], 100.0, 24.0, "#6366f1", None, &theme.columns);
+        let infinite = print(&render_spark_columns(&[f64::NEG_INFINITY, 10.0], 100.0, 24.0, "#6366f1", None, &theme.columns));
         assert_eq!(infinite.matches("<rect").count(), 1);
     }
 
@@ -12673,6 +6354,7 @@ pub(crate) mod tests {
         let (content, ..) = render_spark_cell("col", &json!(650.0), &spark, 216.0, 24.0, &theme, Some(812.0), &unsigned())
             .expect("no error")
             .expect("renders");
+        let content = print(&content);
         assert!(content.contains("160.1"), "auto-max 812 must scale the fill: {content}");
     }
 
@@ -12685,6 +6367,7 @@ pub(crate) mod tests {
             render_spark_cell("col", &json!(61.0), &spark, 230.0, 24.0, &theme, Some(9999.0), &unsigned())
                 .expect("no error")
                 .expect("renders");
+        let content = print(&content);
         assert!(content.contains("130.5"), "must scale against its own max, not the auto-max: {content}");
     }
 
@@ -12898,6 +6581,15 @@ pub(crate) mod tests {
 mod conditional_formatting_tests {
     use super::tests::{resolved_title_font, resolved_title_style};
     use super::*;
+    use super::layout::column_demand;
+    use super::bind::resolve_palette_stops;
+    use super::bind::resolve_hinge;
+    use super::bind::resolve_conditional_styles;
+    use super::bind::resolve_cell_glyph;
+    use super::bind::match_predicate;
+    use super::bind::interpolate_scale_color;
+    use super::bind::font_weight_as_css;
+    use super::bind::compute_scale_domain;
     use serde_json::json;
 
     fn test_fonts() -> FontBook {
@@ -13858,7 +7550,7 @@ mod conditional_formatting_tests {
         let rows: Vec<serde_json::Map<String, Value>> =
             vec![json!({"v": 5}).as_object().unwrap().clone()];
         let plain_col = ColMeta {
-            name: "v",
+            name: "v".to_string(),
             header: "V".to_string(),
             cfg: ColConfig::default(),
             is_numeric: true,
@@ -13866,7 +7558,7 @@ mod conditional_formatting_tests {
             when_rules: Vec::new(),
         };
         let glyph_col = ColMeta {
-            name: "v",
+            name: "v".to_string(),
             header: "V".to_string(),
             cfg: ColConfig { glyph: Some("MMMMMMMMMM".to_string()), ..Default::default() },
             is_numeric: true,
@@ -14132,6 +7824,11 @@ mod all_pinned_overflow_growth_tests {
 #[cfg(test)]
 mod allocator_tests {
     use super::*;
+    use super::layout::proportional_allocate;
+    use super::layout::grow_toward_header_width;
+    use super::layout::cluster_and_equalize_widths;
+    use super::layout::calculate_column_layout_port;
+    use super::layout::allocate_text_columns;
     use std::collections::BTreeMap;
 
     #[test]
@@ -14399,6 +8096,7 @@ mod cascade_and_lane_tests {
     use super::tests::{resolved_title_font, resolved_title_style};
     use super::tests::{base_table_theme, on_a_board};
     use super::*;
+    use crate::common::TAB_FONT;
     use serde_json::json;
 
     fn test_fonts() -> FontBook {
@@ -14649,6 +8347,7 @@ mod date_like_tests {
     use super::tests::{resolved_title_font, resolved_title_style};
     use super::tests::base_table_theme;
     use super::*;
+    use super::bind::is_date_like_str;
 
     fn test_fonts() -> FontBook {
         let manifest = env!("CARGO_MANIFEST_DIR");
@@ -14731,6 +8430,10 @@ mod demand_affix_tests {
     use super::tests::{resolved_title_font, resolved_title_style};
     use super::tests::base_table_theme;
     use super::*;
+    use super::layout::column_demand;
+    use super::bind::format_numeric_col;
+    use super::bind::format_date_col;
+    use super::bind::build_cell_data;
     use serde_json::json;
 
     fn test_fonts() -> FontBook {
@@ -14753,7 +8456,7 @@ mod demand_affix_tests {
         let _scope = super::tests::en_us_scope();
         let fonts = test_fonts();
         let col = ColMeta {
-            name: "when",
+            name: "when".to_string(),
             header: "When".to_string(),
             cfg: ColConfig::default(),
             is_numeric: false,
@@ -14782,7 +8485,7 @@ mod demand_affix_tests {
     fn an_object_format_suffix_is_measured_with_its_authored_space() {
         let fonts = test_fonts();
         let col = ColMeta {
-            name: "days_since_close",
+            name: "days_since_close".to_string(),
             header: "Days".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot { suffix: " d".into(), ..FormatSlot::from(",.0f") }),
@@ -14811,7 +8514,7 @@ mod demand_affix_tests {
     fn an_object_format_prefix_is_measured_with_its_authored_space() {
         let fonts = test_fonts();
         let col = ColMeta {
-            name: "amt",
+            name: "amt".to_string(),
             header: "Amt".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot { prefix: "~ ".into(), ..FormatSlot::from(",.0f") }),
@@ -14841,7 +8544,7 @@ mod demand_affix_tests {
     #[test]
     fn an_object_format_prefix_keeps_its_inner_space_against_the_d3_prefix() {
         let col = ColMeta {
-            name: "amt",
+            name: "amt".to_string(),
             header: "Amt".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot { prefix: "~ ".into(), ..FormatSlot::from("$,.0f") }),
@@ -14868,7 +8571,7 @@ mod demand_affix_tests {
         values: &[f64],
     ) -> Vec<Cell> {
         let col = ColMeta {
-            name: "v",
+            name: "v".to_string(),
             header: "V".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot {
@@ -14956,7 +8659,7 @@ mod demand_affix_tests {
     fn a_shared_scale_columns_magnitude_suffix_is_measured_glued_to_its_number() {
         let fonts = test_fonts();
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg: ColConfig {
                 shared_scale: Some(SharedScale { exponent: 6, mode: SuffixMode::Anchor, digit_spec: ",.2~f".into() }),
@@ -15069,7 +8772,7 @@ mod demand_affix_tests {
     fn a_predefined_raw_name_keeps_its_sub_unit_fallback() {
         let _scope = super::tests::en_us_scope();
         let col = ColMeta {
-            name: "amt",
+            name: "amt".to_string(),
             header: "Amt".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot { raw: Some("currency".into()), ..FormatSlot::from("$.3~s") }),
@@ -15084,9 +8787,9 @@ mod demand_affix_tests {
         assert_eq!((cells[0].prefix.as_deref(), cells[0].text.as_str()), (Some("$"), "0.67"));
     }
 
-    fn col_with(name: &'static str, config: Value) -> ColMeta<'static> {
+    fn col_with(name: &'static str, config: Value) -> ColMeta {
         ColMeta {
-            name,
+            name: name.to_string(),
             header: name.to_string(),
             cfg: crate::families::table::tests::col_config(config).expect("a column config"),
             is_numeric: true,
@@ -15147,8 +8850,8 @@ mod demand_affix_tests {
     /// (`column_symbol_mode`, `compile/format.py:488`).
     #[test]
     fn a_column_repeat_overrides_the_tables_symbol_mode() {
-        let col = |name, repeat: Option<&str>| ColMeta {
-            name,
+        let col = |name: &str, repeat: Option<&str>| ColMeta {
+            name: name.to_string(),
             header: name.to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot {
@@ -15874,20 +9577,33 @@ mod background_and_font_family_tests {
         );
     }
 
-    /// A serif body paints text cells and numerals in the serif family (with
-    /// the bundled-web alias), while the header keeps its own family.
+    /// Numerals take `style.fonts.numeral` whatever the body family: a serif
+    /// body keeps its serif on text cells only. A Source Serif numeral family paints
+    /// with the bundled-web alias.
     #[test]
-    fn a_serif_table_paints_cells_and_numerals_in_the_serif_family() {
-        let mut payload = payload_with(json!({}));
-        payload.rows = vec![json!({"a": "x", "b": 95}).as_object().unwrap().clone()];
-        payload.resolved["columns"] = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
-        let table = &mut payload.resolved["style"]["table"];
-        table["font"]["family"] = json!("'Source Serif 4', Georgia, serif");
-        table["header"]["font"]["family"] = json!("'Inter Variable', Inter, sans-serif");
-        let svg = render(&payload, &test_fonts()).unwrap();
+    fn table_numerals_follow_the_board_numeral_family_not_the_body() {
+        let render_with = |numeral: Option<&str>| {
+            let mut payload = payload_with(json!({}));
+            payload.rows = vec![json!({"a": "x", "b": 95}).as_object().unwrap().clone()];
+            payload.resolved["columns"] = json!({"a": {"label": "A", "link_open": "page", "header_link_open": "page"}, "b": {"label": "B", "link_open": "page", "header_link_open": "page"}});
+            let table = &mut payload.resolved["style"]["table"];
+            table["font"]["family"] = json!("'Source Serif 4', Georgia, serif");
+            table["header"]["font"]["family"] = json!("'Inter Variable', Inter, sans-serif");
+            if let Some(numeral) = numeral {
+                payload.board_style = crate::test_board_style(json!({"numeral_family": numeral}));
+            }
+            render(&payload, &test_fonts()).unwrap()
+        };
         let serif = "font-family=\"&apos;Source Serif 4 Web&apos;, &apos;Source Serif 4&apos;, Georgia, serif\"";
-        assert_eq!(svg.matches(serif).count(), 2, "text cell and numeral:\n{svg}");
-        assert!(svg.contains("font-family=\"Inter Variable, Inter, sans-serif\">A</text>"), "{svg}");
+        let tabular = format!("font-family=\"{}\"", crate::common::TAB_FONT.replace('\'', "&apos;"));
+
+        let default = render_with(None);
+        assert_eq!(default.matches(serif).count(), 1, "text cell only:\n{default}");
+        assert_eq!(default.matches(tabular.as_str()).count(), 1, "numeral:\n{default}");
+        assert!(default.contains("font-family=\"Inter Variable, Inter, sans-serif\">A</text>"), "{default}");
+
+        let serif_numeral = render_with(Some("'Source Serif 4', Georgia, serif"));
+        assert_eq!(serif_numeral.matches(serif).count(), 2, "text cell and numeral:\n{serif_numeral}");
     }
 
     /// A body at or under 11px takes the header's `font_compact.weight`.
@@ -15913,8 +9629,8 @@ mod background_and_font_family_tests {
     fn an_empty_result_keeps_the_header_and_paints_an_em_dash() {
         let mut payload = payload_with(json!({}));
         payload.rows = vec![];
-        payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
-        payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0}});
+        payload.resolved["style"]["table"]["empty_state"] =
+            json!({"font": {"size": 14.0, "color": "#626366"}});
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
         assert!(svg.contains(">A</text>"), "header label missing:\n{svg}");
         assert!(svg.contains(">\u{2014}</text>"), "{svg}");
@@ -15935,8 +9651,8 @@ mod background_and_font_family_tests {
     fn the_empty_mark_sits_below_the_header_band_inside_the_canvas() {
         let mut payload = payload_with(json!({}));
         payload.rows = vec![];
-        payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
-        payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0}});
+        payload.resolved["style"]["table"]["empty_state"] =
+            json!({"font": {"size": 14.0, "color": "#626366"}});
         let svg = crate::families::empty::render("table", &payload, &test_fonts()).unwrap();
         let canvas_h: f64 =
             svg.split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
@@ -15953,10 +9669,9 @@ mod background_and_font_family_tests {
     fn row_numbers_lead_every_data_row_and_skip_summary_rows() {
         let mut payload = payload_with(json!({}));
         payload.resolved["style"]["table"]["row_numbers"] =
-            json!({"visible": true, "header": "#", "align": "right"});
+            json!({"visible": true, "header": "#", "align": "right", "font": {"color": "#626366"}});
         payload.resolved["style"]["table"]["row"]["role"] = json!("kind");
         payload.resolved["style"]["table"]["pagination"]["enabled"] = json!(false);
-        payload.board_style = crate::test_board_style(json!({"muted": "#626366"}));
         payload.rows = vec![
             json!({"a": "x", "kind": "value"}),
             json!({"a": "y", "kind": "value"}),
@@ -15969,7 +9684,23 @@ mod background_and_font_family_tests {
         assert!(svg.contains(">#</text>"), "{svg}");
         assert!(svg.contains("data-col=\"0\">1</text>") && svg.contains("data-col=\"0\">2</text>"), "{svg}");
         assert!(!svg.contains("data-col=\"0\">3</text>"), "the total row has no index:\n{svg}");
-        assert!(svg.contains("fill=\"#626366\""), "indices take the muted ink:\n{svg}");
+        assert!(svg.contains("fill=\"#626366\""), "indices take their slot's ink:\n{svg}");
+    }
+
+    /// A row-number or empty-state slot with no color is refused by name; no
+    /// board-level ink stands in.
+    #[test]
+    fn a_secondary_text_slot_without_a_color_is_refused_by_name() {
+        let mut payload = payload_with(json!({}));
+        payload.resolved["style"]["table"]["row_numbers"] = json!({"visible": true, "font": {}});
+        let err = render(&payload, &test_fonts()).unwrap_err().to_string();
+        assert!(err.contains("style.table.row_numbers.font.color"), "{err}");
+
+        let mut payload = payload_with(json!({}));
+        payload.rows = vec![];
+        payload.resolved["style"]["table"]["empty_state"] = json!({"font": {"size": 14.0}});
+        let err = crate::families::empty::render("table", &payload, &test_fonts()).unwrap_err().to_string();
+        assert!(err.contains("style.table.empty_state.font.color"), "{err}");
     }
 
     /// The title and subtitle text runs name which authored key they are
@@ -16119,7 +9850,7 @@ mod background_and_font_family_tests {
 
 #[cfg(test)]
 mod decimal_pad_for_tests {
-    use super::*;
+    use super::bind::decimal_pad_for;
 
     fn sample_pad_table() -> Vec<String> {
         // precision = 4 - 2 = 2: distinct sentinels per index so a wrong
@@ -16157,6 +9888,7 @@ mod decimal_pad_for_tests {
 #[cfg(test)]
 mod header_font_tests {
     use super::*;
+    use super::layout::column_inputs;
     use serde_json::json;
 
     fn fonts() -> FontBook {
@@ -16172,7 +9904,7 @@ mod header_font_tests {
     fn a_headers_demand_and_floor_are_measured_in_the_header_font() {
         let fonts = fonts();
         let col = ColMeta {
-            name: "quarterly",
+            name: "quarterly".to_string(),
             header: "quarterly".to_string(),
             cfg: ColConfig::default(),
             is_numeric: false,
@@ -16205,11 +9937,12 @@ mod header_font_tests {
 #[cfg(test)]
 mod padded_column_tests {
     use super::*;
+    use super::bind::format_numeric_col;
     use serde_json::json;
 
-    fn padded_col() -> ColMeta<'static> {
+    fn padded_col() -> ColMeta {
         ColMeta {
-            name: "amt",
+            name: "amt".to_string(),
             header: "Amt".to_string(),
             cfg: ColConfig {
                 format: Some(FormatSlot::from(",.2~f")),
@@ -16258,6 +9991,8 @@ mod padded_column_tests {
 #[cfg(test)]
 mod pivot_shape_tests {
     use super::*;
+    use super::bind::pivot_table_data;
+    use super::bind::pivot_leaf_keys;
     use serde_json::json;
 
     fn rows(values: Vec<Value>) -> Vec<serde_json::Map<String, Value>> {
@@ -16541,6 +10276,7 @@ mod pivot_shape_tests {
 #[cfg(test)]
 mod board_format_tests {
     use super::*;
+    use super::bind::format_numeric_col;
     use serde_json::json;
 
     fn fonts() -> FontBook {
@@ -16626,7 +10362,7 @@ mod board_format_tests {
     fn a_digit_bearing_suffix_does_not_change_the_selected_pad() {
         let pad = |suffix: &str| {
             let col = ColMeta {
-                name: "v",
+                name: "v".to_string(),
                 header: "V".into(),
                 cfg: ColConfig {
                     format: Some(FormatSlot { suffix: suffix.into(), ..FormatSlot::from(",.2~f") }),
@@ -16650,7 +10386,7 @@ mod board_format_tests {
 
 #[cfg(test)]
 mod magnitude_suffix_tests {
-    use super::*;
+    use super::bind::is_magnitude_suffix;
 
     // Oracle: `format_value(2540, "number")` under en-US is '2.54K' (the
     // analytic words are glued, `text/magnitude_words.py:40`); the lane is 'K'.
@@ -16701,6 +10437,10 @@ mod magnitude_suffix_tests {
 #[cfg(test)]
 mod shared_scale_register_tests {
     use super::*;
+    use super::bind::unpadded_cell_text;
+    use super::bind::measured_cell_text;
+    use super::bind::format_numeric_col;
+    use super::bind::decimal_pad_for;
     use serde_json::json;
 
     fn suffixes_of(
@@ -16714,7 +10454,7 @@ mod shared_scale_register_tests {
         }))
         .map_err(|e| e.to_string())?;
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
             is_numeric: true,
@@ -16801,7 +10541,7 @@ mod shared_scale_register_tests {
     fn lanes_of(format: Value, symbol_mode: &str, values: &[f64]) -> Vec<Lanes> {
         let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": format})).expect("column config parses");
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
             is_numeric: true,
@@ -16870,7 +10610,7 @@ mod shared_scale_register_tests {
                 let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": format}))
                     .expect("column config parses");
                 let col = ColMeta {
-                    name: "amount",
+                    name: "amount".to_string(),
                     header: "Amount".to_string(),
                     cfg,
                     is_numeric: true,
@@ -16924,7 +10664,7 @@ mod shared_scale_register_tests {
         }))
         .expect("column config parses");
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
             is_numeric: true,
@@ -16956,7 +10696,7 @@ mod shared_scale_register_tests {
         }))
         .expect("column config parses");
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
             is_numeric: true,
@@ -17030,7 +10770,7 @@ mod shared_scale_register_tests {
     fn a_magnitude_word_before_a_suffix_currency_measures_as_production_does() {
         let cfg: ColConfig = crate::families::table::tests::col_config(json!({"format": "currency"})).expect("column config parses");
         let col = ColMeta {
-            name: "amount",
+            name: "amount".to_string(),
             header: "Amount".to_string(),
             cfg,
             is_numeric: true,
@@ -17093,6 +10833,8 @@ mod shared_scale_register_tests {
 #[cfg(test)]
 mod notation_and_shared_scale_lane_tests {
     use super::*;
+    use super::bind::measured_cell_text;
+    use super::bind::format_numeric_col;
     use serde_json::json;
 
     type Lanes = (String, String, String, String);
@@ -17100,7 +10842,7 @@ mod notation_and_shared_scale_lane_tests {
     fn lanes_of(column: Value, value: f64, symbol_mode: &str) -> Lanes {
         let cfg: ColConfig = crate::families::table::tests::col_config(column).expect("column config parses");
         let col = ColMeta {
-            name: "v",
+            name: "v".to_string(),
             header: "V".to_string(),
             cfg,
             is_numeric: true,
@@ -17213,5 +10955,185 @@ mod notation_and_shared_scale_lane_tests {
         assert_eq!(de(narrative_de, 24_730_000.0, "anchors").2, "Mio.");
         let repeat = shared(json!("$,.0f"), "repeat");
         assert_eq!(de(repeat, 24_730_000.0, "all").2, "Mio.\u{a0}\u{20ac}");
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::tests::{base_table_theme, resolved_title_font, resolved_title_style};
+    use super::*;
+    use serde_json::json;
+
+    fn fonts() -> FontBook {
+        let dir = format!(
+            "{}/../../../src/dbt_charts/core/render/fonts",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        FontBook::load_dir(&dir).expect("test fonts load")
+    }
+
+    fn payload_at(width: f64) -> Payload {
+        payload_pinned(width, json!(null))
+    }
+
+    fn payload_pinned(width: f64, pin: Value) -> Payload {
+        let mut theme = base_table_theme();
+        theme["row"]["role"] = json!(null);
+        // A bounded slot paginates; the unbounded measure does not, so the
+        // layout-at-natural-height laws below hold only without it.
+        theme["pagination"]["enabled"] = json!(false);
+        crate::test_payload(json!({
+            "resolved": {
+                "link_open": "page",
+                "title": null,
+                "title_style": resolved_title_style(),
+                "columns": {
+                    "name": {"label": "Name", "width": pin},
+                    "value": {"label": "Value", "format": ",.0f"},
+                },
+                "style": {"table": theme, "title_font": resolved_title_font()},
+                "pivot_columns": null,
+                "conditional_formatting": null,
+            },
+            "rows": [
+                {"name": "Apex", "value": 1234567.0},
+                {"name": "Bright", "value": 89.0},
+            ],
+            "width": width,
+            "height": 0.0,
+            "background": "#ffffff",
+            "fonts_dir": null,
+            "padding": null,
+        }))
+    }
+
+    /// `bind` holds what the data decides and nothing a size decides: the cells
+    /// read the same on a narrow card and a wide one.
+    #[test]
+    fn bind_formats_the_cells_whatever_the_card_width() {
+        let _scope = super::tests::en_us_scope();
+        let cells = |width: f64| -> Vec<Vec<String>> {
+            let Bound::Rows(rows) = bind::bind(&payload_at(width)).expect("binds") else {
+                panic!("a table with rows binds its rows");
+            };
+            rows.chart
+                .cell_data
+                .iter()
+                .map(|column| column.iter().map(|cell| cell.text.clone()).collect())
+                .collect()
+        };
+        assert_eq!(cells(120.0), cells(900.0));
+        assert_eq!(cells(120.0)[1], ["1,234,567", "89"]);
+    }
+
+    /// The height a board reserves is the height `layout` draws: one law.
+    #[test]
+    fn height_for_width_is_the_extent_layout_draws_at_that_width() {
+        let _scope = super::tests::en_us_scope();
+        let fonts = fonts();
+        let measure = Measure { fonts: &fonts };
+        let bound = bind::bind(&payload_at(300.0)).expect("binds");
+        let height = layout::height_for_width(&bound, 300.0, &measure).expect("measures");
+        let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height };
+        let laid_out = layout::layout(&bound, cell, &measure).expect("lays out");
+        let extent = laid_out.insets.top + laid_out.data_box.height + laid_out.insets.bottom;
+        assert!((height - extent).abs() < 1e-9, "{height} vs {extent}");
+        let svg = print(&laid_out.nodes);
+        assert!(svg.contains(&format!("height=\"{height}\"")), "{height} in {svg}");
+    }
+
+    #[test]
+    fn intrinsic_is_narrowest_no_wider_than_preferred() {
+        let _scope = super::tests::en_us_scope();
+        let fonts = fonts();
+        let bound = bind::bind(&payload_at(300.0)).expect("binds");
+        let width = layout::intrinsic(&bound, &Measure { fonts: &fonts })
+            .expect("measures")
+            .expect("a table of auto columns has a natural width");
+        assert!(0.0 < width.min && width.min <= width.preferred, "{width:?}");
+    }
+
+    /// A pixel decision's WARN comes back with the layout; the sink hears
+    /// nothing until `render` forwards it.
+    #[test]
+    fn the_overflow_warning_is_returned_by_layout_not_sunk() {
+        let _scope = super::tests::en_us_scope();
+        let fonts = fonts();
+        let measure = Measure { fonts: &fonts };
+        let bound = bind::bind(&payload_pinned(200.0, json!(500))).expect("binds");
+        let cell = Rect { x: 0.0, y: 0.0, width: 200.0, height: 400.0 };
+        let (laid_out, sunk) =
+            crate::diagnostic::collect(|| layout::layout(&bound, cell, &measure).expect("lays out"));
+        assert!(sunk.is_empty(), "{sunk:?}");
+        let codes: Vec<&str> = laid_out.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(codes, [crate::codes::WARN_TABLE_COLUMNS_OVERFLOW.id]);
+    }
+
+    #[test]
+    fn layout_refuses_a_cell_with_no_height() {
+        let _scope = super::tests::en_us_scope();
+        let fonts = fonts();
+        let bound = bind::bind(&payload_at(300.0)).expect("binds");
+        let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: 0.0 };
+        let err = layout::layout(&bound, cell, &Measure { fonts: &fonts }).err().expect("refused");
+        assert!(err.to_string().contains("taller than 0"), "{err}");
+    }
+
+    fn intrinsic_of(payload: &Payload) -> crate::layout::IntrinsicWidth {
+        let fonts = fonts();
+        let bound = bind::bind(payload).expect("binds");
+        layout::intrinsic(&bound, &Measure { fonts: &fonts })
+            .expect("measures")
+            .expect("has a natural width")
+    }
+
+    /// A text column of several words can break between them, so the table
+    /// narrows well below the width that shows every word on one line.
+    #[test]
+    fn a_multi_word_column_can_narrow_below_its_preferred_width() {
+        let _scope = super::tests::en_us_scope();
+        let mut payload = payload_at(300.0);
+        payload.rows[0].insert("name".into(), json!("Apex Bright Cobalt Delta Echo"));
+        let width = intrinsic_of(&payload);
+        assert!(width.min + 40.0 < width.preferred, "{width:?}");
+    }
+
+    /// One hug solve serves both ends, so no pin or fixture puts the minimum
+    /// above the preferred width.
+    #[test]
+    fn the_minimum_never_exceeds_the_preferred_width() {
+        let _scope = super::tests::en_us_scope();
+        let mut multi_word = payload_at(300.0);
+        multi_word.rows[0].insert("name".into(), json!("Apex Bright Cobalt Delta Echo"));
+        let mut numbered = payload_at(300.0);
+        numbered.resolved["style"]["table"]["row_numbers"] =
+            json!({"visible": true, "header": "#", "align": "right"});
+        let payloads = [
+            payload_at(300.0),
+            multi_word,
+            numbered,
+            payload_pinned(300.0, json!(120)),
+            payload_pinned(300.0, json!(500)),
+            payload_pinned(300.0, json!("40%")),
+        ];
+        for payload in &payloads {
+            let width = intrinsic_of(payload);
+            assert!(width.min <= width.preferred, "{width:?}");
+        }
+    }
+
+    /// Row numbers take the same width at any breadth, so both ends carry it.
+    #[test]
+    fn row_numbers_widen_the_minimum_and_the_preferred_width_alike() {
+        let _scope = super::tests::en_us_scope();
+        let plain = intrinsic_of(&payload_at(300.0));
+        let mut numbered = payload_at(300.0);
+        numbered.resolved["style"]["table"]["row_numbers"] =
+            json!({"visible": true, "header": "#", "align": "right"});
+        let numbered = intrinsic_of(&numbered);
+        let (min_delta, preferred_delta) =
+            (numbered.min - plain.min, numbered.preferred - plain.preferred);
+        assert!(min_delta > 0.0, "{plain:?} vs {numbered:?}");
+        assert!((min_delta - preferred_delta).abs() < 1e-9, "{plain:?} vs {numbered:?}");
     }
 }

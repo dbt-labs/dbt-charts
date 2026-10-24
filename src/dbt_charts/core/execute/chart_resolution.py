@@ -200,6 +200,7 @@ def resolve_chart_with_runtime_inputs(
         filter_variables=filter_variables,
         link_open=link_open,
         display_text=collect_display_text_inputs(chart, executor, variables),
+        rendered_at=executor.rendered_at,
         x_date_range=chart_x_date_range(chart, executor, variables),
         title_width=title_width,
     )

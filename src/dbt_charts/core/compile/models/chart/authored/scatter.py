@@ -10,6 +10,7 @@ from dbt_charts.core.compile.models.constraints import Constraint
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
 
+from ._annotation import Annotation
 from ._base import SUPPORT_TABLE_TYPE_RULE, _CartesianChartFields
 from ._layer import CartesianLayer
 
@@ -47,5 +48,12 @@ class ScatterChart(_CartesianChartFields):
         Field(
             default=None,
             description="Extra marks on one shared x, each with its own type.",
+        ),
+    ]
+    annotations: Annotated[
+        list[Annotation] | None,
+        Field(
+            default=None,
+            description="Rules, bands, notes and trends drawn on the chart.",
         ),
     ]

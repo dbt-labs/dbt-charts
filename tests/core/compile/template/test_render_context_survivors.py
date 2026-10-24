@@ -24,6 +24,10 @@ import pytest
 from jinja2.environment import Template
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.template.annotation_text import (
+    annotation_text_env,
+    render_annotation_text,
+)
 from dbt_charts.core.compile.template.display_text import resolve_display_text
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.jinja import (
@@ -493,6 +497,34 @@ class TestLabelsEnvContext:
         # identical key set.
         assert len(captured) == 2
         assert {call.context_keys for call in captured} == {frozenset(expected_keys)}
+
+
+class TestAnnotationTextContext:
+    """compile/template/annotation_text.py: an annotation's `text:`."""
+
+    def test_context_is_exactly_value_and_series(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _capture_render_calls(monkeypatch)
+        assert (
+            render_annotation_text("{{ series }}", 4.0, "EMEA", True, None, None)
+            == "EMEA"
+        )
+        [call] = captured
+        assert call.context_keys == {"value", "series"}
+
+    def test_environment_adds_no_global_and_overrides_only_format(self) -> None:
+        env = annotation_text_env(None, None)
+        assert _new_or_overridden(env.globals, _BASELINE_ENV.globals) == {}
+        assert set(_new_or_overridden(env.filters, _BASELINE_ENV.filters)) == {"format"}
+        assert _new_or_overridden(env.tests, _BASELINE_ENV.tests) == {}
+
+    def test_format_returns_a_string_and_takes_an_optional_spec(self) -> None:
+        env = annotation_text_env(None, None)
+        assert env.from_string("{{ value | format('.1f') }}").render(value=2.5) == "2.5"
+        assert isinstance(
+            env.from_string("{{ value | format }}").render(value=2.25), str
+        )
 
 
 class TestExpanderTemplateEnvContext:

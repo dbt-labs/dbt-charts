@@ -287,3 +287,13 @@ class TestOneSearchTool:
     def test_description_names_every_kind(self) -> None:
         for kind in ("boards", "meta", "models", "config", "all"):
             assert f"`{kind}`" in SEARCH_FILES["description"]
+
+
+def test_execute_sql_promises_no_default_source() -> None:
+    """A project that declares `sources:` has no default: a sourceless query
+    raises ERR-SOURCE-NOT-NAMED, so the description must not invite one."""
+    from dbt_charts.ai.tool_schemas import EXECUTE_SQL
+
+    source = EXECUTE_SQL["input_schema"]["properties"]["source"]["description"]
+    assert "project's default" not in EXECUTE_SQL["description"]
+    assert "declares no `sources:`" in source

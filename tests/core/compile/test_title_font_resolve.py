@@ -221,12 +221,14 @@ def _title_font_chart(chart_type: str):
             **common,
             type="geoshape",
             geo_source="fake-geo-source",
+            projection="mercator",
             style=GeoshapeChartStylePatch.model_validate(_TITLE_FONT_OVERRIDE),
         )
     if chart_type == "point_map":
         return PointMapChart(
             **common,
             type="point_map",
+            projection="albersUsa",
             style=PointMapChartStylePatch.model_validate(_TITLE_FONT_OVERRIDE),
         )
     raise AssertionError(f"no chart builder for {chart_type!r}")

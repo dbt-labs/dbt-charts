@@ -147,7 +147,7 @@ class TestDftSearchHelperRouting:
         err = DbtChartsError.from_code(
             ERR_INTERNAL, message="test error"
         ).to_diagnostic()
-        result = SearchResult(success=False, errors=[err], results=[])
+        result = SearchResult(success=False, errors=[err], results=[], sources=[])
         _print_rich(result)
         captured = capsys.readouterr()
         assert "ERR-INTERNAL" in captured.err

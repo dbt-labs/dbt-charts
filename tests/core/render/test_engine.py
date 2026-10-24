@@ -41,6 +41,9 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.constants.layout import SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.chart.annotation_nothing_drawn import (
+    collect_annotation_nothing_drawn,
+)
 from dbt_charts.core.render.chart.axis_label_collision import (
     AxisLabelCollision,
     collect_axis_label_collisions,
@@ -701,12 +704,14 @@ def test_engine_refusal_raises_instead_of_falling_back() -> None:
         "query": "q",
         "latitude": "lat",
         "longitude": "lon",
+        "color": "kind",
+        "projection": "mercator",
     }
     with pytest.raises(ChartDataError) as caught:
-        _native(point_map, [{"lat": "north", "lon": 2.0}])
+        _native(point_map, [{"lat": 40.7, "lon": -74.0, "kind": ["a"]}])
     assert caught.value.code.code == "ERR-ENGINE-REFUSED"
     assert caught.value.fields == {
-        "message": "a point map row with a missing or non-numeric latitude is not supported"
+        "message": "a point map color value that is a list is not supported"
     }
 
 
@@ -1188,6 +1193,26 @@ def test_board_style_envelope_carries_the_resolved_text_mark_font() -> None:
     assert envelope["text_mark_font"] == {"family": font.family, "size": font.size}
 
 
+def test_board_style_envelope_carries_the_authored_numeral_family() -> None:
+    from dbt_charts.core.compile.models.style.authored import StylePatch
+    from dbt_charts.core.render.engine import board_style_envelope
+    from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
+
+    def envelope_for(patch: StylePatch | None) -> dict:
+        style, _ = resolve_style_and_context(get_theme_style(), patch)
+        return board_style_envelope(
+            style, None, active_format_locale(), active_time_locale()
+        )
+
+    assert envelope_for(None)["numeral_family"] == (
+        "'dbt Sans Tabular', Inter, system-ui, sans-serif"
+    )
+    patch = StylePatch.model_validate(
+        {"fonts": {"numeral": {"family": "'Source Serif 4', Georgia, serif"}}}
+    )
+    assert envelope_for(patch)["numeral_family"] == "'Source Serif 4', Georgia, serif"
+
+
 def test_board_style_envelope_carries_the_themes_default_view_widths() -> None:
     from dbt_charts.core.render.engine import board_style_envelope
     from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
@@ -1376,6 +1401,466 @@ rows:
     assert ">0.0042</tspan>" in svg
 
 
+_MONTHLY = [
+    {"month": f"2024-{m:02d}-01", "revenue": float(v)}
+    for m, v in enumerate([10, 12, 11, 15, 14, 18, 17, 21], start=1)
+]
+
+
+@pytest.mark.parametrize("family", ["line", "area"])
+def test_a_resolved_annotation_draws_in_the_engine(family: str) -> None:
+    chart_def = {
+        "type": family,
+        "query": "q",
+        "x": "month",
+        "y": "revenue",
+        "annotations": [
+            {"type": "band", "x": {"from": "2024-03-01", "to": "2024-05-01"}},
+            {"type": "rule", "y": "avg()", "text": "Average"},
+            {"type": "trend", "fit": "linear()", "interval": "confidence(95)"},
+        ],
+    }
+    registry = {"q": ValuesQuery(rows=_MONTHLY)}
+    flat = normalize_chart("c1", chart_def, registry, sources={})
+    chart = resolve(
+        flat,
+        _MONTHLY,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        chart,
+        _MONTHLY,
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
+    )
+    background = svg.index("annotations-background")
+    foreground = svg.index("annotations-foreground")
+    # The data stroke is the last line mark; a halo under it paints before the band.
+    assert background < svg.rindex('class="mark-line role-mark') < foreground
+    assert ">Average</text>" in svg
+
+
+_POINTS = [
+    {"spend": float(s), "signups": float(v)}
+    for s, v in zip(range(10, 70, 10), [12, 18, 33, 38, 52, 57], strict=True)
+]
+
+
+@pytest.mark.parametrize("multiples", [None, {"columns": "region"}])
+def test_a_resolved_scatter_annotation_draws_in_the_engine(
+    multiples: dict[str, str] | None,
+) -> None:
+    rows = [{**p, "region": g} for g in ("EMEA", "APAC") for p in _POINTS]
+    chart_def: dict[str, Any] = {
+        "type": "scatter",
+        "query": "q",
+        "x": "spend",
+        "y": "signups",
+        "annotations": [
+            {"type": "band", "x": {"from": 20, "to": 40}},
+            {"type": "rule", "y": "avg()", "text": "Average"},
+            {"type": "rule", "x": 75, "text": "Budget"},
+            {"type": "trend", "fit": "linear()", "interval": "confidence(95)"},
+        ],
+    }
+    if multiples is not None:
+        chart_def["multiples"] = multiples
+        # A zero-anchored panel bakes no lower y bound, which small multiples need.
+        chart_def["style"] = {"axis_y": {"scale": {"continuous": {"zero": False}}}}
+    registry = {"q": ValuesQuery(rows=rows)}
+    flat = normalize_chart("c1", chart_def, registry, sources={})
+    chart = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        chart,
+        rows,
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
+    )
+    panels = 1 if multiples is None else 2
+    assert svg.count("annotations-background") == panels
+    assert svg.count("annotations-foreground") == panels
+    assert svg.count(">Average</text>") == panels
+    assert svg.count(">Budget</text>") == panels
+
+
+@pytest.mark.parametrize("date", ["2025-03-01", "2024-08-20", "2025-03-20"])
+def test_a_scatter_date_annotation_past_the_data_widens_the_x_axis(date: str) -> None:
+    rows = [{**r, "signups": r["revenue"] * 3} for r in _MONTHLY]
+    chart_def = {
+        "type": "scatter",
+        "query": "q",
+        "x": "month",
+        "y": "signups",
+        "annotations": [{"type": "rule", "x": date}],
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    chart = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2025, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    assert 'aria-roledescription="annotation"' in svg
+
+
+@pytest.mark.parametrize(
+    ("chart", "rule_y"),
+    [
+        ({"style": {"axis_y": {"scale": {"continuous": {"type": "log"}}}}}, 200),
+        (
+            {
+                "multiples": {"columns": "region", "scale": "independent"},
+                "style": {"axis_y": {"scale": {"continuous": {"zero": False}}}},
+            },
+            1000,
+        ),
+    ],
+    ids=["log-y", "independent-panels"],
+)
+def test_a_scatter_y_annotation_past_the_data_widens_an_engine_computed_domain(
+    chart: dict[str, Any], rule_y: int
+) -> None:
+    rows = [{**p, "region": g} for g in ("EMEA", "APAC") for p in _POINTS]
+    chart_def: dict[str, Any] = {
+        "type": "scatter",
+        "query": "q",
+        "x": "spend",
+        "y": "signups",
+        "annotations": [{"type": "rule", "y": rule_y}],
+        **chart,
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    resolved = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        resolved, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    assert 'aria-roledescription="annotation"' in svg
+
+
+@pytest.mark.parametrize(
+    "continuous",
+    [
+        {"type": "sqrt"},
+        {"type": "pow", "pow": {"exponent": 2}},
+        {"type": "symlog"},
+    ],
+    ids=["sqrt", "pow", "symlog"],
+)
+def test_a_scatter_on_bent_axes_draws_annotations(continuous: dict[str, Any]) -> None:
+    scale = {"scale": {"continuous": continuous}}
+    chart_def: dict[str, Any] = {
+        "type": "scatter",
+        "query": "q",
+        "x": "spend",
+        "y": "signups",
+        "style": {"axis_x": scale, "axis_y": scale},
+        "annotations": [
+            {"type": "band", "x": {"from": 20, "to": 40}},
+            {"type": "rule", "y": 80, "text": "Target"},
+            {"type": "trend", "fit": "linear()", "interval": "confidence(95)"},
+        ],
+    }
+    flat = normalize_chart(
+        "c1", chart_def, {"q": ValuesQuery(rows=_POINTS)}, sources={}
+    )
+    resolved = resolve(
+        flat,
+        _POINTS,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        resolved,
+        _POINTS,
+        width=480.0,
+        height=300.0,
+        padding=None,
+        board_style=_BOARD_RS,
+    )
+    assert ">Target</text>" in svg
+
+
+@pytest.mark.parametrize("multiples", [None, {"columns": "region"}])
+@pytest.mark.parametrize(
+    ("x", "y", "annotations"),
+    [
+        (
+            "spend",
+            "team",
+            [
+                {"type": "band", "y": "B", "text": "Focus"},
+                {"type": "rule", "x": "avg()", "text": "Average"},
+            ],
+        ),
+        (
+            "team",
+            "signups",
+            [
+                {"type": "band", "x": "B", "text": "Focus"},
+                {"type": "rule", "y": "avg()", "text": "Average"},
+            ],
+        ),
+    ],
+    ids=["category-y", "category-x"],
+)
+def test_a_dot_plot_draws_category_annotations(
+    x: str,
+    y: str,
+    annotations: list[dict[str, Any]],
+    multiples: dict[str, str] | None,
+) -> None:
+    rows = [
+        {**p, "team": t, "region": g}
+        for g in ("EMEA", "APAC")
+        for p, t in zip(_POINTS, "AABBCC", strict=True)
+    ]
+    chart_def: dict[str, Any] = {
+        "type": "scatter",
+        "query": "q",
+        "x": x,
+        "y": y,
+        "annotations": annotations,
+    }
+    if multiples is not None:
+        chart_def["multiples"] = multiples
+        measure_axis = "axis_x" if y == "team" else "axis_y"
+        chart_def["style"] = {measure_axis: {"scale": {"continuous": {"zero": False}}}}
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    resolved = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        resolved, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    panels = 1 if multiples is None else 2
+    assert svg.count(">Focus</text>") == panels
+    assert svg.count(">Average</text>") == panels
+
+
+def test_a_shared_log_y_scale_stays_shared_when_one_panel_has_a_trend() -> None:
+    rows = [
+        {"spend": float(x), "signups": float(y), "region": g}
+        for g, ys in (
+            ("EMEA", [20, 25, 30, 35, 40, 45]),
+            ("APAC", [900, 925, 940, 965, 980, 999]),
+        )
+        for x, y in zip(range(10, 70, 10), ys, strict=True)
+    ]
+    chart_def: dict[str, Any] = {
+        "type": "scatter",
+        "query": "q",
+        "x": "spend",
+        "y": "signups",
+        "multiples": {"columns": "region"},
+        "style": {"axis_y": {"scale": {"continuous": {"type": "log"}}}},
+        "annotations": [
+            {"type": "trend", "fit": "linear()", "interval": "confidence(95)"}
+        ],
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    resolved = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        resolved, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    labels = re.findall(r'text-anchor="end"[^>]*>([^<]+)</text>', svg)
+    ladder = labels[: labels.index(labels[0], 1)]
+    assert labels[len(ladder) : 2 * len(ladder)] == ladder
+
+
+def test_rule_text_above_a_facet_panel_reserves_room_for_it() -> None:
+    rows = [{**p, "region": g} for g in ("EMEA", "APAC") for p in _POINTS]
+
+    def first_plot_top(rule: dict[str, Any]) -> float:
+        chart_def: dict[str, Any] = {
+            "type": "scatter",
+            "query": "q",
+            "x": "spend",
+            "y": "signups",
+            "multiples": {"columns": "region"},
+            "style": {"axis_y": {"scale": {"continuous": {"zero": False}}}},
+            "annotations": [rule],
+        }
+        flat = normalize_chart(
+            "c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={}
+        )
+        chart = resolve(
+            flat,
+            rows,
+            chart_style_context=_BOARD_CTX,
+            rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+        )
+        svg, _ = render_native(
+            chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        )
+        return float(re.search(r'<g transform="translate\([^,]+,([^)]+)\)', svg)[1])
+
+    bare = first_plot_top({"type": "rule", "x": 75})
+    labeled = first_plot_top({"type": "rule", "x": 75, "text": "Budget"})
+    assert labeled > bare
+
+
+def test_a_scatter_on_a_date_x_draws_date_annotations() -> None:
+    rows = [{**r, "signups": r["revenue"] * 3} for r in _MONTHLY]
+    chart_def = {
+        "type": "scatter",
+        "query": "q",
+        "x": "month",
+        "y": "signups",
+        "annotations": [
+            {"type": "band", "x": {"from": "2024-03-01", "to": "2024-05-01"}},
+            {"type": "rule", "x": "2024-06-01", "text": "Launch"},
+        ],
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    chart = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    assert svg.index("annotations-background") < svg.index("annotations-foreground")
+    assert ">Launch</text>" in svg
+
+
+def test_rule_text_above_a_rail_chart_reserves_top_margin() -> None:
+    rows = [
+        {"month": f"2024-{m:02d}-01", "region": region, "revenue": float(m * k)}
+        for m in range(1, 7)
+        for region, k in (("EMEA", 1), ("APAC", 2))
+    ]
+    chart_def = {
+        "type": "line",
+        "query": "q",
+        "x": "month",
+        "y": "revenue",
+        "color": "region",
+        "annotations": [{"type": "rule", "x": "2024-03-01", "text": "Launch"}],
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    chart = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    plot_top = float(re.search(r'<g transform="translate\([^,]+,([^)]+)\)', svg)[1])
+    text = re.search(
+        r'<text[^>]* y="([^"]+)"[^>]* font-size="([^"]+)"[^>]*>Launch<', svg
+    )
+    assert text is not None
+    assert plot_top + float(text[1]) - float(text[2]) >= 0
+
+
+def test_an_annotation_the_engine_draws_nothing_for_is_recorded() -> None:
+    rows = [{"month": f"2024-{m:02d}-01", "revenue": float(m)} for m in range(1, 7)]
+    chart_def = {
+        "type": "line",
+        "query": "q",
+        "x": "month",
+        "y": "revenue",
+        "style": {"axis_y": {"scale": {"continuous": {"type": "log"}}}},
+        "annotations": [{"type": "rule", "y": 1000}],
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    chart = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    with collect_annotation_nothing_drawn() as drawn_nothing:
+        render_native(
+            chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+        )
+    assert list(drawn_nothing) == ["c1"]
+    assert list(drawn_nothing["c1"]) == [0]
+
+
+_REGIONS: list[dict[str, Any]] = [
+    {"region": r, "revenue": float(v)}
+    for r, v in (("East", 10), ("West", 14), ("North", 8))
+]
+
+_SIZES: list[dict[str, Any]] = [
+    {"size": float(s), "revenue": float(v)}
+    for s, v in ((10, 5), (20, 9), (30, 7), (40, 12), (50, 8))
+]
+
+
+@pytest.mark.parametrize(
+    ("rows", "x", "style", "annotations"),
+    [
+        (_MONTHLY, "month", {}, [{"type": "band", "x": "current(month)"}]),
+        (
+            _REGIONS,
+            "region",
+            {"orientation": "horizontal"},
+            [{"type": "band", "x": "West"}],
+        ),
+        (_SIZES, "size", {}, [{"type": "band", "x": {"from": 15, "to": 35}}]),
+    ],
+    ids=["date", "horizontal", "numeric"],
+)
+def test_a_resolved_annotation_draws_on_a_bar(
+    rows: list[dict[str, Any]],
+    x: str,
+    style: dict[str, Any],
+    annotations: list[dict[str, Any]],
+) -> None:
+    chart_def = {
+        "type": "bar",
+        "query": "q",
+        "x": x,
+        "y": "revenue",
+        "style": style,
+        "annotations": [*annotations, {"type": "rule", "y": 12, "text": "Quota"}],
+    }
+    flat = normalize_chart("c1", chart_def, {"q": ValuesQuery(rows=rows)}, sources={})
+    chart = resolve(
+        flat,
+        rows,
+        chart_style_context=_BOARD_CTX,
+        rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
+    )
+    svg, _ = render_native(
+        chart, rows, width=480.0, height=300.0, padding=None, board_style=_BOARD_RS
+    )
+    assert svg.index("annotations-background") < svg.index("annotations-foreground")
+    assert ">Quota</text>" in svg
+
+
 _US_STATES_URL = "bundled:us-10m.json"
 _GEOSHAPE = {"type": "map", "query": "q", "geo": {"source": "us-states"}}
 _POINT_MAP = {
@@ -1383,6 +1868,7 @@ _POINT_MAP = {
     "query": "q",
     "latitude": "lat",
     "longitude": "lon",
+    "projection": "albersUsa",
     "basemap": {"source": "us-states"},
 }
 _POINT_ROWS = [{"lat": 40.7, "lon": -74.0}]

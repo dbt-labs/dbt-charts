@@ -27,7 +27,7 @@ use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
 use crate::families::axis_caption::{slot_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol};
-use print::xml_escape_attr;
+use scene::{Attrs, Node};
 use measure::FontBook;
 use crate::Payload;
 
@@ -232,10 +232,20 @@ pub(crate) struct OverlayLineLayer {
     pub label: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    /// The color a layer with no `color` paints on the shared scale, baked at resolve.
+    #[serde(default)]
+    pub ink: Option<String>,
+    /// The color each value of a layer's own `color` paints, baked at resolve.
+    #[serde(default)]
+    pub series_inks: HashMap<String, String>,
     #[serde(default)]
     pub query_name: Option<String>,
     #[serde(default)]
     pub label_is_house: bool,
+    /// False when the layer declines its legend entry: it still claims its color
+    /// and paints, and only the entry is dropped.
+    #[serde(default = "entry_by_default")]
+    pub legend: bool,
 }
 
 impl OverlayLineLayer {
@@ -316,15 +326,6 @@ impl OverlayLineLayer {
         }
     }
 
-    /// The color a layer authors for its series: a line's stroke. An area's
-    /// fill, like a bar's, always comes from the palette (`_layer_series_color`).
-    pub(crate) fn authored_series_color(&self) -> Option<&str> {
-        if self.area_mark.is_some() {
-            return None;
-        }
-        self.line_mark.stroke.color.as_deref()
-    }
-
     /// The slot the layer's value labels read: a line layer's `marks.point.labels`
     /// aliases `marks.line.labels`, the line slot winning when both are visible
     /// (`_overlay.py`'s `point_labels`); an area layer reads the line slot alone
@@ -362,12 +363,14 @@ pub(crate) fn curve_named(name: Option<&str>, family: &str) -> Result<d3rs::shap
 }
 
 /// The color fields of the layers drawing on the shared color scale: a layer colored by a
-/// numeric field has a scale, and so a legend, of its own.
+/// numeric field has a scale, and so a legend, of its own, and a layer declining its
+/// legend titles nothing.
 pub(crate) fn shared_color_fields<'a>(
     layers: impl IntoIterator<Item = (&'a OverlayLayer, &'a [serde_json::Map<String, Value>])>,
 ) -> Vec<&'a str> {
     layers
         .into_iter()
+        .filter(|(layer, _)| layer.legend())
         .filter_map(|(layer, rows)| layer.color().filter(|field| numeric_layer_color(rows, field).is_none()))
         .collect()
 }
@@ -840,14 +843,10 @@ pub(crate) fn layer_stroked(l: &OverlayLineLayer, row: &serde_json::Map<String, 
 
 /// A layered chart's one shared `color:{datum}` scale (`_overlay.py`'s
 /// `scale_domain`/`scale_range`): the base's entries, then each layer's claims
-/// in authored order. An unauthored claim takes the first palette color the
-/// board and the scale have not taken (`_free_palette_color`), not the next
-/// positional slot; a claimed label already on the scale paints with its
-/// first occurrence, as Vega's ordinal domain dedupes.
-pub(crate) struct LayerScale<'a> {
-    palette: &'a [String],
-    single_series_fill: &'a str,
-    category_colors: &'a [crate::common::CategoryColorScale],
+/// in authored order, each painted with the ink resolve baked on the layer. A
+/// claimed label already on the scale paints with its first occurrence, as
+/// Vega's ordinal domain dedupes.
+pub(crate) struct LayerScale {
     color_split_base: bool,
     /// The layered endpoint-label rail keys its anchors by label, so a repeat
     /// would collapse two of them.
@@ -858,29 +857,21 @@ pub(crate) struct LayerScale<'a> {
     glyphs: HashMap<String, LegendSymbol<'static>>,
     /// The labels a bar layer drew (`square_datums`): a square stroked in its own fill.
     squares: HashSet<String>,
+    /// Indices into `domain` of the claims whose layer declined its legend entry:
+    /// they keep their place on the scale, so their marks paint, and draw no entry.
+    declined: HashSet<usize>,
 }
 
-impl<'a> LayerScale<'a> {
+impl LayerScale {
     pub(crate) fn with_rail(mut self, rail_may_fire: bool) -> Self {
         self.rail_may_fire = rail_may_fire;
         self
     }
 
     /// `base` is every color the base paints on the scale: one entry per
-    /// series, or its one labeled fill. Building one resolves nothing: the
-    /// palette and board checks run in the claims, as production runs them
-    /// only on its layered path, so a chart without layers never trips them.
-    pub(crate) fn new(
-        palette: &'a [String],
-        single_series_fill: &'a str,
-        category_colors: &'a [crate::common::CategoryColorScale],
-        base: &[(String, String)],
-        color_split_base: bool,
-    ) -> Self {
+    /// series, or its one labeled fill.
+    pub(crate) fn new(base: &[(String, String)], color_split_base: bool) -> Self {
         LayerScale {
-            palette,
-            single_series_fill,
-            category_colors,
             color_split_base,
             rail_may_fire: false,
             base_len: base.len(),
@@ -888,65 +879,37 @@ impl<'a> LayerScale<'a> {
             range: base.iter().map(|(_, fill)| fill.clone()).collect(),
             glyphs: HashMap::new(),
             squares: HashSet::new(),
+            declined: HashSet::new(),
         }
     }
 
-    /// A grouped layer or a color-split base needs a palette to draw from
-    /// (`ERR_LAYERED_NO_PALETTE`).
-    fn require_palette(&self) -> Result<(), Diagnostic> {
-        if self.palette.is_empty() {
-            return Err(Diagnostic::new(&crate::codes::ERR_LAYERED_NO_PALETTE, []));
-        }
-        Ok(())
+    /// The number of claims on the scale: a mark for `decline_since`.
+    pub(crate) fn claimed(&self) -> usize {
+        self.domain.len()
     }
 
-    /// Every color the board binds to a category value, drawn by this chart or
-    /// not: an unauthored layer must not take one (empty without a palette).
-    fn board_colors(&self) -> Result<Vec<String>, Diagnostic> {
-        let mut board = Vec::new();
-        if self.palette.is_empty() {
-            return Ok(board);
-        }
-        for scale in self.category_colors {
-            for value in scale.slots.keys() {
-                board.push(
-                    crate::common::category_color(scale, value, self.palette)
-                        .map_err(Diagnostic::refused)?,
-                );
+    /// A layer that keeps its entries restores any of `values` an earlier declining
+    /// layer introduced: the entry belongs to whoever keeps it.
+    pub(crate) fn keep_entries(&mut self, values: &[String]) {
+        for value in values {
+            if let Some(index) = self.domain.iter().position(|d| d == value) {
+                self.declined.remove(&index);
             }
         }
-        Ok(board)
     }
 
-    fn free_color(&self) -> Result<String, Diagnostic> {
-        if self.palette.is_empty() {
-            return Ok(self.single_series_fill.to_string());
-        }
-        let board = self.board_colors()?;
-        let taken: HashSet<String> = board.iter().chain(&self.range).map(|c| c.to_lowercase()).collect();
-        Ok(self
-            .palette
-            .iter()
-            .find(|c| !taken.contains(&c.to_lowercase()))
-            .unwrap_or(&self.palette[self.range.len() % self.palette.len()])
-            .clone())
+    /// Drops the legend entries of every claim made since `mark`.
+    pub(crate) fn decline_since(&mut self, mark: usize) {
+        self.declined.extend(mark..self.domain.len());
     }
 
-    /// A layer claims `label` with its authored color, else the next free one,
-    /// and returns that color: bar and line marks paint it as a literal (the
-    /// emitter's single-series color), where `color_of` is what an encoded
-    /// mark or the legend reads back.
-    pub(crate) fn claim(&mut self, label: &str, authored: Option<&str>) -> Result<String, Diagnostic> {
-        if self.color_split_base {
-            self.require_palette()?;
-        }
-        let fill = match authored {
-            Some(color) => color.to_string(),
-            None => self.free_color()?,
-        };
+    /// A layer claims `label` with its baked `ink` and returns that color: bar
+    /// and line marks paint it as a literal (the emitter's single-series
+    /// color), where `color_of` is what an encoded mark or the legend reads back.
+    pub(crate) fn claim(&mut self, label: &str, ink: &str) -> String {
         self.domain.push(label.to_string());
-        self.range.push(fill.clone());
-        Ok(fill)
+        self.range.push(ink.to_string());
+        ink.to_string()
     }
 
     /// Raises `ERR_LAYER_LABEL_COLLISION` for a label the scale already holds.
@@ -960,12 +923,15 @@ impl<'a> LayerScale<'a> {
         Ok(())
     }
 
-    /// A color-grouped layer claims each of its values the scale lacks.
-    pub(crate) fn claim_values(&mut self, values: &[String]) -> Result<(), Diagnostic> {
-        self.require_palette()?;
+    /// A color-grouped layer claims each of its values the scale lacks, with the
+    /// ink resolve baked for it.
+    pub(crate) fn claim_values(&mut self, values: &[String], inks: &HashMap<String, String>) -> Result<(), Diagnostic> {
         for value in values {
             if !self.domain.contains(value) {
-                self.claim(value, None)?;
+                let ink = inks
+                    .get(value)
+                    .ok_or_else(|| Diagnostic::refused(format!("a layer's color value {value:?} has no baked ink")))?;
+                self.claim(value, ink);
             }
         }
         Ok(())
@@ -1019,8 +985,8 @@ impl<'a> LayerScale<'a> {
     pub(crate) fn layer_entries(&self) -> Vec<(&str, &str)> {
         let mut seen: Vec<&str> = self.domain[..self.base_len].iter().map(String::as_str).collect();
         let mut out = Vec::new();
-        for label in &self.domain[self.base_len..] {
-            if !seen.contains(&label.as_str()) {
+        for (index, label) in self.domain.iter().enumerate().skip(self.base_len) {
+            if !self.declined.contains(&index) && !seen.contains(&label.as_str()) {
                 seen.push(label);
                 out.push((label.as_str(), self.color_of(label)));
             }
@@ -1070,6 +1036,8 @@ pub(crate) struct LayerClaim {
     /// The sequential scale of a layer colored by a numeric field: it claims no
     /// slot on the shared scale and paints each value by position on this one.
     pub numeric: Option<ContinuousColor>,
+    /// False when the layer declines its legend entries; its marks still paint.
+    pub legend: bool,
 }
 
 impl LayerClaim {
@@ -1129,39 +1097,57 @@ pub(crate) fn claim_layers(
     layers
         .iter()
         .map(|&(layer, rows)| {
-            let label = crate::common::axis_title_text(layer.y(), layer.label(), field_labels)?;
-            let (glyph, authored) = match layer {
-                OverlayLayer::Bar(_) => (None, None),
-                OverlayLayer::Line(l) => (Some(l.legend_glyph(area_opacity)), l.authored_series_color()),
-                OverlayLayer::Scatter(l) => {
-                    (l.color.is_some().then(|| LegendSymbol::FadedCircle(area_opacity.unwrap_or(1.0))), l.point_mark.color.as_deref())
-                }
-            };
-            if let Some(numeric) = layer.color().and_then(|field| numeric_layer_color(rows, field)) {
-                return Ok(LayerClaim { label, values: Vec::new(), fill: None, circle: false, numeric: Some(numeric) });
+            let mark = scale.claimed();
+            let claim = claim_layer(scale, layer, rows, area_opacity, field_labels)?;
+            if claim.legend {
+                scale.keep_entries(&claim.values);
+            } else {
+                scale.decline_since(mark);
             }
-            let Some(color_field) = layer.color() else {
-                scale.refuse_repeat(&label)?;
-                let fill = scale.claim(&label, authored)?;
-                if let Some(glyph) = glyph {
-                    scale.set_glyph(&label, glyph);
-                }
-                if matches!(layer, OverlayLayer::Bar(_)) {
-                    scale.set_square(&label);
-                }
-                return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill), circle: false, numeric: None });
-            };
-            let values = layer_color_values(rows, color_field);
-            scale.claim_values(&values)?;
-            if let Some(glyph) = glyph {
-                values.iter().for_each(|value| scale.set_glyph(value, glyph));
-            }
-            if matches!(layer, OverlayLayer::Bar(_)) {
-                values.iter().for_each(|value| scale.set_square(value));
-            }
-            Ok(LayerClaim { label, values, fill: None, circle: matches!(layer, OverlayLayer::Scatter(_)), numeric: None })
+            Ok(claim)
         })
         .collect()
+}
+
+fn claim_layer(
+    scale: &mut LayerScale,
+    layer: &OverlayLayer,
+    rows: &[serde_json::Map<String, Value>],
+    area_opacity: Option<f64>,
+    field_labels: &crate::common::FieldLabels,
+) -> Result<LayerClaim, Diagnostic> {
+    let label = crate::common::axis_title_text(layer.y(), layer.label(), field_labels)?;
+    let glyph = match layer {
+        OverlayLayer::Bar(_) => None,
+        OverlayLayer::Line(l) => Some(l.legend_glyph(area_opacity)),
+        OverlayLayer::Scatter(l) => l.color.is_some().then(|| LegendSymbol::FadedCircle(area_opacity.unwrap_or(1.0))),
+    };
+    if let Some(numeric) = layer.color().and_then(|field| numeric_layer_color(rows, field)) {
+        return Ok(LayerClaim { label, values: Vec::new(), fill: None, circle: false, numeric: Some(numeric), legend: layer.legend() });
+    }
+    let Some(color_field) = layer.color() else {
+        scale.refuse_repeat(&label)?;
+        let ink = layer
+            .ink()
+            .ok_or_else(|| Diagnostic::refused(format!("layer {label:?} has no baked ink")))?;
+        let fill = scale.claim(&label, ink);
+        if let Some(glyph) = glyph {
+            scale.set_glyph(&label, glyph);
+        }
+        if matches!(layer, OverlayLayer::Bar(_)) {
+            scale.set_square(&label);
+        }
+        return Ok(LayerClaim { label, values: Vec::new(), fill: Some(fill), circle: false, numeric: None, legend: layer.legend() });
+    };
+    let values = layer_color_values(rows, color_field);
+    scale.claim_values(&values, layer.series_inks())?;
+    if let Some(glyph) = glyph {
+        values.iter().for_each(|value| scale.set_glyph(value, glyph));
+    }
+    if matches!(layer, OverlayLayer::Bar(_)) {
+        values.iter().for_each(|value| scale.set_square(value));
+    }
+    Ok(LayerClaim { label, values, fill: None, circle: matches!(layer, OverlayLayer::Scatter(_)), numeric: None, legend: layer.legend() })
 }
 
 /// A band x's step geometry: its bandwidth and the centers of its first and
@@ -1194,8 +1180,7 @@ pub(crate) struct StepBand {
 /// `stroke.color` over it, and the points an authored `point_mark.color`.
 /// `stacked` gives an area row's `(start, end)` on the stack of its color
 /// groups: the fill spans it while the line and points stay on the raw value.
-pub(crate) fn paint_line_layer_marks(
-    svg: &mut String,
+pub(crate) fn line_layer_marks(
     l: &OverlayLineLayer,
     rows: &[serde_json::Map<String, Value>],
     // A NaN x is Vega's NaN position: the mark sits at 0 and the line or area is undefined there.
@@ -1213,12 +1198,10 @@ pub(crate) fn paint_line_layer_marks(
     step_lead: f64,
     stacked: Option<&LayerStack>,
     link: Option<&crate::href::DatumLink>,
-) -> Result<(), String> {
-    use std::fmt::Write as _;
-
+) -> Result<Vec<Node>, String> {
     // A band step's marks are drawn from data Vega-Lite rewrites, so they carry no link; its labels still do.
     let mark_link = link.filter(|_| !(l.curve_name() == Some("step") && step_band.is_some()));
-    let marks_from = svg.len();
+    let mut marks: Vec<Node> = Vec::new();
 
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
     // Each point's own link; a path's is its first datum's.
@@ -1339,10 +1322,16 @@ pub(crate) fn paint_line_layer_marks(
         disconnected,
         l.line_mark.disconnected_cap.as_deref(),
     );
-    let dash = l.line_mark.stroke.dasharray.as_deref().map_or(Ok(String::new()), |raw| {
-        let fit = band_step.filter(|_| disconnected).map(|bw| bw * plateau);
-        Ok::<_, String>(crate::step_band::attr(&crate::step_band::parse("layer", raw, fit.is_some())?, fit))
-    })?;
+    let dash = l
+        .line_mark
+        .stroke
+        .dasharray
+        .as_deref()
+        .map(|raw| {
+            let fit = band_step.filter(|_| disconnected).map(|bw| bw * plateau);
+            Ok::<_, String>(crate::step_band::dasharray(&crate::step_band::parse("layer", raw, fit.is_some())?, fit))
+        })
+        .transpose()?;
     let (curve, runs, area_runs, mark_points, mark_labels, mark_hrefs, run_hrefs): (_, Vec<Vec<(f64, f64)>>, Vec<Vec<(f64, f64, f64)>>, Vec<(f64, f64)>, Vec<Option<String>>, Vec<Option<String>>, Vec<Option<String>>) =
         match band_step {
             Some(bw) => {
@@ -1469,23 +1458,25 @@ pub(crate) fn paint_line_layer_marks(
         let leaves_plot = frame.clip
             && area_runs.iter().flatten().any(|&(_, top, bottom)| [top, bottom].iter().any(|v| *v < 0.0 || *v > if horizontal { plot_w } else { plot_h }));
         let clip_id = format!("dbt-area-clip-{plot_w}-{plot_h}");
-        let clip_attr = if leaves_plot {
-            let _ = write!(svg, "<clipPath id=\"{clip_id}\"><rect width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath>");
-            format!(" clip-path=\"url(#{clip_id})\"")
-        } else {
-            String::new()
-        };
-        crate::contract::connected_group_open(svg, "area", "layer_1_marks");
+        let mut fill = Attrs::new()
+            .set("d", d)
+            .set("fill", series_color)
+            .set("fill-opacity", area.opacity.to_string())
+            .set("stroke-opacity", "0")
+            .set("opacity", "1");
+        if leaves_plot {
+            marks.push(Node::ClipPath {
+                attrs: Attrs::new().set("id", clip_id.as_str()),
+                children: vec![Node::Rect(Attrs::new().set("width", plot_w.to_string()).set("height", plot_h.to_string()))],
+            });
+            fill = fill.set("clip-path", format!("url(#{clip_id})"));
+        }
         let first = run_hrefs.first().cloned().flatten();
-        svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, &first)));
-        let _ = write!(
-            svg,
-            "<path d=\"{d}\" fill=\"{}\" fill-opacity=\"{}\" stroke-opacity=\"0\" opacity=\"1\"{clip_attr}/>",
-            xml_escape_attr(series_color),
-            area.opacity,
-        );
-        svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, &first)));
-        crate::contract::mark_group_close(svg);
+        marks.push(crate::contract::connected_group(
+            "area",
+            "layer_1_marks",
+            vec![crate::href::linked(crate::href::anchor_for(mark_link, &first), Node::Path(fill))],
+        ));
     }
     // The imputed zero rows of this color value form their own mark group, zero-high atop each column.
     if let (Some(area), Some(stack), Some(first), Some(_)) = (&l.area_mark, stacked, rows.first(), mark_link) {
@@ -1502,31 +1493,38 @@ pub(crate) fn paint_line_layer_marks(
             let run: Vec<(f64, f64, f64)> = items.iter().map(|&(x, y, _)| (x, y, y)).collect();
             let d = d3rs::shape::stacked_area_path(&[run], curve);
             let first_href = Some(first_href.to_string());
-            crate::contract::connected_group_open(svg, "area", "layer_1_marks");
-            svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, &first_href)));
-            let _ = write!(
-                svg,
-                "<path d=\"{d}\" fill=\"{}\" fill-opacity=\"{}\" stroke-opacity=\"0\" opacity=\"1\"/>",
-                xml_escape_attr(series_color),
-                area.opacity,
-            );
-            svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, &first_href)));
-            crate::contract::mark_group_close(svg);
+            let fill = Attrs::new()
+                .set("d", d)
+                .set("fill", series_color)
+                .set("fill-opacity", area.opacity.to_string())
+                .set("stroke-opacity", "0")
+                .set("opacity", "1");
+            marks.push(crate::contract::connected_group(
+                "area",
+                "layer_1_marks",
+                vec![crate::href::linked(crate::href::anchor_for(mark_link, &first_href), Node::Path(fill))],
+            ));
         }
     }
     // A disconnected plateau is its own path, never joined to its neighbors.
     for (run, run_href) in runs.iter().zip(&run_hrefs) {
         let d = d3rs::shape::line_path(std::slice::from_ref(run), curve);
-        crate::contract::connected_group_open(svg, "line", "layer_1_marks");
-        svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, run_href)));
-        let _ = write!(
-            svg,
-            "<path d=\"{d}\" fill=\"none\" stroke=\"{line_color}\" \
-             stroke-width=\"{}\" stroke-linecap=\"{cap}\" stroke-linejoin=\"{join}\"{dash}/>",
-            l.line_mark.stroke.width, line_color = xml_escape_attr(line_color), cap = xml_escape_attr(cap), join = xml_escape_attr(join)
-        );
-        svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, run_href)));
-        crate::contract::mark_group_close(svg);
+        let stroke = Attrs::new()
+            .set("d", d)
+            .set("fill", "none")
+            .set("stroke", line_color)
+            .set("stroke-width", l.line_mark.stroke.width.to_string())
+            .set("stroke-linecap", cap)
+            .set("stroke-linejoin", join);
+        let stroke = match &dash {
+            Some(dash) => stroke.set("stroke-dasharray", dash.as_str()),
+            None => stroke,
+        };
+        marks.push(crate::contract::connected_group(
+            "line",
+            "layer_1_marks",
+            vec![crate::href::linked(crate::href::anchor_for(mark_link, run_href), Node::Path(stroke))],
+        ));
     }
     // A visible point overlay only draws when `point_mark.size` is authored
     // (production's `point_size` gate, `_layers.py`); a hollow point
@@ -1539,48 +1537,72 @@ pub(crate) fn paint_line_layer_marks(
     let drawn = l.point_mark.size.filter(|s| *s > 0.0);
     if let Some(size) = drawn {
         let r_pt = crate::common::symbol_radius(size);
-        if announced {
-            crate::contract::mark_group_open(svg, "symbol", "layer_2_marks")?;
-        }
+        let mut points = Vec::new();
         for ((&(px, py), label), href) in mark_points.iter().zip(&mark_labels).zip(&mark_hrefs) {
             let point_color = l.point_mark.color.as_deref().unwrap_or(series_color);
-            svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, href)));
-            paint_overlay_point(svg, &l.point_mark, px, py, r_pt, point_color, canvas, label.as_deref())?;
-            svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, href)));
+            let point = overlay_point(&l.point_mark, px, py, r_pt, point_color, canvas, label.as_deref())?;
+            points.push(crate::href::linked(crate::href::anchor_for(mark_link, href), point));
         }
         if announced {
-            crate::contract::mark_group_close(svg);
+            marks.push(crate::contract::mark_group("symbol", "layer_2_marks", points)?);
+        } else {
+            marks.extend(points);
         }
     }
     if announced {
         let hover_r = crate::common::symbol_radius(crate::common::HOVER_TARGET_SIZE);
-        if drawn.is_some() {
-            crate::contract::hidden_mark_group_open(svg, "symbol", "layer_3_marks");
-        } else {
-            crate::contract::mark_group_open(svg, "symbol", "layer_3_marks")?;
-        }
+        let mut targets = Vec::new();
         for ((&(px, py), label), href) in mark_points.iter().zip(&mark_labels).zip(&mark_hrefs) {
             let aria = if drawn.is_some() { None } else { label.as_deref() };
-            let label_attr = crate::contract::aria_attr(aria, crate::contract::ItemRole::Point)?;
-            svg.push_str(&crate::href::anchor_open(crate::href::anchor_for(mark_link, href)));
-            let _ = write!(
-                svg,
-                "<circle transform=\"translate({px:.3},{py:.3})\" r=\"{hover_r:.3}\" fill=\"{}\" \
-                 opacity=\"0\"{label_attr}/>",
-                xml_escape_attr(series_color)
+            let target = Node::Circle(
+                Attrs::new()
+                    .set("transform", format!("translate({px:.3},{py:.3})"))
+                    .set("r", format!("{hover_r:.3}"))
+                    .set("fill", series_color)
+                    .set("opacity", "0")
+                    .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?),
             );
-            svg.push_str(crate::href::anchor_close(crate::href::anchor_for(mark_link, href)));
+            targets.push(crate::href::linked(crate::href::anchor_for(mark_link, href), target));
         }
-        crate::contract::mark_group_close(svg);
+        marks.push(if drawn.is_some() {
+            crate::contract::hidden_mark_group("symbol", "layer_3_marks", targets)
+        } else {
+            crate::contract::mark_group("symbol", "layer_3_marks", targets)?
+        });
     }
     // An area clips itself; a line's own marks clip as a group, its value labels do not.
-    if frame.clip && l.area_mark.is_none() {
-        clip_marks_from(svg, marks_from, frame.plot);
-    }
+    let mut out = if frame.clip && l.area_mark.is_none() { clip_marks(marks, frame.plot) } else { marks };
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), step_band, horizontal);
-        paint_layer_value_labels(svg, style, &marks, link.map(|link| link.open).unwrap_or_default())?;
+        out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
     }
+    Ok(out)
+}
+
+pub(crate) fn paint_line_layer_marks(
+    svg: &mut String,
+    l: &OverlayLineLayer,
+    rows: &[serde_json::Map<String, Value>],
+    x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
+    label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
+    y_of: impl Fn(f64) -> f64,
+    frame: &AreaFrame,
+    horizontal: bool,
+    series_color: &str,
+    canvas: &str,
+    describe: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
+    board_style: Option<&crate::BoardStyle>,
+    describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
+    step_band: Option<StepBand>,
+    step_lead: f64,
+    stacked: Option<&LayerStack>,
+    link: Option<&crate::href::DatumLink>,
+) -> Result<(), String> {
+    let nodes = line_layer_marks(
+        l, rows, x_of, label_x_of, y_of, frame, horizontal, series_color, canvas, describe, board_style,
+        describe_label, step_band, step_lead, stacked, link,
+    )?;
+    svg.push_str(&print::print(&nodes));
     Ok(())
 }
 
@@ -1639,7 +1661,7 @@ pub(crate) struct LayerLabelStyle<'a> {
     is_house: bool,
     field_is_text: bool,
     pub font: crate::families::bar::LabelFont,
-    pub font_style: String,
+    pub font_style: Option<String>,
     pub color: &'a str,
 }
 
@@ -1665,7 +1687,7 @@ impl<'a> LayerLabelStyle<'a> {
             is_house,
             field_is_text: ml.field_is_text(rows),
             font,
-            font_style: ml.font.as_ref().map(crate::common::Font::style_attr).unwrap_or_default(),
+            font_style: ml.font.as_ref().and_then(|f| f.style.clone()),
             color,
         })
     }
@@ -1708,39 +1730,34 @@ pub(crate) struct LayerLabelMark {
 
 /// The layer's value-label text mark set, drawn after the layer's marks the
 /// way production layers it, each at its caption's spot.
-pub(crate) fn paint_layer_value_labels(
-    svg: &mut String,
+pub(crate) fn layer_value_labels(
     style: &LayerLabelStyle,
     marks: &[LayerLabelMark],
     link_open: crate::href::LinkOpen,
-) -> Result<(), String> {
+) -> Result<Vec<Node>, String> {
     let stamped = marks.iter().any(|m| m.aria.is_some());
-    if stamped {
-        crate::contract::value_label_group_open(svg, "layer_4_marks")?;
-    }
+    let mut labels = Vec::new();
     for m in marks {
         let spot = &m.caption.spot;
         let anchor = link_open.anchor(m.href.as_deref());
-        svg.push_str(&crate::href::anchor_open(anchor));
-        crate::common::write_value_label(
-            svg,
+        let label = crate::common::value_label(
             m.x + spot.dx,
             m.y + spot.dy + measure::baseline_shift(spot.baseline, style.font.size),
             spot.align,
             &style.font.family,
             style.font.size,
             &style.font.weight,
-            &style.font_style,
+            style.font_style.as_deref(),
             style.color,
-            &crate::contract::aria_attr(m.aria.as_deref(), crate::contract::ItemRole::TextMark)?,
+            crate::contract::aria_attrs(m.aria.as_deref(), crate::contract::ItemRole::TextMark)?,
             &m.caption.text,
         );
-        svg.push_str(crate::href::anchor_close(anchor));
+        labels.push(crate::href::linked(anchor, label));
     }
     if stamped {
-        crate::contract::mark_group_close(svg);
+        return Ok(vec![crate::contract::value_label_group("layer_4_marks", labels)?]);
     }
-    Ok(())
+    Ok(labels)
 }
 
 /// One point marker (filled/hollow, per `OverlayPointMark`'s law) at
@@ -1754,8 +1771,7 @@ pub(crate) fn paint_layer_value_labels(
 /// Vega places a symbol: `chart_interactivity.js` reads a datum's position off
 /// the element's screen CTM, so `cx`/`cy` would put every marker at the group
 /// origin.
-fn paint_overlay_point(
-    svg: &mut String,
+fn overlay_point(
     pm: &OverlayPointMark,
     px: f64,
     py: f64,
@@ -1763,30 +1779,21 @@ fn paint_overlay_point(
     point_color: &str,
     canvas: &str,
     aria: Option<&str>,
-) -> Result<(), String> {
-    use std::fmt::Write as _;
-
-    let filled = pm.filled.unwrap_or(true);
-    let aria_attr = format!(
-        "{}{}",
-        if aria.is_some() { " opacity=\"1\"" } else { "" },
-        crate::contract::aria_attr(aria, crate::contract::ItemRole::Point)?
-    );
-    if filled {
-        let _ = write!(
-            svg,
-            "<circle transform=\"translate({px:.3},{py:.3})\" r=\"{r_pt:.3}\" fill=\"{point_color}\"{aria_attr}/>", point_color = xml_escape_attr(point_color)
-        );
+) -> Result<Node, String> {
+    let attrs = Attrs::new().set("transform", format!("translate({px:.3},{py:.3})")).set("r", format!("{r_pt:.3}"));
+    let attrs = if pm.filled.unwrap_or(true) {
+        attrs.set("fill", point_color)
     } else {
-        let hollow_fill = pm.fill.as_deref().unwrap_or(canvas);
-        let _ = write!(
-            svg,
-            "<circle transform=\"translate({px:.3},{py:.3})\" r=\"{r_pt:.3}\" fill=\"{hollow_fill}\" \
-             stroke=\"{point_color}\" stroke-width=\"{}\"{aria_attr}/>",
-            pm.stroke_width, hollow_fill = xml_escape_attr(hollow_fill), point_color = xml_escape_attr(point_color)
-        );
-    }
-    Ok(())
+        attrs
+            .set("fill", pm.fill.as_deref().unwrap_or(canvas))
+            .set("stroke", point_color)
+            .set("stroke-width", pm.stroke_width.to_string())
+    };
+    Ok(Node::Circle(
+        attrs
+            .set_if(aria.is_some(), "opacity", "1")
+            .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?),
+    ))
 }
 
 /// How a scatter layer's points take their color.
@@ -1817,10 +1824,20 @@ pub(crate) struct OverlayScatterLayer {
     pub label: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    /// The color a layer with no `color` paints on the shared scale, baked at resolve.
+    #[serde(default)]
+    pub ink: Option<String>,
+    /// The color each value of a layer's own `color` paints, baked at resolve.
+    #[serde(default)]
+    pub series_inks: HashMap<String, String>,
     #[serde(default)]
     pub query_name: Option<String>,
     #[serde(default)]
     pub label_is_house: bool,
+    /// False when the layer declines its legend entry: it still claims its color
+    /// and paints, and only the entry is dropped.
+    #[serde(default = "entry_by_default")]
+    pub legend: bool,
 }
 
 impl OverlayScatterLayer {
@@ -1863,8 +1880,7 @@ impl OverlayScatterLayer {
 /// own (`OverlayScatterLayer::size`): the point IS the whole mark, unlike a
 /// line layer's optional point overlay.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_scatter_layer_marks(
-    svg: &mut String,
+pub(crate) fn scatter_layer_marks(
     l: &OverlayScatterLayer,
     rows: &[serde_json::Map<String, Value>],
     size: f64,
@@ -1880,10 +1896,9 @@ pub(crate) fn paint_scatter_layer_marks(
     mut describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
     link: Option<&crate::href::DatumLink>,
     clip: Option<(f64, f64)>,
-) -> Result<(), String> {
+) -> Result<Vec<Node>, String> {
     let r_pt = crate::common::symbol_radius(size);
-    let marks_from = svg.len();
-    crate::contract::mark_group_open(svg, "symbol", &format!("layer_{layer_index}_marks"))?;
+    let mut points = Vec::new();
     let ml = l.point_mark.labels.visible.then_some(&l.point_mark.labels);
     let label_style = ml.map(|ml| LayerLabelStyle::new(ml, l.label_is_house, rows, board_style)).transpose()?;
     let mut label_points: Vec<(f64, f64)> = Vec::new();
@@ -1901,9 +1916,8 @@ pub(crate) fn paint_scatter_layer_marks(
             PointColor::Claimed(claimed) => l.point_mark.color.as_deref().unwrap_or(claimed).to_string(),
             PointColor::Encoded(of_row) => of_row(row),
         };
-        svg.push_str(&crate::href::anchor_open(anchor));
-        paint_overlay_point(svg, &l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
-        svg.push_str(crate::href::anchor_close(anchor));
+        let point = overlay_point(&l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
+        points.push(crate::href::linked(anchor, point));
         if let Some(style) = &label_style {
             if let Some(label_cross) = label_x_of.map_or(Some(cross), |label_x_of| label_x_of(row)) {
                 label_points.push(if horizontal { (measure, label_cross) } else { (label_cross, measure) });
@@ -1912,14 +1926,42 @@ pub(crate) fn paint_scatter_layer_marks(
             }
         }
     }
-    crate::contract::mark_group_close(svg);
-    if let Some(plot) = clip {
-        clip_marks_from(svg, marks_from, plot);
-    }
+    let group = crate::contract::mark_group("symbol", &format!("layer_{layer_index}_marks"), points)?;
+    let mut out = match clip {
+        Some(plot) => clip_marks(vec![group], plot),
+        None => vec![group],
+    };
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), None, horizontal);
-        paint_layer_value_labels(svg, style, &marks, link.map(|link| link.open).unwrap_or_default())?;
+        out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
     }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_scatter_layer_marks(
+    svg: &mut String,
+    l: &OverlayScatterLayer,
+    rows: &[serde_json::Map<String, Value>],
+    size: f64,
+    layer_index: usize,
+    horizontal: bool,
+    x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
+    label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
+    y_of: impl Fn(f64) -> f64,
+    aria_of: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
+    color: PointColor,
+    canvas: &str,
+    board_style: Option<&crate::BoardStyle>,
+    describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
+    link: Option<&crate::href::DatumLink>,
+    clip: Option<(f64, f64)>,
+) -> Result<(), String> {
+    let nodes = scatter_layer_marks(
+        l, rows, size, layer_index, horizontal, x_of, label_x_of, y_of, aria_of, color, canvas, board_style,
+        describe_label, link, clip,
+    )?;
+    svg.push_str(&print::print(&nodes));
     Ok(())
 }
 
@@ -1941,10 +1983,20 @@ pub(crate) struct OverlayBarLayer {
     pub label: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    /// The color a layer with no `color` paints on the shared scale, baked at resolve.
+    #[serde(default)]
+    pub ink: Option<String>,
+    /// The color each value of a layer's own `color` paints, baked at resolve.
+    #[serde(default)]
+    pub series_inks: HashMap<String, String>,
     #[serde(default)]
     pub query_name: Option<String>,
     #[serde(default)]
     pub label_is_house: bool,
+    /// False when the layer declines its legend entry: it still claims its color
+    /// and paints, and only the entry is dropped.
+    #[serde(default = "entry_by_default")]
+    pub legend: bool,
 }
 
 impl OverlayBarLayer {
@@ -1960,6 +2012,10 @@ pub(crate) enum OverlayLayer {
     Bar(Box<OverlayBarLayer>),
     Line(Box<OverlayLineLayer>),
     Scatter(Box<OverlayScatterLayer>),
+}
+
+fn entry_by_default() -> bool {
+    true
 }
 
 /// The mark family of a layer.
@@ -2017,6 +2073,30 @@ impl OverlayLayer {
             OverlayLayer::Bar(l) => l.query_name.as_deref(),
             OverlayLayer::Line(l) => l.query_name.as_deref(),
             OverlayLayer::Scatter(l) => l.query_name.as_deref(),
+        }
+    }
+
+    pub(crate) fn ink(&self) -> Option<&str> {
+        match self {
+            OverlayLayer::Bar(l) => l.ink.as_deref(),
+            OverlayLayer::Line(l) => l.ink.as_deref(),
+            OverlayLayer::Scatter(l) => l.ink.as_deref(),
+        }
+    }
+
+    pub(crate) fn legend(&self) -> bool {
+        match self {
+            OverlayLayer::Bar(l) => l.legend,
+            OverlayLayer::Line(l) => l.legend,
+            OverlayLayer::Scatter(l) => l.legend,
+        }
+    }
+
+    pub(crate) fn series_inks(&self) -> &HashMap<String, String> {
+        match self {
+            OverlayLayer::Bar(l) => &l.series_inks,
+            OverlayLayer::Line(l) => &l.series_inks,
+            OverlayLayer::Scatter(l) => &l.series_inks,
         }
     }
 
@@ -2286,27 +2366,47 @@ pub(crate) fn clamp_unless_clipped(position: f64, extent: f64, clipped: bool) ->
     if clipped { position } else { position.clamp(0.0, extent) }
 }
 
-/// Wraps what `svg` gained since `from` in the plot clip (`clip: true` on a line or scatter layer).
-pub(crate) fn clip_marks_from(svg: &mut String, from: usize, (plot_w, plot_h): (f64, f64)) {
+/// `marks` in the plot clip (`clip: true` on a line or scatter layer).
+pub(crate) fn clip_marks(marks: Vec<Node>, (plot_w, plot_h): (f64, f64)) -> Vec<Node> {
     let id = format!("dbt-area-clip-{plot_w}-{plot_h}");
-    let open = format!("<clipPath id=\"{id}\"><rect width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath><g clip-path=\"url(#{id})\">");
-    svg.insert_str(from, &open);
-    svg.push_str("</g>");
+    vec![
+        Node::ClipPath {
+            attrs: Attrs::new().set("id", id.as_str()),
+            children: vec![Node::Rect(Attrs::new().set("width", plot_w.to_string()).set("height", plot_h.to_string()))],
+        },
+        Node::group(Attrs::new().set("clip-path", format!("url(#{id})")), marks),
+    ]
 }
 
-/// Opens the plot-sized clip a layer's marks paint under (`clip: true`); close it
-/// with `</g>`. The id names the plot box and carries the chart's namespace suffix,
-/// as every id production mints does (`_namespace_svg_ids`).
-pub(crate) fn clip_open(svg: &mut String, (plot_w, plot_h): (f64, f64), chart_id: &str) {
-    let id = format!("dbt-layer-clip-{plot_w}-{plot_h}-{}", crate::contract::safe_svg_id(chart_id));
-    // One definition per id: a second clipped layer of the same plot reuses it.
-    if !svg.contains(&format!("<clipPath id=\"{id}\">")) {
-        let _ = std::fmt::Write::write_fmt(
-            svg,
-            format_args!("<clipPath id=\"{id}\"><rect x=\"0\" y=\"0\" width=\"{plot_w}\" height=\"{plot_h}\"/></clipPath>"),
-        );
+/// The id of the plot-sized clip a layer's marks paint under (`clip: true`): it names the
+/// plot box and carries the chart's namespace suffix, as every id production mints does
+/// (`_namespace_svg_ids`).
+pub(crate) fn layer_clip_id((plot_w, plot_h): (f64, f64), chart_id: &str) -> String {
+    format!("dbt-layer-clip-{plot_w}-{plot_h}-{}", crate::contract::safe_svg_id(chart_id))
+}
+
+/// `children` under the layer clip `id`, defining it first unless `defined`: a second
+/// clipped layer of the same plot reuses the definition.
+pub(crate) fn layer_clip_group(id: &str, (plot_w, plot_h): (f64, f64), defined: bool, children: Vec<Node>) -> Vec<Node> {
+    let group = Node::group(Attrs::new().set("clip-path", format!("url(#{id})")), children);
+    if defined {
+        return vec![group];
     }
-    let _ = std::fmt::Write::write_fmt(svg, format_args!("<g clip-path=\"url(#{id})\">"));
+    let clip = Node::ClipPath {
+        attrs: Attrs::new().set("id", id),
+        children: vec![Node::Rect(
+            Attrs::new().set("x", "0").set("y", "0").set("width", plot_w.to_string()).set("height", plot_h.to_string()),
+        )],
+    };
+    vec![clip, group]
+}
+
+/// Opens the layer clip for a caller that writes the marks as markup itself; close it with `</g>`.
+pub(crate) fn clip_open(svg: &mut String, plot: (f64, f64), chart_id: &str) {
+    let id = layer_clip_id(plot, chart_id);
+    let defined = svg.contains(&format!("<clipPath id=\"{id}\">"));
+    let printed = print::print(&layer_clip_group(&id, plot, defined, Vec::new()));
+    svg.push_str(printed.strip_suffix("</g>").expect("a childless group prints its end tag"));
 }
 
 /// One rect of a bar layer: spanning `from..to` on the value scale at its row's x.
@@ -2360,35 +2460,63 @@ pub(crate) fn bar_layer_marks<'a>(
         .collect()
 }
 
+/// The annotation y map of each `layers:` entry: its own scale once any layer
+/// pins a side (`own` then holds one axis per layer), else the base's.
+pub(crate) fn layer_y_maps(base: &crate::annotation::AxisMap, own: &[LayerAxis], layers: usize, plot_h: f64) -> Vec<crate::annotation::AxisMap> {
+    (0..layers)
+        .map(|i| {
+            own.get(i).map_or_else(
+                || base.clone(),
+                |la| crate::annotation::AxisMap::Linear { domain: (la.domain_min, la.domain_max), range: (plot_h, 0.0) },
+            )
+        })
+        .collect()
+}
+
 /// Each layer axis's own grid, over the base axis's theme style: the rungs of its
 /// own ladder, rounded like the base's.
-pub(crate) fn paint_layer_grids(
-    svg: &mut String,
+pub(crate) fn layer_grids(
     layer_axes: &[LayerAxis],
     ax_y: &crate::common::AxisStyle,
     (plot_w, plot_h): (f64, f64),
     family: &str,
-) -> Result<(), String> {
+) -> Result<Vec<Node>, String> {
+    let mut groups = Vec::new();
     for la in layer_axes.iter().filter(|la| la.grid_visible) {
-        crate::contract::grid_group_open(svg);
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), family, "axis_y.grid.color")?;
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
         let scale = la.scale(plot_h);
-        for &tv in &la.tick_values {
-            let gy = scale.position(tv).round() + 0.5;
-            let _ = std::fmt::Write::write_fmt(
-                svg,
-                format_args!(
-                    "<line x1=\"0.5\" y1=\"{gy:.3}\" x2=\"{:.3}\" y2=\"{gy:.3}\" \
-                     stroke=\"{}\" stroke-width=\"{gw}\" opacity=\"{go}\"/>",
-                    plot_w + 0.5,
-                    xml_escape_attr(gc)
-                ),
-            );
-        }
-        crate::contract::grid_group_close(svg);
+        let lines = la
+            .tick_values
+            .iter()
+            .map(|&tv| {
+                let gy = scale.position(tv).round() + 0.5;
+                Node::Line(
+                    Attrs::new()
+                        .set("x1", "0.5")
+                        .set("y1", format!("{gy:.3}"))
+                        .set("x2", format!("{:.3}", plot_w + 0.5))
+                        .set("y2", format!("{gy:.3}"))
+                        .set("stroke", gc)
+                        .set("stroke-width", gw.to_string())
+                        .set("opacity", go.to_string()),
+                )
+            })
+            .collect();
+        groups.push(crate::contract::grid_group(lines));
     }
+    Ok(groups)
+}
+
+pub(crate) fn paint_layer_grids(
+    svg: &mut String,
+    layer_axes: &[LayerAxis],
+    ax_y: &crate::common::AxisStyle,
+    plot: (f64, f64),
+    family: &str,
+) -> Result<(), String> {
+    svg.push_str(&print::print(&layer_grids(layer_axes, ax_y, plot, family)?));
     Ok(())
 }
 
@@ -2588,6 +2716,7 @@ impl<'a> ScaledLayer<'a> {
                 ),
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let tick_labels = tick_labels.iter().map(|label| ax_y.labels.cased(label)).collect::<Result<Vec<_>, _>>()?;
         // The layer axis is the bare `axis_to_vl(axis_y)` template: it never
         // routes through `measure_axis_to_vl`'s own-side gutter, so its
         // `labelPadding` stays the theme's flat value and the gutter is the
@@ -2665,59 +2794,67 @@ pub(crate) struct LayerAxisInk<'a> {
 /// padding past the edge (and a visible tick's length), a left one
 /// end-anchors them — never the base's flip-aligned gutter law. An empty
 /// title draws nothing.
-pub(crate) fn paint_layer_axis(
-    svg: &mut String,
+pub(crate) fn layer_axis(
     la: &LayerAxis,
     scale: &crate::families::cartesian::LinearScale,
     edge_x: f64,
     (top, bottom): (f64, f64),
     ink: &LayerAxisInk,
     title_key: Option<crate::contract::LabelKey>,
-) -> Result<(), String> {
+) -> Result<Vec<Node>, String> {
     let (outward, anchor) = match la.side {
         LayerSide::Right => (1.0, "start"),
         LayerSide::Left => (-1.0, "end"),
     };
     let label_x = edge_x + outward * la.label_offset;
     let title_x = edge_x + outward * la.gutter;
-    crate::contract::axis_group_open(svg, crate::contract::AxisChannel::Y, &la.caption, (edge_x, top))?;
+    let mut items = Vec::new();
     for (&tv, label) in la.tick_values.iter().zip(&la.tick_labels) {
         let tick_y = top + scale.position(tv) + 0.5;
         if tick_y < top - 1.0 || tick_y > bottom + 1.0 {
             continue;
         }
-        crate::common::emit_value_ticks(
-            svg,
+        items.extend(crate::common::value_ticks(
             ink.ticks,
             (ink.tick_size > 0.0).then(|| crate::common::tick_row(top, scale.position(tv))),
             edge_x,
             outward,
             ink.tick_size,
-        )?;
+        )?);
         let y = tick_y + measure::baseline_shift("middle", ink.font_size);
-        let _ = std::fmt::Write::write_fmt(
-            svg,
-            format_args!(
-                "<text x=\"{label_x:.2}\" y=\"{y:.2}\" text-anchor=\"{anchor}\" \
-                 font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                print::vega_escape_attr(ink.font_family),
-                ink.font_size,
-                xml_escape_attr(ink.font_weight),
-                xml_escape_attr(ink.font_color),
-                print::xml_escape(label),
-            ),
-        );
+        items.push(Node::text(
+            Attrs::new()
+                .set("x", format!("{label_x:.2}"))
+                .set("y", format!("{y:.2}"))
+                .set("text-anchor", anchor)
+                .vega("font-family", ink.font_family)
+                .set("font-size", ink.font_size.to_string())
+                .set("font-weight", ink.font_weight)
+                .set("fill", ink.font_color),
+            label.as_str(),
+        ));
     }
-    crate::common::emit_axis_title_rotated(
-        svg,
+    items.extend(crate::common::axis_title_rotated(
         &la.title_text,
         ink.title_style,
         title_x,
         top + (bottom - top) / 2.0,
         outward,
         title_key,
-    );
-    crate::contract::axis_group_close(svg);
+    ));
+    crate::contract::axis_group(crate::contract::AxisChannel::Y, &la.caption, (edge_x, top), items)
+}
+
+pub(crate) fn paint_layer_axis(
+    svg: &mut String,
+    la: &LayerAxis,
+    scale: &crate::families::cartesian::LinearScale,
+    edge_x: f64,
+    extent: (f64, f64),
+    ink: &LayerAxisInk,
+    title_key: Option<crate::contract::LabelKey>,
+) -> Result<(), String> {
+    svg.push_str(&print::print(&layer_axis(la, scale, edge_x, extent, ink, title_key)?));
     Ok(())
 }
 
@@ -2770,7 +2907,7 @@ fn defined_domain_order(values: &[String]) -> Option<Vec<String>> {
 
 /// `extend_domain_in_base_order`: `base + extra` in the order `base` itself
 /// states, ascending or descending, or `None` when it states none.
-fn extend_domain_in_base_order(base: &[String], extra: &[String]) -> Option<Vec<String>> {
+pub(crate) fn extend_domain_in_base_order(base: &[String], extra: &[String]) -> Option<Vec<String>> {
     let ordered = defined_domain_order(base)?;
     let ascending = if base == ordered.as_slice() {
         true
@@ -2917,7 +3054,7 @@ mod tests {
                     "type": "scatter",
                     "point_mark": {"size": 50.0, "stroke_width": 1.0, "labels": {"visible": false}},
                     "axis_y": {"position": position},
-                    "x": null, "y": "y", "label": null, "color": null, "query_name": null,
+                    "x": null, "y": "y", "label": null, "color": null, "ink": "#779bc9", "query_name": null,
                 }),
                 "test",
             )
@@ -3013,9 +3150,8 @@ mod tests {
                 format!("<circle transform=\"translate(10.000,20.000)\" r=\"4.000\" fill=\"#fff\" stroke=\"#111\" stroke-width=\"2\" opacity=\"1\"{described}/>"),
             ),
         ] {
-            let mut svg = String::new();
-            paint_overlay_point(&mut svg, &point_mark(filled), 10.0, 20.0, 4.0, "#111", "#fff", Some("a: 1")).unwrap();
-            assert_eq!(svg, want);
+            let point = overlay_point(&point_mark(filled), 10.0, 20.0, 4.0, "#111", "#fff", Some("a: 1")).unwrap();
+            assert_eq!(print::print(&[point]), want);
         }
     }
 
@@ -3087,6 +3223,34 @@ mod tests {
         assert_eq!(title(true, &["seg"], true), "Base");
         assert_eq!(title(false, &[], true), "Base");
         assert_eq!(title(false, &["seg"], false), "Base", "a hidden title stays the base's own empty one");
+    }
+
+    /// A layer that declines its legend entry keeps its claim on the scale, so
+    /// its marks paint their own color, and draws no entry; the layers around it
+    /// keep theirs in authored order.
+    #[test]
+    fn a_declined_claim_keeps_its_color_and_drops_only_its_entry() {
+        let mut scale = LayerScale::new(&[("A".to_string(), "#aaa".to_string())], false);
+        scale.claim("B", "#bbb");
+        let mark = scale.claimed();
+        scale.claim("C", "#ccc");
+        scale.decline_since(mark);
+        scale.claim("D", "#ddd");
+        assert_eq!(scale.color_of("C"), "#ccc");
+        assert_eq!(scale.layer_entries(), vec![("B", "#bbb"), ("D", "#ddd")]);
+    }
+
+    /// A value a declining layer introduced stays on the legend when a later layer
+    /// that keeps its entries claims it too.
+    #[test]
+    fn a_later_layer_keeping_its_entries_restores_a_declined_value() {
+        let mut scale = LayerScale::new(&[("A".to_string(), "#aaa".to_string())], false);
+        let mark = scale.claimed();
+        scale.claim("X", "#xxx");
+        scale.decline_since(mark);
+        assert!(scale.layer_entries().is_empty());
+        scale.keep_entries(&["X".to_string()]);
+        assert_eq!(scale.layer_entries(), vec![("X", "#xxx")]);
     }
 
     fn numeric_rows(values: &[Value]) -> Vec<serde_json::Map<String, Value>> {

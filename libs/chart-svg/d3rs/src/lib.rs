@@ -17,6 +17,7 @@ pub mod path;
 pub mod pie;
 pub mod predefined_formats;
 pub mod py_float;
+pub mod py_str;
 pub mod sankey;
 pub mod sankey_circular;
 pub mod scale;

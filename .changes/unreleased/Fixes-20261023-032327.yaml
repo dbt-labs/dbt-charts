@@ -1,0 +1,3 @@
+kind: Fixes
+body: Scatter charts no longer print an axis title under a date x axis unless you set x_label.
+time: 2026-10-23T03:23:27.583084-07:00

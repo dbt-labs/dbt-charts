@@ -8,7 +8,7 @@
 use serde_json::{Map, Value};
 
 use crate::common::is_text_format;
-use mdsvg::pygments_re::is_py_space;
+use d3rs::py_str::is_py_space;
 
 type Row = Map<String, Value>;
 

@@ -677,6 +677,17 @@ class SnowflakeSourceConfig(AttributedSourceConfig, DatabaseSourceConfig):
         str | None,
         Field(description="Private VPC endpoint DNS name for S3 staging."),
     ] = None
+    workload_identity_provider: Annotated[
+        str | None,
+        Field(
+            description="Workload identity provider (AWS, AZURE, GCP, or OIDC) "
+            "for the workload_identity authenticator."
+        ),
+    ] = None
+    workload_identity_entra_resource: Annotated[
+        str | None,
+        Field(description="Entra ID resource for Azure workload identity."),
+    ] = None
     platform_detection_timeout_seconds: Annotated[
         float,
         Field(description="Timeout for Snowflake platform detection."),

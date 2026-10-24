@@ -4,6 +4,7 @@
 
 use super::tests::{base_table_theme, resolved_title_font, resolved_title_style};
 use super::*;
+use super::bind::pivot_table_data;
 use serde_json::json;
 
 fn test_fonts() -> FontBook {

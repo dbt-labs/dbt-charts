@@ -14,11 +14,11 @@
 //! variable substitution, the case transform, markdown assembly, and the
 //! authoring-tag wrapper.
 
-use mdsvg::fonts::FontSlots;
 use mdsvg::style::Style;
 use mdsvg::types::{
     AnyBlock, Document, Heading, OrderedList, Paragraph, Span, SpanType, UnorderedList,
 };
+use measure::fonts::FontSlots;
 use serde_json::Value;
 
 use crate::board::{padded_authoring_content, px};
@@ -356,9 +356,9 @@ pub fn render_title_svg(
     let blocks = resolved_title_blocks(title, variables, title_case)?;
     let family = style.font_family.clone();
     let renderer = mdsvg::renderer::SVGRenderer::new(style, fonts)?;
-    let svg = renderer.render(&blocks, width, 0.0)?;
+    let svg = renderer.render_content(&blocks, width, 0.0)?.svg();
     record_painted_italics(sink, &family, &renderer.used_fonts());
-    Ok(svg)
+    Ok(print::print(&[svg]))
 }
 
 /// `boards.py::_paint_title_svg_fill`: force every `<text>` — and any
@@ -456,7 +456,9 @@ pub fn get_title_height(
     fonts: FontSlots,
 ) -> Result<f64, String> {
     let blocks = resolved_title_blocks(title, variables, title_case)?;
-    Ok(mdsvg::renderer::SVGRenderer::new(style, fonts)?.measure(&blocks, width, 0.0)?.height)
+    Ok(mdsvg::renderer::SVGRenderer::new(style, fonts)?
+        .render_content(&blocks, width, 0.0)?
+        .height)
 }
 
 /// `markdown_style.py::title_max_content_width`: the width the title needs to

@@ -18,6 +18,11 @@ Included assets:
     the browser paints from the woff2 below.
   - Source: https://github.com/google/fonts/blob/main/ofl/inter/Inter-Italic%5Bopsz%2Cwght%5D.ttf
   - SHA-256: `acd98e64795781b2058f07b18475e0ecee2a0fe2b42a49e2f9e37d0d6bf66ce6`
+    (upstream). `just rebuild-weight-faces` renames the vendored copy from
+    `Inter` to `Inter Variable` (style `Italic`, PostScript
+    `InterVariable-Italic`) — the family `font_support` rewrites `Inter` to for
+    vl-convert. Under the upstream name no family held both faces, so every
+    italic Inter request rasterized upright. Run it after re-vendoring.
 - `InterVariable.woff2`, `InterVariable-Italic.woff2`
   - The served web fonts, subsetted to the shared text recipe (see "The subset
     recipe" below) and committed alongside the source TTFs. Rebuild both with
@@ -27,6 +32,13 @@ Included assets:
     families. Same vl-convert-only role and mechanism as the Source Serif
     Medium/SemiBold pair below — see "Select figure style by family". Built
     with `just rebuild-weight-faces`.
+- `InterVariable-MediumItalic.ttf`, `InterVariable-SemiBoldItalic.ttf`,
+  `SourceSerif4-MediumItalic.ttf`, `SourceSerif4-SemiBoldItalic.ttf`
+  - Static wght=500/600 instances of the two vendored italics, named into the
+    same alias family as their upright sibling (`Inter Variable Medium` Italic,
+    `dbt Serif SemiBold` Italic, …). resvg never synthesizes an oblique, so
+    without them the weight rewrite drops `font-style: italic` on the floor.
+    Built with `just rebuild-weight-faces`.
 - `DBTSansTabular-Regular.ttf`
   - In-house numeric companion font (derived from InterVariable) used for tabular figures and
     chart value labels. Variable font with wght axis 100–900 (default 400),

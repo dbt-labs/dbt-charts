@@ -1,0 +1,2 @@
+{"id": "104", "model": "sales", "view": "v104", "fields": ["v104.id"], "pivots": null, "filters": null,
+ "dynamic_fields": null, "vis_config": {"type": "looker_grid"}, "query_timezone": null}

@@ -1,0 +1,3 @@
+kind: Features
+body: Serve every board in a project as one Streamlit app with `st_project()`, navigated like `dct serve`.
+time: 2026-10-22T21:38:44.533503-07:00

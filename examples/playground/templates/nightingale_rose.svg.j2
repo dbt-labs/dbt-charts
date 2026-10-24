@@ -96,7 +96,7 @@ options:
     {% set am = (a0 + a1) / 2 %}
     {% set top = radius(wedges | map(attribute="v") | max) %}
     {% set lr = [top, r_max * label_floor] | max + small * 1.1 %}
-    <text x="{{ (cx + lr * math.sin(am))|round(1) }}" y="{{ (cy - lr * math.cos(am))|round(1) }}" dy="0.35em" text-anchor="middle" font-size="{{ small }}" fill="{{ style.muted }}">{{ r[label_col] }}</text>
+    <text x="{{ (cx + lr * math.sin(am))|round(1) }}" y="{{ (cy - lr * math.cos(am))|round(1) }}" dy="0.35em" text-anchor="middle" font-size="{{ small }}" fill="{{ style.fonts.secondary.color }}">{{ r[label_col] }}</text>
   {% endfor %}
   {% if p.panel %}
   <text x="{{ cx|round(1) }}" y="{{ (ph + size)|round(1) }}" text-anchor="middle" font-size="{{ size }}" fill="{{ style.font.color }}">{{ key }}</text>

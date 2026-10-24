@@ -2,10 +2,8 @@
 //! `vega-scenegraph` draws for each of its names, and the legend Vega draws
 //! for a shape encoding that carries no legend config.
 
-use std::fmt::Write as _;
-
 use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
-use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use scene::{Attrs, Node};
 use measure::FontBook;
 use crate::Payload;
 use measure::baseline_shift;
@@ -78,9 +76,9 @@ pub fn half_extents(symbol: &str, r: f64) -> Bounds {
     Bounds { x, up, down, sharp: symbol == "wedge" }
 }
 
-/// The attribute a stroked glyph of these bounds carries.
-pub fn miter_attr(bounds: Bounds) -> &'static str {
-    if bounds.sharp { " stroke-miterlimit=\"10\"" } else { "" }
+/// The `stroke-miterlimit` a stroked glyph of these bounds carries.
+pub fn miter_limit(bounds: Bounds) -> Option<&'static str> {
+    bounds.sharp.then_some("10")
 }
 
 /// The SVG path `vega-scenegraph/src/path/symbols.js` draws for `symbol` at
@@ -221,49 +219,57 @@ impl ShapeLegend {
     }
 
     /// Paints the legend at `(x, y)` with `opacity` the mark's own.
-    pub fn paint(
-        &self,
-        svg: &mut String,
-        x: f64,
-        y: f64,
-        fill: SymbolFill,
-        opacity: f64,
-    ) {
-        let fill_attrs = match fill {
-            SymbolFill::Static(color) => format!("fill=\"{}\"", xml_escape_attr(color)),
-            SymbolFill::Field => "fill=\"black\" fill-opacity=\"1\"".to_string(),
-            SymbolFill::Ring { interior, stroke } => format!(
-                "fill=\"{}\"{}",
-                xml_escape_attr(interior),
-                stroke.map(|s| format!(" stroke=\"{}\"", xml_escape_attr(s))).unwrap_or_default()
-            ),
+    pub fn paint(&self, svg: &mut String, x: f64, y: f64, fill: SymbolFill, opacity: f64) {
+        svg.push_str(&print::print(&self.nodes(x, y, fill, opacity)));
+    }
+
+    /// [`Self::paint`] as nodes.
+    pub fn nodes(&self, x: f64, y: f64, fill: SymbolFill, opacity: f64) -> Vec<Node> {
+        let symbol_fill = |attrs: Attrs| match fill {
+            SymbolFill::Static(color) => attrs.set("fill", color),
+            SymbolFill::Field => attrs.set("fill", "black").set("fill-opacity", "1"),
+            SymbolFill::Ring { interior, stroke } => {
+                let attrs = attrs.set("fill", interior);
+                match stroke {
+                    Some(stroke) => attrs.set("stroke", stroke),
+                    None => attrs,
+                }
+            }
         };
-        let family = vega_escape_attr(&self.family);
-        let _ = write!(
-            svg,
-            "<text x=\"{x:.2}\" y=\"{:.2}\" font-family=\"{family}\" font-size=\"{TITLE_SIZE}\" \
-             font-weight=\"bold\" fill=\"{INK}\">{}</text>",
-            y + baseline_shift("top", TITLE_SIZE),
-            xml_escape(&self.title)
-        );
+        let mut nodes = vec![Node::text(
+            Attrs::new()
+                .set("x", format!("{x:.2}"))
+                .set("y", format!("{:.2}", y + baseline_shift("top", TITLE_SIZE)))
+                .vega("font-family", self.family.as_str())
+                .set("font-size", TITLE_SIZE.to_string())
+                .set("font-weight", "bold")
+                .set("fill", INK),
+            self.title.as_str(),
+        )];
         let entries_y = y + TITLE_SIZE + TITLE_PADDING;
         let c = self.grid.size / 2.0;
         for (i, (label, path)) in self.labels.iter().zip(&self.paths).enumerate() {
             let row_y = entries_y + self.grid.row_y[i];
-            let _ = write!(
-                svg,
-                "<path transform=\"translate({:.2},{:.2})\" d=\"{}\" {fill_attrs} \
-                 stroke-width=\"{SYMBOL_STROKE_WIDTH}\" opacity=\"{opacity}\"/>\
-                 <text x=\"{:.2}\" y=\"{:.2}\" font-family=\"{family}\" \
-                 font-size=\"{LABEL_SIZE}\" fill=\"{INK}\">{}</text>",
-                x + c,
-                row_y + c,
-                path,
-                x + self.grid.label_x,
-                row_y + c + baseline_shift("middle", LABEL_SIZE),
-                xml_escape(label)
-            );
+            nodes.push(Node::Path(
+                symbol_fill(
+                    Attrs::new()
+                        .set("transform", format!("translate({:.2},{:.2})", x + c, row_y + c))
+                        .set("d", path.as_str()),
+                )
+                .set("stroke-width", SYMBOL_STROKE_WIDTH.to_string())
+                .set("opacity", opacity.to_string()),
+            ));
+            nodes.push(Node::text(
+                Attrs::new()
+                    .set("x", format!("{:.2}", x + self.grid.label_x))
+                    .set("y", format!("{:.2}", row_y + c + baseline_shift("middle", LABEL_SIZE)))
+                    .vega("font-family", self.family.as_str())
+                    .set("font-size", LABEL_SIZE.to_string())
+                    .set("fill", INK),
+                label.as_str(),
+            ));
         }
+        nodes
     }
 }
 

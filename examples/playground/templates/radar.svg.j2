@@ -64,7 +64,7 @@ options:
 {% for k in range(1, p.rings + 1) %}
   {% set rr = radial(top * k / p.rings) %}
   <polygon points="{% for i in range(n) %}{{ pt(i, rr) }} {% endfor %}" fill="none" stroke="{{ style.charts.axis.grid.color }}"/>
-  <text x="{{ (cx + 4)|round(1) }}" y="{{ (cy - rr)|round(1) }}" dy="-0.3em" font-size="{{ small }}" fill="{{ style.muted }}">{{ (top * k / p.rings) | format(p.value_format) }}</text>
+  <text x="{{ (cx + 4)|round(1) }}" y="{{ (cy - rr)|round(1) }}" dy="-0.3em" font-size="{{ small }}" fill="{{ style.fonts.secondary.color }}">{{ (top * k / p.rings) | format(p.value_format) }}</text>
 {% endfor %}
 {% for a in ns.axes %}
   {% set i = loop.index0 %}

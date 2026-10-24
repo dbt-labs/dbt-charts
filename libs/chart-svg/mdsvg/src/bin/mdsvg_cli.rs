@@ -31,8 +31,8 @@
 
 use std::io::{Read, Write};
 
-use mdsvg::fonts::FontSlots;
 use mdsvg::style::Style;
+use measure::fonts::FontSlots;
 
 #[derive(serde::Deserialize)]
 struct CliRequest {
@@ -77,14 +77,14 @@ fn dump_east_asian_ranges() -> ! {
             }
             continue;
         };
-        if mdsvg::fonts::is_wide_east_asian(ch) {
+        if measure::fonts::is_wide_east_asian(ch) {
             if wide_start.is_none() {
                 wide_start = Some(cp);
             }
         } else if let Some(start) = wide_start.take() {
             wide_ranges.push((start, cp - 1));
         }
-        if mdsvg::fonts::is_zero_advance_wide_mark(cp) {
+        if measure::fonts::is_zero_advance_wide_mark(cp) {
             zero_marks.push(cp);
         }
     }
@@ -197,15 +197,16 @@ fn main() {
         Err(e) => fail(e),
     };
 
+    let laid_out = || renderer.render_content(&blocks, request.width, request.padding);
     match request.mode.as_str() {
-        "render" => match renderer.render(&blocks, request.width, request.padding) {
-            Ok(svg) => print!("{svg}"),
+        "render" => match laid_out() {
+            Ok(result) => print!("{}", print::print(&[result.svg()])),
             Err(e) => fail(e),
         },
-        "measure" => match renderer.measure(&blocks, request.width, request.padding) {
-            Ok(size) => print!(
+        "measure" => match laid_out() {
+            Ok(result) => print!(
                 "{}",
-                serde_json::json!({"width": size.width, "height": size.height})
+                serde_json::json!({"width": result.width, "height": result.height})
             ),
             Err(e) => fail(e),
         },

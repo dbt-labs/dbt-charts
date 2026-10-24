@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -17,6 +17,12 @@ from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedAreaStyle,
     ResolvedPointLabels,
+)
+from dbt_charts.core.compile.resolve.chart._annotations import (
+    NO_ANNOTATIONS,
+    annotation_chart,
+    point_radius,
+    resolve_annotations,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_orient,
@@ -42,7 +48,6 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _bake_y_zero,
     _CartesianTickResolution,
     _check_bar_layer_spans,
-    _numeric_y_values,
     _reject_non_positive_log_layer_data,
     _reject_non_positive_log_scale_data,
     _resolve_cartesian_ticks,
@@ -58,6 +63,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
+    _resolve_layer_inks,
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
@@ -245,6 +251,7 @@ def _resolve_area(
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
     x_date_range: tuple[date, date] | None,
+    rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedAreaChart:
     data = dataset.all_rows()
@@ -285,8 +292,49 @@ def _resolve_area(
     area = chart_local_style_context.area
     primary = plan.primary
     channels = plan.channels
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
+    measure_tooltip_format = _measure_tooltip_format(
+        normalized, primary, chart_style_context, values=tooltip_format_values
+    )
+    single_series_fill = _effective_single_series_fill(
+        chart_style_context,
+        primary,
+        rhythm_slot=normalized.rhythm_slot,
+        has_layers=bool(normalized.layers),
+    )
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "area", has_layers=bool(normalized.layers)
+    )
+    inks = _resolve_layer_inks(
+        normalized,
+        chart_style_context,
+        area,
+        primary,
+        channels,
+        data,
+        datasets,
+        single_series_fill,
+        measure_quantitative=True,
+    )
+    annotations = (
+        NO_ANNOTATIONS
+        if rendered_at is None or not normalized.annotations
+        else resolve_annotations(
+            normalized.annotations,
+            annotation_chart(
+                normalized,
+                x_ch_type,
+                "quantitative",
+                resolved_stack not in (None, "none"),
+                single_series_fill,
+                False,
+                inks,
+            ),
+            dataset,
+            datasets,
+            chart_local_style_context,
+            rendered_at,
+        )
     )
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
@@ -348,7 +396,7 @@ def _resolve_area(
     )
     ay_merged = plan.axes.y.style
     y_field_area = normalized.y if isinstance(normalized.y, str) else None
-    _area_floats = _zero_anchor_floats(normalized.y, data)
+    _area_floats = _zero_anchor_floats(normalized.y, data) + list(annotations.y_values)
     ay_merged = _bake_ay_orient(
         ay_merged,
         channels,
@@ -448,7 +496,7 @@ def _resolve_area(
         # they all share this one axis_y scale.
         _log_y_floats = [
             v for field in _log_y_fields for v in numeric_column_values(data, field)
-        ]
+        ] + [v for v in annotations.y_values if v > 0]
         if _log_y_floats and ay_merged.scale is not None:
             _new_cont = _ay_cont_log.model_copy(
                 update={"domain": [min(_log_y_floats), max(_log_y_floats)]}
@@ -508,8 +556,9 @@ def _resolve_area(
     else:
         area_y_values = (
             _shared_y_values(data, y_field_area, normalized, datasets)
+            + list(annotations.y_values)
             if y_field_area
-            else _numeric_y_values(data, tuple(_log_y_fields))
+            else _area_floats
         )
         area_ticks = _resolve_cartesian_ticks(
             normalized.id,
@@ -528,7 +577,6 @@ def _resolve_area(
     # No tick_values on the categorical axis -- the non-compacting bake
     # can't fire regardless, but the format is required, not defaulted
     # (see build_resolved_axis's docstring).
-    tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, area_style_tail = build_cartesian_axes(
         normalized.id,
         "area",
@@ -540,9 +588,7 @@ def _resolve_area(
             area_ticks.ticks, area_domain_max, area_domain_min
         ),
         column_forming=True,
-        measure_tooltip_format=_measure_tooltip_format(
-            normalized, primary, chart_style_context, values=tooltip_format_values
-        ),
+        measure_tooltip_format=measure_tooltip_format,
         tooltip_format_values=tooltip_format_values,
         # Area semantics fix x=dimension, y=value -- see _validate_area_encoding.
         ax_is_quantitative=x_ch_type == "quantitative",
@@ -696,6 +742,7 @@ def _resolve_area(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        inks,
         normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
@@ -710,6 +757,9 @@ def _resolve_area(
         stacked=False,
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
+    area_point_mark = _resolved_point_mark(
+        area.marks.point, chart_style_context.formats, tooltip_format_values
+    )
     return ResolvedAreaChart(
         **bkw,
         **_ck,
@@ -727,16 +777,9 @@ def _resolve_area(
             stack_order=area.stack_order,
             area_mark=resolved_area_mark,
             line_mark=resolved_line_mark,
-            point_mark=_resolved_point_mark(
-                area.marks.point, chart_style_context.formats, tooltip_format_values
-            ),
+            point_mark=area_point_mark,
             endpoint_labels=endpoint_labels,
-            single_series_fill=_effective_single_series_fill(
-                chart_style_context,
-                primary,
-                rhythm_slot=normalized.rhythm_slot,
-                has_layers=bool(normalized.layers),
-            ),
+            single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             dashes=chart_style_context.dashes,
             title_font=_tf,
@@ -744,4 +787,11 @@ def _resolve_area(
             **area_style_tail,
         ),
         layers=resolved_layers,
+        annotations=annotations.render(
+            ay,
+            area_style_tail["axis_x"],
+            resolved_layers,
+            point_radius(area_point_mark.size),
+        ),
+        annotation_gaps=annotations.gaps,
     )

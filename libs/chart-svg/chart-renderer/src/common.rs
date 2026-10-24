@@ -11,6 +11,7 @@ use crate::diagnostic::Diagnostic;
 use crate::number_locale::active_number_locale;
 use print::xml_escape_attr;
 use measure::FontBook;
+use scene::{Attrs, Chars, Escape, Node, TextBlock};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -127,21 +128,6 @@ pub fn resolve_stroke_cap<'a>(cap: Option<&'a str>, disconnected: bool, disconne
     }
 }
 
-/// The font file production's `get_font_path` measures a family with:
-/// Source Serif keeps its own file, every other family measures as Inter
-/// (the sans stand-in — labels may PAINT in another family, e.g. dbt Sans
-/// Tabular, but production-baked gutters were sized with Inter advances).
-/// Shared by table.rs's column demands and bar.rs's value-label gutter.
-pub fn measure_family_stand_in(family: &str) -> &str {
-    if family.contains("Source Serif") {
-        // The `Web` alias is a paint-time CSS font name; production measures the
-        // bundled file under the authored family.
-        family.strip_prefix("'Source Serif 4 Web', ").unwrap_or(family)
-    } else {
-        "Inter"
-    }
-}
-
 /// The baked rungs inside the baked domain — production's
 /// `ResolvedAxisStyle.drawn_tick_values` (`axis_cascade.py`), the ladder its
 /// ruler anchor and its measured `labelPadding` read. A rung a merged scale's
@@ -157,7 +143,7 @@ pub fn drawn_tick_values(ax: &AxisStyle) -> Vec<f64> {
 
 /// Production's weighted measurer, `get_weighted_font_measurer(family,
 /// css_weight).measure(text, size)` (`font_measure.py:133-169`): the family
-/// resolves through the same file `measure_family_stand_in` names, instanced at
+/// resolves through the same file `measure::stand_in_family` names, instanced at
 /// the painted CSS weight. A width production bakes into its own layout is
 /// measured this way; a width Vega measures stays on `FontBook::measure`,
 /// which vl-convert does not re-instance.
@@ -170,9 +156,9 @@ pub fn measure_at_css_weight(
 ) -> Result<f64, String> {
     fonts.measure_at_weight(
         text,
-        measure_family_stand_in(family),
+        measure::stand_in_family(family),
         size,
-        mdsvg::fonts::css_weight_axis(css_weight)?,
+        measure::fonts::css_weight_axis(css_weight)?,
     )
 }
 
@@ -496,6 +482,11 @@ pub struct MirrorGhost {
     /// The authored Vega expression the ghost's labels are spoken through (`ResolvedMirrorAxis.expr`):
     /// `datum.label` is the label the ghost would otherwise draw.
     pub expr: Option<String>,
+    /// The axis's `labels.font.case`, which the ghost's labels wear like the primary's.
+    pub case: Option<String>,
+    /// The axis the ghost copies: a ghost with an `expr` and no label of its own repeats the primary's
+    /// text, and the expression reads it before the case is applied.
+    primary: Box<AxisStyle>,
 }
 
 impl MirrorGhost {
@@ -504,18 +495,48 @@ impl MirrorGhost {
     /// ([`FormatSlot::paint_tick`], `compose_axis_format`), its own ruler as
     /// `compose_axis_label_expr` does.
     pub fn labels(&self, ticks: &[f64], primary: &[String]) -> Result<Option<Vec<String>>, String> {
+        self.spoken_labels(ticks, primary)?
+            .map(|labels| labels.iter().map(|label| label_case(self.case.as_deref(), label)).collect())
+            .transpose()
+    }
+
+    fn spoken_labels(&self, ticks: &[f64], primary: &[String]) -> Result<Option<Vec<String>>, String> {
         let own = self.own_labels(ticks)?;
         let Some(src) = &self.expr else { return Ok(own) };
-        let base = own.as_deref().unwrap_or(primary);
+        let base = match own {
+            Some(own) => own,
+            None => self.uncased_primary(ticks, primary)?,
+        };
         ticks
             .iter()
-            .zip(base)
+            .zip(&base)
             .enumerate()
             .map(|(i, (&tv, label))| {
                 crate::labels_expr::speak_value("y", src, tv, label, i, ticks.len()).map_err(|e| format!("axis_y.mirror.expr: {e}"))
             })
             .collect::<Result<_, _>>()
             .map(Some)
+    }
+
+    /// The primary's labels before `labels.font.case`, which `primary` (painted, cased) no longer shows.
+    /// A label the primary's own formatter does not reproduce (a normalized percent, a hidden log
+    /// mantissa) is carried as painted: those hold no letters for the case to change.
+    fn uncased_primary(&self, ticks: &[f64], primary: &[String]) -> Result<Vec<String>, String> {
+        let axis = &*self.primary;
+        let case = self.case.as_deref();
+        if !matches!(case, Some("upper" | "lower")) {
+            return Ok(primary.to_vec());
+        }
+        ticks
+            .iter()
+            .zip(primary)
+            .enumerate()
+            .map(|(i, (&tv, painted))| {
+                let label = format_y_label(tv, axis.ruler.as_ref(), axis.tick_label.as_ref(), axis.labels.format.as_ref(), i, ticks.len())?;
+                let raw = axis.labels.apply_expr_uncased("y", tv, label, i, ticks.len())?;
+                Ok(if label_case(case, &raw)? == *painted { raw } else { painted.clone() })
+            })
+            .collect()
     }
 
     /// The labels the ghost's own `format` or ruler bake; `None` when it repeats the primary's.
@@ -545,7 +566,10 @@ impl MirrorGhost {
 
     /// [`Self::labels`], falling back to the `primary` labels it repeats.
     pub fn texts(&self, ticks: &[f64], primary: &[String]) -> Result<Vec<String>, String> {
-        Ok(self.labels(ticks, primary)?.unwrap_or_else(|| primary.to_vec()))
+        match self.labels(ticks, primary)? {
+            Some(labels) => Ok(labels),
+            None => primary.iter().map(|label| label_case(self.case.as_deref(), label)).collect(),
+        }
     }
 
     /// The width of each ghost label, `primary_ws` when it repeats the primary's.
@@ -682,7 +706,11 @@ impl FormatSlot {
     /// `default_sign_placement` (`format_d3.py:60`): a prefix ending in
     /// whitespace is a word or code, anything else a symbol.
     pub fn default_placement(prefix: &str) -> SignPlacement {
-        if prefix.chars().next_back().is_some_and(mdsvg::pygments_re::is_py_space) {
+        if prefix
+            .chars()
+            .next_back()
+            .is_some_and(d3rs::py_str::is_py_space)
+        {
             SignPlacement::AfterPrefix
         } else {
             SignPlacement::BeforePrefix
@@ -771,7 +799,7 @@ impl FormatSlot {
     /// for them (none when the table is empty).
     fn padded_digits(&self, spec: &str, value: f64, pad_table: &[String]) -> Result<String, String> {
         let digits = self.digits(spec, self.notation.as_deref(), value)?;
-        let pad = crate::families::table::decimal_pad_for(pad_table, &digits)?;
+        let pad = crate::families::table::bind::decimal_pad_for(pad_table, &digits)?;
         Ok(format!("{digits}{pad}"))
     }
 
@@ -1400,7 +1428,7 @@ pub fn estimated_tick_label_gutter(
     } else {
         linear_tick_candidates(lo.min(0.0), hi.max(0.0))
     };
-    let measure_family = measure_family_stand_in(family);
+    let measure_family = measure::stand_in_family(family);
     let mut max_w = 0.0_f64;
     for &v in &candidates {
         let lbl = match (tick_label.filter(|tl| tl.si_format.is_some()), labels_format) {
@@ -1514,7 +1542,7 @@ pub fn format_y_label(
             // symbol and an authored affix included, then the ternary chain
             // selects table[i] on an exact match for i in 0..len-1 and the
             // LAST entry for everything else.
-            let frac = crate::families::table::count_decimals(&text) as i64;
+            let frac = crate::families::table::bind::count_decimals(&text) as i64;
             let precision = tl.decimal_pad_table.len() as i64 - 2;
             let missing = if frac == 0 { precision + 1 } else { precision - frac };
             let table = &tl.decimal_pad_table;
@@ -1851,24 +1879,38 @@ pub fn emit_value_ticks(
     outward: f64,
     len: f64,
 ) -> Result<(), String> {
+    svg.push_str(&print::print(&value_ticks(ticks, rows, edge_x, outward, len)?));
+    Ok(())
+}
+
+/// [`emit_value_ticks`] as nodes.
+pub fn value_ticks(
+    ticks: &AxisTicks,
+    rows: impl IntoIterator<Item = f64>,
+    edge_x: f64,
+    outward: f64,
+    len: f64,
+) -> Result<Vec<Node>, String> {
     let (x1, x2) = if outward > 0.0 { (edge_x, edge_x + len) } else { (edge_x - len, edge_x) };
     let mut rows = rows.into_iter().peekable();
     if rows.peek().is_none() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let color = required_ink(ticks.color.as_deref(), "axis", "ticks.color")?;
     let width = ticks.width.unwrap_or(1.0);
-    for y in rows {
-        let _ = std::fmt::Write::write_fmt(
-            svg,
-            format_args!(
-                "<line x1=\"{x1:.2}\" y1=\"{y:.2}\" x2=\"{x2:.2}\" y2=\"{y:.2}\" \
-                 stroke=\"{}\" stroke-width=\"{width}\"/>",
-                xml_escape_attr(color)
-            ),
-        );
-    }
-    Ok(())
+    Ok(rows
+        .map(|y| {
+            Node::Line(
+                Attrs::new()
+                    .set("x1", format!("{x1:.2}"))
+                    .set("y1", format!("{y:.2}"))
+                    .set("x2", format!("{x2:.2}"))
+                    .set("y2", format!("{y:.2}"))
+                    .set("stroke", color)
+                    .set("stroke-width", width.to_string()),
+            )
+        })
+        .collect())
 }
 
 impl AxisStyle {
@@ -1947,7 +1989,7 @@ impl AxisStyle {
     pub fn mirror_ghost(&self, family: &str) -> Result<Option<MirrorGhost>, String> {
         let resolved = match self.mirror.as_ref() {
             None | Some(Value::Null) | Some(Value::Bool(false)) => return Ok(None),
-            Some(Value::Bool(true)) => return Ok(Some(MirrorGhost { format: None, ruler: None, tick_label: None, expr: None })),
+            Some(Value::Bool(true)) => return Ok(Some(MirrorGhost { format: None, ruler: None, tick_label: None, expr: None, case: self.labels.font.case.clone(), primary: Box::new(self.clone()) })),
             Some(Value::Object(resolved)) => resolved,
             Some(other) => {
                 return Err(format!(
@@ -1980,6 +2022,8 @@ impl AxisStyle {
                 ruler: ghost_ruler.filter(|g| Some(g) != self.ruler.as_ref()),
                 tick_label: None,
                 expr,
+                case: self.labels.font.case.clone(),
+                primary: Box::new(self.clone()),
             }));
         };
         if ghost_ruler.is_some() {
@@ -1994,7 +2038,7 @@ impl AxisStyle {
             .map(|tl| TickLabelConfig::deserialize(tl))
             .transpose()
             .map_err(|e| format!("{family}: axis_y.mirror.tick_label is not a ResolvedTickLabel: {e}"))?;
-        Ok(Some(MirrorGhost { format: Some(slot), ruler: None, tick_label, expr }))
+        Ok(Some(MirrorGhost { format: Some(slot), ruler: None, tick_label, expr, case: self.labels.font.case.clone(), primary: Box::new(self.clone()) }))
     }
 
     /// The transform of `scale.continuous.type`; Vega's defaults for the
@@ -2149,12 +2193,11 @@ pub fn zero_anchor_pinned_floor(axis: &AxisStyle) -> Option<f64> {
 ///    while the data stays non-negative.
 /// 4. **The data extent**, what Vega-Lite auto-fits an unpinned axis to.
 ///
-/// On an unauthored x-axis branches 2 and 3 never engage (resolve bakes
-/// neither `domain_min`/`domain_max` nor a zero-anchor floor for x today),
-/// reducing this to "authored domain, else the data extent" there — but
-/// that reduction is a CONSEQUENCE of what resolve doesn't bake, not
-/// something this function special-cases; an x-side headroom/zero-anchor
-/// bake added later is read correctly with no change here.
+/// On an unauthored x-axis branch 2 never engages (resolve bakes no
+/// `domain_min`/`domain_max` for x). Branch 3 engages when resolve baked
+/// `scale.continuous.zero: true`: scatter's percent-formatted quantitative x
+/// does (`_bake_percent_x_zero`). Any other x reduces to "authored domain,
+/// else the data extent".
 ///
 /// `data_extent` is `None` when the measure column carried no numeric
 /// rows — mirrors production's `data_extent is None` early return, which
@@ -2430,12 +2473,47 @@ impl AxisLabels {
     /// The expr wins over the composed label, so an authored format keeps only its
     /// d3 digits as `datum.label` (`compose_axis_format`): its affix is dropped.
     pub fn apply_expr(&self, scale: &'static str, value: f64, label: String, index: usize, count: usize) -> Result<String, String> {
+        self.cased(&self.apply_expr_uncased(scale, value, label, index, count)?)
+    }
+
+    /// [`Self::apply_expr`] before the case: what an expression reading the tick's text sees.
+    pub fn apply_expr_uncased(&self, scale: &'static str, value: f64, label: String, index: usize, count: usize) -> Result<String, String> {
         let Some(src) = self.expr.as_deref() else { return Ok(label) };
         let label = match self.spec() {
             Some(spec) => crate::number_locale::d3_format(spec, value).map_err(|e| format!("labels.format {spec:?}: {e}"))?,
             None => label,
         };
         crate::labels_expr::speak_value(scale, src, value, &label, index, count)
+    }
+
+    /// `labels.font.case` over text an axis paints. Only `upper` and `lower` change the paint
+    /// (Vega's `upper`/`lower` over the label expression); every other value leaves the text as
+    /// authored. Axis label text is cased here, or through [`label_case`] by a painter that holds the authored case itself.
+    pub fn cased(&self, text: &str) -> Result<String, String> {
+        label_case(self.font.case.as_deref(), text)
+    }
+
+    /// The advance of axis-label text as painted: the cased text at the labels' weight.
+    pub fn measure(&self, fonts: &measure::FontBook, text: &str, size: f64) -> Result<f64, String> {
+        self.font.measure_weighted(fonts, &self.cased(text)?, size)
+    }
+
+    pub fn cased_labels(&self, labels: Vec<crate::families::temporal::TemporalLabel>) -> Result<Vec<crate::families::temporal::TemporalLabel>, String> {
+        labels.into_iter().map(|label| self.cased_temporal(label)).collect()
+    }
+
+    pub fn cased_ticks(&self, ticks: Vec<crate::families::temporal::BareTick>) -> Result<Vec<crate::families::temporal::BareTick>, String> {
+        ticks
+            .into_iter()
+            .map(|tick| {
+                let row2 = tick.row2.as_deref().map(|row| self.cased(row)).transpose()?;
+                Ok(crate::families::temporal::BareTick { text: self.cased(&tick.text)?, row2, ..tick })
+            })
+            .collect()
+    }
+
+    pub fn cased_temporal(&self, label: crate::families::temporal::TemporalLabel) -> Result<crate::families::temporal::TemporalLabel, String> {
+        Ok(crate::families::temporal::TemporalLabel { row1: self.cased(&label.row1)?, row2: self.cased(&label.row2)?, ..label })
     }
 
     /// The text Vega draws for an axis label: each line cut to the axis's `labelLimit` with an ellipsis.
@@ -2454,6 +2532,14 @@ impl AxisLabels {
     /// axis; an authored `labels.expr` drops it.
     pub fn spec(&self) -> Option<&str> {
         self.format.as_ref().map(|f| f.spec.as_str())
+    }
+}
+
+/// [`AxisLabels::cased`] for a painter that holds the authored `labels.font.case` itself.
+pub fn label_case(case: Option<&str>, text: &str) -> Result<String, String> {
+    match case {
+        Some(case @ ("upper" | "lower")) => display_text::case::apply_case(text, case),
+        _ => Ok(text.to_string()),
     }
 }
 
@@ -3223,18 +3309,33 @@ pub fn emit_title_block_vega(
     y: f64,
     title_font_size: f64,
 ) {
+    out.push_str(&print::print(&title_block_nodes(block, style, x, y, title_font_size)));
+}
+
+/// [`emit_title_block_vega`] as nodes.
+pub fn title_block_nodes(
+    block: &TitleBlock,
+    style: Option<&TitleStyle>,
+    x: f64,
+    y: f64,
+    title_font_size: f64,
+) -> Vec<Node> {
     let advance = title_font_size + crate::vega_fit::TitleInk::LINE_ADVANCE_EXTRA;
-    for (i, line) in block.title_lines.iter().enumerate() {
-        // Production wraps every title line in ONE `role-title-text` group
-        // (`_stamp_chart_title_kind`'s regex matches the group, not each
-        // line), so `data-authored-kind="title"` appears exactly once
-        // regardless of wrap -- stamp only the first line here too.
-        emit_title_vega(out, line, style, x, y + i as f64 * advance, i == 0);
-    }
+    // Production wraps every title line in ONE `role-title-text` group
+    // (`_stamp_chart_title_kind`'s regex matches the group, not each
+    // line), so `data-authored-kind="title"` appears exactly once
+    // regardless of wrap -- stamp only the first line here too.
+    let mut nodes: Vec<Node> = block
+        .title_lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| title_node(line, style, x, y + i as f64 * advance, i == 0))
+        .collect();
     if !block.sub_lines.is_empty() {
         let last_title_y = y + (block.title_lines.len() - 1) as f64 * advance;
-        emit_subtitle_vega(out, &block.sub_lines, style, x, last_title_y, title_font_size);
+        nodes.extend(subtitle_nodes(&block.sub_lines, style, x, last_title_y, title_font_size));
     }
+    nodes
 }
 
 /// Emit the standard chart title; returns the vertical band consumed (size + 10).
@@ -3294,7 +3395,17 @@ pub fn emit_subtitle_vega(
     title_row_y: f64,
     title_font_size: f64,
 ) {
-    use std::fmt::Write;
+    out.push_str(&print::print(&subtitle_nodes(subs, style, x, title_row_y, title_font_size)));
+}
+
+/// [`emit_subtitle_vega`] as nodes.
+pub fn subtitle_nodes(
+    subs: &[String],
+    style: Option<&TitleStyle>,
+    x: f64,
+    title_row_y: f64,
+    title_font_size: f64,
+) -> Vec<Node> {
     let sf = style.and_then(|ts| ts.subtitle.as_ref());
     // Same fallback the wrap/ink path uses (production's prepare_title_text
     // falls back to the effective title size) — box and text agree.
@@ -3308,20 +3419,24 @@ pub fn emit_subtitle_vega(
         + measure::baseline_shift("top", sub_fs);
     // Extra lines advance by the Vega text mark's default lineHeight
     // (fontSize + LINE_ADVANCE_EXTRA) — same term the fit margins reserve.
-    for (i, sub) in subs.iter().enumerate() {
-        let ly = sy + i as f64 * (sub_fs + crate::vega_fit::TitleInk::LINE_ADVANCE_EXTRA);
-        // Same one-group-not-one-per-line law as the title above.
-        let kind_attr =
-            if i == 0 { crate::contract::authored_kind_attr("subtitle") } else { String::new() };
-        let _ = write!(
-            out,
-            "<text x=\"{x:.2}\" y=\"{ly:.2}\" font-family=\"{}\" \
-             font-size=\"{sub_fs}\" font-weight=\"{sub_weight}\" \
-             fill=\"{sub_color}\"{kind_attr}>{}</text>",
-            print::vega_escape_attr(sub_family),
-            print::xml_escape(sub), sub_weight = xml_escape_attr(&sub_weight), sub_color = xml_escape_attr(sub_color)
-        );
-    }
+    subs.iter()
+        .enumerate()
+        .map(|(i, sub)| {
+            let ly = sy + i as f64 * (sub_fs + crate::vega_fit::TitleInk::LINE_ADVANCE_EXTRA);
+            // Same one-group-not-one-per-line law as the title above.
+            Node::text(
+                Attrs::new()
+                    .set("x", format!("{x:.2}"))
+                    .set("y", format!("{ly:.2}"))
+                    .vega("font-family", sub_family)
+                    .set("font-size", sub_fs.to_string())
+                    .set("font-weight", sub_weight.clone())
+                    .set("fill", sub_color)
+                    .set_if(i == 0, "data-authored-kind", "subtitle"),
+                sub.as_str(),
+            )
+        })
+        .collect()
 }
 
 pub fn emit_title_vega(
@@ -3332,21 +3447,28 @@ pub fn emit_title_vega(
     y: f64,
     stamp_kind: bool,
 ) {
-    use std::fmt::Write;
+    out.push_str(&print::print(&[title_node(text, style, x, y, stamp_kind)]));
+}
+
+/// [`emit_title_vega`] as a node.
+pub fn title_node(text: &str, style: Option<&TitleStyle>, x: f64, y: f64, stamp_kind: bool) -> Node {
     let f = style.map(|t| &t.font);
     let family = f.and_then(|f| f.family.as_deref()).unwrap_or("serif");
     let size = f.and_then(|f| f.size).unwrap_or(18.0);
     let color = f.and_then(|f| f.color.as_deref()).unwrap_or("#1a1a1a");
     let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "600".into());
     let baseline = y + measure::baseline_shift("top", size);
-    let kind_attr = if stamp_kind { crate::contract::authored_kind_attr("title") } else { String::new() };
-    let _ = write!(
-        out,
-        "<text x=\"{x:.2}\" y=\"{baseline:.2}\" font-family=\"{}\" font-size=\"{size}\" \
-         font-weight=\"{weight}\" fill=\"{color}\"{kind_attr}>{}</text>",
-        print::vega_escape_attr(family),
-        print::xml_escape(text), weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
-    );
+    Node::text(
+        Attrs::new()
+            .set("x", format!("{x:.2}"))
+            .set("y", format!("{baseline:.2}"))
+            .vega("font-family", family)
+            .set("font-size", size.to_string())
+            .set("font-weight", weight)
+            .set("fill", color)
+            .set_if(stamp_kind, "data-authored-kind", "title"),
+        text,
+    )
 }
 
 /// Numeric value from a row column, tolerating strings.
@@ -3387,7 +3509,8 @@ pub fn raw_x_order(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
 /// series' value at its own greatest x, found by walking the rows in order and
 /// replacing the held pair whenever a row's raw x is `>=` the held one (Python's
 /// comparison of the raw values, so the later of two equal xs wins and an
-/// unsorted string x compares lexicographically). A row with a null series, x or
+/// unsorted string x compares lexicographically; a time axis hands in its
+/// instants, not its text). A row with a null series, x or
 /// y is skipped; an x pair of different types has no order and is refused.
 pub fn last_nonnull_value_per_series(
     rows: &[serde_json::Map<String, Value>],
@@ -3606,15 +3729,15 @@ pub fn wrap_axis_title(
 
 /// `WARN-AXIS-TITLE-TRUNCATED`: production's
 /// `record_text_truncation(chart_id, "axis_title", text, authored_field)`.
-pub fn warn_axis_title_truncated(chart_id: &str, authored_field: &str, text: &str) {
-    crate::diagnostic::warn(Diagnostic::new(
+pub fn axis_title_truncated(chart_id: &str, authored_field: &str, text: &str) -> Diagnostic {
+    Diagnostic::new(
         &codes::WARN_AXIS_TITLE_TRUNCATED,
         [
             ("authored_field", json!(authored_field)),
             ("authored_text", json!(text)),
             ("chart_id", json!(chart_id)),
         ],
-    ));
+    )
 }
 
 /// A title's lines past the first, in pixels: Vega draws newline-separated text
@@ -3637,14 +3760,26 @@ pub fn wrapped_axis_title(
     panels: f64,
     fonts: &measure::FontBook,
 ) -> Result<String, String> {
+    let (title, cut) = axis_title_lines(chart_id, authored_field, text, font, extent, panels, fonts)?;
+    cut.into_iter().for_each(crate::diagnostic::warn);
+    Ok(title)
+}
+
+/// [`wrapped_axis_title`] with the truncation finding returned rather than recorded.
+pub fn axis_title_lines(
+    chart_id: &str,
+    authored_field: &str,
+    text: &str,
+    font: &Font,
+    extent: f64,
+    panels: f64,
+    fonts: &measure::FontBook,
+) -> Result<(String, Option<Diagnostic>), String> {
     if text.is_empty() {
-        return Ok(String::new());
+        return Ok((String::new(), None));
     }
     let (lines, truncated) = wrap_axis_title(text, extent, panels, font, fonts)?;
-    if truncated {
-        warn_axis_title_truncated(chart_id, authored_field, text);
-    }
-    Ok(lines.join("\n"))
+    Ok((lines.join("\n"), truncated.then(|| axis_title_truncated(chart_id, authored_field, text))))
 }
 
 /// The widest line of a (possibly wrapped) axis title as Vega measures it
@@ -3757,44 +3892,68 @@ pub fn emit_axis_title_at(
     title_y: f64,
     key: Option<crate::contract::LabelKey>,
 ) {
-    use std::fmt::Write;
+    out.extend(axis_title_at(text, style, center_x, title_y, key).map(|node| print::print(&[node])));
+}
+
+/// [`emit_axis_title_at`] as a node.
+pub fn axis_title_at(
+    text: &str,
+    style: &AxisTitle,
+    center_x: f64,
+    title_y: f64,
+    key: Option<crate::contract::LabelKey>,
+) -> Option<Node> {
     if axis_title_band(style, text) == 0.0 {
-        return;
+        return None;
     }
-    let lines: Vec<&str> = text.split('\n').collect();
-    let f = &style.font;
-    let size = f.size_or(11.0);
-    let family = f.family_or("sans-serif");
-    let color = f.color.as_deref().unwrap_or("#8A8C8F");
-    let weight = f.weight_str();
     // The title lives inside Vega's axis group, which the ticks and
     // gridlines already crisp-shift by +0.5 — the title inherits it too.
     let x = center_x + 0.5;
-    crate::contract::axis_title_group_open(out, key);
-    let _ = write!(
-        out,
-        "<text x=\"{x:.2}\" y=\"{title_y:.2}\" text-anchor=\"middle\" \
-         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" fill=\"{color}\">",
-        print::vega_escape_attr(family),
-        weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
-    );
-    write_title_lines(out, &lines, x, size);
-    out.push_str("</text>");
-    crate::contract::mark_group_close(out);
+    let attrs = Attrs::new()
+        .set("x", format!("{x:.2}"))
+        .set("y", format!("{title_y:.2}"))
+        .set("text-anchor", "middle");
+    Some(axis_title_group(text, style, attrs, x, key))
 }
 
-/// A title's `<text>` content: the line itself, or one `<tspan>` per line
-/// stepping `lineHeight` along the text's own y (Vega's multi-line text).
-pub fn write_title_lines(out: &mut String, lines: &[&str], x: f64, size: f64) {
-    use std::fmt::Write;
-    if let [line] = lines {
-        out.push_str(&print::xml_escape(line));
-        return;
-    }
-    for (i, line) in lines.iter().enumerate() {
-        let step = if i == 0 { String::new() } else { format!(" x=\"{x:.2}\" dy=\"{}\"", crate::vega_fit::label_row_advance(size)) };
-        let _ = write!(out, "<tspan{step}>{}</tspan>", print::xml_escape(line));
-    }
+/// The title group around `text`: `attrs` lead the `<text>` and its font finishes them; a
+/// wrapped title's lines after the first step `lineHeight` from `line_x`.
+fn axis_title_group(
+    text: &str,
+    style: &AxisTitle,
+    attrs: Attrs,
+    line_x: f64,
+    key: Option<crate::contract::LabelKey>,
+) -> Node {
+    let f = &style.font;
+    let size = f.size_or(11.0);
+    let attrs = attrs
+        .vega("font-family", f.family_or("sans-serif"))
+        .set("font-size", size.to_string())
+        .set("font-weight", f.weight_str())
+        .set("fill", f.color.as_deref().unwrap_or("#8A8C8F"));
+    let lines: Vec<&str> = text.split('\n').collect();
+    let title = match lines[..] {
+        [line] => Node::text(attrs, line),
+        _ => Node::TextRuns {
+            attrs,
+            children: lines
+                .iter()
+                .enumerate()
+                .map(|(i, line)| {
+                    let step = if i == 0 {
+                        Attrs::new()
+                    } else {
+                        Attrs::new()
+                            .set("x", format!("{line_x:.2}"))
+                            .set("dy", crate::vega_fit::label_row_advance(size).to_string())
+                    };
+                    Node::Tspan(TextBlock { attrs: step, text: Chars::new(*line, Escape::Attr) })
+                })
+                .collect(),
+        },
+    };
+    Node::group(crate::contract::axis_title_attrs(key), vec![title])
 }
 
 /// Emit a bottom-anchored (horizontal) axis title, centered under the plot,
@@ -3821,9 +3980,23 @@ pub fn emit_axis_title_bottom(
     label_font_size: f64,
     key: Option<crate::contract::LabelKey>,
 ) {
+    out.extend(
+        axis_title_bottom(text, style, center_x, label_baseline_y, label_font_size, key)
+            .map(|node| print::print(&[node])),
+    );
+}
+
+/// [`emit_axis_title_bottom`] as a node.
+pub fn axis_title_bottom(
+    text: &str,
+    style: &AxisTitle,
+    center_x: f64,
+    label_baseline_y: f64,
+    label_font_size: f64,
+    key: Option<crate::contract::LabelKey>,
+) -> Option<Node> {
     let padding = style.padding.unwrap_or(10.0);
-    let y = label_baseline_y + label_font_size + padding;
-    emit_axis_title_at(out, text, style, center_x, y, key);
+    axis_title_at(text, style, center_x, label_baseline_y + label_font_size + padding, key)
 }
 
 /// [`emit_axis_title_bottom`] for either edge: above a top axis the title baseline sits a label
@@ -3838,10 +4011,25 @@ pub fn emit_axis_title_flat(
     key: Option<crate::contract::LabelKey>,
     edge: XEdge,
 ) {
+    out.extend(
+        axis_title_flat(text, style, center_x, label_baseline_y, label_font_size, key, edge)
+            .map(|node| print::print(&[node])),
+    );
+}
+
+/// [`emit_axis_title_flat`] as a node.
+pub fn axis_title_flat(
+    text: &str,
+    style: &AxisTitle,
+    center_x: f64,
+    label_baseline_y: f64,
+    label_font_size: f64,
+    key: Option<crate::contract::LabelKey>,
+    edge: XEdge,
+) -> Option<Node> {
     match edge {
-        XEdge::Bottom => emit_axis_title_bottom(out, text, style, center_x, label_baseline_y, label_font_size, key),
-        XEdge::Top => emit_axis_title_at(
-            out,
+        XEdge::Bottom => axis_title_bottom(text, style, center_x, label_baseline_y, label_font_size, key),
+        XEdge::Top => axis_title_at(
             text,
             style,
             center_x,
@@ -3868,38 +4056,40 @@ pub fn emit_axis_title_rotated(
     sign: f64,
     key: Option<crate::contract::LabelKey>,
 ) {
-    use std::fmt::Write;
+    out.extend(
+        axis_title_rotated(text, style, label_edge_x, center_y, sign, key).map(|node| print::print(&[node])),
+    );
+}
+
+/// [`emit_axis_title_rotated`] as a node.
+pub fn axis_title_rotated(
+    text: &str,
+    style: &AxisTitle,
+    label_edge_x: f64,
+    center_y: f64,
+    sign: f64,
+    key: Option<crate::contract::LabelKey>,
+) -> Option<Node> {
     if axis_title_band(style, text) == 0.0 {
-        return;
+        return None;
     }
-    let lines: Vec<&str> = text.split('\n').collect();
-    let f = &style.font;
-    let size = f.size_or(11.0);
-    let family = f.family_or("sans-serif");
-    let color = f.color.as_deref().unwrap_or("#8A8C8F");
-    let weight = f.weight_str();
+    let size = style.font.size_or(11.0);
     let padding = style.padding.unwrap_or(10.0);
     let angle = if sign < 0.0 { -90.0 } else { 90.0 };
     // Extra lines grow the title away from the plot; the last line keeps the
     // single-line baseline.
-    let extra_lines = (lines.len() - 1) as f64 * crate::vega_fit::label_row_advance(size);
+    let extra_lines = (text.split('\n').count() - 1) as f64 * crate::vega_fit::label_row_advance(size);
     let title_x = label_edge_x + sign * (padding + rotated_axis_title_nudge(size) + extra_lines);
     // The title lives inside Vega's axis group, which already crisp-shifts
     // by +0.5 in both coordinates — the title's y (its position ALONG the
     // axis) inherits it too, same as the bottom title's x above.
     let y = center_y + 0.5;
-    crate::contract::axis_title_group_open(out, key);
-    let _ = write!(
-        out,
-        "<text x=\"{title_x:.2}\" y=\"{y:.2}\" text-anchor=\"middle\" \
-         transform=\"rotate({angle} {title_x:.2} {y:.2})\" \
-         font-family=\"{}\" font-size=\"{size}\" font-weight=\"{weight}\" fill=\"{color}\">",
-        print::vega_escape_attr(family),
-        weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
-    );
-    write_title_lines(out, &lines, title_x, size);
-    out.push_str("</text>");
-    crate::contract::mark_group_close(out);
+    let attrs = Attrs::new()
+        .set("x", format!("{title_x:.2}"))
+        .set("y", format!("{y:.2}"))
+        .set("text-anchor", "middle")
+        .set("transform", format!("rotate({angle} {title_x:.2} {y:.2})"));
+    Some(axis_title_group(text, style, attrs, title_x, key))
 }
 
 /// Display string from a row column. This is production's Vega-drawn
@@ -4125,36 +4315,37 @@ impl CaptionSpot {
 
 /// One point value label's `<text>`: `baseline_y` already carries the anchor's
 /// dy and the baseline's own font shift; `align` is `vega_fit::text_ink`'s
-/// vocabulary; `font_style` is `Font::style_attr`.
+/// vocabulary; `font_style` is `Font::style`; `aria` the mark's label attributes.
 #[allow(clippy::too_many_arguments)]
-pub fn write_value_label(
-    svg: &mut String,
+pub fn value_label(
     x: f64,
     baseline_y: f64,
     align: &str,
     family: &str,
     size: f64,
     weight: &str,
-    font_style: &str,
+    font_style: Option<&str>,
     color: &str,
-    label_attr: &str,
+    aria: Attrs,
     text: &str,
-) {
-    use std::fmt::Write as _;
+) -> Node {
     let text_anchor = match align {
         "left" => "start",
         "right" => "end",
         _ => "middle",
     };
-    let _ = write!(
-        svg,
-        "<text x=\"{x:.2}\" y=\"{baseline_y:.2}\" text-anchor=\"{text_anchor}\" font-family=\"{}\" \
-         font-size=\"{size}\" font-weight=\"{}\"{font_style} fill=\"{}\"{label_attr}>{}</text>",
-        print::vega_escape_attr(family),
-        print::xml_escape_attr(weight),
-        print::xml_escape_attr(color),
-        print::xml_escape(text),
-    );
+    let attrs = Attrs::new()
+        .set("x", format!("{x:.2}"))
+        .set("y", format!("{baseline_y:.2}"))
+        .set("text-anchor", text_anchor)
+        .vega("font-family", family)
+        .set("font-size", size.to_string())
+        .set("font-weight", weight);
+    let attrs = match font_style {
+        Some(style) => attrs.set("font-style", style),
+        None => attrs,
+    };
+    Node::text(attrs.set("fill", color).extend(aria), text)
 }
 
 #[cfg(test)]
@@ -4641,15 +4832,15 @@ pub fn predefined_number_spec(name: &str) -> Option<&'static str> {
 /// (`compile/format_value.py:379-382`) and with `.strip()` otherwise; the KPI
 /// and the table share these.
 pub(crate) fn py_strip(s: &str) -> &str {
-    s.trim_matches(mdsvg::pygments_re::is_py_space)
+    s.trim_matches(d3rs::py_str::is_py_space)
 }
 
 pub(crate) fn py_lstrip(s: &str) -> &str {
-    s.trim_start_matches(mdsvg::pygments_re::is_py_space)
+    s.trim_start_matches(d3rs::py_str::is_py_space)
 }
 
 pub(crate) fn py_rstrip(s: &str) -> &str {
-    s.trim_end_matches(mdsvg::pygments_re::is_py_space)
+    s.trim_end_matches(d3rs::py_str::is_py_space)
 }
 
 /// The affix step of `format_kpi_parts` (`compile/format_value.py:379-390`):
@@ -6371,20 +6562,6 @@ pub fn border_dash_attrs(dash_array: Option<&[f64]>, line_cap: Option<&str>, das
         .into_iter()
         .map(|(name, value)| format!(r#" {name}="{}""#, print::xml_escape_attr(&value)))
         .collect()
-}
-
-#[cfg(test)]
-mod measure_family_tests {
-    use super::*;
-
-    #[test]
-    fn serif_measures_under_the_authored_family_not_the_web_alias() {
-        assert_eq!(
-            measure_family_stand_in("'Source Serif 4 Web', 'Source Serif 4', Georgia, serif"),
-            "'Source Serif 4', Georgia, serif"
-        );
-        assert_eq!(measure_family_stand_in("Inter Variable, sans-serif"), "Inter");
-    }
 }
 
 #[cfg(test)]

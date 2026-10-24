@@ -21,7 +21,7 @@ from dbt_charts.core.compile.models.style.resolved._base import (
 )
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
-    color_at,
+    series_colors,
 )
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
@@ -106,14 +106,13 @@ def effective_measure_domain(
        the axis reports where ``zero: true`` auto-fits instead.
     4. **The data extent**, which is what Vega-Lite auto-fits from.
 
-    On an unauthored x-axis, branches 2 and 3 never fire: resolve has no
-    ``resolve_measure_x_scale`` and its smart-zero heuristic only ever runs
-    against the y column, so ``domain_min``/``domain_max``/the zero anchor
-    stay unbaked for x. The function therefore reduces there to "authored
-    domain, else the data extent" — exactly what Vega-Lite auto-fits an
-    unpinned x-axis to. That reduction holds only because of what resolve
-    does NOT bake for x today; an x-side headroom bake added later would
-    start populating those fields and invalidate it.
+    On an unauthored x-axis, branch 2 never fires: resolve bakes no
+    ``domain_min``/``domain_max`` for x. Branch 3 fires only for a
+    percent-formatted quantitative x, whose zero anchor resolve bakes
+    (``_bake_percent_x_zero``); any other x reduces to "authored domain, else
+    the data extent" — exactly what Vega-Lite auto-fits an unpinned x-axis
+    to. An x-side headroom bake added later would start populating the
+    baked edges and invalidate that reduction.
 
     **Every value here is one the emitter actually pins, or the extent VL fits
     to — never a prediction of where VL's ``nice`` will land.** An earlier
@@ -195,10 +194,7 @@ def spatial_color_scale(
     every chart. Either way the color follows the value, never its new
     display position.
     """
-    if scale is not None:
-        color_of = {s: color_at(scale, s, palette) for s in series}
-    else:
-        color_of = {s: palette[i % len(palette)] for i, s in enumerate(series)}
+    color_of = series_colors(series, palette, scale)
     return {"domain": list(order), "range": [color_of[s] for s in order]}
 
 

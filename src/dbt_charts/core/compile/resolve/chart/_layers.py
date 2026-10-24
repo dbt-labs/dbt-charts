@@ -18,7 +18,9 @@ from dbt_charts.core.compile.models.chart.authored._layer import (
     CartesianLayer,
     LayerAxisYStyle,
     LineLayer,
+    ScatterLayer,
 )
+from dbt_charts.core.compile.models.chart.resolved._channel import ResolvedStyleChannel
 from dbt_charts.core.compile.models.chart.resolved._layer import (
     ResolvedAreaLayer,
     ResolvedBarLayer,
@@ -38,8 +40,26 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointMarkStyle,
 )
 from dbt_charts.core.compile.models.style.resolved._base import ResolvedTickLabel
+from dbt_charts.core.compile.models.style.theme.area import AreaChartStyle
+from dbt_charts.core.compile.models.style.theme.bar import BarChartStyle
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    category_scale_for,
+    series_colors,
+)
+from dbt_charts.core.compile.models.style.theme.line import LineChartStyle
+from dbt_charts.core.compile.models.style.theme.scatter import ScatterChartStyle
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
-from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows, LayerDatasets
+from dbt_charts.core.compile.resolve.chart._chart_rows import (
+    CartesianChart,
+    ChartRows,
+    LayerDatasets,
+)
+from dbt_charts.core.compile.resolve.chart._kwargs import _bound_scales
+from dbt_charts.core.compile.resolve.chart._layer_ink import (
+    LayerBase,
+    LayerInk,
+    layer_inks,
+)
 from dbt_charts.core.compile.resolve.chart._marks import (
     _apply_line_width,
     _build_resolved_area_line,
@@ -49,7 +69,11 @@ from dbt_charts.core.compile.resolve.chart._marks import (
     _resolved_point_mark,
     _with_label_format,
 )
-from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
+from dbt_charts.core.compile.resolve.chart._palette import (
+    _effective_palette,
+    _HasColor,
+    _with_color_tokens,
+)
 from dbt_charts.core.compile.resolve.chart.adaptive_stroke import (
     bake_point_companions,
 )
@@ -68,6 +92,7 @@ from dbt_charts.core.text.format_d3 import is_d3_si_spec
 
 __all__ = [
     "_check_layers_y_domain",
+    "_resolve_layer_inks",
     "_resolve_layer_list",
     "_resolve_one_layer",
 ]
@@ -93,6 +118,104 @@ def _layer_rows(
     return datasets[layer.query]
 
 
+def _authored_ink(
+    layer: CartesianLayer,
+    chart_style_context: ChartStyleContext,
+    base_family_style: BarChartStyle
+    | LineChartStyle
+    | AreaChartStyle
+    | ScatterChartStyle,
+) -> str | None:
+    """The one color a layer authors for its series: a line's stroke, a
+    scatter's point. An area's fill and a bar's always come from the palette."""
+    patch = _with_color_tokens(layer.style, chart_style_context)
+    marks = patch.marks if patch is not None else None
+    if isinstance(layer, LineLayer):
+        parent = (
+            base_family_style
+            if isinstance(base_family_style, LineChartStyle)
+            else chart_style_context.line
+        )
+        stroke = merge_unset(
+            parent.marks.line, marks.line if marks is not None else None
+        ).stroke
+        # An authored `stroke: null` is refused when the layer's marks resolve.
+        return None if stroke is None else stroke.color
+    if isinstance(layer, ScatterLayer):
+        parent = (
+            base_family_style
+            if isinstance(base_family_style, ScatterChartStyle)
+            else chart_style_context.scatter
+        )
+        return merge_unset(
+            parent.marks.point, marks.point if marks is not None else None
+        ).color
+    return None
+
+
+def _resolve_layer_inks(
+    normalized: CartesianChart,
+    chart_style_context: ChartStyleContext,
+    base_family_style: BarChartStyle
+    | LineChartStyle
+    | AreaChartStyle
+    | ScatterChartStyle,
+    primary: _HasColor | None,
+    channels: Mapping[str, ResolvedStyleChannel],
+    data: ChartRows,
+    datasets: LayerDatasets,
+    single_series_fill: str,
+    *,
+    measure_quantitative: bool,
+) -> tuple[LayerInk, ...]:
+    """Each layer's ink on the chart's shared color scale (`_layer_ink.layer_inks`).
+
+    The base claims the scale first: one color per value of its categorical
+    `color`, else its one single-series fill. Layers share that scale only
+    where the base's measure is quantitative and its color, if any, is a
+    categorical field.
+    """
+    if not normalized.layers:
+        return ()
+    palette = _effective_palette(chart_style_context, primary)
+    board_scales = _bound_scales(normalized, chart_style_context, palette)
+    color = channels["color"] if normalized.color is not None else None
+    if color is None:
+        base = LayerBase(
+            measure_quantitative,
+            {str(normalized.y): single_series_fill} if measure_quantitative else {},
+        )
+    elif color.mode == "series" and not color.quantitative_data:
+        values = sorted(
+            {
+                str(row[color.data_field])
+                for row in data
+                if row.get(color.data_field) is not None
+            }
+        )
+        base = LayerBase(
+            measure_quantitative,
+            series_colors(
+                values, palette, category_scale_for(board_scales, color.data_field)
+            ),
+        )
+    else:
+        base = LayerBase(False, {})
+    return layer_inks(
+        normalized.layers,
+        [
+            _authored_ink(layer, chart_style_context, base_family_style)
+            for layer in normalized.layers
+        ],
+        base,
+        chart_id=normalized.id,
+        palette=palette,
+        board_scales=board_scales,
+        single_series_fill=single_series_fill,
+        rows_of=lambda layer: _layer_rows(layer, data, normalized.query_name, datasets),
+    )
+
+
 def _resolve_one_layer(
     layer: CartesianLayer,
     chart_style_context: ChartStyleContext,
@@ -106,6 +229,7 @@ def _resolve_one_layer(
     chart_id: str,
     index: int,
     query_formats: Mapping[str, str] | None,
+    layer_ink: LayerInk,
     layer_query_formats: Mapping[str, Mapping[str, str]],
 ) -> ResolvedLayer:
     """Resolve a single typed authored layer into its resolved counterpart.
@@ -267,17 +391,34 @@ def _resolve_one_layer(
         # base series (bake_point_companions) — otherwise a layered line
         # chart shows dots on the base series and none on its overlays. On a
         # non-line base, line_px_per_point is 0.0: the size half is skipped
-        # and the ring still tracks this layer's own stroke.
+        # and the ring still tracks this layer's own stroke. A reference line
+        # (one constant value) marks a level, not a series of observations, so
+        # it takes no density-derived dots; an authored point size is honored.
         if resolved_line_layer_mark.stroke.width > 0:
+            size_authored = line_layer_point_mark.size is not None
             line_layer_point_mark = bake_point_companions(
                 line_layer_point_mark,
                 resolved_line_layer_mark.stroke.width,
                 line_px_per_point,
             )
+            # Only an automatic size needs the rows: judge them lazily.
+            auto_size = line_layer_point_mark.size
+            if not size_authored and auto_size is not None and auto_size > 0:
+                layer_values = list(_layer_values())
+                if (
+                    layer.color is None
+                    and len(layer_values) > 1
+                    and len(set(layer_values)) == 1
+                ):
+                    line_layer_point_mark = line_layer_point_mark.model_copy(
+                        update={"size": 0.0}
+                    )
         return ResolvedLineLayer(
             type="line",
             line_mark=resolved_line_layer_mark,
             point_mark=line_layer_point_mark,
+            ink=layer_ink.ink,
+            series_inks=layer_ink.series,
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
@@ -285,6 +426,7 @@ def _resolve_one_layer(
             color=layer.color,
             query_name=query_name,
             label_is_house=layer_label_is_house,
+            legend=layer.legend,
         )
     if isinstance(layer, AreaLayer):
         area_marks = layer_style.marks if layer_style is not None else None
@@ -321,6 +463,8 @@ def _resolve_one_layer(
                 chart_style_context.formats,
                 _layer_values(),
             ),
+            ink=layer_ink.ink,
+            series_inks=layer_ink.series,
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
@@ -328,6 +472,7 @@ def _resolve_one_layer(
             color=layer.color,
             query_name=query_name,
             label_is_house=area_label_is_house,
+            legend=layer.legend,
         )
     if isinstance(layer, BarLayer):
         bar_marks = layer_style.marks if layer_style is not None else None
@@ -358,6 +503,8 @@ def _resolve_one_layer(
                     chart_style_context.formats,
                 ),
             ),
+            ink=layer_ink.ink,
+            series_inks=layer_ink.series,
             axis_y=axis_y,
             x=layer.x,
             y=layer.y,
@@ -366,6 +513,7 @@ def _resolve_one_layer(
             color=layer.color,
             query_name=query_name,
             label_is_house=bar_label_is_house,
+            legend=layer.legend,
         )
     # ScatterLayer
     scatter_marks = layer_style.marks if layer_style is not None else None
@@ -389,6 +537,8 @@ def _resolve_one_layer(
         point_mark=resolved_as(
             ResolvedPointMarkStyle, pre_fallback_scatter_point, labels=scatter_labels
         ),
+        ink=layer_ink.ink,
+        series_inks=layer_ink.series,
         axis_y=axis_y,
         x=layer.x,
         y=layer.y,
@@ -396,6 +546,7 @@ def _resolve_one_layer(
         color=layer.color,
         query_name=query_name,
         label_is_house=scatter_label_is_house,
+        legend=layer.legend,
     )
 
 
@@ -435,6 +586,7 @@ def _resolve_layer_list(
     datasets: LayerDatasets,
     chart_id: str,
     query_formats: Mapping[str, str] | None,
+    inks: Sequence[LayerInk],
     layer_query_formats: Mapping[str, Mapping[str, str]],
 ) -> tuple[ResolvedLayer, ...]:
     """Resolve a list of authored typed layers to their resolved counterparts.
@@ -489,6 +641,7 @@ def _resolve_layer_list(
             chart_id,
             index,
             query_formats,
+            inks[index],
             layer_query_formats,
         )
         for index, layer in enumerate(layers)

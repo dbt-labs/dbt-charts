@@ -240,16 +240,6 @@ class SliceLabelsStyle(BaseModel):
     )
 
 
-class ProjectionStyle(BaseModel):
-    """Vega-Lite map projection configuration for geo chart families."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    type: str = Field(
-        description="Vega-Lite projection type (e.g. 'mercator', 'albersUsa', 'equalEarth')."
-    )
-
-
 class BasemapStyle(BaseModel):
     """Background map layer for geo charts (especially point maps).
 
@@ -444,7 +434,7 @@ class BarMarkStyle(BaseModel):
     # Cascade tier sentinel: None means "not specified at this tier".
     band_width: float | None = Field(
         default=None,
-        description="Bar width as a fraction of the band step (0–1).",
+        description="Bar width as a fraction of the band step (0 to 1).",
     )
     # Continuous (quantitative) x/y scale only — a band scale sizes via
     # band_width instead. Cascade tier sentinel: None means "not specified at
@@ -634,7 +624,9 @@ class AreaMarkStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Cascade tier sentinel: None means "not specified at this tier".
-    opacity: float | None = Field(default=None, description="Area fill opacity (0–1).")
+    opacity: float | None = Field(
+        default=None, ge=0, le=1, description="Area fill opacity (0–1)."
+    )
     # Cascade tier sentinel: None means "not specified at this tier".
     curve: Annotated[Curve | None, AutoUnset()] = Field(
         default=None,
@@ -771,6 +763,8 @@ class RuleMarkStyle(BaseModel):
 
     opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
+        ge=0,
+        le=1,
         description="Mark opacity (0 to 1); 'auto' uses the board opacity.",
     )
     stroke: FontColorStrokeStyle = Field(
@@ -786,6 +780,8 @@ class RectMarkStyle(BaseModel):
 
     opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
+        ge=0,
+        le=1,
         description="Mark opacity (0 to 1); 'auto' uses the board opacity.",
     )
     # SkipInheritSlots(cascade=True): apply_inherit copies the entire stroke object
@@ -805,6 +801,8 @@ class CircleMarkStyle(BaseModel):
 
     opacity: Annotated[float | None, AutoUnset()] = Field(
         default=None,
+        ge=0,
+        le=1,
         description="Mark opacity (0 to 1); 'auto' uses the board opacity.",
     )
     # SkipInheritSlots: nullable container; apply_inherit can't navigate through None parent.

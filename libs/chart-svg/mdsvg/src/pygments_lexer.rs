@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use once_cell::sync::Lazy;
 
 use crate::pygments_lexers::{self as tables, Act, Grp, LexerDef, Next, Rule};
-use crate::pygments_re::{is_py_space, is_py_word, Flags, Pattern};
+use crate::pygments_re::{is_py_word, Flags, Pattern};
+use d3rs::py_str::is_py_space;
 
 /// A token type as its dotted `str()` path under `Token`
 /// (`pygments/token.py`): `Number = Literal.Number`, `Whitespace =

@@ -22,6 +22,8 @@ Dependencies:
 """
 
 import contextlib
+import logging
+import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -63,6 +65,10 @@ from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import board_variables, daterange_presets
 from dbt_charts.core.render.boards import render_board_svg
+from dbt_charts.core.render.chart.annotation_nothing_drawn import (
+    NothingDrawn,
+    collect_annotation_nothing_drawn,
+)
 from dbt_charts.core.render.chart.axis_label_collision import (
     AxisLabelCollision,
     collect_axis_label_collisions,
@@ -132,6 +138,7 @@ from dbt_charts.core.render.restated_auto import (
 )
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
+from dbt_charts.core.render.tab_scope import scope_tabs
 from dbt_charts.core.render.thumbnail import cartoonize
 from dbt_charts.core.render.variables_resolve import resolve_option_values
 from dbt_charts.core.render.warnings import (
@@ -142,10 +149,14 @@ from dbt_charts.core.render.warnings import (
 from dbt_charts.core.text.format_d3 import regional_scope
 from dbt_charts.core.utils import Rows
 
+_logger = logging.getLogger(__name__)
+
 # Formats whose payload is a layout-tree walk instead of the drawn svg — every
 # format still draws the board once (below) so the measurement-warning family
 # and ERR-CHART-PAINTED-NO-MARKS are detected the same way regardless of format.
 _DATA_FORMATS = frozenset({"json", "text", "text-data", "yaml", "data"})
+# Formats whose payload prints every tab, not just the one a tabs layout shows.
+_EVERY_TAB_FORMATS = _DATA_FORMATS | {"terminal"}
 
 
 class DataFormatRenderer(Protocol):
@@ -261,6 +272,7 @@ def _collect_render_warnings(
     table_page_squeezes: dict[str, TablePageSqueeze],
     endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
     x_domain_paint_orders: dict[str, XDomainPaintOrder],
+    annotation_nothing_drawn: NothingDrawn,
     plot_width_share_warnings: dict[str, PlotWidthShareWarning],
     pie_total_overflows: dict[str, PieTotalOverflow],
     contrast_warnings: list[ContrastRecord],
@@ -299,8 +311,10 @@ def _collect_render_warnings(
     # it is not a usable gate for one (see the layer_results loop below).
     pre_executed_query_names = collect_layout_chart_query_names(board)
 
-    # A tabs layout's inactive-tab charts are data-resolved (ResolvedBoard.charts
-    # must agree with what record_board records) but never laid out — the
+    # A tabs layout's inactive-tab charts reach here only when the format walks
+    # every tab (a drawn format empties them, `scope_tabs`). Then they are
+    # data-resolved (ResolvedBoard.charts must agree with what record_board
+    # records) but never laid out — the
     # render-first vl-convert measurement the active tab gets is exactly the
     # cost this skips, so these items (and a collapsed `details:` chart, sized
     # the same unmeasured way) keep width=height=0.0.
@@ -432,6 +446,7 @@ def _collect_render_warnings(
         text_truncations=text_truncations,
         endpoint_label_gap_overflows=endpoint_label_gap_overflows,
         x_domain_paint_orders=x_domain_paint_orders,
+        annotation_nothing_drawn=annotation_nothing_drawn,
         chart_truncations=chart_truncations,
         unattributed_truncations=unattributed_truncations,
         plot_width_share_warnings=plot_width_share_warnings,
@@ -450,6 +465,83 @@ def _collect_render_warnings(
             source_board, executor, variables, ""
         )
     return warnings
+
+
+def _render_variables(
+    board: Board,
+    parsed_variables: VariableValues,
+    builtin_variables: VariableValues | None,
+) -> VariableValues:
+    """The variable values a render runs every query and template with."""
+    variable_registry = (
+        board.variable_registry  # type-state: silent_fallback — a board without variables has an empty registry
+        or {}
+    )
+
+    # Merge variables: start with None for all vars, then defaults, then user values
+    all_variables: VariableValues = dict.fromkeys(variable_registry)
+    all_variables.update(board.variable_defaults)  # Pre-computed by normalizer
+    merged_variables = {**all_variables, **parsed_variables}
+
+    # Inject caller-supplied built-in variables (e.g. dir-navigation context
+    # computed by render_dashboard).  Builtins sit UNDER user-declared
+    # variables so merged_variables can shadow any name.
+    if builtin_variables is not None:
+        merged_variables = {**builtin_variables, **merged_variables}
+
+    # A multiselect is a list on every path. The seed above is `None` for any
+    # variable without a default, and markdown/title Jinja reads this dict
+    # directly — so without this, `{{ v | join(', ') }}` on an unset multiselect
+    # raises and the whole board renders as an error. Queries get the same
+    # narrowing from coerce_variable_values; this is the render half.
+    return normalize_render_values(merged_variables, variable_registry)
+
+
+def _prefetch_query_names(board: Board, variables: VariableValues) -> frozenset[str]:
+    """Queries of the hidden tabs whose cache policy asks to be prefetched.
+
+    ``prefetch`` is resolved per query at compile time, so a query is warmed
+    only when its own policy has caching on and ``prefetch`` set.
+    """
+    hidden = collect_all_query_names(board) - collect_all_query_names(
+        scope_tabs(board, variables)
+    )
+    return frozenset(name for name in hidden if board.queries[name].cache.prefetch)
+
+
+def prefetch_tab_queries(
+    board: Board,
+    executor: Executor,
+    variables: VariableValues,
+    max_workers: int | None = None,
+    builtin_variables: VariableValues | None = None,
+) -> dict[str, Exception | None]:
+    """Run the queries of the hidden tabs that a drawn render left cold.
+
+    A drawn render executes only the tabs it shows; this runs the queries of the
+    rest whose cache policy sets ``prefetch: true``, so the click that opens one
+    finds its rows in the result cache. Pass the variables and builtins the render
+    got — the queries must render to the same SQL to land on the same cache
+    keys. Cached queries are skipped, misses run in parallel through
+    ``execute_queries_parallel`` with the executor's own per-query guards, and
+    a failure is returned in the per-query outcome rather than raised: the
+    click re-runs that query and reports it.
+    """
+    merged = _render_variables(
+        board, parse_variable_json_strings(variables), builtin_variables
+    )
+    misses = {
+        name
+        for name in _prefetch_query_names(board, merged)
+        if not executor.is_cached(name, merged)
+    }
+    outcomes = execute_queries_parallel(
+        executor, misses, merged, resolve_max_workers(max_workers)
+    )
+    for name, exc in outcomes.items():
+        if exc is not None:
+            _logger.warning("prefetch of query %r failed: %s", name, exc)
+    return outcomes
 
 
 def render(
@@ -568,26 +660,8 @@ def _render(
 
     # Trust the normalizer - use pre-computed variable_defaults
     variable_registry = board.variable_registry or {}
-
-    # Merge variables: start with None for all vars, then defaults, then user values
-    all_variables: dict[str, Any] = dict.fromkeys(variable_registry)
-    all_variables.update(board.variable_defaults)  # Pre-computed by normalizer
-    # Parse JSON strings in variables (from URL parameters) and merge
     parsed_variables = parse_variable_json_strings(variables or {})
-    merged_variables = {**all_variables, **parsed_variables}
-
-    # Inject caller-supplied built-in variables (e.g. dir-navigation context
-    # computed by render_dashboard).  Builtins sit UNDER user-declared
-    # variables so merged_variables can shadow any name.
-    if builtin_variables is not None:
-        merged_variables = {**builtin_variables, **merged_variables}
-
-    # A multiselect is a list on every path. The seed above is `None` for any
-    # variable without a default, and markdown/title Jinja reads this dict
-    # directly — so without this, `{{ v | join(', ') }}` on an unset multiselect
-    # raises and the whole board renders as an error. Queries get the same
-    # narrowing from coerce_variable_values; this is the render half.
-    merged_variables = normalize_render_values(merged_variables, variable_registry)
+    merged_variables = _render_variables(board, parsed_variables, builtin_variables)
 
     # Board-level precondition: required variables must have a value before any query runs.
     if variable_registry:
@@ -618,7 +692,25 @@ def _render(
     # Errors are stored on the executor (executor._query_errors) so that
     # execute_chart() during the render walk raises the stored error
     # instead of re-executing.  The render walk never retries a failed query.
+    #
+    # A drawn format shows one tab per tabs layout, so it executes, resolves and
+    # checks only those (`scope_tabs`); the board is rebound so nothing below
+    # can reach a hidden tab's query. The formats that print every tab keep the
+    # whole board. The width still hugs the whole board, so it never depends on
+    # which tab is open.
+    prefetch_query_names: frozenset[str] = frozenset()
+    whole_board = board
+    if format not in _EVERY_TAB_FORMATS:
+        try:
+            prefetch_query_names = _prefetch_query_names(board, merged_variables)
+            board = scope_tabs(board, merged_variables)
+        except DbtChartsError as e:
+            return RenderResult(
+                output=None,
+                board_error=e.to_diagnostic(),
+            )
     query_names = collect_all_query_names(board)
+    query_started = time.perf_counter()
 
     # Partition: resolve hits synchronously, submit only misses to pool.
     # The probe runs twice for a hit (once here, once inside execute_query) but the
@@ -634,12 +726,13 @@ def _render(
     execute_queries_parallel(
         executor, cache_miss_names, merged_variables, resolved_max_workers
     )
+    query_ms = (time.perf_counter() - query_started) * 1000
     # Option queries have run for the board's own controls, so their rows cost
     # nothing more to check a query-backed select against. A tab
     # variable's options are its tabs: an unknown tab is ERR-TAB-UNKNOWN, raised
     # by the tabs layout with the slugs.
     if strict_variables:
-        tab_variables = _tab_variables(board.layout)
+        tab_variables = _tab_variables(whole_board.layout)
         check_option_values(
             {
                 name: var
@@ -742,6 +835,7 @@ def _render(
     with (
         collect_text_truncations() as _sizing_truncations,
         collect_x_domain_paint_orders() as _sizing_x_domain_paint_orders,
+        collect_annotation_nothing_drawn() as _sizing_annotation_nothing_drawn,
         collect_endpoint_label_gap_overflows() as _sizing_endpoint_label_gap_overflows,
         collect_plot_width_share_warnings() as _sizing_plot_width_share_warnings,
         collect_pie_total_overflows() as _sizing_pie_total_overflows,
@@ -754,10 +848,13 @@ def _render(
                 merged_variables,
                 render_first=True,
                 authored_slot_heights=authored_chart_heights,
+                hug_board=whole_board,
             )
         except DbtChartsError as e:
             _reset_contexts()
             return RenderResult(
+                query_ms=query_ms,
+                prefetch_query_names=prefetch_query_names,
                 output=None,
                 chart_errors=error_collector,
                 payload_errors=error_collector,
@@ -771,6 +868,8 @@ def _render(
             _reset_contexts()
             wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
             return RenderResult(
+                query_ms=query_ms,
+                prefetch_query_names=prefetch_query_names,
                 output=None,
                 chart_errors=error_collector,
                 payload_errors=error_collector,
@@ -800,6 +899,7 @@ def _render(
         table_page_squeezes: dict[str, TablePageSqueeze],
         endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow],
         x_domain_paint_orders: dict[str, XDomainPaintOrder],
+        annotation_nothing_drawn: NothingDrawn,
         plot_width_share_warnings: dict[str, PlotWidthShareWarning],
         pie_total_overflows: dict[str, PieTotalOverflow],
         contrast_warnings: list[ContrastRecord],
@@ -816,6 +916,7 @@ def _render(
             table_page_squeezes,
             endpoint_label_gap_overflows,
             x_domain_paint_orders,
+            annotation_nothing_drawn,
             plot_width_share_warnings,
             pie_total_overflows,
             contrast_warnings,
@@ -868,6 +969,7 @@ def _render(
     _table_page_squeezes: dict[str, TablePageSqueeze] = {}
     _endpoint_label_gap_overflows: dict[str, EndpointLabelGapOverflow | None] = {}
     _x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
+    _annotation_nothing_drawn: NothingDrawn = {}
     _plot_width_share_warnings: dict[str, PlotWidthShareWarning] = {}
     _pie_total_overflows: dict[str, PieTotalOverflow] = {}
     _contrast_warnings: list[ContrastRecord] = []
@@ -907,6 +1009,7 @@ def _render(
             collect_table_page_squeezes() as _table_page_squeezes,
             collect_endpoint_label_gap_overflows() as _endpoint_label_gap_overflows,
             collect_x_domain_paint_orders() as _x_domain_paint_orders,
+            collect_annotation_nothing_drawn() as _annotation_nothing_drawn,
             collect_plot_width_share_warnings() as _plot_width_share_warnings,
             collect_pie_total_overflows() as _pie_total_overflows,
             collect_contrast_warnings() as _contrast_warnings,
@@ -939,7 +1042,7 @@ def _render(
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     except Exception as e:  # noqa: BLE001
         from dbt_charts.core.diagnostics import ERR_INTERNAL
@@ -948,7 +1051,7 @@ def _render(
             ERR_INTERNAL, message=str(e)
         ).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     finally:
         _reset_contexts()
@@ -983,6 +1086,7 @@ def _render(
                 if overflow is not None
             },
             {**_sizing_x_domain_paint_orders, **_x_domain_paint_orders},
+            {**_sizing_annotation_nothing_drawn, **_annotation_nothing_drawn},
             {**_sizing_plot_width_share_warnings, **_plot_width_share_warnings},
             {**_sizing_pie_total_overflows, **_pie_total_overflows},
             _contrast_warnings,
@@ -1070,6 +1174,8 @@ def _render(
             if (d.fields.get("chart_id"), d.code) not in _drawn_errors
         )
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=output,
             chart_errors=error_collector,
             payload_errors=_data_format_errors,
@@ -1084,6 +1190,8 @@ def _render(
         # grouped here too even though its own payload is actually an
         # independent walk, same shape as a data format's.
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=None,
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1099,6 +1207,8 @@ def _render(
     # terminal is the exception — see the board_error branch above.
     if format == "svg":
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=svg_content,
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1117,6 +1227,8 @@ def _render(
             **html_options,
         )
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=html_output,
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1129,6 +1241,8 @@ def _render(
         if png_scale is None:
             png_scale = get_rendering_config().png.scale
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=to_png(strip_pagination_chrome(svg_content), png_scale),
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1138,6 +1252,8 @@ def _render(
 
     elif format == "pdf":
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=to_pdf(strip_pagination_chrome(svg_content)),
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1147,6 +1263,8 @@ def _render(
 
     elif format == "thumbnail":
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=cartoonize(strip_pagination_chrome(svg_content)),
             chart_errors=error_collector,
             payload_errors=error_collector,
@@ -1156,6 +1274,8 @@ def _render(
 
     elif format == "terminal":
         return RenderResult(
+            query_ms=query_ms,
+            prefetch_query_names=prefetch_query_names,
             output=_to_terminal(
                 board, executor, merged_variables, resolved_board.style, **options
             ),

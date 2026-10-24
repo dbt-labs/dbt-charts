@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic_core import PydanticUndefined, to_jsonable_python
@@ -21,6 +22,7 @@ from dbt_charts.core.compile.models.constraints import (
     Condition,
     Constraint,
     Forbids,
+    IsCall,
     IsList,
     IsSet,
     ItemsMatch,
@@ -56,12 +58,30 @@ def _schema_for_token(
     if token.startswith(("list[", "set[", "frozenset[")):
         item_repr = token[token.index("[") + 1 : -1]
         return _container_schema("array", "items", _map_type_repr(item_repr, keywords))
+    if token.startswith("tuple[") and not token.endswith(", ...]"):
+        return _tuple_schema(_split_union(token[6:-1], ", "))
     if token.startswith("dict["):
         value_repr = ", ".join(_split_union(token[5:-1], ", ")[1:])
         return _container_schema(
             "object", "additionalProperties", _map_type_repr(value_repr, keywords)
         )
     return {}
+
+
+def _tuple_schema(
+    item_reprs: Sequence[str],
+) -> dict[str, Any]:  # type-state: explicit_any — JSON Schema value, see _ref
+    """A fixed-length tuple: prefixItems, one type_repr per position.
+
+    prefixItems is the one shape neither field.container nor field.enum_values
+    models (both assume every position shares one type).
+    """
+    return {
+        "type": "array",
+        "prefixItems": [_map_type_repr(r, {}) for r in item_reprs],
+        "minItems": len(item_reprs),
+        "maxItems": len(item_reprs),
+    }
 
 
 def _container_schema(
@@ -164,17 +184,7 @@ def _type_schema(field: SchemaField, root: str) -> dict[str, Any]:
     ]
 
     if field.tuple_item_reprs is not None:
-        # A fixed-length tuple: one type_repr string per position, mapped
-        # through the same _map_type_repr each bare list[X]/dict[K,V] field
-        # already uses -- prefixItems is the one shape neither field.container
-        # nor field.enum_values models (both assume every position shares one
-        # type; a tuple's positions don't).
-        tuple_schema = {
-            "type": "array",
-            "prefixItems": [_map_type_repr(r, {}) for r in field.tuple_item_reprs],
-            "minItems": len(field.tuple_item_reprs),
-            "maxItems": len(field.tuple_item_reprs),
-        }
+        tuple_schema = _tuple_schema(field.tuple_item_reprs)
         return {"anyOf": [tuple_schema, {"type": "null"}]} if nullable else tuple_schema
 
     if field.enum_values is not None:
@@ -411,7 +421,7 @@ def _union_to_def(model_name: str, ir: AuthorableSchema) -> dict[str, Any]:
         "properties": {
             spec.discriminator: {
                 "enum": all_tags,
-                "description": f"Chart family selector. One of: {', '.join(all_tags)}.",
+                "description": f"{spec.discriminator_description} One of: {', '.join(all_tags)}.",
             }
         },
         "required": [spec.discriminator],
@@ -469,6 +479,20 @@ def _condition(
                 # An absent key (or object on its path) reads as null.
                 matches = {"anyOf": [matches, {"not": _is_set(key, nonempty=False)}]}
             return {"not": matches} if negate else matches
+        case IsCall(key, names, negate):
+            call = _at(
+                key,
+                {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "pattern": rf"^\s*(?:{'|'.join(names)})\s*\(\s*\)\s*$",
+                        },
+                        _at("fn", {"enum": list(names)}),
+                    ]
+                },
+            )
+            return {"not": call} if negate else call
         case IsList(key):
             return _at(key, {"type": "array"})
 

@@ -1,0 +1,3 @@
+kind: Features
+body: search_files results now list the sources a project's SQL can name, so AI agents don't need to read dbt_charts.yml to find them.
+time: 2026-10-23T02:06:02.268964-07:00

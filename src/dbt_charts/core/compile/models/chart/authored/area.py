@@ -9,6 +9,7 @@ from pydantic import ConfigDict, Field
 from dbt_charts.core.compile.models.constraints import Constraint, Forbids, IsList
 from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
 
+from ._annotation import Annotation
 from ._base import _CartesianChartFields
 from ._layer import CartesianLayer
 
@@ -38,5 +39,12 @@ class AreaChart(_CartesianChartFields):
         Field(
             default=None,
             description="Extra marks on one shared x, each with its own type.",
+        ),
+    ]
+    annotations: Annotated[
+        list[Annotation] | None,
+        Field(
+            default=None,
+            description="Rules, bands, notes and trends drawn on the chart.",
         ),
     ]

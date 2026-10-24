@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
+title: Support Load with Annotations
+notes: |
+  A line chart annotated with a rule (the staffing target), a band (the
+  launch window) and a note (the peak). Annotations are authored on the chart
+  in data coordinates, so they stay attached to the data as it changes.
+
+# Inline `columns`/`values` keep this specimen runnable anywhere. In your own
+# board, replace them with `source:` + `sql:` - see https://docs.dbtcharts.com/queries/
+queries:
+  monthly_tickets:
+    notes: One row per month - the plotted series.
+    columns: [month, tickets]
+    values:
+      - ["2025-01-01", 410]
+      - ["2025-02-01", 395]
+      - ["2025-03-01", 430]
+      - ["2025-04-01", 455]
+      - ["2025-05-01", 520]
+      - ["2025-06-01", 640]
+      - ["2025-07-01", 610]
+      - ["2025-08-01", 560]
+      - ["2025-09-01", 505]
+      - ["2025-10-01", 480]
+      - ["2025-11-01", 470]
+      - ["2025-12-01", 495]
+
+charts:
+  ticket_volume:
+    query: monthly_tickets
+    type: line
+    x: month
+    y: tickets
+    annotations:
+      - type: rule
+        y: 500
+        text: Staffing capacity
+      - type: band
+        x:
+          from: 2025-05-01
+          to: 2025-08-01
+        text: Product launch
+        style:
+          marks:
+            text:
+              position:
+                edge: bottom
+      - type: note
+        x: 2025-06-01
+        y: 640
+        text: Launch-week spike
+        connector: arrow
+        style:
+          marks:
+            text:
+              dx: 60
+              dy: -10
+
+rows:
+  - ticket_volume

@@ -57,6 +57,7 @@ def _make_bubble_map() -> PointMapChart:
     return PointMapChart(
         id="c1",
         type="bubble_map",
+        projection="albersUsa",
         query_name="q",
         latitude="lat",
         longitude="lng",
@@ -128,6 +129,7 @@ def test_no_warning_without_size_field() -> None:
     chart = PointMapChart(
         id="c1",
         type="point_map",
+        projection="albersUsa",
         query_name="q",
         latitude="lat",
         longitude="lng",

@@ -530,3 +530,58 @@ class TestNavHtml:
         js = (DBT_CHARTS_PKG_DIR / "core/render/templates/nav/nav.js").read_text()
         view_handler = js[js.index("dbt-nav-view") :]
         assert "resize" in view_handler
+
+
+class TestRenderNavHtml:
+    def _project(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> Project:
+        (tmp_path / "charts" / "sales").mkdir(parents=True)
+        (tmp_path / "charts" / "overview.yml").write_text("title: Overview\n")
+        (tmp_path / "charts" / "sales" / "trend.yml").write_text("title: Trend\n")
+        return local_project(tmp_path)
+
+    def test_renders_the_strip_with_its_styles_and_script(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        from dbt_charts.core.render.nav import render_nav_html
+
+        project = self._project(tmp_path, local_project)
+
+        html = render_nav_html(
+            project.directory("charts/sales"),
+            "charts",
+            "trend",
+            None,
+            "",
+            show_download=True,
+            show_actions=True,
+        )
+
+        assert 'class="dbt-nav"' in html
+        assert 'href="/sales/"' in html
+        assert "<style>" in html
+        assert "<script>" in html
+        assert 'class="dbt-nav-data"' in html
+
+    def test_a_host_without_a_server_hides_the_actions(
+        self, tmp_path: Path, local_project: Callable[..., Project]
+    ) -> None:
+        """The data browser, view modes and downloads all need dct serve's own
+        routes; a host without them shows the paths only."""
+        from dbt_charts.core.render.nav import render_nav_html
+
+        project = self._project(tmp_path, local_project)
+
+        html = render_nav_html(
+            project.directory("charts/sales"),
+            "charts",
+            "trend",
+            None,
+            "",
+            show_download=False,
+            show_actions=False,
+        )
+
+        assert 'href="/sales/"' in html
+        assert 'class="dbt-nav-actions"' not in html

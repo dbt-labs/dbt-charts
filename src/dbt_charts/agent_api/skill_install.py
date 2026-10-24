@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from collections.abc import Set
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from dbt_charts.agent_api._paths import find_repo_root
 from dbt_charts.agent_api.skill_render import render_skill_body
 from dbt_charts.agent_api.skills import (
     INSTALL_NAME_PREFIX,
@@ -276,3 +278,33 @@ def install_skills(
         retired_removed=retired_removed,
         legacy_dirs_detected=legacy,
     )
+
+
+def gitignored_skill_installs(target_dir: Path) -> list[str]:
+    """``dct-*`` installs under ``target_dir`` whose ``SKILL.md`` git ignores.
+
+    Outside a git repository, or without a git binary, there is nothing to
+    commit, so nothing is ignored.
+    """
+    rel_paths = sorted(
+        f"{d.name}/SKILL.md"
+        for d in target_dir.glob(f"{INSTALL_NAME_PREFIX}*")
+        if (d / "SKILL.md").is_file()
+    )
+    if not rel_paths or find_repo_root(target_dir) is None:
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "check-ignore", "--stdin"],
+            cwd=target_dir,
+            input="\n".join(rel_paths),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return []
+    # 0: some paths ignored; 1: none.
+    if proc.returncode not in (0, 1):
+        raise RuntimeError(f"git check-ignore failed: {proc.stderr.strip()}")
+    return sorted(Path(line).parent.name for line in proc.stdout.splitlines())

@@ -408,10 +408,17 @@ def test_resolve_geo_projection_structured_projection_extracts_type() -> None:
     The resolver is the single point that canonicalizes structured projections into bare strings;
     the emitter reads chart.geo_projection_type (already a str) via ADR-008.
     """
+    from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
     from dbt_charts.core.compile.models.vega_lite.contracts import Projection
     from dbt_charts.core.compile.resolve.chart.geo import _resolve_geo_projection
 
-    proj_type, proj_params = _resolve_geo_projection(Projection(type="mercator"), None)
+    chart = GeoshapeChart(
+        id="g",
+        type="geoshape",
+        geo_source="us-states",
+        projection=Projection(type="mercator"),
+    )
+    proj_type, proj_params = _resolve_geo_projection(chart, "us-states", None)
     assert proj_type == "mercator", f"expected 'mercator', got {proj_type!r}"
     assert proj_params is None
 

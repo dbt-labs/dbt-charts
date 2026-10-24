@@ -355,7 +355,7 @@ pub fn category_label_widths(
     with_gap: bool,
 ) -> Result<Vec<f64>, String> {
     let gap = if with_gap { labels.font.measure_weighted(fonts, " ", font_size)? } else { 0.0 };
-    cats.iter().map(|c| labels.font.measure_weighted(fonts, c, font_size).map(|w| w + gap)).collect()
+    cats.iter().map(|c| labels.measure(fonts, c, font_size).map(|w| w + gap)).collect()
 }
 
 /// Vega's `labelOverlap` parity transform (vega-encode overlap.js) over

@@ -64,6 +64,7 @@ def _make_table_chart(style_patch: ChartStylePatch | None = None) -> Chart:
 def _make_executor(row_count: int) -> MagicMock:
     """Return a mock Executor that yields `row_count` rows for execute_chart."""
     mock = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock.rendered_at = None
     mock.execute_chart.return_value = [{"col": i} for i in range(row_count)]
     return mock
 
@@ -994,6 +995,7 @@ class TestSizingProbeRecordsNoWarnings:
             {"col": f"a cell value far too long for forty pixels {i}"} for i in range(6)
         ]
         executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+        executor.rendered_at = None
         executor.execute_chart.return_value = rows
         with collect_text_truncations() as recorded:
             _call_provider(chart, executor)

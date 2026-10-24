@@ -38,8 +38,9 @@ queries:
     sql: |
       WITH bounds AS (SELECT * FROM {{ queries.report_window }})
       SELECT DISTINCT date_trunc('month', close_at)::DATE AS month
-      FROM opportunities, bounds
-      WHERE is_closed AND close_at >= bounds.window_start AND close_at < bounds.period_end
+      FROM opportunities
+      JOIN bounds ON close_at >= bounds.window_start AND close_at < bounds.period_end
+      WHERE is_closed
 
   monthly_bookings:
     sql: |
@@ -72,12 +73,11 @@ queries:
       WITH months AS (SELECT * FROM {{ queries.report_months }})
       SELECT
         months.month,
-        COUNT(*) FILTER (
-          WHERE s.created_at < months.month + INTERVAL 1 MONTH
-            AND (s.canceled_at IS NULL OR s.canceled_at >= months.month + INTERVAL 1 MONTH)
-        ) AS active_subs
+        COUNT(s.id) AS active_subs
       FROM months
-      CROSS JOIN subscriptions s
+      LEFT JOIN subscriptions s
+        ON s.created_at < months.month + INTERVAL 1 MONTH
+       AND (s.canceled_at IS NULL OR s.canceled_at >= months.month + INTERVAL 1 MONTH)
       GROUP BY 1
       ORDER BY 1
 
@@ -359,8 +359,6 @@ charts:
     subtitle: All tickets ever filed, by status
     theta: tickets
     color: status
-    total:
-      label: Total tickets
 
 rows:
   - text: |
@@ -369,25 +367,25 @@ rows:
       analyst would write it up, with charts placed where the argument
       needs them.
 
-      Dundersign closed **$13,356** in new business over the trailing 90
-      days (through July 31, 2026), down 8% from the $14,544 booked in the
-      90 days before that. Fewer deals reached the table — 191 closed
-      compared with 239 — but the ones that did close won more often: a
-      **41.9%** win rate, up from 36.0% the quarter before.
+      Dundersign closed **$14,112** in new business over the trailing 90
+      days (through July 31, 2026), down 3% from the $14,616 booked in the
+      90 days before that. Fewer deals reached the table — 197 closed
+      compared with 233 — but the ones that did close won more often: a
+      **43.1%** win rate, up from 37.8% the quarter before.
 
       The story underneath bookings is stronger. Active subscriptions have
-      grown every month since October, from 5 to 313 by the last complete
-      month and **339** as of today — up 61% from 90 days ago. Even as new
+      grown every month since October, from 6 to 313 by the last complete
+      month and **348** as of today — up 62% from 90 days ago. Even as new
       bookings soften, the business is keeping more of what it has already
       sold.
 
       Growth is not uniform, though. New signups climbed through the fall to a
-      412 peak in December, spiked again to 340 in March, and have since leveled
-      into the 150–230 range, and only 10.7% of
+      416 peak in December, spiked again to 327 in March, and have since leveled
+      into the 163–239 range, and only 11.1% of
       everyone who has ever signed up has converted to a paid plan. Support
-      tells a similar story: ticket volume is down by roughly half from
-      last fall, but resolution has not kept pace — 159 of the 245 tickets
-      ever filed remain open. $14,868 sits in open pipeline across 89
+      tells a similar story: ticket volume is down by about two-thirds from
+      last fall, but resolution has not kept pace — 162 of the 232 tickets
+      ever filed remain open. $14,040 sits in open pipeline across 84
       deals, and more than half of it is concentrated in just two stages.
       The sections below walk through each of these threads in turn.
 
@@ -397,16 +395,16 @@ rows:
           ## Bookings cooled, but win rate held up
 
           Monthly bookings are choppy by nature — the average Dundersign
-          deal is $167, so a handful of closes can swing a month's total.
-          December's $8,388 was a seasonal peak; July closed at $3,600. A
-          cleaner read is the trailing 90 days, which is where the **8%
-          decline** actually lives — from $14,544 to $13,356.
+          deal is $166, so a handful of closes can swing a month's total.
+          February's $8,424 was the peak; July closed at $3,060. A
+          cleaner read is the trailing 90 days, which is where the **3%
+          decline** actually lives — from $14,616 to $14,112.
 
           Win rate is the more encouraging number. The 100% marks in
-          October and November reflect only 5 and 15 closed deals — too
-          few to read as a rate. January and February still ran hot (62%
-          and 51%); from March on, a 3-month rolling win rate settled into
-          the high-30s to low-40s and has held near **42%** since.
+          October and November reflect only 6 and 20 closed deals — too
+          few to read as a rate. January and February still ran hot (63%
+          and 55%); from March on, the 3-month rolling win rate settled into
+          the high-30s to low-40s and has held near **43%** since.
       - width: "60%"
         cols:
           - bookings_trend
@@ -418,8 +416,8 @@ rows:
           ## The installed base keeps growing
 
           Active subscriptions have risen in every one of the last ten
-          months, from 5 in October to 313 by July and **339 today** — a
-          61% increase versus 90 days ago. Whatever is happening upstream
+          months, from 6 in October to 313 by July and **348 today** — a
+          62% increase versus 90 days ago. Whatever is happening upstream
           in bookings, existing customers are staying, and the subscriber
           base compounds regardless.
       - width: "60%"
@@ -427,8 +425,8 @@ rows:
           - active_subs_chart
 
   - text: |
-      > Nearly two-thirds of every support ticket Dundersign has ever
-      > filed is still open.
+      > Seven in ten of the support tickets Dundersign has ever filed
+      > are still open.
 
   - text: |
       A quick pulse check before the detail:
@@ -444,12 +442,12 @@ rows:
         text: |
           ## Pipeline is concentrated in two stages
 
-          Dundersign is carrying **$14,868** in open pipeline across 89
-          deals. Negotiation and Prospecting together hold 56% of that
-          value — $4,248 and $4,032 respectively — while Proposal, the
-          stage closest to closing, holds only $1,512 across 9 deals. A
-          pipeline this front-loaded is worth watching: growth this
-          quarter depends on those early-stage deals actually advancing.
+          Dundersign is carrying **$14,040** in open pipeline across 84
+          deals. Negotiation and Proposal together hold 58% of that
+          value — $5,040 and $3,132 respectively — while Prospecting, the
+          earliest stage, holds $2,844 across 17 deals. Growth this
+          quarter depends on the deals in those top two stages actually
+          closing.
       - width: "60%"
         rows:
           - pipeline_chart
@@ -465,13 +463,13 @@ rows:
         text: |
           ## New signups are decelerating
 
-          Monthly signups peaked at 412 in December, spiked again to 340
-          in March, and have since leveled into the 150–230 range —
-          averaging **196 a month** over the trailing quarter (May–July),
+          Monthly signups peaked at 416 in December, spiked again to 327
+          in March, and have since leveled into the 163–239 range —
+          averaging **202 a month** over the trailing quarter (May–July),
           roughly half the December peak.
 
-          Of the 2,588 accounts created since launch, only 10.7% have
-          converted to a paid plan; 21.8% are still mid-trial and 66.8%
+          Of the 2,639 accounts created since launch, only 11.1% have
+          converted to a paid plan; 22.2% are still mid-trial and 65.7%
           have expired without converting. Trial-to-paid conversion, not
           top-of-funnel volume, looks like the more binding constraint.
       - width: "60%"
@@ -484,11 +482,11 @@ rows:
         text: |
           ## Support backlog is building
 
-          Ticket volume has fallen by nearly half since last fall — an
-          average of 30 new tickets a month in October–December 2025, down
-          to 16 a month in May–July 2026. Resolution has not kept pace: of
-          the 245 tickets filed since launch, only 86 have been solved,
-          leaving **159 still open**.
+          Ticket volume has fallen by about two-thirds since last fall — an
+          average of 34 new tickets a month in October–December 2025, down
+          to 12 a month in May–July 2026. Resolution has not kept pace: of
+          the 232 tickets filed since launch, only 70 have been solved,
+          leaving **162 still open**.
       - width: "60%"
         cols:
           - tickets_chart
@@ -497,13 +495,13 @@ rows:
   - text: |
       ## What we are watching
 
-      - Whether the Negotiation and Prospecting stages convert — 56% of
+      - Whether the Negotiation and Proposal stages convert — 58% of
         open pipeline sits in those two stages alone.
-      - Trial-to-paid conversion: only 10.7% of all accounts ever created
+      - Trial-to-paid conversion: only 11.1% of all accounts ever created
         have become paying customers.
-      - The support backlog: 159 open tickets against a resolution rate
+      - The support backlog: 162 open tickets against a resolution rate
         that has not grown alongside ticket volume.
-      - Whether active-subscription growth (+61% over 90 days) can
+      - Whether active-subscription growth (+62% over 90 days) can
         outpace the slowdown in new bookings.
 
   - text: |

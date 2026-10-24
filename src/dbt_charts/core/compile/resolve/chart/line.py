@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -18,6 +18,12 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedLineStyle,
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
+)
+from dbt_charts.core.compile.resolve.chart._annotations import (
+    NO_ANNOTATIONS,
+    annotation_chart,
+    point_radius,
+    resolve_annotations,
 )
 from dbt_charts.core.compile.resolve.chart._axes import (
     _bake_ay_orient,
@@ -57,6 +63,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
+    _resolve_layer_inks,
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
@@ -119,6 +126,7 @@ def _resolve_line(
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
     x_date_range: tuple[date, date] | None,
+    rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedLineChart:
     data = dataset.all_rows()
@@ -163,8 +171,49 @@ def _resolve_line(
     line = chart_local_style_context.line
     primary = plan.primary
     channels = plan.channels
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
+    measure_tooltip_format = _measure_tooltip_format(
+        normalized, primary, chart_style_context, values=tooltip_format_values
+    )
+    single_series_fill = _effective_single_series_fill(
+        chart_style_context,
+        primary,
+        rhythm_slot=normalized.rhythm_slot,
+        has_layers=bool(normalized.layers),
+    )
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "line", has_layers=bool(normalized.layers)
+    )
+    inks = _resolve_layer_inks(
+        normalized,
+        chart_style_context,
+        line,
+        primary,
+        channels,
+        data,
+        datasets,
+        single_series_fill,
+        measure_quantitative=True,
+    )
+    annotations = (
+        NO_ANNOTATIONS
+        if rendered_at is None or not normalized.annotations
+        else resolve_annotations(
+            normalized.annotations,
+            annotation_chart(
+                normalized,
+                x_ch_type,
+                "quantitative",
+                False,
+                single_series_fill,
+                False,
+                inks,
+            ),
+            dataset,
+            datasets,
+            chart_local_style_context,
+            rendered_at,
+        )
     )
     endpoint_label_has_layers = layered_endpoint_rail_fires(
         layered_endpoint_rail_shape(normalized.x, normalized.y),
@@ -234,7 +283,7 @@ def _resolve_line(
     # flag must be derived from the same extent, or the ladder gets baked for
     # a domain the scale never adopts. _zero_floats is that one shared extent
     # for both single- and multi-metric line.
-    _zero_floats = _zero_anchor_floats(normalized.y, data)
+    _zero_floats = _zero_anchor_floats(normalized.y, data) + list(annotations.y_values)
     ay_merged = _bake_ay_orient(
         ay_merged,
         channels,
@@ -306,6 +355,7 @@ def _resolve_line(
     # _resolve_cartesian_ticks documents).
     line_y_values = (
         _shared_y_values(data, y_field_line, normalized, datasets)
+        + list(annotations.y_values)
         if y_field_line
         else _zero_floats
     )
@@ -321,7 +371,6 @@ def _resolve_line(
     # No tick_values on the categorical axis -- the non-compacting bake
     # can't fire regardless, but the format is required, not defaulted
     # (see build_resolved_axis's docstring).
-    tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         "line",
@@ -331,9 +380,7 @@ def _resolve_line(
         ax_edge=None,
         ticks=line_ticks,
         column_forming=True,
-        measure_tooltip_format=_measure_tooltip_format(
-            normalized, primary, chart_style_context, values=tooltip_format_values
-        ),
+        measure_tooltip_format=measure_tooltip_format,
         tooltip_format_values=tooltip_format_values,
         # Line semantics fix x=dimension, y=value -- see the same comment
         # above near the categorical-y guard.
@@ -442,6 +489,7 @@ def _resolve_line(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        inks,
         normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
@@ -472,12 +520,7 @@ def _resolve_line(
             line_mark=resolved_line_mark,
             point_mark=line_point_mark,
             endpoint_labels=endpoint_labels,
-            single_series_fill=_effective_single_series_fill(
-                chart_style_context,
-                primary,
-                rhythm_slot=normalized.rhythm_slot,
-                has_layers=bool(normalized.layers),
-            ),
+            single_series_fill=single_series_fill,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             dashes=chart_style_context.dashes,
             title_font=_tf,
@@ -486,4 +529,11 @@ def _resolve_line(
             **style_tail,
         ),
         layers=resolved_layers,
+        annotations=annotations.render(
+            ay,
+            style_tail["axis_x"],
+            resolved_layers,
+            point_radius(line_point_mark.size),
+        ),
+        annotation_gaps=annotations.gaps,
     )

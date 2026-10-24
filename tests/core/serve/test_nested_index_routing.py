@@ -19,10 +19,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.project import CHARTS_SUBDIR
+from dbt_charts.core.project import CHARTS_SUBDIR, folder_index_board
 from dbt_charts.core.serve.server import (
     _resolve_board_file_path,
-    _resolve_folder_index_board,
     create_server,
 )
 
@@ -62,7 +61,7 @@ rows:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for _resolve_folder_index_board
+# Unit tests for folder_index_board
 # ---------------------------------------------------------------------------
 
 
@@ -74,7 +73,7 @@ class TestResolveFolderIndexBoard:
         folder.mkdir()
         (folder / "index.yml").write_text(_SIMPLE_BOARD)
         p = local_project(tmp_path)
-        result = _resolve_folder_index_board(p.directory_for_fspath(folder))
+        result = folder_index_board(p.directory_for_fspath(folder))
         assert result is not None and result.relpath == "support/index.yml"
 
     def test_returns_index_yaml_when_only_yaml_present(
@@ -84,7 +83,7 @@ class TestResolveFolderIndexBoard:
         folder.mkdir()
         (folder / "index.yaml").write_text(_SIMPLE_BOARD)
         p = local_project(tmp_path)
-        result = _resolve_folder_index_board(p.directory_for_fspath(folder))
+        result = folder_index_board(p.directory_for_fspath(folder))
         assert result is not None and result.relpath == "support/index.yaml"
 
     def test_returns_index_md_when_only_md_present(
@@ -94,7 +93,7 @@ class TestResolveFolderIndexBoard:
         folder.mkdir()
         (folder / "index.md").write_text("# Support\n")
         p = local_project(tmp_path)
-        result = _resolve_folder_index_board(p.directory_for_fspath(folder))
+        result = folder_index_board(p.directory_for_fspath(folder))
         assert result is not None and result.relpath == "support/index.md"
 
     def test_returns_none_when_no_index(
@@ -103,7 +102,7 @@ class TestResolveFolderIndexBoard:
         folder = tmp_path / "support"
         folder.mkdir()
         p = local_project(tmp_path)
-        assert _resolve_folder_index_board(p.directory_for_fspath(folder)) is None
+        assert folder_index_board(p.directory_for_fspath(folder)) is None
 
     def test_returns_index_markdown_when_only_markdown_present(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -113,7 +112,7 @@ class TestResolveFolderIndexBoard:
         folder.mkdir()
         (folder / "index.markdown").write_text("# Support\n")
         p = local_project(tmp_path)
-        result = _resolve_folder_index_board(p.directory_for_fspath(folder))
+        result = folder_index_board(p.directory_for_fspath(folder))
         assert result is not None and result.relpath == "support/index.markdown"
 
     def test_prefers_yml_over_yaml(
@@ -124,13 +123,12 @@ class TestResolveFolderIndexBoard:
         (folder / "index.yml").write_text(_SIMPLE_BOARD)
         (folder / "index.yaml").write_text(_SIMPLE_BOARD)
         p = local_project(tmp_path)
-        result = _resolve_folder_index_board(p.directory_for_fspath(folder))
+        result = folder_index_board(p.directory_for_fspath(folder))
         assert result is not None and result.relpath == "support/index.yml"
 
 
 class TestResolveBoardFilePathRejectsEscape:
-    """A `..` segment in the URL is rejected with 403 (moved from the old
-    _ensure_within_project guard into the handle-based resolver)."""
+    """A `..` segment in the URL is rejected with 403."""
 
     def test_dotdot_segment_returns_403(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

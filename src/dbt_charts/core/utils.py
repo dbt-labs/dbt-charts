@@ -305,6 +305,33 @@ def vega_infers_quantitative(data: Rows, field: str) -> bool:
     )
 
 
+_STANDARD_DATE_RES = (
+    re.compile(r"^\d{4}[-/]\d{2}[-/]\d{2}([T ][\d:.].*)?$"),
+    re.compile(r"^\d{2}/\d{2}/\d{4}$"),
+)
+
+
+def vega_infers_temporal(data: Rows, field: str) -> bool:
+    """Whether Vega-Lite's type inference would resolve ``field`` to temporal.
+
+    Checked after ``vega_infers_quantitative``: over the same first-10-rows
+    sample, every non-null cell is a date/datetime or a standard date string
+    (YYYY-MM-DD, YYYY/MM/DD, MM/DD/YYYY, ISO timestamps) -- not any string
+    with a few hyphens (``claude-opus-4-7``).
+    """
+    if not data or field not in data[0]:
+        return False
+    return all(
+        isinstance(value, (date, datetime))
+        or (
+            isinstance(value, str)
+            and any(pattern.match(value) for pattern in _STANDARD_DATE_RES)
+        )
+        for value in (row.get(field) for row in data[:10] if field in row)
+        if value is not None
+    )
+
+
 def is_date_like(value: Any) -> bool:
     """Return True for date-like values: Python date/datetime objects or
     string values matching date patterns.

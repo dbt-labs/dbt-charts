@@ -82,6 +82,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.diagnostics.registry import WarningCode
 from dbt_charts.core.execute.executor import TruncationInfo
+from dbt_charts.core.render.chart.annotation_nothing_drawn import NothingDrawn
 from dbt_charts.core.render.chart.axis_label_collision import AxisLabelCollision
 from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
@@ -142,6 +143,8 @@ class WarningContext(BaseModel):
     # stated no order to absorb, recorded by rendered_x_domain at the point it
     # declined to place them (sparse — only charts left in paint order appear).
     x_domain_paint_orders: dict[str, XDomainPaintOrder] = {}
+    # chart id → annotation index → why the engine drew nothing for it (sparse).
+    annotation_nothing_drawn: NothingDrawn = {}
     # chart id → nearest ancestor's literal authored layout height, in px
     # (sparse — see module docstring for why this isn't derived from
     # board_spec.layout's resolved .height).

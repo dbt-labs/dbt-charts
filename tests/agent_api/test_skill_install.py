@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from dbt_charts.agent_api.skill_install import (
     detect_global_skill_targets,
     detect_legacy_skill_dirs,
     detect_skill_targets,
+    gitignored_skill_installs,
     install_skills,
     skills_for_file_install,
     target_dir_for,
@@ -384,3 +386,51 @@ def test_reinstall_into_a_read_only_target_raises_the_install_error(
             install_skills(target_dir=target, project_root=install_root)
     finally:
         target.chmod(0o755)
+
+
+def test_gitignored_skill_installs_names_installs_a_broad_rule_swallows(
+    install_root: Path,
+) -> None:
+    """A common `*build/` rule for build artifacts also matches
+    `dct-custom-chart-build/`, dropping that one skill from every commit."""
+    subprocess.run(["git", "init", "-q", str(install_root)], check=True)
+    (install_root / ".gitignore").write_text("*build/\n", encoding="utf-8")
+    target = install_root / ".claude" / "skills"
+    install_skills(target_dir=target, project_root=install_root)
+
+    assert gitignored_skill_installs(target) == ["dct-custom-chart-build"]
+
+
+def test_gitignored_skill_installs_is_empty_outside_a_repository(
+    install_root: Path,
+) -> None:
+    target = install_root / ".claude" / "skills"
+    install_skills(target_dir=target, project_root=install_root)
+
+    assert gitignored_skill_installs(target) == []
+
+
+def test_gitignored_skill_installs_is_empty_without_git_on_path(
+    install_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no git binary, git ignores nothing -- the install must not crash."""
+    target = install_root / ".claude" / "skills"
+    install_skills(target_dir=target, project_root=install_root)
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    assert gitignored_skill_installs(target) == []
+
+
+def test_gitignored_skill_installs_raises_when_git_fails_inside_a_repository(
+    install_root: Path,
+) -> None:
+    """Inside a repository, a git failure (here a corrupt `.git`) is an
+    error, never reported as "nothing ignored"."""
+    (install_root / ".git").mkdir()
+    target = install_root / ".claude" / "skills"
+    install_skills(target_dir=target, project_root=install_root)
+
+    with pytest.raises(RuntimeError, match="git check-ignore failed"):
+        gitignored_skill_installs(target)

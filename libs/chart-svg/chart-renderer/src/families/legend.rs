@@ -15,7 +15,7 @@ use crate::diagnostic::Diagnostic;
 use crate::common::{field_display_text, truncate_label, FieldLabels, Font};
 use crate::contract;
 use measure::baseline_shift;
-use scene::{Attrs, Node};
+use scene::{Attrs, Chars, Escape, Node};
 use print::print;
 use measure::FontBook;
 use crate::vega_fit;
@@ -876,6 +876,61 @@ pub fn limit_legend_text<'a>(
     Ok(LimitedLegendText { labels: drawn, label_ws, title, title_w })
 }
 
+/// The width a legend's entry grid may take: the chart's `width` less the offset the plot's
+/// origin sits in from the card, for a legend above or below the plot, which Vega anchors at that
+/// origin and lets run past the card; `None` where the legend sits beside the plot (it takes its
+/// own gutter) or floats over it.
+pub fn legend_room(cfg: &LegendConfig, width: Option<f64>) -> Option<f64> {
+    width
+        .filter(|_| !cfg.position.overlay && matches!(cfg.position.edge.as_str(), "top" | "bottom"))
+        .map(|width| width - VEGA_LEGEND_OFFSET)
+}
+
+/// The narrowest a label is cut to, in px, when the legend must shrink to its room.
+const MIN_FIT_LABEL_LIMIT: f64 = 40.0;
+
+/// Each entry's label as it is drawn: cut with an ellipsis at `labelLimit`, and, where the legend
+/// has only `room` px, at the widest limit that lets its grid fit (never under
+/// [`MIN_FIT_LABEL_LIMIT`]), so long names shorten instead of running off the card.
+pub fn limited_labels(
+    entries: &[LegendEntry],
+    mixed_marks: bool,
+    title: &str,
+    cfg: &LegendConfig,
+    fonts: &FontBook,
+    room: Option<f64>,
+) -> Result<Vec<String>, String> {
+    let (size, family) = (cfg.label.font.size_or(11.0), cfg.label.font.family_or("sans-serif"));
+    let cut = |limit: f64| -> Result<Vec<String>, String> {
+        entries.iter().map(|e| truncate_label(e.label, limit, family, size, fonts, true)).collect()
+    };
+    let theme_limit = cfg.label.max_width.unwrap_or(VEGA_LEGEND_LABEL_LIMIT);
+    let fits = |limit: f64| -> Result<bool, String> {
+        let drawn = cut(limit)?;
+        Ok(vega_legend(&with_drawn_labels(entries, &drawn), mixed_marks, title, cfg, fonts)?.box_w <= room.expect("fits is asked only with room"))
+    };
+    let Some(_) = room else { return cut(theme_limit) };
+    if fits(theme_limit)? {
+        return cut(theme_limit);
+    }
+    let (mut lo, mut hi) = (MIN_FIT_LABEL_LIMIT.min(theme_limit), theme_limit);
+    while hi - lo > 1.0 {
+        let mid = ((lo + hi) / 2.0).floor();
+        if fits(mid)? { lo = mid } else { hi = mid }
+    }
+    cut(lo)
+}
+
+/// `entries` drawn with `drawn` as their labels; a cut label keeps its full name as `series_key`,
+/// which the legend prints as its hover title.
+pub fn with_drawn_labels<'a>(entries: &[LegendEntry<'a>], drawn: &'a [String]) -> Vec<LegendEntry<'a>> {
+    entries
+        .iter()
+        .zip(drawn)
+        .map(|(e, label)| LegendEntry { label, series_key: e.series_key.or((label != e.label).then_some(e.label)), ..*e })
+        .collect()
+}
+
 /// `symbolLimit`: vega-encode's `LegendEntries` keeps the first `limit - 1` of `count` entries and
 /// folds the rest into one "…N entries" row that carries the next entry's own swatch. `None` where
 /// the entries fit.
@@ -908,6 +963,10 @@ pub fn vega_legend(
     let symbols: Vec<Option<LegendSymbol>> = entries
         .iter()
         .map(|e| match authored_glyph(cfg, e.symbol) {
+            Some((_, bounds, _)) if matches!(e.symbol, Some(LegendSymbol::FilledShape)) => {
+                let bare = |extent: f64| extent - VEGA_SYMBOL_STROKE_WIDTH;
+                Some(LegendSymbol::Glyph(Bounds { x: bare(bounds.x), up: bare(bounds.up), down: bare(bounds.down), ..bounds }))
+            }
             Some((_, bounds, _)) => Some(LegendSymbol::Glyph(bounds)),
             None => e.symbol,
         })
@@ -994,6 +1053,9 @@ pub enum LegendSymbol<'a> {
     /// it keeps the legend's uniform cell, as a square and circle always do.
     BorderedCircle(&'a str),
     FilledCircle,
+    /// A [`LegendSymbol::FilledCircle`] that an authored `symbol_shape` turns into a fill-only glyph: the
+    /// mark has no stroke, so the shape carries none and bounds without one.
+    FilledShape,
     /// Vega's default 10px stroke symbol (`M-5,0L5,0`), the legend of a line
     /// mark outside a mixed stroke legend.
     ShortStroke,
@@ -1143,6 +1205,7 @@ pub fn symbol_legend(
         if let Some((path, bounds, opacity)) = &authored {
             symbol = match symbol {
                 LegendSymbol::BorderedCircle(border) => LegendSymbol::BorderedGlyph(path, border, *bounds),
+                LegendSymbol::FilledShape => LegendSymbol::FilledGlyph(path),
                 _ => {
                     let interior = if cfg.symbol_fill == Some(false) { "transparent" } else { entry.fill };
                     LegendSymbol::Ring(path, interior, *opacity, *bounds)
@@ -1158,17 +1221,22 @@ pub fn symbol_legend(
         // from the SAME `order_domain`/series-promotion facts its own tooltip
         // already derived, never a second scan of the SVG).
         let series_key = stamp_series.then(|| entry.series_key.unwrap_or(entry.label).trim());
-        let label = Node::text(
-            Attrs::new()
-                .set("x", format!("{:.2}", x + grid.label_x))
-                .set("y", format!("{:.2}", y + c + baseline_shift("middle", size)))
-                .set("text-anchor", "start")
-                .vega("font-family", family)
-                .set("font-size", size.to_string())
-                .set("font-weight", weight.clone())
-                .set("fill", color),
-            entry.label,
-        );
+        let label_attrs = Attrs::new()
+            .set("x", format!("{:.2}", x + grid.label_x))
+            .set("y", format!("{:.2}", y + c + baseline_shift("middle", size)))
+            .set("text-anchor", "start")
+            .vega("font-family", family)
+            .set("font-size", size.to_string())
+            .set("font-weight", weight.clone())
+            .set("fill", color);
+        // A label cut at `labelLimit` shows its full name on hover.
+        let label = match entry.series_key.map(str::trim).filter(|full| *full != entry.label) {
+            Some(full) => Node::TextRuns {
+                attrs: label_attrs,
+                children: vec![Node::Chars(Chars::new(entry.label, Escape::Attr)), Node::Title(Chars::new(full, Escape::Attr))],
+            },
+            None => Node::text(label_attrs, entry.label),
+        };
         cells.push(Node::group(contract::legend_label_attrs(series_key), vec![label]));
     }
     children.push(Node::group(contract::legend_entries_attrs(), cells));
@@ -1220,6 +1288,7 @@ fn symbol_node(symbol: LegendSymbol, fill: &str, (cx, cy): (f64, f64)) -> Node {
             path(CIRCLE.into(), Attrs::new().set("fill", fill).set("stroke", stroke).set("stroke-width", "1.5"))
         }
         LegendSymbol::FilledCircle => path(CIRCLE.into(), Attrs::new().set("fill", fill).set("stroke-width", "1.5")),
+        LegendSymbol::FilledShape => unreachable!("an unstroked shape is laid out and emitted as its glyph"),
         LegendSymbol::FilledGlyph(d) => path(d.into(), Attrs::new().set("fill", fill).set("stroke-width", "1.5")),
         LegendSymbol::Ring(d, interior, opacity, bounds) => path(
             d.into(),
@@ -1429,11 +1498,23 @@ pub fn emit_vega_legend(
     legend_y: f64,
     stamp_series: bool,
 ) {
-    if entries.is_empty() && legend.title.is_empty() {
-        return;
-    }
-    let node = symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series);
-    out.push_str(&print(&[node]));
+    let node = drawn_symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series);
+    out.extend(node.map(|node| print(&[node])));
+}
+
+/// [`symbol_legend`], or nothing for a legend with no entries and no title.
+#[allow(clippy::too_many_arguments)]
+pub fn drawn_symbol_legend(
+    entries: &[LegendEntry],
+    legend: &VegaLegend,
+    cfg: &LegendConfig,
+    default_symbol: LegendSymbol,
+    legend_x: f64,
+    legend_y: f64,
+    stamp_series: bool,
+) -> Option<Node> {
+    (!(entries.is_empty() && legend.title.is_empty()))
+        .then(|| symbol_legend(entries, legend, cfg, default_symbol, legend_x, legend_y, stamp_series))
 }
 
 #[derive(Deserialize)]
@@ -2111,6 +2192,6 @@ mod tests {
 
     #[test]
     fn symbol_legend_markup_is_pinned() {
-        assert_eq!(symbol_legend_markup(), include_str!("legend_symbols_golden.svg"));
+        assert_eq!(symbol_legend_markup(), include_str!("legend_symbols_golden.svg").trim_end());
     }
 }

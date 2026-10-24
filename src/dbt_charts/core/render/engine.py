@@ -63,6 +63,9 @@ from dbt_charts.core.render.board_variables import (
     current_board_variables,
     current_root_board_width,
 )
+from dbt_charts.core.render.chart.annotation_nothing_drawn import (
+    record_annotation_nothing_drawn,
+)
 from dbt_charts.core.render.chart.automatic_link import get_filter_variables_context
 from dbt_charts.core.render.chart.axis_label_collision import (
     AxisLabelCollision,
@@ -287,7 +290,8 @@ def board_style_envelope(
         else []
     )
     return {
-        "muted": board_style.muted,
+        "secondary_color": board_style.secondary_color,
+        "numeral_family": board_style.numeral_family,
         "tones": board_style.tones.model_dump(mode="json"),
         "title_case": board_style.title.font.case,
         "continuous_height": board_style.chart_defaults.view.continuous_height,
@@ -574,6 +578,9 @@ _PLACEMENT_WARNINGS = frozenset(
 )
 
 _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
+    "WARN-ANNOTATION-NOTHING-DRAWN": lambda p: record_annotation_nothing_drawn(
+        p["chart_id"], p["index"], p["reason"]
+    ),
     **{
         code: lambda p, code=code: record_geometry_warning(code, p)
         for code in _GEOMETRY_WARNINGS

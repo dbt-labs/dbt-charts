@@ -153,7 +153,7 @@ Aliases:
 
 ## snowflake
 
-dbt-snowflake 1.11.5
+dbt-snowflake 1.12.4
 
 ### `dbt.adapters.snowflake.connections.SnowflakeCredentials`
 
@@ -185,4 +185,6 @@ dbt-snowflake 1.11.5
 - `insecure_mode`
 - `reuse_connections`
 - `s3_stage_vpce_dns_name`
+- `workload_identity_provider`
+- `workload_identity_entra_resource`
 - `platform_detection_timeout_seconds`

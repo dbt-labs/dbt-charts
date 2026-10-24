@@ -50,14 +50,14 @@ description: Flow map after Charles Joseph Minard's 1869 map of Napoleon's Russi
   {% macro ty(v) %}{{ temp_scale(v | float) | round(1) }}{% endmacro %}
   {% for v in temp_scale.ticks(3) %}
   <line x1="0" x2="{{ width - right }}" y1="{{ ty(v) }}" y2="{{ ty(v) }}" stroke="{{ style.charts.axis.grid.color }}"/>
-  <text x="{{ width - right + 6 }}" y="{{ ty(v) }}" dy="0.35em" font-size="{{ small }}" fill="{{ style.muted }}">{{ v | format(".0f") }}°R</text>
+  <text x="{{ width - right + 6 }}" y="{{ ty(v) }}" dy="0.35em" font-size="{{ small }}" fill="{{ style.fonts.secondary.color }}">{{ v | format(".0f") }}°R</text>
   {% endfor %}
   <polyline fill="none" stroke="{{ style.font.color }}" stroke-width="1.5" points="{% for t in temps %}{{ x(t.lon) }},{{ ty(t.temp) }} {% endfor %}"/>
   {% for t in temps %}
-  <line x1="{{ x(t.lon) }}" x2="{{ x(t.lon) }}" y1="{{ map_h }}" y2="{{ ty(t.temp) }}" stroke="{{ style.muted }}" stroke-width="0.6" stroke-dasharray="2 2"/>
+  <line x1="{{ x(t.lon) }}" x2="{{ x(t.lon) }}" y1="{{ map_h }}" y2="{{ ty(t.temp) }}" stroke="{{ style.fonts.secondary.color }}" stroke-width="0.6" stroke-dasharray="2 2"/>
   <circle cx="{{ x(t.lon) }}" cy="{{ ty(t.temp) }}" r="2.5" fill="{{ style.font.color }}"><title>{{ t.name }}: {{ t.temp | format('.1~f') }}° Réaumur</title></circle>
   <text x="{{ x(t.lon) }}" y="{{ (ty(t.temp) | float) + small + 4 }}" text-anchor="middle" font-size="{{ small }}" fill="{{ style.font.color }}">{{ t.temp | format('.1~f') }}° {{ t.name }}</text>
   {% endfor %}
-  <text x="0" y="{{ temp_top - size * 0.8 }}" font-size="{{ small }}" fill="{{ style.muted }}">Temperature on the retreat, degrees Réaumur</text>
+  <text x="0" y="{{ temp_top - size * 0.8 }}" font-size="{{ small }}" fill="{{ style.fonts.secondary.color }}">Temperature on the retreat, degrees Réaumur</text>
 {% endif %}
 </g>

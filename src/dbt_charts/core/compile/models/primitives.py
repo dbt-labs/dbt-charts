@@ -886,7 +886,7 @@ class SingleLineFontStyle(FontSlotBase):
     color: Annotated[str | None, Color()] = Field(
         default=None, description="Text color as a CSS color string."
     )
-    size: float | None = Field(default=None, description="Font size in pixels.")
+    size: float | None = Field(default=None, gt=0, description="Font size in pixels.")
     weight: Annotated[str | float | None, FontWeightValue()] = Field(
         default=None,
         description="How heavy the type is drawn (e.g., 'bold', 400, 700).",
@@ -1239,7 +1239,7 @@ class StrokeStyle(BaseModel):
         default=None, description="Stroke color as a CSS color string."
     )
     width: Annotated[float | None, AutoUnset()] = Field(
-        default=None, description="Stroke width in pixels."
+        default=None, ge=0, description="Stroke width in pixels."
     )
     cap: Annotated[LineCap | None, AutoUnset()] = Field(
         default=None,

@@ -8,6 +8,7 @@ use super::model::{payload_error, Anchor, Scalar};
 use crate::codes;
 use crate::diagnostic::{self, Diagnostic};
 use crate::families::cartesian::{BandGeometry, LinearScale, LogScale};
+use crate::vega_fit::Bend;
 
 /// The annotation a lookup is for: the `chart_id` and `index` params.
 pub struct Site<'a> {
@@ -40,9 +41,13 @@ impl Site<'_> {
 pub enum AxisMap {
     Linear { domain: (f64, f64), range: (f64, f64) },
     Log { domain: (f64, f64), range: (f64, f64) },
+    /// Pow, sqrt or symlog: the bend the family's marks draw with.
+    Bent { bend: Bend, domain: (f64, f64), range: (f64, f64) },
     /// Discrete slots. `days` is Some when the categories are dates (bars on a
     /// date column): the day-fraction of each category, same order as `domain`.
     Band { domain: Vec<String>, geometry: BandGeometry, days: Option<Vec<f64>>, range: (f64, f64) },
+    /// Line's point x. `days` holds each category's day-fraction for dates,
+    /// or its number on a quantitative x; a value interpolates between them.
     Point { domain: Vec<String>, positions: Vec<f64>, days: Option<Vec<f64>>, range: (f64, f64) },
     /// Temporal line x: days-since-epoch extent to a pixel range, the
     /// `utc_fraction_at` law. `range` already includes the family's x padding.
@@ -54,6 +59,7 @@ impl AxisMap {
         match self {
             AxisMap::Linear { range, .. }
             | AxisMap::Log { range, .. }
+            | AxisMap::Bent { range, .. }
             | AxisMap::Band { range, .. }
             | AxisMap::Point { range, .. }
             | AxisMap::Time { range, .. } => *range,
@@ -76,9 +82,34 @@ impl AxisMap {
                 .map(|(lo, hi)| (lo + hi) / 2.0)),
             AxisMap::Point { positions, days, .. } => {
                 let days = point_days(days, site)?;
-                Ok(Some(self.clamp(interpolate(days, positions, date_days(v, site)?))))
+                Ok(Some(interpolate(days, positions, point_ordinal(v, site)?)))
             }
             _ => self.continuous(v, site).map(Some),
+        }
+    }
+
+    /// One pixel for a trend sample. A band axis interpolates between slot
+    /// centers, extending past the ends along the end segments, so a fitted
+    /// curve runs continuously across the bars; any other axis is `position`.
+    pub fn curve_position(&self, v: &Scalar, site: &Site) -> Result<Option<f64>, Diagnostic> {
+        let AxisMap::Band { geometry, days, .. } = self else { return self.position(v, site) };
+        self.check()?;
+        let days = days.as_deref().ok_or_else(|| site.payload("a value on a category axis"))?;
+        let centers: Vec<f64> = (0..days.len()).map(|i| geometry.edge(i, 0.5)).collect();
+        Ok(Some(interpolate(days, &centers, date_days(v, site)?)))
+    }
+
+    /// One pixel for a rule's or note's anchor: a value, or a category's slot
+    /// center; `None` (warning recorded) when it names no slot.
+    pub fn at(&self, a: &Anchor, site: &Site) -> Result<Option<f64>, Diagnostic> {
+        match (self, a) {
+            (_, Anchor::Value { value }) => self.position(value, site),
+            (AxisMap::Point { domain, positions, .. }, Anchor::Category { value }) => {
+                self.check()?;
+                Ok(category_index(domain, value, site).map(|i| positions[i]))
+            }
+            (_, Anchor::Category { .. }) => Ok(self.span(a, site)?.map(|(lo, hi)| (lo + hi) / 2.0)),
+            (_, Anchor::Range { .. }) => Err(site.payload("a range where one position is needed")),
         }
     }
 
@@ -111,7 +142,7 @@ impl AxisMap {
             }
             (AxisMap::Point { positions, days, .. }, Anchor::Value { value }) => {
                 let days = point_days(days, site)?;
-                let p = self.clamp(interpolate(days, positions, date_days(value, site)?));
+                let p = interpolate(days, positions, point_ordinal(value, site)?);
                 Ok(Some((p, p)))
             }
             (AxisMap::Point { positions, days, .. }, Anchor::Range { from, to }) => {
@@ -119,7 +150,7 @@ impl AxisMap {
                 let (r0, r1) = self.range();
                 let at = |b: &Option<Scalar>, edge: f64| -> Result<f64, Diagnostic> {
                     match b {
-                        Some(v) => Ok(self.clamp(interpolate(days, positions, date_days(v, site)?))),
+                        Some(v) => Ok(interpolate(days, positions, point_ordinal(v, site)?)),
                         None => Ok(edge),
                     }
                 };
@@ -147,7 +178,7 @@ impl AxisMap {
         }
     }
 
-    /// `Linear`, `Log` and `Time`: a pixel for any scalar, inside the domain or not.
+    /// `Linear`, `Log`, `Bent` and `Time`: a pixel for any scalar, inside the domain or not.
     fn continuous(&self, v: &Scalar, site: &Site) -> Result<f64, Diagnostic> {
         match (self, v) {
             (AxisMap::Linear { domain, range }, Scalar::Number(n)) => {
@@ -158,6 +189,9 @@ impl AxisMap {
                     return Err(site.payload(format!("{} on a log axis", v.text())));
                 }
                 Ok(LogScale::new(domain.0, domain.1, range.0, range.1).position(*n))
+            }
+            (AxisMap::Bent { bend, domain, range }, Scalar::Number(n)) => {
+                Ok(range.0 + bend.frac(*domain, *n) * (range.1 - range.0))
             }
             (AxisMap::Time { extent, range }, Scalar::Date(_)) => {
                 let d = date_days(v, site)?;
@@ -189,6 +223,14 @@ fn date_days(v: &Scalar, site: &Site) -> Result<f64, Diagnostic> {
     match v {
         Scalar::Date(text) => v.days().ok_or_else(|| site.payload(format!("{text:?} is not a date"))),
         Scalar::Number(_) => Err(site.payload("a number on a date axis")),
+    }
+}
+
+/// A value on a point axis: a date's day-fraction, or a quantitative x's number.
+fn point_ordinal(v: &Scalar, site: &Site) -> Result<f64, Diagnostic> {
+    match v {
+        Scalar::Number(n) => Ok(*n),
+        Scalar::Date(_) => date_days(v, site),
     }
 }
 
@@ -373,12 +415,36 @@ mod tests {
     }
 
     #[test]
+    fn bent_maps_through_its_bend_on_both_signs() {
+        let sqrt = AxisMap::Bent { bend: Bend::Pow(0.5), domain: (0.0, 100.0), range: (200.0, 0.0) };
+        assert!((sqrt.position(&num(25.0), &SITE).unwrap().unwrap() - 100.0).abs() < 1e-9);
+        let symlog = AxisMap::Bent { bend: Bend::Symlog(1.0), domain: (-99.0, 99.0), range: (0.0, 100.0) };
+        assert!((symlog.position(&num(0.0), &SITE).unwrap().unwrap() - 50.0).abs() < 1e-9);
+        assert!((symlog.position(&num(-9.0), &SITE).unwrap().unwrap() - 25.0).abs() < 1e-9);
+        close(sqrt.span(&range(Some(num(25.0)), None), &SITE).unwrap().unwrap(), (0.0, 100.0));
+        let flat = AxisMap::Bent { bend: Bend::Pow(2.0), domain: (5.0, 5.0), range: (0.0, 40.0) };
+        assert_eq!(flat.position(&num(5.0), &SITE).unwrap(), Some(20.0));
+        payload_err(sqrt.position(&date("2024-01-01"), &SITE));
+        payload_err(sqrt.span(&cat("East"), &SITE));
+    }
+
+    #[test]
     fn continuous_range_reads_a_null_bound_as_the_range_edge() {
         close(linear().span(&range(Some(num(25.0)), None), &SITE).unwrap().unwrap(), (0.0, 150.0));
         close(linear().span(&range(None, Some(num(50.0))), &SITE).unwrap().unwrap(), (100.0, 200.0));
         close(time().span(&range(Some(date("2024-01-03")), None), &SITE).unwrap().unwrap(), (30.0, 110.0));
         let log = AxisMap::Log { domain: (1.0, 100.0), range: (0.0, 100.0) };
         close(log.span(&range(None, Some(num(10.0))), &SITE).unwrap().unwrap(), (0.0, 50.0));
+    }
+
+    #[test]
+    fn a_point_anchor_sits_at_a_category_s_slot_center_or_its_point() {
+        assert_eq!(band(None).at(&cat("2024-02-01"), &SITE).unwrap(), Some(150.0));
+        assert_eq!(point(None).at(&cat("c"), &SITE).unwrap(), Some(200.0));
+        assert_eq!(linear().at(&value(num(25.0)), &SITE).unwrap(), Some(150.0));
+        payload_err(linear().at(&cat("East"), &SITE));
+        let (out, drew_nothing) = warned(|| band(None).at(&cat("East"), &SITE).unwrap());
+        assert!(out.is_none() && drew_nothing);
     }
 
     #[test]
@@ -523,16 +589,25 @@ mod tests {
     }
 
     #[test]
-    fn point_dates_interpolate_between_neighbors_and_clamp() {
+    fn point_dates_interpolate_between_neighbors_and_extrapolate_past_the_ends() {
         let p = point(Some(vec![0.0, 10.0, 20.0]));
         let at = |d: f64| p.position(&Scalar::Date(iso(d)), &SITE).unwrap().unwrap();
         assert!((at(5.0) - 75.0).abs() < 1e-9);
         assert!((at(15.0) - 150.0).abs() < 1e-9);
-        assert_eq!(at(-100.0), 0.0);
-        assert_eq!(at(100.0), 250.0);
+        // Off the axis: the placer warns and draws nothing, never the edge.
+        assert!(at(-100.0) < 0.0);
+        assert!(at(100.0) > 250.0);
         let r = p.span(&range(None, Some(Scalar::Date(iso(10.0)))), &SITE).unwrap().unwrap();
         close(r, (0.0, 100.0));
         payload_err(point(None).position(&date("2024-01-01"), &SITE));
         payload_err(point(None).span(&range(None, None), &SITE));
+    }
+
+    #[test]
+    fn point_numbers_interpolate_like_dates() {
+        let p = point(Some(vec![0.0, 10.0, 20.0]));
+        let at = |n: f64| p.position(&Scalar::Number(n), &SITE).unwrap().unwrap();
+        assert!((at(5.0) - 75.0).abs() < 1e-9);
+        assert!(at(100.0) > 250.0);
     }
 }

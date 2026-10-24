@@ -1,0 +1,3 @@
+kind: Fixes
+body: A line or area chart on a date axis draws its points in date order whatever order the query returns its rows.
+time: 2026-10-22T23:32:54.754957-07:00

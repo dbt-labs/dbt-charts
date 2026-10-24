@@ -701,7 +701,7 @@ impl StripNumerals {
     }
 
     fn padded(&self, text: String) -> Result<String, String> {
-        let pad = crate::families::table::decimal_pad_for(&self.decimal_pad, &text)?;
+        let pad = crate::families::table::bind::decimal_pad_for(&self.decimal_pad, &text)?;
         Ok(format!("{text}{pad}"))
     }
 
@@ -799,8 +799,13 @@ impl<'a> DecimalPad<'a> {
 
     fn table(&self, precision: usize) -> Result<Vec<String>, String> {
         let measurer = self.fonts.measurer(self.family)?;
-        let (digit_unit, dot_unit) = mdsvg::reservation::compose_decimal_units(&measurer, self.family)?;
-        Ok(d3rs::numeral_pad::build_decimal_pad_table(precision, &digit_unit, &dot_unit))
+        let (digit_unit, dot_unit) =
+            measure::reservation::compose_decimal_units(&measurer, self.family)?;
+        Ok(d3rs::numeral_pad::build_decimal_pad_table(
+            precision,
+            &digit_unit,
+            &dot_unit,
+        ))
     }
 
     /// `decimal_pad_table_for`: a table for a trim-enabled fixed-point spec
@@ -844,7 +849,7 @@ impl<'a> DecimalPad<'a> {
             .filter(|v| v.is_finite())
             .map(|&v| {
                 crate::number_locale::d3_format(digit_spec, v / magnitude)
-                    .map(|t| crate::families::table::count_decimals(&t))
+                    .map(|t| crate::families::table::bind::count_decimals(&t))
                     .map_err(|e| format!("support_table: format {digit_spec:?}: {e}"))
             })
             .collect::<Result<_, _>>()?;

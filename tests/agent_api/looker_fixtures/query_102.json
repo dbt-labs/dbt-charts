@@ -1,0 +1,2 @@
+{"id": "102", "model": "sales", "view": "orders", "fields": ["orders.revenue"], "pivots": null, "filters": null,
+ "dynamic_fields": null, "vis_config": {"type": "single_value"}, "query_timezone": "America/Los_Angeles"}

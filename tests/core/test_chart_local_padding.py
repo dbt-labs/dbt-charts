@@ -201,6 +201,7 @@ def test_resolve_bakes_family_padding_for_type_aliases():
     bubble_map = PointMapChart(
         id="bm",
         type="bubble_map",
+        projection="albersUsa",
         style=PointMapChartStylePatch(padding=PaddingStylePatch(top=40)),
     )
     resolved_bubble_map = resolve(bubble_map, [], chart_style_context=board_resolved)

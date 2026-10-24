@@ -16,16 +16,12 @@ style:
   # below and any `sequence[N]` token read the same palette.
   palettes:
     sequence: dbt-seq-gray
+  # Secondary text (KPI support rows, table more-rows/empty-state lines, muted
+  # annotations). Stark is single-tier: muted is the same ink as every other
+  # text slot; multi-tier themes bind it to a rung of their own ladders.
+  roles:
+    muted: chrome[10]
   background: dbt-grays.white
-  accent: info.solid-hover
-  # Secondary text (KPI support rows, table more-rows/empty-state lines —
-  # table subtitles read title.subtitle.font.color instead, the same source
-  # chart-family subtitles use). Stark is single-tier — every text slot is
-  # the same ink, muted included; multi-tier themes (clarity, paper, neon)
-  # bind it to a rung of their own ladders. The bar tracks
-  # (spark_bar.bar.background, table.spark.bar.background) carry their own
-  # fill-grade gray in `_base` rather than borrowing this token.
-  muted: chrome[10]
 
   font:
     color: &color_ink chrome[10]
@@ -37,6 +33,13 @@ style:
     subtitle:
       font:
         color: *color_ink
+
+  annotations:
+    rule:
+      marks:
+        rule:
+          stroke:
+            width: 2
 
   charts:
     color:
@@ -143,6 +146,7 @@ style:
     hover_emphasis:
       drop_line_color: chrome[10]
       drop_line_width: 3.5
+
 
     support_table:
       neutral_color: *color_ink

@@ -9,7 +9,6 @@ notes: "Get up and running with dbt charts in 5 minutes"
 source: examples_db
 
 queries:
-  sales: SELECT * FROM ecommerce_orders
 
   sales_by_product:
     columns: [product, category, revenue, units_sold]
@@ -385,7 +384,7 @@ rows:
       - revenue_by_product
 
   - text: |
-      The chart references `query: sales` to pull data, then maps `product` to the x-axis and `revenue` to the y-axis.
+      The chart references `query: sales_by_product` to pull data, then maps `product` to the x-axis and `revenue` to the y-axis.
 
       ### Multiple Charts
 
@@ -549,7 +548,7 @@ rows:
       - text: "**Widget B** leads on revenue · **Electronics** is 64% of the mix · **Tools** trail at 15%"
         style:
           font:
-            color: "#8a7b6b"
+            color: "#6b5d4e"
           text:
             align: center
 

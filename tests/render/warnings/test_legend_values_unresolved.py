@@ -211,6 +211,25 @@ def test_layered_field_colored_base_resolves_a_layer_label_by_y_column_name() ->
     assert detector.detect(_ctx(chart, rows)) == []
 
 
+def test_a_layer_declining_its_legend_entry_cannot_be_named_by_legend_values() -> None:
+    """The declined layer draws no entry, so an authored value naming it matches nothing."""
+    from dbt_charts.core.compile.models.chart.authored._layer import LineLayer
+
+    chart = _bar(
+        style=BarChartStylePatch.model_validate(
+            {"legend": {"values": ["A", "B", "target"]}}
+        ),
+        layers=[LineLayer(type="line", y="target", legend=False)],
+    )
+    rows = [
+        {"cat": "a", "series": "A", "val": 1, "target": 5},
+        {"cat": "a", "series": "B", "val": 2, "target": 5},
+    ]
+    warnings = detector.detect(_ctx(chart, rows))
+    assert len(warnings) == 1
+    assert "target" in warnings[0].message
+
+
 def _pie(**kwargs: Any) -> Any:
     from dbt_charts.core.compile.models.chart.normalized import PieChart
 
@@ -752,6 +771,7 @@ def test_geoshape_normalizes_before_building_its_domain_like_geo_py_does() -> No
         id="geo1",
         type="geoshape",
         geo_source="fake-geo-source",
+        projection="mercator",
         lookup="state",
         value="tier",
         style=GeoshapeChartStylePatch.model_validate(
@@ -775,6 +795,7 @@ def test_fires_on_geoshape_nominal_choropleth_when_entry_matches_nothing() -> No
         id="geo1",
         type="geoshape",
         geo_source="fake-geo-source",
+        projection="mercator",
         lookup="state",
         value="tier",
         style=GeoshapeChartStylePatch.model_validate(
@@ -800,6 +821,7 @@ def test_silent_on_geoshape_when_every_entry_resolves() -> None:
         id="geo1",
         type="geoshape",
         geo_source="fake-geo-source",
+        projection="mercator",
         lookup="state",
         value="tier",
         style=GeoshapeChartStylePatch.model_validate(

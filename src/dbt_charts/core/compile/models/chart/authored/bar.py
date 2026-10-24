@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.constraints import (
 from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
+from ._annotation import Annotation
 from ._base import SUPPORT_TABLE_TYPE_RULE, _CartesianChartFields
 from ._layer import (
     CARTESIAN_LAYER_SUPPORTED_CHART_TYPES,
@@ -47,6 +48,13 @@ class BarChart(_CartesianChartFields):
                 ),
             ),
             nonempty=("layers",),
+        ),
+        Forbids(
+            ("annotations",),
+            "annotations are not supported on type: histogram: a histogram "
+            "bins x, so an anchor has no category or date slot to name.",
+            when=(ValueIn("type", ("histogram",)),),
+            nonempty=("annotations",),
         ),
         Forbids(
             ("y_start",),
@@ -117,5 +125,12 @@ class BarChart(_CartesianChartFields):
                 "count, so there is no shared y measure for an overlay to "
                 "plot against."
             ),
+        ),
+    ]
+    annotations: Annotated[
+        list[Annotation] | None,
+        Field(
+            default=None,
+            description="Rules, bands, notes and trends drawn on the chart. Not supported when type: histogram.",
         ),
     ]

@@ -39,7 +39,7 @@ options:
   {{ ring(r0, r1, [full * v / peak, 0.001] | max, color_for(r[category_col], category_col), r[category_col] ~ ": " ~ (v | format(p.value_format))) }}
   {% set ly = ((r0 + r1) / -2 + cy)|round(1) %}
   {% set shown = v | format(p.value_format) %}
-  <text x="{{ (cx - 6)|round(1) }}" y="{{ ly }}" dy="0.35em" text-anchor="end" fill="{{ style.muted }}">{{ shown }}</text>
+  <text x="{{ (cx - 6)|round(1) }}" y="{{ ly }}" dy="0.35em" text-anchor="end" fill="{{ style.fonts.secondary.color }}">{{ shown }}</text>
   <text x="{{ (cx - 10 - text_width(shown, style.charts.axis.labels.font.size))|round(1) }}" y="{{ ly }}" dy="0.35em" text-anchor="end" fill="{{ style.font.color }}">{{ r[category_col] }}</text>
 {% endfor %}
 </g>

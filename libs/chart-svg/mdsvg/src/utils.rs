@@ -2,34 +2,20 @@
 //!
 //! Transliterated from `libs/markdown-svg/src/mdsvg/utils.py`.
 
-use crate::pygments_re::is_py_space;
-
-/// Escape text for inclusion in SVG text elements: XML-escape, then collapse
-/// runs of 2+ spaces down to one (preserving single spaces).
-pub fn escape_svg_text(text: &str) -> String {
-    let escaped = print::xml_escape_attr(text);
-    let mut out = String::with_capacity(escaped.len());
-    let mut chars = escaped.chars().peekable();
+/// Collapse runs of 2+ spaces to one (single spaces kept): an SVG `<text>`
+/// renders them as one anyway, and layout measured them as one.
+pub fn collapse_spaces(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
+        out.push(ch);
         if ch == ' ' {
-            out.push(' ');
             while chars.peek() == Some(&' ') {
                 chars.next();
             }
-        } else {
-            out.push(ch);
         }
     }
     out
-}
-
-/// Collapse multiple whitespace runs to a single space and strip edges.
-/// Mirrors Python's `" ".join(text.split())`.
-pub fn normalize_whitespace(text: &str) -> String {
-    text.split(is_py_space)
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// Split text into lines on `\n`, `\r\n`, or `\r`, without the line-ending
@@ -65,22 +51,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_whitespace_splits_on_every_python_space() {
-        assert_eq!(
-            normalize_whitespace(" a\x1cb\x1d\x1d c\u{a0}d\x1f"),
-            "a b c d"
-        );
-    }
-
-    #[test]
-    fn test_escape_svg_text_collapses_spaces() {
-        assert_eq!(escape_svg_text("a   b"), "a b");
-        assert_eq!(escape_svg_text("a b"), "a b");
-    }
-
-    #[test]
-    fn test_normalize_whitespace() {
-        assert_eq!(normalize_whitespace("  a   b\tc\n"), "a b c");
+    fn collapse_spaces_keeps_single_spaces() {
+        assert_eq!(collapse_spaces("a   b"), "a b");
+        assert_eq!(collapse_spaces("a b"), "a b");
     }
 
     #[test]

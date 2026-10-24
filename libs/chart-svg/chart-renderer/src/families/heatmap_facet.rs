@@ -33,9 +33,10 @@ use crate::families::facet_compose::{
     self, FacetChrome, FacetSpec, GhostStyle, LegendChrome, PanelGeometry, PanelXAxis, RowAxisSpec, TitleChrome,
 };
 use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
+use crate::families::heatmap::bind::{fold_wide_y, Prelude};
 use crate::families::heatmap::{
     dated_bands,
-    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, emit_rotated_x_label, legend_labels, svg_text_anchor, paint_cells, tooltip_value_title, CellFill, CellPaint, HeaderFmt,
+    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, flat_label, rotated_label, tick_line, LabelFace, legend_labels, svg_text_anchor, bind_cells, cell_nodes, tooltip_value_title, CellFill, CellMarks, CellPaint, HeaderFmt,
     HeatmapResolved, AXIS_TRANSLATE, BREATHING_ROOM_PX,
 };
 use crate::families::color_scale::{
@@ -147,7 +148,7 @@ impl HeatmapXAxis {
             .angle,
         });
         let measure = Self::measurer(ax_x, fonts);
-        let texts = crate::labels_expr::band_texts("x", domain, labels_cfg.expr.as_deref()).map_err(|e| format!("heatmap: {e}"))?;
+        let texts = crate::labels_expr::band_texts("x", domain, labels_cfg).map_err(|e| format!("heatmap: {e}"))?;
         let labels = texts
             .into_iter()
             .enumerate()
@@ -180,7 +181,7 @@ impl HeatmapXAxis {
             axis_time_format(labels_cfg.spec(), &ax_x.grain_formats, unit.grain()),
         )?;
         let font_size = labels_cfg.font.size_or(11.0);
-        let mut measure = |s: &str| labels_cfg.font.measure_weighted(fonts, s, font_size);
+        let mut measure = |s: &str| labels_cfg.measure(fonts, s, font_size);
         let expr = labels_cfg
             .expr
             .as_deref()
@@ -205,7 +206,7 @@ impl HeatmapXAxis {
         .map_err(|e| format!("heatmap: {e}"))?;
         let angle = labels_cfg.angle.or(resolved.angle);
         let parity = resolved.parity;
-        let temporal = resolved.labels;
+        let temporal = labels_cfg.cased_labels(resolved.labels)?;
         let measure = Self::measurer(ax_x, fonts);
         let labels = temporal
             .into_iter()
@@ -408,11 +409,11 @@ impl HeatmapXAxis {
         Ok(AxisSpec { orient: Orient::Bottom, offset, shift: -0.5, align, baseline, angle, flush: None, style: ax_x.labels.item_style()? })
     }
 
-    /// Paints at the CALLER's `plot_left`/`plot_w`/`plot_edge`, the y of the plot edge the axis
+    /// The axis at the CALLER's `plot_left`/`plot_w`/`plot_edge`, the y of the plot edge the axis
     /// hangs from. The axis group sits `offset` plus Vega's half-pixel crisp translate past
     /// it; a tick snaps to a whole pixel (`floor(center) + 0.5`) while its label keeps the
     /// exact band center.
-    pub(crate) fn paint(&self, svg: &mut String, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_edge: f64) -> Result<(), String> {
+    pub(crate) fn nodes(&self, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_edge: f64) -> Result<Vec<Node>, String> {
         let scale = BandScale::new(self.domain.clone(), 0.0, plot_w, 0.0, 0.0);
         let sign = self.edge.sign();
         let axis_top = plot_edge + sign * self.offset + AXIS_TRANSLATE;
@@ -422,42 +423,32 @@ impl HeatmapXAxis {
         let tick_width = ax_x.ticks.width.unwrap_or(1.0);
         let label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
         let label_weight = ax_x.labels.font.weight_str();
-        crate::contract::axis_group_open(
-            svg,
-            crate::contract::AxisChannel::X,
-            &category_axis_caption(&self.caption_title, ax_x, &self.domain)?,
-            (plot_left + AXIS_TRANSLATE, axis_top),
-        )?;
+        let caption = category_axis_caption(&self.caption_title, ax_x, &self.domain)?;
         let (align, baseline) = self.anchor();
         let anchor_y = axis_top + sign * (self.tick_len + self.label_pad);
         let dy = measure::baseline_shift(baseline, self.font_size);
-        let text_anchor = svg_text_anchor(align);
+        // A flat label is `middle`-anchored whatever the side; a rotated one follows the angle.
+        let face = LabelFace { places: 2, anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, fill: label_color };
+        let flat_face = LabelFace { anchor: "middle", ..face };
         let visible = self.visible(plot_w);
+        let mut items = Vec::new();
         for (label, &shown) in self.labels.iter().zip(&visible) {
             let center = scale.position(&self.domain[label.domain_idx]).expect("a label names a band of its own domain")
                 + scale.bandwidth() / 2.0;
             if self.tick_len > 0.0 {
                 let tick_x = plot_left + center.floor() + AXIS_TRANSLATE;
-                let _ = write!(
-                    svg,
-                    "<line x1=\"{tick_x:.2}\" y1=\"{axis_top:.2}\" x2=\"{tick_x:.2}\" y2=\"{:.2}\" \
-                     stroke=\"{}\" stroke-width=\"{tick_width}\"/>",
-                    axis_top + sign * self.tick_len,
-                    xml_escape_attr(tick_color)
-                );
+                items.push(tick_line(2, (tick_x, axis_top), (tick_x, axis_top + sign * self.tick_len), tick_color, tick_width));
             }
             if self.labels_hidden {
                 continue;
             }
-            let opacity = if shown { "" } else { " opacity=\"0\"" };
             if self.angle != 0.0 {
-                emit_rotated_x_label(
-                    svg,
+                items.push(rotated_label(
                     (plot_left + center, anchor_y, self.angle, dy),
-                    (text_anchor, &self.family, self.font_size, &label_weight, label_color),
+                    &face,
                     (&label.row1, &label.row2),
-                    opacity,
-                );
+                    !shown,
+                ));
                 continue;
             }
             // The label block anchors on its far baseline: a second row hangs below the first on
@@ -468,20 +459,9 @@ impl HeatmapXAxis {
                 crate::common::XEdge::Top => (label_y - row_advance, label_y),
             };
             for (text, y) in [(&label.row1, row1_y), (&label.row2, row2_y)] {
-                if text.is_empty() {
-                    continue;
+                if !text.is_empty() {
+                    items.push(flat_label((plot_left + center, y), &flat_face, !shown, text));
                 }
-                let _ = write!(
-                    svg,
-                    "<text x=\"{:.2}\" y=\"{y:.2}\" text-anchor=\"middle\" font-family=\"{}\" \
-                     font-size=\"{}\" font-weight=\"{}\" fill=\"{}\"{opacity}>{}</text>",
-                    plot_left + center,
-                    vega_escape_attr(&self.family),
-                    self.font_size,
-                    xml_escape_attr(&label_weight),
-                    xml_escape_attr(label_color),
-                    xml_escape(text)
-                );
             }
         }
         if self.angle != 0.0 || self.labels_hidden {
@@ -495,19 +475,15 @@ impl HeatmapXAxis {
             let title_y = axis_top
                 + sign * (bounds_bottom + ax_x.title.padding.unwrap_or(10.0))
                 + measure::baseline_shift(self.edge.baseline(), title_fs);
-            crate::common::emit_axis_title_at(svg, &self.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, None);
-            crate::contract::axis_group_close(svg);
-            return Ok(());
-        }
-        if crate::common::axis_title_band(&ax_x.title, &self.title) > 0.0 {
+            items.extend(crate::common::axis_title_at(&self.title, &ax_x.title, plot_left + plot_w / 2.0, title_y, None));
+        } else if crate::common::axis_title_band(&ax_x.title, &self.title) > 0.0 {
             let rows_offset = if self.labels.iter().any(|l| !l.row2.is_empty()) {
                 vega_fit::label_row_advance(self.font_size)
             } else {
                 0.0
             };
-            match self.edge {
-                crate::common::XEdge::Bottom => crate::common::emit_axis_title_bottom(
-                    svg,
+            items.extend(match self.edge {
+                crate::common::XEdge::Bottom => crate::common::axis_title_bottom(
                     &self.title,
                     &ax_x.title,
                     plot_left + plot_w / 2.0,
@@ -515,18 +491,16 @@ impl HeatmapXAxis {
                     self.font_size,
                     None,
                 ),
-                crate::common::XEdge::Top => crate::common::emit_axis_title_at(
-                    svg,
+                crate::common::XEdge::Top => crate::common::axis_title_at(
                     &self.title,
                     &ax_x.title,
                     plot_left + plot_w / 2.0,
                     label_y - rows_offset - self.font_size - ax_x.title.padding.unwrap_or(10.0),
                     None,
                 ),
-            }
+            });
         }
-        crate::contract::axis_group_close(svg);
-        Ok(())
+        contract::axis_group(contract::AxisChannel::X, &caption, (plot_left + AXIS_TRANSLATE, axis_top), items)
     }
 }
 
@@ -538,7 +512,7 @@ pub(crate) fn facet_extra_axis_px(labels: &AxisLabels, bands: &[String], fonts: 
     let size = labels.font.size_or(11.0);
     let limit = labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let widest = bands.iter().try_fold(0.0_f64, |acc, band| {
-        labels.font.measure_weighted(fonts, band, size).map(|w| acc.max(w))
+        labels.measure(fonts, band, size).map(|w| acc.max(w))
     })?;
     Ok(CHROME_PX + widest.min(limit))
 }
@@ -629,6 +603,7 @@ struct PanelStyle<'a> {
     /// Every panel draws its own x axis inside its cell.
     cell_x_axis: bool,
     cells: CellPaint<'a>,
+    marks: CellMarks,
     y_font_size: f64,
     y_family: &'a str,
     y_color: &'a str,
@@ -692,7 +667,8 @@ fn render_panel(
 ) -> Result<(String, PanelGeometry), String> {
     let x_scale = BandScale::new(x_domain.to_vec(), 0.0, plot_w, 0.0, 0.0);
     let y_scale = BandScale::new(y_domain.to_vec(), 0.0, plot_h, 0.0, 0.0);
-    let ghost_text = |band: &String| -> String { style.ghost_texts.and_then(|texts| texts.get(band)).unwrap_or(band).clone() };
+    let shown = |band: &String| style.ax_y.labels.cased(band);
+    let ghost_text = |band: &String| style.ax_y.labels.cased(style.ghost_texts.and_then(|texts| texts.get(band)).unwrap_or(band));
     let label_w = |band: &str| {
         style.y_label_ws.iter().find(|(label, _)| label == band).map(|(_, w)| *w).expect("label measured")
     };
@@ -721,7 +697,7 @@ fn render_panel(
         }
     };
     let margins = vega_fit::pad_plot(plot_w, plot_h, |_, _, b| {
-        b.union(&vega_fit::Bounds::new(0.0, 0.0, plot_w, plot_h).expand(style.cells.stroke_reach));
+        b.union(&vega_fit::Bounds::new(0.0, 0.0, plot_w, plot_h).expand(style.marks.reach));
         if style.own_axis {
             for &(band, cy) in &centers {
                 b.union(&label_ink(cy, label_w(band)));
@@ -745,7 +721,8 @@ fn render_panel(
     );
     let content_start = svg.len();
     let _ = write!(svg, "<g transform=\"translate({left:.2},0)\">");
-    paint_cells(&mut svg, rows, &x_scale, &y_scale, &style.cells)?;
+    let cells = bind_cells(rows, x_scale.domain(), y_scale.domain(), &style.cells)?;
+    svg.push_str(&print(&cell_nodes(&cells, &x_scale, &y_scale, &style.marks)?));
     svg.push_str("</g>");
     let label_shift = measure::baseline_shift("middle", style.y_font_size);
     let y_caption = category_axis_caption(style.y_title, style.ax_y, y_domain)?;
@@ -760,6 +737,7 @@ fn render_panel(
             style.y_tick_len,
         )?;
         for &(band, cy) in &centers {
+            let text = shown(band)?;
             let _ = write!(
                 svg,
                 "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{}\" font-family=\"{}\" font-size=\"{}\" \
@@ -771,7 +749,7 @@ fn render_panel(
                 style.y_font_size,
                 xml_escape_attr(&style.y_weight),
                 xml_escape_attr(style.y_color),
-                xml_escape(band)
+                xml_escape(&text)
             );
         }
         crate::common::emit_axis_title_rotated(
@@ -786,7 +764,7 @@ fn render_panel(
         crate::contract::axis_group_close(&mut svg);
     }
     if style.cell_x_axis {
-        x_axis.paint(&mut svg, style.ax_x, left, plot_w, plot_h)?;
+        svg.push_str(&print(&x_axis.nodes(style.ax_x, left, plot_w, plot_h)?));
     }
     let right_axis = (style.y_right || style.mirror) && !style.own_axis;
     let right_title_extra = if style.y_right { style.y_title_extra } else { 0.0 };
@@ -819,7 +797,7 @@ fn render_panel(
                 style.y_font_size,
                 xml_escape_attr(&style.y_weight),
                 xml_escape_attr(style.y_color),
-                xml_escape(&if style.y_right { band.clone() } else { ghost_text(band) })
+                xml_escape(&if style.y_right { shown(band)? } else { ghost_text(band)? })
             );
         }
         if style.y_right {
@@ -840,7 +818,7 @@ fn render_panel(
     let svg_end = svg.len();
     svg.push_str("</svg>");
 
-    let mut ink = vega_fit::Bounds::new(left, 0.0, left + plot_w, plot_h).expand(style.cells.stroke_reach);
+    let mut ink = vega_fit::Bounds::new(left, 0.0, left + plot_w, plot_h).expand(style.marks.reach);
     if right_axis && right.fold {
         ink.union(&vega_fit::Bounds::new(left, 0.0, left + plot_w + right.overhang + style.right_reach() + right_title_extra, plot_h));
     }
@@ -878,7 +856,7 @@ fn render_panel(
         val_ticks: if style.own_axis {
             Vec::new()
         } else {
-            centers.iter().map(|&(band, cy)| (cy + label_shift, if style.y_right { ghost_text(band) } else { band.clone() })).collect()
+            centers.iter().map(|&(band, cy)| Ok((cy + label_shift, if style.y_right { ghost_text(band)? } else { shown(band)? }))).collect::<Result<Vec<_>, String>>()?
         },
         mirror_style: (!style.own_axis).then(|| GhostStyle {
             caption: y_caption.clone(),
@@ -1166,7 +1144,15 @@ enum FacetColor {
     Categories(CategoryScale),
 }
 
-pub(crate) fn render_facet(
+/// A `multiples` heatmap: the composite of one plot per panel.
+pub(crate) fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+    let folded = fold_wide_y(payload)?;
+    let payload = folded.as_ref().unwrap_or(payload);
+    let Prelude { r, kind, .. } = Prelude::of(payload)?;
+    render_facet(payload, fonts, &r, kind)
+}
+
+fn render_facet(
     payload: &Payload,
     fonts: &FontBook,
     r: &HeatmapResolved,
@@ -1213,7 +1199,7 @@ pub(crate) fn render_facet(
     let y_label_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     let y_raw_widths: Vec<(String, f64)> = y_shared
         .iter()
-        .map(|band| fonts.measure(band, y_label_family, y_label_fs).map(|w| (band.clone(), w)))
+        .map(|band| ax_y.labels.measure(fonts, band, y_label_fs).map(|w| (band.clone(), w)))
         .collect::<Result<_, _>>()?;
     let widest_y = y_raw_widths.iter().fold(0.0_f64, |acc, (_, w)| acc.max(*w));
     let y_axis_px = if mc.columns.is_some() { facet_extra_axis_px(&ax_y.labels, &y_shared, fonts)? } else { 0.0 };
@@ -1288,9 +1274,6 @@ pub(crate) fn render_facet(
             FacetColor::Categories(scale) => CellFill::Categories(scale),
             FacetColor::Dates { min, max } => CellFill::Dates { min: *min, max: *max },
         },
-        opacity: r.style.rect_mark.opacity.unwrap_or(1.0),
-        stroke_attr: r.style.rect_mark.stroke_attr()?,
-        stroke_reach: r.style.rect_mark.stroke_reach(),
         tooltip: tooltip_value_title(r)?.zip(r.style.tooltip_format.as_ref()),
         native_aria: false,
         x_header: HeaderFmt::of(&rows, &r.x, ax_x)?,
@@ -1304,6 +1287,7 @@ pub(crate) fn render_facet(
         ax_y,
         cell_x_axis,
         cells,
+        marks: CellMarks::of(&r.style.rect_mark)?,
         y_font_size: y_label_fs,
         y_family: y_label_family,
         y_color: ax_y.labels.font.color.as_deref().unwrap_or("#626366"),
@@ -1578,5 +1562,18 @@ mod tests {
         assert!(bold - regular > 1.0, "{regular} vs {bold}");
         assert_eq!(facet_extra_axis_px(&labels_at("semibold", None), &bands, &fonts).unwrap(), regular);
         assert_eq!(facet_extra_axis_px(&labels_at("800", Some(40.0)), &bands, &fonts).unwrap(), CHROME_PX + 40.0);
+    }
+
+    /// The extra axis budgets the cased text it paints: capitals run wider than lowercase.
+    #[test]
+    fn the_extra_axis_costs_what_the_cased_labels_measure() {
+        let fonts = shipped_fonts();
+        let bands = ["Northeast Territory".to_string(), "Southwest".to_string()];
+        let at = |case: &str| {
+            let mut labels = labels_at("400", None);
+            labels.font.case = Some(case.into());
+            facet_extra_axis_px(&labels, &bands, &fonts).unwrap()
+        };
+        assert!(at("upper") > at("none") && at("none") > at("lower"), "{} {} {}", at("upper"), at("none"), at("lower"));
     }
 }

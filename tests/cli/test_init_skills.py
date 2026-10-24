@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,7 @@ def test_init_skills_project_dir_stays_in_subproject(tmp_path: Path) -> None:
     (a sibling walk unrelated to the named project) must not steal it."""
     git_root = tmp_path / "repo"
     git_root.mkdir()
-    (git_root / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(git_root)], check=True)
     subproject = git_root / "sub"
     subproject.mkdir()
     (subproject / "dbt_charts.yml").write_text("name: test\n", encoding="utf-8")
@@ -78,7 +79,7 @@ def test_init_skills_project_dir_without_marker_errors_with_tip(
     hint at the enclosing project, not silently install there instead."""
     git_root = tmp_path / "repo"
     git_root.mkdir()
-    (git_root / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(git_root)], check=True)
     (git_root / "dbt_project.yml").write_text("name: test\n", encoding="utf-8")
     newproj = git_root / "newproj"
     newproj.mkdir()
@@ -123,7 +124,7 @@ def test_init_skills_dct_project_dir_env_var_walks_to_git_root(
     nested project instead of the git root."""
     git_root = tmp_path / "repo"
     git_root.mkdir()
-    (git_root / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(git_root)], check=True)
     subproject = git_root / "sub"
     subproject.mkdir()
     (subproject / "dbt_charts.yml").write_text("name: test\n", encoding="utf-8")
@@ -165,15 +166,35 @@ def test_init_skills_all_with_both_markers(
     assert Path(".claude/skills/dct-chart/SKILL.md").exists()
 
 
-def test_init_skills_prints_a_gitignore_hint(
+def test_init_skills_tells_the_user_to_commit_the_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A teammate's agent only sees skills that are committed, and nothing
+    tells it to run `dct init skills` itself -- so a repo install says to
+    commit the copies and refresh them after an upgrade, never to gitignore
+    them."""
     monkeypatch.chdir(tmp_path)
     _seed_project()
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert ".claude/skills/dct-*/" in result.output
+    assert "Commit .claude/skills/dct-*/" in result.output
+    assert "re-run `dct init skills` after upgrading dbt Charts" in result.output
+    assert "gitignore" not in result.output.lower()
+
+
+def test_init_skills_warns_when_gitignore_drops_an_installed_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _seed_project()
+    subprocess.run(["git", "init", "-q"], check=True)
+    Path(".gitignore").write_text("*build/\n", encoding="utf-8")
+    result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
+
+    assert result.exit_code == 0, result.output
+    assert "gitignored: dct-custom-chart-build" in result.output
+    assert "!.claude/skills/dct-*/" in result.output
 
 
 def test_init_skills_check_dry_run(
@@ -212,17 +233,17 @@ def test_init_skills_check_reports_would_remove_retired_without_deleting(
     assert stale.exists()
 
 
-def test_init_skills_check_prints_no_gitignore_hint(
+def test_init_skills_check_prints_no_commit_hint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A dry run writes nothing to gitignore: the hint would tell the user
-    to gitignore a directory that doesn't exist."""
+    """A dry run writes nothing: the hint would tell the user to commit a
+    directory that doesn't exist."""
     monkeypatch.chdir(tmp_path)
     _seed_project()
     result = runner.invoke(cli_main.app, ["init", "skills", "agents", "--check"])
 
     assert result.exit_code == 0, result.output
-    assert "Gitignore" not in result.output
+    assert "Commit" not in result.output
 
 
 def test_init_skills_no_markers_defaults_to_agents(
@@ -271,7 +292,7 @@ def test_init_skills_dir_override(
     assert result.exit_code == 0, result.output
     assert Path("custom-skills/dct-chart/SKILL.md").exists()
     assert "→ custom-skills/" in result.output
-    assert "Gitignore: custom-skills/dct-*/" in result.output
+    assert "Commit custom-skills/dct-*/" in result.output
     assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
@@ -308,10 +329,10 @@ def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
     """--dir names the install destination outright, but --project-dir still
     picks the project context for display and legacy scanning -- that context
     must stay the git root, not the --project-dir target, or the printed
-    Gitignore hint turns into a useless absolute path and a legacy install
+    commit hint turns into a useless absolute path and a legacy install
     elsewhere in the repo goes unreported."""
     monkeypatch.chdir(tmp_path)
-    Path(".git").mkdir()
+    subprocess.run(["git", "init", "-q"], check=True)
     legacy_dir = Path(".cursor/skills/chart")
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "SKILL.md").write_text("stub\n", encoding="utf-8")
@@ -325,7 +346,7 @@ def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
     )
 
     assert result.exit_code == 0, result.output
-    assert "Gitignore: custom-skills/dct-*/" in result.output
+    assert "Commit custom-skills/dct-*/" in result.output
     assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
@@ -334,10 +355,10 @@ def test_init_skills_explicit_project_dir_keeps_repo_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An explicit --project-dir moves the install root, not the repository.
-    Paths stay repo-relative so the printed Gitignore line works pasted at the
+    Paths stay repo-relative so the printed commit path works pasted at the
     repo root, and a legacy install elsewhere in the repo is still reported."""
     monkeypatch.chdir(tmp_path)
-    Path(".git").mkdir()
+    subprocess.run(["git", "init", "-q"], check=True)
     legacy_dir = Path(".cursor/skills/chart")
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "SKILL.md").write_text("stub\n", encoding="utf-8")
@@ -352,7 +373,7 @@ def test_init_skills_explicit_project_dir_keeps_repo_context(
     assert result.exit_code == 0, result.output
     assert (sub / ".claude/skills/dct-chart/SKILL.md").exists()
     assert not Path(".claude").exists()
-    assert "Gitignore: sub/.claude/skills/dct-*/" in result.output
+    assert "Commit sub/.claude/skills/dct-*/" in result.output
     assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
@@ -372,11 +393,11 @@ def test_init_skills_global_installs_into_home_claude(
     assert (home / ".claude/skills/dct-chart/SKILL.md").exists()
 
 
-def test_init_skills_global_prints_no_gitignore_hint(
+def test_init_skills_global_prints_no_commit_hint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A global install lands in the user's home directory, not a repo: a
-    gitignore hint naming a repo-relative path is meaningless there."""
+    commit hint naming a repo-relative path is meaningless there."""
     home = tmp_path / "home"
     home.mkdir()
     (home / ".claude").mkdir()
@@ -387,7 +408,7 @@ def test_init_skills_global_prints_no_gitignore_hint(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert "Gitignore" not in result.output
+    assert "Commit" not in result.output
 
 
 def test_init_skills_global_installs_into_home_agents_via_codex(

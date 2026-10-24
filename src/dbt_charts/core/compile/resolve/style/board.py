@@ -787,7 +787,15 @@ def _finalize_style(
         scatter=concrete.scatter,
     )
 
-    _TRANSFORMED = {"font", "emoji_mode", "vega_config", "chart_defaults", "box_shadow"}
+    _TRANSFORMED = {
+        "font",
+        "emoji_mode",
+        "vega_config",
+        "chart_defaults",
+        "box_shadow",
+        "secondary_color",
+        "numeral_family",
+    }
     passthrough = {
         name: getattr(cascaded, name)
         for name in (f.name for f in dataclasses.fields(ResolvedStyle))
@@ -797,6 +805,8 @@ def _finalize_style(
     resolved = ResolvedStyle(
         **passthrough,
         font=resolved_root_font,
+        secondary_color=cascaded.secondary_ink(),
+        numeral_family=cascaded.numeral_family(),
         emoji_mode=cascaded.font.emoji,
         box_shadow=(
             None

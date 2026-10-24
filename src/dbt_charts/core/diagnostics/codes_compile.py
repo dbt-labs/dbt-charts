@@ -172,10 +172,31 @@ ERR_EXTRA_FIELD = REGISTRY.register(
         doc=(
             "Fired when the board YAML contains a field name that the schema does "
             "not recognize. Remove the unknown field or refer to the YAML reference "
-            "for the supported keys. When the key is one a past grammar renamed, "
-            "moved, or removed, the hint names its successor and the version that "
-            "retired it. When the key is valid in a nearby block (the chart for a "
-            "key written under `style:`, or the reverse), the hint names that block."
+            "for the supported keys. A key a past grammar renamed, moved, or "
+            "removed is ERR-RETIRED-FIELD instead. When the key is valid in a "
+            "nearby block (the chart for a key written under `style:`, or the "
+            "reverse), the hint names that block."
+        ),
+        docs_topic="board",
+    )
+)
+
+ERR_RETIRED_FIELD = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RETIRED-FIELD",
+        domain="compile",
+        title="Retired field in board YAML",
+        message_template=(
+            "Field {field_path!r} was retired by a past grammar version. "
+            "See the hint for its successor."
+        ),
+        doc=(
+            "Fired when the board YAML spells a key a past grammar version renamed, "
+            "moved, or removed and the file could not be migrated automatically "
+            "(for example it also uses newer keys, or both spellings are present). "
+            "The message names the version that retired the key and where it went; "
+            "the hint says what to change. The facts come from the migration "
+            "declarations, so every key ever retired stays known."
         ),
         docs_topic="board",
     )
@@ -680,6 +701,23 @@ ERR_LINE_Y_NOT_NUMERIC = REGISTRY.register(
             "Fired when a line chart's `y:` column contains non-numeric data. Line "
             "charts always use y as the value axis; use a numeric column for y."
         ),
+        docs_topic="charts",
+    )
+)
+
+ERR_ANNOTATION_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ANNOTATION-INVALID",
+        domain="compile",
+        title="Annotation cannot be resolved against the chart",
+        message_template="Chart {chart_id!r}: annotation {index}: {reason}.",
+        doc=(
+            "Fired when an annotation does not fit the chart it is on: an anchor "
+            "whose value does not match the axis column's type, an aggregate or "
+            "fit the axis cannot take, a missing or unknown `series`, a range "
+            "whose `from` is past its `to`, or text that does not render."
+        ),
+        summary="Fired when an annotation does not fit the chart it is on.",
         docs_topic="charts",
     )
 )
@@ -1776,6 +1814,31 @@ ERR_GEOSHAPE_SHADING_WITHOUT_LOOKUP = REGISTRY.register(
             "identifiers, or drop `value:`/`color:` to draw a plain base map."
         ),
         summary="Geoshape `value:`/`color:` set without `lookup:`.",
+        docs_topic="charts",
+    )
+)
+
+ERR_GEO_PROJECTION_REQUIRED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-GEO-PROJECTION-REQUIRED",
+        domain="compile",
+        title="A map has no projection and no geo source to take one from",
+        message_template=(
+            "Chart {chart_id!r} is a {chart_type} with no {field_path}, and "
+            "its geo source (if any) sets none. Set `projection:` (for example "
+            "`projection: mercator`) or set `geo_source:` to a source that has "
+            "one. See {maps_docs_url} for the available projections."
+        ),
+        doc=(
+            "A map is drawn through a projection, and dbt Charts picks none on "
+            "its own. A built-in `geo_source` (us-states, world-countries, ...) "
+            "carries the projection suited to its region; a chart with no such "
+            "source, such as a point_map without a basemap or a geoshape read "
+            "from a raw URL, must say which projection to use. Set "
+            "`projection:` to one of Vega's projection names, or to an object "
+            "with `type` plus parameters like `center` and `scale`."
+        ),
+        summary="Map chart without `projection:` and without a built-in `geo_source`.",
         docs_topic="charts",
     )
 )

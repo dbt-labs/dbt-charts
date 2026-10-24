@@ -11,7 +11,12 @@ source: examples_db
 variables:
   selected_category:
     label: Category
-    default:
+    options:
+      static:
+        - Accessories
+        - Electronics
+        - Tools
+    default: Electronics
 queries:
   revenue_by_category: |
     SELECT
@@ -36,7 +41,6 @@ queries:
       SUM(revenue) AS revenue
     FROM ecommerce_orders
     WHERE category = '{{ selected_category }}'
-       OR '{{ selected_category }}' = ''
     GROUP BY product, category
     ORDER BY revenue DESC
     LIMIT 10
@@ -61,7 +65,7 @@ charts:
     type: bar
     x: category
     y: revenue
-    title: Variable update — click a bar to filter the product breakdown below
+    title: Variable update — click a bar to filter products
     link: ?selected_category={{ x }}
   product_breakdown:
     query: revenue_by_product
@@ -69,7 +73,7 @@ charts:
     x: product
     y: revenue
     color: category
-    title: Product breakdown (filtered by selected category)
+    title: Products in the selected category
     style:
       stack: zero
 rows:

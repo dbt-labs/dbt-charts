@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.primitives import (
     check_box_shadow,
 )
 from dbt_charts.core.compile.models.schema_names import PaletteName
+from dbt_charts.core.compile.models.style.theme.annotations import AnnotationsStyle
 from dbt_charts.core.compile.models.style.theme.board import (
     FrameStyle,
     PlaceholderStyle,
@@ -71,19 +72,17 @@ class Style(BaseModel):
     )
     # Semantic color tokens — set once at root level, cascade to UI chrome.
     # accent: focus_color, input.focus_color (via Inherit)
-    # muted: secondary TEXT only (KPI support rows, table/spark subtitles,
-    # more-rows/empty-state lines). Bar-track fills are required theme
-    # values (spark_bar.bar.background, table.spark.bar.background) — they
-    # used to Inherit from muted, which conflated fill- and text-grade grays.
+    # Secondary text is the named font ``fonts.secondary``; its surfaces
+    # (table row numbers, more-rows/empty-state, spark_bar subtitle and
+    # more-rows) each bind it through their own font slot. Bar-track fills
+    # are required theme values (spark_bar.bar.background,
+    # table.spark.bar.background).
     # font.color: tick.stroke.color, rule.stroke.color (via Inherit)
     # spark colors (spark.color, spark.bar.color, spark_bar.bar.color) seed from
     # single_series_palette[0] in resolved.py — not Inherit, since list indexing
     # can't be expressed as a declarative path.
     accent: Annotated[str, Color()] = Field(
         description="Accent color token cascaded to sparklines, bars, and focus rings."
-    )
-    muted: Annotated[str, Color()] = Field(
-        description="Muted secondary-text color token (KPI support rows, table and spark subtitles)."
     )
     font: RootFontStyle = Field(
         description="Root font: literal family, size, weight, color; never a `fonts` name."
@@ -114,6 +113,10 @@ class Style(BaseModel):
     )
     charts: ChartsStyle = Field(
         description="Root of all chart-type styles and shared chart configuration."
+    )
+    # One board-wide slot; resolve reads it off the cascaded tree per annotation.
+    annotations: AnnotationsStyle = Field(
+        description="Default look of each annotation type: rule, band, note, trend."
     )
     layout: LayoutStyle = Field(
         description="Spacing and arrangement inside the containers (rows, cols, grid, tabs, details)."
@@ -250,3 +253,21 @@ class Style(BaseModel):
                 "their H2–H6 sizes from it."
             )
         return section.sizes
+
+    def numeral_family(self) -> str:
+        """The numeral font family, ``style.fonts.numeral.family``."""
+        numeral = self.fonts.get("numeral") if self.fonts is not None else None
+        if numeral is None or numeral.family is None:
+            raise ValueError(
+                "style.fonts.numeral.family is unset after the theme cascade."
+            )
+        return numeral.family
+
+    def secondary_ink(self) -> str:
+        """The secondary-text color, ``style.fonts.secondary.color``."""
+        secondary = self.fonts.get("secondary") if self.fonts is not None else None
+        if secondary is None or secondary.color is None:
+            raise ValueError(
+                "style.fonts.secondary.color is unset after the theme cascade."
+            )
+        return secondary.color

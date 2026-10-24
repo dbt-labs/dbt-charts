@@ -79,12 +79,14 @@ def test_chrome_css_variables_input_border_style_dashed_when_dash_array_set() ->
     assert variables["--dbt-system-input-border-style"] == "dashed"
 
 
-def test_chrome_css_variables_muted_uses_variables_font_color_not_style_muted() -> None:
-    # Every shipped theme converges Style.muted and variables.font.color on the
-    # same ink, so construct an explicit divergence (distinctive-value pattern)
-    # to discriminate which source chrome_css_variables reads.
+def test_chrome_css_variables_muted_uses_variables_font_color_not_secondary_font() -> (
+    None
+):
+    # Every shipped theme converges the secondary font and variables.font.color
+    # on the same ink, so construct an explicit divergence (distinctive-value
+    # pattern) to discriminate which source chrome_css_variables reads.
     base, _ = resolve_style_and_context(get_theme_style("clarity"))
-    diverged = dataclasses.replace(base, muted="#ff00ff")
-    assert diverged.muted != diverged.variables.font.color
+    diverged = dataclasses.replace(base, secondary_color="#ff00ff")
+    assert diverged.secondary_color != diverged.variables.font.color
     variables = chrome_css_variables(diverged)
     assert variables["--dbt-system-muted"] == diverged.variables.font.color

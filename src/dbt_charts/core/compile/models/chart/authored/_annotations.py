@@ -12,7 +12,7 @@ from dbt_charts.core.compile.models.markers import DisplayText
 class ChartSort(BaseModel):
     """Chart-level sort configuration for categorical axes."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     by: str = Field(
         description=(
@@ -33,7 +33,7 @@ class ChartSort(BaseModel):
 class ChartTotal(BaseModel):
     """Donut center total: auto-rendered sum at the center of a donut, with author override."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     visible: bool = Field(
         default=True,

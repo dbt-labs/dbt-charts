@@ -6,9 +6,12 @@ import json
 import logging
 import os
 import re
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path  # noqa: TID251 — DCT_TRACE_VL debug spec dump
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.execute.executor import utc_now
 from dbt_charts.core.render.chart._types import VLDict
 
 if TYPE_CHECKING:
@@ -223,8 +226,12 @@ def render_chart(
     is_placeholder: bool = False,
     datasets: dict[str | None, list[dict[str, Any]]] | None = None,
     padding: dict[str, Any] | None = None,
+    clock: Callable[[], datetime] = utc_now,
 ) -> str:
-    """Render a chart to JSON, SVG, PNG, or PDF."""
+    """Render a chart to JSON, SVG, PNG, or PDF.
+
+    ``clock`` is the render time annotation clock anchors read.
+    """
     if format == "json":
         artifact: RenderArtifact = RenderArtifact(
             kind="json",
@@ -269,6 +276,7 @@ def render_chart(
             else {name: rows for name, rows in datasets.items() if name is not None}
         ),
         display_text="raw",
+        rendered_at=clock(),
     )
     artifact = render_resolved_chart(
         resolved,

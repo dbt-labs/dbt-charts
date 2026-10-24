@@ -187,7 +187,21 @@ def run_init_skills(
             for name in sorted(result.installed):
                 typer.echo(f"    ✓ {name}")
             if not check and not global_install:
-                typer.echo(f"  Gitignore: {rel}/{skill_install.INSTALL_NAME_PREFIX}*/")
+                # A teammate's agent sees only committed skills and has no
+                # way to know it should run `dct init skills` itself.
+                typer.echo(
+                    f"  Commit {rel}/{skill_install.INSTALL_NAME_PREFIX}*/ so "
+                    "teammates' agents get these skills; re-run "
+                    "`dct init skills` after upgrading dbt Charts."
+                )
+                ignored = skill_install.gitignored_skill_installs(target_dir)
+                if ignored:
+                    typer.echo(
+                        f"  Warning: gitignored: {', '.join(ignored)}. Add "
+                        f"`!{rel}/{skill_install.INSTALL_NAME_PREFIX}*/` to "
+                        ".gitignore so they get committed (git cannot "
+                        "re-include them under an ignored parent directory)."
+                    )
         if result.retired_removed:
             retired_verb = "Would remove" if check else "Removed"
             typer.echo(f"  {retired_verb} retired: {', '.join(result.retired_removed)}")

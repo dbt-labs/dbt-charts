@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,7 +25,7 @@ def dbt_dir(tmp_path: Path) -> Path:
 def bare_git_subdir(tmp_path: Path) -> tuple[Path, Path]:
     repo_root = tmp_path / "repo"
     subdir = repo_root / "nested" / "work"
-    (repo_root / ".git").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
     subdir.mkdir(parents=True)
     return repo_root, subdir
 
@@ -649,7 +650,7 @@ def test_init_yes_does_not_install_editor_extensions_without_flags(
         patch("dbt_charts.cli._extras.install_extras"),
         patch("dbt_charts.cli.commands.init.shutil.which", side_effect=_which),
         patch("dbt_charts.cli.commands.extension.shutil.which", side_effect=_which),
-        patch("dbt_charts.cli.commands.extension.subprocess.run") as run,
+        patch("dbt_charts.cli.commands.extension.subprocess") as extension_subprocess,
     ):
         result = CliRunner().invoke(
             app,
@@ -657,5 +658,5 @@ def test_init_yes_does_not_install_editor_extensions_without_flags(
             catch_exceptions=False,
         )
     assert result.exit_code == 0, result.output
-    run.assert_not_called()
+    extension_subprocess.run.assert_not_called()
     assert "pass --vscode to install it" in result.output

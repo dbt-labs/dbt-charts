@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from dbt_charts.core.colors import is_unknown_color_name
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.primitives import NamedFont, SingleLineFontStyle
+from dbt_charts.core.compile.models.style.theme.annotations import AnnotationFontStyle
 from dbt_charts.core.compile.models.style.theme.board import ChartTitleFontStyle
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_COLOR_TOKEN,
@@ -100,7 +101,9 @@ def expand_named_fonts(
     ``path`` is the dotted authored location of ``node``, used in errors.
     """
     node_cls = type(node)
-    if isinstance(node, (SingleLineFontStyle, ChartTitleFontStyle)):
+    if isinstance(
+        node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
+    ):
         if node.extends is None:
             return node
         _check_known(node.extends, registry, path)
@@ -150,7 +153,7 @@ def _slot_graph() -> Mapping[str, str]:
 
 def _slot_at(
     style: BaseModel, path: str
-) -> SingleLineFontStyle | ChartTitleFontStyle | None:
+) -> SingleLineFontStyle | ChartTitleFontStyle | AnnotationFontStyle | None:
     node: object = style  # type-state: object_annotation — a walk down model attributes
     for segment in path.split("."):
         node = getattr(
@@ -159,7 +162,11 @@ def _slot_at(
         if node is None:
             return None
     return (
-        node if isinstance(node, (SingleLineFontStyle, ChartTitleFontStyle)) else None
+        node
+        if isinstance(
+            node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
+        )
+        else None
     )
 
 

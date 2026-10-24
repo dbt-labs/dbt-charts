@@ -173,3 +173,54 @@ def test_a_store_backed_project_searches_its_own_files(
     )
 
     assert _paths(store, kind="models", text="orders") == ["models/schema.yml"]
+
+
+def test_every_result_names_the_sources_sql_may_run_on(
+    project: FilesystemProject,
+) -> None:
+    """An agent with only MCP tools otherwise reads dbt_charts.yml to learn
+    what `execute_sql(source=...)` accepts."""
+    for kind in ("boards", "models"):
+        result = search_files(project, kind=kind, text="order")
+        assert result.sources is not None
+        assert [s.model_dump(exclude_none=True) for s in result.sources] == [
+            {"name": "warehouse", "dialect": "duckdb"}
+        ]
+
+
+def test_source_entries_mark_the_implicit_dbt_source_as_the_default() -> None:
+    from dbt_charts.agent_api.search import source_entries
+    from dbt_charts.core.compile.config import ProjectSourcesConfig
+
+    config = ProjectSourcesConfig(
+        sources={"shop": {"type": "dbt_profile"}}, implicit_source="shop"
+    )
+    [entry] = source_entries(config)
+    assert entry.name == "shop"
+    assert entry.default is True
+
+
+def test_a_broken_sources_section_is_reported_not_raised(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """`kind: config` is how an agent finds the broken dbt_charts.yml, so the
+    search still runs and names the config error."""
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  warehouse:\n    type: nosuchtype\n"
+    )
+    result = search_files(local_project(tmp_path), kind="config", text="")
+    assert result.sources is None
+    assert [hit.file_path for hit in result.results] == ["dbt_charts.yml"]
+    assert "warehouse" in result.errors[0].message
+
+
+@pytest.mark.parametrize(
+    ("dialect", "type_"), [(None, None), ("duckdb", "csv")], ids=["neither", "both"]
+)
+def test_a_source_entry_has_exactly_one_of_dialect_or_type(
+    dialect: str | None, type_: str | None
+) -> None:
+    from dbt_charts.agent_api.search import SourceEntry
+
+    with pytest.raises(ValidationError, match="exactly one"):
+        SourceEntry(name="db", dialect=dialect, type=type_)

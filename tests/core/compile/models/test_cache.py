@@ -11,6 +11,7 @@ from typing import Annotated, Any, get_args, get_origin
 import pytest
 from pydantic import BaseModel, BeforeValidator, TypeAdapter, ValidationError
 
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.cache import (
     CachePatch,
     CachePolicy,
@@ -199,7 +200,7 @@ def test_enabled_is_absent_from_the_authorable_schema() -> None:
     from dbt_charts.core.compile.schema.introspection import introspect
 
     cache_model = introspect().models["CachePatch"]
-    assert [f.name for f in cache_model.fields] == ["ttl"]
+    assert [f.name for f in cache_model.fields] == ["ttl", "prefetch"]
 
 
 # ── CachePolicy ──────────────────────────────────────────────────────────────
@@ -325,6 +326,54 @@ def test_unresolved_enabled_raises() -> None:
     default silently — the root is required to resolve `enabled`."""
     with pytest.raises(ValueError, match="enabled"):
         resolve_cache_policy(CachePatch(), None)
+
+
+def test_prefetch_defaults_false_when_no_layer_sets_it() -> None:
+    assert resolve_cache_policy(_root()).prefetch is False
+
+
+def test_prefetch_inherits_down_the_cascade() -> None:
+    policy = resolve_cache_policy(
+        _root(), cache_layer({"prefetch": True}), cache_layer({"ttl": "5m"})
+    )
+    assert policy.prefetch is True
+
+
+def test_nearer_prefetch_overrides_in_both_directions() -> None:
+    on = cache_layer({"prefetch": True})
+    off = cache_layer({"prefetch": False})
+    assert resolve_cache_policy(_root(), on, off).prefetch is False
+    assert resolve_cache_policy(_root(), off, on).prefetch is True
+
+
+def test_scalar_shorthands_set_no_prefetch() -> None:
+    on = cache_layer({"prefetch": True})
+    for scalar in ("1h", True):
+        assert resolve_cache_policy(_root(), on, cache_layer(scalar)).prefetch is True
+
+
+def test_prefetch_only_block_does_not_switch_caching_on() -> None:
+    """`prefetch:` says nothing about whether to cache, so a block carrying only
+    it must not re-enable a scope above that opted out."""
+    policy = resolve_cache_policy(
+        _root(), cache_layer(False), cache_layer({"prefetch": False})
+    )
+    assert policy.enabled is False
+
+
+def test_prefetch_true_below_a_cache_false_scope_is_an_error() -> None:
+    with pytest.raises(CompilationError, match="prefetch"):
+        resolve_cache_policy(
+            _root(), cache_layer(False), cache_layer({"prefetch": True})
+        )
+
+
+def test_cache_false_below_an_inherited_prefetch_true_just_disables_it() -> None:
+    policy = resolve_cache_policy(
+        _root(), cache_layer({"prefetch": True}), cache_layer(False)
+    )
+    assert policy.enabled is False
+    assert policy.prefetch is False
 
 
 # ── shipped config root ──────────────────────────────────────────────────────

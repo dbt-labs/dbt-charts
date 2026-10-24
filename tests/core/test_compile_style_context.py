@@ -164,7 +164,9 @@ class TestMergedStyleOnBoard:
             style:
               font:
                 family: "Arial"
-              muted: "#aabbcc"
+              fonts:
+                secondary:
+                  color: "#aabbcc"
               accent: "#334455"
             rows:
               - text: Child
@@ -178,7 +180,7 @@ class TestMergedStyleOnBoard:
         nested = result.board.layout.items[0].board
         assert nested is not None
         assert nested.resolved_style.background == "#ff0000"
-        assert nested.resolved_style.muted == "#aabbcc"
+        assert nested.resolved_style.secondary_color == "#aabbcc"
         assert nested.resolved_style.accent == "#334455"
         assert nested.resolved_style.font.family.startswith("Arial")
 
@@ -190,7 +192,9 @@ class TestMergedStyleOnBoard:
             style:
               font:
                 family: "Arial"
-              muted: "#aabbcc"
+              fonts:
+                secondary:
+                  color: "#aabbcc"
             rows:
               - text: Child
                 style:
@@ -203,7 +207,9 @@ class TestMergedStyleOnBoard:
             style:
               font:
                 family: "Arial"
-              muted: "#aabbcc"
+              fonts:
+                secondary:
+                  color: "#aabbcc"
             rows:
               - text: Child
                 style:
@@ -224,7 +230,10 @@ class TestMergedStyleOnBoard:
         assert fast_nested.resolved_style.font.family == (
             slow_nested.resolved_style.font.family
         )
-        assert fast_nested.resolved_style.muted == slow_nested.resolved_style.muted
+        assert (
+            fast_nested.resolved_style.secondary_color
+            == slow_nested.resolved_style.secondary_color
+        )
 
 
 class TestMergedStyleVegaConfig:

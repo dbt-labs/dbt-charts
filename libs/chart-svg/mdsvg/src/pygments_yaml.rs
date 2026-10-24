@@ -13,7 +13,8 @@ use once_cell::sync::Lazy;
 
 use crate::pygments_lexer::{transition, Span, Tok, ERROR, WHITESPACE};
 use crate::pygments_lexers::Next;
-use crate::pygments_re::{is_py_space, Flags, Pattern};
+use crate::pygments_re::{Flags, Pattern};
+use d3rs::py_str::is_py_space;
 
 const TEXT: Tok = "Token.Text";
 const WHITESPACE_ERROR: Tok = "Token.Text.Whitespace.Error";

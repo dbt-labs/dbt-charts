@@ -69,6 +69,7 @@ from dbt_charts.core.compile.resolve.style.scale import (
 )
 from dbt_charts.core.constants.axis import AUTO_TICK_TARGET
 from dbt_charts.core.font_measure import compose_decimal_units
+from dbt_charts.core.fonts import font_is_tabular
 from dbt_charts.core.text.format_d3 import (
     is_d3_fixed_decimal_spec,
     is_d3_number_spec,
@@ -903,6 +904,7 @@ def _axis_layers(
     column_layer_format: AuthoredFormat | None,
     local: AxisOverrides,
     temporal_band: bool,
+    horizontal_ruler: bool,
 ) -> list[BaseModel | None]:
     """The cascade's layers above ``charts.axis``, lowest first.
 
@@ -915,6 +917,13 @@ def _axis_layers(
     heatmap's nominal month axis): it skips ``charts.axis_band`` so time stays on
     the muted ``charts.axis`` voice; a family's or chart's own ``axis_band`` still
     styles it.
+
+    ``horizontal_ruler`` marks a quantitative axis that paints along the bottom
+    or top: its ticks do not stack into a column, so a tabular face handed down
+    by the ``charts.*`` tier is swapped for the shared ``charts.axis`` face. A
+    non-tabular family there (an authored one) is left alone. The layer sits
+    just above the ``charts.*`` quantitative slot, so a family's or the chart's
+    own font still wins.
     """
     channel_patch_cls = AxisXStylePatch if axis_name == "axis_x" else AxisYStylePatch
     channel_axis = getattr(chart_style_context, axis_name)
@@ -938,6 +947,19 @@ def _axis_layers(
         if type_slot == "axis_quantitative"
         else _without_band_position(local.band)
     )
+    axis_face = chart_style_context.axis.labels.font
+    # The family the ``charts.*`` tier hands this axis before the layer below.
+    tier_family = next(
+        family
+        for family in (
+            chart_style_context.axis_quantitative.labels.font.family
+            if type_slot == "axis_quantitative"
+            else None,
+            channel_axis.labels.font.family,
+            axis_face.family,
+        )
+        if family is not None
+    )
     return [
         _full_model_as_overlay(channel_axis, channel_patch_cls),
         _full_model_as_overlay(
@@ -948,6 +970,11 @@ def _axis_layers(
             _full_model_as_overlay(chart_style_context.axis_band, BandAxisStylePatch)
         )
         if type_slot == "axis_band" and not temporal_band
+        else None,
+        BaseAxisStylePatch.model_validate(
+            {"labels": {"font": {"family": axis_face.family}}}
+        )
+        if horizontal_ruler and font_is_tabular(tier_family)
         else None,
         family_slot("axis"),
         family_slot(axis_name),
@@ -974,6 +1001,7 @@ def _merge_axis_cascade(
     chart_type: str,
     labeled: bool,
     temporal_band: bool = False,
+    horizontal_measure: bool = False,
 ) -> tuple[AxisXStyle, float | None]: ...
 
 
@@ -988,6 +1016,7 @@ def _merge_axis_cascade(
     chart_type: str,
     labeled: bool,
     temporal_band: bool = False,
+    horizontal_measure: bool = False,
 ) -> tuple[AxisYStyle, float | None]: ...
 
 
@@ -1001,6 +1030,7 @@ def _merge_axis_cascade(
     chart_type: str,
     labeled: bool,
     temporal_band: bool = False,
+    horizontal_measure: bool = False,
 ) -> tuple[AxisXStyle | AxisYStyle, float | None]:
     """Walk the axis cascade and return the merged, channel-typed axis, plus any
     band_position the chart's own band patch sets.
@@ -1034,6 +1064,12 @@ def _merge_axis_cascade(
     ``temporal_band`` is ``_axis_layers``'s flag for a band-typed axis whose
     column is a date.
 
+    ``horizontal_measure`` says the measure axis (``axis_y``) paints along the
+    bottom or top, which only the caller knows (a horizontal bar). ``axis_x`` is
+    a horizontal ruler on every family but bar, whose ``axis_x`` is the category
+    axis: it paints at the bottom or the side by an orientation decided later,
+    so a numeric category keeps its tabular face.
+
     Chart-local patches come from ``axis_overrides`` when given, else from the
     context's ``axis_overrides_*``.
     """
@@ -1062,6 +1098,8 @@ def _merge_axis_cascade(
         column_layer_format,
         local,
         temporal_band,
+        horizontal_ruler=(axis_name == "axis_x" and chart_type != "bar")
+        or horizontal_measure,
     ):
         base = merge_onto_base(base, layer)
 

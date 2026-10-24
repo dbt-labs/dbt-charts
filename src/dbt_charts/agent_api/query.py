@@ -330,7 +330,7 @@ def lookup_board_query_sql(
 
 
 class ExecuteQueryArgs(BaseModel):
-    """Run a query and return its rows as CSV. Give exactly one of two forms: raw SQL (`sql`, on a named `source` or the project's default), or one named query from a stored board (`board` + `query`). Prefer `sql` to explore data or answer a question. Prefer the named form to see what a board's query produces, for example when debugging a chart error like 'unknown column foo': it runs the query as the board's author wrote it, including Jinja variable substitution (declared defaults apply) and non-SQL query types (values, http). The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
+    """Run a query and return its rows as CSV. Give exactly one of two forms: raw SQL (`sql` + `source`), or one named query from a stored board (`board` + `query`). Prefer `sql` to explore data or answer a question. Prefer the named form to see what a board's query produces, for example when debugging a chart error like 'unknown column foo': it runs the query as the board's author wrote it, including Jinja variable substitution (declared defaults apply) and non-SQL query types (values, http). The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
 
     sql: str | None = Field(
         None,
@@ -355,7 +355,8 @@ class ExecuteQueryArgs(BaseModel):
         None,
         description=(
             "Data source name, or a CSV/JSON/Parquet file path (table name = "
-            "file stem), to execute against ('sql' only)."
+            "file stem), to execute against ('sql' only). Required unless the "
+            "project declares no `sources:`, where SQL runs on its dbt profile."
         ),
     )
     lenient_variables: bool = Field(

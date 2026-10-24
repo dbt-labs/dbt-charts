@@ -38,6 +38,6 @@ options:
   {% set y = loop.index0 * (style.font.size * 2.8) + 4 %}
   <rect x="{{ (side + 16)|round(1) }}" y="{{ y|round(1) }}" width="12" height="12" rx="2" fill="{{ color_for(part.name, category_col) }}"/>
   <text x="{{ (side + 34)|round(1) }}" y="{{ (y + 10)|round(1) }}" fill="{{ style.font.color }}">{{ part.name }}</text>
-  <text x="{{ (side + 34)|round(1) }}" y="{{ (y + 12 + style.font.size)|round(1) }}" fill="{{ style.muted }}">{{ (part.value / total) | format(".1%") }} · {{ part.value | format(p.value_format) }}</text>
+  <text x="{{ (side + 34)|round(1) }}" y="{{ (y + 12 + style.font.size)|round(1) }}" fill="{{ style.fonts.secondary.color }}">{{ (part.value / total) | format(".1%") }} · {{ part.value | format(p.value_format) }}</text>
 {% endfor %}
 </g>

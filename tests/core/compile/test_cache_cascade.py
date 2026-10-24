@@ -15,6 +15,7 @@ from pydantic import TypeAdapter, ValidationError
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.compiler import CompileResult, compile_file
 from dbt_charts.core.compile.config import get_config, reset_config
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.cache import CachePatch, CachePolicy
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -167,7 +168,6 @@ def test_query_cache_rejects_unauthorable_values(authored: object) -> None:
     point as the pydantic-model authored fields: a duration must be a string
     with a unit, and a bare number, a list, or a malformed duration is a
     compile error — never a silently dropped cache directive."""
-    from dbt_charts.core.compile.errors import CompilationError
 
     with pytest.raises(CompilationError):
         normalize_query(
@@ -1146,3 +1146,157 @@ class TestTtlValueIsBounded:
     def test_a_long_but_sane_ttl_still_parses(self) -> None:
         """The ceiling must not reject a real authoring intent."""
         assert cache_layer({"ttl": "52w"}).ttl == "52w"
+
+
+# ── prefetch: the flat sibling of ttl ────────────────────────────────────────
+
+_PREFETCH_SOURCES: dict[str, Any] = {
+    "db": {"type": "duckdb", "path": "warehouse.duckdb"},
+    "warm_db": {
+        "type": "duckdb",
+        "path": "warehouse.duckdb",
+        "cache": {"prefetch": True},
+    },
+}
+
+
+def test_prefetch_defaults_false_in_the_shipped_root() -> None:
+    query = normalize_query(
+        "q", {"sql": "SELECT 1", "source": "db"}, sources=dict(_PREFETCH_SOURCES)
+    )
+    assert query.cache.prefetch is False
+
+
+def test_source_prefetch_reaches_its_queries_and_a_query_can_opt_out() -> None:
+    warm = normalize_query(
+        "q", {"sql": "SELECT 1", "source": "warm_db"}, sources=dict(_PREFETCH_SOURCES)
+    )
+    cold = normalize_query(
+        "q",
+        {"sql": "SELECT 1", "source": "warm_db", "cache": {"prefetch": False}},
+        sources=dict(_PREFETCH_SOURCES),
+    )
+    assert warm.cache.prefetch is True
+    assert cold.cache.prefetch is False
+
+
+def test_query_prefetch_beats_a_board_that_opts_out(tmp_path: Path) -> None:
+    policy = _compiled_querycache_layer(
+        tmp_path,
+        _BOARD.format(
+            board_cache="cache: {prefetch: false}",
+            query_cache="cache: {prefetch: true}",
+        ),
+    )
+    assert policy.prefetch is True
+
+
+def test_project_prefetch_is_the_default_and_a_board_can_opt_out(
+    tmp_path: Path,
+) -> None:
+    project_yaml = "cache:\n  prefetch: true\n"
+    inherited = _compiled_querycache_layer(
+        tmp_path,
+        _BOARD.format(board_cache="", query_cache=""),
+        project_yaml=project_yaml,
+    )
+    opted_out = _compiled_querycache_layer(
+        tmp_path,
+        _BOARD.format(board_cache="cache: {prefetch: false}", query_cache=""),
+        project_yaml=project_yaml,
+    )
+    assert inherited.prefetch is True
+    assert inherited.ttl == _root_ttl()
+    assert opted_out.prefetch is False
+
+
+def test_meta_prefetch_reaches_the_query_and_the_board_overrides_it(
+    tmp_path: Path,
+) -> None:
+    meta = "cache:\n  prefetch: true\n"
+    inherited = _compiled_querycache_layer(
+        tmp_path, _BOARD.format(board_cache="", query_cache=""), meta_yaml=meta
+    )
+    overridden = _compiled_querycache_layer(
+        tmp_path,
+        _BOARD.format(board_cache="cache: {prefetch: false}", query_cache=""),
+        meta_yaml=meta,
+    )
+    assert inherited.prefetch is True
+    assert overridden.prefetch is False
+
+
+def test_prefetch_under_a_cache_false_board_fails_the_compile(tmp_path: Path) -> None:
+    reset_config()
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: duckdb\n    path: warehouse.duckdb\n"
+    )
+    boards = tmp_path / "charts"
+    boards.mkdir()
+    (boards / "board.yml").write_text(
+        dedent(
+            _BOARD.format(
+                board_cache="cache: false", query_cache="cache: {prefetch: true}"
+            )
+        )
+    )
+    project = FilesystemProject(tmp_path)
+
+    result = compile_file(project.path("charts/board.yml").read_board())
+
+    assert not result.success
+    message = "; ".join(e.message for e in result.errors)
+    assert "prefetch" in message
+    assert "'main'" in message
+
+
+def test_prefetch_under_a_cache_false_meta_fails_the_compile(
+    tmp_path: Path,
+) -> None:
+    """meta.yml and the board fold into one layer before the cascade sees them."""
+    reset_config()
+    (tmp_path / "dbt_charts.yml").write_text(
+        "sources:\n  db:\n    type: duckdb\n    path: warehouse.duckdb\n"
+    )
+    boards = tmp_path / "charts"
+    boards.mkdir()
+    (boards / "meta.yml").write_text("cache: false\n")
+    (boards / "board.yml").write_text(
+        dedent(_BOARD.format(board_cache="cache: {prefetch: true}", query_cache=""))
+    )
+    project = FilesystemProject(tmp_path)
+
+    result = compile_file(project.path("charts/board.yml").read_board())
+
+    assert not result.success
+    assert "prefetch" in "; ".join(e.message for e in result.errors)
+
+
+def test_prefetch_with_caching_turned_on_in_the_same_layer_is_allowed(
+    tmp_path: Path,
+) -> None:
+    policy = _compiled_querycache_layer(
+        tmp_path,
+        _BOARD.format(board_cache="cache: {ttl: 1h, prefetch: true}", query_cache=""),
+        meta_yaml="cache: false\n",
+    )
+    assert policy.enabled is True
+    assert policy.prefetch is True
+
+
+def test_prefetch_in_a_nested_board_under_a_cache_false_parent_is_an_error() -> None:
+    result = compile_with_board_sources(
+        """
+        title: T
+        cache: false
+        rows:
+          - cache: {prefetch: true}
+            queries:
+              nested_q: {sql: "SELECT 1", source: db}
+            charts:
+              nc: {query: nested_q, type: kpi, value: value}
+            rows: [nc]
+        """
+    )
+    assert not result.success
+    assert "prefetch" in "; ".join(e.message for e in result.errors)

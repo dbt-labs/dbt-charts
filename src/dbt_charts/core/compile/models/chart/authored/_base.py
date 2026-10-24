@@ -43,8 +43,10 @@ from dbt_charts.core.compile.models.refs import (
 )
 from dbt_charts.core.compile.models.schema_names import ChartWarningCode
 from dbt_charts.core.compile.models.variable.authored import SingleRowBoolProbe
-from dbt_charts.core.compile.models.vega_lite.contracts import Projection
-from dbt_charts.core.compile.vega_lite.validation import validate_projection_definition
+from dbt_charts.core.compile.models.vega_lite.contracts import (
+    Projection,
+    ProjectionType,
+)
 from dbt_charts.core.diagnostics.suppression import warn_retired_codes
 
 from ._annotations import (
@@ -560,12 +562,12 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
 
     model_config = ConfigDict(allow_inf_nan=False)
 
-    # None = no projection specified; renderer uses default.
+    # None = no projection authored; the geo source's registry projection applies.
     projection: Annotated[
-        str | Projection | None,
+        ProjectionType | Projection | None,
         Field(
             default=None,
-            description="Map projection name or Vega-Lite projection config.",
+            description="Vega projection name, or an object with type and parameters.",
         ),
     ]
     # None = no color encoding.
@@ -631,11 +633,6 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
             ),
         ),
     ]
-
-    @field_validator("projection", mode="before")
-    @classmethod
-    def _validate_projection(cls, value: Any) -> str | Projection | None:
-        return validate_projection_definition(value)
 
 
 class _RadialChartFields(_SharedChartFields, _FieldLabelsField):

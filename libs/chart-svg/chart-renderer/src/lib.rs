@@ -26,11 +26,12 @@ pub mod step_band;
 pub mod svg;
 pub mod text;
 pub mod time_locale;
+pub mod torn;
 pub mod title;
 pub mod title_shift;
 pub mod variables;
 pub mod vega_fit;
-pub mod xml;
+pub mod tree;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -86,16 +87,18 @@ pub struct TextMarkFont {
     pub size: f64,
 }
 
-/// Board-level `ResolvedStyle` tokens shared across families — the muted
+/// Board-level `ResolvedStyle` tokens shared across families — the secondary
 /// ink and the tone palette. Production hands the whole `ResolvedStyle` to
 /// every renderer alongside the chart; this envelope carries only the
 /// slices a family actually reads. Optional on the wire because pre-slice
 /// fixtures omit it, but a family whose production renderer asserts a
-/// token (spark_bar: `muted`, the title case) refuses its absence by name
+/// token (spark_bar: the title geometry, the title case) refuses its absence by name
 /// rather than painting a stand-in.
 #[derive(Deserialize, Clone)]
 pub struct BoardStyle {
-    pub muted: Option<String>,
+    /// `fonts.secondary.color`: the KPI support row's no-tone ink. Every other
+    /// secondary-text surface reads its own font slot.
+    pub secondary_color: Option<String>,
     pub tones: Option<TonesStyle>,
     /// Board-level `style.title.font.case` — the title case transform the
     /// chart/table/spark renderers all share (spark_bar.py:434-448).
@@ -131,6 +134,10 @@ pub struct BoardStyle {
     /// when it is absent.
     #[serde(default)]
     pub font_color: Option<String>,
+    /// `style.fonts.numeral`: the family a table sets its digits in. Optional in
+    /// the envelope; a table errors when it is absent.
+    #[serde(default)]
+    pub numeral_family: Option<String>,
     /// The theme's text-mark font (`chart_defaults.marks.text.font`): the face a
     /// value label measures in when it authors none.
     pub text_mark_font: TextMarkFont,
@@ -277,18 +284,16 @@ impl PlaceholderStyle {
         Node::group(Attrs::new().quick("class", "placeholder-overlay"), vec![wash, label])
     }
 
-    /// The overlay printed into `xml`, for the families that still write through it.
+    /// The overlay printed as markup, for the families that still build strings.
     pub fn overlay(
         &self,
-        xml: &mut xml::Xml,
         width: f64,
         height: f64,
         family: &str,
         case: Option<&str>,
-    ) -> Result<(), Diagnostic> {
+    ) -> Result<String, Diagnostic> {
         let (text, weight) = self.overlay_label(case)?;
-        xml.raw(&print::print(&[self.overlay_node(width, height, family, text, weight)]));
-        Ok(())
+        Ok(print::print(&[self.overlay_node(width, height, family, text, weight)]))
     }
 }
 
@@ -303,6 +308,7 @@ fn with_required_board_fields(mut style: Value) -> Value {
     fields.entry("text_mark_font").or_insert_with(|| {
         serde_json::json!({"family": "'Inter Variable', 'Noto Emoji', Inter, system-ui, sans-serif", "size": 11.0})
     });
+    fields.entry("numeral_family").or_insert(serde_json::json!(common::TAB_FONT));
     fields.entry("column_block_share_warn_ratio").or_insert(serde_json::json!(0.4));
     fields
         .entry("sub_unit_specs")
@@ -454,6 +460,11 @@ pub struct Payload {
 }
 
 impl Payload {
+    /// The query returned no rows, in the chart's own dataset and every other.
+    pub(crate) fn is_empty_result(&self) -> bool {
+        self.rows.is_empty() && self.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty))
+    }
+
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
         let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, authored_height, max_template_output_bytes, cell_text } = self;
@@ -649,10 +660,8 @@ fn render_family(
     if chart_type == "custom" {
         return families::custom::render(payload, fonts).map(|svg| (svg, None));
     }
-    let every_dataset_empty = payload.rows.is_empty()
-        && payload.datasets.as_ref().is_none_or(|sets| sets.values().all(Vec::is_empty));
     // A map with no rows is a base map, not an empty chart: `geoshape` decides it.
-    if (every_dataset_empty || unplotted(&payload.resolved, chart_type))
+    if (payload.is_empty_result() || unplotted(&payload.resolved, chart_type))
         && !matches!(chart_type, "callout" | "geoshape")
     {
         // The empty chart still raises what production raises of its resolved model.

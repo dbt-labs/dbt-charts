@@ -18,7 +18,6 @@
 //! chart's plot group or, for a small-multiples composite, in the shared
 //! footer band.
 
-use std::fmt::Write as _;
 
 use crate::common::AxisStyle;
 use crate::families::axis_caption::{authored_time_format, bucket_text, padded_day_domain, vega_axis_format, AxisCaption, CaptionScale, MS_PER_DAY};
@@ -31,7 +30,7 @@ use crate::families::temporal::{
     time_unit_specifier, TimePart, TimeUnit,
 };
 use crate::families::x_type::{Grain, XResolution};
-use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use scene::{Attrs, Chars, Escape, Node, TextBlock};
 use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
 
@@ -151,6 +150,11 @@ enum Ticks {
     Part { part: TimePart, count: Option<usize>, time_format: Option<String> },
 }
 
+/// Whether a label is painted: parity keeps it and it has text. A thinned bar axis ticks exactly these.
+pub(crate) fn is_painted(keep: bool, text: &str) -> bool {
+    keep && !text.is_empty()
+}
+
 #[derive(Clone)]
 pub(crate) struct TemporalXAxis {
     scale: Scale,
@@ -174,6 +178,8 @@ pub(crate) struct TemporalXAxis {
     pub(crate) collision: Option<usize>,
     font_size: f64,
     family: String,
+    /// The authored `labels.font.case`, applied to every label before it is measured and painted.
+    label_case: Option<String>,
     color: String,
     weight: String,
     label_pad: f64,
@@ -181,6 +187,8 @@ pub(crate) struct TemporalXAxis {
     separation: f64,
     tick_len: f64,
     ticks_visible: bool,
+    /// A thinned bar axis ticks only under the labels it paints, so the ticks draw the labels' cadence.
+    ticks_under_labels: bool,
     tick_color: String,
     tick_width: f64,
     /// `axis.offset`; the drawn axis group adds its own half-pixel crisp
@@ -214,6 +222,9 @@ pub(crate) struct DateColumn<'a> {
     pub(crate) law: XResolution,
     /// A band-needing layer shares the scale, which makes an ordinal one a band scale.
     pub(crate) band_layer: bool,
+    /// Whole days the scale also spans, unfloored: an annotation's dates join
+    /// the extent exactly, as a data row's date joins it at its bucket start.
+    pub(crate) extra_days: &'a [i64],
     /// The point or band scale a temporal field rides when a layer beside it types the same field nominal.
     pub(crate) indexed: Option<Indexed>,
     /// Production's `bucket_aligned_temporal`: bar's marks span buckets, which lets a weekly or daily axis
@@ -330,6 +341,7 @@ impl TemporalXAxis {
             collision: None,
             font_size,
             family: family.clone(),
+            label_case: labels_cfg.font.case.clone(),
             color: labels_cfg.font.color.as_deref().unwrap_or("#626366").to_string(),
             weight: labels_cfg.font.weight_str(),
             label_pad: labels_cfg.padding.unwrap_or(6.0),
@@ -337,6 +349,7 @@ impl TemporalXAxis {
             separation: labels_cfg.min_gap.unwrap_or(0.0),
             tick_len: ticks_cfg.length.unwrap_or(6.0),
             ticks_visible: ticks_cfg.visible.unwrap_or(true),
+            ticks_under_labels: false,
             tick_color: crate::common::required_ink(ticks_cfg.color.as_deref(), "scatter_axis", "ticks.color")?.to_string(),
             tick_width: ticks_cfg.width.unwrap_or(1.0),
             axis_offset: ticks_cfg.offset.unwrap_or(0.0),
@@ -381,7 +394,7 @@ impl TemporalXAxis {
             "scatter",
             crate::families::temporal::axis_time_format(labels_cfg.spec(), &ax_x.grain_formats, label_grain),
         )?;
-        let mut measure = |t: &str| labels_cfg.font.measure_weighted(fonts, t, font_size);
+        let mut measure = |t: &str| labels_cfg.measure(fonts, t, font_size);
         // An authored angle skips the overlap ladder altogether
         // (`resolve_axis_x_overlap`): the labels keep the vocabulary of the
         // authored label grain (else the data's own), none thinned or tilted.
@@ -395,7 +408,7 @@ impl TemporalXAxis {
                 Some(angle) => {
                     let format_tu = labels_cfg.time_unit.as_deref().and_then(parse_authored_time_unit).unwrap_or(tu);
                     Ok(ResolvedVegaLabels {
-                        labels: build_temporal_labels(domain, tu, format_tu, format_tu, fiscal, authored)?,
+                        labels: build_temporal_labels(domain, tu, format_tu, format_tu, 1, fiscal, authored)?,
                         angle,
                         block_height: crate::families::temporal::pinned_block_height(
                             domain, format_tu, authored, angle, font_size, measure,
@@ -404,6 +417,7 @@ impl TemporalXAxis {
                         collision: None,
                         format_tu,
                         visibility_tu: format_tu,
+                        year_step: 1,
                     })
                 }
                 None => resolve_vega_x_labels(
@@ -447,11 +461,8 @@ impl TemporalXAxis {
                 None => floor(date),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let span = kept_at
-            .iter()
-            .copied()
-            .reduce(f64::min)
-            .zip(kept_at.iter().copied().reduce(f64::max));
+        let spanned: Vec<f64> = kept_at.iter().copied().chain(col.extra_days.iter().map(|&day| day as f64)).collect();
+        let span = spanned.iter().copied().reduce(f64::min).zip(spanned.iter().copied().reduce(f64::max));
 
         if let Some(indexed) = col.indexed {
             // An authored domain is the discrete scale's whole domain: its two ends, not the dates between.
@@ -478,6 +489,7 @@ impl TemporalXAxis {
                         None => crate::families::temporal::d3_multi_format(y, m, d)?,
                     };
                     let (tilted_align, baseline) = bare_label_anchor(labels_cfg.angle.unwrap_or(0.0), 0.5, 100.0, axis.edge);
+                    let text = axis.cased(&text)?;
                     let width = fonts.measure(&text, &axis.family, axis.font_size)?;
                     labels.push(AxisLabel { at: At::Index(i), text, row2: None, width, tilted_align, baseline });
                 }
@@ -499,7 +511,7 @@ impl TemporalXAxis {
             // Production lets Vega tick every boundary of an unthinned axis (`tickCount: {interval}`); a point
             // or band scale throws on that.
             axis.ticks_interval_on_discrete =
-                resolved.visibility_tu == tu && resolved.format_tu == tu || ax_x.ticks.time_unit.is_some();
+                resolved.visibility_tu == tu && resolved.format_tu == tu && resolved.year_step == 1 || ax_x.ticks.time_unit.is_some();
             let mut labels = Vec::new();
             for tl in &resolved.labels {
                 let Some(i) = domain.iter().position(|d| *d == ladder[tl.domain_idx]) else { continue };
@@ -519,7 +531,7 @@ impl TemporalXAxis {
             axis.collision = resolved.collision;
             // Unthinned, every bucket is a tick that speaks (`values` stays the
             // full bucket list); the opener gate only applies once thinned.
-            let speaking = if resolved.visibility_tu == tu {
+            let speaking = if resolved.visibility_tu == tu && resolved.year_step == 1 {
                 build_all_temporal_labels(col.ladder, resolved.format_tu, fiscal, authored)?
             } else {
                 resolved.labels.clone()
@@ -612,7 +624,7 @@ impl TemporalXAxis {
         // boundary of the scale (`tickCount: {interval}`, `type_inference.py:
         // 1049-1052`), an empty bucket included; a thinner ladder injects its
         // openers as `values` instead.
-        let native = resolved.visibility_tu == tu && resolved.format_tu == tu;
+        let native = resolved.visibility_tu == tu && resolved.format_tu == tu && resolved.year_step == 1;
         if native {
             axis.ticks = Ticks::Native {
                 ladder,
@@ -640,17 +652,24 @@ impl TemporalXAxis {
         Ok(axis)
     }
 
+    fn cased(&self, text: &str) -> Result<String, String> {
+        crate::common::label_case(self.label_case.as_deref(), text)
+    }
+
     fn label(&self, tl: &TemporalLabel, at: At, format_tu: TimeUnit, fonts: &FontBook) -> Result<AxisLabel, String> {
         let (text, rows, tilted_align, baseline) = tilted_temporal_label(tl, self.angle, format_tu, self.edge);
+        let (text, row2) = (self.cased(&text)?, self.cased(&tl.row2)?);
         let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
         if rows == 2 {
-            width = width.max(fonts.measure_shaped(&tl.row2, &self.family, self.font_size)?);
+            width = width.max(fonts.measure_shaped(&row2, &self.family, self.font_size)?);
         }
-        Ok(AxisLabel { at, text, row2: (rows == 2).then(|| tl.row2.clone()), width, tilted_align, baseline })
+        Ok(AxisLabel { at, text, row2: (rows == 2).then_some(row2), width, tilted_align, baseline })
     }
 
     fn plain_label(&self, text: String, row2: Option<String>, day: f64, frac: f64, pw: f64, fonts: &FontBook) -> Result<(f64, AxisLabel), String> {
         let (tilted_align, baseline) = bare_label_anchor(self.angle, frac, pw, self.edge);
+        let text = self.cased(&text)?;
+        let row2 = row2.map(|row| self.cased(&row)).transpose()?;
         let mut width = fonts.measure_shaped(&text, &self.family, self.font_size)?;
         if let Some(row2) = &row2 {
             width = width.max(fonts.measure_shaped(row2, &self.family, self.font_size)?);
@@ -719,6 +738,7 @@ impl TemporalXAxis {
                 let text = expr
                     .eval(&crate::labels_expr::Tick::at(i, count, value, &default))
                     .map_err(|e| crate::labels_expr::describe(&e, "a validated tick"))?;
+                let text = self.cased(&text)?;
                 let width = fonts.measure(&text, &self.family, self.font_size)?;
                 Ok((frac, AxisLabel { text, row2: None, width, ..label }))
             })
@@ -742,7 +762,7 @@ impl TemporalXAxis {
                 let ticks = if *vl_default_labels {
                     none_tick_labels(&days, *tu, authored)?
                 } else {
-                    interval_tick_labels(&days, ladder, *tu, *format_tu, *visibility_tu, *fiscal, authored)?
+                    interval_tick_labels(&days, ladder, *tu, *format_tu, *visibility_tu, 1, *fiscal, authored)?
                 };
                 ticks
                     .into_iter()
@@ -775,12 +795,23 @@ impl TemporalXAxis {
         }
     }
 
-    /// Production draws the injected opener ticks of a thinned bar axis whatever
-    /// the theme says of the axis's ticks (`type_inference.py`, `restores_ticks`).
-    pub(crate) fn show_injected_ticks(&mut self) {
+    /// A thinned bar axis draws a tick under each label it paints, whatever the theme says of the axis's ticks.
+    pub(crate) fn tick_under_labels(&mut self) {
         if matches!(self.ticks, Ticks::Fixed(_)) {
             self.ticks_visible = true;
+            self.ticks_under_labels = true;
         }
+    }
+
+    /// The scale fractions a tick is drawn at: every label's, or only those painted when ticking under labels.
+    fn painted_tick_fracs(&self, labels: &[(f64, AxisLabel)], pw: f64) -> Vec<f64> {
+        let kept = self.kept(labels, pw);
+        labels
+            .iter()
+            .zip(kept)
+            .filter(|((_, l), keep)| !self.ticks_under_labels || is_painted(*keep, &l.text))
+            .map(|((frac, _), _)| *frac)
+            .collect()
     }
 
     /// The data's calendar grain and the grain its labels thinned to; `None` off a bucketed scale.
@@ -1007,11 +1038,13 @@ impl TemporalXAxis {
             if keep {
                 b.union(&self.ink(l, *frac, pw, row_y));
             }
-            // A tick is a rule stroked its full width past its own ends (`boundStroke`), whether or not
-            // parity hid its label: one at the plot's edge reaches past it.
-            if self.ticks_visible {
+        }
+        // A tick is a rule stroked its full width past its own ends (`boundStroke`): one at the plot's
+        // edge reaches past it. Off the thinned bar axis a tick stays whether or not parity hid its label.
+        if self.ticks_visible {
+            let (near, far) = (self.edge.at(ph, self.axis_offset), self.edge.at(ph, self.axis_offset + self.tick_len));
+            for frac in self.painted_tick_fracs(&labels, pw) {
                 let x = pw * frac;
-                let (near, far) = (self.edge.at(ph, self.axis_offset), self.edge.at(ph, self.axis_offset + self.tick_len));
                 b.union(&Bounds::new(x, near.min(far), x, near.max(far)).expand(self.tick_width));
             }
         }
@@ -1063,25 +1096,39 @@ impl TemporalXAxis {
         plot_bottom: f64,
         fonts: &FontBook,
     ) -> Result<(), String> {
+        svg.push_str(&print::print(&self.nodes(ax_x, plot_left, plot_w, plot_bottom, fonts)?));
+        Ok(())
+    }
+
+    /// [`Self::paint`] as nodes.
+    pub(crate) fn nodes(
+        &self,
+        ax_x: &AxisStyle,
+        plot_left: f64,
+        plot_w: f64,
+        plot_bottom: f64,
+        fonts: &FontBook,
+    ) -> Result<Vec<Node>, String> {
         let fs = self.font_size;
         // The drawn axis group is translated by half a pixel so 1px strokes
         // land on a pixel boundary; the fit measures the ink before it.
         let sign = self.edge.sign();
         let group_y = plot_bottom + sign * self.axis_offset + 0.5;
         let labels = self.labels_at(plot_w, fonts)?;
-        crate::contract::axis_group_open(svg, crate::contract::AxisChannel::X, &self.caption(ax_x, plot_w)?, (plot_left + 0.5, group_y))?;
+        let caption = self.caption(ax_x, plot_w)?;
+        let mut items = Vec::new();
         if self.ticks_visible {
-            for (frac, _) in &labels {
+            for frac in self.painted_tick_fracs(&labels, plot_w) {
                 let gx = plot_left + (plot_w * frac).round() + 0.5;
-                let _ = write!(
-                    svg,
-                    "<line x1=\"{gx:.3}\" y1=\"{:.3}\" x2=\"{gx:.3}\" y2=\"{:.3}\" \
-                     stroke=\"{}\" stroke-width=\"{}\"/>",
-                    group_y,
-                    group_y + sign * self.tick_len,
-                    xml_escape_attr(&self.tick_color),
-                    self.tick_width
-                );
+                items.push(Node::Line(
+                    Attrs::new()
+                        .set("x1", format!("{gx:.3}"))
+                        .set("y1", format!("{group_y:.3}"))
+                        .set("x2", format!("{gx:.3}"))
+                        .set("y2", format!("{:.3}", group_y + sign * self.tick_len))
+                        .set("stroke", self.tick_color.as_str())
+                        .set("stroke-width", self.tick_width.to_string()),
+                ));
             }
         }
         if crate::labels_expr::view::active() && self.title_key.is_some() {
@@ -1092,7 +1139,7 @@ impl TemporalXAxis {
         let flat_y = anchor_y + measure::baseline_shift(self.edge.baseline(), fs);
         let mut reach = 0.0_f64;
         for ((frac, l), keep) in labels.iter().zip(&kept) {
-            if !keep || l.text.is_empty() {
+            if !is_painted(*keep, &l.text) {
                 continue;
             }
             let ink = self.ink(l, *frac, plot_w, 0.0);
@@ -1103,56 +1150,67 @@ impl TemporalXAxis {
             let gx = plot_left + plot_w * frac + 0.5;
             if self.angle != 0.0 {
                 let text_anchor = self.anchor(l, *frac, plot_w);
-                let rows = match &l.row2 {
-                    Some(row2) => format!(
-                        "<tspan>{}</tspan><tspan x=\"0\" dy=\"{}\">{}</tspan>",
-                        xml_escape(&ax_x.labels.clip(&l.text, fonts)?),
-                        fs + 2.0,
-                        xml_escape(&ax_x.labels.clip(row2, fonts)?)
-                    ),
-                    None => xml_escape(&ax_x.labels.clip(&l.text, fonts)?).into_owned(),
-                };
-                let _ = write!(
-                    svg,
-                    "<text text-anchor=\"{text_anchor}\" transform=\"translate({gx:.3},{anchor_y:.3}) \
-                     rotate({}) translate(0,{})\" font-family=\"{}\" font-size=\"{fs}\" \
-                     font-weight=\"{}\" fill=\"{}\">{rows}</text>",
-                    self.angle,
-                    measure::baseline_shift(l.baseline, fs),
-                    vega_escape_attr(&self.family),
-                    xml_escape_attr(&self.weight),
-                    xml_escape_attr(&self.color),
-                );
+                let attrs = Attrs::new()
+                    .set("text-anchor", text_anchor)
+                    .set(
+                        "transform",
+                        format!(
+                            "translate({gx:.3},{anchor_y:.3}) rotate({}) translate(0,{})",
+                            self.angle,
+                            measure::baseline_shift(l.baseline, fs)
+                        ),
+                    )
+                    .vega("font-family", self.family.as_str())
+                    .set("font-size", fs.to_string())
+                    .set("font-weight", self.weight.as_str())
+                    .set("fill", self.color.as_str());
+                items.push(match &l.row2 {
+                    Some(row2) => Node::TextRuns {
+                        attrs,
+                        children: vec![
+                            Node::Tspan(TextBlock {
+                                attrs: Attrs::new(),
+                                text: Chars::new(ax_x.labels.clip(&l.text, fonts)?, Escape::Attr),
+                            }),
+                            Node::Tspan(TextBlock {
+                                attrs: Attrs::new().set("x", "0").set("dy", (fs + 2.0).to_string()),
+                                text: Chars::new(ax_x.labels.clip(row2, fonts)?, Escape::Attr),
+                            }),
+                        ],
+                    },
+                    None => Node::text(attrs, ax_x.labels.clip(&l.text, fonts)?),
+                });
                 continue;
             }
             let anchor = match (&self.align, &self.scale) {
                 (Some(_), _) | (None, Scale::Point { .. } | Scale::Band { .. }) => self.anchor(l, *frac, plot_w),
                 _ => flush_anchor_px(*frac * plot_w, plot_w),
             };
-            let mut row = |y: f64, text: &str| -> Result<(), String> {
-                let _ = write!(
-                    svg,
-                    "<text x=\"{gx:.3}\" y=\"{y:.3}\" text-anchor=\"{anchor}\" font-family=\"{}\" \
-                     font-size=\"{fs}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                    vega_escape_attr(&self.family),
-                    xml_escape_attr(&self.weight),
-                    xml_escape_attr(&self.color),
-                    xml_escape(&ax_x.labels.clip(text, fonts)?)
-                );
-                Ok(())
+            let row = |y: f64, text: &str| -> Result<Node, String> {
+                Ok(Node::text(
+                    Attrs::new()
+                        .set("x", format!("{gx:.3}"))
+                        .set("y", format!("{y:.3}"))
+                        .set("text-anchor", anchor)
+                        .vega("font-family", self.family.as_str())
+                        .set("font-size", fs.to_string())
+                        .set("font-weight", self.weight.as_str())
+                        .set("fill", self.color.as_str()),
+                    ax_x.labels.clip(text, fonts)?,
+                ))
             };
             // The label block anchors on its far baseline: the second row hangs below the first
             // under a bottom axis, and the first sits above the second over a top one.
             match (&l.row2, self.edge) {
                 (Some(row2), crate::common::XEdge::Bottom) => {
-                    row(flat_y, &l.text)?;
-                    row(flat_y + fs + 2.0, row2)?;
+                    items.push(row(flat_y, &l.text)?);
+                    items.push(row(flat_y + fs + 2.0, row2)?);
                 }
                 (Some(row2), crate::common::XEdge::Top) => {
-                    row(flat_y - fs - 2.0, &l.text)?;
-                    row(flat_y, row2)?;
+                    items.push(row(flat_y - fs - 2.0, &l.text)?);
+                    items.push(row(flat_y, row2)?);
                 }
-                (None, _) => row(flat_y, &l.text)?,
+                (None, _) => items.push(row(flat_y, &l.text)?),
             }
         }
         // Vega's `axisTitleLayout`: the title clears the label ink's own
@@ -1161,9 +1219,14 @@ impl TemporalXAxis {
         let title_y = anchor_y
             + sign * (reach + ax_x.title.padding.unwrap_or(10.0))
             + measure::baseline_shift(self.edge.baseline(), title_fs);
-        crate::common::emit_axis_title_at(svg, &self.title_text, &ax_x.title, plot_left + plot_w / 2.0, title_y, self.title_key);
-        crate::contract::axis_group_close(svg);
-        Ok(())
+        items.extend(crate::common::axis_title_at(
+            &self.title_text,
+            &ax_x.title,
+            plot_left + plot_w / 2.0,
+            title_y,
+            self.title_key,
+        ));
+        crate::contract::axis_group(crate::contract::AxisChannel::X, &caption, (plot_left + 0.5, group_y), items)
     }
 }
 

@@ -75,11 +75,71 @@ class Axis(VegaLiteBaseModel):
     """Structural contract for Vega-Lite axis definitions."""
 
 
-class Projection(VegaLiteBaseModel):
-    """A Vega-Lite projection; any other Vega-Lite projection property is accepted."""
+ProjectionType = Literal[
+    "mercator",
+    "transverseMercator",
+    "equirectangular",
+    "equalEarth",
+    "naturalEarth1",
+    "mollweide",
+    "azimuthalEqualArea",
+    "azimuthalEquidistant",
+    "gnomonic",
+    "orthographic",
+    "stereographic",
+    "albers",
+    "albersUsa",
+    "conicConformal",
+    "conicEqualArea",
+    "conicEquidistant",
+    "identity",
+]
+"""Every projection Vega registers; the authored ``projection`` is closed to it."""
 
-    type: str | None = Field(
-        default=None, description="Projection name, such as mercator."
+_LonLat = tuple[float, float]
+
+
+class Projection(BaseModel):
+    """A map projection: a Vega projection type plus its typed parameters.
+
+    Spelled as Vega spells it (``clipAngle``), so the authored object is the
+    one Vega-Lite receives. Unlike the rest of this module it is closed: an
+    unknown type or key is an authoring error, not a pass-through.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: ProjectionType = Field(description="Projection name.")
+    center: _LonLat | None = Field(
+        default=None, description="Map center as [longitude, latitude]."
+    )
+    rotate: _LonLat | tuple[float, float, float] | None = Field(
+        default=None, description="Rotation as [lambda, phi] or [lambda, phi, gamma]."
+    )
+    scale: float | None = Field(default=None, description="Projection scale factor.")
+    translate: _LonLat | None = Field(
+        default=None, description="Pixel offset of the projection center, as [x, y]."
+    )
+    parallels: _LonLat | None = Field(
+        default=None, description="Standard parallels for conic projections."
+    )
+    clipAngle: float | None = Field(
+        default=None, description="Clip angle in degrees from the projection center."
+    )
+    clipExtent: tuple[_LonLat, _LonLat] | None = Field(
+        default=None, description="Clip rectangle as [[x0, y0], [x1, y1]] in pixels."
+    )
+    precision: float | None = Field(
+        default=None, description="Adaptive resampling threshold in pixels."
+    )
+    reflectX: bool | None = Field(
+        default=None, description="Mirror the projected x axis."
+    )
+    reflectY: bool | None = Field(
+        default=None, description="Mirror the projected y axis."
+    )
+    pointRadius: float | None = Field(
+        default=None, description="Radius in pixels for point geometries."
     )
 
 

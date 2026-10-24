@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board key an older version retired now reports as a retired field with the version and replacement, instead of an unknown field.
+time: 2026-10-14T03:55:01.720509-07:00

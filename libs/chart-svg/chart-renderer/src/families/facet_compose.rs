@@ -175,7 +175,10 @@ impl PanelXAxis {
             PanelXAxis::Line(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Temporal(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Plain(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
-            PanelXAxis::Heat(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
+            PanelXAxis::Heat(x) => {
+                svg.push_str(&print::print(&x.nodes(ax_x, plot_left, plot_w, plot_bottom)?));
+                Ok(())
+            }
             PanelXAxis::Value(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
         }
     }

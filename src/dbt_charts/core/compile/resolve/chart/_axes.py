@@ -92,6 +92,7 @@ __all__ = [
     "SeriesNaming",
     "_NO_RAIL_ENDPOINT_LABELS",
     "_cascaded_legend",
+    "horizontal_measure_style",
     "_bake_ay_orient",
     "_bake_ay_position_left",
     "_bake_ay_position_right",
@@ -180,6 +181,38 @@ class BakedAxis(Generic[_S]):
 class BakedCartesianAxes:
     x: BakedAxis[AxisXStyle]
     y: BakedAxis[AxisYStyle]
+
+
+def horizontal_measure_style(
+    chart_style_context: ChartStyleContext,
+    chart: CartesianFamilyChart,
+    chart_type: str,
+    axis_overrides: AxisOverrides,
+    y_style: AxisYStyle,
+) -> AxisYStyle:
+    """``y_style`` with the label face a horizontal measure ruler takes.
+
+    Orientation is known only after the axis bake, so the measure axis is baked
+    for the vertical default and the face is re-decided here, with every layer
+    (the chart's own font included) applied in cascade order.
+    """
+    horizontal, _ = _merge_axis_cascade(
+        chart_style_context,
+        "axis_y",
+        "quantitative",
+        column_layer_format=axis_layer_format(
+            chart, "quantitative", chart.y, chart_style_context.formats
+        ),
+        axis_overrides=axis_overrides,
+        chart_type=chart_type,
+        labeled=bool(chart.y_label),
+        horizontal_measure=True,
+    )
+    return y_style.model_copy(
+        update={
+            "labels": y_style.labels.model_copy(update={"font": horizontal.labels.font})
+        }
+    )
 
 
 def _bake_axis(
@@ -737,6 +770,7 @@ def cartesian_top_legend_entries(
     predicate for an entry render never draws. A layer with no ``y`` is
     likewise skipped entirely by render (it has nothing to plot), so it is
     excluded here rather than borrowing the base's field as a stand-in name.
+    A layer that declines its entry (``legend: false``) is excluded too.
     """
     layer_entries: tuple[str, ...] = ()
     if layers:
@@ -746,7 +780,7 @@ def cartesian_top_legend_entries(
         names = [base_name] + [
             _series_display_name(layer.y, layer.label, field_labels)
             for layer in layers
-            if layer.y is not None
+            if layer.y is not None and layer.legend
         ]
         layer_entries = tuple(name for name in names if name is not None)
     return layer_entries + color_domain_values

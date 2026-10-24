@@ -41,6 +41,7 @@
       <span class="dbt-nav-file-label">{{ current_label }}</span>
     {%- endif -%}
   </span>
+  {%- if show_actions %}
   <span class="dbt-nav-actions">
     <a class="dbt-nav-data" href="/data/">data</a>
     <span class="dbt-nav-view-wrap" title="View">
@@ -69,4 +70,5 @@
     {%- endif %}
     <span class="dbt-nav-more" aria-hidden="true">...</span>
   </span>
+  {%- endif %}
 </div>

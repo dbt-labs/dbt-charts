@@ -80,8 +80,8 @@ options:
   <line x1="{{ x(t) | round(2) }}" x2="{{ x(t) | round(2) }}" y1="{{ T }}" y2="{{ B }}" stroke="{{ axis.grid.color }}"/>
   <text x="{{ x(t) | round(2) }}" y="{{ B + lab.size + 4 }}" text-anchor="{{ 'start' if loop.first else ('end' if loop.last else 'middle') }}" fill="{{ lab.color }}">{{ t | format(column=channels.x) }}</text>
 {% endfor %}
-  <line x1="{{ x(cx) | round(2) }}" x2="{{ x(cx) | round(2) }}" y1="{{ T }}" y2="{{ B }}" stroke="{{ style.muted }}" stroke-dasharray="4 3"/>
-  <line x1="{{ L }}" x2="{{ R }}" y1="{{ y(cy) | round(2) }}" y2="{{ y(cy) | round(2) }}" stroke="{{ style.muted }}" stroke-dasharray="4 3"/>
+  <line x1="{{ x(cx) | round(2) }}" x2="{{ x(cx) | round(2) }}" y1="{{ T }}" y2="{{ B }}" stroke="{{ style.fonts.secondary.color }}" stroke-dasharray="4 3"/>
+  <line x1="{{ L }}" x2="{{ R }}" y1="{{ y(cy) | round(2) }}" y2="{{ y(cy) | round(2) }}" stroke="{{ style.fonts.secondary.color }}" stroke-dasharray="4 3"/>
 {% if p.corner_label %}
   <text x="{{ (qx0 + 6) if left else (qx1 - 6) }}" y="{{ (qy0 + lab.size + 4) if top else (qy1 - 6) }}" text-anchor="{{ 'start' if left else 'end' }}" font-weight="600" fill="{{ style.tones.positive }}">{{ p.corner_label }}</text>
 {% endif %}

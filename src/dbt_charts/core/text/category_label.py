@@ -23,8 +23,8 @@ def category_label_text(
     applies here, and only to a value d3 reads as a number
     (``reads_as_number``, the rule `the engine's label-format gate` uses); a time
     format is ``cadence_label_text``'s job. ``case`` is
-    ``axis.labels.font.case``; only "upper"/"lower" change the paint (see
-    ``inject_axis_label_case``).
+    ``axis.labels.font.case``; only "upper"/"lower" change the paint (the
+    engine's ``AxisLabels::cased`` is the same law).
 
     An authored ``axis.labels.expr`` paints text no Python function can
     compute; callers check for it themselves.

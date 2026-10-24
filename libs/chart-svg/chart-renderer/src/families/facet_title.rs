@@ -6,6 +6,7 @@
 use crate::common::{Font, TitleBlock, TitleStyle};
 use measure::FontBook;
 use crate::vega_fit;
+use scene::Node;
 
 /// The resolved fields a title reads, borrowed off whichever chart owns them.
 pub(crate) struct TitleSource<'a> {
@@ -106,15 +107,21 @@ pub(crate) fn layout_title(
 impl TitlePlan {
     /// Paints the title group at the absolute `(x, y)` of its origin.
     pub(crate) fn paint(&self, src: &TitleSource, svg: &mut String, x: f64, y: f64) {
+        svg.push_str(&print::print(&self.nodes(src, x, y)));
+    }
+
+    /// [`Self::paint`] as nodes.
+    pub(crate) fn nodes(&self, src: &TitleSource, x: f64, y: f64) -> Vec<Node> {
         let eff_title_style = src.effective_style();
         let style = eff_title_style.as_ref().or(src.title_style);
         match &self.block {
-            Some(block) => crate::common::emit_title_block_vega(svg, block, style, x, y, self.font_size),
+            Some(block) => crate::common::title_block_nodes(block, style, x, y, self.font_size),
             None => {
-                crate::common::emit_title_vega(svg, &self.text, style, x, y, true);
+                let mut nodes = vec![crate::common::title_node(&self.text, style, x, y, true)];
                 if let Some(sub) = &self.subtitle {
-                    crate::common::emit_subtitle_vega(svg, std::slice::from_ref(sub), style, x, y, self.font_size);
+                    nodes.extend(crate::common::subtitle_nodes(std::slice::from_ref(sub), style, x, y, self.font_size));
                 }
+                nodes
             }
         }
     }

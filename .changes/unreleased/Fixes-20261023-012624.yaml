@@ -1,0 +1,3 @@
+kind: Fixes
+body: A scatter whose x axis is percent-formatted now draws the 0% rule beside the 100% one.
+time: 2026-10-23T01:26:24.35032-07:00

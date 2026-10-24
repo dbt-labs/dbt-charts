@@ -9,8 +9,9 @@ style:
   palettes:
     chrome: dbt-creams
     sequence: dbt-seq-brown
+  roles:
+    muted: chrome[8]
   background: chrome[1]
-  muted: chrome[8]
   font:
     color: chrome[11]
   title:

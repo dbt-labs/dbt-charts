@@ -468,7 +468,14 @@ def layout_intrinsic_width(
     nesting level. ``chart_style_context`` supplies the
     chart-local-style-patch merge; ``resolved_style`` supplies board chrome
     for nested boards.
+
+    A tabs layout is measured without data, whatever ``measurer`` is: its
+    tables answer their config width and a query-backed ``visible:`` counts
+    as drawn. A render runs only the open tab's queries, so this is what keeps
+    the width the same whichever tab is open.
     """
+    if layout.type == "tabs":
+        measurer = WidthMeasurer(measurer.variable_values)
 
     def item_width(item: LayoutItem) -> IntrinsicWidth:
         if item.user_width is not None and not (

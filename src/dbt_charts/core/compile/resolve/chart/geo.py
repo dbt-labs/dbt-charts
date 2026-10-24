@@ -5,6 +5,9 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from pydantic import JsonValue, TypeAdapter, ValidationError
+
+from dbt_charts._docs_site import docs_site_url
 from dbt_charts.core.compile.config import get_config
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
@@ -32,7 +35,10 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedStaticGradientColorStyle,
 )
 from dbt_charts.core.compile.models.style.theme import GeoshapeChartStyle
-from dbt_charts.core.compile.models.vega_lite.contracts import Projection
+from dbt_charts.core.compile.models.vega_lite.contracts import (
+    Projection,
+    ProjectionType,
+)
 from dbt_charts.core.compile.resolve.chart._axes import (
     color_legend_entries,
     legend_row_fits,
@@ -60,7 +66,13 @@ from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_GEO_PROJECTION_REQUIRED,
     ERR_GEOSHAPE_SHADING_WITHOUT_LOOKUP,
+    ERR_VALIDATION_FIELD,
+)
+
+_PROJECTION_ADAPTER: TypeAdapter[ProjectionType | Projection] = TypeAdapter(
+    ProjectionType | Projection
 )
 
 __all__ = [
@@ -183,36 +195,42 @@ def _resolve_geo_source_fields(
 
 
 def _resolve_geo_projection(
-    explicit_proj: str | Projection | None,
+    normalized: GeoshapeChart | PointMapChart,
+    geo_source: str | None,
     geo_info: ConfigNode | None,
-) -> tuple[str, dict[str, Any] | None]:
-    """Resolve (proj_type, proj_params) for a geoshape.
+) -> tuple[ProjectionType, dict[str, JsonValue] | None]:
+    """Resolve (proj_type, proj_params) for a geo chart.
 
-    Precedence: explicit str/Projection > geo_source registry default > "mercator".
+    Precedence: the chart's own ``projection`` > the geo source's registry
+    projection. A chart with neither is an error; no projection is guessed.
     """
-    if isinstance(explicit_proj, str):
-        return explicit_proj, None
-    if isinstance(explicit_proj, Projection):
-        # model_dump for forward-compat if Projection fields expand beyond `type`.
-        proj_dict = explicit_proj.model_dump(exclude_none=True)
-        proj_type = str(proj_dict.pop("type", "mercator"))
-        return proj_type, proj_dict if proj_dict else None
-    # No explicit projection: fall back to the registry default.
-    if geo_info is not None:
-        raw_default = geo_info.get("projection", "mercator")
-        default_proj: str | dict[str, Any] = (
-            raw_default.to_plain_dict(exclude_none=True)
-            if hasattr(raw_default, "to_plain_dict")
-            else raw_default
-        )
-    else:
-        default_proj = "mercator"
-    if isinstance(default_proj, dict):
-        remainder = {k: v for k, v in default_proj.items() if k != "type"}
-        return str(default_proj.get("type", "mercator")), (
-            remainder if remainder else None
-        )
-    return str(default_proj) if default_proj else "mercator", None
+    projection = normalized.projection
+    if projection is None:
+        registry_projection = None if geo_info is None else geo_info.get("projection")
+        if registry_projection is None:
+            raise CompilationError.from_code(
+                ERR_GEO_PROJECTION_REQUIRED,
+                field_path=f"charts.{normalized.id}.projection",
+                chart_id=normalized.id,
+                chart_type=normalized.type,
+                maps_docs_url=f"{docs_site_url()}/charts/maps/",
+            )
+        try:
+            projection = _PROJECTION_ADAPTER.validate_python(
+                registry_projection
+                if isinstance(registry_projection, str)
+                else registry_projection.to_plain_dict()
+            )
+        except ValidationError as error:
+            raise CompilationError.from_code(
+                ERR_VALIDATION_FIELD,
+                field_path=f"geo_sources.{geo_source}.projection",
+                pydantic_msg=error.errors()[0]["msg"],
+            ) from error
+    if isinstance(projection, str):
+        return projection, None
+    params = projection.model_dump(mode="json", exclude={"type"}, exclude_none=True)
+    return projection.type, params or None
 
 
 def _resolve_choropleth_value_field(
@@ -233,7 +251,7 @@ def _resolve_choropleth_value_field(
 
 
 def _geoshape_kwargs(
-    normalized: _GeoChartFields,
+    normalized: GeoshapeChart,
     channels: dict[str, Any],
     display_text: ChartDisplayText,
     chart_style_context: ChartStyleContext,
@@ -261,7 +279,7 @@ def _geoshape_kwargs(
     fields = _resolve_geo_source_fields(
         geo_info, geo_source, geo_feature_override, explicit_key
     )
-    proj_type, proj_params = _resolve_geo_projection(normalized.projection, geo_info)
+    proj_type, proj_params = _resolve_geo_projection(normalized, geo_source, geo_info)
 
     # --- Choropleth fields ---
     lookup_field = normalized.lookup
@@ -459,18 +477,9 @@ def _resolve_point_map(
     if basemap_fill is None and basemap_geo_url is not None:
         basemap_fill = chart_style_context.marks.geoshape.fill
 
-    # Resolve projection: explicit author value > geo_source registry default > "albersUsa".
-    # _resolve_geo_projection falls back to "mercator" when no geo_info; point_map uses "albersUsa".
-    proj_type, proj_params = _resolve_geo_projection(normalized.projection, bg_geo_info)
-    if normalized.projection is None and bg_geo_info is None:
-        proj_type = "albersUsa"
-        proj_params = None
+    proj_type, proj_params = _resolve_geo_projection(normalized, bg_source, bg_geo_info)
 
     geo_kw = _geo_kwargs(normalized, chart_local_style_context, display_text)
-    # Keep projection on the shared geo field (used by existing callers).
-    geo_kw["projection"] = (
-        normalized.projection if normalized.projection is not None else "albersUsa"
-    )
 
     _tf = resolve_title_font(chart_local_style_context, width)
     return ResolvedPointMapChart(

@@ -11,6 +11,7 @@ from dbt_charts.core.compile.models.markers import (
     SkipInheritSlots,  # noqa: F401  # pyright: ignore[reportUnusedImport] — required in module globals for model_rebuild() to resolve inherited base-class annotations
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
     _QuantitativeAxisChartStyleMixin,
 )
@@ -45,7 +46,9 @@ class ScatterLayerStyle(BaseModel):
     )
 
 
-class ScatterChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
+class ScatterChartStyle(
+    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+):
     """Scatter chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

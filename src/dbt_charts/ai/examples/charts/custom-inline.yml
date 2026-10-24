@@ -44,7 +44,7 @@ charts:
           points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}{% for r in rows | reverse %}{{ pad + (n - 1 - loop.index0) * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
         <polyline fill="none" stroke="{{ style.accent }}" stroke-width="2"
           points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[up] / ymax * (height - 2 * pad) }} {% endfor %}"/>
-        <polyline fill="none" stroke="{{ style.muted }}" stroke-width="2"
+        <polyline fill="none" stroke="{{ style.fonts.secondary.color }}" stroke-width="2"
           points="{% for r in rows %}{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }},{{ height - pad - r[lo] / ymax * (height - 2 * pad) }} {% endfor %}"/>
         {% for r in rows %}
         <text x="{{ pad + loop.index0 * (width - 2 * pad) / (n - 1) }}" y="{{ height - pad / 3 }}"
@@ -57,7 +57,7 @@ charts:
         <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][up] / ymax * (height - 2 * pad) - 8 }}"
               text-anchor="end" fill="{{ style.accent }}">{{ up }}</text>
         <text x="{{ width - pad }}" y="{{ height - pad - rows[n - 1][lo] / ymax * (height - 2 * pad) + 22 }}"
-              text-anchor="end" fill="{{ style.muted }}">{{ lo }}</text>
+              text-anchor="end" fill="{{ style.fonts.secondary.color }}">{{ lo }}</text>
       </g>
     x: year
     y: [exports, imports]

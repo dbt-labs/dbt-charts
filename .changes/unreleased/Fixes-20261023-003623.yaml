@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct mcp serve now tells connected AI clients where to start, and no longer suggests a default source or a dct command they cannot run.
+time: 2026-10-23T00:36:23.196706-07:00

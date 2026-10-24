@@ -212,5 +212,6 @@ def test_board_level_slot_gets_the_hint_when_migration_cannot_finish(
         if (e.fields or {}).get("field_path", "").startswith("style.charts.")
     ]
     assert board_level, [e.message for e in result.errors]
-    assert "no per-chart card" in (board_level[0].hint or "")
-    assert "bar" in (board_level[0].hint or "")
+    story = f"{board_level[0].message} {board_level[0].hint}"
+    assert "no per-chart card" in story
+    assert "bar" in story

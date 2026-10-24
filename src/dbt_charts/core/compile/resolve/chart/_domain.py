@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import math
+from collections.abc import Sequence
 from decimal import Decimal
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, TypeVar
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import resolve_format, tick_min_step_for_format
@@ -16,6 +17,7 @@ from dbt_charts.core.compile.models.chart.authored._layer import (
 )
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.chart.resolved._layer import layers_share_date_axis
+from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.theme import (
     AxisXStyle,
     AxisYStyle,
@@ -66,6 +68,7 @@ __all__ = [
     "_axis_headroom",
     "_bake_normalize_domain",
     "_bake_y_zero",
+    "_bake_percent_x_zero",
     "_bake_zero_flag",
     "_check_bar_layer_spans",
     "_check_bar_span",
@@ -120,7 +123,10 @@ def resolve_y_zero(
     return bool(picked["zero"])
 
 
-def _bake_zero_flag(ay: AxisYStyle, zero: bool) -> AxisYStyle:
+_AxisStyleT = TypeVar("_AxisStyleT", AxisXStyle, AxisYStyle)
+
+
+def _bake_zero_flag(ay: _AxisStyleT, zero: bool) -> _AxisStyleT:
     """Bake an explicit zero-anchor bool onto ``ay.scale.continuous.zero``.
 
     Callers must have already excluded a log-typed axis themselves — see
@@ -138,6 +144,24 @@ def _bake_zero_flag(ay: AxisYStyle, zero: bool) -> AxisYStyle:
         else BaseScaleStyle(continuous=new_cont)
     )
     return ay.model_copy(update={"scale": baked_scale})
+
+
+def _bake_percent_x_zero(
+    ax: AxisXStyle, format: ResolvedFormat | None, is_quantitative: bool
+) -> AxisXStyle:
+    """Anchor a percent-formatted quantitative x at 0, as a percent y is.
+
+    A ratio axis has a meaningful 0 by definition, which a year or a temperature
+    does not. An authored ``zero``, a domain in any spelling (a string end included, which
+    only the scale coerces), or a log scale is left alone.
+    """
+    cont = ax.scale.continuous if ax.scale is not None else None
+    authored = cont is not None and (
+        cont.zero is not None or cont.domain is not None or cont.type == "log"
+    )
+    if not is_quantitative or format is None or "%" not in format.spec or authored:
+        return ax
+    return _bake_zero_flag(ax, True)
 
 
 def _bake_y_zero(
@@ -933,6 +957,7 @@ def _resolve_stacked_bar_ticks(
     y_fields: list[str],
     cat_field: str,
     scale: Literal["shared", "independent"],
+    extra_values: Sequence[float] = (),
 ) -> tuple[float, ...]:
     """Compute nice tick values for a stacked bar using the stacked domain max.
 
@@ -947,6 +972,8 @@ def _resolve_stacked_bar_ticks(
     Never reached with a log measure axis — every caller must reject log+stack
     upstream. Bar rejects it in ``_resolve_bar_chart`` before stack resolution
     runs; area rejects it via ``ERR_AREA_STACKED_LOG_SCALE_NOT_SUPPORTED``.
+
+    ``extra_values`` (annotation anchors) join the domain as data does.
 
     An authored ``axis_y.scale.values`` bypasses the stacked-total ladder
     entirely and returns that list verbatim — see ``_authored_tick_ladder``.
@@ -1002,9 +1029,10 @@ def _resolve_stacked_bar_ticks(
             scale,
             lambda rows: stacked_totals_max(rows, cat_field, y_fields),
         )
-        raw_max = sm if sm is not None else max(y_floats)
+        raw_max = max([sm if sm is not None else max(y_floats), *extra_values])
         tick_max = apply_headroom(raw_max, _axis_headroom(ay))
-        tick_min = min(0.0, min(y_floats))  # stacked bars always zero-anchor
+        # stacked bars always zero-anchor
+        tick_min = min([0.0, *y_floats, *extra_values])
     ticks: tuple[float, ...] = tuple(
         nice_tick_values(tick_min, tick_max, target_count, min_step=min_step)
     )

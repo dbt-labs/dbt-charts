@@ -16,6 +16,7 @@ from dbt_charts.core.colors import is_color_token, is_unknown_color_name
 from dbt_charts.core.compile.models.markers import AUTO, Color
 from dbt_charts.core.compile.models.primitives import SingleLineFontStyle
 from dbt_charts.core.compile.models.style.theme import Style
+from dbt_charts.core.compile.models.style.theme.annotations import AnnotationFontStyle
 from dbt_charts.core.compile.models.style.theme.board import ChartTitleFontStyle
 from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorBinding,
@@ -38,6 +39,18 @@ from dbt_charts.core.fonts import NOTO_EMOJI_FONT_FAMILY
 # canvas. A patch's own root ``background: theme.background`` takes the base
 # theme's canvas at patch time, since the merged canvas does not exist yet.
 _THEME_SELF_TOKENS = {"theme.background"}
+
+# "The series color": a theme value that stands for the ink of the series an
+# annotation is derived from. It is not the canvas, so ``_resolve_self_tokens``
+# leaves it; annotation resolve substitutes it per series with
+# ``substitute_tokens``, since only a chart knows its series.
+SERIES_COLOR_TOKEN = "theme.series"
+_ANNOTATIONS_FIELD = "annotations"
+
+
+def _is_kept_token(node: str, in_annotations: bool) -> bool:
+    return node in _THEME_SELF_TOKENS or (in_annotations and node == SERIES_COLOR_TOKEN)
+
 
 # Fields on Style that hold the resolver's own lookup tables rather than
 # styled content. roles maps a role name to a token address
@@ -71,15 +84,27 @@ def _self_token_replacement(token: str, canvas: str) -> str:
 def _resolve_self_tokens(
     node: Any,  # type-state: explicit_any — recursive walk over heterogeneous Style nodes
     canvas: str,
-    in_keyed_collection: bool = False,
 ) -> Any:  # type-state: explicit_any — the same node shape, substituted
     """Walk a Style subtree and substitute theme-self tokens with ``canvas``.
 
     ``canvas`` is the opaque canvas the board paints on (see
     ``resolve_style_and_context``), so a knockout tracks what the reader sees
-    rather than the base theme's own fill. The resolver's lookup tables and the
-    non-color text of keyed-collection models are skipped, as in
-    ``_resolve_color_tokens``.
+    rather than the base theme's own fill.
+    """
+    return substitute_tokens(
+        node, {t: _self_token_replacement(t, canvas) for t in _THEME_SELF_TOKENS}
+    )
+
+
+def substitute_tokens(
+    node: Any,  # type-state: explicit_any — recursive walk over heterogeneous Style nodes
+    replacements: Mapping[str, str],
+    in_keyed_collection: bool = False,
+) -> Any:  # type-state: explicit_any — the same node shape, substituted
+    """Walk a Style subtree and replace every string in ``replacements``.
+
+    The resolver's lookup tables and the non-color text of keyed-collection
+    models are skipped, as in ``_resolve_color_tokens``.
     """
     if isinstance(node, BaseModel):
         updates: dict[str, Any] = {}
@@ -92,17 +117,15 @@ def _resolve_self_tokens(
                 and name not in _COLOR_FIELD_NAMES
             ):
                 continue
-            new = _resolve_self_tokens(value, canvas, in_keyed_collection)
+            new = substitute_tokens(value, replacements, in_keyed_collection)
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
     if isinstance(node, str):
-        if node in _THEME_SELF_TOKENS:
-            return _self_token_replacement(node, canvas)
-        return node
+        return replacements.get(node, node)  # type-state: silent_fallback — non-token
     if isinstance(node, list):
         new_list = [
-            _resolve_self_tokens(item, canvas, in_keyed_collection) for item in node
+            substitute_tokens(item, replacements, in_keyed_collection) for item in node
         ]
         return (
             new_list
@@ -110,7 +133,9 @@ def _resolve_self_tokens(
             else node
         )
     if isinstance(node, dict):
-        new_dict = {k: _resolve_self_tokens(v, canvas, True) for k, v in node.items()}
+        new_dict = {
+            k: substitute_tokens(v, replacements, True) for k, v in node.items()
+        }
         return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
     return node
 
@@ -162,6 +187,35 @@ def _resolve_one_color_token(
     )
 
 
+def _color_marker(node: BaseModel, name: str) -> Color | None:
+    field = type(node).model_fields.get(name)
+    if field is None:
+        return None
+    return next((m for m in field.metadata if isinstance(m, Color)), None)
+
+
+def _is_role_color(
+    node: BaseModel,
+    name: str,
+    value: object,  # type-state: object_annotation — a model field holds any type
+    roles: dict[str, str] | None,
+) -> bool:
+    """A bare theme role name (``muted``) in a ``Color()`` field.
+
+    Only a color field reads a bare word as a role: anywhere else it is an
+    enum value or text that happens to share the name, and in a field that
+    takes a column it names the column.
+    """
+    color = _color_marker(node, name)
+    return (
+        isinstance(value, str)
+        and roles is not None
+        and value in roles
+        and color is not None
+        and not color.column_ref
+    )
+
+
 def _unknown_color_name(
     node: BaseModel,
     name: str,
@@ -171,12 +225,7 @@ def _unknown_color_name(
 
     ``None`` for a value that is fine, or a field that does not hold a color.
     """
-    field = type(node).model_fields.get(name)
-    color = (
-        next((m for m in field.metadata if isinstance(m, Color)), None)
-        if field is not None
-        else None
-    )
+    color = _color_marker(node, name)
     if (
         not isinstance(value, str)
         or color is None
@@ -195,11 +244,13 @@ def _resolve_color_tokens(
     in_keyed_collection: bool = False,
     single_series_palette: list[str] | None = None,
     keep_self_tokens: bool = False,
+    in_annotations: bool = False,
 ) -> Any:
     """Walk a Style subtree and resolve every dotted palette token to hex.
 
     ``keep_self_tokens`` leaves ``theme.background`` in place for
-    ``_resolve_self_tokens``; only the theme-load walk sets it. Every
+    ``_resolve_self_tokens``, and ``theme.series`` inside an ``annotations``
+    subtree for annotation resolve; only the theme-load walk sets it. Every
     chart-local walk keeps the default, so a sentinel there raises as the
     unknown role it is.
 
@@ -341,6 +392,11 @@ def _resolve_color_tokens(
             # as `_walk` does, so the name reaches the bake untouched.
             if name in _PALETTE_FIELDS and isinstance(value, str):
                 continue
+            if _is_role_color(node, name, value, roles):
+                updates[name] = _resolve_one_color_token(
+                    value, palettes, roles, single_series_palette
+                )
+                continue
             if reason := _unknown_color_name(node, name, value):
                 raise UnknownColorError(f"{name}: {reason}")
             new = _resolve_color_tokens(
@@ -350,12 +406,13 @@ def _resolve_color_tokens(
                 in_keyed_collection,
                 single_series_palette,
                 keep_self_tokens,
+                in_annotations or name == _ANNOTATIONS_FIELD,
             )
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
     if isinstance(node, str):
-        if keep_self_tokens and node in _THEME_SELF_TOKENS:
+        if keep_self_tokens and _is_kept_token(node, in_annotations):
             return node
         if is_color_token(node):
             return _resolve_one_color_token(
@@ -371,6 +428,7 @@ def _resolve_color_tokens(
                 in_keyed_collection,
                 single_series_palette,
                 keep_self_tokens,
+                in_annotations,
             )
             for item in node
         ]
@@ -388,7 +446,13 @@ def _resolve_color_tokens(
         # model branch above, where a name is what the walk actually has.
         new_dict = {
             k: _resolve_color_tokens(
-                v, palettes, roles, True, single_series_palette, keep_self_tokens
+                v,
+                palettes,
+                roles,
+                True,
+                single_series_palette,
+                keep_self_tokens,
+                in_annotations,
             )
             for k, v in node.items()
         }
@@ -440,7 +504,9 @@ def _append_emoji_family(node: Any, emoji_family: str) -> Any:
     FontStyle never appears inside a list/dict field in this schema; if that
     changes, add a list branch mirroring _resolve_color_tokens.
     """
-    if isinstance(node, (SingleLineFontStyle, ChartTitleFontStyle)):
+    if isinstance(
+        node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
+    ):
         if node.family is not None and node.family != AUTO:
             new_family = insert_emoji_family(node.family, emoji_family)
             if new_family != node.family:
@@ -493,12 +559,15 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
         node: Any,  # type-state: explicit_any — any Style patch node: model, list, dict, or leaf
         path: str,
         in_keyed_collection: bool = False,
+        in_annotations: bool = False,
     ) -> Any:  # type-state: explicit_any — returns the same node shape it was given
         if isinstance(node, CategoryColorBinding):
             return node.model_copy(
                 update={
                     "values": {
-                        value: _walk(color, f"{path}.{value}")
+                        value: _walk(
+                            color, f"{path}.{value}", in_annotations=in_annotations
+                        )
                         for value, color in node.values.items()
                     }
                 }
@@ -529,18 +598,28 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
                 # tokens, e.g. `[category.blue, "#fff"]`) still walks below.
                 if name in _PALETTE_FIELDS and isinstance(value, str):
                     continue
+                if _is_role_color(node, name, value, roles):
+                    updates[name] = _resolve_one_color_token(
+                        value, palettes, roles, single_series_palette
+                    )
+                    continue
                 if reason := _unknown_color_name(node, name, value):
                     raise CompilationError.from_code(
                         ERR_COLOR_TOKEN, scope=f"{path}.{name}", reason=reason
                     )
-                new = _walk(value, f"{path}.{name}", in_keyed_collection)
+                new = _walk(
+                    value,
+                    f"{path}.{name}",
+                    in_keyed_collection,
+                    in_annotations or name == _ANNOTATIONS_FIELD,
+                )
                 if node is patch and name == "background" and new in _THEME_SELF_TOKENS:
                     new = _self_token_replacement(new, base.background)
                 if new is not value:
                     updates[name] = new
             return node.model_copy(update=updates) if updates else node
         if isinstance(node, str):
-            if node in _THEME_SELF_TOKENS:
+            if _is_kept_token(node, in_annotations):
                 return node
             if is_color_token(node):
                 try:
@@ -555,7 +634,7 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             return node
         if isinstance(node, list):
             new_list = [
-                _walk(item, f"{path}.{i}", in_keyed_collection)
+                _walk(item, f"{path}.{i}", in_keyed_collection, in_annotations)
                 for i, item in enumerate(node)
             ]
             return (
@@ -565,7 +644,8 @@ def _resolve_tokens_on_patch(patch: Any, base: Style) -> Any:
             )
         if isinstance(node, dict):
             return {
-                key: _walk(value, f"{path}.{key}", True) for key, value in node.items()
+                key: _walk(value, f"{path}.{key}", True, in_annotations)
+                for key, value in node.items()
             }
         return node
 
@@ -579,7 +659,9 @@ __all__ = [
     "_EMOJI_MODE_TO_FAMILY",
     "_append_emoji_family",
     "_resolve_color_tokens",
+    "SERIES_COLOR_TOKEN",
     "_resolve_self_tokens",
+    "substitute_tokens",
     "_resolve_tokens_on_patch",
 ]
 

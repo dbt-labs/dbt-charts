@@ -12,7 +12,7 @@ mod text;
 use serde::Deserialize;
 
 pub use axis_map::{AxisMap, Site};
-pub use model::Annotation;
+pub use model::{Annotation, YAxis};
 
 use crate::diagnostic::Diagnostic;
 use measure::FontBook;
@@ -33,6 +33,28 @@ pub enum Orientation {
     Horizontal,
 }
 
+/// How far the chart's own ink (axes, their titles, marks) reaches past each
+/// plot edge, px. Annotation text past an edge clears it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Reach {
+    pub left: f64,
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+}
+
+impl Reach {
+    /// What `ink`, in the plot-relative frame of a `pw` x `ph` plot, reaches past it.
+    pub fn past(ink: &Bounds, pw: f64, ph: f64) -> Self {
+        Reach {
+            left: (-ink.x1).max(0.0),
+            top: (-ink.y1).max(0.0),
+            right: (ink.x2 - pw).max(0.0),
+            bottom: (ink.y2 - ph).max(0.0),
+        }
+    }
+}
+
 /// Absolute plot origin and size in chart px.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlotRect {
@@ -49,6 +71,9 @@ pub struct AnnotationCtx<'a> {
     /// Canonical panel key; entries whose `panel` is Some and differs are skipped.
     pub panel: Option<&'a str>,
     pub plot: PlotRect,
+    /// The chart's own ink past the plot at this size; zero on an arm that
+    /// reserves no margin for annotation text (it refuses text there).
+    pub reach: Reach,
     /// Map of the x CHANNEL, in plot-relative px along the screen axis it occupies.
     pub x: AxisMap,
     /// Map of the base y channel.
@@ -73,6 +98,7 @@ pub(crate) fn resolve<'a>(ctx: &'a AnnotationCtx) -> Result<Vec<Placed<'a>>, Dia
         }
     }
     items.sort_by_key(|p| p.index);
+    place::separate(&mut items, ctx);
     Ok(items)
 }
 
@@ -123,19 +149,131 @@ pub fn bounds(ctx: &AnnotationCtx) -> Option<Bounds> {
     union
 }
 
-/// Paints one plane. Call with `Background` after the grid and before any
-/// data mark; with `Foreground` after the value labels and before the axes.
-/// `Background` must be called before `Foreground` (it emits the clipPath).
-pub fn paint(ctx: &AnnotationCtx, plane: Plane, svg: &mut String) -> Result<(), Diagnostic> {
-    emit::paint(ctx, &resolve(ctx)?, plane, svg)
+/// The right edge of annotation text past the plot, else `0.0`: a side legend
+/// anchors beyond it.
+pub fn text_x2(ctx: &AnnotationCtx) -> f64 {
+    bounds(ctx).map_or(0.0, |b| b.x2)
 }
 
-/// Refuses when a fixed-margin arm would draw ink outside the plot.
-pub fn refuse_margin_ink(ctx: &AnnotationCtx) -> Result<(), Diagnostic> {
+/// One plane as nodes. Call with `Background` after the grid and before any
+/// data mark; with `Foreground` after the value labels and before the axes.
+/// `Background` must come before `Foreground` (it emits the clipPath).
+pub fn nodes(ctx: &AnnotationCtx, plane: Plane) -> Result<Vec<scene::Node>, Diagnostic> {
+    emit::nodes(ctx, &resolve(ctx)?, plane)
+}
+
+pub fn paint(ctx: &AnnotationCtx, plane: Plane, svg: &mut String) -> Result<(), Diagnostic> {
+    svg.push_str(&print::print(&nodes(ctx, plane)?));
+    Ok(())
+}
+
+/// The whole days that bound every date the annotations place on x.
+pub fn x_day_bounds(annotations: &[Annotation]) -> impl Iterator<Item = i64> + '_ {
+    annotations.iter().flat_map(Annotation::x_days).flat_map(|d| [d.floor() as i64, d.ceil() as i64])
+}
+
+/// ISO dates of the earliest and latest annotation day on x that fall before
+/// or after every date in `domain`: they extend a bucket scaffold as data
+/// does. A range's exclusive end adds none by itself. A day inside the data maps onto its existing bucket and adds none.
+pub fn x_dates_outside(domain: &[String], annotations: &[Annotation]) -> Vec<String> {
+    let data: Vec<f64> = domain.iter().filter_map(|v| crate::families::temporal::date_text_day(v)).collect();
+    let (Some(lo), Some(hi)) = (data.iter().copied().reduce(f64::min), data.iter().copied().reduce(f64::max)) else {
+        return Vec::new();
+    };
+    let days: Vec<i64> = annotations
+        .iter()
+        .flat_map(Annotation::x_covered_days)
+        .flat_map(|d| [d.floor() as i64, d.ceil() as i64])
+        .collect();
+    let before = days.iter().copied().filter(|&d| (d as f64) < lo.floor()).min();
+    let after = days.iter().copied().filter(|&d| d as f64 > hi).max();
+    [before, after]
+        .into_iter()
+        .flatten()
+        .map(|d| {
+            let (y, m, d) = crate::families::temporal::civil_from_days(d);
+            format!("{y:04}-{m:02}-{d:02}")
+        })
+        .collect()
+}
+
+/// A temporal x extent in whole days, widened to every date the annotations
+/// place on x: anchors join the axis domain as data does.
+pub fn widen_extent(extent: (f64, f64), annotations: &[Annotation]) -> (f64, f64) {
+    x_day_bounds(annotations).map(|d| d as f64).fold(extent, |(lo, hi), d| (lo.min(d), hi.max(d)))
+}
+
+/// The `axis` y extent widened to every number the annotations on that scale
+/// place on y: those drawn on `panel` when an independent scale fits one, else
+/// every annotation's. A log extent takes only the positive ones; the map
+/// refuses the rest by name when it draws them.
+pub fn widen_y(extent: (f64, f64), annotations: &[Annotation], axis: YAxis, panel: Option<&str>, log: bool) -> (f64, f64) {
+    annotations
+        .iter()
+        .filter(|a| panel.is_none_or(|p| a.panel.as_deref().is_none_or(|own| own == p)))
+        .flat_map(|a| a.y_numbers(axis))
+        .filter(|&n| !log || n > 0.0)
+        .fold(extent, |(lo, hi), n| (lo.min(n), hi.max(n)))
+}
+
+/// A quantitative x extent widened to every number the annotations place on x.
+pub fn widen_numbers(extent: (f64, f64), annotations: &[Annotation]) -> (f64, f64) {
+    annotations.iter().flat_map(Annotation::x_numbers).fold(extent, |(lo, hi), n| (lo.min(n), hi.max(n)))
+}
+
+/// Entries a numeric point scale gains for annotations past its ends: stepping
+/// from each end by the data's median gap, then the anchor itself, so spacing
+/// stays proportional. Ascending, unique, as the text a domain entry carries.
+/// Numbers inside the span interpolate and add none; more than `MAX_STEPS` in
+/// one direction is an error.
+pub fn x_numbers_outside(domain: &[String], annotations: &[Annotation]) -> Result<Vec<String>, String> {
+    const MAX_STEPS: usize = 500;
+    let mut numbers: Vec<f64> = domain.iter().filter_map(|v| v.parse().ok()).collect();
+    numbers.sort_by(f64::total_cmp);
+    numbers.dedup();
+    let (Some(&lo), Some(&hi)) = (numbers.first(), numbers.last()) else { return Ok(Vec::new()) };
+    let mut gaps: Vec<f64> = numbers.windows(2).map(|w| w[1] - w[0]).collect();
+    gaps.sort_by(f64::total_cmp);
+    let step = gaps.get(gaps.len() / 2).copied();
+    let anchors: Vec<f64> = annotations.iter().flat_map(Annotation::x_numbers).collect();
+    let reach = |edge: f64, far: f64, sign: f64| -> Result<Vec<f64>, String> {
+        let Some(step) = step else { return Ok(vec![far]) };
+        let count = ((far - edge).abs() / step).ceil() as usize;
+        if count > MAX_STEPS {
+            return Err(format!("an annotation at x {far} is {count} steps past the data; at most {MAX_STEPS}"));
+        }
+        let at = |k: usize| ((edge + sign * step * k as f64) * 1e9).round() / 1e9;
+        Ok((1..count).map(at).chain([far]).collect())
+    };
+    let mut out = Vec::new();
+    if let Some(far) = anchors.iter().copied().filter(|&n| n < lo).reduce(f64::min) {
+        out.extend(reach(lo, far, -1.0)?);
+    }
+    if let Some(far) = anchors.iter().copied().filter(|&n| n > hi).reduce(f64::max) {
+        out.extend(reach(hi, far, 1.0)?);
+    }
+    out.sort_by(f64::total_cmp);
+    Ok(out.into_iter().map(|n| model::Scalar::Number(n).text()).collect())
+}
+
+/// The plot edges an arm reserved room past for annotation text.
+#[derive(Clone, Copy, Default)]
+pub struct Reserved {
+    pub top: bool,
+    pub right: bool,
+}
+
+/// Refuses when a fixed-margin arm would draw ink outside the plot, past an
+/// edge it did not reserve.
+pub fn refuse_margin_ink(ctx: &AnnotationCtx, reserved: Reserved) -> Result<(), Diagnostic> {
     const EPS: f64 = 1e-9;
     for p in resolve(ctx)? {
         let Some(t) = &p.text else { continue };
-        if t.x < -EPS || t.y < -EPS || t.x + t.w > ctx.plot.w + EPS || t.y + t.h > ctx.plot.h + EPS {
+        if t.x < -EPS
+            || (!reserved.top && t.y < -EPS)
+            || (!reserved.right && t.x + t.w > ctx.plot.w + EPS)
+            || t.y + t.h > ctx.plot.h + EPS
+        {
             return Err(Diagnostic::new(
                 &crate::codes::ERR_ANNOTATION_MARGIN_UNSUPPORTED,
                 [
@@ -169,6 +307,7 @@ mod tests {
             chart_id: "rev",
             panel: None,
             plot: PlotRect { x: 30.0, y: 20.0, w: 200.0, h: 100.0 },
+            reach: Reach::default(),
             x: AxisMap::Time { extent: (day("2024-01-01"), day("2024-12-31")), range: (0.0, 200.0) },
             y: AxisMap::Linear { domain: (0.0, 40_000_000.0), range: (100.0, 0.0) },
             layer_y: vec![AxisMap::Linear { domain: (0.0, 20.0), range: (100.0, 0.0) }],
@@ -177,6 +316,22 @@ mod tests {
             canvas: "#fafafa",
             clip_id: "rev-ann0".into(),
         }
+    }
+
+    /// A rule at y on the base scale or on `layers[0]`'s.
+    fn rule_at(y: f64, axis: YAxis) -> Annotation {
+        let mut rule = contract().into_iter().find(|a| a.kind == model::Kind::Rule && a.y.is_some()).unwrap();
+        rule.y = Some(Anchor::Value { value: Scalar::Number(y) });
+        rule.y_axis = axis;
+        rule
+    }
+
+    #[test]
+    fn a_scale_widens_only_to_the_annotations_that_read_it() {
+        let anns = [rule_at(90.0, YAxis::Layer(0)), rule_at(50.0, YAxis::Base)];
+        assert_eq!(widen_y((0.0, 10.0), &anns, YAxis::Layer(0), None, false), (0.0, 90.0));
+        assert_eq!(widen_y((0.0, 10.0), &anns, YAxis::Base, None, false), (0.0, 50.0));
+        assert_eq!(widen_y((0.0, 10.0), &anns, YAxis::Layer(1), None, false), (0.0, 10.0));
     }
 
     /// The contract's annotations that fit the dated test chart.
@@ -192,6 +347,68 @@ mod tests {
         svg
     }
 
+    fn rule_x(value: Scalar) -> Annotation {
+        let mut a = contract().into_iter().find(|a| a.index == 0).unwrap();
+        a.x = Some(Anchor::Value { value });
+        a
+    }
+
+    #[test]
+    fn numbers_past_the_domain_ends_join_it_in_steps_and_inner_ones_do_not() {
+        let domain: Vec<String> = ["0", "1", "2"].map(String::from).to_vec();
+        let anns = [Scalar::Number(5.0), Scalar::Number(1.5), Scalar::Number(-2.0), Scalar::Number(5.0)].map(rule_x);
+        assert_eq!(x_numbers_outside(&domain, &anns).unwrap(), ["-2", "-1", "3", "4", "5"]);
+        let far = [Scalar::Number(1e6)].map(rule_x);
+        assert!(x_numbers_outside(&domain, &far).unwrap_err().contains("steps past the data"));
+    }
+
+    #[test]
+    fn only_dates_past_the_data_extend_it() {
+        let domain: Vec<String> = ["2024-01-01", "2024-06-01", "2025-12-01"].map(String::from).to_vec();
+        let inside = [Scalar::Date("2024-06-01".into()), Scalar::Date("2025-12-01".into())].map(rule_x);
+        assert!(x_dates_outside(&domain, &inside).is_empty());
+        let anns = [Scalar::Date("2030-01-01".into()), Scalar::Date("2020-03-05".into()), Scalar::Date("2024-01-01".into())]
+            .map(rule_x);
+        assert_eq!(x_dates_outside(&domain, &anns), ["2020-03-05", "2030-01-01"]);
+        assert!(x_dates_outside(&domain, &[]).is_empty());
+    }
+
+    fn band_x(from: &str, to: &str) -> Annotation {
+        let mut a = contract().into_iter().find(|a| a.index == 0).unwrap();
+        a.x = Some(Anchor::Range { from: Some(Scalar::Date(from.into())), to: Some(Scalar::Date(to.into())) });
+        a
+    }
+
+    /// The monthly bucket scaffold the bar and line families build from the data and the annotations.
+    fn monthly_scaffold(domain: &[&str], anns: &[Annotation]) -> Vec<String> {
+        use crate::families::temporal::{complete_buckets, TimeUnit};
+        let domain: Vec<String> = domain.iter().map(|d| d.to_string()).collect();
+        let widened: Vec<String> = domain.iter().cloned().chain(x_dates_outside(&domain, anns)).collect();
+        complete_buckets(&widened, TimeUnit::YearMonth, 1)
+    }
+
+    #[test]
+    fn a_range_end_is_exclusive_and_alone_adds_no_bucket() {
+        let data = ["2026-09-01", "2026-10-01"];
+        let last = |anns: &[Annotation]| monthly_scaffold(&data, anns).pop().unwrap();
+        assert_eq!(last(&[band_x("2026-10-01", "2026-11-01")]), "2026-10-01");
+        assert_eq!(last(&[band_x("2026-10-01", "2027-02-01")]), "2027-01-01");
+        assert_eq!(last(&[band_x("2026-10-01", "2027-02-15")]), "2027-02-01");
+        assert_eq!(monthly_scaffold(&data, &[band_x("2026-08-15", "2026-10-01")])[0], "2026-08-01");
+    }
+
+    #[test]
+    fn a_range_end_still_widens_the_continuous_extent() {
+        let anns = [band_x("2026-10-01", "2026-11-01")];
+        let hi = day("2026-11-01");
+        assert_eq!(widen_extent((day("2026-05-01"), day("2026-10-01")), &anns), (day("2026-05-01"), hi));
+    }
+
+    #[test]
+    fn a_point_date_past_the_data_still_adds_its_bucket() {
+        assert_eq!(monthly_scaffold(&["2026-09-01", "2026-10-01"], &[rule_x(Scalar::Date("2026-11-01".into()))]).pop().unwrap(), "2026-11-01");
+    }
+
     #[test]
     fn background_paints_the_clip_and_its_own_plane_only() {
         let svg = painted(&dated(), Plane::Background);
@@ -199,6 +416,19 @@ mod tests {
         assert!(svg.contains("<g class=\"annotations annotations-background\" transform=\"translate(30,20)\">"));
         assert!(!svg.contains("annotations-foreground"));
         assert_eq!(svg.matches("<rect x=").count(), 3, "the clip rect and two bands");
+    }
+
+    #[test]
+    fn every_text_paints_in_the_foreground_whatever_its_plane() {
+        let anns = dated();
+        let fonts = fonts();
+        let c = ctx(&anns, &fonts);
+        let placed = resolve(&c).unwrap();
+        let texts = placed.iter().filter(|p| p.text.is_some()).count();
+        assert!(placed.iter().any(|p| p.plane == Plane::Background && p.text.is_some()), "a band with text");
+        assert!(!painted(&anns, Plane::Background).contains("<text"));
+        assert_eq!(painted(&anns, Plane::Foreground).matches("<g class=\"annotations-text\">").count(), 1);
+        assert_eq!(painted(&anns, Plane::Foreground).matches("role=\"graphics-symbol\"").count(), texts);
     }
 
     #[test]
@@ -210,6 +440,18 @@ mod tests {
         assert!(marks < text);
         assert!(!svg[text..].contains("clip-path"), "text is never clipped");
         assert!(svg[marks..text].contains("<line ") && !svg[marks..text].contains("<text"));
+    }
+
+    #[test]
+    fn connectors_and_enclosures_paint_outside_the_plot_clip() {
+        let svg = painted(&dated(), Plane::Foreground);
+        let marks = svg.find("<g class=\"annotations-marks\" clip-path=").unwrap();
+        let links = svg.find("<g class=\"annotations-links\">").expect("an unclipped links group");
+        let text = svg.find("<g class=\"annotations-text\">").unwrap();
+        assert!(marks < links && links < text);
+        let arrowhead = "Z\" fill=\"#3b6fd4\"";
+        assert!(!svg[marks..links].contains(arrowhead), "no arrowhead inside the clip");
+        assert!(svg[links..text].contains(arrowhead), "the arrowhead is in the links group");
     }
 
     #[test]
@@ -231,14 +473,42 @@ mod tests {
     }
 
     #[test]
-    fn halo_text_strokes_in_the_canvas_color_under_the_fill() {
+    fn halo_is_one_outlined_copy_faded_as_a_group_under_the_text() {
         let svg = painted(&dated(), Plane::Foreground);
-        assert!(svg.contains("stroke=\"#fafafa\" stroke-width=\"6\" stroke-linejoin=\"round\" paint-order=\"stroke\">FY24 goal</text>"));
-        let mut anns = dated();
-        for a in &mut anns {
-            a.style.text.halo = 0.0;
+        let halo = "<g opacity=\"0.75\" aria-hidden=\"true\">";
+        let outlined = "fill=\"#fafafa\" stroke=\"#fafafa\" stroke-width=\"6\" stroke-linejoin=\"round\">FY24 goal</text></g>";
+        assert!(svg.contains(halo) && svg.contains(outlined), "{svg}");
+        assert!(svg.contains("fill=\"#757575\">FY24 goal</text>") || svg.matches(">FY24 goal</text>").count() == 2);
+        assert!(!svg.contains("paint-order"));
+        for (halo, opacity) in [(0.0, 0.75), (3.0, 0.0)] {
+            let mut anns = dated();
+            for a in &mut anns {
+                a.style.text.halo = halo;
+                a.style.text.halo_opacity = opacity;
+            }
+            assert!(!painted(&anns, Plane::Foreground).contains("stroke-linejoin"));
         }
-        assert!(!painted(&anns, Plane::Foreground).contains("paint-order"));
+    }
+
+    #[test]
+    fn a_baked_dash_is_drawn_as_given_and_none_is_solid() {
+        let mut anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 0).collect();
+        anns[0].style.rule.as_mut().unwrap().stroke.dasharray = Some("7 2".to_string());
+        assert!(painted(&anns, Plane::Foreground).contains("stroke-dasharray=\"7 2\""));
+        anns[0].style.rule.as_mut().unwrap().stroke.dasharray = None;
+        assert!(!painted(&anns, Plane::Foreground).contains("stroke-dasharray"));
+    }
+
+    #[test]
+    fn halo_inside_an_enclosing_rect_uses_the_rect_fill() {
+        let mut anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 9).collect();
+        anns[0].x = Some(Anchor::Value { value: Scalar::Date("2024-06-01".into()) });
+        anns[0].connector = model::Connector::None;
+        let fill = anns[0].style.rect().fill.clone();
+        let svg = painted(&anns, Plane::Foreground);
+        assert_ne!(fill, "#fafafa");
+        assert!(svg.contains(&format!("fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\"6\"")), "{svg}");
+        assert!(!svg.contains("stroke=\"#fafafa\""));
     }
 
     #[test]
@@ -315,12 +585,12 @@ mod tests {
         let mut anns = margin_text();
         anns[0].y = Some(Anchor::Value { value: Scalar::Number(40_000_000.0) });
         let fonts = fonts();
-        let d = refuse_margin_ink(&ctx(&anns, &fonts)).unwrap_err();
+        let d = refuse_margin_ink(&ctx(&anns, &fonts), Reserved::default()).unwrap_err();
         assert_eq!(d.code, "ERR-ANNOTATION-MARGIN-UNSUPPORTED");
         assert_eq!((d.params["chart_id"].as_str(), d.params["index"].as_u64()), (Some("rev"), Some(0)));
         let mut inside = margin_text();
         inside[0].style.text.position.overlay = true;
-        refuse_margin_ink(&ctx(&inside, &fonts)).unwrap();
+        refuse_margin_ink(&ctx(&inside, &fonts), Reserved::default()).unwrap();
     }
 
     #[test]

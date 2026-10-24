@@ -1,0 +1,21 @@
+{
+  "id": "101",
+  "model": "sales",
+  "view": "orders",
+  "fields": [
+    "orders.created_month",
+    "orders.region",
+    "orders.revenue"
+  ],
+  "pivots": [
+    "orders.region"
+  ],
+  "filters": {
+    "orders.status": "complete"
+  },
+  "dynamic_fields": "[{\"table_calculation\": \"growth\", \"label\": \"Growth\", \"expression\": \"${orders.revenue} / offset(${orders.revenue}, -1)\"}]",
+  "vis_config": {
+    "type": "looker_column"
+  },
+  "query_timezone": "America/Los_Angeles"
+}

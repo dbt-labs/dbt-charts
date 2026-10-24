@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use crate::common::{measure_family_stand_in, slug_to_display, TAB_FONT};
+use crate::common::{slug_to_display, TAB_FONT};
 use crate::diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
     build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, validate_against_data,
@@ -184,7 +184,7 @@ pub fn build_block(
     let cell_measure = cell_measure_family(style);
     let cell_paint = cell_family(style);
     let (label_family, label_size) = label_font_resolved(style);
-    let header_measure = measure_family_stand_in(label_family);
+    let header_measure = measure::stand_in_family(label_family);
     let pad = 2.0 * style.row.padding.horizontal;
 
     let decimals = DecimalPad::new(fonts, style)?;

@@ -98,13 +98,17 @@ pub(crate) fn svg_value(dashes: &[f64], fitted: bool) -> String {
 /// The ` stroke-dasharray="..."` attribute of a foreground line, fitted to the
 /// plateau when `plateau_span` is the pixel width of a disconnected step's plateau.
 pub(crate) fn attr(dashes: &[f64], plateau_span: Option<f64>) -> String {
+    format!(" stroke-dasharray=\"{}\"", dasharray(dashes, plateau_span))
+}
+
+/// [`attr`]'s value.
+pub(crate) fn dasharray(dashes: &[f64], plateau_span: Option<f64>) -> String {
     // A list with no ink is not rescaled, so its authored lengths cross JSON as they are.
     let computed = plateau_span.is_some() && dashes.iter().step_by(2).sum::<f64>() != 0.0;
-    let value = match plateau_span {
+    match plateau_span {
         Some(span) => svg_value(&fit_to_plateau(dashes, span), computed),
         None => svg_value(dashes, false),
-    };
-    format!(" stroke-dasharray=\"{value}\"")
+    }
 }
 
 #[cfg(test)]

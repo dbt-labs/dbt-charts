@@ -27,7 +27,10 @@ from dbt_charts.core.compile.models.chart.authored import (
 from dbt_charts.core.compile.models.markers import Url
 from dbt_charts.core.compile.models.primitives import LinkOpen, VariableDependencies
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
-from dbt_charts.core.compile.models.vega_lite.contracts import Projection
+from dbt_charts.core.compile.models.vega_lite.contracts import (
+    Projection,
+    ProjectionType,
+)
 
 
 class _BaseChartFields(BaseModel):
@@ -192,7 +195,7 @@ class _GeoChartFields(_SharedChartFields, _FieldLabelsField):
         default=None,
         description="Data field mapped to fill color / choropleth value.",
     )
-    projection: str | Projection | None = Field(
+    projection: ProjectionType | Projection | None = Field(
         default=None, description="Map projection name or config."
     )
     basemap: BasemapConfig | None = Field(

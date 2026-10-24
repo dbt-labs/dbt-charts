@@ -54,7 +54,7 @@ pub struct Layout {
     /// Findings the layout raised, in the order it raised them.
     pub diagnostics: Vec<Diagnostic>,
     /// Where the title group sits in `data_box` coordinates, for the caller that
-    /// paints it (`FrameTitle` writes a string, not nodes); `None` when untitled.
+    /// paints it (`FrameTitle::paint` takes it to place the title); `None` when untitled.
     pub title_pos: Option<(f64, f64)>,
 }
 

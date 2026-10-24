@@ -355,6 +355,13 @@ class TableRowNumbersStyle(BaseModel):
     align: Literal["left", "right"] = Field(
         default="right", description="Text alignment for the row-number column."
     )
+    # InheritSlot: row-number font fills from table.font.
+    font: Annotated[FontStyle, InheritSlot(from_path="Style.charts.table.font")] = (
+        Field(
+            default_factory=FontStyle,
+            description="Row-number font style overrides.",
+        )
+    )
 
 
 class PaginatorStyle(BaseModel):

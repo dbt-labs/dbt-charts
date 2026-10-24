@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from dbt_charts.core.compile.errors import CompilationError
@@ -37,6 +37,11 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
     BarLabelsStyle,
 )
+from dbt_charts.core.compile.resolve.chart._annotations import (
+    NO_ANNOTATIONS,
+    annotation_chart,
+    resolve_annotations,
+)
 from dbt_charts.core.compile.resolve.chart._axes import (
     _apply_multiples_mirror,
     _bake_ay_orient,
@@ -51,6 +56,7 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     cartesian_top_legend_entries,
     estimate_cartesian_plot_height,
     estimate_left_axis_reserve_px,
+    horizontal_measure_style,
     legend_wrap_marginal_height_px,
     legend_wrap_required_height_px,
 )
@@ -87,6 +93,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
+    _resolve_layer_inks,
     _resolve_layer_list,
 )
 from dbt_charts.core.compile.resolve.chart._marks import (
@@ -136,6 +143,7 @@ from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.constants.bar import TOP_RAIL_LABEL_GAP_SPACES
 from dbt_charts.core.constants.estimates import ROW_LEGEND_TOTAL_PX
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_ANNOTATION_INVALID,
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
 )
@@ -394,9 +402,10 @@ def _categorical_axis_gutter_px(
     if not labels:
         return 0.0
     if ax.labels.expr is None:
-        # No case: a horizontal bar's category axis never gets the case expr.
         spec = None if ax.labels.format is None else resolve_format(ax.labels.format)
-        labels = [category_label_text(label, spec, None) for label in labels]
+        labels = [
+            category_label_text(label, spec, ax.labels.font.case) for label in labels
+        ]
     padding = measured_label_padding(labels, font.family, font.size)
     label_limit = ax.labels.max_width
     return cap_padding_to_label_limit(
@@ -626,6 +635,7 @@ def _resolve_bar(
     datasets: LayerDatasets,
     automatic_link_candidate: AutomaticLinkCandidate,
     x_date_range: tuple[date, date] | None,
+    rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedBarChart:
     data = dataset.all_rows()
@@ -707,8 +717,22 @@ def _resolve_bar(
     is_stacked = resolved_stack not in (None, "none")
     primary = plan.primary
     channels = plan.channels
-    channels, wide_measure_series = resolve_wide_measure_channels(
-        normalized, channels, "bar", has_layers=bool(normalized.layers)
+    tooltip_format_values = quantitative_channel_values(data, normalized.y)
+    measure_tooltip_format = _measure_tooltip_format(
+        normalized, primary, chart_style_context, values=tooltip_format_values
+    )
+    if span_kind == "temporal" and normalized.annotations:
+        raise CompilationError.from_code(
+            ERR_ANNOTATION_INVALID,
+            chart_id=normalized.id,
+            index=0,
+            reason="annotations do not draw on a bar over a date span",
+        )
+    single_series_fill = _effective_single_series_fill(
+        chart_style_context,
+        primary,
+        rhythm_slot=normalized.rhythm_slot,
+        has_layers=bool(normalized.layers),
     )
     ax_merged, ay_merged = plan.axes.x.style, plan.axes.y.style
     # Orientation depends on ax_merged.time_unit (a pure cascade fact, not
@@ -718,6 +742,44 @@ def _resolve_bar(
     # resolved `orientation` field at the bottom of this function.
     orientation = _bar_orientation(
         normalized, bar, data, ax_merged.time_unit is not None
+    )
+    if orientation == "horizontal":
+        ay_merged = horizontal_measure_style(
+            chart_style_context, normalized, "bar", plan.axis_overrides, ay_merged
+        )
+    channels, wide_measure_series = resolve_wide_measure_channels(
+        normalized, channels, "bar", has_layers=bool(normalized.layers)
+    )
+    inks = _resolve_layer_inks(
+        normalized,
+        chart_style_context,
+        bar,
+        primary,
+        channels,
+        data,
+        datasets,
+        single_series_fill,
+        measure_quantitative=True,
+    )
+    annotations = (
+        NO_ANNOTATIONS
+        if rendered_at is None or not normalized.annotations
+        else resolve_annotations(
+            normalized.annotations,
+            annotation_chart(
+                normalized,
+                x_ch_type,
+                "quantitative",
+                is_stacked,
+                single_series_fill,
+                orientation == "horizontal",
+                inks,
+            ),
+            dataset,
+            datasets,
+            chart_local_style_context,
+            rendered_at,
+        )
     )
     ay_merged = _apply_multiples_mirror(
         ay_merged,
@@ -927,7 +989,9 @@ def _resolve_bar(
     # layer introducing genuinely new values -- is undercharged, which
     # keeps this a miss rather than a false positive, the direction this
     # check errs in everywhere else.
-    _unlabeled_layers = sum(1 for layer in normalized.layers if layer.color is None)
+    _unlabeled_layers = sum(
+        1 for layer in normalized.layers if layer.color is None and layer.legend
+    )
     if legend_entry_count:
         _floor_entry_count = legend_entry_count + _unlabeled_layers
     elif normalized.layers:
@@ -1054,7 +1118,12 @@ def _resolve_bar(
             ay_merged = _bake_normalize_domain(ay_merged)
     elif is_stacked and x_field:
         tick_values = _resolve_stacked_bar_ticks(
-            ay_merged, dataset, y_fields, x_field, multiples_scale
+            ay_merged,
+            dataset,
+            y_fields,
+            x_field,
+            multiples_scale,
+            annotations.y_values,
         )
         # stacked domainMax baked separately below; domain_min stays None
     else:
@@ -1062,7 +1131,7 @@ def _resolve_bar(
             _shared_y_values(data, y_field, normalized, datasets)
             if y_field
             else _numeric_y_values(data, tuple(y_fields))
-        )
+        ) + list(annotations.y_values)
         if span_kind == "temporal":
             bar_zero = False
         elif normalized.y_start is not None and ay_scale_zero is None and bar_y_values:
@@ -1106,6 +1175,8 @@ def _resolve_bar(
             multiples_scale,
             lambda rows: stacked_totals_max(rows, x_field, y_fields),
         )
+        if _raw_stacked_max is not None:
+            _raw_stacked_max = max([_raw_stacked_max, *annotations.y_values])
         if _raw_stacked_max is not None and _raw_stacked_max > 0:
             stacked_domain_max = apply_headroom(
                 _raw_stacked_max, _axis_headroom(ay_merged)
@@ -1114,7 +1185,6 @@ def _resolve_bar(
     # and forms no column — see build_resolved_axis's column_forming
     # docstring. Every other bar orientation keeps the default (vertical
     # ruler, column-forming).
-    tooltip_format_values = quantitative_channel_values(data, normalized.y)
     ay, style_tail = build_cartesian_axes(
         normalized.id,
         "bar",
@@ -1124,9 +1194,7 @@ def _resolve_bar(
         ax_edge=x_edge,
         ticks=_CartesianTickResolution(tick_values, bar_domain_max, bar_domain_min),
         column_forming=orientation != "horizontal",
-        measure_tooltip_format=_measure_tooltip_format(
-            normalized, primary, chart_style_context, values=tooltip_format_values
-        ),
+        measure_tooltip_format=measure_tooltip_format,
         tooltip_format_values=tooltip_format_values,
         ax_is_quantitative=x_ch_type == "quantitative",
         # Bar semantics fix y=measure regardless of orientation (see the
@@ -1178,6 +1246,7 @@ def _resolve_bar(
         datasets,
         normalized.id,
         normalized.query.formats if normalized.query else None,
+        inks,
         normalized.layer_query_formats,
     )
     if authored_y_domain is not None:
@@ -1241,6 +1310,8 @@ def _resolve_bar(
         stack=resolved_stack,
         stacked_domain_max=stacked_domain_max,
         orientation=orientation,
+        annotations=annotations.render(ay, style_tail["axis_x"], resolved_layers, None),
+        annotation_gaps=annotations.gaps,
         style=ResolvedBarStyle(
             series_label=series_label,
             stack_order=bar.stack_order,
@@ -1249,12 +1320,7 @@ def _resolve_bar(
             plot_height_below_floor=plot_starved,
             estimated_plot_height_px=estimated_plot_height,
             estimated_card_height_px=floor_card_height,
-            single_series_fill=_effective_single_series_fill(
-                chart_style_context,
-                primary,
-                rhythm_slot=normalized.rhythm_slot,
-                has_layers=bool(normalized.layers),
-            ),
+            single_series_fill=single_series_fill,
             endpoint_labels=endpoint_labels,
             label_usable_ratio=chart_style_context.label_usable_ratio,
             title_font=_tf,

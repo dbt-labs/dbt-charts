@@ -120,7 +120,7 @@ fn table_title_geometry(py: Python<'_>, payload_json: &str) -> PyResult<(f64, f6
             .map_err(|e| Diagnostic::from(format!("parse payload: {e}")))?;
         let fonts = fonts_for(payload.fonts_dir.as_deref())?;
         display_text::language::with_language(payload.language, || {
-            chart_renderer::families::table::title_geometry(&payload.resolved, payload.width, &fonts)
+            chart_renderer::families::table::layout::title_geometry(&payload.resolved, payload.width, &fonts)
         })
         .map_err(Diagnostic::from)
     });

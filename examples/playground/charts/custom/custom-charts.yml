@@ -284,7 +284,7 @@ charts:
         <path fill="{{ style.tones.positive }}" fill-opacity="0.3"
           d="{{ d3.line(ns.upper + (ns.lower | reverse | list)) }}Z"/>
         <path fill="none" stroke="{{ style.accent }}" stroke-width="2" d="{{ d3.line(ns.upper) }}"/>
-        <path fill="none" stroke="{{ style.muted }}" stroke-width="2" d="{{ d3.line(ns.lower) }}"/>
+        <path fill="none" stroke="{{ style.fonts.secondary.color }}" stroke-width="2" d="{{ d3.line(ns.lower) }}"/>
         {% for r in rows %}
         <text x="{{ x(loop.index0) }}" y="{{ height - pad / 3 }}"
               text-anchor="middle">{{ r[channels.x] }}</text>
@@ -295,7 +295,7 @@ charts:
         <text x="{{ width - pad }}" y="{{ y(rows[n - 1][up]) - 8 }}"
               text-anchor="end" fill="{{ style.accent }}">{{ up }}</text>
         <text x="{{ width - pad }}" y="{{ y(rows[n - 1][lo]) + 22 }}"
-              text-anchor="end" fill="{{ style.muted }}">{{ lo }}</text>
+              text-anchor="end" fill="{{ style.fonts.secondary.color }}">{{ lo }}</text>
       </g>
     x: year
     y: [exports, imports]

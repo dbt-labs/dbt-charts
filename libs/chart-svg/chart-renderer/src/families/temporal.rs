@@ -470,16 +470,11 @@ pub fn parse_authored_time_unit(s: &str) -> Option<TimeUnit> {
 
 // ── Date parsing ─────────────────────────────────────────────────────────────
 
-/// A date cell as days since the epoch, with a `[T ]HH:MM[:SS[.f]]` clock as the
-/// day's fraction and an optional `Z` or `±HH:MM` offset. A clock without an
+/// A date cell as days since the epoch, with any clock `datetime.fromisoformat` takes
+/// after `[T ]` as the day's fraction and an optional `Z` or `±HH[[:]MM[[:]SS]]` offset. A clock without an
 /// offset is UTC (the render pins the zone). Fractional seconds keep V8's
 /// millisecond precision. `None` for any other shape.
 pub fn date_text_day(text: &str) -> Option<f64> {
-    let digits = |part: &str, max: u32| -> Option<f64> {
-        (part.len() == 2 && part.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| part.parse::<u32>().ok().filter(|&n| n < max).map(f64::from))
-            .flatten()
-    };
     let (y, m, d) = parse_iso_date(text.get(..text.len().min(10))?)?;
     let day = days_from_civil(y, m, d) as f64;
     if text.len() <= 10 {
@@ -489,35 +484,29 @@ pub fn date_text_day(text: &str) -> Option<f64> {
         return None;
     }
     let clock = text.get(11..)?;
-    let (clock, offset_minutes) = match clock.char_indices().find(|(_, c)| matches!(c, 'Z' | '+' | '-')) {
+    let (clock, offset_minutes) = match clock.find(['Z', '+', '-']) {
         None => (clock, 0.0),
-        Some((i, 'Z')) if i + 1 == clock.len() => (&clock[..i], 0.0),
-        Some((i, sign @ ('+' | '-'))) => {
-            let zone = clock[i + 1..].split(':').collect::<Vec<_>>();
-            let [hours, minutes] = zone[..] else { return None };
-            let total = digits(hours, 24)? * 60.0 + digits(minutes, 60)?;
-            (&clock[..i], if sign == '+' { total } else { -total })
-        }
-        Some(_) => return None,
-    };
-    let mut parts = clock.split(':');
-    let hours = digits(parts.next()?, 24)?;
-    let minutes = digits(parts.next()?, 60)?;
-    let (seconds, millis) = match parts.next() {
-        None => (0.0, 0.0),
-        Some(field) => {
-            let (whole, fraction) = field.split_once('.').map_or((field, ""), |(w, f)| (w, f));
-            if field.contains('.') && (fraction.is_empty() || !fraction.bytes().all(|b| b.is_ascii_digit())) {
-                return None;
-            }
-            let padded = format!("{fraction:0<3}");
-            (digits(whole, 60)?, padded[..3].parse::<f64>().ok()?)
+        Some(i) => {
+            let (head, zone) = clock.split_at(i);
+            let minutes = match zone.as_bytes()[0] {
+                b'Z' if zone.len() == 1 => 0.0,
+                sign @ (b'+' | b'-') => {
+                    let [hours, minutes, seconds] = super::x_type::clock_fields(&zone[1..], 23)?;
+                    let total = f64::from(hours) * 60.0 + f64::from(minutes) + f64::from(seconds) / 60.0;
+                    if sign == b'+' { total } else { -total }
+                }
+                _ => return None,
+            };
+            (head, minutes)
         }
     };
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(day + (hours * 3600.0 + minutes * 60.0 + seconds + millis / 1000.0 - offset_minutes * 60.0) / 86_400.0)
+    let [hours, minutes, seconds] = super::x_type::clock_fields(clock, 23)?;
+    let millis = match clock.find(['.', ',']) {
+        None => 0.0,
+        Some(i) => format!("{:0<3}", &clock[i + 1..])[..3].parse::<f64>().ok()?,
+    };
+    let clock_seconds = f64::from(hours) * 3600.0 + f64::from(minutes) * 60.0 + f64::from(seconds) + millis / 1000.0;
+    Some(day + (clock_seconds - offset_minutes * 60.0) / 86_400.0)
 }
 
 /// Parse an ISO date string `"YYYY-MM-DD"` → `(year, month, day)`.
@@ -1376,33 +1365,6 @@ pub fn normalize_labeled_temporal<'a>(
     })
 }
 
-/// The ISO-anchored domain a year-shaped x column resolves to in
-/// production — every value in `domain_strs` mapped to `YYYY-01-01` via
-/// [`year_from_row_str`], mirroring `normalize_labeled_temporal`'s own
-/// row-rewrite (`time_unit_detect.py:937-945`) rather than just detecting
-/// its grain: production rewrites the DATA itself before anything
-/// downstream (type inference, tick/label positions) ever runs, and this
-/// is the port's one seam for that same rewrite — callers that need
-/// year-shaped x parsed as a calendar date (position fractions, label
-/// text) read this instead of the raw domain. `is_year_shaped` admits only
-/// values that anchor, and a null x is no bucket, so none is in the domain.
-pub fn year_shaped_iso_domain(domain_strs: &[&str]) -> Vec<String> {
-    domain_strs.iter().map(|v| format!("{:04}-01-01", year_from_row_str(v).expect("a year-shaped x anchors to a calendar year"))).collect()
-}
-
-/// Parses a year from its `row_str`-rendered form — a bare integer
-/// (`"2019"`) or an integral float (`"2019.0"`, the shape a warehouse
-/// DECIMAL/NUMERIC year takes once `Decimal` round-trips through JSON as a
-/// float, matching `common::is_year_shaped`'s own Decimal arm,
-/// `utils.py:284-313`).
-fn year_from_row_str(s: &str) -> Option<i32> {
-    if let Ok(y) = s.trim().parse::<i32>() {
-        return Some(y);
-    }
-    let f: f64 = s.trim().parse().ok()?;
-    (f.fract() == 0.0).then_some(f as i32)
-}
-
 // ── Label cadence resolution ──────────────────────────────────────────────────
 //
 // Production (`time_unit_detect.py` + `emitters/_label_overlap.py`) separates
@@ -1484,12 +1446,13 @@ fn openers_at(
     dates: &[(i32, u8, u8)],
     data_tu: TimeUnit,
     label_tu: TimeUnit,
+    year_step: i32,
     fiscal_start: u8,
 ) -> Vec<usize> {
     let mut out = Vec::new();
     let mut prev_key: Option<(i32, u16)> = None;
     for (idx, &(y, m, d)) in dates.iter().enumerate() {
-        if !is_opener(y, m, d, data_tu, label_tu, fiscal_start) {
+        if !is_opener(y, m, d, data_tu, label_tu, fiscal_start) || y % year_step != 0 {
             continue;
         }
         let key = opener_key(y, m, d, label_tu);
@@ -1688,8 +1651,8 @@ fn resolve_visibility(
     skip: bool,
     authored: Option<AuthoredTimeFormat>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
-) -> Result<(TimeUnit, TimeUnit), String> {
-    let (visibility_tu, _fits) = resolve_visibility_loop(
+) -> Result<(TimeUnit, TimeUnit, i32), String> {
+    let (visibility_tu, year_step, _fits) = resolve_visibility_loop(
         dates,
         data_tu,
         format_tu,
@@ -1701,7 +1664,7 @@ fn resolve_visibility(
         measure,
     )?;
     let promoted = if visibility_tu == TimeUnit::Year { TimeUnit::Year } else { format_tu };
-    Ok((promoted, visibility_tu))
+    Ok((promoted, visibility_tu, year_step))
 }
 
 /// Resolve `(format_tu, visibility_tu)` from the data grain and measured
@@ -1723,17 +1686,13 @@ fn resolve_visibility(
 /// branches), so day/week data enters the ladder at its own grain.
 ///
 /// Without an authored format, weekly/daily data first tries its own native
-/// cadence flat (every bucket labeled); daily also tries a Monday-only rung
-/// before falling back further — but only when the axis is `bucket_aligned`
-/// or `continuous_temporal` (`_label_overlap.py:570-573`:
-/// `bucket_aligned_temporal or (continuous_temporal and encoding_time_unit
-/// == "yearmonthdate")`; the candidate loop is `:576-598`).
-/// Neither is a coarsening *step* — they're read as-is, only promoting to
-/// `yearmonth` when the domain spans ≥2 months. These two checks add one
-/// measured space of gap per label, the legacy arm's stand-in for
-/// `_submonth_candidate_fits`' per-row gaps ([`submonth_candidate_fits`] is
-/// the exact port the Vega arms use); [`resolve_visibility`]'s
-/// `_pair_clears` carries no gap.
+/// cadence flat (every bucket labeled). When the axis is `bucket_aligned`, or
+/// `continuous_temporal` over daily data (`_label_overlap.py:570-573`), that
+/// check is [`submonth_candidate_fits`] (day and context rows clear apart)
+/// and daily also tries a Monday-only rung (`:576-598`); otherwise it is one
+/// gapped width per label. Neither is a coarsening *step*: they're read
+/// as-is, only promoting to `yearmonth` when the domain spans ≥2 months.
+/// [`resolve_visibility`]'s `_pair_clears` carries no gap.
 ///
 /// `bucket_aligned` mirrors production's `bucket_aligned_temporal` flag
 /// (`curve == "step"`, `_cartesian.py:503`): bar's discrete/ordinal x-scale
@@ -1759,7 +1718,7 @@ pub fn resolve_label_visibility(
     skip: bool,
     authored: Option<AuthoredTimeFormat>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
-) -> Result<(TimeUnit, TimeUnit), String> {
+) -> Result<(TimeUnit, TimeUnit, i32), String> {
     let span;
     let dates = if continuous_temporal {
         span = enumerate_continuous_span(dates, data_tu, fiscal_start);
@@ -1769,7 +1728,7 @@ pub fn resolve_label_visibility(
     };
     if dates.len() < 2 {
         let tu = authored_label_tu.unwrap_or(data_tu);
-        return Ok((tu, tu));
+        return Ok((tu, tu, 1));
     }
     let band = plot_width / dates.len() as f64;
 
@@ -1777,46 +1736,37 @@ pub fn resolve_label_visibility(
         && authored.is_none()
         && matches!(data_tu, TimeUnit::YearWeek | TimeUnit::YearMonthDate)
     {
-        // A single space's measured width stands in for production's
-        // `label_gap_spaces`/`label_gap_spaces_numeric` (`_submonth_candidate_fits`)
-        // — the only fit test in production with an explicit gap term.
-        let gap = measure(" ")?;
-        let mut gapped = |s: &str| -> Result<f64, String> { Ok(measure(s)? + gap) };
-        let native = openers_at(dates, data_tu, data_tu, fiscal_start);
-        if visibility_fits(
-            &native,
-            dates,
-            data_tu,
-            data_tu,
-            band,
-            edge_labels_flushed,
-            fiscal_start,
-            None,
-            &mut gapped,
-        )? {
-            return Ok((data_tu, data_tu));
-        }
-        if (bucket_aligned || continuous_temporal) && data_tu == TimeUnit::YearMonthDate {
-            let weekly = openers_at(dates, data_tu, TimeUnit::YearWeek, fiscal_start);
-            if weekly.len() >= 2
-                && visibility_fits(
-                    &weekly,
-                    dates,
-                    data_tu,
-                    TimeUnit::YearWeek,
-                    band,
-                    edge_labels_flushed,
-                    fiscal_start,
-                    None,
-                    &mut gapped,
-                )?
-            {
-                return Ok((TimeUnit::YearWeek, TimeUnit::YearWeek));
+        if bucket_aligned || (continuous_temporal && data_tu == TimeUnit::YearMonthDate) {
+            let candidates: &[TimeUnit] =
+                if data_tu == TimeUnit::YearMonthDate { &[TimeUnit::YearMonthDate, TimeUnit::YearWeek] } else { &[TimeUnit::YearWeek] };
+            for &candidate in candidates {
+                if submonth_candidate_fits(dates, data_tu, candidate, fiscal_start, plot_width, measure)? {
+                    return Ok((candidate, candidate, 1));
+                }
+            }
+        } else {
+            // One measured space per label: production's `_fits_flat` over
+            // gapped native widths (`_label_overlap.py:620-650`).
+            let gap = measure(" ")?;
+            let mut gapped = |s: &str| -> Result<f64, String> { Ok(measure(s)? + gap) };
+            let native = openers_at(dates, data_tu, data_tu, 1, fiscal_start);
+            if visibility_fits(
+                &native,
+                dates,
+                data_tu,
+                data_tu,
+                band,
+                edge_labels_flushed,
+                fiscal_start,
+                None,
+                &mut gapped,
+            )? {
+                return Ok((data_tu, data_tu, 1));
             }
         }
-        let month_openers = openers_at(dates, data_tu, TimeUnit::YearMonth, fiscal_start);
+        let month_openers = openers_at(dates, data_tu, TimeUnit::YearMonth, 1, fiscal_start);
         if month_openers.len() < 2 {
-            return Ok((data_tu, data_tu));
+            return Ok((data_tu, data_tu, 1));
         }
         return resolve_visibility(
             dates,
@@ -1863,7 +1813,8 @@ pub fn resolve_label_visibility(
 /// Returns the label sequence plus the visibility grain the ladder settled
 /// on — `visibility_tu != data_tu` is production's "labels grew sparser than
 /// buckets" fact (`visibility_thinned` / `label_tick_cadence` in
-/// type_inference.py), which the bar family reads to restore its tick marks.
+/// type_inference.py), which the bar family reads to restore its tick marks;
+/// a `year_step` above 1 (every 5th/10th year) is the same fact at `year` grain.
 pub fn resolve_temporal_labels(
     domain: &[String],
     data_tu: TimeUnit,
@@ -1876,9 +1827,9 @@ pub fn resolve_temporal_labels(
     skip: bool,
     authored: Option<AuthoredTimeFormat>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
-) -> Result<(Vec<TemporalLabel>, TimeUnit), String> {
+) -> Result<(Vec<TemporalLabel>, TimeUnit, i32), String> {
     let dates = parse_domain_dates(domain);
-    let (format_tu, visibility_tu) = resolve_label_visibility(
+    let (format_tu, visibility_tu, year_step) = resolve_label_visibility(
         &dates,
         data_tu,
         authored_label_tu,
@@ -1892,8 +1843,9 @@ pub fn resolve_temporal_labels(
         measure,
     )?;
     Ok((
-        build_temporal_labels(domain, data_tu, format_tu, visibility_tu, fiscal_start, authored)?,
+        build_temporal_labels(domain, data_tu, format_tu, visibility_tu, year_step, fiscal_start, authored)?,
         visibility_tu,
+        year_step,
     ))
 }
 
@@ -2066,8 +2018,7 @@ pub enum ExprBands {
 /// cadence ladder, and an authored `labels.expr` rewrites the text of `expr_bands`.
 pub struct OrdinalDateLabels {
     pub labels: Vec<TemporalLabel>,
-    /// The axis keeps a tick at every bucket once its labels grow sparser than its
-    /// buckets (`_LABEL_THINNING_TICK_MARK_TYPES`).
+    /// The axis ticks under each painted label once its labels grow sparser than its buckets.
     pub ticks_restored: bool,
     /// The tilt the crowding remedies picked; an authored angle wins over it.
     pub angle: Option<f64>,
@@ -2122,12 +2073,12 @@ pub fn ordinal_date_labels(
             (labels, false, angle, parity)
         }
         LabelUnit::Calendar(label_tu) if labels_cfg.angle.is_some() => {
-            let labels = build_temporal_labels(domain, data_tu, label_tu, label_tu, fiscal_start, authored)?;
+            let labels = build_temporal_labels(domain, data_tu, label_tu, label_tu, 1, fiscal_start, authored)?;
             (fold_steep(labels, labels_cfg.angle, label_tu), label_tu != data_tu, None, false)
         }
         LabelUnit::Calendar(label_tu) => {
             let authored_label_tu = labels_cfg.time_unit.as_deref().filter(|u| *u != "auto").map(|_| label_tu);
-            let (labels, visibility_tu) = resolve_temporal_labels(
+            let (labels, visibility_tu, year_step) = resolve_temporal_labels(
                 domain,
                 data_tu,
                 authored_label_tu,
@@ -2142,14 +2093,14 @@ pub fn ordinal_date_labels(
                 authored,
                 measure,
             )?;
-            (labels, visibility_tu != data_tu, None, false)
+            (labels, visibility_tu != data_tu || year_step > 1, None, false)
         }
     };
     if let Some(expr) = expr {
         labels = match (unit, expr_bands) {
             (_, ExprBands::KeptByLadder) => labels,
             (LabelUnit::Calendar(label_tu), ExprBands::AllBuckets) if label_tu != data_tu => {
-                build_temporal_labels(domain, data_tu, label_tu, label_tu, fiscal_start, authored)?
+                build_temporal_labels(domain, data_tu, label_tu, label_tu, 1, fiscal_start, authored)?
             }
             _ => (0..domain.len())
                 .map(|domain_idx| TemporalLabel { domain_idx, row1: String::new(), row2: String::new() })
@@ -2242,7 +2193,7 @@ fn resolve_visibility_loop(
     allow_skip: bool,
     authored: Option<AuthoredTimeFormat>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
-) -> Result<(TimeUnit, bool), String> {
+) -> Result<(TimeUnit, i32, bool), String> {
     walk_label_cadence_ladder(dates, data_tu, format_tu, band, fiscal_start, allow_skip, &mut |labeled, vocab_tu| {
         visibility_fits(
             labeled,
@@ -2274,11 +2225,11 @@ fn walk_label_cadence_ladder(
     fiscal_start: u8,
     allow_skip: bool,
     fits: &mut dyn FnMut(&[usize], TimeUnit) -> Result<bool, String>,
-) -> Result<(TimeUnit, bool), String> {
+) -> Result<(TimeUnit, i32, bool), String> {
     let mut unit = format_tu;
     let mut sparse_fit: Option<TimeUnit> = None;
     loop {
-        let labeled = openers_at(dates, data_tu, unit, fiscal_start);
+        let labeled = openers_at(dates, data_tu, unit, 1, fiscal_start);
         let vocab_tu = if unit == TimeUnit::Year { TimeUnit::Year } else { format_tu };
         if fits(&labeled, vocab_tu)? {
             let spacing = if labeled.len() >= 2 {
@@ -2287,7 +2238,7 @@ fn walk_label_cadence_ladder(
                 0.0
             };
             if spacing <= SPARSE_CEILING_PX {
-                return Ok((unit, true));
+                return Ok((unit, 1, true));
             }
             if sparse_fit.is_none() {
                 sparse_fit = Some(unit);
@@ -2295,14 +2246,46 @@ fn walk_label_cadence_ladder(
         }
         let next_unit = if allow_skip { next_coarser(unit) } else { None };
         let Some(next_unit) = next_unit else {
-            return Ok(sparse_fit.map(|u| (u, true)).unwrap_or((unit, false)));
+            return match sparse_fit {
+                Some(u) => Ok((u, 1, true)),
+                None => year_step_rung(dates, data_tu, unit, fiscal_start, allow_skip, fits),
+            };
         };
-        let next_labeled = openers_at(dates, data_tu, next_unit, fiscal_start);
+        let next_labeled = openers_at(dates, data_tu, next_unit, 1, fiscal_start);
         if next_labeled.len() < 2 {
-            return Ok(sparse_fit.map(|u| (u, true)).unwrap_or((unit, false)));
+            return match sparse_fit {
+                Some(u) => Ok((u, 1, true)),
+                None => year_step_rung(dates, data_tu, unit, fiscal_start, allow_skip, fits),
+            };
         }
         unit = next_unit;
     }
+}
+
+/// Calendar-year steps a dense year axis climbs after every year's label has
+/// failed to clear: readers group on multiples of 5 and 10, so a step keeps
+/// only the years divisible by it.
+const YEAR_STEPS: [i32; 2] = [5, 10];
+
+/// The rung past the last grain: at `year` cadence, label only the years that
+/// are multiples of 5, then of 10. `(unit, 1, false)` when even 10 collides.
+fn year_step_rung(
+    dates: &[(i32, u8, u8)],
+    data_tu: TimeUnit,
+    unit: TimeUnit,
+    fiscal_start: u8,
+    allow_skip: bool,
+    fits: &mut dyn FnMut(&[usize], TimeUnit) -> Result<bool, String>,
+) -> Result<(TimeUnit, i32, bool), String> {
+    if allow_skip && unit == TimeUnit::Year {
+        for step in YEAR_STEPS {
+            let labeled = openers_at(dates, data_tu, unit, step, fiscal_start);
+            if labeled.len() >= 2 && fits(&labeled, unit)? {
+                return Ok((unit, step, true));
+            }
+        }
+    }
+    Ok((unit, 1, false))
 }
 
 /// A date band axis read top to bottom: the calendar labels that survive the
@@ -2333,7 +2316,7 @@ pub fn resolve_vertical_temporal_labels(
 ) -> Result<VerticalTemporalLabels, String> {
     let dates = parse_domain_dates(domain);
     let band = plot_height / dates.len() as f64;
-    let (visibility_tu, fits) = walk_label_cadence_ladder(
+    let (visibility_tu, year_step, fits) = walk_label_cadence_ladder(
         &dates,
         data_tu,
         data_tu,
@@ -2363,7 +2346,7 @@ pub fn resolve_vertical_temporal_labels(
         },
     )?;
     let format_tu = if visibility_tu == TimeUnit::Year { TimeUnit::Year } else { data_tu };
-    let labels = build_temporal_labels(domain, data_tu, format_tu, visibility_tu, fiscal_start, authored)?;
+    let labels = build_temporal_labels(domain, data_tu, format_tu, visibility_tu, year_step, fiscal_start, authored)?;
     Ok(VerticalTemporalLabels { labels, fits })
 }
 
@@ -2375,6 +2358,8 @@ pub fn resolve_vertical_temporal_labels(
 pub struct VegaLabelLayout {
     pub format_tu: TimeUnit,
     pub visibility_tu: TimeUnit,
+    /// At `year` cadence, label only the years divisible by this (1: every year).
+    pub year_step: i32,
     /// Vega's own runtime `labelOverlap: parity` pass should run over the
     /// drawn labels' real ink (`vega_fit::parity_visible`) — true whenever
     /// `overlap.skip` fired against a band that didn't clear.
@@ -2445,6 +2430,7 @@ pub fn resolve_vega_label_layout(
         return Ok(VegaLabelLayout {
             format_tu,
             visibility_tu: format_tu,
+            year_step: 1,
             parity: false,
             angle: 0.0,
             block_height: font_size,
@@ -2464,6 +2450,7 @@ pub fn resolve_vega_label_layout(
                 return Ok(VegaLabelLayout {
                     format_tu: candidate,
                     visibility_tu: candidate,
+                    year_step: 1,
                     parity: false,
                     angle: 0.0,
                     block_height: font_size,
@@ -2471,7 +2458,7 @@ pub fn resolve_vega_label_layout(
                 });
             }
         }
-        if openers_at(dates, data_tu, TimeUnit::YearMonth, fiscal_start).len() >= 2 {
+        if openers_at(dates, data_tu, TimeUnit::YearMonth, 1, fiscal_start).len() >= 2 {
             return resolve_vega_bucketed(
                 dates,
                 data_tu,
@@ -2506,6 +2493,7 @@ pub fn resolve_vega_label_layout(
         return Ok(VegaLabelLayout {
             format_tu: TimeUnit::YearWeek,
             visibility_tu: TimeUnit::YearWeek,
+            year_step: 1,
             parity: false,
             angle,
             block_height,
@@ -2527,7 +2515,7 @@ pub fn resolve_vega_label_layout(
         let native_widths: Vec<f64> = (0..dates.len())
             .map(|pos| cadence_token_width(dates, pos, format_tu, pos == 0, fiscal_start, None, &mut gapped))
             .collect::<Result<_, _>>()?;
-        let month_openers = openers_at(dates, data_tu, TimeUnit::YearMonth, fiscal_start);
+        let month_openers = openers_at(dates, data_tu, TimeUnit::YearMonth, 1, fiscal_start);
         let native_fits = crate::vega_fit::fits_flat(
             &native_widths,
             usable_width / native_widths.len().max(1) as f64,
@@ -2537,6 +2525,7 @@ pub fn resolve_vega_label_layout(
             return Ok(VegaLabelLayout {
                 format_tu,
                 visibility_tu: format_tu,
+                year_step: 1,
                 parity: gl.parity,
                 angle: gl.angle,
                 block_height: gl.block_height,
@@ -2593,7 +2582,7 @@ fn resolve_vega_bucketed(
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<VegaLabelLayout, String> {
     let band = usable_width / dates.len() as f64;
-    let (visibility_tu, fits) = resolve_visibility_loop(
+    let (visibility_tu, year_step, fits) = resolve_visibility_loop(
         dates,
         data_tu,
         format_tu,
@@ -2612,6 +2601,7 @@ fn resolve_vega_bucketed(
         return Ok(VegaLabelLayout {
             format_tu: promoted_format_tu,
             visibility_tu,
+            year_step,
             parity: false,
             angle: 0.0,
             block_height: font_size,
@@ -2655,6 +2645,7 @@ fn resolve_vega_bucketed(
     Ok(VegaLabelLayout {
         format_tu: promoted_format_tu,
         visibility_tu,
+        year_step: 1,
         parity,
         angle,
         block_height,
@@ -2738,7 +2729,7 @@ fn resolve_none_layout(
         .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
         .collect();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
-    let openers = openers_at(&dates, data_tu, data_tu, fiscal_start);
+    let openers = openers_at(&dates, data_tu, data_tu, 1, fiscal_start);
     // Production's fit decision measures the author's format, else the RAW domain
     // values, plus `label_gap_spaces` (`_label_overlap.py:341-358`:
     // `format_time_unit` is "" for "none", so `_generic_temporal_labels` returns
@@ -2810,6 +2801,8 @@ pub struct ResolvedVegaLabels {
     pub collision: Option<usize>,
     pub format_tu: TimeUnit,
     pub visibility_tu: TimeUnit,
+    /// At `year` cadence, only the years divisible by this are labeled.
+    pub year_step: i32,
 }
 
 /// One shared entry point for line/area's fit and rail-concat arms: L1-L5
@@ -2855,6 +2848,7 @@ pub fn resolve_vega_x_labels(
                 collision: gl.collision,
                 format_tu: data_tu,
                 visibility_tu: data_tu,
+                year_step: 1,
             }),
             Some(angle) => {
                 let mut widest = 0.0_f64;
@@ -2869,6 +2863,7 @@ pub fn resolve_vega_x_labels(
                     collision: None,
                     format_tu: data_tu,
                     visibility_tu: data_tu,
+                    year_step: 1,
                 })
             }
         };
@@ -2881,13 +2876,14 @@ pub fn resolve_vega_x_labels(
         // (`resolve_axis_x_overlap`): every band keeps its label at the
         // axis's own grain.
         return Ok(ResolvedVegaLabels {
-            labels: build_temporal_labels(domain, data_tu, format_tu, format_tu, fiscal_start, authored)?,
+            labels: build_temporal_labels(domain, data_tu, format_tu, format_tu, 1, fiscal_start, authored)?,
             angle,
             block_height: pinned_block_height(domain, format_tu, authored, angle, font_size, measure)?,
             parity: false,
             collision: None,
             format_tu,
             visibility_tu: format_tu,
+            year_step: 1,
         });
     }
     let dates = parse_domain_dates(domain);
@@ -2913,6 +2909,7 @@ pub fn resolve_vega_x_labels(
         data_tu,
         layout.format_tu,
         layout.visibility_tu,
+        layout.year_step,
         fiscal_start,
         authored,
     )?;
@@ -2924,6 +2921,7 @@ pub fn resolve_vega_x_labels(
         collision: layout.collision,
         format_tu: layout.format_tu,
         visibility_tu: layout.visibility_tu,
+        year_step: layout.year_step,
     })
 }
 
@@ -2992,12 +2990,14 @@ impl TemporalLabel {
 /// `visibility_tu` are silently skipped (no label emitted at those x
 /// positions); the ones that survive are rendered in `format_tu`'s
 /// vocabulary — a label names the tick it sits on, never the coarser
-/// interval `visibility_tu` may have stepped to.
+/// interval `visibility_tu` may have stepped to. `year_step` keeps only the
+/// years divisible by it (1 keeps every year).
 pub fn build_temporal_labels(
     domain: &[String],
     data_tu: TimeUnit,
     format_tu: TimeUnit,
     visibility_tu: TimeUnit,
+    year_step: i32,
     fiscal_start: u8,
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<TemporalLabel>, String> {
@@ -3011,7 +3011,7 @@ pub fn build_temporal_labels(
         .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
         .collect();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
-    let openers = openers_at(&dates, data_tu, visibility_tu, fiscal_start);
+    let openers = openers_at(&dates, data_tu, visibility_tu, year_step, fiscal_start);
     label_openers(&dated, &dates, &openers, format_tu, fiscal_start, authored)
 }
 
@@ -3499,8 +3499,7 @@ pub fn complete_ordinal_rows(
 /// is a min/max field aggregate (`domain: {fields: [...]}` in the compiled
 /// specs), order-independent, so an unsorted or ragged multi-series union
 /// still maps every value inside [0, 1]. `None` when any entry fails to
-/// parse or the extent is degenerate — callers keep their point-scale
-/// fractions in that case.
+/// parse or the extent is degenerate.
 pub fn utc_position_fractions(domain: &[String]) -> Option<Vec<f64>> {
     let extent = utc_domain_extent(domain)?;
     domain.iter().map(|s| utc_fraction_at(s, extent)).collect()
@@ -3514,26 +3513,32 @@ pub fn utc_position_fractions(domain: &[String]) -> Option<Vec<f64>> {
 /// `utc_position_fractions` (fewer than 2 entries, a parse failure, or a
 /// degenerate span).
 pub fn utc_domain_extent(domain: &[String]) -> Option<(f64, f64)> {
-    if domain.len() < 2 {
+    let days: Vec<f64> = domain.iter().map(|s| date_text_day(s)).collect::<Option<_>>()?;
+    extent_of(&days)
+}
+
+/// `(min, max)` of `days`; `None` for fewer than two or a zero span, which d3 centers instead.
+pub fn extent_of(days: &[f64]) -> Option<(f64, f64)> {
+    if days.len() < 2 {
         return None;
     }
-    let days: Vec<f64> = domain.iter().map(|s| date_text_day(s)).collect::<Option<_>>()?;
     let d0 = days.iter().copied().fold(f64::INFINITY, f64::min);
     let dn = days.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    if dn <= d0 {
-        return None;
-    }
-    Some((d0, dn))
+    (dn > d0).then_some((d0, dn))
+}
+
+/// Position fraction of `day` within an `extent` from [`extent_of`]. A day
+/// outside the domain that produced the extent falls outside `[0, 1]`
+/// (Vega drops an axis label whose scale position lands outside the range,
+/// which is production's actual behavior for a raw weekly opener past the
+/// floored domain's own end).
+pub fn frac_of(day: f64, extent: (f64, f64)) -> f64 {
+    (day - extent.0) / (extent.1 - extent.0)
 }
 
 /// Position fraction of `date` within an `extent` from [`utc_domain_extent`].
-/// Unlike [`utc_position_fractions`], `date` need not be a member of the
-/// domain that produced `extent` — the fraction can fall outside `[0, 1]`
-/// when it doesn't (Vega drops an axis label whose scale position lands
-/// outside the range, which is production's actual behavior for a raw
-/// weekly opener past the floored domain's own end).
 pub fn utc_fraction_at(date: &str, extent: (f64, f64)) -> Option<f64> {
-    Some((date_text_day(date)? - extent.0) / (extent.1 - extent.0))
+    date_text_day(date).map(|day| frac_of(day, extent))
 }
 
 /// A date Vega's `timeunit` transform reads as NaN: JavaScript's Date constructor maps a year
@@ -3550,10 +3555,7 @@ pub fn timeunit_nan(date: &str) -> bool {
 /// `time_unit_detect.py:1376`), so a weekly axis's ticks/labels sit off
 /// their own vertex by the data's weekday offset from Sunday.
 pub fn week_floor(date: &str) -> Option<String> {
-    let (y, m, d) = parse_iso_date(date)?;
-    let days = days_from_civil(y, m, d) - (i64::from(weekday(y, m, d)) + 1) % 7;
-    let (fy, fm, fd) = civil_from_days(days);
-    Some(format!("{fy:04}-{fm:02}-{fd:02}"))
+    time_unit_floor(date, TimeUnit::YearWeek)
 }
 
 /// How Vega-Lite's default description prints an x value: through its `timeUnit`'s format (`%Y W%U` for a week,
@@ -3591,12 +3593,19 @@ pub fn time_unit_specifier(unit: TimeUnit) -> &'static str {
 /// starts; one grained by cadence ([`detect_cadence`]) does not, and its
 /// marks, gridlines and scale domain all sit on the floored dates.
 pub fn time_unit_floor(date: &str, tu: TimeUnit) -> Option<String> {
-    if tu == TimeUnit::YearWeek {
-        return week_floor(date);
-    }
     let (y, m, d) = parse_iso_date(date)?;
-    let (fy, fm, fd) = floor_to_bucket_start((y, m, d), tu, 1);
+    let (fy, fm, fd) = civil_from_days(floor_day(days_from_civil(y, m, d), tu));
     Some(format!("{fy:04}-{fm:02}-{fd:02}"))
+}
+
+/// [`time_unit_floor`] on a day number: the day the enclosing bucket of `tu` starts.
+pub fn floor_day(day: i64, tu: TimeUnit) -> i64 {
+    let (y, m, d) = civil_from_days(day);
+    if tu == TimeUnit::YearWeek {
+        return day - (i64::from(weekday(y, m, d)) + 1) % 7;
+    }
+    let (fy, fm, fd) = floor_to_bucket_start((y, m, d), tu, 1);
+    days_from_civil(fy, fm, fd)
 }
 
 // ── A2: Vega's bare temporal axis ───────────────────────────────────────────
@@ -3973,13 +3982,15 @@ fn opens_label_period(
 /// weekly axis in the week vocabulary reads each Sunday tick as its Monday
 /// bucket, `utcOffset('day', toDate(datum.value), 1)`
 /// (`time_unit_detect.py:2013-2017`): the text, the gate and the anchor all
-/// see the Monday.
+/// see the Monday. `year_step` keeps only the years divisible by it, the
+/// thinning the ladder resolved at `year` cadence (1 keeps every year).
 pub fn interval_tick_labels(
     tick_days: &[i64],
     domain: &[String],
     data_tu: TimeUnit,
     format_tu: TimeUnit,
     visibility_tu: TimeUnit,
+    year_step: i32,
     fiscal_start: u8,
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<TemporalLabel>, String> {
@@ -4003,6 +4014,9 @@ pub fn interval_tick_labels(
             Some(key) => anchor_key((y, m, d)) == key,
             None => idx == 0,
         };
+        if y % year_step != 0 {
+            continue;
+        }
         if is_anchor || opens_label_period(y, m, d, data_tu, visibility_tu, fiscal_start) {
             let (row1, row2) = label_rows(y, m, d, format_tu, is_anchor, fiscal_start, authored)?;
             labels.push(TemporalLabel { domain_idx: idx, row1, row2 });
@@ -4282,6 +4296,11 @@ mod tests {
         assert_eq!(date_text_day("2024-01-01T12:00:00.5"), Some(jan_first + 0.5 + 0.5 / 86_400.0));
         assert_eq!(date_text_day("2024-01-01T12:00:00Z05:00"), None);
         assert_eq!(date_text_day("2024-01-01T12:00:00."), None);
+        // Every clock and offset `datetime.fromisoformat` takes, as `x_type::parse_date` does.
+        assert_eq!(date_text_day("2024-01-01T12"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01T120000"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01 00:00:00+05"), Some(jan_first - 5.0 / 24.0));
+        assert_eq!(date_text_day("2024-01-01T12:00:00+0600"), Some(jan_first + 0.25));
         assert_eq!(date_text_day("2024-01-01T12:00:00.123456"), Some(jan_first + 0.5 + 0.123 / 86_400.0));
         for unread in ["soon", "2024-01-01T", "2024/01/05", "2024-01-01T24:00:00", "2024-01-01T1:00", "2024-01-01T12:00:00+6", "2024-01-01T12:00:00.x", "2024-01-01T12:00:00Zulu"] {
             assert_eq!(date_text_day(unread), None, "{unread}");
@@ -4907,6 +4926,7 @@ mod tests {
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
             1,
+            1,
             None,
         )
         .unwrap();
@@ -4973,7 +4993,7 @@ mod tests {
     fn wk_52_coarsens_to_month_openers() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 6), 7, 52);
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearWeek,
             None,
@@ -5006,7 +5026,7 @@ mod tests {
     fn dy_90_coarsens_to_monday_rung() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 1), 1, 90);
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonthDate,
             None,
@@ -5038,7 +5058,7 @@ mod tests {
     fn monthly_data_needs_no_coarsening() {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonth,
             None,
@@ -5072,7 +5092,7 @@ mod tests {
     fn monthly_row1_fits_despite_wider_anchor_year_row() {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonth,
             None,
@@ -5108,7 +5128,7 @@ mod tests {
         for m in 1u8..=11 {
             domain.push(format!("2025-{m:02}-01"));
         }
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonth,
             None,
@@ -5136,7 +5156,7 @@ mod tests {
     fn wk_130_visibility_steps_to_quarter_openers_with_month_text() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 6), 7, 130);
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearWeek,
             None,
@@ -5163,7 +5183,7 @@ mod tests {
         // Wide enough that all 52 weekly labels clear each other — authored
         // format used as-is, no visibility thinning needed.
         let domain = iso_range((2025, 1, 6), 7, 52);
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearWeek,
             Some(TimeUnit::YearWeek),
@@ -5192,7 +5212,7 @@ mod tests {
     fn authored_native_format_still_thins_visibility() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 1), 1, 90);
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonthDate,
             Some(TimeUnit::YearMonthDate),
@@ -5226,7 +5246,7 @@ mod tests {
     fn continuous_axis_keeps_native_daily_cadence_when_it_fits() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 20), 1, 6);
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonthDate,
             None,
@@ -5268,7 +5288,7 @@ mod tests {
                 &mut char_measure,
             )
             .unwrap();
-            (build_temporal_labels(&domain, TimeUnit::YearMonthDate, tus.0, tus.1, 1, None).unwrap(), tus)
+            (build_temporal_labels(&domain, TimeUnit::YearMonthDate, tus.0, tus.1, tus.2, 1, None).unwrap(), (tus.0, tus.1))
         };
         assert_eq!((format_tu, visibility_tu), (TimeUnit::YearWeek, TimeUnit::YearWeek));
         assert_eq!(labels[0].row1, "24");
@@ -5279,13 +5299,38 @@ mod tests {
         }
     }
 
+    /// 20 daily bars at a 29px band: the day row clears (`10`/`11` need 28px),
+    /// and the opener's `Mar'26` context row has no neighbor on its line, so
+    /// every day keeps its label (`_submonth_candidate_fits`).
+    #[test]
+    fn bucket_aligned_daily_axis_checks_the_day_and_context_rows_apart() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain = iso_range((2026, 3, 2), 1, 20);
+        let (labels, visibility_tu, year_step) = resolve_temporal_labels(
+            &domain,
+            TimeUnit::YearMonthDate,
+            None,
+            580.0,
+            false,
+            true,
+            false,
+            1,
+            true,
+            None,
+            &mut char_measure,
+        )
+        .unwrap();
+        assert_eq!(visibility_tu, TimeUnit::YearMonthDate);
+        assert_eq!(labels.len(), 20);
+    }
+
     /// The same domain and width with neither gate set (not bucket-aligned,
     /// not continuous) jumps from the native misfit straight to month openers.
     #[test]
     fn daily_axis_without_either_gate_keeps_month_openers() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 2, 19), 1, 150);
-        let (labels, visibility_tu) = resolve_temporal_labels(
+        let (labels, visibility_tu, year_step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonthDate,
             None,
@@ -5315,7 +5360,7 @@ mod tests {
         let mut gapped = full.clone();
         gapped.remove(10);
         let resolve = |domain: &[String]| {
-            let (labels, visibility_tu) = resolve_temporal_labels(
+            let (labels, visibility_tu, year_step) = resolve_temporal_labels(
                 domain,
                 TimeUnit::YearMonthDate,
                 None,
@@ -5391,7 +5436,7 @@ mod tests {
                 format!("{year:04}-{month:02}-01")
             })
             .collect();
-        let (labels, _vt) = resolve_temporal_labels(
+        let (labels, _vt, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonth,
             None,
@@ -5783,6 +5828,100 @@ mod tests {
         assert_eq!(layout.visibility_tu, TimeUnit::Year);
         assert!(!layout.parity, "4 Januaries at 44px spacing clear under the 90px sparse ceiling");
         assert_eq!(layout.angle, 0.0);
+    }
+
+    fn years(first: i32, last: i32) -> Vec<(i32, u8, u8)> {
+        (first..=last).map(|y| (y, 1, 1)).collect()
+    }
+
+    fn year_layout(dates: &[(i32, u8, u8)], width: f64, skip: bool) -> VegaLabelLayout {
+        let _locale = crate::time_locale::en_us_scope();
+        resolve_vega_label_layout(
+            dates,
+            TimeUnit::Year,
+            TimeUnit::Year,
+            true,
+            width,
+            true,
+            false,
+            false,
+            1,
+            skip,
+            true,
+            Some(&TILT_LADDER),
+            11.0,
+            None,
+            &mut char_measure,
+        )
+        .unwrap()
+    }
+
+    /// A dense yearly axis steps on multiples of 5, then 10 — never parity by
+    /// index, never a tilt: 36 years at 400px (11px bands, 28px labels).
+    #[test]
+    fn a_dense_yearly_axis_steps_on_multiples_of_5_then_10() {
+        let dates = years(1990, 2025);
+        let five = year_layout(&dates, 400.0, true);
+        assert_eq!((five.visibility_tu, five.year_step), (TimeUnit::Year, 5));
+        assert!(!five.parity && five.angle == 0.0 && five.collision.is_none());
+        let ten = year_layout(&dates, 200.0, true);
+        assert_eq!((ten.visibility_tu, ten.year_step), (TimeUnit::Year, 10));
+        assert!(!ten.parity && ten.angle == 0.0);
+        let all = year_layout(&dates, 2000.0, true);
+        assert_eq!(all.year_step, 1, "every year clears when there is room");
+    }
+
+    /// Only a width that even 10-year labels cannot clear falls back to parity.
+    #[test]
+    fn a_pathologically_narrow_yearly_axis_still_falls_back_to_parity() {
+        let layout = year_layout(&years(1990, 2025), 40.0, true);
+        assert_eq!(layout.year_step, 1);
+        assert!(layout.parity);
+    }
+
+    /// Without `overlap.skip` the ladder never thins, years included.
+    #[test]
+    fn a_yearly_axis_without_skip_never_steps() {
+        assert_eq!(year_layout(&years(1990, 2025), 400.0, false).year_step, 1);
+    }
+
+    /// The labels follow the step: bar's ordinal path and the vertical ladder
+    /// both name only multiples, and report the thinning.
+    #[test]
+    fn year_steps_label_only_the_multiples_on_ordinal_and_vertical_axes() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain: Vec<String> = (1990..=2025).map(|y| format!("{y}-01-01")).collect();
+        let (labels, visibility_tu, step) = resolve_temporal_labels(
+            &domain, TimeUnit::Year, None, 300.0, false, true, false, 1, true, None, &mut char_measure,
+        )
+        .unwrap();
+        assert_eq!((visibility_tu, step), (TimeUnit::Year, 5));
+        let texts: Vec<&str> = labels.iter().map(|l| l.row1.as_str()).collect();
+        assert_eq!(texts, ["1990", "1995", "2000", "2005", "2010", "2015", "2020", "2025"]);
+        let vertical = resolve_vertical_temporal_labels(&domain, TimeUnit::Year, 300.0, 1, true, 11.0, 4.0, None).unwrap();
+        assert!(vertical.fits);
+        assert!(vertical.labels.iter().all(|l| l.row1.parse::<i32>().unwrap() % 5 == 0));
+    }
+
+    /// Authored year ticks (`ticks.time_unit: year`) label the ticks, not the
+    /// opener set: the ladder's year step must thin them too, anchored on
+    /// multiples even when the first tick is not one.
+    #[test]
+    fn authored_year_interval_ticks_honor_the_year_step() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain: Vec<String> = (1991..=2025).map(|y| format!("{y}-01-01")).collect();
+        let extent = utc_domain_extent(&domain).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Year(1));
+        let texts = |step| -> Vec<String> {
+            interval_tick_labels(&ticks, &domain, TimeUnit::Year, TimeUnit::Year, TimeUnit::Year, step, 1, None)
+                .unwrap()
+                .into_iter()
+                .map(|l| l.row1)
+                .collect()
+        };
+        assert_eq!(texts(1).len(), 35);
+        assert_eq!(texts(5), ["1995", "2000", "2005", "2010", "2015", "2020", "2025"]);
+        assert_eq!(texts(10), ["2000", "2010", "2020"]);
     }
 
     /// L1+L3: 30 consecutive daily dates in one month (<2 month openers) at
@@ -6224,6 +6363,7 @@ mod tests {
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
             1,
+            1,
             None,
         )
         .expect("labels");
@@ -6253,6 +6393,7 @@ mod tests {
             TimeUnit::YearMonth,
             TimeUnit::YearQuarter,
             1,
+            1,
             None,
         )
         .expect("labels");
@@ -6279,6 +6420,7 @@ mod tests {
             TimeUnit::YearMonth,
             TimeUnit::YearQuarter,
             TimeUnit::YearQuarter,
+            1,
             1,
             None,
         )
@@ -6319,6 +6461,7 @@ mod tests {
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
             1,
+            1,
             None,
         )
         .expect("labels");
@@ -6351,7 +6494,7 @@ mod tests {
         let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
         assert_eq!(ticks.len(), 4);
         let labels = interval_tick_labels(
-            &ticks, &mondays, TimeUnit::YearWeek, TimeUnit::YearWeek, TimeUnit::YearWeek, 1, None,
+            &ticks, &mondays, TimeUnit::YearWeek, TimeUnit::YearWeek, TimeUnit::YearWeek, 1, 1, None,
         )
         .expect("labels");
         assert_eq!(
@@ -6374,6 +6517,7 @@ mod tests {
             TimeUnit::YearMonthDate,
             TimeUnit::YearMonthDate,
             TimeUnit::YearMonthDate,
+            1,
             1,
             None,
         )
@@ -6586,7 +6730,7 @@ mod tests {
     fn an_authored_format_is_measured_by_the_ladder_and_painted_at_the_cadence_it_lands_on() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
-        let (labels, vis) = resolve_temporal_labels(
+        let (labels, vis, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonth,
             None,
@@ -6612,7 +6756,7 @@ mod tests {
     fn the_built_in_vocabulary_clears_a_rung_the_authored_text_does_not() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
-        let (labels, vis) = resolve_temporal_labels(
+        let (labels, vis, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonth,
             None,
@@ -6636,7 +6780,7 @@ mod tests {
     fn the_ladder_steps_coarser_only_under_overlap_skip() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
-        let (labels, vis) = resolve_temporal_labels(
+        let (labels, vis, _step) = resolve_temporal_labels(
             &domain, TimeUnit::YearMonth, None, 400.0, false, true, false, 1, false, authored("%b %Y"),
             &mut char_measure,
         )
@@ -6652,7 +6796,7 @@ mod tests {
     #[test]
     fn an_authored_format_on_daily_data_enters_the_ladder_at_the_day_grain() {
         let domain = iso_range((2024, 1, 1), 1, 45);
-        let (labels, vis) = resolve_temporal_labels(
+        let (labels, vis, _step) = resolve_temporal_labels(
             &domain,
             TimeUnit::YearMonthDate,
             None,

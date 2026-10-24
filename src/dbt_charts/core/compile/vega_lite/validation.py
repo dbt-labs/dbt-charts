@@ -1,4 +1,4 @@
-"""Helpers for validating Vega-Lite contracts (projection input + emission boundary)."""
+"""Helpers for validating Vega-Lite contracts (emission boundary)."""
 
 from __future__ import annotations
 
@@ -7,13 +7,11 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.vega_lite.contracts import (
-    Projection,
     TopLevelCompositeSpec,
     TopLevelSpec,
     TopLevelUnitSpec,
 )
 
-_PROJECTION_ADAPTER: TypeAdapter[Any] = TypeAdapter(Projection)
 _TOP_LEVEL_SPEC_ADAPTER: TypeAdapter[Any] = TypeAdapter(TopLevelSpec)
 
 
@@ -70,17 +68,6 @@ def _validate_with_adapter_plain(
 
     return to_plain_dict(
         _validate_with_adapter(value, adapter=adapter, field_name=field_name)
-    )
-
-
-def validate_projection_definition(value: Any) -> str | Projection | None:
-    """Validate authored projection against the Projection contract."""
-    if value is None or isinstance(value, str):
-        return value
-    if isinstance(value, Projection):
-        return value
-    return _validate_with_adapter(
-        value, adapter=_PROJECTION_ADAPTER, field_name="projection"
     )
 
 

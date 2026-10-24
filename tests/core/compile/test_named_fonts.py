@@ -26,7 +26,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 
 from .._board_utils import merged_patch
 
-KNOWN = "body, caption, code, heading, label, numeral, section, subtitle"
+KNOWN = "body, caption, code, heading, label, numeral, secondary, section, subtitle"
 
 
 def _pre_style(*patches: dict[str, Any]):
@@ -193,8 +193,8 @@ def test_registry_unknown_parent_names_entry_and_known_fonts() -> None:
         _pre_style({"fonts": {"h2": {"extends": "nope", "size": 9}}})
     assert (
         "Unknown font 'nope' at style.fonts.h2. "
-        "Known fonts: body, caption, code, h2, heading, label, numeral, section, subtitle."
-        in str(err.value)
+        "Known fonts: body, caption, code, h2, heading, label, numeral, secondary, "
+        "section, subtitle." in str(err.value)
     )
 
 
@@ -588,8 +588,8 @@ def test_label_size_reaches_chrome_slots(path: str) -> None:
     assert _slot(resolved, path).size == 9
 
 
-def test_label_color_reaches_the_table_empty_state() -> None:
-    style = _pre_style({"fonts": {"label": {"color": "#123456"}}})
+def test_secondary_color_reaches_the_table_empty_state() -> None:
+    style = _pre_style({"fonts": {"secondary": {"color": "#123456"}}})
     resolved = apply_inherit(style, get_inherit_graph())
     assert resolved.charts.table.empty_state.font.color == "#123456"
 

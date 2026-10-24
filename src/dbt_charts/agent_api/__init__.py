@@ -75,6 +75,11 @@ if TYPE_CHECKING:
         DoctorReport as DoctorReport,
         run_doctor as run_doctor,
     )
+    from dbt_charts.agent_api.hex_project import (
+        HexProject as HexProject,
+        import_hex as import_hex,
+        list_hex_projects as list_hex_projects,
+    )
     from dbt_charts.agent_api.import_closure import (
         board_import_closure as board_import_closure,
     )
@@ -82,11 +87,17 @@ if TYPE_CHECKING:
         InitResult as InitResult,
         init_project as init_project,
     )
+    from dbt_charts.agent_api.looker import import_looker as import_looker
     from dbt_charts.agent_api.migrate import (
         MigrateError as MigrateError,
         MigrateNote as MigrateNote,
         MigrateSummary as MigrateSummary,
         migrate_paths as migrate_paths,
+    )
+    from dbt_charts.agent_api.omni import (
+        OmniDashboard as OmniDashboard,
+        import_omni as import_omni,
+        list_omni_dashboards as list_omni_dashboards,
     )
     from dbt_charts.agent_api.project_session import ProjectSession as ProjectSession
     from dbt_charts.agent_api.query import (
@@ -94,6 +105,12 @@ if TYPE_CHECKING:
         query_board as query_board,
     )
     from dbt_charts.agent_api.schema_hints import SchemaHints as SchemaHints
+    from dbt_charts.agent_api.sigma import (
+        SigmaWorkbook as SigmaWorkbook,
+        import_sigma as import_sigma,
+        list_sigma_workbooks as list_sigma_workbooks,
+    )
+    from dbt_charts.agent_api.source_bundle import BundleError as BundleError
     from dbt_charts.agent_api.validate import ValidateResult as ValidateResult
     from dbt_charts.agent_api.validate_query import QueryDiagnostic as QueryDiagnostic
     from dbt_charts.agent_api.warmup import warm_process as warm_process
@@ -188,6 +205,17 @@ __all__ = [
     "init_project",
     "run_doctor",
     "migrate_paths",
+    "import_looker",
+    "OmniDashboard",
+    "import_omni",
+    "list_omni_dashboards",
+    "SigmaWorkbook",
+    "import_sigma",
+    "list_sigma_workbooks",
+    "HexProject",
+    "import_hex",
+    "list_hex_projects",
+    "BundleError",
     "query_board",
     "QueryRefCalls",
     "extract_ref_calls",
@@ -247,6 +275,17 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "MigrateNote": ("dbt_charts.agent_api.migrate", "MigrateNote"),
     "MigrateSummary": ("dbt_charts.agent_api.migrate", "MigrateSummary"),
     "migrate_paths": ("dbt_charts.agent_api.migrate", "migrate_paths"),
+    "import_looker": ("dbt_charts.agent_api.looker", "import_looker"),
+    "OmniDashboard": ("dbt_charts.agent_api.omni", "OmniDashboard"),
+    "import_omni": ("dbt_charts.agent_api.omni", "import_omni"),
+    "list_omni_dashboards": ("dbt_charts.agent_api.omni", "list_omni_dashboards"),
+    "SigmaWorkbook": ("dbt_charts.agent_api.sigma", "SigmaWorkbook"),
+    "import_sigma": ("dbt_charts.agent_api.sigma", "import_sigma"),
+    "list_sigma_workbooks": ("dbt_charts.agent_api.sigma", "list_sigma_workbooks"),
+    "HexProject": ("dbt_charts.agent_api.hex_project", "HexProject"),
+    "import_hex": ("dbt_charts.agent_api.hex_project", "import_hex"),
+    "list_hex_projects": ("dbt_charts.agent_api.hex_project", "list_hex_projects"),
+    "BundleError": ("dbt_charts.agent_api.source_bundle", "BundleError"),
     "ProjectSession": ("dbt_charts.agent_api.project_session", "ProjectSession"),
     "QueryBoardResult": ("dbt_charts.agent_api.query", "QueryBoardResult"),
     "query_board": ("dbt_charts.agent_api.query", "query_board"),

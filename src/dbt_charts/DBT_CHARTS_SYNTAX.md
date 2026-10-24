@@ -420,12 +420,13 @@ instead, the ramp markdown headings use.
 
 ### Named fonts
 
-Text is styled through eight named fonts under `style.fonts`: `heading`
+Text is styled through nine named fonts under `style.fonts`: `heading`
 (board and chart titles, markdown `#` to `######`), `section` (section
 title sizes), `subtitle`, `body` (prose),
 `label` (axis, legend, tooltip, KPI label, table cells and header,
 variable controls), `caption` (footers, timestamps), `numeral` (KPI values,
-quantitative axis labels) and `code`. Set a family or size once and every slot
+quantitative axis labels), `secondary` (row numbers, "+N" notes, empty-state
+marks, spark_bar subtitles, KPI support text) and `code`. Set a family or size once and every slot
 bound to that font follows. Do not repeat `family:` on individual slots.
 
 ```yaml
@@ -795,7 +796,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `geo_source` | string | Named geographic data source |
 | `lookup` | string | Field that joins to the geographic source key |
 | `value` | string | KPI: column reference (string column name); map: data field for fill color |
-| `projection` | string \| object | Projection name (e.g. `mercator`, `albersUsa`) or VL projection config |
+| `projection` | string \| object | One of Vega's 17 projection names (e.g. `mercator`, `albersUsa`), or an object with `type` plus `center`, `rotate`, `scale`, `translate`, `parallels`, `clipAngle`, `clipExtent`, `precision`, `reflectX`, `reflectY`, `pointRadius`. Required unless a built-in `geo_source` supplies one |
 | `latitude` | string | Latitude field (point/bubble map) |
 | `longitude` | string | Longitude field (point/bubble map) |
 | `background` | string \| object | Background channel — color, `{value}`, `{field, scale/when}`, or map layer |
@@ -804,6 +805,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — every code is listed at https://docs.dbtcharts.com/reference/warnings/) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
+| `annotations` | list | Rules, bands, notes and trends drawn in data coordinates on `bar`/`line`/`area`/`scatter`; see [Annotations](#annotations) |
 | `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
 | `spanners` | list | Flat `table` only: `[{label, columns: [...]}]` — a label centered over a run of adjacent columns in an extra header row. Columns must be adjacent in query order and in at most one spanner; not combinable with `rows`/`columns`/`values` pivot channels |
@@ -1267,7 +1269,52 @@ layers:
       title: "Target"
 ```
 
-The base chart (`type: bar`, `type: line`, or `type: area`) sets the primary mark, `x`, `y`, and `query`. Additional marks go in `layers:`. Each layer accepts: `type`, `y`, `label`, `color` (data channel, bare field name), `query` (overrides the base chart query for this layer), `x` (layer x-values extend the base x-scale), `axis_y`, and `style` (marks-only patch). Vega-Lite `encoding:` is not allowed inside a layer — use the typed channels.
+The base chart (`type: bar`, `type: line`, or `type: area`) sets the primary mark, `x`, `y`, and `query`. Additional marks go in `layers:`. Each layer accepts: `type`, `y`, `label`, `color` (data channel, bare field name), `query` (overrides the base chart query for this layer), `x` (layer x-values extend the base x-scale), `axis_y`, `legend` (`false` drops the layer's legend entry and keeps the layer drawn; default `true`), and `style` (marks-only patch). A colorless line layer holding one value across its rows is a reference line: it draws no automatic point marks. Vega-Lite `encoding:` is not allowed inside a layer — use the typed channels.
+
+### Annotations
+
+`annotations:` on a `bar`, `line`, `area`, or `scatter` chart draws the author's statement about the data: a list of entries with an explicit `type`. Full reference: https://docs.dbtcharts.com/charts/annotations/
+
+```yaml
+type: line
+x: month
+y: revenue
+annotations:
+  - type: rule
+    y: 25
+    text: FY goal
+  - type: band
+    x:
+      from: 2026-04-01
+      to: 2026-07-01
+    text: Summer promo
+  - type: note
+    x: 2026-03-01
+    y: 19.2
+    text: Slow month
+    connector: arrow
+  - type: trend
+    fit: linear()
+    interval: confidence(95)
+```
+
+| Type | Anchor | Draws | `style.marks` keys |
+|------|--------|-------|--------------------|
+| `rule` | `x` or `y` (a segment when the other axis gets a range) | Line across the plot | `rule`, `text` |
+| `band` | `x` and/or `y` range, or one category | Shaded region | `rect`, `text` |
+| `note` | `x` and `y` (a value, `min()`, `max()`), or none for a frame note | Text at a point; `connector` as `line` or `arrow`, `enclose` as `circle` or `rect` | `text`, `line`, `circle`, `rect` |
+| `trend` | `fit:` (required), optional `interval:`, `x:` range | Fitted curve | `line`, `area`, `text` |
+
+Common fields: `text` (one line; `{{ value | format }}` prints the anchor, `{{ series }}` the series), `plane` (`background` or `foreground`; notes default `foreground`, rules/bands/trends `background`, everything but bands `foreground` on area), `series`, `y_column`, `style`.
+
+- **Anchors:** a literal in the axis column's type, a range (`from:`/`to:`, half-open `[from, to)`, either optional), a category on a discrete axis, an aggregate (`min()`, `max()`, `avg()`, `median()`, `percentile(<0-100>)`), or a clock (`now()`, `current(day|week|month|quarter|year)`; date x only). No nesting or arithmetic. Aggregates are an error on a categorical axis; on a time axis only `min()`/`max()`.
+- **`fit`:** `linear()`, `polynomial(<order >= 2>)`, `exponential()`, `log()`, `power()`. **`interval`:** `confidence(<pct>)`, `prediction(<pct>)`. A categorical x cannot be fitted.
+- **`series`:** required on a computed annotation (aggregate or trend) when the chart has `color`: `each`, a list of names, or `total` (pooled; the per-x sum when stacked). Error on a literal-only annotation. Only `total` on a stacked chart.
+- **`y_column`:** names the y column (picks its axis and rows). Required for a computed y anchor, trend, or derived note on a chart with several y columns or `layers:`.
+- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes and trends).
+- **Theme:** `style.annotations.<rule|band|note|trend>.marks.*` on the board or a chart; an annotation's own `style:` wins.
+- **Not accepted** on pie, donut, map, table, or KPI charts.
+- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warning `WARN-ANNOTATION-NOTHING-DRAWN`.
 
 ### Conditional formatting
 

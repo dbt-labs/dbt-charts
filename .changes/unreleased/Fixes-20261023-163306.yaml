@@ -1,0 +1,3 @@
+kind: Fixes
+body: Long legend entries shorten to fit the card and show the full name on hover.
+time: 2026-10-23T16:33:06.97285-07:00

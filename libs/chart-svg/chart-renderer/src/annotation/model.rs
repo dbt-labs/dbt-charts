@@ -27,6 +27,13 @@ impl Scalar {
         }
     }
 
+    pub fn number(&self) -> Option<f64> {
+        match self {
+            Scalar::Number(n) => Some(*n),
+            Scalar::Date(_) => None,
+        }
+    }
+
     /// The scalar as written, for the aria label.
     pub fn text(&self) -> String {
         match self {
@@ -56,6 +63,11 @@ pub enum Anchor {
 }
 
 impl Anchor {
+    /// A rule's or note's anchor: one value, or one category's slot center.
+    pub fn is_point(&self) -> bool {
+        !matches!(self, Anchor::Range { .. })
+    }
+
     fn text(&self) -> String {
         match self {
             Anchor::Value { value } => value.text(),
@@ -125,6 +137,7 @@ pub struct Trend {
 pub struct Stroke {
     pub color: String,
     pub width: f64,
+    /// A dash pattern in px, or none for solid.
     pub dasharray: Option<String>,
 }
 
@@ -141,8 +154,8 @@ pub struct RectStyle {
     pub opacity: f64,
     pub fill: String,
     pub stroke: Option<Stroke>,
-    /// Enclosure inset around a note's text box, px.
-    pub padding: f64,
+    /// Enclosure inset around a note's text box, px; a band has none.
+    pub padding: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +171,8 @@ pub struct LineStyle {
     pub opacity: f64,
     pub curve: Curve,
     pub stroke: Stroke,
+    /// A connected note's anchor-to-text distance, px; a trend has none.
+    pub length: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -172,6 +187,8 @@ pub struct AreaStyle {
 pub struct CircleStyle {
     pub opacity: f64,
     pub radius: f64,
+    /// Outer radius of the point marks a connector clears, halo and stroke included, px; 0 when none.
+    pub point_radius: f64,
     pub stroke: Stroke,
 }
 
@@ -189,6 +206,8 @@ pub struct Font {
     pub size: f64,
     pub weight: f64,
     pub style: FontStyle,
+    /// Advance between wrapped lines, as a multiple of `size`.
+    pub line_height: f64,
     pub color: String,
 }
 
@@ -241,22 +260,71 @@ pub struct TextStyle {
     pub font: Font,
     /// Canvas-colored stroke width behind the text, px; 0 = none.
     pub halo: f64,
+    /// Opacity of the halo as a whole, 0 to 1.
+    pub halo_opacity: f64,
     #[serde(rename = "box")]
     pub frame: BoxStyle,
     pub position: Position,
     pub dx: f64,
     pub dy: f64,
+    /// Wrap width of a frame note's or trend's text, px, kept inside the plot; `None` keeps the text on one line.
+    pub max_width: Option<f64>,
+    /// A trend's text takes at most this share of the plot's width beside the
+    /// plot; the wrap measure shrinks to fit. `None` caps nothing.
+    pub max_share: Option<f64>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Style {
-    pub rule: RuleStyle,
-    pub rect: RectStyle,
-    pub line: LineStyle,
-    pub area: AreaStyle,
-    pub circle: CircleStyle,
+    pub rule: Option<RuleStyle>,
+    pub rect: Option<RectStyle>,
+    pub line: Option<LineStyle>,
+    pub area: Option<AreaStyle>,
+    pub circle: Option<CircleStyle>,
     pub text: TextStyle,
+}
+
+/// The marks each kind draws; `validate` refuses any other set, so the
+/// accessors below only read marks the kind owns.
+const DRAWN: [(Kind, [bool; 5]); 4] = [
+    // rule, rect, line, area, circle
+    (Kind::Rule, [true, false, false, false, false]),
+    (Kind::Band, [false, true, false, false, false]),
+    (Kind::Note, [false, true, true, false, true]),
+    (Kind::Trend, [false, false, true, true, false]),
+];
+
+impl Style {
+    pub fn rule(&self) -> &RuleStyle {
+        self.rule.as_ref().expect("a rule carries the rule mark")
+    }
+
+    pub fn rect(&self) -> &RectStyle {
+        self.rect.as_ref().expect("a band or note carries the rect mark")
+    }
+
+    pub fn line(&self) -> &LineStyle {
+        self.line.as_ref().expect("a note or trend carries the line mark")
+    }
+
+    pub fn area(&self) -> &AreaStyle {
+        self.area.as_ref().expect("a trend carries the area mark")
+    }
+
+    pub fn circle(&self) -> &CircleStyle {
+        self.circle.as_ref().expect("a note carries the circle mark")
+    }
+
+    fn present(&self) -> [bool; 5] {
+        [
+            self.rule.is_some(),
+            self.rect.is_some(),
+            self.line.is_some(),
+            self.area.is_some(),
+            self.circle.is_some(),
+        ]
+    }
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -291,10 +359,17 @@ impl Annotation {
     /// resolve bug is refused here instead of drawn.
     pub fn validate(&self, chart_id: &str) -> Result<(), Diagnostic> {
         let fail = |reason: &str| Err(self.payload_error(chart_id, reason));
-        let is_value = |a: &Option<Anchor>| matches!(a, Some(Anchor::Value { .. }));
+        let is_point = |a: &Option<Anchor>| a.as_ref().is_some_and(Anchor::is_point);
         let is_range = |a: &Option<Anchor>| matches!(a, Some(Anchor::Range { .. }));
         if self.text.as_deref().is_some_and(|t| t.contains('\n')) {
             return fail("text is single-line; it holds a line break");
+        }
+        let frame_note = self.kind == Kind::Note && self.x.is_none();
+        if self.style.text.max_width.is_some() && !(frame_note || self.kind == Kind::Trend) {
+            return fail("only a frame note or a trend wraps its text");
+        }
+        if self.style.text.max_share.is_some() && self.kind != Kind::Trend {
+            return fail("only a trend caps its text by a share of the plot");
         }
         if self.kind != Kind::Note && (self.connector != Connector::None || self.enclose.is_some()) {
             return fail("connector and enclose are note-only");
@@ -302,18 +377,25 @@ impl Annotation {
         if self.kind != Kind::Trend && self.trend.is_some() {
             return fail("trend geometry on a non-trend annotation");
         }
+        let drawn = DRAWN.iter().find(|(kind, _)| *kind == self.kind).map(|(_, marks)| *marks);
+        if drawn != Some(self.style.present()) {
+            return fail("style marks differ from the marks this type draws");
+        }
+        if self.kind == Kind::Note && self.style.rect().padding.is_none() {
+            return fail("a note's rect style needs a padding");
+        }
+        if self.kind == Kind::Note && self.style.line().length.is_none() {
+            return fail("a note's line style needs a length");
+        }
         match self.kind {
             Kind::Rule => {
-                let ok = (is_value(&self.y) && (self.x.is_none() || is_range(&self.x)))
-                    || (is_value(&self.x) && (self.y.is_none() || is_range(&self.y)));
+                let ok = (is_point(&self.y) && (self.x.is_none() || is_range(&self.x)))
+                    || (is_point(&self.x) && (self.y.is_none() || is_range(&self.y)));
                 if !ok {
-                    return fail("a rule takes one value anchor, the other axis a range or nothing");
+                    return fail("a rule takes one value or category anchor, the other axis a range or nothing");
                 }
             }
             Kind::Band => {
-                if matches!(self.y, Some(Anchor::Category { .. })) {
-                    return fail("a band's y anchor is a value or a range, never a category");
-                }
                 if self.x.is_none() && self.y.is_none() {
                     return fail("a band needs an x or a y anchor");
                 }
@@ -321,22 +403,75 @@ impl Annotation {
             Kind::Note => {
                 let anchored = match (&self.x, &self.y) {
                     (None, None) => false,
-                    (x, y) if is_value(x) && is_value(y) => true,
-                    _ => return fail("a note takes value anchors on both x and y, or neither"),
+                    (x, y) if is_point(x) && is_point(y) => true,
+                    _ => return fail("a note takes value or category anchors on both x and y, or neither"),
                 };
                 if !anchored && (self.connector != Connector::None || self.enclose.is_some()) {
                     return fail("a frame note takes no connector or enclose");
                 }
             }
             Kind::Trend => {
-                if self.x.is_some() || self.y.is_some() {
-                    return fail("a trend's geometry is its samples, not anchors");
+                if self.x.is_some() && !is_range(&self.x) || self.y.is_some() {
+                    return fail("a trend takes an x range limiting its span, and no other anchor");
                 }
                 let Some(trend) = &self.trend else { return fail("a trend needs samples") };
                 validate_trend(trend).map_err(|reason| self.payload_error(chart_id, reason))?;
             }
         }
         Ok(())
+    }
+
+    fn x_scalars(&self) -> impl Iterator<Item = &Scalar> + '_ {
+        let anchor: Vec<&Scalar> = match &self.x {
+            Some(Anchor::Value { value }) => vec![value],
+            Some(Anchor::Range { from, to }) => [from, to].into_iter().flatten().collect(),
+            Some(Anchor::Category { .. }) | None => Vec::new(),
+        };
+        let trend = self.trend.iter().flat_map(|t| t.line.iter().map(|(x, _)| x));
+        anchor.into_iter().chain(trend)
+    }
+
+    /// Days of every date it places on x: its anchor, range bounds and trend samples.
+    pub fn x_days(&self) -> impl Iterator<Item = f64> + '_ {
+        self.x_scalars().filter_map(Scalar::days)
+    }
+
+    /// Whole days of the dates it places on x that a bucket scaffold must
+    /// hold. A range is `[from, to)`: `to` is excluded, so only the last whole
+    /// day before it counts. A trend's samples are the fit's drawn curve, not
+    /// buckets; its `x` range bounds the span.
+    pub fn x_covered_days(&self) -> impl Iterator<Item = f64> + '_ {
+        let days: Vec<f64> = match &self.x {
+            Some(Anchor::Value { value }) => value.days().into_iter().collect(),
+            Some(Anchor::Range { from, to }) => from
+                .iter()
+                .filter_map(Scalar::days)
+                .chain(to.iter().filter_map(Scalar::days).map(|d| d.ceil() - 1.0))
+                .collect(),
+            Some(Anchor::Category { .. }) | None => Vec::new(),
+        };
+        days.into_iter()
+    }
+
+    /// Every number it places on the `axis` y scale: its anchor, range bounds,
+    /// trend samples and interval bounds; none when it reads another scale.
+    pub fn y_numbers(&self, axis: YAxis) -> impl Iterator<Item = f64> + '_ {
+        let on_axis = self.y_axis == axis;
+        let anchor: Vec<&Scalar> = match (&self.y, on_axis) {
+            (Some(Anchor::Value { value }), true) => vec![value],
+            (Some(Anchor::Range { from, to }), true) => [from, to].into_iter().flatten().collect(),
+            _ => Vec::new(),
+        };
+        let trend = self.trend.iter().filter(move |_| on_axis).flat_map(|t| {
+            let interval = t.interval.iter().flatten().flat_map(|&(_, lo, hi)| [lo, hi]);
+            t.line.iter().map(|&(_, y)| y).chain(interval)
+        });
+        anchor.into_iter().filter_map(Scalar::number).chain(trend)
+    }
+
+    /// Every number it places on x, the quantitative counterpart of `x_days`.
+    pub fn x_numbers(&self) -> impl Iterator<Item = f64> + '_ {
+        self.x_scalars().filter_map(Scalar::number)
     }
 
     /// The accessible name: the text, else the type and its anchors.
@@ -423,24 +558,25 @@ pub(crate) mod tests {
     /// One unknown key per `deny_unknown_fields` struct, each refused.
     #[test]
     fn every_struct_refuses_an_unknown_key() {
-        let paths: &[&[&str]] = &[
-            &[],
-            &["style"],
-            &["style", "rule"],
-            &["style", "rule", "stroke"],
-            &["style", "rect"],
-            &["style", "line"],
-            &["style", "area"],
-            &["style", "circle"],
-            &["style", "text"],
-            &["style", "text", "font"],
-            &["style", "text", "box"],
-            &["style", "text", "position"],
-            &["y"],
-            &["trend"],
+        // (annotation index, path): each mark is read off an annotation that draws it.
+        let paths: &[(usize, &[&str])] = &[
+            (0, &[]),
+            (0, &["style"]),
+            (0, &["style", "rule"]),
+            (0, &["style", "rule", "stroke"]),
+            (3, &["style", "rect"]),
+            (11, &["style", "line"]),
+            (11, &["style", "area"]),
+            (7, &["style", "circle"]),
+            (0, &["style", "text"]),
+            (0, &["style", "text", "font"]),
+            (0, &["style", "text", "box"]),
+            (0, &["style", "text", "position"]),
+            (0, &["y"]),
+            (11, &["trend"]),
         ];
-        for path in paths {
-            let mut v = contract_json()[if path == &["trend"] { 11 } else { 0 }].clone();
+        for (index, path) in paths {
+            let mut v = contract_json()[*index].clone();
             let mut node = &mut v;
             for key in *path {
                 node = &mut node[*key];
@@ -487,8 +623,6 @@ pub(crate) mod tests {
             (0, Box::new(|v: &mut Value| v["x"] = category())),
             // rule: no anchors
             (0, Box::new(|v: &mut Value| v["y"] = Value::Null)),
-            // band: category y
-            (4, Box::new(|v: &mut Value| v["y"] = category())),
             // band: no anchors
             (4, Box::new(|v: &mut Value| v["y"] = Value::Null)),
             // note: one anchor
@@ -517,11 +651,27 @@ pub(crate) mod tests {
             (11, Box::new(|v: &mut Value| v["trend"]["interval"][1][0] = "2024-02-02".into())),
             // text with a line break
             (0, Box::new(|v: &mut Value| v["text"] = "two\nlines".into())),
+            // a mark the type never draws
+            (0, Box::new(|v: &mut Value| v["style"]["area"] = serde_json::json!({"opacity": 1, "fill": "red"}))),
+            (11, Box::new(|v: &mut Value| v["style"]["rect"] = serde_json::json!({"opacity": 1, "fill": "red", "stroke": null, "padding": null}))),
+            (3, Box::new(|v: &mut Value| v["style"]["rule"] = serde_json::json!({"opacity": 1, "stroke": {"color": "red", "width": 1, "dasharray": null}}))),
+            (3, Box::new(|v: &mut Value| v["style"]["rect"] = Value::Null)),
+            // a note without the rect inset
+            (7, Box::new(|v: &mut Value| v["style"]["rect"]["padding"] = Value::Null)),
+            // a note without the connector length
+            (7, Box::new(|v: &mut Value| v["style"]["line"]["length"] = Value::Null)),
         ];
         for (n, (i, edit)) in cases.into_iter().enumerate() {
             let reason = refused(with(i, edit));
             assert!(!reason.is_empty(), "case {n}");
         }
+    }
+
+    #[test]
+    fn a_trend_takes_an_x_range_but_no_value_or_y_anchor() {
+        let range = serde_json::json!({"kind": "range", "from": 1, "to": 2});
+        with(12, |v| v["x"] = range.clone()).validate("c").unwrap();
+        refused(with(12, |v| v["y"] = range));
     }
 
     #[test]

@@ -5,7 +5,8 @@
 //! below the title.
 
 use crate::common::{Font, TitleBlock, TitleStyle};
-use print::xml_escape_attr;
+use print::print;
+use scene::{Attrs, Extent, Node};
 use measure::FontBook;
 use crate::vega_fit::{self, Bounds, FitMargins, TitleInk};
 use crate::Payload;
@@ -39,20 +40,36 @@ impl<'a> ChartFrame<'a> {
 
     /// [`Self::of`] over a card with no room: the view takes the theme's default width.
     pub fn of_view(payload: &Payload, background: &'a str, x_scale: crate::ViewScale) -> Result<Self, String> {
-        Ok(ChartFrame { view_w: payload.view_width(x_scale)?, ..Self::of(payload, background) })
+        Self::at_view(payload.width, payload.height, payload.padding.as_ref(), payload.board_style.as_ref(), background, x_scale)
+    }
+
+    /// [`Self::at`] over a card with no room: the view takes the theme's default width.
+    pub fn at_view(
+        w: f64,
+        h: f64,
+        padding: Option<&crate::Padding>,
+        board_style: Option<&crate::BoardStyle>,
+        background: &'a str,
+        x_scale: crate::ViewScale,
+    ) -> Result<Self, String> {
+        Ok(ChartFrame { view_w: crate::view_width(w, board_style, x_scale)?, ..Self::at(w, h, padding, background) })
     }
 
     /// The payload's own card, its dims printed as bare numbers.
     pub fn of(payload: &Payload, background: &'a str) -> Self {
-        let pad = payload.padding.as_ref();
+        Self::at(payload.width, payload.height, payload.padding.as_ref(), background)
+    }
+
+    /// A `w` x `h` card, its dims printed as bare numbers.
+    pub fn at(w: f64, h: f64, padding: Option<&crate::Padding>, background: &'a str) -> Self {
         Self::new(
-            payload.width,
-            payload.height,
+            w,
+            h,
             (
-                pad.map_or(0.0, |p| p.left),
-                pad.map_or(0.0, |p| p.right),
-                pad.map_or(0.0, |p| p.top),
-                pad.map_or(0.0, |p| p.bottom),
+                padding.map_or(0.0, |p| p.left),
+                padding.map_or(0.0, |p| p.right),
+                padding.map_or(0.0, |p| p.top),
+                padding.map_or(0.0, |p| p.bottom),
             ),
             background,
             crate::svg::num_full,
@@ -90,21 +107,38 @@ impl<'a> ChartFrame<'a> {
 
     /// Writes the opening `<svg>` tag.
     pub fn root(&self, out: &mut String) {
-        let (w, h) = ((self.dim)(self.view_w), (self.dim)(self.h));
-        out.push_str(&format!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" \
-             viewBox=\"0 0 {w} {h}\">"
-        ));
+        let printed = print(&[self.root_node(Vec::new())]);
+        out.push_str(printed.strip_suffix("</svg>").expect("a childless root prints its end tag"));
     }
 
     /// Writes the background rect.
     pub fn background(&self, out: &mut String) {
-        out.push_str(&format!(
-            "<rect width=\"{}\" height=\"{}\" fill=\"{}\"/>",
-            (self.dim)(self.view_w),
-            (self.dim)(self.h),
-            xml_escape_attr(self.background)
-        ));
+        out.push_str(&print(&[self.background_node()]));
+    }
+
+    /// The root `<svg>` around `children`.
+    fn root_node(&self, children: Vec<Node>) -> Node {
+        let (w, h) = ((self.dim)(self.view_w), (self.dim)(self.h));
+        let attrs = Attrs::new()
+            .set("xmlns", "http://www.w3.org/2000/svg")
+            .set("width", w.as_str())
+            .set("height", h.as_str())
+            .set("viewBox", format!("0 0 {w} {h}"));
+        Node::Svg { extent: Extent { width: self.view_w, height: self.h }, attrs, children }
+    }
+
+    fn background_node(&self) -> Node {
+        Node::Rect(
+            Attrs::new()
+                .set("width", (self.dim)(self.view_w))
+                .set("height", (self.dim)(self.h))
+                .set("fill", self.background),
+        )
+    }
+
+    /// The whole card: root and background around `body`.
+    pub fn svg(&self, body: Vec<Node>) -> Node {
+        self.root_node(std::iter::once(self.background_node()).chain(body).collect())
     }
 
     /// Root and background; returns the byte offset where the background
@@ -192,16 +226,41 @@ impl FrameTitle {
 
     /// Paints the title group with its top-left at `(x, y)`.
     pub fn paint_at(&self, out: &mut String, x: f64, y: f64) {
-        crate::common::emit_title_block_vega(out, &self.block, self.style.as_ref(), x, y, self.font_size);
+        out.push_str(&print(&self.nodes_at(x, y)));
+    }
+
+    /// The title group with its top-left at `(x, y)`.
+    pub fn nodes_at(&self, x: f64, y: f64) -> Vec<Node> {
+        crate::common::title_block_nodes(&self.block, self.style.as_ref(), x, y, self.font_size)
     }
 
     /// Paints the title at the fit's `title_pos` relative to the body
     /// `origin`; false when there is nothing to paint (untitled, or no fit).
     pub fn paint(&self, out: &mut String, title_pos: Option<(f64, f64)>, origin: (f64, f64)) -> bool {
-        let (Some((tx, ty)), false) = (title_pos, self.block.title_lines.is_empty()) else {
-            return false;
-        };
-        self.paint_at(out, origin.0 + tx, origin.1 + ty);
-        true
+        let nodes = self.nodes(title_pos, origin);
+        out.push_str(&print(&nodes));
+        !nodes.is_empty()
+    }
+
+    /// [`Self::paint`] as nodes; none when there is nothing to paint.
+    pub fn nodes(&self, title_pos: Option<(f64, f64)>, origin: (f64, f64)) -> Vec<Node> {
+        match (title_pos, self.block.title_lines.is_empty()) {
+            (Some((tx, ty)), false) => self.nodes_at(origin.0 + tx, origin.1 + ty),
+            _ => Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_card_node_prints_what_open_and_the_closing_tag_write() {
+        let frame = ChartFrame::new(600.0, 400.5, (0.0, 0.0, 0.0, 0.0), "#f<f", crate::svg::num_full);
+        let mut written = String::new();
+        frame.open(&mut written);
+        written.push_str("<rect/></svg>");
+        assert_eq!(print(&[frame.svg(vec![Node::Rect(Attrs::new())])]), written);
     }
 }

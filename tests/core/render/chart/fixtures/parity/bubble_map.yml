@@ -1,6 +1,7 @@
 chart_id: chart1
 chart:
   type: bubble_map
+  projection: albersUsa
   query: q
   latitude: lat
   longitude: lon

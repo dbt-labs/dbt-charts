@@ -375,8 +375,6 @@ charts:
     subtitle: Closed-won $ split by price point
     theta: bookings
     color: plan
-    total:
-      label: "Total bookings"
     style:
       total:
         value:

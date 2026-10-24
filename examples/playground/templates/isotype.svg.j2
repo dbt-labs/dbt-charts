@@ -95,7 +95,7 @@ options:
   <text x="{{ (ns.x + ns.slot[b] / 2)|round(1) }}" y="{{ (base + style.font.size + 6)|round(1) }}" text-anchor="middle">{% for w in words %}<tspan x="{{ (ns.x + ns.slot[b] / 2)|round(1) }}" dy="{{ 0 if loop.first else '1.15em' }}">{{ w }}</tspan>{% endfor %}</text>
   {% set ns.x = ns.x + ns.slot[b] + gap %}
 {% endfor %}
-  <text x="{{ ((width - used) / 2)|round(1) }}" y="{{ (height - key_h + style.font.size + 10)|round(1) }}" fill="{{ style.muted }}">Each symbol represents {{ p.per_symbol | format(",") }} {{ p.unit }}</text>
+  <text x="{{ ((width - used) / 2)|round(1) }}" y="{{ (height - key_h + style.font.size + 10)|round(1) }}" fill="{{ style.fonts.secondary.color }}">Each symbol represents {{ p.per_symbol | format(",") }} {{ p.unit }}</text>
 {% set ns.kx = (width - used) / 2 %}
 {% for g in ns.groups %}
   <rect x="{{ ns.kx }}" y="{{ (height - style.font.size - 2)|round(1) }}" width="10" height="10" rx="2" fill="{{ color_for(g, group_col) }}"/>

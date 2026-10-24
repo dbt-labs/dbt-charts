@@ -124,6 +124,7 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
     chart = PointMapChart(
         id="test_map",
         type="point_map",
+        projection="albersUsa",
         query_name="q",
         latitude="lat",
         longitude="lng",

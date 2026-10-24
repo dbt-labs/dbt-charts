@@ -48,6 +48,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisTitleStyle,
     AxisXStyle,
     AxisYStyle,
+    BandAnnotationStyle,
     BandAxisStyle,
     BarChartStyle,
     BarLayerStyle,
@@ -68,12 +69,14 @@ from dbt_charts.core.compile.models.style.theme import (
     LineChartStyle,
     LineLayerStyle,
     LineMarkStyle,
+    NoteAnnotationStyle,
     PaddingStyle,
     PieChartStyle,
     PieLegendStyle,
     PointMapChartStyle,
     PointMarkStyle,
     QuantitativeAxisStyle,
+    RuleAnnotationStyle,
     ScaleContinuousStyle,
     ScatterChartStyle,
     ScatterLayerStyle,
@@ -82,6 +85,7 @@ from dbt_charts.core.compile.models.style.theme import (
     TableChartStyle,
     TotalSlotStyle,
     TotalStyle,
+    TrendAnnotationStyle,
     XScaleStyle,
     _CartesianChartStyle,
     _GeoChartStyle,
@@ -458,3 +462,24 @@ else:
     BarLayerStylePatch = build_patch_model(BarLayerStyle)
     AreaLayerStylePatch = build_patch_model(AreaLayerStyle)
     ScatterLayerStylePatch = build_patch_model(ScatterLayerStyle)
+
+# One annotation's style: `style.marks.<mark>` over its type's theme slot.
+if TYPE_CHECKING:
+
+    class RuleAnnotationStylePatch(RuleAnnotationStyle):
+        pass
+
+    class BandAnnotationStylePatch(BandAnnotationStyle):
+        pass
+
+    class NoteAnnotationStylePatch(NoteAnnotationStyle):
+        pass
+
+    class TrendAnnotationStylePatch(TrendAnnotationStyle):
+        pass
+
+else:
+    RuleAnnotationStylePatch = build_patch_model(RuleAnnotationStyle)
+    BandAnnotationStylePatch = build_patch_model(BandAnnotationStyle)
+    NoteAnnotationStylePatch = build_patch_model(NoteAnnotationStyle)
+    TrendAnnotationStylePatch = build_patch_model(TrendAnnotationStyle)

@@ -118,7 +118,7 @@ def test_point_map_border_overrides_board_default(
 ) -> None:
     board = _BOARD.replace(
         "rows:\n  - bar\n",
-        "  pts:\n    type: point_map\n    query: geo\n    latitude: lat\n"
+        "  pts:\n    type: point_map\n    projection: albersUsa\n    query: geo\n    latitude: lat\n"
         "    longitude: lon\nrows:\n  - pts\n  - bar\n",
     ).replace(
         "charts:\n",

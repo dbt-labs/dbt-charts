@@ -41,6 +41,18 @@ Changes in this release:
   in both grammars, so it cannot be migrated or recognized. The detectable
   case, an authored `section` with a `size`, raises `The 'section' font takes
   sizes (H2–H6), not size.`
+- **The theme `projection` key is removed** from the geo families: `Deletion`s
+  of `style.charts.geoshape.projection`, `style.charts.point_map.projection` and
+  the chart-local `style.projection` on `map`, `geoshape`, `point_map` and
+  `bubble_map`. Nothing ever read it; a chart's projection is its root
+  `projection:`, else its geo source's.
+- **`style.muted` becomes the secondary font's color**: `style.muted` becomes
+  `style.fonts.secondary.color` on the root, every nested board and every tab
+  item (`tabs.items.*.style`), at any depth: one `Move` whose
+  `sub_board_prefixes` follow both. The field no longer exists in the models, so neither
+  the 0.9.0 variant respell nor this boundary's scaffold respell reaches it;
+  the `Move`'s `rewrite` applies both on the way (`category_dark.blue` becomes
+  `category.blue.dark`, `dbt-grays.muted` becomes `dbt-grays.8`).
 """
 
 from __future__ import annotations
@@ -48,6 +60,8 @@ from __future__ import annotations
 import dataclasses
 
 from dbt_charts.core.compile.migrations.migrations import (
+    Deletion,
+    Dropped,
     MappedScalar,
     Move,
     YamlKeyPath,
@@ -55,8 +69,10 @@ from dbt_charts.core.compile.migrations.migrations import (
     token_respell_moves,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
+    JsonValue,
     YamlSchemaCatalog,
 )
+from dbt_charts.core.diagnostics.hints import respell_retired_variant_token
 
 THEME_RENAMES: dict[MappedScalar, MappedScalar] = {}
 
@@ -130,10 +146,52 @@ RETIRED_SCAFFOLD_TOKEN_MAP: dict[MappedScalar, MappedScalar] = (
 )
 
 
+def _respell_secondary_ink(value: JsonValue) -> JsonValue | Dropped:
+    if not isinstance(value, str):
+        return value
+    token = respell_retired_variant_token(value) or value
+    return RETIRED_SCAFFOLD_TOKEN_MAP.get(
+        token, token
+    )  # type-state: silent_fallback — absent from the map means not a retired scaffold spelling; it passes through unchanged
+
+
 _ROLES_AND_PALETTES: tuple[YamlKeyPath, ...] = (
     ("style", "palettes", "*"),
     ("style", "roles", "*"),
 )
+
+
+_PROJECTION_REASON = (
+    "The theme projection was never read. Set `projection:` on the chart, or "
+    "use a geo_source, which carries its own."
+)
+_GEO_CHART_TYPES = ("map", "geoshape", "point_map", "bubble_map")
+
+
+def deletions(
+    source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
+) -> tuple[Deletion, ...]:
+    """Return the Deletions of the geo theme ``projection`` key."""
+    theme = tuple(
+        Deletion(
+            source_schema,
+            target_schema,
+            ("style", "charts", family, "projection"),
+            reason=_PROJECTION_REASON,
+        )
+        for family in ("geoshape", "point_map")
+    )
+    chart_local = tuple(
+        Deletion(
+            source_schema,
+            target_schema,
+            ("style", "projection"),
+            reason=_PROJECTION_REASON,
+            chart_type=chart_type,
+        )
+        for chart_type in _GEO_CHART_TYPES
+    )
+    return theme + chart_local
 
 
 def moves(
@@ -143,14 +201,28 @@ def moves(
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
     nesting = board_nesting_prefixes(AuthoredBoard)
-    return tuple(
-        dataclasses.replace(move, sub_board_prefixes=nesting)
-        for move in token_respell_moves(
-            source_schema,
-            target_schema,
-            RETIRED_SCAFFOLD_TOKEN_MAP,
-            catalog=catalog,
-            category_pins=True,
-            open_map_values=_ROLES_AND_PALETTES,
-        )
+    # A tab item is its own model, not an AuthoredBoard, so the board nesting
+    # walk never steps into one; following it as a prefix reaches its own
+    # `style:` and, prefixes composing, tabs and boards nested to any depth.
+    secondary_ink = Move(
+        source_schema,
+        target_schema,
+        ("style", "muted"),
+        ("style", "fonts", "secondary", "color"),
+        rewrite=_respell_secondary_ink,
+        sub_board_prefixes=(*nesting, ("tabs", "items", "*")),
+    )
+    return (
+        *(
+            dataclasses.replace(move, sub_board_prefixes=nesting)
+            for move in token_respell_moves(
+                source_schema,
+                target_schema,
+                RETIRED_SCAFFOLD_TOKEN_MAP,
+                catalog=catalog,
+                category_pins=True,
+                open_map_values=_ROLES_AND_PALETTES,
+            )
+        ),
+        secondary_ink,
     )

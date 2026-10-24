@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use ttf_parser::{Face as TtfFont, Tag};
 
 use crate::east_asian_width;
-use crate::pygments_re::is_py_space;
+use d3rs::py_str::is_py_space;
 
 // One glyph's width for an emoji cluster, however many codepoints compose
 // it. Matches Noto Emoji's advance for the curated glyphs (2600/2048 units).
@@ -1072,7 +1072,7 @@ pub fn truncate_text_precise(
 ) -> String {
     let owned;
     let text = if normalize_whitespace {
-        owned = crate::utils::normalize_whitespace(text.trim_matches(is_py_space));
+        owned = d3rs::py_str::normalize_whitespace(text.trim_matches(is_py_space));
         owned.as_str()
     } else {
         text
@@ -1134,7 +1134,7 @@ pub fn wrap_text_precise(
 ) -> (Vec<String>, bool) {
     let owned;
     let text = if normalize_whitespace {
-        owned = crate::utils::normalize_whitespace(text.trim_matches(is_py_space));
+        owned = d3rs::py_str::normalize_whitespace(text.trim_matches(is_py_space));
         owned.as_str()
     } else {
         text

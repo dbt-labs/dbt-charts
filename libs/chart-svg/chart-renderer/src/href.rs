@@ -4,7 +4,7 @@
 //! its marks. Vega evaluates that expression per datum, so each substitution
 //! below is JS `'' + datum[field]` followed by `_vega_encode_field`'s chain.
 
-use mdsvg::pygments_re::is_py_space;
+use d3rs::py_str::is_py_space;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -338,6 +338,14 @@ pub(crate) struct Anchor<'a> {
     pub open: LinkOpen,
 }
 
+impl Anchor<'_> {
+    pub(crate) fn attrs(&self) -> scene::Attrs {
+        let attrs = scene::Attrs::new().set("href", self.url);
+        let attrs = self.open.open_attr().map_or(attrs.clone(), |v| attrs.set("data-dbt-link-open", v));
+        self.open.target().map_or(attrs.clone(), |v| attrs.set("target", v))
+    }
+}
+
 impl LinkOpen {
     pub(crate) fn anchor(self, href: Option<&str>) -> Option<Anchor<'_>> {
         href.map(|url| Anchor { url, open: self })
@@ -368,11 +376,15 @@ impl LinkOpen {
 /// wraps only the datum's first drawn element — a stroke-only antialiasing
 /// overlay that follows is the same datum, never a second linked mark.
 pub(crate) fn anchor_open(anchor: Option<Anchor<'_>>) -> String {
-    anchor.map_or_else(String::new, |a| {
-        let open = a.open.open_attr().map_or_else(String::new, |v| format!(" data-dbt-link-open=\"{v}\""));
-        let target = a.open.target().map_or_else(String::new, |v| format!(" target=\"{v}\""));
-        format!("<a href=\"{}\"{open}{target}>", print::xml_escape_attr(a.url))
-    })
+    anchor.map_or_else(String::new, |a| format!("<a{}>", print::attributes(&a.attrs())))
+}
+
+/// `mark` inside its datum's `<a>`, or alone when the datum carries no link.
+pub(crate) fn linked(anchor: Option<Anchor<'_>>, mark: scene::Node) -> scene::Node {
+    match anchor {
+        Some(a) => scene::Node::Link { attrs: a.attrs(), children: vec![mark] },
+        None => mark,
+    }
 }
 
 pub(crate) fn anchor_close(anchor: Option<Anchor<'_>>) -> &'static str {

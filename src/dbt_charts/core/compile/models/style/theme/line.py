@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.markers import (
     SkipInheritSlots,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
     _QuantitativeAxisChartStyleMixin,
 )
@@ -66,7 +67,9 @@ class LineLayerStyle(BaseModel):
     )
 
 
-class LineChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
+class LineChartStyle(
+    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+):
     """Line chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

@@ -319,6 +319,7 @@ class TestRender:
             '<text id="e">{{ color_for("x") }}</text>'
             '<text id="f">{{ width > 0 and height > 0 }}</text>'
             '<text id="g">{{ columns | join(",") }}</text>'
+            '<text id="h">{{ style.fonts.secondary.color }}</text>'
         )
         project = _project(tmp_path, template)
         yaml_text = re.sub(
@@ -335,6 +336,7 @@ class TestRender:
         assert texts["e"].startswith("#")
         assert texts["f"] == "True"
         assert texts["g"] == "from_stage,to_stage,visitors"
+        assert texts["h"].startswith("#")
 
     def test_missing_channel_column_names_available_columns(
         self, tmp_path: Path

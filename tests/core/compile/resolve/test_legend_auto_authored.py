@@ -33,6 +33,7 @@ _CHARTS: dict[str, dict[str, Any]] = {
         "query": "q",
         "latitude": "lat",
         "longitude": "lng",
+        "projection": "albersUsa",
         "color": "c",
     },
 }

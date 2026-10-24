@@ -38,7 +38,7 @@ def test_lower_case_applies() -> None:
 
 def test_other_case_values_are_no_ops() -> None:
     # "title"/"sentence"/"slug"/"camel" never reach an axis label as a
-    # Vega label expression (inject_axis_label_case only wires up/lower) —
+    # Vega label expression (the engine only cases upper/lower) —
     # applying them here would measure text Vega never paints.
     assert category_label_text("acme corp", None, "title") == "acme corp"
     assert category_label_text("acme corp", None, "sentence") == "acme corp"

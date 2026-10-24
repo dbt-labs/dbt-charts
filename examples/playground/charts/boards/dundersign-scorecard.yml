@@ -12,12 +12,19 @@ variables:
     column: dundersign.opportunities.lead_source
 
 queries:
+  # The first and last months of the fixture are partial; every monthly
+  # series starts after the first and stops before the last.
+  complete_months: |
+    SELECT *
+    FROM dundersign_serving.monthly_metrics
+    WHERE month > (SELECT MIN(month) FROM dundersign_serving.monthly_metrics)
+      AND month < (SELECT MAX(month) FROM dundersign_serving.monthly_metrics)
   kpis: |
     WITH months AS (
       SELECT month, revenue, active_users,
              revenue - LAG(revenue) OVER (ORDER BY month) AS revenue_delta,
              active_users - LAG(active_users) OVER (ORDER BY month) AS users_delta
-      FROM dundersign_serving.monthly_metrics
+      FROM {{ queries.complete_months }}
     ),
     deals AS (
       SELECT SUM(CASE WHEN is_won THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS win_rate
@@ -27,9 +34,9 @@ queries:
     SELECT revenue, revenue_delta, active_users, users_delta, (SELECT win_rate FROM deals) AS win_rate
     FROM months WHERE month = (SELECT MAX(month) FROM months)
   documents: |
-    SELECT month, 'Created' AS series, documents_created AS documents FROM dundersign_serving.monthly_metrics
+    SELECT month, 'Created' AS series, documents_created AS documents FROM {{ queries.complete_months }}
     UNION ALL
-    SELECT month, 'Completed', documents_completed FROM dundersign_serving.monthly_metrics
+    SELECT month, 'Completed', documents_completed FROM {{ queries.complete_months }}
     ORDER BY 1, 2
   bookings: |
     SELECT lead_source, SUM(amount) AS bookings
@@ -37,12 +44,12 @@ queries:
     WHERE is_won AND {{ filter('lead_source', lead_source) }}
     GROUP BY 1 ORDER BY 2 DESC
   active_users: |
-    SELECT month, active_users FROM dundersign_serving.monthly_metrics ORDER BY 1
+    SELECT month, active_users FROM {{ queries.complete_months }} ORDER BY 1
   plans: |
     SELECT plan, COUNT(*) AS users FROM dundersign.users GROUP BY 1 ORDER BY 2 DESC
   monthly: |
     SELECT month, revenue, new_users, tickets_created, tickets_resolved
-    FROM dundersign_serving.monthly_metrics ORDER BY 1
+    FROM {{ queries.complete_months }} ORDER BY 1
 
 charts:
   k_revenue:
@@ -121,6 +128,8 @@ charts:
     type: table
     style:
       columns:
+        month:
+          format: "%b %Y"
         revenue:
           format: currency_whole
           align: right
@@ -137,10 +146,10 @@ rows:
       - width: "50%"
         text: |
           Support is the soft spot: tickets resolved trail tickets opened in every
-          month, 245 opened against 86 resolved over the year. Bookings are spread
-          evenly across sources, with Website, Referral, Download, and Paid Search
-          within $220 of each other, so no single channel deserves the next dollar
-          on its own.
+          month, 207 opened against 67 resolved over the ten complete months.
+          Bookings are spread across sources, from Website at $9,000 to Paid
+          Search at $6,480, so no single channel dominates and none deserves the
+          next dollar on its own.
       - width: "50%"
         cols: [k_revenue, k_users, k_win_rate]
 

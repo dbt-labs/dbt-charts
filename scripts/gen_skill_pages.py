@@ -81,6 +81,19 @@ def _summary(text: str, where: str, *, max_words: int = _SUMMARY_MAX_WORDS) -> s
 # --- model walking -------------------------------------------------------------
 
 
+def _nested_models(field: Any) -> list[str]:
+    """The models a field holds, a discriminated union read as its variants."""
+    models = _schema().models
+    return [
+        variant
+        for n in field.nested_models
+        if not n.endswith("Ref")
+        for variant in (
+            models[n].union.variants.values() if models[n].union is not None else [n]
+        )
+    ]
+
+
 def _resolve(path: str) -> tuple[Any, str]:
     """Walk `Root.field.field` or `chart:bar.field` to a model; return it and its YAML path."""
     schema = _schema()
@@ -100,7 +113,7 @@ def _resolve(path: str) -> tuple[Any, str]:
         field = next((f for f in model.fields if f.name == step), None)
         if field is None:
             raise KeyError(f"{path}: {model.name} has no field {step!r}")
-        nested = [n for n in field.nested_models if not n.endswith("Ref")]
+        nested = _nested_models(field)
         if pick:
             nested = [n for n in nested if n == pick]
         if len(nested) != 1:
@@ -348,7 +361,7 @@ class Generator:
         field = _field(schema.models["BarChart"], "layers", "layer_types")
         tags = [
             _field(schema.models[n], "type", n).enum_values[0]
-            for n in field.nested_models
+            for n in _nested_models(field)
         ]
         return self._wrap(_names(tags))
 

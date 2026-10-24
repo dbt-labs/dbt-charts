@@ -591,3 +591,36 @@ def test_a_null_axis_title_padding_charges_the_vega_lite_default() -> None:
     assert unset.estimated_plot_height_px - baseline.estimated_plot_height_px == (
         pytest.approx(6.0)
     )
+
+
+def test_a_layer_declining_its_legend_entry_is_not_charged_for_the_legend() -> None:
+    """Six overlays wrap a top legend at 300px; declining them leaves the base alone."""
+    rows: list[dict[str, str | float]] = [
+        {"quarter": q, **{f"target_{n}": 90.0 + n for n in range(6)}, "revenue": 100.0}
+        for q in ["Q1", "Q2", "Q3", "Q4"]
+    ]
+
+    def estimate(legend: bool) -> float:
+        chart = BarChart(
+            id="probe",
+            query=SqlQuery(sql="SELECT 1", source="t"),
+            query_name="q",
+            type="bar",
+            title="Revenue against targets",
+            x="quarter",
+            y="revenue",
+            layers=[
+                LineLayer(
+                    type="line",
+                    y=f"target_{n}",
+                    label=f"A long target label {n}",
+                    legend=legend,
+                )
+                for n in range(6)
+            ],
+        )
+        resolved = resolve(chart, rows, _CTX, width=300.0)
+        assert isinstance(resolved, ResolvedBarChart)
+        return resolved.style.estimated_plot_height_px
+
+    assert estimate(legend=False) > estimate(legend=True)

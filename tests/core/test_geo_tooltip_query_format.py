@@ -12,6 +12,7 @@ def test_bubble_map_tooltip_follows_the_query_format() -> None:
     chart = PointMapChart(
         id="c1",
         type="bubble_map",
+        projection="albersUsa",
         query_name="q",
         query=SqlQuery(sql="SELECT 1", source="s", formats={"profit": "currency"}),
         latitude="lat",

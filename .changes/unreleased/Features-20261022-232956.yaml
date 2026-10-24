@@ -1,0 +1,3 @@
+kind: Features
+body: dct import sigma fetches a Sigma workbook into a source bundle, and lists workbooks with --list.
+time: 2026-10-22T23:29:56.521328-07:00

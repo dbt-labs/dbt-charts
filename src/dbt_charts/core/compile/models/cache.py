@@ -28,9 +28,12 @@ directory's ttl instead of jumping to the project root's. The block form
 (``cache: {ttl: 5m}``) means exactly the same thing as the scalar and is what
 the project scope uses to carry its extra ``path`` key.
 
-``ttl`` lives directly on the layer (no ``invalidate:`` nesting). A future
-watermark trigger would join it as a flat sibling key
+``ttl`` lives directly on the layer (no ``invalidate:`` nesting), and so does
+``prefetch``. A future watermark trigger would join them as a flat sibling key
 (``cache: {ttl: 1h, watermark: "SELECT max(...)"}``), not as a submap.
+``prefetch`` is block-only: no scalar shorthand sets it, and a block carrying
+only ``prefetch`` leaves ``enabled`` to the scope above, since it says nothing
+about whether to cache.
 """
 
 from __future__ import annotations
@@ -212,6 +215,14 @@ class CachePatch(BaseModel):
         ),
         examples=["5m", "1h", "24h", "7d", "forever"],
     )
+    prefetch: bool | SkipJsonSchema[None] = Field(
+        default=None,
+        description=(
+            "Load this scope's queries into the cache in the background when "
+            "they sit on a hidden tab, inner tabs of a hidden tab included. "
+            "Omit to inherit from the parent scope. Needs caching on."
+        ),
+    )
 
     @model_serializer(mode="plain")
     def _serialize_as_authored(self) -> bool | str | Mapping[str, str | bool]:
@@ -227,7 +238,7 @@ class CachePatch(BaseModel):
         # one (`ttl: null` is rejected outright), and it re-validates to the
         # same unset state it came from, so nothing is lost by leaving it out —
         # while keeping it would make this a dict of maybe-strings.
-        written: dict[str, str] = {
+        written: dict[str, str | bool] = {
             name: value
             for name in self.model_fields_set
             if name != "enabled" and (value := getattr(self, name)) is not None
@@ -280,8 +291,11 @@ def desugar_cache(
             "ttl: null is ambiguous — omit ttl to inherit from the parent "
             "scope, or write cache: forever to never auto-expire."
         )
-    # A block that carries any value at all means caching is on.
-    return {"enabled": True, **data} if data else data
+    # A block that carries any value at all means caching is on — except one
+    # carrying only `prefetch`, which is no statement about caching itself.
+    if data.keys() - {"prefetch"}:
+        return {"enabled": True, **data}
+    return data
 
 
 _CACHE_SHORTHAND = BeforeValidator(
@@ -331,6 +345,11 @@ class CachePolicy(BaseModel):
     ttl: Duration | None = Field(
         default=None,
         description="Resolved ttl duration string; None means never auto-expire.",
+    )
+    prefetch: bool = Field(
+        default=False,
+        description="Whether queries on hidden tabs (inner tabs of a hidden tab "
+        "included) are loaded in the background after a render.",
     )
 
     @cached_property
@@ -435,10 +454,16 @@ def resolve_cache_policy(*layers: CachePatch | None) -> CachePolicy:
     patch→policy conversion, mapping ``ttl: forever`` to the resolved
     ``ttl=None``.
 
+    ``prefetch`` resolves false when no scope sets it, and is dropped (not an
+    error) when a nearer scope turns caching off after it was inherited.
+
     Raises:
         ValueError: If no layer resolves ``enabled`` — the cascade root is
             required to (any authored value other than ``false`` does); a miss
             is a configuration bug, never a silent default.
+        CompilationError: If a scope authors ``prefetch: true`` at or below the
+            scope that turned caching off (raised by the merge) — prefetch warms
+            the cache, so with no cache there is nothing to warm.
     """
     authored = [layer for layer in layers if layer is not None]
     merged = merge_cache_layers(*authored)
@@ -450,4 +475,26 @@ def resolve_cache_policy(*layers: CachePatch | None) -> CachePolicy:
     return CachePolicy(
         enabled=merged.enabled,
         ttl=None if merged.ttl == "forever" else merged.ttl,
+        prefetch=merged.enabled and merged.prefetch is True,
     )
+
+
+def reject_prefetch_without_cache(lower: CachePatch, upper: CachePatch) -> None:
+    """Raise when *upper* authors ``prefetch: true`` onto a disabled *lower*.
+
+    Called by ``merge_patches`` for every cache merge, so it fires wherever
+    layers combine: the cascade, the meta.yml fold into a board, and nested
+    boards. A layer that also sets ``enabled`` decides caching itself, so its
+    prefetch is judged against its own switch.
+    """
+    if (
+        lower.enabled is False
+        and upper.prefetch is True
+        and "enabled" not in upper.model_fields_set
+    ):
+        raise CompilationError(
+            "cache.prefetch: true needs caching on: prefetch warms the cache, "
+            "and caching is turned off by cache: false at or above this scope. "
+            "Remove prefetch, or turn caching on with cache: <duration> or "
+            "cache: true."
+        )

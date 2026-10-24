@@ -4,6 +4,7 @@ chart:
   query: q
   latitude: lat
   longitude: lon
+  projection: albersUsa
 queries:
   q:
     columns: [name, lat, lon]

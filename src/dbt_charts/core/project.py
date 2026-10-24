@@ -1051,3 +1051,69 @@ def iter_dir_from_relpaths(
     for name in sorted(file_names, key=str.lower):
         child = name if under == "." else f"{under}/{name}"
         yield ProjectPath(project, child)
+
+
+def folder_index_board(directory: ProjectDirectory) -> ProjectPath | None:
+    """The directory's index board (``index.yml``, then ``.yaml``, ``.md``,
+    ``.markdown``), if it has one."""
+    for name in INDEX_CANDIDATE_NAMES:
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _host_namespace_board(project: Project, clean_path: str) -> ProjectPath | None:
+    """The host board at a package's bare namespace slug (``charts/pkg_a.yml``).
+
+    It shadows the package's own index, which serves at the same ``/pkg_a/``.
+    """
+    roots = board_roots(project)
+    if clean_path not in {r.namespace for r in roots if r.namespace}:
+        return None
+    for relpath in board_relpath_candidates(clean_path, roots[:1]):
+        if relpath.endswith(BOARD_CANDIDATE_SUFFIXES) and project.exists(relpath):
+            return project.path(relpath)
+    return None
+
+
+def resolve_directory_url(
+    project: Project, clean_path: str
+) -> ProjectPath | list[ProjectDirectory]:
+    """Resolve a directory-shaped board URL: its index board, else the
+    directories to list.
+
+    The root URL prefers the project-root index board. A URL may name several
+    directories (a host ``charts/pkg_a/`` and the package's own root); the
+    first index board wins, host before package, and a host board at the
+    namespace slug beats the package's index. The root always lists, even
+    before ``charts/`` exists. An empty list means *clean_path* names no
+    directory, so it resolves as a board file. Raises ``ValueError`` for a
+    ``..`` segment: a board URL never contains one, and following it through
+    an intentional symlink under ``charts/`` would leave the project.
+    """
+    if ".." in clean_path.split("/"):
+        raise ValueError(f"{clean_path!r} leaves the project")
+    if not clean_path:
+        root_index = folder_index_board(project.directory())
+        if root_index is not None:
+            return root_index
+    if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
+        return []
+    roots = board_roots(project)
+    directories = [
+        project.directory(f"{root.relpath}/{rest}" if rest else root.relpath)
+        for root, rest in board_directory_candidates(clean_path, roots)
+    ]
+    directories = [
+        d for d in directories if not clean_path or project.exists(d.relpath)
+    ]
+    namespace_board = _host_namespace_board(project, clean_path)
+    package_dirs = {r.relpath for r in roots if r.namespace}
+    for directory in directories:
+        if namespace_board is not None and directory.relpath in package_dirs:
+            return namespace_board
+        index_board = folder_index_board(directory)
+        if index_board is not None:
+            return index_board
+    return directories

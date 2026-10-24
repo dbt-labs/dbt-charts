@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.primitives import (
     OverlapSpec,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
+    _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
     _QuantitativeAxisChartStyleMixin,
 )
@@ -70,7 +71,9 @@ class BarLayerStyle(BaseModel):
     marks: BarChartMarksStyle = Field(description="Mark overrides for this bar layer.")
 
 
-class BarChartStyle(_CartesianChartStyle, _QuantitativeAxisChartStyleMixin):
+class BarChartStyle(
+    _CartesianChartStyle, _QuantitativeAxisChartStyleMixin, _AnnotatedChartStyleMixin
+):
     """Bar chart style: chart-level fields + marks sub-block."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

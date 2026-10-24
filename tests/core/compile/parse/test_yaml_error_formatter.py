@@ -306,11 +306,12 @@ rows:
         cf_error = next(
             error for error in errors if error.path.endswith("conditional_formatting")
         )
-        assert cf_error.hint is not None
-        assert "`charts.bar_chart.conditional_formatting` was removed in 0.7.0" in (
-            cf_error.hint
+        assert cf_error.code == "ERR-RETIRED-FIELD"
+        assert (
+            "'conditional_formatting' at charts.bar_chart was removed in 0.7.0"
+            in cf_error.message
         )
-        assert "Use table or kpi for conditional formatting." in cf_error.hint
+        assert "Use table or kpi for conditional formatting." in cf_error.message
 
     @pytest.mark.parametrize(
         "chart_type",
@@ -958,7 +959,7 @@ rows:
             if (e.fields or {}).get("field_path", "").startswith("style.charts.")
         ]
         assert board_level, [e.message for e in result.errors]
-        hint = board_level[0].hint or ""
+        hint = f"{board_level[0].message} {board_level[0].hint}"
         # The distinctive clause, not just "axis_band"/"heatmap": the generic
         # unknown-field fallback also names heatmap in its path and lists
         # axis_band among the allowed keys, so asserting on those alone passes
@@ -997,9 +998,8 @@ rows:
 
         assert not result.success
         err = next(e for e in result.errors if e.path.endswith("axis_quantitative"))
-        assert err.hint is not None
-        assert "was removed in 0.6.0" in err.hint
-        assert "axis_band" in err.hint
+        assert "was removed in 0.6.0" in err.message
+        assert "axis_band" in err.message
 
     def test_heatmap_theme_level_axis_quantitative_migrates_silently(self):
         """Same field, board-level slot -- but this position DOES have a
@@ -1744,13 +1744,15 @@ def _frozen_clock(monkeypatch: pytest.MonkeyPatch, today: date) -> None:
 
 
 def _diagnostic_for(errors: list[Diagnostic], key: str) -> Diagnostic:
-    return next(e for e in errors if f"Unknown field '{key}'" in e.message)
+    return next(e for e in errors if e.fields.get("unknown_field") == key)
 
 
 def _hint_for(errors: list[Diagnostic], key: str) -> str:
-    hint = _diagnostic_for(errors, key).hint
-    assert hint is not None
-    return hint
+    """The diagnostic's story: its hint, plus the message for a retired key,
+    whose history leads the message rather than the hint."""
+    diagnostic = _diagnostic_for(errors, key)
+    assert diagnostic.hint is not None
+    return f"{diagnostic.message} {diagnostic.hint}"
 
 
 class TestRetiredKeysNameTheirSuccessor:
@@ -1762,9 +1764,8 @@ class TestRetiredKeysNameTheirSuccessor:
 
         zero = _diagnostic_for(result.errors, "zero")
         assert zero.hint is not None
-        assert (
-            "`zero` was renamed to `threshold` in 0.7.0. Rename the key." in zero.hint
-        )
+        assert "'zero' at charts.rev.style.axis_y.grid was renamed" in zero.message
+        assert zero.hint.startswith("Rename the key.")
         assert "Allowed keys" not in zero.hint
         assert zero.fields["retired_in"] == "0.7.0"
         assert zero.fields["successor"] == "charts.rev.style.axis_y.grid.threshold"
@@ -1773,9 +1774,7 @@ class TestRetiredKeysNameTheirSuccessor:
     def test_both_spellings_present_still_names_the_successor(self) -> None:
         result = compile(_RETIRED_KEY_BOARD.format(extra="", grid=_ZERO + _THRESHOLD))
 
-        assert "`zero` was renamed to `threshold` in 0.7.0" in _hint_for(
-            result.errors, "zero"
-        )
+        assert "was renamed to 'threshold' in 0.7.0" in _hint_for(result.errors, "zero")
 
     def test_a_retired_key_in_a_nested_sub_board_names_its_full_successor(self) -> None:
         result = compile(
@@ -1790,11 +1789,9 @@ rows:
         )
 
         description = _diagnostic_for(result.errors, "description")
+        assert "was renamed to 'notes' in 0.6.0" in description.message
         assert description.hint is not None
-        assert (
-            "`description` was renamed to `notes` in 0.6.0. Rename the key."
-            in description.hint
-        )
+        assert description.hint.startswith("Rename the key.")
         assert description.fields["successor"] == "rows.0.charts.c1.notes"
 
     def test_callout_description_names_no_successor(self) -> None:
@@ -1835,9 +1832,7 @@ rows: [rev]
 """
         )
 
-        assert "`domain` was renamed to `line` in 0.4.0" in _hint_for(
-            result.errors, "domain"
-        )
+        assert "was renamed to 'line' in 0.4.0" in _hint_for(result.errors, "domain")
 
     def test_a_move_that_changes_the_parent_names_the_full_destination(self) -> None:
         result = compile(
@@ -1857,7 +1852,7 @@ rows: [p]
         )
 
         assert (
-            "`total.format` was moved to `style.total.value.format` in 0.7.0"
+            "'total.format' at charts.p was moved to 'style.total.value.format' in 0.7.0"
             in _hint_for(result.errors, "format")
         )
 
@@ -1883,7 +1878,8 @@ rows: [c]
 
         hint = _hint_for(result.errors, "conditional_formatting")
         assert (
-            "`charts.c.conditional_formatting` was removed in 0.7.0: bar charts" in hint
+            "'conditional_formatting' at charts.c was removed in 0.7.0: bar charts"
+            in hint
         )
         assert "Delete the key." in hint
 
@@ -1893,7 +1889,9 @@ rows: [c]
         _frozen_clock(monkeypatch, date(2028, 1, 1))
         result = compile("title: t\nstyle:\n  page:\n    background: red\nrows: []\n")
 
-        assert "`style.page` was removed in 0.7.0" in _hint_for(result.errors, "page")
+        assert "'page' at style was removed in 0.7.0" in _hint_for(
+            result.errors, "page"
+        )
 
     def test_removed_key_beside_an_unrelated_error_keeps_the_generic_hint(
         self,
@@ -1909,8 +1907,9 @@ rows: [c]
     def test_current_key_beside_a_typo_has_no_retired_text(self) -> None:
         result = compile(_RETIRED_KEY_BOARD.format(extra="titel: x\n", grid=_THRESHOLD))
 
+        assert all(e.code != "ERR-RETIRED-FIELD" for e in result.errors)
         assert all(
-            "was renamed" not in (e.hint or "") and "was removed" not in (e.hint or "")
+            "was renamed" not in e.message and "was removed" not in e.message
             for e in result.errors
         )
 
@@ -1948,7 +1947,7 @@ rows: [c]
                 ProjectDirectory(in_memory_project(Path(), {}), "."),
             )
 
-        assert "`style.page` was removed in 0.7.0" in _hint_for(
+        assert "'page' at style was removed in 0.7.0" in _hint_for(
             excinfo.value.diagnostics, "page"
         )
 

@@ -510,7 +510,7 @@ charts:
         action:
           label: ' '
           link: next_link
-          width: 300
+          width: 250
           align: center
           background: '#dbeafe'
           font:
@@ -543,8 +543,6 @@ charts:
       - row_sort
     columns:
       - cell_column
-    values:
-      - cell_value
     title: Live cells are dark
     conditional_formatting:
       c1: &id001
@@ -595,7 +593,7 @@ charts:
       header:
         visible: false
       column_defaults:
-        width: 36
+        width: 34
         align: center
       columns:
         c1: {}

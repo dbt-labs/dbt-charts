@@ -26,7 +26,7 @@ dev = [
     "dbt-bigquery==1.11.1",  # BigQuery profile and adapter tests
     "dbt-postgres==1.10.0",  # PostgreSQL adapter tests
     "dbt-redshift==1.11.1",  # Redshift adapter tests
-    "dbt-snowflake==1.11.5",  # Snowflake adapter tests
+    "dbt-snowflake==1.12.4",  # Snowflake adapter tests
     "trino==0.338.0",  # Trino driver tests
     # Excluded on Windows: it pins mmh3<4.2, which has no cp313 Windows wheel
     # and would compile from source (minutes); the Windows subset needs no Athena.

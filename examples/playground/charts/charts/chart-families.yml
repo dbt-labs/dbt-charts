@@ -229,7 +229,6 @@ charts:
     y: revenue
     color: category
     x_label: Units Sold
-    y_label: Revenue
     style:
       axis_y:
         labels:
@@ -243,8 +242,6 @@ charts:
     y: margin
     size: headcount
     color: region
-    x_label: Growth rate
-    y_label: Margin
     style:
       axis_x:
         labels:
@@ -279,7 +276,6 @@ charts:
     type: spark_bar
     title: Revenue trend
     subtitle: "type: spark_bar is a compact inline trend, no axes"
-    x: revenue
     y: month_label
   histogram_revenue:
     query: order_scatter
@@ -319,16 +315,12 @@ charts:
     type: point_map
     title: Store locations
     subtitle: "type: point_map marks exact coordinates"
-    latitude: lat
-    longitude: lng
     geo_source: us-states
   store_bubbles:
     query: new_england_stores
     type: bubble_map
     title: Store revenue
     subtitle: "type: bubble_map sizes each marker by a value"
-    latitude: lat
-    longitude: lng
     size: revenue
     geo_source: us-states
 rows:

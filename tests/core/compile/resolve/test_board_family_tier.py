@@ -29,12 +29,13 @@ _CHART = ["#0000cc", "#1111cc"]
 
 _PIE: dict[str, Any] = {"type": "pie", "theta": "n", "color": "s"}
 _PIE_ROWS = [{"n": 1, "s": "a"}, {"n": 2, "s": "b"}]
-_GEOSHAPE: dict[str, Any] = {"type": "geoshape", "geo": "g"}
+_GEOSHAPE: dict[str, Any] = {"type": "geoshape", "geo": "g", "projection": "mercator"}
 _GEOSHAPE_ROWS = [{"g": "CA"}]
 _POINT_MAP: dict[str, Any] = {
     "type": "point_map",
     "latitude": "la",
     "longitude": "lo",
+    "projection": "albersUsa",
 }
 _POINT_MAP_ROWS = [{"la": 1.0, "lo": 1.0}]
 

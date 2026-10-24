@@ -1,8 +1,9 @@
 //! Breaking plain text into lines that fit a width.
 
-use mdsvg::fonts::{cached_measurer, wrap_text_precise};
+use crate::fonts::{cached_measurer, wrap_text_precise};
 
 use crate::font_files::font_path;
+use crate::FontBook;
 
 /// `wrap_text_precise(..., ellipsis=True) or [text]` against the font
 /// `get_font_measurer(family)` loads.
@@ -25,4 +26,22 @@ pub fn wrap_plain(
     } else {
         lines
     })
+}
+
+/// `title_overflow.py::prepare_title_text`'s wrap (title_overflow.py:33-46,
+/// 49-82): the unweighted measurer of the face `family` resolves to
+/// (`get_font_measurer(font_family)`), whitespace-normalized, at most
+/// `max_lines` lines with an ellipsis when `ellipsis`. Returns the lines and
+/// whether any text was cut.
+pub fn wrap_label(
+    book: &FontBook,
+    family: &str,
+    text: &str,
+    limit: f64,
+    size: f64,
+    max_lines: Option<usize>,
+    ellipsis: bool,
+) -> Result<(Vec<String>, bool), String> {
+    let measurer = book.measurer(family)?;
+    Ok(wrap_text_precise(text, limit, size, &measurer, max_lines, ellipsis, true))
 }

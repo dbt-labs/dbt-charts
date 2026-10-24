@@ -19,6 +19,7 @@
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use measure::weighted::registry_family;
 use regex::Regex;
 use serde::Deserialize;
 use std::cell::RefCell;
@@ -36,22 +37,6 @@ pub struct FontRegistryEntry {
     pub weight_range: Option<(u32, u32)>,
     #[serde(default)]
     pub unicode_range: Vec<String>,
-}
-
-/// `fonts.py::registry_family` — the registry family name a CSS font stack
-/// resolves to; any `Source Serif` spelling names the one vendored cut.
-fn registry_family(font_family: &str) -> String {
-    let primary = font_family
-        .split(',')
-        .next()
-        .unwrap_or(font_family)
-        .trim()
-        .trim_matches(['\'', '"']);
-    if primary.starts_with("Source Serif") {
-        "Source Serif 4".to_string()
-    } else {
-        primary.to_string()
-    }
 }
 
 /// `font_selection.py::collect_painted_italic_families`' sink: the registry
@@ -75,7 +60,7 @@ pub fn record_painted_italics(
 ) {
     let Some(sink) = sink else { return };
     if used.contains("italic") || used.contains("bold_italic") {
-        sink.borrow_mut().insert(registry_family(font_family));
+        sink.borrow_mut().insert(registry_family(font_family).to_string());
     }
 }
 
@@ -99,7 +84,7 @@ static DECLARES_FAMILY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"font-family\s*[:=]\s*("[^"]*"|'[^']*'|(?:&#?\w+;|[^;}])+)"#).unwrap()
 });
 
-/// Undo the references `print::xml_escape_attr` and `xml::Xml` write in a
+/// Undo the references `print::xml_escape_attr` writes in a
 /// font-family stack (production's broader `html.unescape`).
 pub(crate) fn xml_unescape_attr(s: &str) -> String {
     s.replace("&#x27;", "'")
@@ -117,7 +102,7 @@ pub(crate) fn xml_unescape_attr(s: &str) -> String {
 /// already known to declare italic.
 fn declared_family(scope: &str) -> Option<String> {
     let family = DECLARES_FAMILY.captures(scope)?;
-    Some(registry_family(&xml_unescape_attr(family.get(1)?.as_str())))
+    Some(registry_family(&xml_unescape_attr(family.get(1)?.as_str())).to_string())
 }
 
 /// `font_selection.py::italic_families_in` — families whose italic is

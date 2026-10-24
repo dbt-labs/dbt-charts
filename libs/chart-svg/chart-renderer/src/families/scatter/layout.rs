@@ -2664,7 +2664,7 @@ pub(super) fn fit(
         .transpose()?;
     let panel_layer_ink = panel.map(|_| layer_ink(plot_w, plot_h)).transpose()?;
     let group = Attrs::new().set("transform", format!("translate({group_x:.3},{group_y:.3})"));
-    let cuts = panel.map(|_| panel_cuts(&frame, &head, &group, &plot, &value_axis));
+    let cuts = panel.map(|_| frame.cuts(&head, &group, &plot, &value_axis, &[]));
     let geometry = panel.zip(cuts).map(|(o, cuts)| {
         let (plot_left, plot_top) = (pad_l + left_margin, pad_t + top_margin);
         let (plot_right, plot_bottom) = (plot_left + plot_w, plot_top + plot_h);
@@ -2808,29 +2808,6 @@ pub(super) struct Fitted {
     pub(super) canvas: Rect,
     pub(super) title_pos: Option<(f64, f64)>,
     pub(super) geometry: Option<PanelGeometry>,
-}
-
-/// Where the composite splices a printed panel: the end of its opening tags, the start of its
-/// closing one, and the value axis between them.
-struct PanelCuts {
-    content_start: usize,
-    svg_end: usize,
-    value_axis: std::ops::Range<usize>,
-}
-
-/// The cuts of the panel `frame` draws: `head` and the plot `group` of children `plot`, the
-/// value axis being `plot[value_axis]`. Printing is concatenative, so each cut is the length of
-/// what is printed ahead of it.
-fn panel_cuts(frame: &ChartFrame, head: &[Node], group: &Attrs, plot: &[Node], value_axis: &std::ops::Range<usize>) -> PanelCuts {
-    let opened = print::print(&[frame.svg(Vec::new())]);
-    let content_start = opened.strip_suffix("</svg>").expect("a childless card prints its end tag").len();
-    let opened_group = print::print(&[Node::group(group.clone(), Vec::new())]);
-    let group_open = opened_group.strip_suffix("</g>").expect("a childless group prints its end tag").len();
-    let ahead = content_start + print::print(head).len() + group_open;
-    let start = ahead + print::print(&plot[..value_axis.start]).len();
-    let end = start + print::print(&plot[value_axis.clone()]).len();
-    let svg_end = ahead + print::print(plot).len() + "</g>".len();
-    PanelCuts { content_start, svg_end, value_axis: start..end }
 }
 
 /// The fit arm's y domain when the author pinned `scale.continuous.domain`

@@ -52,33 +52,6 @@ class TestSurfaceSelection:
         assert out == expected
 
 
-class TestBareNameAliasFamily:
-    """`s_skill_name_*` renders a bare skill name on `tool` and `cli`, the
-    dct-prefixed install name only on `install`: for prose that names a
-    skill, not one that tells the reader to run it (that's the existing
-    `s_skill_*` invocation family). `cli` stays bare because `dct skills`
-    resolves names against the bare registry, not the file-install directory."""
-
-    def test_bare_name_renders_unprefixed_on_tool(self) -> None:
-        out = render_skill_body("{{ s_skill_name_chart }}", surface="tool")
-        assert out == "chart"
-
-    def test_bare_name_renders_unprefixed_on_cli(self) -> None:
-        out = render_skill_body("{{ s_skill_name_chart }}", surface="cli")
-        assert out == "chart"
-
-    def test_bare_name_renders_prefixed_on_install(self) -> None:
-        out = render_skill_body("{{ s_skill_name_chart }}", surface="install")
-        assert out == "dct-chart"
-
-    def test_command_macro_identical_on_cli_and_install(self) -> None:
-        """Non-name macros (commands, prose) don't vary between `cli` and
-        `install`: only the bare-name family does."""
-        cli_out = render_skill_body("{{ s_execute_sql }}", surface="cli")
-        install_out = render_skill_body("{{ s_execute_sql }}", surface="install")
-        assert cli_out == install_out == "dct query SOURCE SQL"
-
-
 class TestUnknownKey:
     @pytest.mark.parametrize("surface", ["tool", "cli"])
     def test_unknown_key_raises(self, surface: str) -> None:
@@ -164,50 +137,6 @@ class TestNoStaleDashboardVocabularyInSkills:
         assert offenders == []
 
 
-class TestNoBareInstallSetNameInSkillBodies:
-    """A sibling reference must be a `{{ s_skill_name_* }}` macro, not a literal
-    install-set skill name — the macro is what makes the CLI-installed body read
-    `dct-custom-chart-build` while the tool-call body reads `custom-chart-build`. `dct://guide/`
-    resource URIs are exempt: registry addresses, not filesystem paths."""
-
-    def test_no_bare_install_set_name_outside_guide_uri(self) -> None:
-        from dbt_charts.agent_api.skill_install import skills_for_file_install
-
-        # `chart` and `styling` are ordinary words in every skill's prose, so
-        # they only count in a reference position: a lookup call, the CLI
-        # command, an install directory, or "the <name> skill".
-        ordinary = {"chart", "styling"}
-        names = sorted(
-            (s.name for s in skills_for_file_install()),
-            key=len,
-            reverse=True,
-        )
-        rare = [n for n in names if n not in ordinary]
-        reference = "|".join(
-            rf"get_skill\(['\"]{n}['\"]\)|dct skills {n}\b|dct-{n}\b|the {n} skill"
-            for n in sorted(ordinary)
-        )
-        name_re = re.compile(
-            r"(?<![\w-])(" + "|".join(re.escape(n) for n in rare) + r")(?![\w-])"
-            "|" + reference
-        )
-        skills_root = files("dbt_charts.ai.skills")
-        offenders: list[str] = []
-        for entry in skills_root.iterdir():
-            skill_md = entry / "SKILL.md"
-            if not skill_md.is_file():
-                continue
-            # Frontmatter `description:` is a separate rendering pass — checked
-            # by test_skills.py's description-rendering coverage, not here.
-            body = skill_md.read_text(encoding="utf-8").split("---", 2)[2]
-            for line in body.splitlines():
-                if "dct://guide/" in line:
-                    continue
-                if name_re.search(line):
-                    offenders.append(f"{skill_md}: {line.strip()}")
-        assert offenders == []
-
-
 class TestIfSurface:
     BODY = (
         "a{{#if_surface cli}}CLI{{/if_surface}}b"
@@ -219,6 +148,3 @@ class TestIfSurface:
 
     def test_cli_keeps_cli_blocks(self) -> None:
         assert render_skill_body(self.BODY, surface="cli") == "aCLIbc"
-
-    def test_install_keeps_cli_blocks(self) -> None:
-        assert render_skill_body(self.BODY, surface="install") == "aCLIbc"

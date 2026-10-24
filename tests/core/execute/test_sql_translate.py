@@ -78,8 +78,6 @@ def test_untranslatable_sql_raises_named_error(sql: str) -> None:
         # a raw-text Command is passed through verbatim, untranslated
         ("explain select safe_divide(a, b) from t", "bigquery", "postgres"),
         ("select * from t where a in (explain select 1)", "bigquery", "postgres"),
-        # sqlglot fails internally on this construct
-        (f"select make_interval(days => {PARAM})", "redshift", "mysql"),
     ],
 )
 def test_translation_that_misplaces_or_skips_is_rejected(

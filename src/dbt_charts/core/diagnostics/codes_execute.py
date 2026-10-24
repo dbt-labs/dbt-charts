@@ -804,6 +804,30 @@ ERR_WAREHOUSE_CONNECTION = REGISTRY.register(
     )
 )
 
+ERR_CONNECTION_NOT_PASSING = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CONNECTION-NOT-PASSING",
+        domain="execute",
+        title="Connection not passing",
+        summary=(
+            "A board's source maps to a connection that has failed or never "
+            "run its last test, so the board does not render."
+        ),
+        message_template="{reasons}",
+        doc=(
+            "Fired by dbtcharts.com before a board renders, when a source "
+            "the board reads maps to a connection whose last test failed or "
+            "that has never been tested. `{reasons}` names each source, its "
+            "connection, and the `dct cloud connection test` command that "
+            "re-runs the test; it never carries the test's own failure text, "
+            "which only people who manage connections may read. Run the "
+            "command, or fix the connection's credentials on its settings "
+            "page, and the board renders on its next view."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_ADAPTER_NOT_INSTALLED = REGISTRY.register(
     ErrorCode(
         code="ERR-ADAPTER-NOT-INSTALLED",

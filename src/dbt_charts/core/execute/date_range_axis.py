@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+import sqlglot
 import sqlglot.errors
 from sqlglot import exp
 from sqlglot.lineage import lineage
 
+from dbt_charts.core.column_refs import qualify_without_schema
 from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 
 _DATE_TYPES = (
@@ -95,7 +97,10 @@ def proven_range(
     level of its ``WHERE``, the one ``BETWEEN`` carrying a recorded filter's bounds.
     """
     try:
-        node = lineage(output_column, sql, dialect=dialect)
+        qualified = qualify_without_schema(
+            sqlglot.parse_one(sql, dialect), dialect, validate=False
+        )
+        node = lineage(output_column, qualified, schema={}, dialect=dialect)
     except sqlglot.errors.SqlglotError:
         return None
     chain = [node]

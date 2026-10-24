@@ -56,11 +56,13 @@ _SKILLS_DIR = files("dbt_charts") / "ai" / "skills"
 # project's skills vary per tenant/branch, so re-read every call.
 PROJECT_SKILLS_DIRS: tuple[str, ...] = ("skills", ".claude/skills", ".agents/skills")
 
-# On-disk namespace `dct init skills` writes its output under (skill_install.py
-# owns the rest of the install machinery; the constant lives here because the
-# project-skill scanner below also needs it, and skill_install.py already
-# imports from this module).
-INSTALL_NAME_PREFIX = "dct-"
+# The one directory `dct init skills` writes (skill_install.py owns the rest
+# of the install machinery; the names live here because the project-skill
+# scanner below also needs them, and skill_install.py already imports from
+# this module). Releases before the stub wrote one `dct-<skill>` copy per
+# wheel skill; the install sweeps those and the scanner skips them until it has.
+INSTALL_SKILL_NAME = "dct"
+RETIRED_INSTALL_PREFIX = "dct-"
 
 # Cap on an authored (project- or user-written) skill body (chars). Guards
 # against an untrusted body flooding the model's context via get_skill.
@@ -329,18 +331,22 @@ def _discover_project_skill_paths(
     folders (Cloud, when ``honor_agent_instructions`` is off) passes
     ``skill_dirs=()``.
 
-    Skips any directory named ``INSTALL_NAME_PREFIX*``: that namespace is
-    ``dct init skills``'s own file-install output, not an author's project
-    skill, and re-scanning it here would register the same workflow skill
-    twice under two names.
+    Skips ``dct init skills``'s own output, the ``INSTALL_SKILL_NAME`` stub
+    and any ``RETIRED_INSTALL_PREFIX*`` copy an earlier release wrote: neither
+    is an author's project skill, and re-scanning them here would register a
+    wheel skill twice under two names.
     """
     return [
         relpath
         for base in skill_dirs
         for relpath in project.iter_files(base, recursive=True)
         if PurePosixPath(relpath).name == "SKILL.md"
-        and not PurePosixPath(relpath).parent.name.startswith(INSTALL_NAME_PREFIX)
+        and not _is_install_dir(PurePosixPath(relpath).parent.name)
     ]
+
+
+def _is_install_dir(name: str) -> bool:
+    return name == INSTALL_SKILL_NAME or name.startswith(RETIRED_INSTALL_PREFIX)
 
 
 def _format_authored_skill_body(body: str, name: str, source: SkillSource) -> str:

@@ -8,7 +8,7 @@ description: >
   Claude Desktop, VS Code, Codex, Copilot, or any MCP-compatible client,
   or troubleshooting MCP connection issues like 'server not starting',
   'tools not appearing', 'MCP requires additional dependencies'. Do NOT
-  use for building dashboards (use {{ s_skill_name_chart }}). Do NOT
+  use for building dashboards (use chart). Do NOT
   use for dashboard errors (fix what the error says).
 metadata:
   author: fivetran

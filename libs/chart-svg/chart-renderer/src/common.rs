@@ -401,19 +401,15 @@ impl Divider {
         }
     }
 
-    /// ` stroke-dasharray="6,3"` for a line Vega serializes (a Vega-Lite
-    /// `rule` mark's `strokeDash`, joined by commas), `""` when solid.
-    pub fn vega_dash_attr(&self) -> String {
-        match &self.dasharray {
-            None => String::new(),
-            Some(dasharray) => {
-                let parts: Vec<String> = dasharray
-                    .split(' ')
-                    .map(|part| part.parse::<f64>().expect("validated in de_dasharray").to_string())
-                    .collect();
-                format!(" stroke-dasharray=\"{}\"", parts.join(","))
-            }
-        }
+    /// `6,3` for a line Vega serializes (a Vega-Lite `rule` mark's `strokeDash`,
+    /// joined by commas), `None` when solid.
+    pub fn vega_dash(&self) -> Option<String> {
+        let dasharray = self.dasharray.as_ref()?;
+        let parts: Vec<String> = dasharray
+            .split(' ')
+            .map(|part| part.parse::<f64>().expect("validated in de_dasharray").to_string())
+            .collect();
+        Some(parts.join(","))
     }
 }
 
@@ -3350,8 +3346,13 @@ pub fn emit_title(
     x: f64,
     pad_t: f64,
 ) -> f64 {
-    use std::fmt::Write;
     let Some(title) = title else { return 0.0 };
+    out.push_str(&print::print(&[plain_title_node(title, style, x, pad_t)]));
+    style.and_then(|t| t.font.size).unwrap_or(18.0) + 10.0
+}
+
+/// [`emit_title`]'s text as a node: the title with `font.case` applied, anchored start at `x`.
+pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: f64) -> Node {
     let f = style.map(|t| &t.font);
     let family = f.and_then(|f| f.family.as_deref()).unwrap_or("serif");
     let size = f.and_then(|f| f.size).unwrap_or(18.0);
@@ -3362,22 +3363,22 @@ pub fn emit_title(
     // (translate.py -> spec_builders.set_chart_title -> text/case.py
     // apply_case); subtitle stays raw (case is never applied there).
     let font_case = f.and_then(|f| f.case.as_deref()).unwrap_or("none");
-    // emit_title returns f64, not Result (family call sites don't propagate
-    // one) — an unsupported case value (slug/camel; never emitted for a
-    // title by production themes) is a payload bug, so it fails loudly
-    // here rather than silently falling back to the raw title.
+    // An unsupported case value (slug/camel; never emitted for a title by production
+    // themes) is a payload bug, so it fails loudly here rather than silently falling
+    // back to the raw title.
     let cased_title = display_text::case::apply_case(title, font_case)
         .unwrap_or_else(|e| panic!("emit_title: {e}"));
-    let _ = write!(
-        out,
-        "<text x=\"{x:.1}\" y=\"{y_baseline:.1}\" font-family=\"{}\" font-size=\"{size}\" \
-         font-weight=\"{weight}\" fill=\"{color}\"{}>{}</text>",
-        print::vega_escape_attr(family),
-        crate::contract::authored_kind_attr("title"),
-        print::xml_escape(&cased_title), weight = xml_escape_attr(&weight), color = xml_escape_attr(color)
-    );
-    // VL allocates font_size + offset (10px) above the plot for the title.
-    size + 10.0
+    Node::text(
+        Attrs::new()
+            .set("x", format!("{x:.1}"))
+            .set("y", format!("{y_baseline:.1}"))
+            .vega("font-family", family)
+            .set("font-size", size.to_string())
+            .set("font-weight", weight)
+            .set("fill", color)
+            .set("data-authored-kind", "title"),
+        cased_title,
+    )
 }
 
 /// Draw the chart title where Vega's title layout put it: `y` is the title

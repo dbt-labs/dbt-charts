@@ -911,7 +911,7 @@ requires-dist = [
     { name = "pygments", specifier = ">=2.21.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "sqlglot", specifier = ">=30.0.0" },
+    { name = "sqlglot", specifier = ">=30.22.0" },
     { name = "streamlit", marker = "extra == 'streamlit'", specifier = ">=1.51.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "trino", marker = "extra == 'trino'", specifier = ">=0.334" },
@@ -4010,11 +4010,11 @@ wheels = [
 
 [[package]]
 name = "sqlglot"
-version = "30.18.0"
+version = "30.24.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e4/73/5b5ce3e23b3ded3ea1986c2c2991217460d5fd5161b3e00a8425f5dcb8a3/sqlglot-30.18.0.tar.gz", hash = "sha256:e57e1b205e341979d1df5b1212c1435c598a0437e4619e3f428b15d5bc3a5cc6", size = 6018496, upload-time = "2026-09-03T13:12:58.206Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/7c/9fd907983ff041692399bf855d344e1fcc9a02c8d92a5fee6dbdf139d19e/sqlglot-30.24.0.tar.gz", hash = "sha256:6451aabd1c9994d0f73355c962a5eaf9258381b3f2554e53db916cd9a605552a", size = 6131857, upload-time = "2026-10-20T17:14:03.987Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/9f/3dd2ec8dd84a33e0092f1c815267bc055073f9e833b93e389c59c10f62cc/sqlglot-30.18.0-py3-none-any.whl", hash = "sha256:ee0f9a9f3e2193e763c326e52dfb377b96fdb4292f6305c3ff2d9a220e71c601", size = 748788, upload-time = "2026-09-03T13:12:56.467Z" },
+    { url = "https://files.pythonhosted.org/packages/68/5f/d78f74306cc026c5f40f8808a47356dfd37461eb15eb759a20e5e9efe7d7/sqlglot-30.24.0-py3-none-any.whl", hash = "sha256:9488828cc018453b7a3ba01e65d2749c9a731314c14583695163ca1f358203fe", size = 792162, upload-time = "2026-10-20T17:14:02.053Z" },
 ]
 
 [[package]]

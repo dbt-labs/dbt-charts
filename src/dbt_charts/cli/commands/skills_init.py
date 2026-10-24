@@ -8,6 +8,7 @@ import typer
 
 from dbt_charts.agent_api import skill_install
 from dbt_charts.agent_api._paths import find_repo_root
+from dbt_charts.agent_api.skills import INSTALL_SKILL_NAME
 from dbt_charts.cli._project import DCT_ROOT_MARKERS, resolve_skill_install_root
 
 _VALID_TARGETS = skill_install.SKILL_INSTALL_TARGETS
@@ -182,26 +183,17 @@ def run_init_skills(
             had_error = True
             continue
         rel = _display_path(target_dir, repo_root, global_install)
-        if result.installed:
-            typer.echo(f"  {prefix} workflow skills ({len(result.installed)}) → {rel}/")
-            for name in sorted(result.installed):
-                typer.echo(f"    ✓ {name}")
-            if not check and not global_install:
-                # A teammate's agent sees only committed skills and has no
-                # way to know it should run `dct init skills` itself.
+        typer.echo(f"  {prefix} the dct skill → {rel}/{INSTALL_SKILL_NAME}/SKILL.md")
+        if not check and not global_install:
+            # A teammate's agent sees only committed skills and has no way
+            # to know it should run `dct init skills` itself.
+            typer.echo("  Commit it: the file is versionless and never goes stale.")
+            if skill_install.stub_is_gitignored(target_dir):
                 typer.echo(
-                    f"  Commit {rel}/{skill_install.INSTALL_NAME_PREFIX}*/ so "
-                    "teammates' agents get these skills; re-run "
-                    "`dct init skills` after upgrading dbt Charts."
+                    f"  Warning: gitignored. Add `!{rel}/{INSTALL_SKILL_NAME}/` "
+                    "to .gitignore so it gets committed (git cannot re-include "
+                    "it under an ignored parent directory)."
                 )
-                ignored = skill_install.gitignored_skill_installs(target_dir)
-                if ignored:
-                    typer.echo(
-                        f"  Warning: gitignored: {', '.join(ignored)}. Add "
-                        f"`!{rel}/{skill_install.INSTALL_NAME_PREFIX}*/` to "
-                        ".gitignore so they get committed (git cannot "
-                        "re-include them under an ignored parent directory)."
-                    )
         if result.retired_removed:
             retired_verb = "Would remove" if check else "Removed"
             typer.echo(f"  {retired_verb} retired: {', '.join(result.retired_removed)}")

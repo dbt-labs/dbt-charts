@@ -14,12 +14,12 @@ from dataclasses import dataclass, field, replace
 
 import sqlglot.errors
 import sqlglot.expressions as exp
-from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, build_scope
 
 from dbt_charts.core.column_refs import (
     name_dbt_nodes,
     parse_sql_statements,
+    qualify_without_schema,
     resolve_source,
 )
 from dbt_charts.core.dbt_manifest import RawFormats, RawTableFormats
@@ -117,7 +117,7 @@ class _Lineage:
 
     def output_at(self, scope: Scope, index: int) -> str | None:
         if isinstance(scope.expression, exp.SetOperation):
-            branches = [self.output_at(s, index) for s in scope.union_scopes]
+            branches = [self.output_at(s, index) for s in scope.set_operation_scopes]
             first = branches[0] if branches else None
             if first is not None and all(b == first for b in branches):
                 return first
@@ -229,7 +229,7 @@ class _Lineage:
             # Alias expansion stays off: a column sharing a projection's alias is
             # marked above and types nothing, so it is never guessed either way.
             root = build_scope(
-                qualify(query, dialect=self.dialect, expand_alias_refs=False)
+                qualify_without_schema(query, self.dialect, expand_alias_refs=False)
             )
         except sqlglot.errors.SqlglotError:
             return {}

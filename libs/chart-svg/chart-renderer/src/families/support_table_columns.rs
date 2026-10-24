@@ -433,7 +433,7 @@ impl ColumnBlock {
                         out,
                         "<text{} x=\"{cell_x:.2}\" y=\"{y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
                          font-size=\"{font_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                        crate::contract::cell_label_attr(&cell.aria)?,
+                        print::attributes(&crate::contract::cell_label_attrs(&cell.aria)?),
                         vega_escape_attr(paint),
                         xml_escape_attr(&cell_weight),
                         xml_escape_attr(ink),
@@ -449,7 +449,7 @@ impl ColumnBlock {
                 // and still short of the next column's leftmost glyph.
                 let rule_x = x + style.row.padding.horizontal;
                 out.push_str(&crate::href::anchor_open(undefined));
-                out.push_str(&divider_line(rule_x, origin_y, rule_x, origin_y + plot_h, &style.row.divider));
+                out.push_str(&print::print(&[divider_line(rule_x, origin_y, rule_x, origin_y + plot_h, &style.row.divider)]));
                 out.push_str(crate::href::anchor_close(undefined));
             }
         }

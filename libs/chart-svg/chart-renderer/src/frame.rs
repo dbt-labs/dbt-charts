@@ -152,6 +152,31 @@ impl<'a> ChartFrame<'a> {
     }
 }
 
+/// Where a composite cuts a printed panel: after the card's background rect, before its
+/// closing tag, and around the value axis.
+pub struct PanelCuts {
+    pub content_start: usize,
+    pub svg_end: usize,
+    pub value_axis: std::ops::Range<usize>,
+}
+
+impl ChartFrame<'_> {
+    /// The cuts of the panel this frame draws: `head` ahead of the plot `group` of children `plot`
+    /// (the value axis being `plot[value_axis]`), then `tail`. Printing is concatenative, so each
+    /// cut is the length of what is printed ahead of it.
+    pub fn cuts(&self, head: &[Node], group: &Attrs, plot: &[Node], value_axis: &std::ops::Range<usize>, tail: &[Node]) -> PanelCuts {
+        let opened = print(&[self.svg(Vec::new())]);
+        let content_start = opened.strip_suffix("</svg>").expect("a childless card prints its end tag").len();
+        let opened_group = print(&[Node::group(group.clone(), Vec::new())]);
+        let group_open = opened_group.strip_suffix("</g>").expect("a childless group prints its end tag").len();
+        let ahead = content_start + print(head).len() + group_open;
+        let start = ahead + print(&plot[..value_axis.start]).len();
+        let end = start + print(&plot[value_axis.clone()]).len();
+        let svg_end = ahead + print(plot).len() + "</g>".len() + print(tail).len();
+        PanelCuts { content_start, svg_end, value_axis: start..end }
+    }
+}
+
 /// A chart title after production's overflow wrap, with the fit ink it
 /// reserves and the style it paints in.
 pub struct FrameTitle {

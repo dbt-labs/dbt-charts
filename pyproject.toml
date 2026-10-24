@@ -106,7 +106,7 @@ dependencies = [
     "rich>=13.0.0",
     # 30.x split the node hierarchy into Expr/Expression; core annotates
     # against exp.Expr, which 28.x does not define.
-    "sqlglot>=30.0.0",
+    "sqlglot>=30.22.0",
     "duckdb>=1.0.0",  # SET file_search_path (duckdb_adapter relative-path resolution)
     # Builds Arrow from Python values without pyarrow (core/execute/arrow_ingest.py).
     "nanoarrow>=0.9.0",

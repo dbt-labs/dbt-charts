@@ -1,28 +1,26 @@
-"""File-based install of wheel workflow skills into agent skill directories."""
+"""File install of the `dct` stub skill into agent skill directories."""
 
 from __future__ import annotations
 
 import shutil
 import subprocess
 from collections.abc import Set
+from importlib.resources import files
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.agent_api._paths import find_repo_root
-from dbt_charts.agent_api.skill_render import render_skill_body
 from dbt_charts.agent_api.skills import (
-    INSTALL_NAME_PREFIX,
-    Skill,
+    INSTALL_SKILL_NAME,
+    RETIRED_INSTALL_PREFIX,
     all_skill_names,
-    list_skills,
 )
 
-# Bare (pre-`dct-` prefix) directory names from the release just before this
+# Bare (pre-`dct-` prefix) directory names from the release just before that
 # prefix landed: the 11 install-set skills that wrote bare, plus the 10
-# pattern skills retired before this prefix existed. Not exhaustive back
-# through every earlier rebrand, only this prefix's own predecessor names.
+# pattern skills retired before the prefix existed. Not exhaustive back
+# through every earlier rebrand, only that prefix's own predecessor names.
 # Never extended; swept once, forever, under the same wheel-authored guard
 # as the dct-* sweep below.
 PRE_NAMESPACE_SKILL_NAMES: tuple[str, ...] = (
@@ -62,6 +60,10 @@ _SKILL_TARGET_DIRS: dict[str, Path] = {
 
 SKILL_INSTALL_TARGETS: frozenset[str] = frozenset(_SKILL_TARGET_DIRS)
 
+# The one file `dct init skills` writes: a pointer at `dct skills`, never a
+# copy of a wheel skill, so a committed install cannot drift from the wheel.
+_STUB_PATH = files("dbt_charts.agent_api") / "_skill_stub" / "SKILL.md"
+
 
 class SkillInstallError(Exception):
     """Installing skills into a target directory failed on the filesystem."""
@@ -78,24 +80,12 @@ class SkillInstallError(Exception):
 class InstallSkillsResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    installed: list[str] = Field(default_factory=list)
     retired_removed: list[str] = Field(default_factory=list)
     legacy_dirs_detected: list[Path] = Field(default_factory=list)
 
 
-def skills_for_file_install() -> list[Skill]:
-    """Workflow skills exposed on the CLI surface.
-
-    All file-backed by construction: no ``project``/``extra_skills`` is passed,
-    so only wheel built-ins are listed. Returned bodies/descriptions are
-    ``cli``-rendered, same as every other CLI reader. ``_rendered_skill_md``
-    re-reads and re-renders each one for the ``install`` surface before
-    writing it to disk, so nothing here needs to be install-specific.
-    """
-    return sorted(
-        (s for s in list_skills(surface="cli").skills if s.kind == "workflow"),
-        key=lambda s: s.name,
-    )
+def stub_skill_text() -> str:
+    return _STUB_PATH.read_text(encoding="utf-8")
 
 
 def target_dir_for(target: str, *, project_root: Path) -> Path:
@@ -145,52 +135,6 @@ def detect_legacy_skill_dirs(
     return found
 
 
-def prefixed_install_name(name: str) -> str:
-    """The on-disk, namespaced directory/frontmatter name for a file-installed
-    skill. Registry name stays bare; this prefix exists only here, on the
-    install surface."""
-    return f"{INSTALL_NAME_PREFIX}{name}"
-
-
-class _FoldedDumper(yaml.SafeDumper):
-    """safe_dump variant that folds long or multi-line strings with `>`
-    instead of quoting them, so a round-tripped `description:` reads like
-    the authored source rather than a flow scalar full of doubled quotes."""
-
-
-def _represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
-    style = ">" if len(data) > 80 or "\n" in data else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
-
-
-_FoldedDumper.add_representer(str, _represent_str)
-
-
-def _rendered_skill_md(skill: Skill) -> str:
-    # Narrowing only — skills_for_file_install lists built-ins, which always
-    # have a directory; a file-less one would raise on the `/` below anyway.
-    assert skill.directory is not None
-    raw = (skill.directory / "SKILL.md").read_text(encoding="utf-8")
-    if not raw.startswith("---"):
-        raise ValueError(f"{skill.directory / 'SKILL.md'}: missing frontmatter")
-    parts = raw.split("---", 2)
-    if len(parts) < 3:
-        raise ValueError(f"{skill.directory / 'SKILL.md'}: malformed frontmatter")
-    # Re-read the raw frontmatter rather than reuse skill.description: `skill`
-    # is cli-rendered (bare sibling names), but this is the install surface.
-    # Sibling names must come out dct-prefixed, so the render pass below has
-    # to see the unrendered `{{ s_ }}` macros, not already-expanded text.
-    frontmatter = yaml.safe_load(parts[1]) or {}
-    raw_description = frontmatter.get("description", "").strip()
-    frontmatter["name"] = prefixed_install_name(skill.name)
-    frontmatter["description"] = render_skill_body(raw_description, surface="install")
-    rendered_frontmatter = yaml.dump(
-        frontmatter, Dumper=_FoldedDumper, sort_keys=False, allow_unicode=True
-    )
-    rendered_body = render_skill_body(parts[2].lstrip("\n"), surface="install")
-    return f"---\n{rendered_frontmatter}---\n{rendered_body}"
-
-
 def _is_wheel_authored(skill_md: Path) -> bool:
     """Only a SKILL.md this tool wrote carries the wheel's author line; a
     user's own skill that happens to share a retired name is not ours to sweep."""
@@ -210,20 +154,14 @@ def _remove_install_dir(path: Path) -> None:
 
 
 def _sweep_stale_install_dirs(target_dir: Path, *, check: bool = False) -> list[str]:
-    """Report, and unless ``check``, remove a file-installed skill
-    directory that no longer belongs: a ``dct-*`` dir the wheel doesn't
-    currently install (an old release retired it) found by globbing the
-    namespace, or a bare pre-namespace dir from before this prefix existed
-    found by walking the fixed ``PRE_NAMESPACE_SKILL_NAMES`` list. Both paths
-    only ever touch a directory carrying our own wheel-authored SKILL.md.
+    """Report, and unless ``check``, remove what earlier releases installed:
+    one ``dct-*`` copy per wheel skill, found by globbing that namespace, and
+    the bare pre-namespace dirs before those, found by walking the fixed
+    ``PRE_NAMESPACE_SKILL_NAMES`` list. Both only ever touch a directory
+    carrying our own wheel-authored SKILL.md.
     """
-    current_install_names = {
-        prefixed_install_name(s.name) for s in skills_for_file_install()
-    }
     removed: list[str] = []
-    for candidate in sorted(target_dir.glob(f"{INSTALL_NAME_PREFIX}*")):
-        if candidate.name in current_install_names:
-            continue
+    for candidate in sorted(target_dir.glob(f"{RETIRED_INSTALL_PREFIX}*")):
         if _is_wheel_authored(candidate / "SKILL.md"):
             if not check:
                 _remove_install_dir(candidate)
@@ -243,68 +181,57 @@ def install_skills(
     project_root: Path,
     check: bool = False,
 ) -> InstallSkillsResult:
-    """Install CLI-rendered workflow skills into ``target_dir``, unconditionally
-    overwriting an existing ``dct-*`` install (there is no ``--force`` flag).
-    ``check=True`` reports what a real install would do without writing or
-    deleting anything.
+    """Write the stub skill into ``target_dir``, overwriting the one a previous
+    install wrote (there is no ``--force`` flag). A ``dct/`` directory that is
+    not ours is refused, in a dry run too. ``check=True`` reports what a real
+    install would do without writing or deleting anything.
     """
-    wheel_names = all_skill_names()
-    legacy = detect_legacy_skill_dirs(project_root, wheel_names)
-    installed: list[str] = []
-
+    legacy = detect_legacy_skill_dirs(project_root, all_skill_names())
+    dest_dir = target_dir / INSTALL_SKILL_NAME
+    if (dest_dir.is_dir() or dest_dir.is_symlink()) and not _is_wheel_authored(
+        dest_dir / "SKILL.md"
+    ):
+        raise SkillInstallError(
+            target_dir, OSError(f"{dest_dir} is a skill of your own, not ours")
+        )
     try:
         if not check:
             target_dir.mkdir(parents=True, exist_ok=True)
         retired_removed = _sweep_stale_install_dirs(target_dir, check=check)
-
-        for skill in skills_for_file_install():
-            install_name = prefixed_install_name(skill.name)
-            dest_dir = target_dir / install_name
-            dest_md = dest_dir / "SKILL.md"
-            content = _rendered_skill_md(skill)
-            if check:
-                installed.append(install_name)
-                continue
+        if not check:
             if dest_dir.is_dir() or dest_dir.is_symlink():
                 _remove_install_dir(dest_dir)
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_md.write_text(content, encoding="utf-8")
-            installed.append(install_name)
+            (dest_dir / "SKILL.md").write_text(stub_skill_text(), encoding="utf-8")
     except OSError as exc:
         raise SkillInstallError(target_dir, exc) from exc
 
     return InstallSkillsResult(
-        installed=installed,
         retired_removed=retired_removed,
         legacy_dirs_detected=legacy,
     )
 
 
-def gitignored_skill_installs(target_dir: Path) -> list[str]:
-    """``dct-*`` installs under ``target_dir`` whose ``SKILL.md`` git ignores.
+def stub_is_gitignored(target_dir: Path) -> bool:
+    """Whether git ignores the installed stub under ``target_dir``.
 
     Outside a git repository, or without a git binary, there is nothing to
     commit, so nothing is ignored.
     """
-    rel_paths = sorted(
-        f"{d.name}/SKILL.md"
-        for d in target_dir.glob(f"{INSTALL_NAME_PREFIX}*")
-        if (d / "SKILL.md").is_file()
-    )
-    if not rel_paths or find_repo_root(target_dir) is None:
-        return []
+    rel_path = f"{INSTALL_SKILL_NAME}/SKILL.md"
+    if not (target_dir / rel_path).is_file() or find_repo_root(target_dir) is None:
+        return False
     try:
         proc = subprocess.run(
-            ["git", "check-ignore", "--stdin"],
+            ["git", "check-ignore", "-q", rel_path],
             cwd=target_dir,
-            input="\n".join(rel_paths),
             capture_output=True,
             text=True,
             check=False,
         )
     except FileNotFoundError:
-        return []
-    # 0: some paths ignored; 1: none.
+        return False
+    # 0: ignored; 1: not ignored.
     if proc.returncode not in (0, 1):
         raise RuntimeError(f"git check-ignore failed: {proc.stderr.strip()}")
-    return sorted(Path(line).parent.name for line in proc.stdout.splitlines())
+    return proc.returncode == 0

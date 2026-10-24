@@ -6,7 +6,7 @@ description: >
   structure and data, in dbt charts' own styling. Use for 'replicate', 'recreate',
   'rebuild this in dbt charts', 'migrate from Looker', or when an image of a
   dashboard is attached. Do NOT use for building from scratch, or for copying a
-  board already in this project ({{ s_skill_name_chart }}).
+  board already in this project (chart).
 metadata:
   author: fivetran
 ---

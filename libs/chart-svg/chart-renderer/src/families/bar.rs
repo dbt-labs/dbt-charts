@@ -93,7 +93,7 @@ use crate::families::support_table_columns::{self, ColumnBlock, Side};
 use crate::families::support_table_strip;
 use crate::families::color_scale::{ContinuousColor, NumericLegends};
 use crate::families::legend::{
-    emit_vega_legend, fold_legend_token, legend_slide, legend_room, legend_title_text, limited_labels, with_drawn_labels,
+    drawn_symbol_legend, emit_vega_legend, fold_legend_token, legend_slide, legend_room, legend_title_text, limited_labels, with_drawn_labels,
     legend_fit_bounds, legend_origin, narrow_legend_entries, resolve_legend_values, title_only_legend, vega_legend, VegaLegend, LegendConfig,
     LegendEntry,
     LegendSymbol,
@@ -1094,7 +1094,7 @@ fn render_rows(
 
     let layers = validate_layers(&r, payload)?;
     // A wide (`y: [a, b]`) chart unfolds into long rows once, here, before
-    // any other law runs — same seam as line.rs's `render_with_layout`. The
+    // any other law runs — same seam as line's `bind`. The
     // resolver already bakes `y` as `WIDE_VALUE_FIELD`; the only
     // substitution left is the rows and the synthetic color field, so
     // `render_horizontal`/`render_vertical` (already generic over
@@ -4613,10 +4613,9 @@ fn render_horizontal_panel(
     let mut facet_legend: Option<facet_compose::FacetLegend> = None;
     if let Some((lx, ly, lg)) = &vega_legend {
         if facet.is_some() {
-            let mut legend_svg = String::new();
-            emit_vega_legend(&mut legend_svg, &legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series);
-            numeric_legends.paint_after(&mut legend_svg, lg, &r.legend, fonts, (plot_w, plot_h), (0.0, 0.0))?;
-            facet_legend = Some(facet_compose::FacetLegend { svg: legend_svg, box_w: lg.box_w, box_h: lg.box_h() });
+            let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series).into_iter().collect();
+            nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (0.0, 0.0))?);
+            facet_legend = Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() });
         } else {
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
             emit_vega_legend(&mut svg, &legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series);
@@ -4671,7 +4670,7 @@ fn render_horizontal_panel(
                     category_scale,
                 )?;
                 let rail_label_attr = match color_field.filter(|_| tooltip_labels) {
-                    Some(field) => crate::contract::series_label_attr(field, series)?,
+                    Some(field) => print::attributes(&crate::contract::series_label_attrs(field, series)?),
                     None => String::new(),
                 };
                 let _ = write!(
@@ -6668,10 +6667,9 @@ fn render_vertical_continuous_x_panel(
     let mut facet_legend: Option<facet_compose::FacetLegend> = None;
     if let Some(lg) = &legend {
         if suppress_x_axis {
-            let mut legend_svg = String::new();
-            emit_vega_legend(&mut legend_svg, &legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series);
-            numeric_legends.paint_after(&mut legend_svg, lg, &r.legend, fonts, (m.plot_w, m.plot_h), (0.0, 0.0))?;
-            facet_legend = Some(facet_compose::FacetLegend { svg: legend_svg, box_w: lg.box_w, box_h: lg.box_h() });
+            let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries, lg, &r.legend, LegendSymbol::Square(swatch_stroke), 0.0, 0.0, stamp_legend_series).into_iter().collect();
+            nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (m.plot_w, m.plot_h), (0.0, 0.0))?);
+            facet_legend = Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() });
         } else {
             let (lx, ly) = legend_xy.get();
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (m.plot_w, m.plot_h))?;
@@ -7667,7 +7665,7 @@ fn render_facet(
             width: Box::new(|_, _| lg.box_w),
             height: Box::new(|_| lg.box_h),
             paint: Box::new(|svg, x, y, _, _| {
-                let _ = write!(svg, "<g transform=\"translate({x:.2},{y:.2})\">{}</g>", lg.svg);
+                svg.push_str(&print::print(&[lg.placed(x, y)]));
             }),
         }).into_iter().collect(),
     };
@@ -11296,10 +11294,9 @@ pub(crate) fn render_vertical_panel(
     if legend_top || (legend_shown && facet.is_some()) {
         match &vega_legend {
             Some((_, _, lg)) if facet.is_some() => {
-                let mut legend_svg = String::new();
-                emit_vega_legend(&mut legend_svg, &legend_entries_typed, lg, &r.legend, facet_swatch, 0.0, 0.0, stamp_legend_series);
-                numeric_legends.paint_after(&mut legend_svg, lg, &r.legend, fonts, (plot_w, plot_h), (0.0, 0.0))?;
-                facet_legend = Some(facet_compose::FacetLegend { svg: legend_svg, box_w: lg.box_w, box_h: lg.box_h() });
+                let mut nodes: Vec<scene::Node> = drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, facet_swatch, 0.0, 0.0, stamp_legend_series).into_iter().collect();
+                nodes.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (0.0, 0.0))?);
+                facet_legend = Some(facet_compose::FacetLegend { nodes, box_w: lg.box_w, box_h: lg.box_h() });
             }
             Some((lx, ly, lg)) => {
                 let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
@@ -12650,7 +12647,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 category_scale,
             )?;
             let rail_label_attr = match color_field.filter(|_| tooltip_labels) {
-                Some(field) => crate::contract::series_label_attr(field, series)?,
+                Some(field) => print::attributes(&crate::contract::series_label_attrs(field, series)?),
                 None => String::new(),
             };
             // The text mark's `limit` is the pane's own (capped) width.

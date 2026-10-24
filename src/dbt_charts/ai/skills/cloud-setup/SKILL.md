@@ -8,7 +8,7 @@ description: >
   and render — driven by `dct cloud status` until it reports done. Use when
   the user says 'set me up with dbt charts cloud', 'deploy my dashboards to
   cloud', 'connect this repo to dbtcharts.com', or 'get my boards live'. Do
-  NOT use for authoring boards (use {{ s_skill_name_chart }}) or for deleting/removing an
+  NOT use for authoring boards (use chart) or for deleting/removing an
   org, project, or connection — this skill never runs a destructive verb.
 metadata:
   author: fivetran
@@ -269,7 +269,7 @@ session.
 ## Step 4: Boards, if none exist yet
 
 This skill connects a repo and a warehouse; it doesn't author boards. If the
-repo has no boards the user actually authored, hand off to the {{ s_skill_name_chart }} skill
+repo has no boards the user actually authored, hand off to the chart skill
 first: inspect the warehouse schema, author board YAML, validate and render
 locally, commit, push, then publish the push (Step 8).
 

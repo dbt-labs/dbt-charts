@@ -30,15 +30,14 @@ use crate::constants::layout::SUPPORT_TABLE_MAX_X_TICKS;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 
 use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
 use crate::number_locale::active_number_locale;
 use crate::families::temporal::TimeUnit;
-use print::{vega_escape_attr, xml_escape, xml_escape_attr};
 use measure::FontBook;
+use scene::{Attrs, Node};
 
 // Per-row base height before padding — mirrors `_ROW_HEIGHT_BASE` in
 // `compile/support_table.py`.
@@ -270,14 +269,18 @@ fn divider_offset(style: &SupportTableStyle) -> f64 {
 
 /// One strip line, as the Vega-Lite `rule` mark production draws it: the
 /// divider's own color and width, dashed as Vega serializes `strokeDash`.
-pub(crate) fn divider_line(x1: f64, y1: f64, x2: f64, y2: f64, divider: &Divider) -> String {
-    format!(
-        "<line x1=\"{x1:.2}\" y1=\"{y1:.2}\" x2=\"{x2:.2}\" y2=\"{y2:.2}\" \
-         stroke=\"{}\" stroke-width=\"{}\"{}/>",
-        xml_escape_attr(&divider.color),
-        divider.width,
-        divider.vega_dash_attr()
-    )
+pub(crate) fn divider_line(x1: f64, y1: f64, x2: f64, y2: f64, divider: &Divider) -> Node {
+    let line = Attrs::new()
+        .set("x1", format!("{x1:.2}"))
+        .set("y1", format!("{y1:.2}"))
+        .set("x2", format!("{x2:.2}"))
+        .set("y2", format!("{y2:.2}"))
+        .set("stroke", divider.color.as_str())
+        .set("stroke-width", divider.width.to_string());
+    Node::Line(match divider.vega_dash() {
+        Some(dash) => line.set("stroke-dasharray", dash),
+        None => line,
+    })
 }
 
 pub(crate) fn row_height(style: &SupportTableStyle) -> f64 {
@@ -1748,6 +1751,83 @@ pub fn composed_right_overhang(rows: &[ComposedRow], pane_w: f64) -> f64 {
 /// left at `x − dx` (production writes `mark["dx"] = -dx`) and the stub
 /// ends at `−axis_y.labels.padding`.
 #[allow(clippy::too_many_arguments)]
+pub fn composed_rows_nodes(
+    rows: &[ComposedRow],
+    style: &SupportTableStyle,
+    ay_label_padding: f64,
+    plot_w: f64,
+    origin_x: f64,
+    origin_y: f64,
+    axis_on_right: bool,
+    axis_offset: f64,
+    link_open: Option<crate::href::LinkOpen>,
+) -> Result<Vec<Node>, String> {
+    // The row labels and dividers read no datum: on a linked chart each carries an undefined link.
+    let undefined = link_open.and_then(|open| open.anchor(Some(crate::href::UNDEFINED_HREF)));
+    let font_family = style.font.family_or("sans-serif");
+    let font_size = style.font.size_or(11.0);
+    let font_color = style.font.color.as_deref().unwrap_or("#333");
+    let font_weight = style.font.weight_str();
+    let (label_family, label_size) = label_font_resolved(style);
+    let label_color = style.label.font.color.as_deref().unwrap_or(font_color);
+    let label_weight = style.label.font.weight_str();
+    let baseline = measure::baseline_shift("middle", font_size);
+
+    let mut out = Vec::new();
+    if style.divider.line.visible {
+        let y = origin_y + divider_y_base(style, axis_offset);
+        out.push(crate::href::linked(undefined, divider_line(origin_x, y, origin_x + plot_w, y, &style.divider.line)));
+    }
+    let (cell_anchor, stub_anchor) =
+        if axis_on_right { ("end", "start") } else { ("start", "end") };
+    let stub_x = if axis_on_right {
+        origin_x + plot_w + ay_label_padding
+    } else {
+        origin_x - ay_label_padding
+    };
+    for (i, row) in rows.iter().enumerate() {
+        let row_y = origin_y + row_y_base(i, style, axis_offset) + baseline;
+        let dx = if axis_on_right { row.dx } else { -row.dx };
+        let mut cells = Vec::new();
+        for (cell, copy_dx) in row.cells.iter().flat_map(|cell| row.copy_dx.iter().map(move |dx| (cell, dx))) {
+            let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
+            let text = Node::text(
+                crate::contract::cell_label_attrs(&cell.aria)?
+                    .set("x", format!("{:.2}", origin_x + cell.x + dx + copy_dx))
+                    .set("y", format!("{row_y:.2}"))
+                    .set("text-anchor", cell_anchor)
+                    .vega("font-family", font_family)
+                    .set("font-size", font_size.to_string())
+                    .set("font-weight", font_weight.clone())
+                    .set("fill", font_color),
+                cell.text.as_str(),
+            );
+            cells.push(crate::href::linked(anchor, text));
+        }
+        out.push(crate::contract::mark_group("text", "strip", cells)?);
+        let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
+        let stub = Node::text(
+            Attrs::new()
+                .set("x", format!("{:.2}", stub_x + row.stub_dx))
+                .set("y", format!("{row_y:.2}"))
+                .set("text-anchor", stub_anchor)
+                .vega("font-family", label_family)
+                .set("font-size", label_size.to_string())
+                .set("font-weight", label_weight.clone())
+                .set("fill", row_label_color),
+            row.label.as_str(),
+        );
+        out.push(crate::href::linked(undefined, stub));
+        if style.row.divider.visible && i + 1 < rows.len() {
+            let y = origin_y + inter_row_y_base(i, style, axis_offset);
+            out.push(crate::href::linked(undefined, divider_line(origin_x, y, origin_x + plot_w, y, &style.row.divider)));
+        }
+    }
+    Ok(out)
+}
+
+/// [`composed_rows_nodes`] printed onto the string a family still builds.
+#[allow(clippy::too_many_arguments)]
 pub fn render_rows_composed(
     out: &mut String,
     rows: &[ComposedRow],
@@ -1760,69 +1840,8 @@ pub fn render_rows_composed(
     axis_offset: f64,
     link_open: Option<crate::href::LinkOpen>,
 ) -> Result<(), String> {
-    // The row labels and dividers read no datum: on a linked chart each carries an undefined link.
-    let undefined = link_open.and_then(|open| open.anchor(Some(crate::href::UNDEFINED_HREF)));
-    let font_family = style.font.family_or("sans-serif");
-    let font_size = style.font.size_or(11.0);
-    let font_color = style.font.color.as_deref().unwrap_or("#333");
-    let font_weight = style.font.weight_str();
-    let (label_family, label_size) = label_font_resolved(style);
-    let label_color = style.label.font.color.as_deref().unwrap_or(font_color);
-    let label_weight = style.label.font.weight_str();
-    let baseline = measure::baseline_shift("middle", font_size);
-
-    if style.divider.line.visible {
-        let y = origin_y + divider_y_base(style, axis_offset);
-        out.push_str(&crate::href::anchor_open(undefined));
-        out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.divider.line));
-        out.push_str(crate::href::anchor_close(undefined));
-    }
-    let (cell_anchor, stub_anchor) =
-        if axis_on_right { ("end", "start") } else { ("start", "end") };
-    let stub_x = if axis_on_right {
-        origin_x + plot_w + ay_label_padding
-    } else {
-        origin_x - ay_label_padding
-    };
-    for (i, row) in rows.iter().enumerate() {
-        let row_y = origin_y + row_y_base(i, style, axis_offset) + baseline;
-        let dx = if axis_on_right { row.dx } else { -row.dx };
-        crate::contract::mark_group_open(out, "text", "strip")?;
-        for (cell, copy_dx) in row.cells.iter().flat_map(|cell| row.copy_dx.iter().map(move |dx| (cell, dx))) {
-            let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
-            out.push_str(&crate::href::anchor_open(anchor));
-            let _ = write!(
-                out,
-                "<text{} x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{cell_anchor}\" \
-                 font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{font_weight}\" \
-                 fill=\"{font_color}\">{}</text>",
-                crate::contract::cell_label_attr(&cell.aria)?,
-                origin_x + cell.x + dx + copy_dx,
-                vega_escape_attr(font_family),
-                xml_escape(&cell.text), cell_anchor = xml_escape_attr(cell_anchor), font_weight = xml_escape_attr(&font_weight), font_color = xml_escape_attr(font_color)
-            );
-            out.push_str(crate::href::anchor_close(anchor));
-        }
-        crate::contract::mark_group_close(out);
-        let row_label_color = row.label_color.as_deref().unwrap_or(label_color);
-        out.push_str(&crate::href::anchor_open(undefined));
-        let _ = write!(
-            out,
-            "<text x=\"{:.2}\" y=\"{row_y:.2}\" text-anchor=\"{stub_anchor}\" \
-             font-family=\"{}\" font-size=\"{label_size}\" font-weight=\"{label_weight}\" \
-             fill=\"{row_label_color}\">{}</text>",
-            stub_x + row.stub_dx,
-            vega_escape_attr(label_family),
-            xml_escape(&row.label), stub_anchor = xml_escape_attr(stub_anchor), label_weight = xml_escape_attr(&label_weight), row_label_color = xml_escape_attr(row_label_color)
-        );
-        out.push_str(crate::href::anchor_close(undefined));
-        if style.row.divider.visible && i + 1 < rows.len() {
-            let y = origin_y + inter_row_y_base(i, style, axis_offset);
-            out.push_str(&crate::href::anchor_open(undefined));
-            out.push_str(&divider_line(origin_x, y, origin_x + plot_w, y, &style.row.divider));
-            out.push_str(crate::href::anchor_close(undefined));
-        }
-    }
+    let nodes = composed_rows_nodes(rows, style, ay_label_padding, plot_w, origin_x, origin_y, axis_on_right, axis_offset, link_open)?;
+    out.push_str(&print::print(&nodes));
     Ok(())
 }
 
@@ -2438,12 +2457,12 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(
-            divider_line(10.0, 20.0, 110.0, 20.0, &dashed),
+            print::print(&[divider_line(10.0, 20.0, 110.0, 20.0, &dashed)]),
             "<line x1=\"10.00\" y1=\"20.00\" x2=\"110.00\" y2=\"20.00\" \
              stroke=\"#cc7700\" stroke-width=\"2\" stroke-dasharray=\"6,3.5\"/>"
         );
         let solid = Divider { dasharray: None, ..dashed };
-        assert!(!divider_line(0.0, 0.0, 1.0, 0.0, &solid).contains("dasharray"));
+        assert!(!print::print(&[divider_line(0.0, 0.0, 1.0, 0.0, &solid)]).contains("dasharray"));
     }
 
     #[test]

@@ -434,18 +434,16 @@ def init_skills(
     ] = False,
     project_dir: ProjectDirOption = None,
 ) -> None:
-    """Install dbt charts workflow skills for file-based agent auto-discovery.
+    """Install the dct agent skill for file-based auto-discovery.
 
-    Writes CLI-rendered skill files, namespaced under a ``dct-`` prefix
-    (``dct-chart/``, ...), to ``.agents/skills/`` (Cursor, Codex,
+    Writes one ``dct/SKILL.md`` to ``.agents/skills/`` (Cursor, Codex,
     Copilot) and/or ``.claude/skills/`` (Claude Code) inside the current
-    repository. Pass ``--global`` to install into your user-level directories
-    instead (``~/.claude/skills/``, ``~/.agents/skills/``), so any new project
-    on this machine picks up the skills without a per-repo install. Does not
-    configure MCP or modify AGENTS.md / CLAUDE.md. Always overwrites an
-    existing ``dct-*`` install; re-run after every upgrade to pick up new
-    skill bodies. Commit a repository install: a teammate's agent sees only
-    the skills checked in, and nothing tells it to run ``dct init skills``.
+    repository. It is a pointer at ``dct skills chart``, so it carries no
+    version and never goes stale: commit it. Pass ``--global`` to install into
+    your user-level directories instead (``~/.claude/skills/``,
+    ``~/.agents/skills/``), so any new project on this machine picks it up
+    without a per-repo install. Does not configure MCP or modify AGENTS.md /
+    CLAUDE.md. Removes the per-skill ``dct-*`` copies earlier releases wrote.
 
     \b
     Examples:

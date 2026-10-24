@@ -1,0 +1,3 @@
+kind: Fixes
+body: Registered ERR-CONNECTION-NOT-PASSING for a board blocked by a connection that has failed or never run its test.
+time: 2026-10-23T23:46:00.024877-07:00

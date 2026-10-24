@@ -78,7 +78,7 @@ def init_project(
     """Bootstrap (or refresh) a dbt charts project layout.
 
     Safe to re-run: scaffold files are skipped unless *force* is set.
-    Agent markdown is never written; agent onboarding lives in installed skills.
+    Agent markdown is never written; agent onboarding is the installed dct skill.
     """
     root = (project_dir or Path()).resolve()
     dbt_detected = (root / "dbt_project.yml").exists()

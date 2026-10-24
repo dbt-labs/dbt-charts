@@ -444,15 +444,15 @@ pub fn aria_attrs(label: Option<&str>, role: ItemRole) -> Result<Attrs, String> 
 }
 
 /// The attributes a support-table cell carries; a cell nobody described stays bare.
-pub fn cell_label_attr(label: &str) -> Result<String, String> {
-    aria_attr((!label.is_empty()).then_some(label), ItemRole::TextMark)
+pub fn cell_label_attrs(label: &str) -> Result<Attrs, String> {
+    aria_attrs((!label.is_empty()).then_some(label), ItemRole::TextMark)
 }
 
 /// The attributes a series-label rail text carries: Vega's default
 /// description of a text mark bound to a nominal field, the raw `field: value`
 /// pair (never the truncated display text).
-pub fn series_label_attr(color_field: &str, series: &str) -> Result<String, String> {
-    aria_attr(Some(&format!("{color_field}: {series}")), ItemRole::TextMark)
+pub fn series_label_attrs(color_field: &str, series: &str) -> Result<Attrs, String> {
+    aria_attrs(Some(&format!("{color_field}: {series}")), ItemRole::TextMark)
 }
 
 /// One cartesian datum's structured-tooltip content -- shared by bar,

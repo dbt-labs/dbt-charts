@@ -53,7 +53,7 @@
 //! `PanelGeometry.top_axis_overhang` is the new field this all reads —
 //! each arm's own `fit`/`ink` closure tracks it via a `std::cell::Cell`
 //! (bar's `render_vertical_continuous_x_panel`/`render_vertical_panel`,
-//! line's `render_line_panel`), reset at the start of every `fit()` call
+//! line's `line::layout::fit`), reset at the start of every `fit()` call
 //! since an unbaked ladder's own retry loop must not let a stale call's
 //! overhang survive into the next one's measurement.
 //!
@@ -172,7 +172,10 @@ impl PanelXAxis {
         match self {
             PanelXAxis::Band(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
             PanelXAxis::Continuous(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
-            PanelXAxis::Line(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
+            PanelXAxis::Line(x) => {
+                svg.push_str(&print::print(&x.nodes(ax_x, plot_left, plot_w, plot_bottom, fonts)?));
+                Ok(())
+            }
             PanelXAxis::Temporal(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Plain(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
             PanelXAxis::Heat(x) => {
@@ -204,9 +207,17 @@ pub(crate) struct GhostStyle {
 /// whole composite (`layoutGroup` gathers the root's `role-legend` marks), so
 /// the composer places it (`LegendChrome`), never a panel.
 pub(crate) struct FacetLegend {
-    pub(crate) svg: String,
+    /// The legend drawn at its own origin.
+    pub(crate) nodes: Vec<scene::Node>,
     pub(crate) box_w: f64,
     pub(crate) box_h: f64,
+}
+
+impl FacetLegend {
+    /// The legend at `(x, y)` on the composite.
+    pub(crate) fn placed(&self, x: f64, y: f64) -> scene::Node {
+        scene::Node::group(scene::Attrs::new().set("transform", format!("translate({x:.2},{y:.2})")), self.nodes.clone())
+    }
 }
 
 /// The composite's left-hand placement terms, which depend on how wide the

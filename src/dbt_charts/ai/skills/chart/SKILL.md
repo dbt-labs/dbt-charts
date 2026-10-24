@@ -122,7 +122,7 @@ Every chart needs `type:`, one of the types below.
 - `callout`: requires `message`; takes `title`; rejects `query`, `subtitle`, `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`
   - `message`: Body text the callout displays
 Also exist: `pie`, `donut`, `point_map`, `bubble_map`, `map`, `geoshape`, `spark_bar`, `custom`.
-For a shape no built-in type draws, read the {{ s_skill_name_custom_chart_build }} skill.
+For a shape no built-in type draws, read the custom-chart-build skill.
 - A table is as tall as its rows and takes no `height`: `style.pagination.page_rows` caps the rows shown; a `height` on the layout row around it caps its slot.
 
 `layers[]`:

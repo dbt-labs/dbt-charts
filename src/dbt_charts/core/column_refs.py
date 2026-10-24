@@ -29,6 +29,7 @@ import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
 from sqlglot.optimizer.qualify import qualify
+from sqlglot.optimizer.qualify_columns import validate_qualify_columns
 from sqlglot.optimizer.scope import Scope, traverse_scope
 from sqlglot.tokens import TokenType
 
@@ -307,6 +308,45 @@ def _setup_refs(
     return columns, defined, via_dbt, None
 
 
+def qualify_without_schema(
+    expression: _TreeT,
+    dialect: str | None,
+    expand_alias_refs: bool = True,
+    validate: bool = True,
+) -> _TreeT:
+    """sqlglot's ``qualify`` with no schema, attributing each unqualified column
+    to the one source in its scope whose columns are unknown.
+
+    Without a schema a base table's columns are unknown, and sqlglot qualifies
+    only the columns a derived table names, so a column read from a lone table
+    would otherwise be left unattributed. ``validate`` raises when any column is
+    still unattributed.
+    """
+    qualified = qualify(
+        expression,
+        dialect=dialect,
+        expand_alias_refs=expand_alias_refs,
+        validate_qualify_columns=False,
+    )
+    for scope in traverse_scope(qualified):
+        unknown = [
+            node
+            for node, source in scope.selected_sources.values()
+            if isinstance(source, exp.Table)
+            or isinstance(source.expression, exp.Query)
+            and any(s.is_star for s in source.expression.selects)
+        ]
+        if len(unknown) != 1:
+            continue
+        (node,) = unknown
+        alias = node.args.get("alias")
+        table = alias.this if alias else exp.to_identifier(node.alias_or_name)
+        for col in scope.columns:
+            if not col.table:
+                col.set("table", table.copy())
+    return validate_qualify_columns(qualified) if validate else qualified
+
+
 def resolve_source(scope: Scope, table_alias: str) -> exp.Table | Scope | None:
     """The alias's source in this scope or, for a correlated reference, the
     nearest ancestor scope that knows it."""
@@ -363,7 +403,7 @@ def _collect(statement: exp.Expr, dialect: str | None, refs: QueryColumnRefs) ->
             return
 
     try:
-        statement = qualify(statement, dialect=dialect)
+        statement = qualify_without_schema(statement, dialect)
     except sqlglot.errors.SqlglotError:
         refs.indeterminate = "column-to-table attribution is ambiguous without a schema"
         return

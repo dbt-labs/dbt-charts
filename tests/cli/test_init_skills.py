@@ -24,7 +24,7 @@ def _seed_project() -> None:
     Path("dbt_charts.yml").write_text("name: test\n", encoding="utf-8")
 
 
-def test_init_skills_agents_writes_rendered_workflows(
+def test_init_skills_agents_writes_the_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -32,13 +32,13 @@ def test_init_skills_agents_writes_rendered_workflows(
     result = runner.invoke(cli_main.app, ["init", "skills", "agents"])
 
     assert result.exit_code == 0, result.output
-    skill_md = Path(".agents/skills/dct-chart/SKILL.md")
+    skill_md = Path(".agents/skills/dct/SKILL.md")
     assert skill_md.exists()
     text = skill_md.read_text(encoding="utf-8")
     assert "{{ s_" not in text
     assert not Path(".cursor/skills").exists()
     assert not Path(".codex/skills").exists()
-    assert not (Path(".agents/skills") / "kpi-row").exists()
+    assert [p.name for p in Path(".agents/skills").iterdir()] == ["dct"]
 
 
 def test_init_skills_claude_target(
@@ -49,7 +49,7 @@ def test_init_skills_claude_target(
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".claude/skills/dct-chart/SKILL.md").exists()
+    assert Path(".claude/skills/dct/SKILL.md").exists()
 
 
 def test_init_skills_project_dir_stays_in_subproject(tmp_path: Path) -> None:
@@ -68,7 +68,7 @@ def test_init_skills_project_dir_stays_in_subproject(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert (subproject / ".claude/skills/dct-chart/SKILL.md").exists()
+    assert (subproject / ".claude/skills/dct/SKILL.md").exists()
     assert not (git_root / ".claude").exists()
 
 
@@ -134,7 +134,7 @@ def test_init_skills_dct_project_dir_env_var_walks_to_git_root(
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert (git_root / ".claude/skills/dct-chart/SKILL.md").exists()
+    assert (git_root / ".claude/skills/dct/SKILL.md").exists()
     assert not (subproject / ".claude").exists()
 
 
@@ -149,7 +149,7 @@ def test_init_skills_dct_project_dir_env_var_in_fresh_repo_still_bootstraps(
     result = runner.invoke(cli_main.app, ["init", "skills"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".agents/skills/dct-chart/SKILL.md").exists()
+    assert Path(".agents/skills/dct/SKILL.md").exists()
 
 
 def test_init_skills_all_with_both_markers(
@@ -162,39 +162,37 @@ def test_init_skills_all_with_both_markers(
     result = runner.invoke(cli_main.app, ["init", "skills", "--all"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".agents/skills/dct-chart/SKILL.md").exists()
-    assert Path(".claude/skills/dct-chart/SKILL.md").exists()
+    assert Path(".agents/skills/dct/SKILL.md").exists()
+    assert Path(".claude/skills/dct/SKILL.md").exists()
 
 
-def test_init_skills_tells_the_user_to_commit_the_install(
+def test_init_skills_says_to_commit_the_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A teammate's agent only sees skills that are committed, and nothing
-    tells it to run `dct init skills` itself -- so a repo install says to
-    commit the copies and refresh them after an upgrade, never to gitignore
-    them."""
+    """The stub is a versionless pointer, so committing it is the point: a
+    teammate's fresh clone finds `dct` through it."""
     monkeypatch.chdir(tmp_path)
     _seed_project()
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert "Commit .claude/skills/dct-*/" in result.output
-    assert "re-run `dct init skills` after upgrading dbt Charts" in result.output
+    assert "Installed the dct skill → .claude/skills/dct/SKILL.md" in result.output
+    assert "Commit it" in result.output
     assert "gitignore" not in result.output.lower()
 
 
-def test_init_skills_warns_when_gitignore_drops_an_installed_skill(
+def test_init_skills_warns_when_gitignore_drops_the_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _seed_project()
     subprocess.run(["git", "init", "-q"], check=True)
-    Path(".gitignore").write_text("*build/\n", encoding="utf-8")
+    Path(".gitignore").write_text(".claude/\n", encoding="utf-8")
     result = runner.invoke(cli_main.app, ["init", "skills", "claude"])
 
     assert result.exit_code == 0, result.output
-    assert "gitignored: dct-custom-chart-build" in result.output
-    assert "!.claude/skills/dct-*/" in result.output
+    assert "Warning: gitignored" in result.output
+    assert "!.claude/skills/dct/" in result.output
 
 
 def test_init_skills_check_dry_run(
@@ -233,17 +231,17 @@ def test_init_skills_check_reports_would_remove_retired_without_deleting(
     assert stale.exists()
 
 
-def test_init_skills_check_prints_no_commit_hint(
+def test_init_skills_check_does_not_say_to_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A dry run writes nothing: the hint would tell the user to commit a
-    directory that doesn't exist."""
+    """A dry run writes nothing: there is no file to commit yet."""
     monkeypatch.chdir(tmp_path)
     _seed_project()
     result = runner.invoke(cli_main.app, ["init", "skills", "agents", "--check"])
 
     assert result.exit_code == 0, result.output
-    assert "Commit" not in result.output
+    assert "Would install the dct skill → .agents/skills/dct/SKILL.md" in result.output
+    assert "Commit it" not in result.output
 
 
 def test_init_skills_no_markers_defaults_to_agents(
@@ -258,7 +256,7 @@ def test_init_skills_no_markers_defaults_to_agents(
     result = runner.invoke(cli_main.app, ["init", "skills"])
 
     assert result.exit_code == 0, result.output
-    assert Path(".agents/skills/dct-chart/SKILL.md").exists()
+    assert Path(".agents/skills/dct/SKILL.md").exists()
     assert not Path(".claude/skills").exists()
 
 
@@ -290,9 +288,8 @@ def test_init_skills_dir_override(
     result = runner.invoke(cli_main.app, ["init", "skills", "--dir", "custom-skills"])
 
     assert result.exit_code == 0, result.output
-    assert Path("custom-skills/dct-chart/SKILL.md").exists()
-    assert "→ custom-skills/" in result.output
-    assert "Commit custom-skills/dct-*/" in result.output
+    assert Path("custom-skills/dct/SKILL.md").exists()
+    assert "→ custom-skills/dct/SKILL.md" in result.output
     assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
@@ -319,7 +316,7 @@ def test_init_skills_dir_override_ignores_marker_less_project_dir(
     )
 
     assert result.exit_code == 0, result.output
-    assert Path("custom-skills/dct-chart/SKILL.md").exists()
+    assert Path("custom-skills/dct/SKILL.md").exists()
 
 
 def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
@@ -329,8 +326,8 @@ def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
     """--dir names the install destination outright, but --project-dir still
     picks the project context for display and legacy scanning -- that context
     must stay the git root, not the --project-dir target, or the printed
-    commit hint turns into a useless absolute path and a legacy install
-    elsewhere in the repo goes unreported."""
+    path turns into a useless absolute path and a legacy install elsewhere
+    in the repo goes unreported."""
     monkeypatch.chdir(tmp_path)
     subprocess.run(["git", "init", "-q"], check=True)
     legacy_dir = Path(".cursor/skills/chart")
@@ -346,7 +343,7 @@ def test_init_skills_dir_override_with_project_dir_keeps_git_root_context(
     )
 
     assert result.exit_code == 0, result.output
-    assert "Commit custom-skills/dct-*/" in result.output
+    assert "→ custom-skills/dct/SKILL.md" in result.output
     assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
@@ -355,8 +352,8 @@ def test_init_skills_explicit_project_dir_keeps_repo_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An explicit --project-dir moves the install root, not the repository.
-    Paths stay repo-relative so the printed commit path works pasted at the
-    repo root, and a legacy install elsewhere in the repo is still reported."""
+    Paths stay repo-relative, and a legacy install elsewhere in the repo is
+    still reported."""
     monkeypatch.chdir(tmp_path)
     subprocess.run(["git", "init", "-q"], check=True)
     legacy_dir = Path(".cursor/skills/chart")
@@ -371,9 +368,9 @@ def test_init_skills_explicit_project_dir_keeps_repo_context(
     )
 
     assert result.exit_code == 0, result.output
-    assert (sub / ".claude/skills/dct-chart/SKILL.md").exists()
+    assert (sub / ".claude/skills/dct/SKILL.md").exists()
     assert not Path(".claude").exists()
-    assert "Commit sub/.claude/skills/dct-*/" in result.output
+    assert "→ sub/.claude/skills/dct/SKILL.md" in result.output
     assert "Legacy skill install detected at .cursor/skills/chart" in result.output
 
 
@@ -390,14 +387,14 @@ def test_init_skills_global_installs_into_home_claude(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert (home / ".claude/skills/dct-chart/SKILL.md").exists()
+    assert (home / ".claude/skills/dct/SKILL.md").exists()
 
 
-def test_init_skills_global_prints_no_commit_hint(
+def test_init_skills_global_does_not_say_to_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A global install lands in the user's home directory, not a repo: a
-    commit hint naming a repo-relative path is meaningless there."""
+    """A global install lands in the user's home directory, not a repo:
+    there is nothing to commit."""
     home = tmp_path / "home"
     home.mkdir()
     (home / ".claude").mkdir()
@@ -408,7 +405,7 @@ def test_init_skills_global_prints_no_commit_hint(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert "Commit" not in result.output
+    assert "Commit it" not in result.output
 
 
 def test_init_skills_global_installs_into_home_agents_via_codex(
@@ -424,7 +421,7 @@ def test_init_skills_global_installs_into_home_agents_via_codex(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert (home / ".agents/skills/dct-chart/SKILL.md").exists()
+    assert (home / ".agents/skills/dct/SKILL.md").exists()
 
 
 def test_init_skills_global_no_markers_errors(
@@ -520,7 +517,7 @@ def test_init_skills_global_ignores_dct_project_dir(
     result = runner.invoke(cli_main.app, ["init", "skills", "--global"])
 
     assert result.exit_code == 0, result.output
-    assert (home / ".claude/skills/dct-chart/SKILL.md").exists()
+    assert (home / ".claude/skills/dct/SKILL.md").exists()
     assert not (project / ".claude").exists()
     assert not (project / ".agents").exists()
 

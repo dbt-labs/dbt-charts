@@ -88,7 +88,7 @@ def run_wizard(
         do_skills = _resolve(
             None,
             yes=yes,
-            prompt="Install dbt charts workflow skills for AI assistants?",
+            prompt="Install the dbt Charts agent skill (one file that points AI assistants at `dct skills`)?",
             default=True,
         )
 

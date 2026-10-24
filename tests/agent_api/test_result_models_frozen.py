@@ -116,7 +116,7 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
         ),
         "updated",
     ),
-    (InstallSkillsResult(), "installed"),
+    (InstallSkillsResult(), "retired_removed"),
     (FileHit(file_path="x", line=1, text="l"), "file_path"),
     (FileEntry(file_path="x"), "file_path"),
     (

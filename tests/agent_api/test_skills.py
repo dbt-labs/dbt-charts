@@ -233,17 +233,17 @@ class TestProjectSkills:
 
         assert "my-metric" in {s.name for s in result.skills}
 
-    def test_dct_prefixed_project_dir_is_skipped(self, tmp_path: Path) -> None:
-        """`dct init skills` writes `dct-chart/SKILL.md` with
-        `name: dct-chart` into `.claude/skills/`: the project-skill
-        scanner must not re-read its own file-install output as a second,
-        distinct registry entry."""
+    def test_install_output_is_skipped(self, tmp_path: Path) -> None:
+        """`dct init skills` writes `dct/SKILL.md` into `.claude/skills/`, and
+        earlier releases wrote one `dct-<skill>` copy per wheel skill: the
+        project-skill scanner must not re-read either as a project skill."""
+        _write_project_skill(tmp_path, ".claude/skills/dct", name="dct")
         _write_project_skill(tmp_path, ".claude/skills/dct-chart", name="dct-chart")
         project = FilesystemProject(tmp_path)
 
         result = list_skills(project=project)
 
-        assert "dct-chart" not in {s.name for s in result.skills}
+        assert {"dct", "dct-chart"}.isdisjoint({s.name for s in result.skills})
 
     def test_project_skill_overrides_builtin_of_same_name(self, tmp_path: Path) -> None:
         _write_project_skill(
@@ -633,8 +633,7 @@ def test_every_if_tool_marker_names_a_real_tool(skill_path: Path) -> None:
 
 
 def test_mcp_setup_is_cli_only() -> None:
-    """`mcp-setup` is CLI-only — invisible to tool-call agents. Registry name
-    stays bare; the `dct-` prefix is introduced only on the CLI install surface."""
+    """`mcp-setup` is CLI-only — invisible to tool-call agents."""
     cli_skill = get_skill("mcp-setup", surface="cli")
     assert cli_skill.name == "mcp-setup"
     assert "cli" in cli_skill.surfaces
@@ -816,8 +815,8 @@ class TestExtraSkills:
 # that survives a host we have never seen.
 # ---------------------------------------------------------------------------
 
-# Skills that compose an authoring system prompt or get installed to disk by
-# `dct init skills` — the surfaces an agent actually reads before writing YAML.
+# The skill that composes every authoring system prompt and that the installed
+# stub points CLI agents at — what an agent actually reads before writing YAML.
 _AUTHORING_SKILL = "chart"
 
 
@@ -834,12 +833,12 @@ def test_grammar_skill_reaches_every_authoring_prompt() -> None:
         )
 
 
-def test_grammar_skill_is_installed_to_disk_for_cli_agents() -> None:
+def test_installed_stub_sends_cli_agents_to_the_grammar_skill() -> None:
     """Claude Code and Codex read skills off disk, not from our system prompt.
-    The grammar page only reaches them if it is in the file-install set."""
-    from dbt_charts.agent_api.skill_install import skills_for_file_install
+    The one file `dct init skills` writes must send them to the grammar page."""
+    from dbt_charts.agent_api.skill_install import stub_skill_text
 
-    assert _AUTHORING_SKILL in {s.name for s in skills_for_file_install()}
+    assert f"dct skills {_AUTHORING_SKILL}" in stub_skill_text()
 
 
 def test_unknown_skill_points_each_surface_at_its_own_listing() -> None:

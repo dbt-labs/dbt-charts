@@ -9,7 +9,7 @@ description: >
   structure, chart selection for reports, content writing, and the
   executive-summary-first pattern. Do NOT use for at-a-glance monitoring
   dashboards or for the build-test-iterate workflow (use
-  {{ s_skill_name_chart }}).
+  chart).
 metadata:
   author: fivetran
 ---
@@ -30,7 +30,7 @@ Reports are narrative-driven documents that tell a story with data and answer sp
 | **Structure** | Executive summary → analysis → conclusions | KPIs → trends → breakdowns |
 | **Interaction** | Read in minutes | Scan in seconds |
 
-If the user needs at-a-glance monitoring, use the `{{ s_skill_name_chart }}` skill instead.
+If the user needs at-a-glance monitoring, use the `chart` skill instead.
 
 ## Core Principles
 

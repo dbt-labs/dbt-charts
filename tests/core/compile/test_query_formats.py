@@ -461,7 +461,6 @@ def _executor(rows: list[dict[str, int]]) -> Executor:
     ok = Mock(
         is_success=True,
         data=rows,
-        column_descriptions=None,
         resolved_relations=None,
         truncated_reason=None,
     )

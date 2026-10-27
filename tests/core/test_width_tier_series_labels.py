@@ -111,37 +111,6 @@ def test_series_label_font_size_follows_width_tier(
     assert resolved.style.series_label.font_weight == expected_weight
 
 
-def test_tiny_width_swaps_endpoint_labels_for_top_legend(
-    make_chart: Callable[..., Any],
-    model_copy_at: Callable[[Any, str, Any], Any],
-) -> None:
-    """Tiny cards restore the legend and leave the y-axis on the right."""
-    from dbt_charts.core.compile.resolve.style.typography import _TINY_MAX
-
-    chart = make_chart("line", x="date", y="value", color="series")
-    resolved = resolve(
-        chart,
-        _multi_series_data(),
-        _board_with_distinctive_series_label_sizes(model_copy_at),
-        width=_TINY_MAX - 0.1,
-    )
-
-    assert isinstance(resolved, ResolvedLineChart)
-    assert resolved.style.endpoint_labels.visible is False
-    assert resolved.legend.visible is True
-    assert resolved.style.axis_y.position == "right"
-    assert resolved.legend.position.edge == "top"
-    assert resolved.legend.direction == "horizontal"
-    assert resolved.legend.columns == 7
-    assert resolved.legend.title.visible is False
-    from dbt_charts.core.render.chart.vl_field_maps import legend_to_vl
-
-    emitted = legend_to_vl(resolved.legend)
-    assert emitted is not None
-    assert emitted["columns"] == 7
-    assert emitted["title"] is None
-
-
 def test_tiny_width_owns_legend_position_when_endpoint_labels_are_disabled(
     make_chart: Callable[..., Any],
     model_copy_at: Callable[[Any, str, Any], Any],

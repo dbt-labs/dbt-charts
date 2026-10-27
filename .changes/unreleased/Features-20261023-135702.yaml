@@ -1,0 +1,3 @@
+kind: Features
+body: Values queries reject a column that mixes kinds or holds only nulls when the board is validated.
+time: 2026-10-23T13:57:02.482718-07:00

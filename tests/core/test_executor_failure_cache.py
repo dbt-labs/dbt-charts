@@ -55,7 +55,6 @@ def _make_executor(result_cache=None, adapter_result=None, adapter_side_effect=N
         ok = Mock()
         ok.is_success = True
         ok.data = [{"value": 1}]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = None
         mock_registry.execute.return_value = ok
@@ -80,7 +79,6 @@ class TestQueryErrorCachedViaIsSuccessFalsePath:
         failed_result = Mock()
         failed_result.is_success = False
         failed_result.error = QueryError("column 'x' not found")
-        failed_result.column_descriptions = None
         failed_result.resolved_relations = None
         failed_result.truncated_reason = None
 
@@ -103,7 +101,6 @@ def _failed_result(error: QueryError) -> Mock:
     failed = Mock()
     failed.is_success = False
     failed.error = error
-    failed.column_descriptions = None
     failed.resolved_relations = None
     failed.truncated_reason = None
     return failed
@@ -378,7 +375,6 @@ class TestExecutorForceRefresh:
                 ok = Mock()
                 ok.is_success = True
                 ok.data = [{"value": 42}]
-                ok.column_descriptions = None
                 ok.resolved_relations = None
                 ok.truncated_reason = None
                 return ok
@@ -409,7 +405,6 @@ class TestExecutorForceRefresh:
                 ok = Mock()
                 ok.is_success = True
                 ok.data = [{"value": len(calls)}]
-                ok.column_descriptions = None
                 ok.resolved_relations = None
                 ok.truncated_reason = None
                 return ok

@@ -241,7 +241,7 @@ style:
             radius: 3
             stroke: null
           position:
-            edge: top
+            edge: auto
             align: center
             overlay: false
           dx: 0

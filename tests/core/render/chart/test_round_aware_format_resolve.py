@@ -28,7 +28,6 @@ import re
 import vl_convert as vlc
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.authored import (
@@ -44,7 +43,6 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     build_resolved_axis,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
-from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
 
 _TEXT_RE = re.compile(r"<text[^>]*>(.*?)</text>", re.S)
 
@@ -85,31 +83,6 @@ def _resolved_axis_y_for_format(format_spec: str) -> object:
     )
 
 
-def test_inline_si_axis_passes_through_to_vega_without_trim() -> None:
-    """Inline d3 spec ``".3s"`` is passed verbatim to Vega — no trim injected.
-
-    vl_field_maps.py hands the resolved format directly to Vega (``d["format"] = v``).
-    Under the three-way contract, only predefined format names get trim baked;
-    inline specs pass through as authored. Vega renders ``"1.0M"`` (trailing
-    zero preserved) — the same output Python's format_d3 produces for the same
-    raw spec."""
-    resolved_ay = _resolved_axis_y_for_format(".3s")
-    assert resolved_ay.ruler is None, (
-        "test requires the non-compacting (no ruler) axis path"
-    )
-
-    vl_format = axis_to_vl(resolved_ay)["format"]
-    assert vl_format == ".3s", (
-        f"inline d3 spec must reach Vega unchanged — got {vl_format!r}"
-    )
-
-    rendered = _render_text_via_vega(1_000_000.0, vl_format)
-    assert rendered == "1.00M", (
-        "inline spec without ~ keeps trailing zeros on both Python and Vega sides"
-        f" — got {rendered!r}"
-    )
-
-
 def test_mark_value_label_inline_si_passes_through() -> None:
     """An explicitly-authored mark value-label inline SI spec bypasses trim
     injection — ``_label_format_fallback`` returns it unchanged, and both
@@ -126,26 +99,3 @@ def test_mark_value_label_inline_si_passes_through() -> None:
 
     rendered = _render_text_via_vega(1_000_000.0, resolved_labels.format.spec)
     assert rendered == "1.00M"
-
-
-def test_axis_and_kpi_agree_on_digits_for_the_same_authored_spec() -> None:
-    """The parity claim: an axis tick (real Vega) and a KPI/table cell
-    (format_value, Python) must show the same digit count for one authored
-    spec.
-
-    Under the three-way contract, inline ``"$,.2s"`` passes through without
-    trim on both sides — Vega and Python both render ``"$1.0M"``.
-
-    The space-vs-no-space register gap (Vega's bare d3 ``"M"`` vs dbt charts'
-    analytic ``" M"``) is pre-existing and out of scope here — stripped out on
-    both sides to isolate the digit-count assertion.
-    """
-    resolved_ay = _resolved_axis_y_for_format("$,.2s")
-    vl_format = axis_to_vl(resolved_ay)["format"]
-
-    axis_digits = _render_text_via_vega(1_000_000.0, vl_format).replace(" ", "")
-    kpi_digits = format_value(1_000_000.0, "$,.2s").replace(" ", "")
-    assert axis_digits == kpi_digits, (
-        f"axis (Vega) rendered {axis_digits!r}, KPI/table (format_value) rendered "
-        f"{kpi_digits!r} — same authored spec, different digits"
-    )

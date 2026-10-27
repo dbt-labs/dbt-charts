@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from datetime import date, datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeGuard, TypeVar, get_args
+from zoneinfo import ZoneInfo
 
 from pydantic import (
     BaseModel,
@@ -55,6 +57,7 @@ from dbt_charts.core.compile.models.markers import (
     Palette,
     Strategy,
 )
+from dbt_charts.core.compile.models.palette import PaletteFamily
 from dbt_charts.core.compile.models.schema_names import (
     VEGA_SCHEME_NAMES,
     ScalePaletteName,
@@ -81,6 +84,7 @@ from dbt_charts.core.text.format_d3 import (
 )
 from dbt_charts.core.text.magnitude_words import magnitude_words
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NUMBER_NAMES
+from dbt_charts.core.text.time_zones import TIME_ZONE_NAMES, TimeZoneName
 
 # A frozenset dumps in Python's per-process hash-seed order, so two otherwise-
 # identical processes emit different orderings for the same set. Every model
@@ -516,8 +520,20 @@ class RegionalLocale(BaseModel):
     )
 
 
+def _known_time_zone(
+    value: object,  # type-state: object_annotation — raw authored input
+) -> object:  # type-state: object_annotation — the enum validates the rest
+    # Ahead of the enum's own error, which would list every zone.
+    if not isinstance(value, str) or value not in TIME_ZONE_NAMES:
+        raise ValueError(
+            "unknown IANA time zone; name one like 'UTC', 'America/New_York' "
+            "or 'Europe/Berlin'"
+        )
+    return value
+
+
 class Regional(BaseModel):
-    """How a board writes numbers and dates: its d3 locales and currency symbol."""
+    """How a board writes numbers and times: its locales, currency and zone."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -540,6 +556,26 @@ class Regional(BaseModel):
             "that locale has no catalog or is a definition."
         ),
     )
+
+    time_zone: Annotated[TimeZoneName, BeforeValidator(_known_time_zone)] = Field(
+        default=TimeZoneName("UTC"),
+        description=(
+            "IANA time zone of the board's clock: the date daterange presets "
+            "resolve on and the zone of the data-freshness stamp."
+        ),
+    )
+
+    @cached_property
+    def zone(self) -> ZoneInfo:
+        return ZoneInfo(self.time_zone)
+
+    def today(self, instant: datetime) -> date:
+        """The board-zone date at ``instant``."""
+        if instant.tzinfo is None:
+            raise ValueError(
+                f"the board clock needs an aware instant, got naive {instant!r}"
+            )
+        return instant.astimezone(self.zone).date()
 
     @cached_property
     def resolved_language(self) -> LanguageCode:
@@ -1402,17 +1438,17 @@ class ScaleTargetConfig(ScaleTargetPaletteValidationMixin):
     max: float | int | None = Field(
         default=None, description="Maximum scale domain value (overrides data maximum)."
     )
-    nice: bool = Field(
-        default=True,
+    nice: bool | None = Field(
+        default=None,
         description=(
-            "Widen a data-derived domain to round ('nice') bounds and label "
-            "every nice tick on the legend, mirroring Vega-Lite's own "
-            "scale.nice. Applies to the color scale a gradient legend "
-            "labels, not the x/y position scale. Ignored once min or max is "
-            "set; a single-sided bound already fixes that edge exactly. "
-            "Widening is currently honored on heatmap's themed color "
-            "gradient only; geoshape's choropleth honors `nice: false` "
-            "(exact endpoint labels) but not `nice: true`'s widening."
+            "Widen a data-derived color domain to round ('nice') bounds, e.g. "
+            "12-88 to 0-100, and label every nice tick on a heatmap legend. "
+            "Unset follows the legend: it widens where the scale draws a "
+            "legend (heatmap, map, a chart color gradient whose legend is "
+            "shown) and uses the exact extent where none is drawn (table "
+            "columns, a hidden legend); true or false always wins. Ignored "
+            "once min or max is set; a single-sided bound already fixes "
+            "that edge exactly."
         ),
     )
     null_color: Annotated[str | None, Color()] = Field(
@@ -1464,6 +1500,12 @@ class ResolvedNamedPaletteScaleTargetConfig(ResolvedScaleTargetConfig):
             "value on the wrong type."
         ),
     )
+    family: PaletteFamily = Field(
+        description=(
+            "The palette's family, baked beside its stops so render can tell a "
+            "diverging ramp from a sequential one without reaching into compile."
+        ),
+    )
 
 
 # Union alias: every pydantic field that HOLDS a resolved scale target must use
@@ -1496,12 +1538,14 @@ def bake_scale_target_stops(target: ScaleTargetConfig) -> ResolvedScaleTargetCon
         )
     from dbt_charts.core.compile.resolve.style.palette import (
         palette as resolve_palette,
+        palette_family,
     )  # noqa: PLC0415
 
     return ResolvedNamedPaletteScaleTargetConfig.model_validate(
         {
             **target.model_dump(exclude_unset=True),
             "resolved_stops": tuple(resolve_palette(target.palette)),
+            "family": palette_family(target.palette),
         }
     )
 

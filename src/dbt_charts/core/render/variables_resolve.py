@@ -37,7 +37,10 @@ from dbt_charts.core.compile.template.variables import (
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.render.board_variables import current_daterange_presets
+from dbt_charts.core.render.board_variables import (
+    current_board_today,
+    current_daterange_presets,
+)
 from dbt_charts.core.render.conditions import eval_bool_condition
 from dbt_charts.core.render.variables_layout import ControlSpec
 from dbt_charts.core.text.case import inferred_display_name
@@ -157,7 +160,7 @@ def resolve_controls(
                 # The fallback above is the raw `default:`, which no render
                 # narrowing has seen.
                 preset = current
-                current = resolve_daterange_preset_iso(current, datetime.date.today())
+                current = resolve_daterange_preset_iso(current, current_board_today())
         elif refined.input_type == "multiselect":
             # One selection, narrowed once. A multiselect legitimately arrives
             # as a list, as a bare scalar from a URL param written before it was

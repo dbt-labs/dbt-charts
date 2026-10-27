@@ -71,7 +71,6 @@ def _make_executor(board: object, query_registry: object, layer_rows: list[dict]
         ok = Mock()
         ok.is_success = True
         ok.data = rows_by_query[kwargs["query_name"]]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = None
         return ok

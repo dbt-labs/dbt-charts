@@ -1,15 +1,7 @@
-"""BoardRenderSession — board-level coordinator for a render-v2 pass.
+"""BoardRenderSession — board-level coordinator for a render pass.
 
-Holds the shared board style and drives the per-chart emit → features
-pipeline for a single board/board render.  Call ``emit_chart`` per chart,
-then ``finalize_vl`` to produce Vega-Lite JSON — that path is the geo maps only.
-
-Every other family (``bar``, ``line``, ``area``, ``scatter``, ``histogram``,
-``heatmap``, ``kpi``, ``table``, ``spark_bar``, ``callout``, ``custom``, ``pie``)
-is drawn by the Rust engine: ``render_svg_family`` dispatches it and returns the
-SVG string, bypassing ``emit_chart``/``finalize_vl`` entirely. It returns
-``None`` for a geo map so the caller falls through to the ``emit_chart``/
-``finalize_vl`` path.
+Holds the shared board style and sends each chart to the Rust engine
+(``render_svg_family``); every family, geo maps included, is drawn there.
 """
 
 from __future__ import annotations
@@ -27,27 +19,19 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCalloutChart,
     ResolvedChart,
     ResolvedCustomChart,
+    ResolvedGeoshapeChart,
     ResolvedHeatmapChart,
     ResolvedKpiChart,
     ResolvedLineChart,
     ResolvedPieChart,
+    ResolvedPointMapChart,
     ResolvedScatterChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
-from dbt_charts.core.compile.models.chart.resolved._base import (
-    _SharedResolvedChartFields,
-)
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
-from dbt_charts.core.render.chart._types import VLDict
-from dbt_charts.core.render.chart.emitters import get_emitter
-from dbt_charts.core.render.chart.feature import FeaturePipeline, chart_rows
-from dbt_charts.core.render.chart.features import DEFAULT_FEATURES
-from dbt_charts.core.render.chart.spec import ChartSpec, RenderBox
-from dbt_charts.core.render.chart.translate import assemble_final_vl
 from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.sizing import custom_chart_height
-from dbt_charts.core.render.utils import normalize_data_types
 from dbt_charts.core.utils import Rows
 
 
@@ -57,20 +41,9 @@ class BoardRenderSession:
 
     Args:
         board_style: Fully resolved board-level style shared across all charts.
-            ``board_style.vega_config`` carries the pre-baked theme VL config.
-        features: Feature pipeline applied in list order after each emit.
     """
 
     board_style: ResolvedStyle
-    features: FeaturePipeline
-
-    @classmethod
-    def create(cls, board_style: ResolvedStyle) -> BoardRenderSession:
-        """Create a session with the default feature pipeline."""
-        return cls(
-            board_style=board_style,
-            features=FeaturePipeline(list(DEFAULT_FEATURES)),
-        )
 
     def render_svg_family(
         self,
@@ -86,8 +59,8 @@ class BoardRenderSession:
         datasets: dict[str | None, Rows] | None = None,
         measuring: bool = False,
         authored_height: float | None = None,
-    ) -> str | None:
-        """Engine families → SVG string; geo (Vega-Lite) → None (caller runs emit path).
+    ) -> str:
+        """The chart's SVG, drawn by the engine.
 
         ``inset`` is the padding the caller shrank ``width``/``height`` by; a
         family that paints a card rect grows it back out over that padding.
@@ -153,6 +126,8 @@ class BoardRenderSession:
                 return svg
             case (
                 ResolvedPieChart()
+                | ResolvedGeoshapeChart()
+                | ResolvedPointMapChart()
                 | ResolvedBarChart()
                 | ResolvedLineChart()
                 | ResolvedAreaChart()
@@ -186,61 +161,3 @@ class BoardRenderSession:
                     board_width=width,
                 )
                 return svg
-            case _:
-                return None
-
-    def emit_chart(
-        self,
-        chart: ResolvedChart,
-        box: RenderBox,
-        datasets: dict[str | None, list[dict[str, Any]]],
-    ) -> ChartSpec:
-        """Run emit → features for one geo map.
-
-        Returns the ``ChartSpec`` before assembly; callers drive
-        ``finalize_vl(spec)``.
-
-        Args:
-            chart: Resolved chart for this family.
-            box: Render-time slot geometry passed through to emitters and features.
-            datasets: Every query this chart references, keyed by query_name,
-                built by ``layout_sizing.build_chart_datasets``.
-
-        Returns:
-            Populated ``ChartSpec`` after all applicable features applied.
-        """
-        data = chart_rows(chart, datasets)
-        spec = get_emitter(chart).emit(chart, box, data)
-        spec = self.features.apply(spec, chart, box, datasets)
-        if (
-            spec.data is None
-        ):  # emitters that pre-populate data (e.g. point_map) take priority
-            spec.data = normalize_data_types(data.all_rows())
-        # Bake title/subtitle/title_font from the resolved chart so finalize_vl
-        # can emit the chart title block with correct typography.
-        # Every ResolvedChart union member carries title/subtitle
-        # (KPI and Callout's are always None) so this is plain attribute access.
-        spec.title = chart.title
-        spec.subtitle = chart.subtitle
-        spec.title_font = getattr(chart.style, "title_font", None)
-        # get_emitter above only returns for the VL families, all of which are
-        # _SharedResolvedChartFields subclasses (KPI/callout/table/spark_bar
-        # are dispatched to render_svg_family before this point) — background
-        # and title_style are guaranteed present, so read them directly.
-        assert isinstance(chart, _SharedResolvedChartFields)
-        spec.background = chart.background
-        spec.title_style = chart.title_style
-        return spec
-
-    def finalize_vl(self, spec: ChartSpec) -> VLDict:
-        """Assemble a ChartSpec to a final Vega-Lite spec dict.
-
-        Delegates to ``assemble_final_vl`` with the session's ``board_style``.
-
-        Args:
-            spec: ``ChartSpec`` returned by ``emit_chart``.
-
-        Returns:
-            Vega-Lite JSON-serializable spec dict with config and background applied.
-        """
-        return assemble_final_vl(spec, self.board_style)

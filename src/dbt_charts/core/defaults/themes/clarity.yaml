@@ -47,10 +47,10 @@ style:
     color:
       categorical:
         # One fixed ink for every single-series chart on the board — same
-        # data, same color, regardless of reading-order position. The named
-        # role (rather than a direct `editorial-10.1.dark` pin) keeps this
-        # pointing at slot 1's blue if the family is ever reordered.
-        single_series_palette: [category.blue.dark]
+        # data, same color, regardless of reading-order position. The dark
+        # variant of `category` slot 1, so a board that rebinds `category`
+        # gets the darker variant of its own first color.
+        single_series_palette: ["category[1].dark"]
     axis:
       labels:
         font:
@@ -67,13 +67,12 @@ style:
         threshold:
           color: chrome[7]
       ticks:
-        color: *category_grid
+        # A tick continues the floor, so it wears the measure grid.
+        color: chrome[5]
       line:
         color: chrome[3]
     axis_y:
       grid:
-        color: chrome[5]
-      ticks:
         color: chrome[5]
     axis_band:
       labels:
@@ -84,8 +83,6 @@ style:
         font:
           color: chrome[11]
       grid:
-        color: chrome[5]
-      ticks:
         color: chrome[5]
     legend:
       label:

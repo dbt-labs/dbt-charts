@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import Mock
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters.base import QueryResult
@@ -190,7 +191,9 @@ class TestPreExecutionCacheHits:
         result = _compile(FILTERED_DASHBOARD_YAML)
         executor, registry = _mock_executor(result)
 
-        registry.execute.return_value = QueryResult(data=[{"city": "Paris"}])
+        registry.execute.return_value = QueryResult(
+            data=[{"city": "Paris"}], schema=literal_schema([{"city": "Paris"}])
+        )
 
         # Pre-execution: run all queries including options queries
         all_names = collect_all_query_names(result.board)
@@ -212,7 +215,9 @@ class TestPreExecutionCacheHits:
         result = _compile(COLUMN_BOUND_YAML)
         executor, registry = _mock_executor(result)
 
-        registry.execute.return_value = QueryResult(data=[{"name": "East"}])
+        registry.execute.return_value = QueryResult(
+            data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
+        )
 
         all_names = collect_all_query_names(result.board)
         execute_queries_parallel(executor, all_names)
@@ -228,7 +233,9 @@ class TestPreExecutionCacheHits:
 def _mock_executor(board_result: Any) -> tuple[Any, Mock]:
     """Return (executor, mock_registry) with mock adapter that returns a single-row result."""
     registry = Mock()
-    registry.execute.return_value = QueryResult(data=[{"v": 1}])
+    registry.execute.return_value = QueryResult(
+        data=[{"v": 1}], schema=literal_schema([{"v": 1}])
+    )
     executor = Executor(board=board_result.board, adapter_registry=registry)
     return executor, registry
 

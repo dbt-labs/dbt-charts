@@ -27,7 +27,7 @@ from dbt_charts.core.compile.resolve.style.board import (
 from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
 
 from ._engine_render import render_pie_svg
-from ._svg_render import legend_label_order
+from ._svg_render import legend_label_order, render_board_to_svg
 
 
 def _render(make_chart, chart_type: str, style: dict, rows, **kwargs):
@@ -61,51 +61,30 @@ class TestOtherFamiliesResolveToo:
         assert legend_label_order(render_pie_svg(chart, rows)) == ["Paid", "Direct"]
 
     def test_geoshape_nominal_choropleth_resolves(self):
-        from dbt_charts.core.compile.config import (
-            get_default_theme_name,
-            get_theme_style,
-        )
-        from dbt_charts.core.compile.models.chart.normalized.geoshape import (
-            GeoshapeChart,
-        )
-        from dbt_charts.core.compile.resolve.chart._chart_rows import regroup
-        from dbt_charts.core.compile.resolve.chart.geo import _resolve_geoshape
-        from dbt_charts.core.compile.resolve.style.board import (
-            resolve_chart_style_context,
-        )
-        from dbt_charts.core.render.chart.emitters.geo import GeoshapeEmitter
-        from dbt_charts.core.render.chart.spec import RenderBox
-        from dbt_charts.core.render.chart.translate import translate_to_vl
-
-        board_style = resolve_chart_style_context(
-            get_theme_style(get_default_theme_name())
-        )
-        data = [
-            {"state": "CA", "tier": "west"},
-            {"state": "TX", "tier": "south"},
-        ]
-        # "WEST"/"SOUTH" (uppercase, reversed) must fold-resolve to the
-        # real domain entries "west"/"south" in THAT authored order -- a
-        # byte-verbatim copy would instead pin the literal uppercase
-        # strings, which match nothing Vega actually enumerates for this
-        # field.
-        compiled = GeoshapeChart(
-            id="geo1",
-            type="geoshape",
-            projection="mercator",
-            geo_source="fake-geo-source",
-            lookup="state",
-            value="tier",
-            style={"legend": {"values": ["WEST", "SOUTH"]}},
-        )
-        resolved = _resolve_geoshape(compiled, data, board_style, 800.0, None)
-        vl = translate_to_vl(
-            GeoshapeEmitter().emit(
-                resolved, RenderBox(width=600.0, height=300.0), regroup((), data)
-            )
-        )
-        color_enc = vl["layer"][1]["encoding"]["color"]
-        assert color_enc["legend"]["values"] == ["west", "south"]
+        # "SOUTH"/"WEST" (uppercase, against the data order) fold to the real domain entries
+        # "south"/"west" in the authored order.
+        board = """
+queries:
+  q:
+    type: values
+    rows:
+      - {state_code: "6", tier: west}
+      - {state_code: "48", tier: south}
+charts:
+  c:
+    query: q
+    type: map
+    geo:
+      source: us-states
+    lookup: state_code
+    value: tier
+    style:
+      legend:
+        values: [SOUTH, WEST]
+rows:
+  - c
+"""
+        assert legend_label_order(render_board_to_svg(board)) == ["south", "west"]
 
 
 class TestWideMeasureAllNullDoesNotRaise:

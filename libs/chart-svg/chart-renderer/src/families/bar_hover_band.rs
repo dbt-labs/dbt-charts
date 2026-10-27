@@ -8,10 +8,10 @@
 use crate::constants::bar::{HOVER_BAND_EXTEND_FRACTION, HOVER_BAND_TRIGGER_FRACTION};
 use super::cartesian::LinearScale;
 use crate::common::row_num;
-use crate::contract::{aria_attr, mark_group_close, mark_group_open, ItemRole};
+use crate::contract::{aria_attrs, mark_group, ItemRole};
+use scene::{Attrs, Node};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::fmt::Write as _;
 
 /// Vega-Lite's default mark color: the layer authors no color of its own.
 const FILL: &str = "#4c78a8";
@@ -102,13 +102,13 @@ impl HoverBand {
         self.rows.push(Row { aria: aria.map(str::to_owned), href: href.map(str::to_owned), start, size, value, carrier });
     }
 
-    /// Paint the layer. `vertical` bars grow up from the baseline; `extent` is
+    /// The layer. `vertical` bars grow up from the baseline; `extent` is
     /// the plot's pixel size along the measure axis.
-    pub(crate) fn emit(&self, out: &mut String, vertical: bool, scale: &LinearScale, extent: f64, link_open: crate::href::LinkOpen) -> Result<(), String> {
+    pub(crate) fn node(&self, vertical: bool, scale: &LinearScale, extent: f64, link_open: crate::href::LinkOpen) -> Result<Node, String> {
         let baseline = scale.position(0.0);
         let band = extent * HOVER_BAND_EXTEND_FRACTION;
         let trigger = extent * HOVER_BAND_TRIGGER_FRACTION;
-        mark_group_open(out, "rect", "hover_band_marks")?;
+        let mut paths = Vec::new();
         for row in &self.rows {
             let grows = match (&self.gate, row.value) {
                 (Gate::Each, Some(v)) => (scale.position(v) - baseline).abs() < trigger,
@@ -119,18 +119,16 @@ impl HoverBand {
             // Up (vertical) and right (horizontal) are the positive directions.
             let reach = if !grows { 0.0 } else if vertical { -sign * band } else { sign * band };
             let (lo, len) = (baseline.min(baseline + reach), reach.abs());
-            let label = aria_attr(row.aria.as_deref(), ItemRole::Bar)?;
+            let label = aria_attrs(row.aria.as_deref(), ItemRole::Bar)?;
             let d = if vertical {
                 format!("M{:.2},{lo:.2}h{:.2}v{len:.2}h-{:.2}Z", row.start, row.size, row.size)
             } else {
                 format!("M{lo:.2},{:.2}h{len:.2}v{:.2}h-{len:.2}Z", row.start, row.size)
             };
             let anchor = link_open.anchor(row.href.as_deref());
-            out.push_str(&crate::href::anchor_open(anchor));
-            let _ = write!(out, "<path d=\"{d}\" fill=\"{FILL}\" opacity=\"0\"{label}/>");
-            out.push_str(crate::href::anchor_close(anchor));
+            let path = Node::Path(Attrs::new().set("d", d).set("fill", FILL).set("opacity", "0").extend(label));
+            paths.push(crate::href::linked(anchor, path));
         }
-        mark_group_close(out);
-        Ok(())
+        mark_group("rect", "hover_band_marks", paths)
     }
 }

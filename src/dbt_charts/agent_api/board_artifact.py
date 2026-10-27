@@ -115,21 +115,10 @@ def emit_board_artifact(
     board = compile_result.board
     assert board is not None  # compile_result.success guarantees this
 
-    # `emit-board` merges its own variables — it never goes through `render()`,
-    # whose prologue does this — and this dict is both rendered from and stored
-    # verbatim in the recording that `render_board_from_files` replays. `--var`
-    # values are always strings, so a scalar is the only shape a caller can
-    # supply for a multiselect here; unnarrowed, a bare `| join` would iterate
-    # it character by character.
     try:
         check_variable_overrides(board.variable_registry or {}, variables or {})
     except ExecutionError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
-    merged_variables: dict[str, Any] = normalize_render_values(
-        {**board.variable_defaults, **(variables or {})},
-        board.variable_registry or {},
-    )
-
     executor = Executor(
         board,
         adapter_registry=adapter_registry,
@@ -140,6 +129,17 @@ def emit_board_artifact(
         # calls it with an injected one — so this is always the local
         # DuckDB-backed factory, not a routing decision.
         file_materializer_factory=default_local_materializer_factory(project),
+    )
+    # `emit-board` merges its own variables — it never goes through `render()`,
+    # whose prologue does this — and this dict is both rendered from and stored
+    # verbatim in the recording that `render_board_from_files` replays. `--var`
+    # values are always strings, so a scalar is the only shape a caller can
+    # supply for a multiselect here; unnarrowed, a bare `| join` would iterate
+    # it character by character.
+    merged_variables: dict[str, Any] = normalize_render_values(
+        {**board.variable_defaults, **(variables or {})},
+        board.variable_registry or {},
+        board.regional.today(executor.rendered_at),
     )
 
     # Matches render()'s prologue: the declared variable names are set for the

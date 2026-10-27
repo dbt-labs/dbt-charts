@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
+from dbt_charts.core.column_types import declared_literal_cells, literal_schema
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
@@ -51,6 +52,9 @@ class ValuesAdapter(BaseAdapter):
         if not is_values_query(query):
             return plain_error(f"Expected values query, got {query.query_type}")
 
-        rows = query.apply_limit(list(query.rows))
-
-        return QueryResult(data=rows)
+        schema = literal_schema(query.rows)
+        return QueryResult(
+            data=query.apply_limit(declared_literal_cells(query.rows, schema)),
+            columns=list(schema),
+            schema=schema,
+        )

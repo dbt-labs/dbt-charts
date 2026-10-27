@@ -151,6 +151,19 @@ def resolve_palette_stops(target: ResolvedScaleTarget) -> list[str]:
     )
 
 
+def auto_hinge_pivot(lo: float, hi: float, col_format: str | None) -> float | None:
+    """The neutral value ``hinge: auto`` picks over ``[lo, hi]``: 0 when the
+    domain crosses zero, 1.0 when a percent format's domain crosses it, else
+    ``None`` -- no neutral exists and the pivot is the domain midpoint.
+    """
+    if lo < 0.0 < hi or (lo < 0.0 and hi == 0.0):
+        return 0.0
+    is_percent = col_format is not None and "%" in col_format
+    if is_percent and lo < 1.0 < hi:
+        return 1.0
+    return None
+
+
 def resolve_hinge(
     config: ScaleTargetConfig,
     lo: float,
@@ -171,13 +184,8 @@ def resolve_hinge(
         return None
     if isinstance(config.hinge, (int, float)):
         return float(config.hinge)
-    # "auto" decision tree.
-    if lo < 0.0 < hi or (lo < 0.0 and hi == 0.0):
-        return 0.0
-    is_percent = col_format is not None and "%" in col_format
-    if is_percent and lo < 1.0 < hi:
-        return 1.0
-    return (lo + hi) / 2.0
+    pivot = auto_hinge_pivot(lo, hi, col_format)
+    return (lo + hi) / 2.0 if pivot is None else pivot
 
 
 def _interpolate_arm(t: float, stops: list[str]) -> str:

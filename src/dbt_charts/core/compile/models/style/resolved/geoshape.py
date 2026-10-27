@@ -37,7 +37,7 @@ class ResolvedGeoshapeChartStyle(GeoshapeChartStyle):
 
     Carries a ResolvedStaticGradientColorStyle so the gradient's resolved_stops
     are preserved through pydantic serialization (board artifact round-trip).
-    emitters/geo.py reads chart.style.geoshape.color.gradient from this field
+    The engine reads chart.style.geoshape.color.gradient from this field
     unchanged — the path is identical, now provably resolved.
     """
 

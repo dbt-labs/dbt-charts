@@ -26,6 +26,7 @@
 //! - a non-numeric `sort.by`
 
 use crate::diagnostic::Diagnostic;
+use crate::time_axis::{Grain as AxisGrain, TimeAxis};
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -772,10 +773,7 @@ impl BarX<'_> {
                 let (lo, hi) = axis
                     .day_domain(pw)
                     .ok_or("scatter: a bar layer on a date x needs a bucketed or continuous date axis")?;
-                let days = |row: &serde_json::Map<String, Value>| {
-                    crate::families::temporal::parse_iso_date(&row_str(row, x_field))
-                        .map(|(y, m, d)| crate::families::temporal::days_from_civil(y, m, d) as f64)
-                };
+                let days = |row: &serde_json::Map<String, Value>| axis.date_day(&row_str(row, x_field));
                 let step_days = crate::families::bar::min_gap(rows.iter().filter_map(days).collect());
                 let width = crate::families::bar::ContinuousWidth::of(&bl.bar_mark)?.at(step_days * pw / (hi - lo));
                 // An authored x seats the bar mid-bucket on a bucketed axis (`bandPosition` 0.5).
@@ -871,7 +869,7 @@ const SIZE_LEGEND_LABEL_OFFSET: f64 = 8.0;
 /// or temporal field the unit encodes (`filterinvalid.ts:36-55,85-99`): x and
 /// y unless categorical, and size. A categorical axis adds no term, so a null
 /// category stays (Vega draws it as its own `null` band; `render` refuses
-/// it); a date x is kept when it parses, the way `toDate` + `isDate` read it.
+/// it); a date x is kept when it has a value, the axis having refused any that is no date.
 /// Every mark and legend reads the rows this keeps, and so does every domain
 /// but y's, which a row with no valid x still joins (`y_when_x_invalid`).
 fn kept_reading(
@@ -890,8 +888,8 @@ fn x_reading(row: &serde_json::Map<String, Value>, r: &ScatterResolved, x_nomina
     Some(if x_nominal {
         0.0
     } else if x_dates {
-        let (year, month, day) = crate::families::temporal::parse_iso_date(&row_str(row, &r.x))?;
-        crate::families::temporal::days_from_civil(year, month, day) as f64
+        // A date x that is a value was read by the axis `bind` built, which refused any that is no date.
+        (!row_str(row, &r.x).is_empty()).then_some(0.0)?
     } else {
         row_num(row, &r.x)?
     })
@@ -1074,6 +1072,12 @@ struct PlainXPaint<'a> {
     plot_left: f64,
     plot_w: f64,
     plot_bottom: f64,
+    /// The y of the plot's own edge, where the ticks start: `plot_bottom` itself unless a facet footer sits below it.
+    floor_y: f64,
+    /// The stroke of the baseline rule on the plot edge the axis hangs from, which its ticks continue.
+    floor_rule: Option<&'a str>,
+    /// The vertical threshold rules a tick at their value continues, in plot coordinates.
+    x_rules: &'a [crate::common::ThresholdRule<'a>],
     angle: f64,
     align: &'a str,
     baseline: &'a str,
@@ -1119,20 +1123,10 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
     }
     let mut items = Vec::new();
     if x_ticks_visible {
-        let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "scatter", "axis_x.ticks.color")?;
-        let tw = ax_x.ticks.width.unwrap_or(1.0);
-        for &frac in p.ticks {
-            let gx = plot_left + x_pos(frac).round() + 0.5;
-            items.push(Node::Line(
-                Attrs::new()
-                    .set("x1", format!("{gx:.3}"))
-                    .set("y1", format!("{:.3}", plot_bottom + x_axis_drop))
-                    .set("x2", format!("{gx:.3}"))
-                    .set("y2", format!("{:.3}", plot_bottom + x_axis_drop + sign * x_tick_len))
-                    .set("stroke", tc)
-                    .set("stroke-width", tw.to_string()),
-            ));
-        }
+        let xs = p.ticks.iter().map(|&frac| plot_left + x_pos(frac).round() + 0.5);
+        let end_y = plot_bottom + x_axis_drop + sign * x_tick_len;
+        let rules: Vec<_> = p.x_rules.iter().map(|rule| crate::common::ThresholdRule { at: plot_left + rule.at, tick_at: plot_left + rule.tick_at, ..*rule }).collect();
+        items.extend(crate::common::x_tick_marks(&ax_x.ticks, p.floor_rule, &rules, xs, (p.floor_y, end_y), 3)?);
     }
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
@@ -1253,6 +1247,11 @@ pub(crate) struct PlainXAxis {
     round: bool,
     /// `scale.round` on a category scale: d3's floored step and rounded start.
     nominal_round: Option<NominalRound>,
+    /// The stroke of the baseline rule on the plot edge this axis hangs from, which its ticks continue;
+    /// the arm that paints the rule sets it.
+    floor_rule: Option<String>,
+    /// The vertical threshold rules this axis's ticks continue, in plot coordinates; the arm that paints them sets it.
+    x_rules: Vec<crate::common::PaintedRule>,
 }
 
 #[derive(Clone)]
@@ -1303,6 +1302,8 @@ impl PlainXAxis {
             rotated_reach: None,
             round: ax_x.scale.get("round").and_then(Value::as_bool) == Some(true),
             nominal_round: None,
+            floor_rule: None,
+            x_rules: Vec::new(),
         };
         if infer_vega_type(all_rows, &r.x) != VegaType::Quantitative {
             let kept: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
@@ -1538,18 +1539,18 @@ impl PlainXAxis {
         self.rotated_reach
     }
 
-    pub(crate) fn paint(
+    pub(crate) fn nodes(
         &self,
-        svg: &mut String,
         ax_x: &AxisStyle,
         plot_left: f64,
         plot_w: f64,
-        plot_bottom: f64,
+        (plot_bottom, floor_y): (f64, f64),
         fonts: &FontBook,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<Node>, String> {
         let (ticks, labels, _) = self.ticks_at(plot_w)?;
         let caption = AxisCaption::new(&self.title, &ax_x.title, self.caption_scale(ax_x, plot_w)?).bare_if_undrawn(ax_x);
-        let axis = plain_x_axis(
+        let x_rules = crate::common::thresholds(&self.x_rules);
+        plain_x_axis(
             &PlainXPaint {
                 ax_x,
                 ticks: &ticks,
@@ -1557,6 +1558,9 @@ impl PlainXAxis {
                 plot_left,
                 plot_w,
                 plot_bottom,
+                floor_y,
+                floor_rule: self.floor_rule.as_deref(),
+                x_rules: &x_rules,
                 angle: self.angle,
                 align: self.align,
                 baseline: self.baseline,
@@ -1567,9 +1571,7 @@ impl PlainXAxis {
                 title_key: None,
             },
             fonts,
-        )?;
-        svg.push_str(&print::print(&axis));
-        Ok(())
+        )
     }
 }
 
@@ -1580,7 +1582,7 @@ pub(crate) enum FacetX<'a> {
     Plain(&'a PlainXAxis),
 }
 
-/// The distinct dates of a date x axis, ascending, as `(ladder, scale)`:
+/// The dates of a date x axis, as `(ladder, scale)`, left for the axis to order and dedupe:
 /// production labels the axis from a ladder over every row's dates
 /// (`emitters/_cartesian.py:416-418`, `emitters/_channels.py:1030-1031`) but
 /// scales it to the rows Vega-Lite keeps (`filterinvalid.ts:36-55` runs after
@@ -1591,14 +1593,57 @@ fn axis_dates(
     drawn: &[&serde_json::Map<String, Value>],
     x_field: &str,
 ) -> (Vec<String>, Vec<String>) {
-    let distinct = |mut dates: Vec<String>| {
-        dates.sort();
-        dates.dedup();
-        dates
-    };
-    let ladder = distinct(rows.iter().map(|row| row_str(row, x_field)).filter(|date| !date.is_empty()).collect());
-    let scale = distinct(drawn.iter().map(|row| row_str(row, x_field)).collect());
+    let ladder = rows.iter().map(|row| row_str(row, x_field)).filter(|date| !date.is_empty()).collect();
+    let scale = drawn.iter().map(|row| row_str(row, x_field)).collect();
     (ladder, scale)
+}
+
+/// The date x axis of the chart: every x value of its rows and of the layers' own columns, read once, and a
+/// value that is no date refused. A null or empty x is no value. Empty without a date x.
+fn x_time_axis(
+    r: &ScatterResolved,
+    payload: &Payload,
+    overlays: &[OverlayLayer],
+    x_dates: bool,
+) -> Result<TimeAxis, Diagnostic> {
+    if !x_dates {
+        return Ok(TimeAxis::new(AxisGrain::default(), std::collections::HashMap::new()));
+    }
+    let panel_fields: Vec<&str> = r.panel_axes.iter().map(|a| a.field.as_str()).collect();
+    let law = crate::families::x_type::resolve_cartesian_x_type(
+        &payload.rows,
+        &r.x,
+        &crate::families::x_type::XAxis::of(&r.style.axis_x),
+        "scatter",
+        false,
+        &panel_fields,
+    )?;
+    let grain = AxisGrain {
+        unit: match law.grain {
+            crate::families::x_type::Grain::Calendar(tu) => Some(tu),
+            _ => None,
+        },
+        part: match law.grain {
+            crate::families::x_type::Grain::Part(part) => Some(part),
+            _ => None,
+        },
+        band: false,
+    };
+    let mut time = TimeAxis::new(grain, std::collections::HashMap::new());
+    let mut columns: Vec<(&[serde_json::Map<String, Value>], &str)> = vec![(&payload.rows, &r.x)];
+    for overlay in overlays {
+        let rows = crate::families::layers::resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), "scatter")?;
+        columns.push((rows, overlay.x().unwrap_or(&r.x)));
+    }
+    for (rows, field) in columns {
+        for row in rows {
+            let date = row_str(row, field);
+            if !date.is_empty() {
+                time.add(&date).map_err(|e| e.diagnostic(&r.id, field, "scatter"))?;
+            }
+        }
+    }
+    Ok(time)
 }
 
 /// Whether a layer needs a band x scale, which Vega-Lite then compiles under the
@@ -1670,17 +1715,20 @@ fn x_has_nan_years(payload: &Payload, r: &ScatterResolved) -> Result<bool, Strin
 fn date_axis(
     payload: &Payload,
     r: &ScatterResolved,
+    time: &TimeAxis,
     drawn: &[&serde_json::Map<String, Value>],
     layers: &XLayers,
     slot_w: f64,
     title_text: String,
     title_key: Option<crate::contract::LabelKey>,
     fonts: &FontBook,
-) -> Result<crate::families::scatter_axis::TemporalXAxis, String> {
+) -> Result<crate::families::scatter_axis::TemporalXAxis, Diagnostic> {
     let usable_ratio = r
         .style
         .label_usable_ratio
         .ok_or("scatter: label_usable_ratio absent (theme required for a date x axis)")?;
+    let mut time = time.clone();
+    let unreadable = |e: crate::time_axis::Unreadable| e.diagnostic(&r.id, &r.x, "scatter");
     let (mut ladder, mut kept) = axis_dates(&payload.rows, drawn, &r.x);
     let layer_dates: Vec<String> = layers
         .columns
@@ -1712,32 +1760,35 @@ fn date_axis(
     }
     // An ordinal scale is a band scale beside a bar layer: its buckets are its own domain.
     let ordinal = law.vl_type == crate::families::temporal::VegaType::Ordinal;
-    if let (false, crate::families::x_type::Grain::Calendar(tu)) = (ordinal, law.grain) {
-        use crate::families::temporal::{next_bucket, parse_iso_date, time_unit_floor};
+    if let (false, crate::families::x_type::Grain::Calendar(_)) = (ordinal, law.grain) {
         // The scale runs on to the end of the last bucket a bar occupies, once that
         // passes every datum.
-        let bucket_of = |date: &str| time_unit_floor(date, tu).and_then(|floored| parse_iso_date(&floored));
-        let last_end = layers
-            .bar_columns
-            .iter()
-            .flat_map(|&(rows, field)| rows.iter().map(move |row| row_str(row, field)))
-            .filter_map(|date| bucket_of(&date))
-            .map(|bucket| next_bucket(bucket, tu))
-            .max();
-        let last_datum = kept.iter().filter_map(|d| parse_iso_date(d)).max();
-        if let Some((y, m, d)) = last_end.filter(|end| Some(*end) > last_datum) {
-            let end = format!("{y:04}-{m:02}-{d:02}");
+        let mut last_end: Option<f64> = None;
+        for &(rows, field) in &layers.bar_columns {
+            for row in rows {
+                if let Some(end) = time.get(&row_str(row, field)).and_then(|instant| instant.end) {
+                    last_end = Some(last_end.map_or(end, |last| last.max(end)));
+                }
+            }
+        }
+        let last_datum = kept.iter().filter_map(|d| time.get(d)).map(|instant| instant.at.floor()).reduce(f64::max);
+        if let Some(end) = last_end.filter(|end| Some(*end) > last_datum) {
+            let end = crate::families::temporal::instant_iso(end);
             ladder.push(end.clone());
             kept.push(end);
         }
     }
     for dates in [&mut ladder, &mut kept] {
-        dates.sort();
-        dates.dedup();
+        let mut seen = std::collections::HashSet::new();
+        dates.retain(|date| seen.insert(date.clone()));
+        for date in dates.iter() {
+            time.add(date).map_err(unreadable)?;
+        }
+        time.sort_by_instant(dates);
     }
-    let timed = crate::families::subday::SubdaySource::of(&ladder.iter().map(String::as_str).collect::<Vec<_>>());
+    let timed = crate::families::subday::SubdaySource::of(&time, ladder.iter().map(String::as_str));
     let mut axis = crate::families::scatter_axis::TemporalXAxis::resolve(
-        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law, band_layer: layers.band, indexed: None, bucket_aligned: false, timed: &timed, chart_width: slot_w, extra_days: &extra_days, folded: false },
+        &crate::families::scatter_axis::DateColumn { ladder: &ladder, kept: &kept, law, band_layer: layers.band, indexed: None, bucket_aligned: false, timed: &timed, chart_width: slot_w, extra_days: &extra_days, folded: false, time: &time },
         &r.style.axis_x,
         slot_w * usable_ratio,
         title_text,
@@ -2162,7 +2213,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     let date_layers = XLayers::of(r, overlays, &facet_layer_rows);
     let date_x = shape
         .x_dates
-        .then(|| date_axis(payload, r, &drawn, &date_layers, naive_panel_w, x_title.clone(), None, fonts))
+        .then(|| date_axis(payload, r, &bound.time, &drawn, &date_layers, naive_panel_w, x_title.clone(), None, fonts))
         .transpose()?;
     if date_x.as_ref().is_some_and(crate::families::scatter_axis::TemporalXAxis::raises_no_marks) {
         return Err(crate::labels_expr::throw_diagnostic(payload));
@@ -2303,6 +2354,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
                 None => entry_symbol.map(|_| legend::LegendSymbol::FilledGlyph(&glyph_paths[idx])),
             },
             series_key: None,
+            recede: None,
         })
         .collect();
     let legend_title = match r.color.as_deref() {
@@ -2312,7 +2364,7 @@ fn render_facet(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnos
     let base_y_title = crate::common::axis_title_text(&r.y, r.y_label.as_deref(), &r.field_labels)?;
     let layered_legend = LayeredLegend::new(r, payload, overlays, &color_domain, category_scale, &base_y_title, shape.y_nominal)?;
     let layered_entries = layered_legend.entries(&r.legend);
-    let numeric_legends = crate::families::bar::numeric_legends_of(
+    let numeric_legends = crate::families::bar::legend::numeric_legends_of(
         None,
         overlays.iter().zip(&layered_legend.plan),
         legend_cfg,
@@ -5266,7 +5318,7 @@ mod tests {
         let svg = render_json(json);
         let (plot_w, plot_h) = plot_size(&svg);
         let tag = zero_rule_tag(&svg).unwrap_or_else(|| panic!("zero rule drawn: {svg}"));
-        assert!((attr(tag, "x2") - plot_w).abs() < 1e-6, "spans full plot width: {tag}");
+        assert!(attr(tag, "x2") >= plot_w && attr(tag, "x1") <= 0.0, "spans full plot width: {tag}");
         assert!((attr(tag, "y1") - plot_h).abs() < 1e-6, "datum 0 at the domain floor: {tag}");
         assert!((attr(tag, "y2") - plot_h).abs() < 1e-6, "{tag}");
         // `_insert_rule` routes a scatter's rule to `spec.underlays`
@@ -5459,8 +5511,7 @@ mod tests {
         let svg = render_json(unity_payload(|_| {}));
         let tag = unity_rule_tag(&svg).unwrap_or_else(|| panic!("unity rule drawn: {svg}"));
         let (plot_w, _) = plot_size(&svg);
-        assert!(attr(tag, "x1").abs() < 1e-6, "spans the full plot width: {tag}");
-        assert!((attr(tag, "x2") - plot_w).abs() < 1e-6, "{tag}");
+        assert!(attr(tag, "x1") <= 0.0 && attr(tag, "x2") >= plot_w, "spans the full plot width: {tag}");
         let rule_at = svg.find(UNITY_RULE_COLOR).expect("rule drawn");
         let first_point = svg.find("<path transform=\"translate(").expect("points drawn");
         assert!(rule_at < first_point, "the unity rule paints beneath the points: {svg}");
@@ -6578,6 +6629,89 @@ mod tests {
         let payload: Payload = serde_json::from_value(json).unwrap();
         let err = render(&payload, &test_fonts()).unwrap_err();
         assert!(err.to_string().contains("ERR-ANNOTATION-PAYLOAD"), "{err}");
+    }
+
+    /// Three points whose x are the dates given, in the order given, with the annotations beside them.
+    fn dated_scatter(xs: [&str; 3], annotations: Vec<serde_json::Value>) -> serde_json::Value {
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+        json["resolved"]["annotations"] = serde_json::Value::Array(annotations);
+        for (row, x) in json["rows"].as_array_mut().unwrap().iter_mut().zip(xs) {
+            row["spend"] = serde_json::json!(x);
+        }
+        json
+    }
+
+    fn date_value(day: &str) -> serde_json::Value {
+        serde_json::json!({"kind": "value", "value": day})
+    }
+
+    /// Rows in query order or in time order draw the same marks and place an annotation on the same date.
+    #[test]
+    fn unordered_rows_draw_the_marks_and_annotations_of_ordered_rows() {
+        let _locale = crate::time_locale::en_us_scope();
+        let rule = || vec![annotation(0, date_value("2024-02-20"), serde_json::Value::Null)];
+        let ordered = render_json(dated_scatter(["2024-01-15", "2024-02-15", "2024-03-15"], rule()));
+        // The y values follow their rows, so reorder the whole row.
+        let mut shuffled = dated_scatter(["2024-01-15", "2024-02-15", "2024-03-15"], rule());
+        shuffled["rows"].as_array_mut().unwrap().reverse();
+        let shuffled = render_json(shuffled);
+        let marks = |svg: &str| -> Vec<String> {
+            let mut marks: Vec<String> = crate::time_axis::testing::geometry(svg);
+            marks.sort();
+            marks
+        };
+        assert_eq!(marks(&ordered), marks(&shuffled));
+    }
+
+    /// Two points on one day, hours apart, sit hours apart on the axis.
+    #[test]
+    fn a_time_of_day_places_the_point() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = render_json(dated_scatter(["2024-03-01T08:00:00", "2024-03-01T20:00:00", "2024-03-02T08:00:00"], Vec::new()));
+        let xs: Vec<f64> = svg
+            .split("<path transform=\"translate(")
+            .skip(1)
+            .map(|t| t.split(',').next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(xs.len(), 3, "{svg}");
+        assert!(((xs[1] - xs[0]) * 2.0 - (xs[2] - xs[0])).abs() < 0.01, "twelve hours is half of twenty-four: {xs:?}");
+    }
+
+    /// An offset timestamp sits where its UTC spelling does.
+    #[test]
+    fn an_offset_timestamp_point_sits_where_its_utc_spelling_does() {
+        let _locale = crate::time_locale::en_us_scope();
+        let offset = render_json(dated_scatter(["2024-03-01T23:30:00-05:00", "2024-03-03T01:00:00+05:30", "2024-03-04T08:00:00+0100"], Vec::new()));
+        let utc = render_json(dated_scatter(["2024-03-02T04:30:00Z", "2024-03-02T19:30:00Z", "2024-03-04T07:00:00Z"], Vec::new()));
+        assert_eq!(crate::time_axis::testing::geometry(&offset), crate::time_axis::testing::geometry(&utc));
+    }
+
+    /// A date-shaped x value that is no date (a February 30th) refuses by the code every x-axis family raises,
+    /// as a null x does not: it is no value.
+    #[test]
+    fn a_date_x_value_that_is_no_date_is_refused_by_name() {
+        let mut json = dated_scatter(["2024-01-15", "2024-02-30", "2024-03-15"], Vec::new());
+        // Under a tenth of the column: the type law lets it through, the axis refuses the value.
+        for month in 4..=12 {
+            json["rows"].as_array_mut().unwrap().push(serde_json::json!({"spend": format!("2024-{month:02}-15"), "pipeline": 100.0 + f64::from(month)}));
+        }
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let err = render(&payload, &test_fonts()).expect_err("an unparseable date x refuses");
+        let text = err.to_string();
+        assert!(text.contains("ERR-X-VALUE-NOT-A-DATE"), "{text}");
+        for param in ["x_field=\"spend\"", "value=\"2024-02-30\""] {
+            assert!(text.contains(param), "{param}: {text}");
+        }
+    }
+
+    /// An authored x domain may end on a timestamp, which the UTC scale takes as the instant it is.
+    #[test]
+    fn an_authored_timestamp_domain_sets_the_utc_scale() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = dated_scatter(["2024-01-15", "2024-02-15", "2024-03-15"], Vec::new());
+        json["resolved"]["style"]["axis_x"]["scale"]["continuous"]["domain"] = serde_json::json!(["2024-01-01T12:00:00", "2024-04-01T12:00:00"]);
+        render_json(json);
     }
 
     // ── The family contract ──────────────────────────────────────────────

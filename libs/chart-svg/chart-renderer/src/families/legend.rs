@@ -1212,7 +1212,11 @@ pub fn symbol_legend(
                 }
             };
         }
-        let symbol = symbol_node(symbol, entry.fill, (x + c, y + c));
+        let symbol = match symbol_node(symbol, entry.fill, (x + c, y + c)) {
+            Node::Rect(attrs) => Node::Rect(attrs.map_values(&["fill", "stroke"], |paint| crate::selected::ink(entry.recede, paint))),
+            Node::Path(attrs) => Node::Path(attrs.map_values(&["fill", "stroke"], |paint| crate::selected::ink(entry.recede, paint))),
+            other => other,
+        };
         cells.push(Node::group(contract::legend_symbol_attrs(), vec![symbol]));
         // `data-dbt-series` -- the untruncated join key `_stamp_series_keys`
         // (converters/chart.py:367-385, :457-461: the label's text, stripped) stamps -- fires exactly when
@@ -1228,7 +1232,7 @@ pub fn symbol_legend(
             .vega("font-family", family)
             .set("font-size", size.to_string())
             .set("font-weight", weight.clone())
-            .set("fill", color);
+            .set("fill", crate::selected::ink(entry.recede, color));
         // A label cut at `labelLimit` shows its full name on hover.
         let label = match entry.series_key.map(str::trim).filter(|full| *full != entry.label) {
             Some(full) => Node::TextRuns {
@@ -1538,6 +1542,8 @@ pub struct LegendEntry<'a> {
     /// the ellipsized form Vega draws past `labelLimit`; `None` when `label`
     /// is the whole name.
     pub series_key: Option<&'a str>,
+    /// How far the entry's swatch and label recede toward the canvas: its series is not the selected one.
+    pub recede: Option<crate::selected::Recede>,
 }
 
 /// Title text for a legend: the color field's display name, cased per the
@@ -1998,6 +2004,7 @@ mod tests {
                 fill: "#000",
                 symbol: None,
                 series_key: None,
+                recede: None,
             }).collect();
         let order = |direction: &str, columns: u32, n: usize| {
             vega_legend(&entries[..n], false, "", &legend_cfg(direction, Some(columns)), &fonts).unwrap().order
@@ -2048,12 +2055,14 @@ mod tests {
                 fill: "#40639c",
                 symbol: Some(LegendSymbol::Square("#fff")),
                 series_key: None,
+                recede: None,
             },
             LegendEntry {
                 label: "target",
                 fill: "#dea628",
                 symbol: Some(LegendSymbol::Circle),
                 series_key: None,
+                recede: None,
             },
         ];
         let fonts = test_fonts();
@@ -2091,7 +2100,7 @@ mod tests {
     }
 
     fn titled_entries() -> [LegendEntry<'static>; 2] {
-        ["Enterprise", "SMB"].map(|label| LegendEntry { label, fill: "#40639c", symbol: None, series_key: None })
+        ["Enterprise", "SMB"].map(|label| LegendEntry { label, fill: "#40639c", symbol: None, series_key: None, recede: None })
     }
 
     #[test]
@@ -2125,7 +2134,7 @@ mod tests {
     /// leaves a title-only legend (`apply_legend_entry_order`).
     #[test]
     fn legend_values_narrow_order_or_empty_the_entries() {
-        let entries = || ["store", "web", "revenue"].map(|label| LegendEntry { label, fill: "#40639c", symbol: None, series_key: None });
+        let entries = || ["store", "web", "revenue"].map(|label| LegendEntry { label, fill: "#40639c", symbol: None, series_key: None, recede: None });
         let labels = |values: Option<&[&str]>| {
             let mut cfg = legend_cfg("vertical", None);
             cfg.values = values.map(|v| v.iter().map(|s| s.to_string()).collect());
@@ -2169,6 +2178,7 @@ mod tests {
                 fill: "#40639c",
                 symbol: Some(symbol),
                 series_key: (i % 2 == 0).then_some(" key'\"<1 "),
+                recede: None,
             })
             .collect();
         let mut cfg = legend_cfg("vertical", None);
@@ -2183,6 +2193,7 @@ mod tests {
             fill: "#abc",
             symbol: None,
             series_key: Some(" k "),
+            recede: None,
         });
         let cfg = legend_cfg("horizontal", Some(2));
         let legend = vega_legend(&plain, false, "", &cfg, &test_fonts()).unwrap();

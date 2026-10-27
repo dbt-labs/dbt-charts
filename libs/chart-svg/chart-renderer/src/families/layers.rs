@@ -1016,6 +1016,7 @@ impl LayerScale {
                     None => base_glyph(fill),
                 }),
                 series_key: None,
+                recede: None,
             })
             .collect()
     }
@@ -1579,33 +1580,6 @@ pub(crate) fn line_layer_marks(
     Ok(out)
 }
 
-pub(crate) fn paint_line_layer_marks(
-    svg: &mut String,
-    l: &OverlayLineLayer,
-    rows: &[serde_json::Map<String, Value>],
-    x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
-    label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
-    y_of: impl Fn(f64) -> f64,
-    frame: &AreaFrame,
-    horizontal: bool,
-    series_color: &str,
-    canvas: &str,
-    describe: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
-    board_style: Option<&crate::BoardStyle>,
-    describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
-    step_band: Option<StepBand>,
-    step_lead: f64,
-    stacked: Option<&LayerStack>,
-    link: Option<&crate::href::DatumLink>,
-) -> Result<(), String> {
-    let nodes = line_layer_marks(
-        l, rows, x_of, label_x_of, y_of, frame, horizontal, series_color, canvas, describe, board_style,
-        describe_label, step_band, step_lead, stacked, link,
-    )?;
-    svg.push_str(&print::print(&nodes));
-    Ok(())
-}
-
 /// The step-after pairs of `pairs` flattened into one run per stretch between
 /// `cuts` (each an index of the first pair after a gap); a gap with no pair
 /// before it leaves no empty run.
@@ -1660,7 +1634,7 @@ pub(crate) struct LayerLabelStyle<'a> {
     ml: &'a MarkLabels,
     is_house: bool,
     field_is_text: bool,
-    pub font: crate::families::bar::LabelFont,
+    pub font: crate::families::bar::labels::LabelFont,
     pub font_style: Option<String>,
     pub color: &'a str,
 }
@@ -1680,7 +1654,7 @@ impl<'a> LayerLabelStyle<'a> {
         rows: &[serde_json::Map<String, Value>],
         board_style: Option<&crate::BoardStyle>,
     ) -> Result<Self, String> {
-        let font = crate::families::bar::label_font(ml, board_style)?;
+        let font = crate::families::bar::labels::label_font(ml, board_style)?;
         let color = ml.font.as_ref().and_then(|f| f.color.as_deref()).unwrap_or("#313233");
         Ok(LayerLabelStyle {
             ml,
@@ -1871,7 +1845,7 @@ impl OverlayScatterLayer {
 /// (probed against `bullet`'s own reference: its bar layer is `layer_1_marks`,
 /// its line layer `layer_2_layer_*`), and
 /// `1`, `2` for a dumbbell's two scatter layers. `x_of`/`y_of` mirror
-/// `paint_line_layer_marks`'s own laws (a bar base's band CENTER, the
+/// `line_layer_marks`'s own laws (a bar base's band CENTER, the
 /// shared/independent linear scale's position); a `horizontal` base swaps the
 /// two onto x and y; `aria_of` builds each
 /// datum's structured-tooltip label (`Ok(None)` when `tooltip_labels` is
@@ -1936,33 +1910,6 @@ pub(crate) fn scatter_layer_marks(
         out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
     }
     Ok(out)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_scatter_layer_marks(
-    svg: &mut String,
-    l: &OverlayScatterLayer,
-    rows: &[serde_json::Map<String, Value>],
-    size: f64,
-    layer_index: usize,
-    horizontal: bool,
-    x_of: impl Fn(&serde_json::Map<String, Value>) -> Option<f64>,
-    label_x_of: Option<&dyn Fn(&serde_json::Map<String, Value>) -> Option<f64>>,
-    y_of: impl Fn(f64) -> f64,
-    aria_of: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
-    color: PointColor,
-    canvas: &str,
-    board_style: Option<&crate::BoardStyle>,
-    describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
-    link: Option<&crate::href::DatumLink>,
-    clip: Option<(f64, f64)>,
-) -> Result<(), String> {
-    let nodes = scatter_layer_marks(
-        l, rows, size, layer_index, horizontal, x_of, label_x_of, y_of, aria_of, color, canvas, board_style,
-        describe_label, link, clip,
-    )?;
-    svg.push_str(&print::print(&nodes));
-    Ok(())
 }
 
 /// A `type: "bar"` layer's own raw JSON — `bar_mark` is the SAME shape as
@@ -2401,12 +2348,12 @@ pub(crate) fn layer_clip_group(id: &str, (plot_w, plot_h): (f64, f64), defined: 
     vec![clip, group]
 }
 
-/// Opens the layer clip for a caller that writes the marks as markup itself; close it with `</g>`.
-pub(crate) fn clip_open(svg: &mut String, plot: (f64, f64), chart_id: &str) {
+/// `children` under the layer clip of a `plot`-sized chart, defining the clip the first time the
+/// chart asks for it (`defined` holds the ids already written).
+pub(crate) fn clipped_layer(defined: &mut HashSet<String>, plot: (f64, f64), chart_id: &str, children: Vec<Node>) -> Vec<Node> {
     let id = layer_clip_id(plot, chart_id);
-    let defined = svg.contains(&format!("<clipPath id=\"{id}\">"));
-    let printed = print::print(&layer_clip_group(&id, plot, defined, Vec::new()));
-    svg.push_str(printed.strip_suffix("</g>").expect("a childless group prints its end tag"));
+    let seen = !defined.insert(id.clone());
+    layer_clip_group(&id, plot, seen, children)
 }
 
 /// One rect of a bar layer: spanning `from..to` on the value scale at its row's x.
@@ -2507,17 +2454,6 @@ pub(crate) fn layer_grids(
         groups.push(crate::contract::grid_group(lines));
     }
     Ok(groups)
-}
-
-pub(crate) fn paint_layer_grids(
-    svg: &mut String,
-    layer_axes: &[LayerAxis],
-    ax_y: &crate::common::AxisStyle,
-    plot: (f64, f64),
-    family: &str,
-) -> Result<(), String> {
-    svg.push_str(&print::print(&layer_grids(layer_axes, ax_y, plot, family)?));
-    Ok(())
 }
 
 /// A bar layer's rects over the rows `placed` gives a position on the base's x
@@ -2784,6 +2720,8 @@ pub(crate) struct LayerAxisInk<'a> {
     pub tick_size: f64,
     pub ticks: &'a crate::common::AxisTicks,
     pub title_style: &'a crate::common::AxisTitle,
+    /// The stroke and width of this layer's own painted zero rule, which its tick at 0 continues.
+    pub zero_rule: Option<(&'a str, f64)>,
 }
 
 /// Paints the pinned layer's own value axis on the side it pins: ticks and
@@ -2809,6 +2747,7 @@ pub(crate) fn layer_axis(
     let label_x = edge_x + outward * la.label_offset;
     let title_x = edge_x + outward * la.gutter;
     let mut items = Vec::new();
+    let zero_rules = ink.zero_rule.map_or_else(Vec::new, |(stroke, width)| crate::common::value_axis_rules(top, [scale.position(0.0)], stroke, width));
     for (&tv, label) in la.tick_values.iter().zip(&la.tick_labels) {
         let tick_y = top + scale.position(tv) + 0.5;
         if tick_y < top - 1.0 || tick_y > bottom + 1.0 {
@@ -2820,6 +2759,7 @@ pub(crate) fn layer_axis(
             edge_x,
             outward,
             ink.tick_size,
+            &crate::common::thresholds(&zero_rules),
         )?);
         let y = tick_y + measure::baseline_shift("middle", ink.font_size);
         items.push(Node::text(
@@ -2843,19 +2783,6 @@ pub(crate) fn layer_axis(
         title_key,
     ));
     crate::contract::axis_group(crate::contract::AxisChannel::Y, &la.caption, (edge_x, top), items)
-}
-
-pub(crate) fn paint_layer_axis(
-    svg: &mut String,
-    la: &LayerAxis,
-    scale: &crate::families::cartesian::LinearScale,
-    edge_x: f64,
-    extent: (f64, f64),
-    ink: &LayerAxisInk,
-    title_key: Option<crate::contract::LabelKey>,
-) -> Result<(), String> {
-    svg.push_str(&print::print(&layer_axis(la, scale, edge_x, extent, ink, title_key)?));
-    Ok(())
 }
 
 /// A categorical x domain widened by bar-type layers, as Vega-Lite renders it

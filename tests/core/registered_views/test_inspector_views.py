@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.registered_views.expander import expand_registered_view
 from dbt_charts.core.registered_views.loader import load_builtin_registry
@@ -601,9 +602,15 @@ class TestInspectorServerRoute:
         _write_wh_source(tmp_path)
         mock_result = QueryResult(
             data=[
-                {"name": "order_id", "type": "BIGINT"},
-                {"name": "status", "type": "VARCHAR"},
-            ]
+                {"name": "order_id", "actual_type": "BIGINT"},
+                {"name": "status", "actual_type": "VARCHAR"},
+            ],
+            schema=literal_schema(
+                [
+                    {"name": "order_id", "actual_type": "BIGINT"},
+                    {"name": "status", "actual_type": "VARCHAR"},
+                ]
+            ),
         )
         app = create_server(FilesystemProject(tmp_path))
         with (
@@ -639,7 +646,13 @@ class TestInspectorServerRoute:
             data=[
                 {"name": "order_id", "actual_type": "BIGINT"},
                 {"name": "status", "actual_type": "VARCHAR"},
-            ]
+            ],
+            schema=literal_schema(
+                [
+                    {"name": "order_id", "actual_type": "BIGINT"},
+                    {"name": "status", "actual_type": "VARCHAR"},
+                ]
+            ),
         )
         mock_execute = MagicMock(return_value=schema_result)
         app = create_server(FilesystemProject(tmp_path))
@@ -663,3 +676,39 @@ class TestInspectorServerRoute:
         assert len(schema_executions) == 1, (
             f"Expected one SchemaQuery execution, got {len(schema_executions)}"
         )
+
+
+def test_pivot_keeps_missing_and_null_profile_fields_null() -> None:
+    from dbt_charts.core.compile.template.query_result import QueryRow
+    from dbt_charts.core.registered_views.expander import _pivot_column_profiles
+
+    cells: list[dict[str, float | None]] = [
+        {"null_percentage": 12.5},
+        {"null_percentage": None},
+        {},
+    ]
+    cols = [QueryRow("cols", c) for c in cells]
+    assert _pivot_column_profiles(cols, [["Nulls", "null_percentage"]]) == [
+        ["Nulls", "12.5", None, None]
+    ]
+
+
+def test_pivot_formats_counts_and_percentages() -> None:
+    from dbt_charts.core.compile.template.query_result import QueryRow
+    from dbt_charts.core.registered_views.expander import _pivot_column_profiles
+
+    cells: list[dict[str, str | int | float]] = [
+        {"actual_type": "BIGINT", "null_percentage": 50.82, "distinct_count": 4824},
+        {"actual_type": "VARCHAR", "null_percentage": 0.0, "distinct_count": 238},
+    ]
+    cols = [QueryRow("cols", c) for c in cells]
+    characteristics = [
+        ["Type", "actual_type"],
+        ["Null %", "null_percentage"],
+        ["Distinct", "distinct_count"],
+    ]
+    assert _pivot_column_profiles(cols, characteristics) == [
+        ["Type", "BIGINT", "VARCHAR"],
+        ["Null %", "50.82", "0"],
+        ["Distinct", "4,824", "238"],
+    ]

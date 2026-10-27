@@ -139,6 +139,7 @@ dependencies = [
  "scene",
  "serde",
  "serde_json",
+ "sha2",
  "svg2pdf",
  "usvg",
 ]

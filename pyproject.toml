@@ -107,7 +107,8 @@ dependencies = [
     # 30.x split the node hierarchy into Expr/Expression; core annotates
     # against exp.Expr, which 28.x does not define.
     "sqlglot>=30.22.0",
-    "duckdb>=1.0.0",  # SET file_search_path (duckdb_adapter relative-path resolution)
+    "duckdb>=1.2.0",  # allowed_directories/allowed_paths (duckdb_adapter source lockdown)
+    "tzdata>=2025.3",  # regional.time_zone's zone list (core/text/time_zones.py)
     # Builds Arrow from Python values without pyarrow (core/execute/arrow_ingest.py).
     "nanoarrow>=0.9.0",
     "tomli-w>=1.0.0",
@@ -444,6 +445,10 @@ forbidden_module_paths = [
 # databricks_connection_manager.py behind the databricks adapter gate; it is a
 # transitive dep of the optional
 # `databricks` extra, not a runtime dep.
+# `psycopg2`, `redshift_connector`, `snowflake` and `numpy` are imported inside
+# the family readers of execute/adapters/typed_fetch.py for their type
+# constants, each present only when the matching dbt adapter (or, for numpy,
+# databricks-sql) is installed.
 # `openai` is the lazy import inside ai/openai_gateway.py's OpenAIGateway. No
 # `dct` verb reaches it — the gateway exists for in-repo hosts (Cloud,
 # Playground, A lIe, evals), each of which declares openai itself.
@@ -456,6 +461,10 @@ allowed_external_imports = [
     "dbt_charts_super_schema",
     "google",
     "databricks",
+    "psycopg2",
+    "redshift_connector",
+    "snowflake",
+    "numpy",
     "openai",
 ]
 # Declared deps that the wheel never imports directly but that another

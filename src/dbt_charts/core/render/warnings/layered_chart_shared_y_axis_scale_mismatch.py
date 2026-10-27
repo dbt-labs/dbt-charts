@@ -3,10 +3,18 @@ in core/diagnostics/codes_render.py for what this fires on.
 
 Detection rule:
   chart has typed overlay ``layers`` (bar/line/area/scatter with layers: [...])
-  AND at least 2 distinct y series across the base chart + its layers
-  AND ratio of largest absolute-median to smallest absolute-median ≥ 100×
-  AND neither of the two extreme-ratio series has axis_y set (either one
-    having axis_y means the user has already opted into split scales)
+  AND no layer pins its own y-axis (one pinned layer makes every layer
+    independent of the base, so there is no shared scale to crush anything)
+  AND at least 2 distinct y series share the base chart's y-axis
+  AND one series reaches under ``_REACH_THRESHOLD`` of the shared axis.
+
+A series' reach is the height of its drawn band over the axis span: the band
+runs from zero when the axis includes zero (a bar hangs from it, a line near
+the floor reads the same), else it is the series' own variation. The axis span
+is ``effective_measure_domain`` over every compared series (an authored domain
+wins; a log or non-quantitative axis abstains). A
+series with no height (a constant on a zoomed axis) is flat by its data, not
+crushed, and is not compared.
 
 A layer carrying its own ``query:`` is compared like any other — its rows come
 from ``ctx.layer_results`` rather than the chart's own result set. That shape
@@ -16,14 +24,12 @@ identified by (query, column), not column alone: two queries both selecting
 ``value`` are two series on one axis, not one shared scale.
 
 Diagnostic.field is None — the issue is cross-column, not column-scoped.
-The message names the two columns with the widest ratio, and the diagnostic
-marks where each was authored: `path` on the larger series, `related` on the
-smaller one that gets crushed.
+The message names the widest series and the one with the least reach; the
+diagnostic marks where each was authored: `path` on the widest series,
+`related` on the one that gets crushed.
 """
 
 from __future__ import annotations
-
-import statistics
 
 from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
 from dbt_charts.core.diagnostics import (
@@ -31,11 +37,15 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
     RelatedLocation,
 )
+from dbt_charts.core.render.chart.emitters._cartesian import (
+    authored_measure_domain,
+    effective_measure_domain,
+)
 from dbt_charts.core.render.warnings.base import WarningContext
 from dbt_charts.core.utils import numeric_column_values
 
-# Ratio threshold: fire when largest-median / smallest-median ≥ this value.
-_RATIO_THRESHOLD = 100.0
+# Fire when a series' drawn band is under this share of the shared axis.
+_REACH_THRESHOLD = 0.06
 
 
 def detect(ctx: WarningContext) -> list[Diagnostic]:
@@ -53,31 +63,32 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             chart_id, {}
         )  # type-state: silent_fallback — sparse: no per-layer query, no entry
 
-        # One entry per authored y series: (query, column, authored path,
-        # axis_y_set). A layer with no authored override bakes query_name to
-        # the base chart's own (see _resolve_one_layer), so comparing against
-        # chart.query_name — not "is not None" — is what tells a real override
-        # from an inherited one. The authored path rides along so the two
-        # extremes can be marked where they were actually written.
-        series: list[tuple[str | None, str, str, bool]] = []
+        # One pinned layer makes every layer independent of the base: no
+        # shared scale, nothing to crush.
+        if any(layer.axis_y.position is not None for layer in chart.layers):
+            continue
+
+        # One entry per authored y series: (query, column, authored path). A
+        # layer with no authored override bakes query_name to the base chart's
+        # own (see _resolve_one_layer), so comparing against chart.query_name —
+        # not "is not None" — is what tells a real override from an inherited
+        # one. The authored path rides along so the two extremes can be marked
+        # where they were actually written.
+        series: list[tuple[str | None, str, str]] = []
         base_y = chart.y
         if isinstance(base_y, str):
-            series.append((chart.query_name, base_y, f"charts.{chart_id}.y", False))
+            series.append((chart.query_name, base_y, f"charts.{chart_id}.y"))
         for idx, layer in enumerate(chart.layers):
             if layer.y is not None:
                 series.append(
-                    (
-                        layer.query_name,
-                        layer.y,
-                        f"charts.{chart_id}.layers.{idx}.y",
-                        layer.axis_y.position is not None,
-                    )
+                    (layer.query_name, layer.y, f"charts.{chart_id}.layers.{idx}.y")
                 )
 
-        layer_stats: list[tuple[str, str, float, bool]] = []
+        # (path, column, min, max) per series with values to draw.
+        extents: list[tuple[str, str, float, float]] = []
         seen_series: set[tuple[str | None, str]] = set()
 
-        for query_name, col, path, axis_y_set in series:
+        for query_name, col, path in series:
             # Same query and same column name is literally the same values —
             # one scale, nothing to compare.
             if (query_name, col) in seen_series:
@@ -94,39 +105,58 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                 # The layer's own query failed to execute — nothing to judge.
                 continue
 
-            # Use abs of each value so symmetric distributions (e.g. P&L deltas)
-            # don't cancel to a zero median and get incorrectly dropped.
-            abs_values = [abs(v) for v in numeric_column_values(rows, col)]
-            if not abs_values:
-                continue
+            values = numeric_column_values(rows, col)
+            if values:
+                extents.append((path, col, min(values), max(values)))
 
-            abs_median = statistics.median(abs_values)
-            # Skip columns whose absolute-median is 0 — dividing by zero is undefined.
-            if abs_median == 0.0:
-                continue
-
-            layer_stats.append((path, col, abs_median, axis_y_set))
-
-        if len(layer_stats) < 2:
+        if len(extents) < 2:
             continue
 
-        # Find the pair with the largest ratio.
-        max_path, max_col, max_median, max_axis_y = max(layer_stats, key=lambda t: t[2])
-        min_path, min_col, min_median, min_axis_y = min(layer_stats, key=lambda t: t[2])
-
-        ratio = max_median / min_median
-        if ratio < _RATIO_THRESHOLD:
+        axis_y = chart.style.axis_y
+        cont = axis_y.scale.continuous if axis_y.scale is not None else None
+        if not axis_y.is_quantitative or (cont is not None and cont.type == "log"):
+            continue
+        # The canonical answer to "what range does this axis render": an
+        # authored domain wins, then the baked edges, then the data extent.
+        domain = effective_measure_domain(
+            axis_y, (min(e[2] for e in extents), max(e[3] for e in extents))
+        )
+        if domain is None:
+            continue
+        # One fact for both the span and the band: the baked `zero_anchored`
+        # (resolve decides it for a bar, which never bakes `zero`). An authored
+        # domain is the rendered axis outright, zero or not.
+        zero_anchored = axis_y.zero_anchored
+        floor, ceiling = domain
+        if zero_anchored and authored_measure_domain(axis_y) is None:
+            floor, ceiling = min(floor, 0.0), max(ceiling, 0.0)
+        span = ceiling - floor
+        if span == 0.0:
             continue
 
-        # If either extreme column already carries an axis_y override, the user
-        # has explicitly opted in to split scales — do not fire.
-        if max_axis_y or min_axis_y:
+        # Reach: the series' drawn band over the axis span, clipped to the axis.
+        # On a zero-anchored axis the band runs from zero (a bar's height); on a
+        # zoomed axis it is only the series' own variation, so a series with
+        # none is flat by its data, not crushed.
+        reaches: list[tuple[float, str, str]] = []
+        for path, col, lo, hi in extents:
+            if zero_anchored:
+                lo, hi = min(lo, 0.0), max(hi, 0.0)
+            lo, hi = max(lo, floor), min(hi, ceiling)
+            if hi > lo:
+                reaches.append(((hi - lo) / span, path, col))
+        if len(reaches) < 2:
             continue
 
-        # The complaint is the *ratio between two series*, so it is anchored on
-        # the larger one and carries the smaller — the one being crushed to a
-        # flat line — as a related location. Marking only one of the pair, or
-        # the whole chart block, loses which two columns are at odds.
+        min_reach, min_path, min_col = min(reaches)
+        _, max_path, max_col = max(reaches)
+        if min_reach >= _REACH_THRESHOLD:
+            continue
+
+        # The complaint is about one series squeezed by another, so it is
+        # anchored on the widest series and carries the crushed one as a related
+        # location. Marking only one of the pair, or the whole chart block,
+        # loses which two columns are at odds.
         warnings.append(
             Diagnostic.from_code(
                 WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH,
@@ -137,13 +167,13 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
                     RelatedLocation(
                         path=min_path,
                         message=(
-                            f"{min_col!r} is ~{ratio:.0f}x smaller — this is the "
-                            "series that flattens"
+                            f"{min_col!r} reaches {min_reach:.1%} of the axis — "
+                            "this is the series that flattens"
                         ),
                     ),
                 ),
                 message=WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH.message_template.format(
-                    chart_id=chart_id, col_a=max_col, col_b=min_col, ratio=ratio
+                    chart_id=chart_id, col_a=max_col, col_b=min_col, reach=min_reach
                 ),
                 fix=WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH.fix_template,
             )

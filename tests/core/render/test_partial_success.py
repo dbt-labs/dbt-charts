@@ -733,6 +733,7 @@ def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None
     """ChartDataError raised from build_resolved_board must degrade to board_error, not escape render()."""
     board = _compile_two_chart_board()
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_executor.rendered_at = PINNED_RENDER_TIME
     mock_executor._query_errors = {}
 
     with (
@@ -755,6 +756,7 @@ def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> 
     """Bare RuntimeError from build_resolved_board degrades to board_error wrapping ERR_INTERNAL."""
     board = _compile_two_chart_board()
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_executor.rendered_at = PINNED_RENDER_TIME
     mock_executor._query_errors = {}
 
     with (
@@ -788,6 +790,7 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
     mock_registry = MagicMock(spec=AdapterRegistry)
     project = local_project(tmp_path)
     mock_executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    mock_executor.rendered_at = PINNED_RENDER_TIME
     mock_executor._query_errors = {}
 
     with (
@@ -2135,44 +2138,12 @@ rows:
 """
 
 
-def test_spark_bar_non_numeric_value_beyond_max_bars_still_raises(
-    local_project: Callable[..., Project],
-):
-    """A bad value past the display cap is still a real data-shape bug.
-
-    ``low_cap`` (max_bars: 5) only "sees" the first 5 rows, all clean
-    numbers; ``high_cap`` (max_bars: 10) sees row 5's stray string too.
-    Before the fix low_cap silently rendered a chart whose underlying column
-    is not actually clean, while high_cap raised on the same data — the
-    verdict must be the same regardless of the cap, so both must raise once
-    the check reads the whole dataset. Deliberately a whole-board render:
-    each bad chart must degrade to its own error card, not take the board
-    down (the per-chart isolation this task's Context section calls out).
-    """
-    from dbt_charts.core.execute.adapters import build_adapter_registry
-
+def test_spark_bar_non_numeric_value_beyond_max_bars_is_rejected_at_compile() -> None:
+    """A stray string among a spark_bar's numbers can no longer reach a chart:
+    a values column that mixes kinds is rejected when the board compiles, so
+    the verdict cannot depend on ``max_bars``."""
     result = compile(_NON_NUMERIC_BEYOND_CAP_YAML)
-    assert result.success, result.errors
-    executor = Executor(
-        result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
-        query_registry=result.query_registry,
-    )
 
-    render_result = render(result.board, executor, format="svg")
-
-    assert render_result.board_error is None, (
-        "bad spark_bar charts must not become a board-level failure"
-    )
-    assert render_result.output is not None, "the board must still render"
-    chart_error_codes = {
-        d.fields.get("chart_id"): d.code for d in render_result.chart_errors
-    }
-    assert chart_error_codes.get("low_cap") == "ERR-SPARK-BAR-VALUE-NOT-NUMERIC", (
-        f"expected low_cap to raise too once the check reads the full "
-        f"dataset, got {chart_error_codes}"
-    )
-    assert chart_error_codes.get("high_cap") == "ERR-SPARK-BAR-VALUE-NOT-NUMERIC"
-    # Both tiles are laid out as error cards, not a vanished board.
-    assert "chart-low_cap" in render_result.output
-    assert "chart-high_cap" in render_result.output
+    assert result.board is None
+    assert [d.code for d in result.errors] == ["ERR-RESULT-COLUMN-TYPE"]
+    assert "'val'" in result.errors[0].message

@@ -12,8 +12,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.execute.adapters.base import QueryResult
+
+pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
 
 class TestAdapterParamsPassthrough:
@@ -34,7 +37,7 @@ class TestAdapterParamsPassthrough:
         query = SqlQuery(sql="SELECT * FROM orders WHERE region = $1", source="test_db")
 
         with patch.object(adapter, "_execute_duckdb") as mock_duckdb:
-            mock_duckdb.return_value = QueryResult(data=[])
+            mock_duckdb.return_value = QueryResult(data=[], schema=literal_schema([]))
 
             adapter.execute(query, variables={}, params=["North"])
 
@@ -59,7 +62,9 @@ class TestAdapterParamsPassthrough:
         mock_adapter = Mock()
         mock_adapter.supported_types = {"sql"}
         mock_adapter.can_execute.return_value = True
-        mock_adapter.execute.return_value = QueryResult(data=[])
+        mock_adapter.execute.return_value = QueryResult(
+            data=[], schema=literal_schema([])
+        )
 
         registry._adapters = [mock_adapter]
         registry._type_index = {"sql": [mock_adapter]}
@@ -131,7 +136,7 @@ rows:
 
         def capture_duckdb(sql: str, params: list, *args, **kwargs) -> QueryResult:
             captured_calls.append((sql, list(params or [])))
-            return QueryResult(data=[])
+            return QueryResult(data=[], schema=literal_schema([]))
 
         malicious = "'; DROP TABLE users; --"
 

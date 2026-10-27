@@ -751,12 +751,30 @@ class TestDuckDBAdapterAttachConfig:
         finally:
             adapter.close()
 
-    def test_secrets_with_no_data_dir_still_raise(self, tmp_path: Path) -> None:
-        """Unlike attach, a secret is meant to authenticate a later
-        read_csv()/httpfs call, so external access genuinely needs a
-        data_dir to resolve relative paths against; a source authoring
-        secrets with no data_dir configured must still raise, not silently
-        close external access back down."""
+    @pytest.mark.parametrize(
+        ("fields", "expected"),
+        [
+            ({"extensions": ["json"]}, True),
+            ({"attach": [{"path": "/x.duckdb"}]}, False),
+            ({"secrets": [{"type": "s3", "scope": "s3://b/"}]}, False),
+        ],
+    )
+    def test_reads_only_its_file_tracks_the_lockdown_allowlist(
+        self, fields: dict[str, object], expected: bool
+    ) -> None:
+        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+
+        adapter = DuckDBAdapter(
+            source_config=DuckDBSourceConfig(type="duckdb"), read_only=True
+        )
+        source_config = DuckDBSourceConfig.model_validate(
+            {"type": "duckdb", "path": "db.duckdb", **fields}
+        )
+        assert adapter.reads_only_its_file(source_config) is expected
+
+    def test_secret_scopes_are_the_only_remote_reach(self, tmp_path: Path) -> None:
+        """A secret reaches exactly its authored scope prefixes, with or
+        without a data_dir."""
         from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 
         adapter = DuckDBAdapter(
@@ -765,15 +783,99 @@ class TestDuckDBAdapterAttachConfig:
             read_only=True,
         )
         try:
-            source_config = DuckDBSourceConfig(
-                type="duckdb",
-                path=":memory:",
-                secrets=[{"type": "s3", "key_id": "k"}],
+            source_config = DuckDBSourceConfig.model_validate(
+                {
+                    "type": "duckdb",
+                    "path": ":memory:",
+                    "secrets": [
+                        {
+                            "type": "s3",
+                            "name": "a",
+                            "key_id": "k",
+                            "scope": "s3://bucket-a/",
+                        },
+                        {
+                            "type": "s3",
+                            "name": "b",
+                            "key_id": "k",
+                            "scope": [f"{tmp_path / 'in'}/"],
+                        },
+                    ],
+                }
             )
+            (tmp_path / "in").mkdir()
+            (tmp_path / "in" / "f.csv").write_text("x\n1\n")
+            (tmp_path / "out.csv").write_text("x\n1\n")
+            inside = adapter._execute(
+                _make_query(f"SELECT x FROM read_csv('{tmp_path / 'in' / 'f.csv'}')"),
+                source_config=source_config,
+            )
+            assert inside.error is None, inside.error
+            assert inside.data == [{"x": 1}]
+            outside = adapter._execute(
+                _make_query(f"SELECT x FROM read_csv('{tmp_path / 'out.csv'}')"),
+                source_config=source_config,
+            )
+            assert outside.error is not None
+            assert "disabled by configuration" in str(outside.error.detail)
+
             result = adapter._execute(
-                _make_query("SELECT 1 AS n"), source_config=source_config
+                _make_query(
+                    "SELECT current_setting('allowed_directories') AS d, "
+                    "current_setting('enable_external_access') AS e"
+                ),
+                source_config=source_config,
             )
-            assert result.error is not None
+            assert result.error is None, result.error
+            [row] = result.data
+            assert row["e"] is False
+            # DuckDB normalizes "//" and always allows its own spill directory.
+            assert set(row["d"]) == {".tmp/", "s3:/bucket-a/", f"{tmp_path / 'in'}/"}
+        finally:
+            adapter.close()
+
+    @pytest.mark.parametrize("field", ["attach", "extensions", "secrets"])
+    def test_authored_source_fields_do_not_open_the_filesystem(
+        self, tmp_path: Path, field: str
+    ) -> None:
+        """Authoring attach/extensions/secrets must not let caller SQL read
+        arbitrary absolute paths or URLs, and the lockdown cannot be undone
+        from SQL on the connection."""
+        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        outside = tmp_path / "outside.csv"
+        outside.write_text("x\n1\n")
+        other_db = tmp_path / "other.duckdb"
+        duckdb.connect(str(other_db)).close()
+        source_fields: dict[str, object] = {
+            "attach": {"attach": [{"path": str(other_db), "alias": "other"}]},
+            "extensions": {"extensions": ["json"]},
+            "secrets": {"secrets": [{"type": "s3", "key_id": "k"}]},
+        }[field]
+
+        adapter = DuckDBAdapter(
+            source_config=DuckDBSourceConfig(type="duckdb"),
+            data_dir=data_dir,
+            read_only=True,
+        )
+        try:
+            raw_config = {"type": "duckdb", "path": ":memory:", **source_fields}
+            for sql in (
+                f"SELECT * FROM read_csv_auto('{outside}')",
+                "SELECT * FROM read_csv('http://127.0.0.1:1/x.csv')",
+            ):
+                result = adapter._execute(
+                    _make_query(sql),
+                    source_config=DuckDBSourceConfig.model_validate(raw_config),
+                )
+                assert result.error is not None, sql
+                assert "disabled by configuration" in str(result.error.detail), sql
+
+            conn = adapter._get_duckdb_connection_for_query(raw_config)
+            with pytest.raises(duckdb.Error, match="locked"):
+                conn.execute("SET enable_external_access = true")
         finally:
             adapter.close()
 
@@ -839,12 +941,29 @@ class TestDuckDBAdapterAttachConfig:
         finally:
             registry.close()
 
-    def test_extensions_installed_and_loaded(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    def test_extensions_applied_to_connection(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """duckdb_extensions() scans the home directory, which the locked
+        connection refuses, so the applied list is observed at setup."""
+        from dbt_charts.core.execute.adapters import duckdb_adapter
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
+
+        applied: list[str | dict[str, str]] = []
+        original = duckdb_adapter._apply_duckdb_extensions
+
+        def spy(
+            conn: duckdb.DuckDBPyConnection, extensions: list[str | dict[str, str]]
+        ) -> None:
+            applied.extend(extensions)
+            original(conn, extensions)
+
+        monkeypatch.setattr(duckdb_adapter, "_apply_duckdb_extensions", spy)
 
         (tmp_path / "dbt_charts.yml").write_text(
             "sources:\n"
@@ -856,15 +975,9 @@ class TestDuckDBAdapterAttachConfig:
         )
         registry = build_adapter_registry(local_project(tmp_path))
         try:
-            result = registry.execute(
-                _make_query(
-                    "SELECT extension_name FROM duckdb_extensions() "
-                    "WHERE extension_name = 'json' AND loaded",
-                    source="analytics",
-                )
-            )
+            result = registry.execute(_make_query("SELECT 1 AS n", source="analytics"))
             assert result.error is None, result.error
-            assert result.data == [{"extension_name": "json"}]
+            assert applied == ["json"]
         finally:
             registry.close()
 

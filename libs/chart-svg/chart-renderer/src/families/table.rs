@@ -1708,6 +1708,227 @@ pub(crate) mod tests {
         assert_eq!(svg.matches(">K<").count(), 2, "the per-row magnitude suffix stays its own lane:\n{svg}");
     }
 
+    /// `align: left` on a numeric column anchors the digits at the cell's left
+    /// padding: no end-anchored lane tspans and no decimal pad, so a shallower
+    /// row is not padded to line its decimal mark up with the deeper ones. The
+    /// header moves left with its digits.
+    #[test]
+    fn a_left_aligned_numeric_column_anchors_its_digits_left_with_no_decimal_lane() {
+        let rows = vec![
+            json!({"month": "Oct", "docs": 1037.0}),
+            json!({"month": "Nov", "docs": 5795.0}),
+        ];
+        let mut columns = json!({
+            "month": {"label": "Month"},
+            "docs": {"label": "Docs", "align": "left"},
+        });
+        columns["docs"]["decimal_pad_table"] =
+            json!(["", "\u{2007}\u{200b}", "\u{2007}\u{200b}\u{2007}\u{200b}", "\u{2007}\u{200b}\u{2007}\u{200b}\u{2008}\u{200b}"]);
+        let payload = make_payload(columns, rows, None, 20);
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(!svg.contains("\u{2007}"), "no decimal pad on a left-anchored column:\n{svg}");
+        assert!(!svg.contains("text-anchor=\"end\""), "no end-anchored lane tspan:\n{svg}");
+        assert_eq!(
+            svg.matches("<text x=\"320.3962290553462\" text-anchor=\"start\"").count(),
+            2,
+            "each body run starts at the cell's left padding:\n{svg}"
+        );
+        assert!(
+            svg.contains("<text x=\"320.3962290553462\" y=\"66.0\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
+            "the header takes the same left x, start-anchored:\n{svg}"
+        );
+        assert!(
+            svg.contains("<tspan>1.04</tspan><tspan dx=\"3.0\">K</tspan>")
+                && svg.contains("<tspan>5.8</tspan><tspan dx=\"3.0\">K</tspan>"),
+            "digits and the magnitude suffix flow from the start of the run:\n{svg}"
+        );
+    }
+
+    /// `align: left` on a numeric column whose rows format to different
+    /// widths (here "1.04"K vs "5.8"K) never lines the digits up, no matter
+    /// how much slack the column has — WARN-TABLE-NUMERIC-ALIGN-LEFT.
+    #[test]
+    fn ragged_width_left_aligned_numeric_column_warns_numeric_align_left() {
+        let rows = vec![
+            json!({"month": "Oct", "docs": 1037.0}),
+            json!({"month": "Nov", "docs": 5795.0}),
+        ];
+        let columns = json!({
+            "month": {"label": "Month"},
+            "docs": {"label": "Docs", "align": "left"},
+        });
+        let payload = make_payload(columns, rows, None, 20);
+        let (_svg, codes) = render_with_warnings(&payload);
+        assert!(
+            codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            "{codes:?}"
+        );
+    }
+
+    /// Equal-width values (same digit shape every row) in a column with
+    /// slack beyond its content demand: left-anchoring shifts the block left
+    /// but the digits still stack, so neither alignment warning fires.
+    #[test]
+    fn equal_width_left_aligned_column_with_slack_is_silent() {
+        let rows = vec![
+            json!({"month": "Oct", "docs": 10.0}),
+            json!({"month": "Nov", "docs": 20.0}),
+        ];
+        let columns = json!({
+            "month": {"label": "Month"},
+            "docs": {"label": "Docs", "align": "left"},
+        });
+        let payload = make_payload(columns, rows, None, 20);
+        let (svg, codes) = render_with_warnings(&payload);
+        assert!(svg.contains(">10<") && svg.contains(">20<"), "{svg}");
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            "{codes:?}"
+        );
+    }
+
+    /// Left edge of the "docs" digits with and without `align: left`, from the
+    /// painted SVG: `(decimal_lane_left_x, left_run_x, warning_codes)`.
+    fn docs_digit_left_edges(label: &str, docs_extra: Value, digits: &str) -> (f64, f64, Vec<&'static str>) {
+        let rows = vec![
+            json!({"month": "Oct", "docs": 10.0}),
+            json!({"month": "Nov", "docs": 20.0}),
+        ];
+        let docs = |align: bool| {
+            let mut c = json!({"label": label});
+            if align {
+                c["align"] = json!("left");
+            }
+            for (k, v) in docs_extra.as_object().unwrap() {
+                c[k] = v.clone();
+            }
+            json!({"month": {"label": "Month"}, "docs": c})
+        };
+        let fonts = test_fonts();
+        let decimal = render(&make_payload(docs(false), rows.clone(), None, 20), &fonts).expect("renders");
+        let (left, codes) = render_with_warnings(&make_payload(docs(true), rows, None, 20));
+        let end_x: f64 = decimal
+            .split(&format!("\" text-anchor=\"end\">{digits}<"))
+            .next()
+            .unwrap()
+            .rsplit('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let left_x: f64 = left
+            .split("<text x=\"")
+            .skip(1)
+            .find(|t| t.contains("text-anchor=\"start\"") && t.contains(&format!("<tspan>{digits}</tspan>")))
+            .and_then(|t| t.split('"').next())
+            .unwrap()
+            .parse()
+            .unwrap();
+        (end_x - fonts.measure(digits, TAB_FONT, 11.0).unwrap(), left_x, codes)
+    }
+
+    /// The digits' x positions coincide only when the decimal lane already
+    /// starts at the cell's left padding: a column pinned to exactly its digit
+    /// width plus padding. `align: left` then paints nothing differently —
+    /// WARN-TABLE-ALIGN-NO-VISIBLE-EFFECT, the silent no-op this code exists
+    /// to end.
+    #[test]
+    fn equal_width_left_aligned_column_whose_digits_do_not_move_warns_no_visible_effect() {
+        let digit_w = test_fonts().measure("10", TAB_FONT, 11.0).unwrap();
+        let (lane_left, left_x, codes) =
+            docs_digit_left_edges("N", json!({"width": digit_w + 12.0}), "10");
+        assert!((lane_left - left_x).abs() < 1e-6, "{lane_left} vs {left_x}");
+        assert!(
+            codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            "{codes:?}"
+        );
+    }
+
+    /// A header wider than the digits centers the decimal lane inside the
+    /// column, so `align: left` moves the digits left: no warning.
+    #[test]
+    fn equal_width_left_aligned_column_under_a_wide_header_moves_its_digits_and_is_silent() {
+        let header = "Documents published";
+        let header_w = test_fonts().measure(header, "Inter", 11.0).unwrap();
+        let (lane_left, left_x, codes) =
+            docs_digit_left_edges(header, json!({"width": header_w + 12.0}), "10");
+        assert!(left_x < lane_left - 1.0, "{lane_left} vs {left_x}");
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            "{codes:?}"
+        );
+    }
+
+    /// A column pinned below its content demand overflows both sides of the
+    /// lane: the decimal run straddles the midpoint while the left run starts
+    /// at the padding, so the digits move and nothing warns.
+    #[test]
+    fn equal_width_left_aligned_column_pinned_below_its_digits_moves_them_and_is_silent() {
+        let (lane_left, left_x, codes) = docs_digit_left_edges("N", json!({"width": 20}), "10");
+        assert!((lane_left - left_x).abs() > 1.0, "{lane_left} vs {left_x}");
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            "{codes:?}"
+        );
+    }
+
+    /// `align: left` on a date column is none of the numeric paint path's
+    /// business: no cell becomes a start-anchored lane run.
+    #[test]
+    fn a_date_column_authored_align_left_is_painted_as_before() {
+        let _locale = crate::time_locale::en_us_scope();
+        let rows = vec![
+            json!({"event": "Launch", "date": "2024-03-15"}),
+            json!({"event": "Close", "date": "2024-06-01"}),
+        ];
+        let columns = |align: &str| {
+            json!({"event": {"label": "Event"}, "date": {"label": "Date", "align": align}})
+        };
+        let fonts = test_fonts();
+        let left = render(&make_payload(columns("left"), rows.clone(), None, 20), &fonts).expect("renders");
+        let right = render(&make_payload(columns("right"), rows, None, 20), &fonts).expect("renders");
+        assert!(left.contains(">15 Mar 2024</text>"), "{left}");
+        assert!(!left.contains("text-anchor=\"end\""), "{left}");
+        assert!(right.contains("text-anchor=\"end\""), "{right}");
+    }
+
+    /// `align: left` on a TEXT column is not this ladder's concern (the
+    /// three-lane numeric paint path never runs for it) — neither alignment
+    /// warning ever fires there, ragged or not.
+    #[test]
+    fn text_column_with_align_left_warns_neither_alignment_code() {
+        let rows = vec![
+            json!({"company": "A", "docs": 10.0}),
+            json!({"company": "Globex Corporation", "docs": 20.0}),
+        ];
+        let columns = json!({
+            "company": {"label": "Company", "align": "left"},
+            "docs": {"label": "Docs"},
+        });
+        let payload = make_payload(columns, rows, None, 20);
+        let (_svg, codes) = render_with_warnings(&payload);
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
+            "{codes:?}"
+        );
+    }
+
     // `currency`/`number` must carry d3's explicit `.3` precision
     // (predefined_formats.py:102,111) — a bare `~s` defaults to 6
     // significant digits, so 50752.9 would render "50.7529 K"/"50.7529k"
@@ -2071,6 +2292,59 @@ pub(crate) mod tests {
                  though revenue claims max_width: 120 (rx={rx}, ux={ux}):\n{svg}"
             );
         }
+    }
+
+    /// A pivot whose every leaf is hidden keeps no group-header level: the empty
+    /// level paints no blank band, so the table is as tall as the same row
+    /// dimension drawn on its own.
+    #[test]
+    fn a_pivot_with_every_leaf_hidden_paints_no_blank_header_band() {
+        let theme = base_table_theme();
+        let height_of = |resolved_extra: Value, rows: Vec<Value>| -> String {
+            let mut resolved = json!({
+                "link_open": "page",
+                "title": null,
+                "title_style": resolved_title_style(),
+                "style": {"table": theme.clone(), "title_font": resolved_title_font()},
+                "conditional_formatting": null,
+            });
+            for (k, v) in resolved_extra.as_object().unwrap() {
+                resolved[k] = v.clone();
+            }
+            let payload = crate::test_payload(json!({
+                "resolved": resolved,
+                "rows": rows,
+                "width": 600.0,
+                "height": 400.0,
+                "background": "#ffffff",
+                "fonts_dir": null,
+                "padding": null,
+            }));
+            let svg = render(&payload, &test_fonts()).expect("renders");
+            svg.split("height=\"").nth(1).unwrap().split('"').next().unwrap().to_string()
+        };
+        let pivoted = height_of(
+            json!({
+                "columns": {
+                    "revenue": {"visible": false},
+                    "units": {"visible": false},
+                },
+                "rows": ["region"],
+                "pivot_columns": ["category"],
+                "values": ["revenue", "units"],
+            }),
+            vec![
+                json!({"region": "East", "category": "Electronics", "revenue": 58396.0, "units": 2108.0}),
+                json!({"region": "East", "category": "Tools", "revenue": 14824.0, "units": 449.0}),
+                json!({"region": "West", "category": "Electronics", "revenue": 21000.0, "units": 900.0}),
+                json!({"region": "West", "category": "Tools", "revenue": 9000.0, "units": 300.0}),
+            ],
+        );
+        let alone = height_of(
+            json!({"columns": {"region": {"label": "Region"}}, "pivot_columns": null}),
+            vec![json!({"region": "East"}), json!({"region": "West"})],
+        );
+        assert_eq!(pivoted, alone);
     }
 
     // Regression: `visible: false` on a pivot leaf must narrow that leaf's
@@ -5390,6 +5664,16 @@ pub(crate) mod tests {
         assert!((x + w / 2.0 - 182.0).abs() < 1e-9, "centered on the cell midpoint 182, got {x}");
     }
 
+    /// A left-aligned numeric column has no lane to center its header rule on:
+    /// the rule starts at the padded left edge like a text column's.
+    #[test]
+    fn a_left_aligned_numeric_columns_header_rule_starts_at_its_left_padding() {
+        let mut payload = per_column_payload("Region", "Q", None);
+        payload.resolved["columns"]["n"]["align"] = json!("left");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert_eq!(divider_rects(&svg)[1].0, 140.0, "cell_x 132 + pad 8:\n{svg}");
+    }
+
     /// A label wider than the lane sets the numeric rule's width, measured at
     /// the header size with the header family, after the header's letter case
     /// (`title`) has been applied — the rule covers what is painted.
@@ -7001,6 +7285,33 @@ mod conditional_formatting_tests {
         crate::test_payload(payload_json)
     }
 
+    fn align_left_codes(rows: Vec<Value>, cf: Value) -> Vec<&'static str> {
+        let columns = json!({"days": {"label": "N", "align": "left"}});
+        super::tests::render_with_warnings(&cf_payload(columns, rows, cf)).1
+    }
+
+    /// A glyph on only some rows: those rows' digits start after the glyph
+    /// while the rest start at the padding, so the digits do not stack. The
+    /// auto-sized lane under a short header lands exactly on the padding, so a
+    /// digits-only check calls the key a no-op.
+    #[test]
+    fn align_left_with_a_glyph_on_only_some_rows_warns_ragged_not_no_effect() {
+        let rows = vec![json!({"days": 10}), json!({"days": 20})];
+        let cf = json!({"days": {"when": [{"lte": 10, "glyph": "\u{25b2}"}]}});
+        let codes = align_left_codes(rows, cf);
+        assert!(codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
+        assert!(!codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id), "{codes:?}");
+    }
+
+    /// The minus is painted inline in the left run, so `-10` beside `20`
+    /// puts the digits at different x even though their widths match.
+    #[test]
+    fn align_left_with_mixed_signs_warns_ragged() {
+        let rows = vec![json!({"days": -10}), json!({"days": 20})];
+        let codes = align_left_codes(rows, json!({}));
+        assert!(codes.contains(&crate::codes::WARN_TABLE_NUMERIC_ALIGN_LEFT.id), "{codes:?}");
+    }
+
     #[test]
     fn numeric_lane_glyph_replaces_the_prefix_and_carries_its_own_fill() {
         let rows = vec![json!({"days": 10}), json!({"days": 120})];
@@ -7127,6 +7438,28 @@ mod conditional_formatting_tests {
         // min value (0) -> first stop, max value (10) -> last stop.
         assert!(svg.contains("fill=\"#000000\""), "min-value scale background missing:\n{svg}");
         assert!(svg.contains("fill=\"#ffffff\""), "max-value scale background missing:\n{svg}");
+    }
+
+    /// A table column paints no legend, so `nice` unset keeps the exact extent (12 is the first stop);
+    /// an authored `nice: true` widens an unbounded domain to round ends (12 sits at 12%, #1f1f1f).
+    #[test]
+    fn a_scale_background_widens_only_on_an_authored_nice() {
+        let paint = |nice: Value| {
+            let rows: Vec<Value> = [12.0, 50.0, 88.0].iter().map(|v| json!({"v": v})).collect();
+            let columns = json!({"v": {"label": "V", "scale": {
+                "background": {
+                    "palette": "seq",
+                    "domain": "data",
+                    "nice": nice,
+                    "arm_mode": "asymmetric",
+                    "resolved_stops": ["#000000", "#ffffff"]
+                }
+            }}});
+            render(&cf_payload(columns, rows, Value::Null), &test_fonts()).unwrap()
+        };
+        assert!(paint(json!(true)).contains("fill=\"#1f1f1f\""));
+        assert!(paint(Value::Null).contains("fill=\"#000000\""));
+        assert!(paint(json!(false)).contains("fill=\"#000000\""));
     }
 
     /// The scale domain must come from the rows

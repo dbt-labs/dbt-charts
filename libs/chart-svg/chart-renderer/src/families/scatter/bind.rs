@@ -7,12 +7,13 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::{color_extent, drawn_at, quantitative_color, rows_at, size_scale_domain, validate_scatter_layers, ScatterResolved, Shape};
+use super::{x_time_axis, color_extent, drawn_at, quantitative_color, rows_at, size_scale_domain, validate_scatter_layers, ScatterResolved, Shape};
 use crate::common::color_domain_of;
 use crate::common::row_str;
 use crate::diagnostic::Diagnostic;
 use crate::families::layers::OverlayLayer;
 use crate::families::temporal::{infer_vega_type, VegaType};
+use crate::time_axis::TimeAxis;
 use crate::Payload;
 
 /// A scatter chart bound to its rows.
@@ -25,6 +26,8 @@ pub struct Bound<'a> {
     /// A wide chart's series, in the folded rows' sorted measure order, as the legend names them.
     pub(super) wide_series: Vec<String>,
     pub(super) shape: Shape,
+    /// Every x date of the rows and the layers, read once; empty without a date x.
+    pub(super) time: TimeAxis,
     /// The rows Vega keeps (`kept_reading`), as indices into `payload.rows`: the rows every color,
     /// shape and size scale reads, whichever facet panel draws them.
     pub(super) drawn: Vec<usize>,
@@ -146,6 +149,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     } else {
         (false, false)
     };
+    let time = x_time_axis(&r, &prepared, &overlays, x_dates)?;
     let y_nominal = !y_numeric;
     // A time spec on a categorical y paints through a UTC labelExpr over date
     // bands (`emitters/scatter.py`); over any other value `gate_label_format`
@@ -184,6 +188,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         overlays,
         wide_series,
         shape: Shape { x_dates, x_nominal, y_nominal, y_measure },
+        time,
         drawn,
         color_domain,
         color_range,

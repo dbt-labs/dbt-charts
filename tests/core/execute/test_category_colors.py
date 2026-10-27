@@ -15,6 +15,7 @@ on the board.
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -24,14 +25,21 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.category_colors import plan_board_category_colors
 from dbt_charts.core.execute.executor import Executor
 
+# A typed NULL needs a SQL source; a values column of only nulls has no type.
+_SOURCES_DIR = Path(tempfile.mkdtemp(prefix="dct-category-colors-"))
+(_SOURCES_DIR / "dbt_charts.yml").write_text(
+    'sources:\n  mem:\n    type: duckdb\n    path: ":memory:"\n'
+)
+
 
 def _plan(yaml_content: str, focus: str | None = None) -> dict[str, CategoryColorScale]:
-    result = compile(yaml_content)
+    project = FilesystemProject(_SOURCES_DIR)
+    result = compile(yaml_content, project_sources=project.sources)
     assert result.success and result.board is not None, result.errors
     board = result.board if focus is None else focus_on_chart(result.board, focus)
     executor = Executor(
         board,
-        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        adapter_registry=build_adapter_registry(project),
         query_registry=result.query_registry,
     )
     scales = plan_board_category_colors(board, executor, {})
@@ -150,10 +158,10 @@ queries:
       - {category: Electronics, revenue: 30}
       - {category: Tools, revenue: 20}
   nulls:
-    type: values
-    rows:
-      - {category: null, revenue: 5}
-      - {category: null, revenue: 6}
+    source: mem
+    sql: >-
+      SELECT CAST(NULL AS VARCHAR) AS category, 5 AS revenue
+      UNION ALL SELECT CAST(NULL AS VARCHAR), 6
 charts:
   bar_healthy:
     query: all

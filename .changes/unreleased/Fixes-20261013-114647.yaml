@@ -1,0 +1,3 @@
+kind: Fixes
+body: A board or project layer that rebinds a palette role such as `palettes.category` now changes the colors its charts use.
+time: 2026-10-13T11:46:47.173498-07:00

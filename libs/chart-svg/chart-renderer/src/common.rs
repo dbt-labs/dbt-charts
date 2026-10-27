@@ -1863,10 +1863,70 @@ pub fn value_tick_rows(origin: f64, plot_h: f64, tick_len: f64, positions: impl 
         .collect()
 }
 
+/// A painted threshold rule, for the axis tick that marks its value: that tick is the rule continued
+/// past the plot edge. `at` is the rule's own position along the axis; `tick_at` is where that axis's
+/// tick snap puts the tick for the rule's value, which names the tick to redraw.
+#[derive(Clone, Copy)]
+pub struct ThresholdRule<'a> {
+    pub at: f64,
+    pub tick_at: f64,
+    pub stroke: &'a str,
+    pub width: f64,
+}
+
+/// The rules continued by the value-axis ticks at `positions` (scale positions of each painted rule's datum) on an axis whose
+/// plot top is `origin`, all stroked in `stroke` at `width`.
+pub fn value_axis_rules(origin: f64, positions: impl IntoIterator<Item = f64>, stroke: &str, width: f64) -> Vec<PaintedRule> {
+    positions
+        .into_iter()
+        .map(|position| PaintedRule { at: origin + position, tick_at: tick_row(origin, position), stroke: stroke.to_string(), width })
+        .collect()
+}
+
+/// Whether a baseline rule spanning `(x1, x2)` reaches the value-axis `edge`: it ends less than a pixel short of it.
+/// The one law for both halves of a continued tick: the rule stretches out to a reached edge ([`join_rule_to_edges`])
+/// and only a reached edge's tick is the rule continued; a detached axis keeps ordinary ticks.
+pub fn rule_reaches((x1, x2): (f64, f64), edge: f64) -> bool {
+    edge > x1 - 1.0 && edge < x2 + 1.0
+}
+
+/// A baseline rule's extent `(x1, x2)` joined to every value-axis `edge` it [`rule_reaches`], so the rule and its
+/// continued tick meet with no gap.
+pub fn join_rule_to_edges(span: (f64, f64), edges: &[f64]) -> (f64, f64) {
+    edges.iter().filter(|&&edge| rule_reaches(span, edge)).fold(span, |(lo, hi), &edge| (lo.min(edge), hi.max(edge)))
+}
+
+/// A [`ThresholdRule`] a panel carries to the composite that paints its axis.
+#[derive(Clone)]
+pub struct PaintedRule {
+    pub at: f64,
+    pub tick_at: f64,
+    pub stroke: String,
+    pub width: f64,
+}
+
+impl PaintedRule {
+    pub fn rule(&self) -> ThresholdRule<'_> {
+        ThresholdRule { at: self.at, tick_at: self.tick_at, stroke: &self.stroke, width: self.width }
+    }
+}
+
+/// The [`ThresholdRule`]s of painted `rules`.
+pub fn thresholds(rules: &[PaintedRule]) -> Vec<ThresholdRule<'_>> {
+    rules.iter().map(PaintedRule::rule).collect()
+}
+
+/// `(position, stroke, width)` of the tick snapped to `pos`: the rule it continues when `rules` paint one at its
+/// value, else the themed `stroke`/`width` at `pos`.
+pub fn tick_look<'a>(rules: &[ThresholdRule<'a>], pos: f64, stroke: &'a str, width: f64) -> (f64, &'a str, f64) {
+    rules.iter().find(|rule| (rule.tick_at - pos).abs() < 1e-6).map_or((pos, stroke, width), |rule| (rule.at, rule.stroke, rule.width))
+}
+
 /// One horizontal tick mark per row in `rows`, `len` long, running outward from
 /// the axis `edge_x` (rightward when `outward` is positive, leftward when
-/// negative), stroked with `ticks`' own color and width. Vega draws a mark per
-/// rung on every axis whose `ticks` is true (`vega-parser/src/parsers/axis.js`).
+/// negative), stroked with `ticks`' own color and width unless `rules` paint a
+/// threshold rule at its value. Vega draws a mark per rung on every axis whose
+/// `ticks` is true (`vega-parser/src/parsers/axis.js`).
 pub fn emit_value_ticks(
     svg: &mut String,
     ticks: &AxisTicks,
@@ -1874,8 +1934,9 @@ pub fn emit_value_ticks(
     edge_x: f64,
     outward: f64,
     len: f64,
+    rules: &[ThresholdRule],
 ) -> Result<(), String> {
-    svg.push_str(&print::print(&value_ticks(ticks, rows, edge_x, outward, len)?));
+    svg.push_str(&print::print(&value_ticks(ticks, rows, edge_x, outward, len, rules)?));
     Ok(())
 }
 
@@ -1886,6 +1947,7 @@ pub fn value_ticks(
     edge_x: f64,
     outward: f64,
     len: f64,
+    rules: &[ThresholdRule],
 ) -> Result<Vec<Node>, String> {
     let (x1, x2) = if outward > 0.0 { (edge_x, edge_x + len) } else { (edge_x - len, edge_x) };
     let mut rows = rows.into_iter().peekable();
@@ -1895,14 +1957,63 @@ pub fn value_ticks(
     let color = required_ink(ticks.color.as_deref(), "axis", "ticks.color")?;
     let width = ticks.width.unwrap_or(1.0);
     Ok(rows
-        .map(|y| {
+        .map(|row| {
+            let (y, stroke, width) = tick_look(rules, row, color, width);
             Node::Line(
                 Attrs::new()
                     .set("x1", format!("{x1:.2}"))
                     .set("y1", format!("{y:.2}"))
                     .set("x2", format!("{x2:.2}"))
                     .set("y2", format!("{y:.2}"))
-                    .set("stroke", color)
+                    .set("stroke", stroke)
+                    .set("stroke-width", width.to_string()),
+            )
+        })
+        .collect())
+}
+
+/// Whether a baseline rule painted at any of `rule_ys` lies on the plot edge `edge_y` the x axis
+/// hangs from (within half a pixel of it).
+pub fn rule_on_edge(rule_ys: impl IntoIterator<Item = f64>, edge_y: f64) -> bool {
+    rule_ys.into_iter().any(|y| (y - edge_y).abs() < 0.5)
+}
+
+/// The horizontal extent a floor rule paints so it covers the outermost stroke of every drawn x
+/// tick and vertical gridline at `xs` (the axis's snapped positions): never shorter than
+/// `[0, plot_w]`.
+pub fn floor_rule_span(plot_w: f64, ax_x: &AxisStyle, ticks_drawn: bool, xs: impl IntoIterator<Item = f64>) -> (f64, f64) {
+    let ticks = ticks_drawn.then(|| ax_x.ticks.width.unwrap_or(1.0));
+    let grid = ax_x.grid.visible.unwrap_or(false).then(|| ax_x.grid.width.unwrap_or(1.0));
+    let Some(stroke_w) = ticks.into_iter().chain(grid).reduce(f64::max) else { return (0.0, plot_w) };
+    xs.into_iter().fold((0.0, plot_w), |(lo, hi), x| (lo.min(x - stroke_w / 2.0), hi.max(x + stroke_w / 2.0)))
+}
+
+/// One x tick per center in `xs`, drawn exactly there (callers pass the axis's snapped positions,
+/// the ones its vertical gridlines use), from `floor_y` to `end_y`, stroked in `floor_rule` when a
+/// baseline rule sits on the floor and in the themed tick color otherwise. A tick at the value of a
+/// vertical threshold rule in `rules` is that rule continued instead.
+pub fn x_tick_marks(
+    ticks: &AxisTicks,
+    floor_rule: Option<&str>,
+    rules: &[ThresholdRule],
+    xs: impl IntoIterator<Item = f64>,
+    (floor_y, end_y): (f64, f64),
+    places: usize,
+) -> Result<Vec<Node>, String> {
+    let themed = required_ink(ticks.color.as_deref(), "axis", "ticks.color")?;
+    let stroke = floor_rule.unwrap_or(themed);
+    let width = ticks.width.unwrap_or(1.0);
+    Ok(xs
+        .into_iter()
+        .map(|x| {
+            let (x, stroke, width) = tick_look(rules, x, stroke, width);
+            Node::Line(
+                Attrs::new()
+                    .set("x1", format!("{x:.places$}"))
+                    .set("y1", format!("{floor_y:.places$}"))
+                    .set("x2", format!("{x:.places$}"))
+                    .set("y2", format!("{end_y:.places$}"))
+                    .set("stroke", stroke)
                     .set("stroke-width", width.to_string()),
             )
         })
@@ -2339,6 +2450,12 @@ pub struct AxisGridThreshold {
     pub color: Option<String>,
     pub width: Option<f64>,
     pub visible: Option<bool>,
+}
+
+impl AxisGridThreshold {
+    pub fn stroke(&self) -> &str {
+        self.color.as_deref().unwrap_or("#8A8C8F")
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -2901,7 +3018,7 @@ pub fn wrap_title_block(
     let sub_style = style.and_then(|ts| ts.subtitle.as_ref());
     // Production's `prepare_title_text` callers fall back to the effective
     // TITLE size when the subtitle slot carries none — the same fallback
-    // `emit_subtitle_vega` paints with, so box and text agree. That
+    // `subtitle_nodes` paints with, so box and text agree. That
     // effective size is the pre-pass MEASURE size, never the tiered paint
     // size (`title_overflow.py`'s `subtitle_font_size = ... or
     // effective_title_font_size`).
@@ -3293,21 +3410,6 @@ mod truncate_label_tests {
     }
 }
 
-/// Emit a wrapped title block where Vega's title layout put it: `(x, y)` is
-/// the title group's top-left, each extra line advancing by the text mark's
-/// default lineHeight, with the subtitle rows stacked under the LAST title
-/// line.
-pub fn emit_title_block_vega(
-    out: &mut String,
-    block: &TitleBlock,
-    style: Option<&TitleStyle>,
-    x: f64,
-    y: f64,
-    title_font_size: f64,
-) {
-    out.push_str(&print::print(&title_block_nodes(block, style, x, y, title_font_size)));
-}
-
 /// [`emit_title_block_vega`] as nodes.
 pub fn title_block_nodes(
     block: &TitleBlock,
@@ -3381,25 +3483,7 @@ pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: 
     )
 }
 
-/// Draw the chart title where Vega's title layout put it: `y` is the title
-/// group's top (plot-coordinate `title_pos` made absolute), the text baseline
-/// one top-baseline shift below it, anchored start at `x`.
-/// Emit the subtitle line under a vega-positioned title: one title line +
-/// SUBTITLE_PADDING below the title row, top-baseline, themed muted ink
-/// unless the resolved subtitle font overrides it. Shared by every
-/// vega_fit-wired family that draws `r.subtitle`.
-pub fn emit_subtitle_vega(
-    out: &mut String,
-    subs: &[String],
-    style: Option<&TitleStyle>,
-    x: f64,
-    title_row_y: f64,
-    title_font_size: f64,
-) {
-    out.push_str(&print::print(&subtitle_nodes(subs, style, x, title_row_y, title_font_size)));
-}
-
-/// [`emit_subtitle_vega`] as nodes.
+/// The wrapped subtitle lines as nodes.
 pub fn subtitle_nodes(
     subs: &[String],
     style: Option<&TitleStyle>,
@@ -3438,17 +3522,6 @@ pub fn subtitle_nodes(
             )
         })
         .collect()
-}
-
-pub fn emit_title_vega(
-    out: &mut String,
-    text: &str,
-    style: Option<&TitleStyle>,
-    x: f64,
-    y: f64,
-    stamp_kind: bool,
-) {
-    out.push_str(&print::print(&[title_node(text, style, x, y, stamp_kind)]));
 }
 
 /// [`emit_title_vega`] as a node.
@@ -3957,36 +4030,6 @@ fn axis_title_group(
     Node::group(crate::contract::axis_title_attrs(key), vec![title])
 }
 
-/// Emit a bottom-anchored (horizontal) axis title, centered under the plot,
-/// for a FLAT (untilted) category axis.
-///
-/// `label_baseline_y` is the same baseline the tick-label row already draws
-/// at; `label_font_size` is that row's font size. The title's own baseline
-/// sits one more "row" further out — see `axis_title_band`'s doc for the
-/// measured derivation. This is production's own measured constant for a
-/// flat label row, NOT a general reduction of Vega's `axisTitleLayout` (the
-/// law `emit_axis_title_at`'s own rotated callers read directly): it
-/// differs from `s + titlePadding` (`s` the label ink's true `bounds.y2`)
-/// by `round(0.79·title_fs) − round(0.8·label_fs)` — zero at the label/title
-/// sizes every corpus board and test here authors (11/11), nonzero in
-/// general (e.g. −1px at 12/12). No-op when `axis_title_band` would return
-/// `0.0` for this `text`/`style` pair (callers should still gate the margin
-/// reservation on that same check).
-pub fn emit_axis_title_bottom(
-    out: &mut String,
-    text: &str,
-    style: &AxisTitle,
-    center_x: f64,
-    label_baseline_y: f64,
-    label_font_size: f64,
-    key: Option<crate::contract::LabelKey>,
-) {
-    out.extend(
-        axis_title_bottom(text, style, center_x, label_baseline_y, label_font_size, key)
-            .map(|node| print::print(&[node])),
-    );
-}
-
 /// [`emit_axis_title_bottom`] as a node.
 pub fn axis_title_bottom(
     text: &str,
@@ -4000,25 +4043,7 @@ pub fn axis_title_bottom(
     axis_title_at(text, style, center_x, label_baseline_y + label_font_size + padding, key)
 }
 
-/// [`emit_axis_title_bottom`] for either edge: above a top axis the title baseline sits a label
-/// height and its padding past the label row's own baseline, away from the plot.
-pub fn emit_axis_title_flat(
-    out: &mut String,
-    text: &str,
-    style: &AxisTitle,
-    center_x: f64,
-    label_baseline_y: f64,
-    label_font_size: f64,
-    key: Option<crate::contract::LabelKey>,
-    edge: XEdge,
-) {
-    out.extend(
-        axis_title_flat(text, style, center_x, label_baseline_y, label_font_size, key, edge)
-            .map(|node| print::print(&[node])),
-    );
-}
-
-/// [`emit_axis_title_flat`] as a node.
+/// [`axis_title_flat`] as a node.
 pub fn axis_title_flat(
     text: &str,
     style: &AxisTitle,
@@ -4714,6 +4739,15 @@ pub fn wide_series_display(name: &str, wide_labels: &std::collections::HashMap<S
     }
 }
 
+/// The value a wide series' marks link by: the dimension value of a `<value><sep><measure>`
+/// composite, else the series name itself (a fold with no dimension is keyed by its measure).
+pub fn wide_link_key(series: &str, wide: bool, from_measures: bool) -> &str {
+    match series.rsplit_once(WIDE_SERIES_SEPARATOR) {
+        Some((value, _)) if wide && !from_measures => value,
+        _ => series,
+    }
+}
+
 #[cfg(test)]
 mod wide_fields_tests {
     use super::*;
@@ -5204,21 +5238,21 @@ mod axis_title_tests {
     fn value_ticks_run_outward_from_the_axis_edge_on_each_row() {
         let t = ticks(serde_json::json!({"visible": true, "color": "#112233", "width": 2.0}));
         let mut left = String::new();
-        emit_value_ticks(&mut left, &t, [tick_row(10.0, 3.4)], 50.5, -1.0, 6.0).unwrap();
+        emit_value_ticks(&mut left, &t, [tick_row(10.0, 3.4)], 50.5, -1.0, 6.0, &[]).unwrap();
         assert_eq!(
             left,
             "<line x1=\"44.50\" y1=\"13.50\" x2=\"50.50\" y2=\"13.50\" \
              stroke=\"#112233\" stroke-width=\"2\"/>"
         );
         let mut right = String::new();
-        emit_value_ticks(&mut right, &t, [13.5], 50.5, 1.0, 6.0).unwrap();
+        emit_value_ticks(&mut right, &t, [13.5], 50.5, 1.0, 6.0, &[]).unwrap();
         assert!(right.contains("x1=\"50.50\"") && right.contains("x2=\"56.50\""));
     }
 
     #[test]
     fn a_tick_without_an_ink_refuses_by_name() {
         let t = ticks(serde_json::json!({"visible": true}));
-        let err = emit_value_ticks(&mut String::new(), &t, [13.5], 50.5, 1.0, 6.0).unwrap_err();
+        let err = emit_value_ticks(&mut String::new(), &t, [13.5], 50.5, 1.0, 6.0, &[]).unwrap_err();
         assert_eq!(err, "axis: ticks.color absent (theme required)");
     }
 
@@ -5262,8 +5296,7 @@ mod axis_title_tests {
         // gridlines already crisp-shift by +0.5, so its x is `center_x +
         // 0.5`.
         let style = title_style(11.0, 10.0, Some(true));
-        let mut out = String::new();
-        emit_axis_title_bottom(&mut out, "revenue", &style, 239.0, 14.8, 11.0, None);
+        let out = print::print(&axis_title_bottom("revenue", &style, 239.0, 14.8, 11.0, None).into_iter().collect::<Vec<_>>());
         assert!(out.contains("y=\"35.80\""), "expected baseline near 35.8: {out}");
         assert!(out.contains("x=\"239.50\""), "plot_x + 0.5 + pw/2: {out}");
         assert!(out.contains(">revenue<"));
@@ -5276,8 +5309,7 @@ mod axis_title_tests {
     #[test]
     fn emit_axis_title_bottom_x_carries_the_axis_groups_crisp_translate() {
         let style = title_style(11.0, 10.0, Some(true));
-        let mut out = String::new();
-        emit_axis_title_bottom(&mut out, "revenue", &style, 100.0, 14.8, 11.0, None);
+        let out = print::print(&axis_title_bottom("revenue", &style, 100.0, 14.8, 11.0, None).into_iter().collect::<Vec<_>>());
         assert!(out.contains("x=\"100.50\""), "center_x + 0.5: {out}");
     }
 
@@ -5838,8 +5870,7 @@ pub struct StyleChannel {
 /// `interpolate_scale_color` all take this as `target`): the palette (a Vega
 /// scheme name, or color stops: a named palette's already baked into
 /// `resolved_stops`, or an inline list in `palette`), its authored bounds and
-/// diverging pivot. A table cell paints no legend, so only a chart reads
-/// `nice`.
+/// diverging pivot. `nice` unset follows the legend ([`ScaleTarget::nice_on`]).
 #[derive(Deserialize, Clone)]
 pub struct ScaleTarget {
     pub palette: Value,
@@ -5850,7 +5881,7 @@ pub struct ScaleTarget {
     #[serde(default)]
     pub max: Option<f64>,
     #[serde(default)]
-    pub nice: bool,
+    pub nice: Option<bool>,
     #[serde(default)]
     pub null_color: Option<String>,
     /// A number, or `"auto"`.

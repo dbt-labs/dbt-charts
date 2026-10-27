@@ -10,8 +10,11 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.query.normalized import SchemaQuery, SqlQuery
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters import AdapterRegistry
+from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.adapters.schema_adapter import SchemaAdapter
 
 FAKE_SCHEMAS_ENVELOPE = {
@@ -59,8 +62,12 @@ FAKE_TABLE_PROFILE_ENVELOPE = {
                         "orders": {
                             "row_count": 1000,
                             "columns": {
-                                "id": {"type": "BIGINT", "role": "pk"},
-                                "customer_id": {"type": "BIGINT", "role": "fk"},
+                                "id": {
+                                    "actual_type": "BIGINT",
+                                    "role": "pk",
+                                    "min_value": 1,
+                                },
+                                "customer_id": {"actual_type": "BIGINT", "role": "fk"},
                             },
                         }
                     }
@@ -80,7 +87,11 @@ FAKE_COLUMN_PROFILE_ENVELOPE = {
                         "orders": {
                             "row_count": 1000,
                             "columns": {
-                                "id": {"type": "BIGINT", "role": "pk"},
+                                "id": {
+                                    "actual_type": "BIGINT",
+                                    "role": "pk",
+                                    "min_value": 1,
+                                },
                             },
                         }
                     }
@@ -109,6 +120,64 @@ def _mock_resolver(**method_returns: dict) -> MagicMock:
     for method_name, return_value in method_returns.items():
         getattr(resolver, method_name).return_value = return_value
     return resolver
+
+
+class TestSchemaAdapterColumnSchema:
+    @staticmethod
+    def _run(
+        adapter: SchemaAdapter, query: SchemaQuery, **envelope: dict
+    ) -> QueryResult:
+        with patch(
+            "dbt_charts.core.inspect.cache_factory.build_resolver",
+            return_value=_mock_resolver(**envelope),
+        ):
+            return adapter._execute(query)
+
+    def test_profile_table_types_known_kinds_and_json_for_varying(
+        self, adapter: SchemaAdapter
+    ) -> None:
+        result = self._run(
+            adapter,
+            SchemaQuery(source="warehouse", schema="analytics", table="orders"),
+            profile_table=FAKE_TABLE_PROFILE_ENVELOPE,
+        )
+        assert result.schema["name"] == ColumnType(kind="string")
+        assert result.schema["min_value"] == ColumnType(kind="json")
+        assert (
+            list(result.schema)
+            == result.columns
+            == [
+                "name",
+                "actual_type",
+                "role",
+                "min_value",
+            ]
+        )
+
+    def test_projection_keeps_schema_in_projected_order(
+        self, adapter: SchemaAdapter
+    ) -> None:
+        result = self._run(
+            adapter,
+            SchemaQuery(
+                source="warehouse", schema="analytics", fields=["row_count", "name"]
+            ),
+            list_tables=FAKE_TABLES_ENVELOPE,
+        )
+        assert list(result.schema) == ["row_count", "name"]
+        assert result.schema["row_count"] == ColumnType(kind="integer")
+
+    def test_a_key_outside_the_declared_set_raises(
+        self, adapter: SchemaAdapter
+    ) -> None:
+        envelope = {
+            "sources": {
+                "warehouse": {"schemas": {"raw": {"surprise": 1}}},
+            },
+            "_meta": {},
+        }
+        with pytest.raises(ExecutionError, match="surprise"):
+            self._run(adapter, SchemaQuery(source="warehouse"), list_schemas=envelope)
 
 
 class TestSchemaAdapterListSchemas:

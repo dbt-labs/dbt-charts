@@ -86,6 +86,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _resolve_stacked_bar_ticks,
     _shared_y_values,
 )
+from dbt_charts.core.compile.resolve.chart._header_inks import series_header_inks
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
@@ -1292,6 +1293,13 @@ def _resolve_bar(
         category_axis_vertical=orientation == "horizontal",
         axis_y_orient=_ay_orient_for_table,
         stacked=is_stacked,
+        header_inks=series_header_inks(
+            base_y=normalized.y,
+            base_fill=None if normalized.color else single_series_fill,
+            layers=resolved_layers,
+            legend_visible=bkw["legend"].visible,
+            canvas=chart_local_style_context.ink_canvas,
+        ),
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedBarChart(

@@ -87,7 +87,9 @@ def migrate_paths(
         try:
             original = board_path.read_text()
             with collect_migration_notices() as dropped:
-                migrated = migrate_board_yaml_text(original)
+                migrated = migrate_board_yaml_text(
+                    original, locked_schema_version=project.locked_schema_version
+                )
             notes.extend(MigrateNote(path=path, message=n.message) for n in dropped)
             if migrated == original:
                 current.append(path)

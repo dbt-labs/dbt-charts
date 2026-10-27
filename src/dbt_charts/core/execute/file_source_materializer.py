@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path  # noqa: TID251 — scratch files for DuckDB's readers
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.config import (
     get_execution_config,
     resolve_file_source_max_bytes,
@@ -42,9 +43,10 @@ from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryParams
 from dbt_charts.core.execute.adapters.duckdb_adapter import duckdb_error_code
 from dbt_charts.core.execute.arrow_ingest import RelationStream, ingest, insert_rows
-from dbt_charts.core.execute.cache_composition import quote_identifier, rows_from_result
+from dbt_charts.core.execute.cache_composition import quote_identifier
 from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash
+from dbt_charts.core.execute.duckdb_types import duckdb_schema, typed_rows
 from dbt_charts.core.project import is_glob
 
 if TYPE_CHECKING:
@@ -157,8 +159,11 @@ class FileSourceMaterializer:
         source_name: str,
         params: QueryParams = None,
         strict: bool = True,
-    ) -> list[_JsonRow]:
-        """Load exact file versions once, install aliases, and run author SQL."""
+    ) -> tuple[list[_JsonRow], dict[str, ColumnType]]:
+        """Load exact file versions once, install aliases, and run author SQL.
+
+        Returns the rows and the result's declared column types.
+        """
         source_hash = compute_source_hash(source)
         glob_cap = get_execution_config().max_glob_file_count
         byte_cap = resolve_file_source_max_bytes()
@@ -233,7 +238,9 @@ class FileSourceMaterializer:
                     f"SELECT * FROM {quote_identifier(physical)}"
                 )
             try:
-                return rows_from_result(conn.execute(resolved_sql, resolved_params))
+                result = conn.execute(resolved_sql, resolved_params)
+                schema = duckdb_schema(result.description)
+                return typed_rows(result.description, result.fetchall()), schema
             except DbtChartsError:
                 raise
             except Exception as exc:  # noqa: BLE001 — DuckDB exposes many execution exception classes at this boundary

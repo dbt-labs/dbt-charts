@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
+from dbt_charts.core.column_types import reject_duplicate_columns
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
@@ -56,7 +57,6 @@ from dbt_charts.core.execute.adapters.base import (
     connection_failure,
     handle_adapter_error,
     plain_error,
-    reject_duplicate_columns,
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
@@ -69,6 +69,7 @@ from dbt_charts.core.execute.adapters.dbt_utils import (
     DbtRefResolver,
     source_target_path,
 )
+from dbt_charts.core.execute.adapters.typed_fetch import TypedRows, fetch_typed
 from dbt_charts.core.execute.drivers import (
     DriverConnection,
     is_driver_source,
@@ -231,7 +232,7 @@ class _SourcePool:
 
     def execute(
         self, inlined_sql: str, setup_sql: str | None, limit: int | None = None
-    ) -> Any:  # type-state: explicit_any — dbt-adapters' agate.Table is untyped here
+    ) -> TypedRows:
         """Run SQL on a persistent worker thread, reconnecting once on failure.
 
         The caller may be any (ephemeral) render thread; the actual warehouse
@@ -245,9 +246,8 @@ class _SourcePool:
         established around the render is invisible where the query is actually sent
         and every job goes out unattributed.
 
-        ``limit`` is forwarded to dbt-adapters' own ``execute(..., limit=...)``
-        kwarg, which bounds the fetch via ``cursor.fetchmany(limit)`` — the SQL
-        text sent to the warehouse is never touched.
+        ``limit`` bounds the driver's own fetch (``cursor.fetchmany(limit)``) —
+        the SQL text sent to the warehouse is never touched.
         """
         if self._interrupted:
             raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
@@ -268,7 +268,7 @@ class _SourcePool:
 
     def _execute_on_worker(
         self, inlined_sql: str, setup_sql: str | None, limit: int | None
-    ) -> Any:  # type-state: explicit_any — dbt-adapters' agate.Table is untyped here
+    ) -> TypedRows:
         adapter = self._replace_if_released(self._ensure_connected())
         dirty = self._tls.session_dirty
         try:
@@ -361,7 +361,7 @@ class _SourcePool:
         inlined_sql: str,
         setup_sql: str | None,
         limit: int | None,
-    ) -> Any:  # type-state: explicit_any — dbt-adapters' agate.Table is untyped here
+    ) -> TypedRows:
         # Single owner of the flag, and set before the send: a setup_sql that fails
         # partway still leaves whatever it created on the connection.
         self._tls.session_dirty = bool(setup_sql)
@@ -370,20 +370,16 @@ class _SourcePool:
             if setup_sql
             else inlined_sql
         )
-        # Some dbt-adapters cursors (dbt-spark's Hive/ODBC wrappers) implement
-        # fetchall but not fetchmany — passing limit= there raises AttributeError
-        # inside get_result_from_cursor. Omit it for those dialects and fall back
-        # to the post-fetch slice in apply_row_limit_truncation.
+        # dbt-spark's Hive/ODBC cursors implement fetchall but not fetchmany.
+        # Omit the limit for those dialects and fall back to the post-fetch
+        # slice in apply_row_limit_truncation.
         driver_limit = limit if self._dialect.cursor_supports_driver_limit else None
         try:
-            _, table = adapter.execute(
-                sql, auto_begin=False, fetch=True, limit=driver_limit
-            )
+            return fetch_typed(adapter, self._dialect.name, sql, driver_limit)
         except Exception as exc:  # noqa: BLE001 — classify statement timeout before retry
             if self._dialect.is_statement_timeout_error(exc):
                 raise _QueryDurationExceeded(self._timeout_seconds) from exc
             raise
-        return table
 
     def _ensure_connected(self) -> Any:
         """Return this thread's adapter, building + connecting it on first use.
@@ -997,7 +993,7 @@ class SqlAdapter(BaseAdapter):
             return handle_adapter_error(f"{dialect_name} query setup", e)
 
         try:
-            table = pool.execute(
+            typed = pool.execute(
                 prepared.sql,
                 prepared.setup_sql,
                 limit=prepared.row_fetch_limit.fetch_limit,
@@ -1029,22 +1025,22 @@ class SqlAdapter(BaseAdapter):
         # trip) — left unguarded so a defect here (e.g. an unexpected row
         # shape) surfaces as a crash, not a mislabeled "warehouse rejected
         # the query".
-        columns = [col.lower() for col in table.column_names]
-        rows = list(table.rows)
+        columns = [col.lower() for col in typed.columns]
 
         # The driver already bounded the fetch to row_fetch_limit.fetch_limit
-        # rows (dbt-adapters' execute(..., limit=...) -> cursor.fetchmany()).
+        # rows (cursor.fetchmany() / RowIterator max_results).
         # This slices the ceiling's one-extra-row over-fetch back down and
         # flags truncation only when the ceiling, not the author's own
         # query.limit, was the binding value.
         rows, truncated_reason = apply_row_limit_truncation(
-            rows, prepared.row_fetch_limit
+            typed.rows, prepared.row_fetch_limit
         )
 
         reject_duplicate_columns(columns)
         data = [dict(zip(columns, row, strict=False)) for row in rows]
+        schema = dict(zip(columns, typed.types, strict=True))
         return QueryResult(
-            data=data, columns=columns, truncated_reason=truncated_reason
+            data=data, columns=columns, schema=schema, truncated_reason=truncated_reason
         )
 
     def _execute_via_driver(

@@ -9,11 +9,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_compile import ERR_JINJA_ERROR
+from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_DUPLICATE_COLUMN
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
 from dbt_charts.core.project import Project
+
+pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
 
 def _dbt(
@@ -678,6 +684,46 @@ class TestParameterizedFilterHelper:
         # (see TestDbtAdapterMaxRowsCeiling) — it never touches SQL text, so
         # this is exactly the SQL adapter.execute() was sent.
         return str(adapter._adapter.execute.call_args.args[0])
+
+    def test_typed_fetch_gets_the_canonical_dialect_for_an_alias_type(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A `type: fabric` profile reads types with the sqlserver reader."""
+        seen: list[str] = []
+
+        def record(adapter: Any, dialect: str, sql: str, limit: int | None) -> Any:
+            seen.append(dialect)
+            adapter.execute(sql)
+            return TypedRows(["region"], [("North",)], [ColumnType(kind="string")])
+
+        monkeypatch.setattr(
+            "dbt_charts.core.execute.adapters.dbt_adapter.fetch_typed", record
+        )
+        self._executed_sql(
+            tmp_path, in_memory_project, "SELECT 1", {}, dialect="fabric"
+        )
+        assert seen == ["sqlserver"]
+
+    def test_duplicate_output_columns_raise_a_clear_error(
+        self,
+        tmp_path: Path,
+        in_memory_project: Callable[[Path, dict[str, str]], Project],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def duplicated(adapter: Any, dialect: str, sql: str, limit: int | None) -> Any:
+            string = ColumnType(kind="string")
+            return TypedRows(["id", "id"], [(1, 2)], [string, string])
+
+        monkeypatch.setattr(
+            "dbt_charts.core.execute.adapters.dbt_adapter.fetch_typed", duplicated
+        )
+        with pytest.raises(ExecutionError) as raised:
+            self._executed_sql(tmp_path, in_memory_project, "SELECT 1", {})
+        assert raised.value.code is ERR_RESULT_DUPLICATE_COLUMN
+        assert "'id'" in str(raised.value)
 
     def test_filter_helper_executes_and_inlines_value(
         self,

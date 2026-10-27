@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.template.daterange import (
     DATERANGE_PRESETS,
+    check_daterange_preset,
     resolve_daterange_preset,
     resolve_daterange_preset_iso,
 )
@@ -202,10 +203,9 @@ def coerce_variable_values(
                 result[name] = None
                 continue
             if isinstance(value, str):
-                try:
-                    result[name] = list(resolve_daterange_preset(value, date.today()))
-                except ValueError as e:
-                    raise ExecutionError(f"Variable '{name}': {e}") from None
+                # Dated later, on the board clock (`resolve_daterange_presets`).
+                _require_preset(name, value)
+                result[name] = value
                 continue
             if not isinstance(value, (list, tuple)) or len(value) != 2:
                 raise ExecutionError(
@@ -322,8 +322,29 @@ def check_variable_overrides(
     )
 
 
+def _require_preset(name: str, value: str) -> None:
+    try:
+        check_daterange_preset(value)
+    except ValueError as e:
+        raise ExecutionError(f"Variable '{name}': {e}") from None
+
+
+def resolve_daterange_presets(
+    values: VariableValues, registry: dict[str, Variable], today: date
+) -> VariableValues:
+    """Each daterange preset id in ``values`` as its ``[start, end]`` dates on
+    the board's ``today``."""
+    return {
+        **values,
+        **{
+            name: list(resolve_daterange_preset(preset, today))
+            for name, preset in daterange_preset_ids(values, registry).items()
+        },
+    }
+
+
 def normalize_render_values(
-    values: VariableValues, registry: dict[str, Variable]
+    values: VariableValues, registry: dict[str, Variable], today: date
 ) -> VariableValues:
     """Narrow multiselects to lists and resolve daterange presets for render.
 
@@ -339,11 +360,11 @@ def normalize_render_values(
     see Jinja's Undefined and ``| join`` would raise — the failure that took
     down whole boards.
 
-    A daterange preset id becomes its ISO ``[start, end]``; any other string
-    raises, since a template indexing it would read characters, not dates.
+    A daterange preset id becomes its ISO ``[start, end]`` on the board's
+    ``today``; any other string raises, since a template indexing it would read
+    characters, not dates.
     """
     normalized = dict(values)
-    today = date.today()
     for name, var in registry.items():
         raw = values.get(name)
         if var.input == "multiselect":
@@ -355,10 +376,8 @@ def normalize_render_values(
             and isinstance(raw, str)
             and not variable_value_is_absent(raw)
         ):
-            try:
-                normalized[name] = resolve_daterange_preset_iso(raw, today)
-            except ValueError as e:
-                raise ExecutionError(f"Variable '{name}': {e}") from None
+            _require_preset(name, raw)
+            normalized[name] = resolve_daterange_preset_iso(raw, today)
     return normalized
 
 

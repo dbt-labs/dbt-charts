@@ -110,6 +110,19 @@ struct Resolved {
     link: Option<String>,
     /// How `link` opens (`ResolvedChart.link_open`).
     link_open: crate::href::LinkOpen,
+    /// The slices a held link variable selects.
+    #[serde(skip)]
+    selection: crate::selected::Selection,
+}
+
+impl Resolved {
+    fn from_payload(payload: &Payload) -> Result<Self, String> {
+        let mut r: Self =
+            Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
+        let keys: Vec<(&str, &str)> = color_field_of(&r).map(|field| ("color", field)).into_iter().collect();
+        r.selection = crate::selected::Selection::of(payload, r.link.as_deref(), &keys)?;
+        Ok(r)
+    }
 }
 
 // ── Attached table ────────────────────────────────────────────────────────────
@@ -391,6 +404,8 @@ fn legend_is_drawn(r: &Resolved) -> bool {
 /// the shared grid layout, and the slice stroke color the symbols carry.
 struct PieLegend {
     entries: Vec<(String, String)>,
+    /// Per entry, the raw color value its slice links by; `None` for the "…N entries" fold row.
+    keys: Vec<Option<String>>,
     layout: VegaLegend,
     symbol_stroke: Option<String>,
 }
@@ -402,6 +417,7 @@ impl PieLegend {
             fill,
             symbol: None,
             series_key: None,
+            recede: None,
         }).collect()
     }
 
@@ -502,10 +518,13 @@ fn plan_legend(
     let limit = cfg.symbol_limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize;
     let mut entries: Vec<(String, String)> =
         order.iter().map(|&idx| (domain[idx].to_string(), fills[idx].clone())).collect();
+    let mut keys: Vec<Option<String>> = order.iter().map(|&idx| Some(domain[idx].to_string())).collect();
     if let Some((kept, label)) = fold_symbol_limit(entries.len(), limit) {
         let folded = (label, entries[kept].1.clone());
         entries.truncate(kept);
         entries.push(folded);
+        keys.truncate(kept);
+        keys.push(None);
     }
 
     let title = legend_title_text(color_field, cfg, &r.field_labels)?;
@@ -520,7 +539,7 @@ fn plan_legend(
     let entry_symbol = symbol_stroke.is_none().then_some(LegendSymbol::FilledCircle);
     let layout =
         legend_from_widths(&label_ws, &vec![entry_symbol; entries.len()], false, &title, title_w, cfg)?;
-    Ok(Some(PieLegend { entries, layout, symbol_stroke }))
+    Ok(Some(PieLegend { entries, keys, layout, symbol_stroke }))
 }
 
 /// Standalone pie through Vega's own fit-margin algebra: production compiles
@@ -789,18 +808,20 @@ fn draw_pie_fit(
     let gap = r.style.slice_mark.gap.unwrap_or(0.0);
     let corner = r.style.slice_mark.corner_radius.unwrap_or(0.0);
     let slices = pie(thetas, 0.0, std::f64::consts::TAU, gap);
-    let stroke_attrs = match &r.style.slice_mark.stroke {
-        Some(s) => format!(
-            " stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"{}\"",
-            xml_escape_attr(s.color.as_deref().unwrap_or("none")),
-            s.width.unwrap_or(1.0),
-            xml_escape_attr(s.join.as_deref().unwrap_or("miter")),
-        ),
-        None => String::new(),
-    };
-    let stroke_attrs = match r.style.slice_mark.opacity {
-        Some(opacity) => format!("{stroke_attrs} opacity=\"{opacity}\""),
-        None => stroke_attrs,
+    let stroke_attrs = |anchor: Option<crate::href::Anchor>| {
+        let stroke_attrs = match &r.style.slice_mark.stroke {
+            Some(s) => format!(
+                " stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"{}\"",
+                xml_escape_attr(&crate::href::Anchor::paint(anchor, s.color.as_deref().unwrap_or("none"))),
+                s.width.unwrap_or(1.0),
+                xml_escape_attr(s.join.as_deref().unwrap_or("miter")),
+            ),
+            None => String::new(),
+        };
+        match r.style.slice_mark.opacity {
+            Some(opacity) => format!("{stroke_attrs} opacity=\"{opacity}\""),
+            None => stroke_attrs,
+        }
     };
     // Structured-tooltip content, computed once: `value_title` doesn't vary
     // per slice (`features/structured_tooltip.py::_pie_roles`'s
@@ -857,13 +878,16 @@ fn draw_pie_fit(
         if aria.is_some() {
             crate::contract::mark_group_open(&mut svg, "arc", "layer_0_marks")?;
         }
-        svg.push_str(&crate::href::anchor_open(r.link_open.anchor(href.as_deref())));
+        let anchor = r.selection.mark(r.link_open.anchor(href.as_deref()));
+        let fill = crate::href::Anchor::paint(anchor, &fill);
+        let stroke_attrs = stroke_attrs(anchor);
+        svg.push_str(&crate::href::anchor_open(anchor));
         let _ = write!(
             svg,
             "<path d=\"{path}\" fill=\"{fill}\"{stroke_attrs}{label_attr}/>",
             fill = xml_escape_attr(&fill)
         );
-        svg.push_str(crate::href::anchor_close(r.link_open.anchor(href.as_deref())));
+        svg.push_str(crate::href::anchor_close(anchor));
         if aria.is_some() {
             crate::contract::mark_group_close(&mut svg);
         }
@@ -943,7 +967,8 @@ fn draw_pie_fit(
             if label_aria.is_some() {
                 crate::contract::mark_group_open(&mut svg, "text", "layer_3_marks")?;
             }
-            svg.push_str(&crate::href::anchor_open(r.link_open.anchor(label_href.as_deref())));
+            let label_anchor = r.selection.mark(r.link_open.anchor(label_href.as_deref()));
+            svg.push_str(&crate::href::anchor_open(label_anchor));
             let _ = write!(
                 svg,
                 "<text x=\"{x}\" y=\"{}\" text-anchor=\"{anchor}\" \
@@ -951,7 +976,7 @@ fn draw_pie_fit(
                  font-weight=\"{weight}\" fill=\"{}\"{label_attr}>",
                 num_full(y_anchored + first_dy),
                 labels.font.style_attr(),
-                xml_escape_attr(&sl.fill), anchor = xml_escape_attr(anchor), family = vega_escape_attr(family), weight = xml_escape_attr(&weight)
+                xml_escape_attr(&crate::href::Anchor::paint(label_anchor, &sl.fill)), anchor = xml_escape_attr(anchor), family = vega_escape_attr(family), weight = xml_escape_attr(&weight)
             );
             for (i, line) in sl.lines.iter().enumerate() {
                 let _ = write!(
@@ -962,7 +987,7 @@ fn draw_pie_fit(
                 );
             }
             let _ = write!(svg, "</text>");
-            svg.push_str(crate::href::anchor_close(r.link_open.anchor(label_href.as_deref())));
+            svg.push_str(crate::href::anchor_close(label_anchor));
             if label_aria.is_some() {
                 crate::contract::mark_group_close(&mut svg);
             }
@@ -976,7 +1001,7 @@ fn draw_pie_fit(
         let (dx, dy) = legend_slide(&r.id, &r.legend.position, &lg.layout, m.scenegraph_plot).map_err(|d| d.to_string())?;
         emit_vega_legend(
             &mut svg,
-            &lg.entries(),
+            &r.selection.legend(lg.entries(), &lg.keys.iter().map(Option::as_deref).collect::<Vec<_>>()),
             &lg.layout,
             &r.legend,
             lg.symbol(),
@@ -1054,8 +1079,7 @@ fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r: Resolved =
-        Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
+    let r = Resolved::from_payload(payload)?;
 
     // Fired here, in the shared entry gate ahead of the attached-table /
     // fit-path dispatch below — pie's authored surface can no longer
@@ -1234,8 +1258,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 if titled {
                     let shift = crate::TitleShift { title_dy: 0.0, body_dy: room };
                     let shifted = crate::title_shift::shift_vega_payload(payload, shift)?;
-                    let pushed: Resolved = Deserialize::deserialize(&shifted.resolved)
-                        .map_err(|e| format!("pie payload: {e}"))?;
+                    let pushed = Resolved::from_payload(&shifted)?;
                     let pushed_pad_t = shifted
                         .padding
                         .expect("shift_vega_payload refuses a payload without padding")
@@ -2860,6 +2883,7 @@ mod tests {
                 fill: "#000",
                 symbol: None,
                 series_key: None,
+                recede: None,
             }).collect();
         let title = legend_title_text("category", &cfg, &Default::default()).unwrap();
         let legend = vega_legend(&entries, false, &title, &cfg, &test_fonts()).unwrap();

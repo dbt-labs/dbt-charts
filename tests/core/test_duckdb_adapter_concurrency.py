@@ -6,13 +6,11 @@ DuckDB connection (`self._connection`). ``conn.execute()`` returns the
 connection itself, so ``result.description`` reflects whichever query last ran
 on that shared connection — it is only valid while `_DUCKDB_CWD_LOCK` is held.
 
-Regression guard: `column_descriptions` used to be read from
-``result.description`` *after* the lock was released, so a concurrent query
-could overwrite it (wrong column metadata) or close the result handle
-("Invalid Input Error: result closed" / DuckDB ``bad_weak_ptr``). This test
+Regression guard: column metadata read from ``result.description`` *after*
+the lock was released let a concurrent query overwrite it (wrong column types)
+or close the result handle ("Invalid Input Error: result closed" / DuckDB ``bad_weak_ptr``). This test
 hammers the shared default connection with two queries that return distinct
-column sets and asserts every result's `column_descriptions` matches its own
-columns.
+column sets and asserts every result's columns match its own query.
 """
 
 from __future__ import annotations
@@ -34,12 +32,11 @@ _Q_AB = f"SELECT i AS a, i AS b FROM range({_ROWS}) t(i)"
 _Q_CDE = f"SELECT i AS c, i AS d, i AS e FROM range({_ROWS}) t(i)"
 
 
-def test_concurrent_queries_keep_their_own_column_descriptions() -> None:
+def test_concurrent_queries_keep_their_own_schema() -> None:
     """Concurrent queries on the shared default connection must not cross wires."""
     adapter = DuckDBAdapter(
         source_config=DuckDBSourceConfig(type="duckdb", path=":memory:"),
     )
-    mismatches: list[tuple[set[str], set[str]]] = []
     errors: list[str] = []
 
     def run(sql: str, expected: set[str]) -> None:
@@ -48,10 +45,6 @@ def test_concurrent_queries_keep_their_own_column_descriptions() -> None:
             errors.append(result.error)
             return
         assert set(result.columns or []) == expected
-        if result.column_descriptions is not None:
-            got = set(result.column_descriptions)
-            if got != expected:
-                mismatches.append((expected, got))
 
     try:
         with ThreadPoolExecutor(max_workers=_WORKERS) as pool:
@@ -69,7 +62,3 @@ def test_concurrent_queries_keep_their_own_column_descriptions() -> None:
         adapter.close()
 
     assert not errors, f"DuckDB execution errors under concurrency: {errors[:3]}"
-    assert not mismatches, (
-        f"{len(mismatches)}/{_ITERATIONS} queries received another query's "
-        f"column_descriptions (e.g. {mismatches[0]})"
-    )

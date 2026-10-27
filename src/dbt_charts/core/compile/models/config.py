@@ -431,6 +431,10 @@ class Config(ConfigMappingBase):
     # and validates the whole file, so dropping the field would fail
     # load_config for every project that sets it. None = no block.
     warnings: WarningsConfig | None = None
+    # Nothing reads this field: Project.locked_schema_version reads it raw per
+    # project. It must stay declared anyway -- Config is extra="forbid" and
+    # validates the whole file. None = no lock.
+    locked_schema_version: str | None = None
     # None = exposure emission not configured; `dct exposures` refuses to run.
     exposures: ExposuresConfig | None = None
 

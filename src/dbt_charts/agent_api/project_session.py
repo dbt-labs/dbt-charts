@@ -44,7 +44,6 @@ from dbt_charts.core.project import BoardFile, Project
 from dbt_charts.core.project_data_files import sources_listing
 from dbt_charts.core.project_roots import find_project_root
 from dbt_charts.core.render.board_links import LinkContext
-from dbt_charts.core.render.svg_cache import RenderedSvgCache, svg_cache_scope
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -293,7 +292,7 @@ class ProjectSession:
         # Cloud-managed sources on every refresh-driven path. Popping the
         # cached keys preserves the instance (and its class) while forcing the
         # next access to re-run each property body.
-        for key in ("sources", "warnings_ignore"):
+        for key in ("sources", "warnings_ignore", "locked_schema_version"):
             vars(self.project).pop(key, None)
 
     def close(self) -> None:
@@ -530,7 +529,6 @@ class ProjectSession:
         max_workers: int | None = None,
         link_context: LinkContext | None = None,
         standalone: bool = False,
-        svg_cache: RenderedSvgCache | None = None,
         compile_result: CompileResult | None = None,
         **render_options: Any,
     ) -> BoardRenderResult:
@@ -554,29 +552,23 @@ class ProjectSession:
             public_url = get_export_config(self.project).public_url
             if public_url:
                 link_context = LinkContext(origin=public_url)
-        # Per board render, not per session: a host wires one to its store for
-        # the board it is about to draw and drains it afterwards. Bound around
-        # the call rather than threaded through it — the memo lives at the
-        # vl-convert boundary a dozen frames below, and every signature in
-        # between is about layout, not caching.
-        with svg_cache_scope(svg_cache):
-            return _core_board.render_dashboard(
-                board=board,
-                chart=chart,
-                variables=variables,
-                adapter_registry=self.adapter_registry,
-                project=self.project,
-                result_cache=self.cache,
-                format=format,
-                use_cache=use_cache,
-                as_link=as_link,
-                server_port=server_port,
-                scale=scale,
-                ignore_codes=ignore_codes,
-                max_workers=max_workers,
-                link_context=link_context,
-                standalone=standalone,
-                file_materializer=self._file_materializer,
-                compile_result=compile_result,
-                **render_options,
-            )
+        return _core_board.render_dashboard(
+            board=board,
+            chart=chart,
+            variables=variables,
+            adapter_registry=self.adapter_registry,
+            project=self.project,
+            result_cache=self.cache,
+            format=format,
+            use_cache=use_cache,
+            as_link=as_link,
+            server_port=server_port,
+            scale=scale,
+            ignore_codes=ignore_codes,
+            max_workers=max_workers,
+            link_context=link_context,
+            standalone=standalone,
+            file_materializer=self._file_materializer,
+            compile_result=compile_result,
+            **render_options,
+        )

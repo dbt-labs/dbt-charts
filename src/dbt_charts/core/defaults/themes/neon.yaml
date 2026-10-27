@@ -106,7 +106,8 @@ style:
         threshold:
           color: &value chrome[1]  # baseline anchors at max contrast
       ticks:
-        color: *category_grid
+        # A tick continues the floor, so it wears the measure grid.
+        color: &measure_grid chrome[8]
       labels:
         font:
           color: *mid
@@ -115,12 +116,8 @@ style:
           color: *mid
     axis_y:
       grid:
-        color: &measure_grid chrome[8]  # measure grid reads above the vertical one
+        color: *measure_grid  # measure grid reads above the vertical one
       ticks:
-        # A tick and its gridline mark the same value; they read as one mark
-        # crossing the axis line. Without this the measure tick wore the
-        # category tier while sitting on the measure axis.
-        color: *measure_grid
         width: 1                   # the hairline this theme's grid is drawn at
     axis_band:
       labels:
@@ -133,7 +130,6 @@ style:
         font:
           color: *value            # numeric readouts POP
       ticks:
-        color: *measure_grid       # tracks the quantitative grid above
         width: 1                   # the hairline this theme's grid is drawn at
     legend:
       label:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryResult
 
@@ -13,6 +14,7 @@ def _registry(rows=None, error=None):
     registry.resolve_source_config.return_value = {"type": "duckdb", "path": ":memory:"}
     registry.execute.return_value = QueryResult(
         data=rows if rows is not None else [],
+        schema=literal_schema(rows or []),
         error=QueryError(error) if error is not None else None,
     )
     return registry

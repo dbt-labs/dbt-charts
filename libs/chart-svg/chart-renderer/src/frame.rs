@@ -157,23 +157,45 @@ impl<'a> ChartFrame<'a> {
 pub struct PanelCuts {
     pub content_start: usize,
     pub svg_end: usize,
-    pub value_axis: std::ops::Range<usize>,
+    value_axis: Option<std::ops::Range<usize>>,
+}
+
+impl PanelCuts {
+    /// The value axis's cut; the panel was drawn with one.
+    pub fn value_axis(&self) -> std::ops::Range<usize> {
+        self.value_axis.clone().expect("these cuts were taken with a value axis")
+    }
+}
+
+/// Where a panel's value axis sits among the children of its printed card.
+pub enum ValueAxisAt {
+    /// `plot[range]`, inside the plot group.
+    Plot(std::ops::Range<usize>),
+    /// `tail[range]`, after the plot group.
+    Tail(std::ops::Range<usize>),
 }
 
 impl ChartFrame<'_> {
-    /// The cuts of the panel this frame draws: `head` ahead of the plot `group` of children `plot`
-    /// (the value axis being `plot[value_axis]`), then `tail`. Printing is concatenative, so each
-    /// cut is the length of what is printed ahead of it.
-    pub fn cuts(&self, head: &[Node], group: &Attrs, plot: &[Node], value_axis: &std::ops::Range<usize>, tail: &[Node]) -> PanelCuts {
+    /// The cuts of the panel this frame draws: `head` ahead of the plot `group` of children `plot`,
+    /// then `tail`, with the value axis, if the panel has one, at `value_axis`. Printing is concatenative, so each cut is
+    /// the length of what is printed ahead of it.
+    pub fn cuts(&self, head: &[Node], group: &Attrs, plot: &[Node], tail: &[Node], value_axis: Option<&ValueAxisAt>) -> PanelCuts {
         let opened = print(&[self.svg(Vec::new())]);
         let content_start = opened.strip_suffix("</svg>").expect("a childless card prints its end tag").len();
         let opened_group = print(&[Node::group(group.clone(), Vec::new())]);
         let group_open = opened_group.strip_suffix("</g>").expect("a childless group prints its end tag").len();
         let ahead = content_start + print(head).len() + group_open;
-        let start = ahead + print(&plot[..value_axis.start]).len();
-        let end = start + print(&plot[value_axis.clone()]).len();
-        let svg_end = ahead + print(plot).len() + "</g>".len() + print(tail).len();
-        PanelCuts { content_start, svg_end, value_axis: start..end }
+        let after_plot = ahead + print(plot).len() + "</g>".len();
+        let value_axis = value_axis.map(|at| {
+            let (children, base, range) = match at {
+                ValueAxisAt::Plot(range) => (plot, ahead, range),
+                ValueAxisAt::Tail(range) => (tail, after_plot, range),
+            };
+            let start = base + print(&children[..range.start]).len();
+            start..start + print(&children[range.clone()]).len()
+        });
+        let svg_end = after_plot + print(tail).len();
+        PanelCuts { content_start, svg_end, value_axis }
     }
 }
 

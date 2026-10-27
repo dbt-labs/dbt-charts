@@ -3,9 +3,10 @@
 Palette roles (`palette: category`) are resolved exactly once, at
 ``get_theme_style()`` (``compile/resolve/style/tokens.py``'s
 ``expand_palette_refs``), where the theme's own ``palettes:`` map is final.
-Board- and chart-level ``style:`` never gets that treatment — a role there is
-unsupported by design: theme roles resolve against the theme's own map, which
-does not exist at board/chart scope. But the same model validators that let a
+A board or layer may rebind a role (``style.palettes.category``), and the rebind
+is overlaid before that pass, so it reaches the theme's own tokens. What a
+board- or chart-level ``style:`` cannot do is *use* a role in a palette field:
+that string never goes through the pass. But the same model validators that let a
 *theme* defer a role until that map is final
 (``ScaleTargetPaletteValidationMixin``, ``CategoricalColorStyle``) cannot tell
 a role-shaped board/chart string apart from a typo, so both are deferred the

@@ -20,6 +20,7 @@ import pytest
 
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.cache_backend import CacheHit
+from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 _KEY = ("s" * 16, "q" * 16, "v" * 16)
@@ -174,7 +175,7 @@ class TestMaxAgePrune:
             f"UPDATE _query_outcomes "
             f"SET written_at_utc = written_at_utc - INTERVAL {days} DAY "
             "WHERE query_hash = ?",
-            [query_hash],
+            [stored_query_hash(query_hash)],
         )
         conn.close()
 

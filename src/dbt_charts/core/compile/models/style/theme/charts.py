@@ -103,8 +103,10 @@ class HoverEmphasisStyle(BaseModel):
     scaffold rung past its own measure gridline, at twice that gridline's
     width, so the line reads as structure rather than as another data series.
 
-    Runtime-only, deliberately: nothing about it reaches the rendered SVG, so
-    a board renders the same file either way.
+    The browser runtime reads `visible` and `dimmed_opacity`, and the engine
+    reads the same pair to bake the receded look of a mark a board variable
+    does not select, so changing either changes the rendered SVG of a board
+    that holds one. The drop line's paint stays runtime-only.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

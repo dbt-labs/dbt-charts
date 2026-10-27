@@ -896,6 +896,64 @@ def merge_extends(
     return _merge_extends_inner(node, ctx, frozenset(), theme_sink, layer_sink)
 
 
+def fragment_files(
+    board_path: ProjectPath,
+    board_mapping: Mapping[str, Any],  # type-state: explicit_any — raw board YAML
+    boards_root: ProjectDirectory,
+) -> list[ProjectPath]:
+    """Every meta.yml and ``extends:`` file a compile of *board_path* reads.
+
+    Raw-mapping walk mirroring ``_merge_extends_inner``, run before any
+    compile: a file that cannot be read or resolved is skipped here because
+    the compile reports it.
+    """
+    from dbt_charts.core.compile.parse.meta import find_meta_files
+    from dbt_charts.core.compile.parse.parser import load_yaml_text
+
+    theme_names = get_theme_names()
+    found: dict[str, ProjectPath] = {}
+
+    def visit(
+        mapping: Mapping[str, Any],  # type-state: explicit_any — raw authored YAML
+        anchor: ProjectDirectory,
+    ) -> None:
+        raw = mapping.get("extends")
+        entries = (
+            [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+        )
+        ctx = _ExtendCtx(
+            board_dir=anchor, boards_root=boards_root, theme_names=theme_names
+        )
+        for entry in entries:
+            if not isinstance(entry, str):
+                continue
+            if not is_path_ref(entry) and (
+                entry in theme_names or _retired_theme_redirect(entry, ctx) is not None
+            ):
+                continue
+            try:
+                fragment = _resolve_fragment_file(entry, ctx)
+            except CompilationError:
+                continue
+            if fragment.relpath not in found:
+                found[fragment.relpath] = fragment
+                visit_file(fragment)
+
+    def visit_file(file: ProjectPath) -> None:
+        try:
+            loaded = load_yaml_text(file.read_text(), source=file.relpath)
+        except (OSError, CompilationError):
+            return
+        if isinstance(loaded, dict):
+            visit(loaded, file.parent)
+
+    visit(board_mapping, board_path.parent)
+    for meta in find_meta_files(board_path, boards_root):
+        found[meta.relpath] = meta
+        visit_file(meta)
+    return list(found.values())
+
+
 def merge_metas(
     board_dir: ProjectDirectory,
     boards_root: ProjectDirectory,

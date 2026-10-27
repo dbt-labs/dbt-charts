@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -512,8 +513,9 @@ def _resolved_support_table(
     data: list[dict[str, Any]],
     formats: FormatTable | None,
     query_formats: Mapping[str, str] | None,
+    header_inks: Mapping[str, str],
 ) -> ResolvedSupportTable | None:
-    """Bake the final support_table, entry formats included.
+    """Bake the final support_table, entry formats and header inks included.
 
     A string y column stays unformatted (its raw label renders rather than a
     formatted "-"), so the numeric-y gate for the default ``number`` stamp is
@@ -536,6 +538,7 @@ def _resolved_support_table(
         y,
         query_formats,
         stamp_number=isinstance(y, str) and _column_is_numeric(data, y),
+        header_inks=header_inks,
     )
 
 
@@ -615,8 +618,12 @@ def _cartesian_kwargs(
     stacked: bool,
     category_axis_vertical: bool = False,
     axis_y_orient: Literal["left", "right"] = "left",
+    header_inks: Mapping[str, str] = MappingProxyType({}),
 ) -> dict[str, Any]:
     """Extra kwargs for _CartesianResolvedChartFields subclasses.
+
+    ``header_inks`` (`series_header_inks`) colors a layered chart's `source:`
+    headers; empty for a family with no layered series marks to name.
 
     ``chart_type`` is the resolved chart's own ``chart_type`` literal (e.g. "bar",
     "histogram") — not read off ``normalized.type``, which the shared
@@ -639,6 +646,7 @@ def _cartesian_kwargs(
         data,
         chart_style_context.formats,
         normalized.query.formats if normalized.query else None,
+        header_inks,
     )
     (
         effective_support_table_style,

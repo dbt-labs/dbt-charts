@@ -4,7 +4,7 @@ Walking-skeleton scope: line, multi-series line, bar (vertical + horizontal,
 grouped + stacked), and pie/donut. Asserts on the **rendered SVG aria-label**,
 following the same pattern as ``test_tooltip_dedup.py`` — the structured
 builder's output is VL's native ``description`` channel, not an appended
-``encoding.tooltip`` array (see ``emitters/_tooltip.py`` for why).
+``encoding.tooltip`` array (see ``emitters/_tooltip.py`` for the role markers).
 
 Header/series rows are role-tagged with zero-width Unicode markers (see
 ``emitters/_tooltip.py``'s ``ROLE_*`` constants) and carry a bare value with

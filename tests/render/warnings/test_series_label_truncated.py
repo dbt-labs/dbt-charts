@@ -117,7 +117,6 @@ def test_render_dashboard_fires_the_warning_for_a_long_color_column(
             {"month": month, "revenue": value, "segment": segment}
             for month, value in (("2024-01-01", 10), ("2024-02-01", 20))
         ]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry = Mock()

@@ -46,6 +46,7 @@ import dbt_charts.core.render.warnings.chart_title_truncated as chart_title_trun
 import dbt_charts.core.render.warnings.dual_axis_competing_scales as dual_axis_competing_scales
 import dbt_charts.core.render.warnings.endpoint_label_gap_overflow as endpoint_label_gap_overflow
 import dbt_charts.core.render.warnings.facet_panel_width_below_minimum as facet_panel_width_below_minimum
+import dbt_charts.core.render.warnings.gradient_hinge_mismatch as gradient_hinge_mismatch
 import dbt_charts.core.render.warnings.kpi_align_overflow as kpi_align_overflow
 import dbt_charts.core.render.warnings.kpi_inline_fallback as kpi_inline_fallback
 import dbt_charts.core.render.warnings.kpi_label_truncated as kpi_label_truncated
@@ -74,8 +75,10 @@ import dbt_charts.core.render.warnings.series_labels_repeat_word as series_label
 import dbt_charts.core.render.warnings.spark_label_truncated as spark_label_truncated
 import dbt_charts.core.render.warnings.static_pagination_capped as static_pagination_capped
 import dbt_charts.core.render.warnings.support_table_cell_overflow as support_table_cell_overflow
+import dbt_charts.core.render.warnings.table_align_no_visible_effect as table_align_no_visible_effect
 import dbt_charts.core.render.warnings.table_columns_overflow as table_columns_overflow
 import dbt_charts.core.render.warnings.table_cramped as table_cramped
+import dbt_charts.core.render.warnings.table_numeric_align_left as table_numeric_align_left
 import dbt_charts.core.render.warnings.table_page_squeezed as table_page_squeezed
 import dbt_charts.core.render.warnings.table_text_truncated as table_text_truncated
 import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_point
@@ -111,12 +114,16 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     pie_total_exceeds_inner_radius,
     plot_height_below_minimum,
     plot_width_below_minimum,
+    point_map_negative_size_values,
+    point_map_out_of_projection,
     series_label_truncated,
     spark_label_truncated,
     static_pagination_capped,
     support_table_cell_overflow,
+    table_align_no_visible_effect,
     table_columns_overflow,
     table_cramped,
+    table_numeric_align_left,
     table_page_squeezed,
     table_text_truncated,
     value_labels_crowd_width,
@@ -129,6 +136,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     area_unstacked_reads_as_stacked,
     category_color_pin_unseen,
     dual_axis_competing_scales,
+    gradient_hinge_mismatch,
     layer_data_outside_domain,
     layered_chart_shared_y_axis_scale_mismatch,
     legend_values_unresolved,
@@ -136,8 +144,6 @@ _DATA_DETECTORS: list[ModuleType] = [
     normalize_percent_format_reads_raw_value,
     palette_unsupported,
     pie_dominant_segment,
-    point_map_negative_size_values,
-    point_map_out_of_projection,
     query_result_truncated,
     query_returned_zero_rows,
     redundant_encoding,

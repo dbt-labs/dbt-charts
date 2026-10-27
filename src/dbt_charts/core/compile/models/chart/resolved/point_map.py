@@ -54,6 +54,10 @@ class ResolvedPointMapChart(_GeoResolvedChartFields):
         default=None,
         description="Resolved background geo data URL; None = no background layer.",
     )
+    basemap_source_name: str = Field(
+        default="",
+        description="Registry name of the basemap source; empty for a raw URL.",
+    )
     basemap_geo_format: dict[str, Any] | None = Field(
         default=None,
         description="Resolved background geo data format dict; None = no background layer.",

@@ -449,6 +449,7 @@ class TestWarehouseValidateUnresolvableSource:
 
 def _postgres_registry() -> MagicMock:
     """A registry whose mechanism is EXPLAIN: validity only, no result schema."""
+    from dbt_charts.core.column_types import literal_schema
     from dbt_charts.core.compile.models.source import parse_source_config
     from dbt_charts.core.execute.adapters.base import QueryResult
 
@@ -462,7 +463,10 @@ def _postgres_registry() -> MagicMock:
             "password": "p",
         }
     )
-    registry.execute.return_value = QueryResult(data=[{"QUERY PLAN": "Result"}])
+    registry.execute.return_value = QueryResult(
+        data=[{"QUERY PLAN": "Result"}],
+        schema=literal_schema([{"QUERY PLAN": "Result"}]),
+    )
     return registry
 
 

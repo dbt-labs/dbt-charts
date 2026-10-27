@@ -45,6 +45,10 @@ ALLOWED_OPEN: dict[str, str] = {
         "the warehouse adapter at query-execution time; not yet routed "
         "through Project"
     ),
+    "core/execute/adapters/typed_fetch.py": (
+        "connections.open() reopens a dbt warehouse connection on a Redshift "
+        "retry; no file access"
+    ),
     "core/execute/drivers/_fetch.py": (
         "writes the ADBC driver cache dbt shares (machine-level, under the "
         "user cache dir); never project content, so it does not go through Project"

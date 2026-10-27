@@ -21,9 +21,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
+from dbt_charts.core.column_types import ColumnKind, ColumnType, column_type_error
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
+    SchemaQuery,
     is_schema_query,
 )
 from dbt_charts.core.execute.adapters.base import (
@@ -35,6 +37,137 @@ from dbt_charts.core.execute.adapters.base import (
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters import AdapterRegistry
+
+
+def _t(kind: ColumnKind) -> ColumnType:
+    return ColumnType(kind=kind)
+
+
+def _list_of(element: ColumnType) -> ColumnType:
+    return ColumnType(kind="list", element=element)
+
+
+def _struct_of(**fields: ColumnType) -> ColumnType:
+    return ColumnType(kind="struct", fields=tuple(fields.items()))
+
+
+_STR, _INT, _FLOAT, _BOOL, _JSON = (
+    _t("string"),
+    _t("integer"),
+    _t("float"),
+    _t("boolean"),
+    _t("json"),
+)
+
+_SOURCE_LIST_COLUMNS = {"name": _STR, "type": _STR, "path": _STR, "in_memory": _BOOL}
+_SCHEMAS_COLUMNS = {"name": _STR, "table_count": _INT}
+_TABLES_COLUMNS = {
+    "name": _STR,
+    "kind": _STR,
+    "row_count": _INT,
+    "primary_date_column": _STR,
+    "size_bytes": _INT,
+    "grain": _STR,
+    "description": _STR,
+    "tags": _list_of(_STR),
+    "owner": _JSON,
+    "joins": _list_of(
+        _struct_of(column=_STR, references=_STR, multiplicity=_STR, source=_STR)
+    ),
+    "referenced_by": _list_of(_struct_of(from_table=_STR, from_column=_STR)),
+    "linked_via": _list_of(
+        _struct_of(
+            through_column_a=_STR,
+            hop_table_a=_STR,
+            through_column_b=_STR,
+            hop_table_b=_STR,
+        )
+    ),
+}
+_COLUMN_COLUMNS = {
+    "name": _STR,
+    "actual_type": _STR,
+    "declared_type": _STR,
+    "description": _STR,
+    "tags": _list_of(_STR),
+    "granularity": _STR,
+    "tests": _list_of(_struct_of(name=_STR, kwargs=_JSON)),
+    "relationships": _list_of(_struct_of(to_table=_STR, to_column=_STR)),
+    "role": _STR,
+    "semantic_type": _STR,
+    "semantic_type_confidence": _FLOAT,
+    "distribution": _STR,
+    "completeness": _STR,
+    "key_role": _STR,
+    "distinct_count": _INT,
+    "uniqueness_ratio": _FLOAT,
+    "null_percentage": _FLOAT,
+    "min_value": _JSON,
+    "max_value": _JSON,
+    "mean_value": _FLOAT,
+    "median_value": _FLOAT,
+    "stddev_value": _FLOAT,
+    "min_length": _INT,
+    "max_length": _INT,
+    "avg_length": _FLOAT,
+    "top_values": _JSON,
+    "enum_values": _list_of(_STR),
+    "histogram_bins": _JSON,
+    "date_distribution": _JSON,
+    **dict.fromkeys(
+        (
+            "approximate",
+            "is_non_negative",
+            "is_normalized",
+            "is_zero_inflated",
+            "has_outliers",
+            "is_skewed",
+            "is_incremental",
+            "is_sequential",
+            "is_fixed_length",
+            "is_free_text",
+            "is_ordinal",
+            "is_currency",
+            "is_geo",
+            "is_pii",
+        ),
+        _BOOL,
+    ),
+}
+
+
+def _declared_columns(query: SchemaQuery) -> dict[str, ColumnType]:
+    """The columns the query's level (sources, schemas, tables, columns) declares."""
+    if query.source is None:
+        return _SOURCE_LIST_COLUMNS
+    if query.schema_name is None:
+        return _SCHEMAS_COLUMNS
+    if query.table is None:
+        return _TABLES_COLUMNS
+    return _COLUMN_COLUMNS
+
+
+def schema_query_result(
+    rows: list[dict[str, Any]],  # type-state: explicit_any — metadata cell values
+    query: SchemaQuery,
+) -> QueryResult:
+    """Rows whose columns are the projected ``query.fields``, or else the declared
+    columns the rows carry, in declared order. A column the level does not
+    declare raises."""
+    declared = _declared_columns(query)
+    fields = query.fields
+    present = {key for row in rows for key in row}
+    columns = (
+        list(fields) if fields is not None else [c for c in declared if c in present]
+    )
+    for column in (*columns, *sorted(present)):
+        if column not in declared:
+            raise column_type_error(column, "is not a column the schema query declares")
+    return QueryResult(
+        data=rows,
+        columns=columns,
+        schema={column: declared[column] for column in columns},
+    )
 
 
 class SchemaAdapter(BaseAdapter):
@@ -71,7 +204,9 @@ class SchemaAdapter(BaseAdapter):
         if source is None:
             # No source specified: list all configured sources via the registry.
             source_rows = [dict(entry) for entry in self._registry.list_sql_sources()]
-            return QueryResult(data=query.project(query.apply_limit(source_rows)))
+            return schema_query_result(
+                query.project(query.apply_limit(source_rows)), query
+            )
 
         from dbt_charts.core.inspect.cache_factory import (
             build_resolver,  # noqa: PLC0415
@@ -89,7 +224,7 @@ class SchemaAdapter(BaseAdapter):
                 envelope.get("sources", {}).get(source, {}).get("schemas", {})
             )
             rows = [{**m, "name": n} for n, m in schemas.items()]
-            return QueryResult(data=query.project(query.apply_limit(rows)))
+            return schema_query_result(query.project(query.apply_limit(rows)), query)
 
         if table is None:
             envelope = resolver.list_tables(source, schema)
@@ -100,7 +235,7 @@ class SchemaAdapter(BaseAdapter):
                 return plain_error(f"Schema {schema!r} not found in source {source!r}")
             tables: dict[str, Any] = source_schemas[schema].get("tables", {})
             rows = [{**m, "name": n} for n, m in tables.items()]
-            return QueryResult(data=query.project(query.apply_limit(rows)))
+            return schema_query_result(query.project(query.apply_limit(rows)), query)
 
         if column is None:
             envelope = resolver.profile_table(source, schema, table)
@@ -117,7 +252,7 @@ class SchemaAdapter(BaseAdapter):
                 )
             columns: dict[str, Any] = all_tables[table].get("columns") or {}
             rows = [{**m, "name": n} for n, m in columns.items()]
-            return QueryResult(data=query.project(query.apply_limit(rows)))
+            return schema_query_result(query.project(query.apply_limit(rows)), query)
 
         # column specified → profile_column
         envelope = resolver.profile_column(source, schema, table, column)
@@ -147,7 +282,9 @@ class SchemaAdapter(BaseAdapter):
                     f"Table {schema}.{table} not found in source {source!r}"
                 )
             return plain_error(f"Column {column!r} not found in {schema}.{table}")
-        return QueryResult(data=query.project([{**col_map[column], "name": column}]))
+        return schema_query_result(
+            query.project([{**col_map[column], "name": column}]), query
+        )
 
 
 def fetch_fk_edges(

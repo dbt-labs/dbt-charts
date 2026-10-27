@@ -8,6 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -17,6 +19,8 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 
 from ._board_utils import make_test_board
+
+pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
 
 class TestSetupSqlNormalization:
@@ -304,7 +308,6 @@ def _mock_adapter_registry():
         result = Mock()
         result.is_success = True
         result.data = [{"val": 1}]
-        result.column_descriptions = None
         result.resolved_relations = None
         result.truncated_reason = None
         return result

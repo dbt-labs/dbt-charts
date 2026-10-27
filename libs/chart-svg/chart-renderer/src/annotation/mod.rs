@@ -162,21 +162,15 @@ pub fn nodes(ctx: &AnnotationCtx, plane: Plane) -> Result<Vec<scene::Node>, Diag
     emit::nodes(ctx, &resolve(ctx)?, plane)
 }
 
-pub fn paint(ctx: &AnnotationCtx, plane: Plane, svg: &mut String) -> Result<(), Diagnostic> {
-    svg.push_str(&print::print(&nodes(ctx, plane)?));
-    Ok(())
-}
-
 /// The whole days that bound every date the annotations place on x.
 pub fn x_day_bounds(annotations: &[Annotation]) -> impl Iterator<Item = i64> + '_ {
     annotations.iter().flat_map(Annotation::x_days).flat_map(|d| [d.floor() as i64, d.ceil() as i64])
 }
 
 /// ISO dates of the earliest and latest annotation day on x that fall before
-/// or after every date in `domain`: they extend a bucket scaffold as data
+/// or after every day in `data` (the days of the axis's dates): they extend a bucket scaffold as data
 /// does. A range's exclusive end adds none by itself. A day inside the data maps onto its existing bucket and adds none.
-pub fn x_dates_outside(domain: &[String], annotations: &[Annotation]) -> Vec<String> {
-    let data: Vec<f64> = domain.iter().filter_map(|v| crate::families::temporal::date_text_day(v)).collect();
+pub fn x_dates_outside(data: &[f64], annotations: &[Annotation]) -> Vec<String> {
     let (Some(lo), Some(hi)) = (data.iter().copied().reduce(f64::min), data.iter().copied().reduce(f64::max)) else {
         return Vec::new();
     };
@@ -294,7 +288,7 @@ mod tests {
     use super::*;
     use crate::diagnostic::collect;
     use crate::families::cartesian::BandGeometry;
-    use crate::families::temporal::date_text_day;
+    use crate::time_axis::date_text_day;
 
     fn day(s: &str) -> f64 {
         date_text_day(s).unwrap()
@@ -342,9 +336,7 @@ mod tests {
     fn painted(anns: &[Annotation], plane: Plane) -> String {
         let fonts = fonts();
         let c = ctx(anns, &fonts);
-        let mut svg = String::new();
-        paint(&c, plane, &mut svg).unwrap();
-        svg
+        print::print(&nodes(&c, plane).unwrap())
     }
 
     fn rule_x(value: Scalar) -> Annotation {
@@ -362,15 +354,19 @@ mod tests {
         assert!(x_numbers_outside(&domain, &far).unwrap_err().contains("steps past the data"));
     }
 
+    fn days(domain: &[String]) -> Vec<f64> {
+        domain.iter().map(|d| date_text_day(d).unwrap()).collect()
+    }
+
     #[test]
     fn only_dates_past_the_data_extend_it() {
         let domain: Vec<String> = ["2024-01-01", "2024-06-01", "2025-12-01"].map(String::from).to_vec();
         let inside = [Scalar::Date("2024-06-01".into()), Scalar::Date("2025-12-01".into())].map(rule_x);
-        assert!(x_dates_outside(&domain, &inside).is_empty());
+        assert!(x_dates_outside(&days(&domain), &inside).is_empty());
         let anns = [Scalar::Date("2030-01-01".into()), Scalar::Date("2020-03-05".into()), Scalar::Date("2024-01-01".into())]
             .map(rule_x);
-        assert_eq!(x_dates_outside(&domain, &anns), ["2020-03-05", "2030-01-01"]);
-        assert!(x_dates_outside(&domain, &[]).is_empty());
+        assert_eq!(x_dates_outside(&days(&domain), &anns), ["2020-03-05", "2030-01-01"]);
+        assert!(x_dates_outside(&days(&domain), &[]).is_empty());
     }
 
     fn band_x(from: &str, to: &str) -> Annotation {
@@ -383,7 +379,7 @@ mod tests {
     fn monthly_scaffold(domain: &[&str], anns: &[Annotation]) -> Vec<String> {
         use crate::families::temporal::{complete_buckets, TimeUnit};
         let domain: Vec<String> = domain.iter().map(|d| d.to_string()).collect();
-        let widened: Vec<String> = domain.iter().cloned().chain(x_dates_outside(&domain, anns)).collect();
+        let widened: Vec<String> = domain.iter().cloned().chain(x_dates_outside(&days(&domain), anns)).collect();
         complete_buckets(&widened, TimeUnit::YearMonth, 1)
     }
 
@@ -533,10 +529,8 @@ mod tests {
             days: None,
             range: (0.0, 200.0),
         };
-        let mut svg = String::new();
-        let (res, warnings) = collect(|| paint(&c, Plane::Background, &mut svg));
-        res.unwrap();
-        assert_eq!(svg, "");
+        let (res, warnings) = collect(|| nodes(&c, Plane::Background));
+        assert!(res.unwrap().is_empty());
         assert_eq!(warnings[0].code, "WARN-ANNOTATION-NOTHING-DRAWN");
         assert_eq!(warnings[0].params["chart_id"], "rev");
     }
@@ -600,6 +594,6 @@ mod tests {
         let fonts = fonts();
         let c = ctx(&anns, &fonts);
         assert!(bounds(&c).is_none());
-        assert_eq!(paint(&c, Plane::Background, &mut String::new()).unwrap_err().code, "ERR-ANNOTATION-PAYLOAD");
+        assert_eq!(nodes(&c, Plane::Background).unwrap_err().code, "ERR-ANNOTATION-PAYLOAD");
     }
 }

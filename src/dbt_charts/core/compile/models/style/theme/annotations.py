@@ -136,6 +136,15 @@ class BandPositionStyle(BaseModel):
     )
 
 
+class NotePositionStyle(AnnotationPositionStyle):
+    """A note's text position; `auto` follows the value axis."""
+
+    edge: LegendEdge | Literal["auto"] | None = Field(
+        default=None,
+        description="Side of the anchor the text sits on; `auto` is past the value: top on a vertical chart, right on a horizontal one.",
+    )
+
+
 class AnnotationTextBoxStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -210,6 +219,11 @@ class BandTextMarkStyle(AnnotationTextMarkStyle):
 
 class NoteTextMarkStyle(AnnotationTextMarkStyle):
     """A note's text, plus the measure a note with no anchor wraps to."""
+
+    position: Annotated[NotePositionStyle, SkipInheritSlots()] = Field(
+        default_factory=NotePositionStyle,
+        description="Which side of the anchor the text sits on, and where along it.",
+    )
 
     max_width: Annotated[
         Annotated[float, Field(gt=0)] | Literal["auto"] | None, SkipInheritSlots()

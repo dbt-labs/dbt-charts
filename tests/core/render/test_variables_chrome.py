@@ -18,8 +18,7 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.variable.authored import Variable, VariableOptions
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.compile.template.daterange import resolve_daterange_preset_iso
-from dbt_charts.core.render.board_variables import daterange_presets
+from dbt_charts.core.render.board_variables import board_clock, daterange_presets
 from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import (
@@ -55,6 +54,9 @@ class _NoQueries:
         raise AssertionError(f"no query expected, got {name!r}")
 
 
+_TODAY = datetime.date(2026, 10, 20)
+
+
 def _strip(
     variable_defs,
     current_values=None,
@@ -63,12 +65,13 @@ def _strip(
     executor=None,
     variables_path="variables",
 ):
-    controls = resolve_controls(
-        variable_defs, current_values or {}, executor, _rs().variables
-    )
-    return render_variables_strip_svg(
-        controls, width, _rs(), align, variables_path=variables_path
-    )
+    with board_clock(_TODAY):
+        controls = resolve_controls(
+            variable_defs, current_values or {}, executor, _rs().variables
+        )
+        return render_variables_strip_svg(
+            controls, width, _rs(), align, variables_path=variables_path
+        )
 
 
 def _drawn_text(svg: str) -> list[str]:
@@ -781,13 +784,11 @@ def test_the_rail_publishes_each_preset_with_todays_window() -> None:
     with interactive_controls(True):
         svg, _ = _strip({"span": Variable(input="daterange")})
     groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
-    today = datetime.date.today()
-
     assert [[p["id"] for p in group] for group in groups] == [
         ["today", "last_7_days", "last_28_days", "last_90_days", "last_12_months"],
         ["month_to_date", "year_to_date"],
     ]
-    assert groups[1][0]["range"] == resolve_daterange_preset_iso("month_to_date", today)
+    assert groups[1][0]["range"] == ["2026-10-01", "2026-10-20"]
 
 
 def test_a_preset_default_with_no_committed_value_publishes_its_id() -> None:

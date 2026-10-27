@@ -23,6 +23,7 @@ from dbt_charts.core.compile.template.variables import (
     check_variable_overrides,
     coerce_variable_values,
     parse_variable_json_strings,
+    resolve_daterange_presets,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -225,7 +226,7 @@ def lookup_board_query_sql(
     from dbt_charts.core.compile.models.source import is_file_source
     from dbt_charts.core.compile.normalize.queries import dialect_for_source
     from dbt_charts.core.dialects import get_dialect
-    from dbt_charts.core.execute.executor import merge_board_variables
+    from dbt_charts.core.execute.executor import merge_board_variables, utc_now
     from dbt_charts.core.execute.source_resolver import (
         DbtContext,
         DefaultSourceResolver,
@@ -248,7 +249,9 @@ def lookup_board_query_sql(
         query.source, board.sources, project.sources.sources
     )
     try:
-        merged_vars = merge_board_variables(board, vars or {})
+        merged_vars = merge_board_variables(
+            board, vars or {}, board.regional.today(utc_now())
+        )
         # {{ queries.X }} is expanded to text first, recursively, exactly as the
         # render/serve path does (Executor.execute_query Step 4) — don't move
         # this after the two resolve calls below; it's what lets a template
@@ -632,7 +635,7 @@ def query_board(
     adapter_registry: AdapterRegistry,
 ) -> QueryBoardResult:
     """Run one named query from a compiled board and return its sample rows."""
-    from dbt_charts.core.execute.executor import resolve_query_references
+    from dbt_charts.core.execute.executor import resolve_query_references, utc_now
 
     limit = min(limit, MAX_QUERY_LIMIT)
 
@@ -652,10 +655,17 @@ def query_board(
     )
 
     try:
-        check_variable_overrides(board.variable_registry or {}, vars or {})
-        merged_vars = coerce_variable_values(
-            parse_variable_json_strings({**board.variable_defaults, **(vars or {})}),
-            board.variable_registry or {},
+        registry = board.variable_registry or {}
+        check_variable_overrides(registry, vars or {})
+        merged_vars = resolve_daterange_presets(
+            coerce_variable_values(
+                parse_variable_json_strings(
+                    {**board.variable_defaults, **(vars or {})}
+                ),
+                registry,
+            ),
+            registry,
+            board.regional.today(utc_now()),
         )
     except ExecutionError as exc:
         return _fail(name, resolved_display, [str(exc)], error_code_of(exc))

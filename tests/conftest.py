@@ -250,7 +250,8 @@ def geometry_fetches() -> Iterator[list[str]]:
     """Serve every non-bundled geo source from a stub and record the URLs asked for.
 
     Bundled maps never reach the fetcher; a test that renders a map from a URL
-    gets an empty FeatureCollection instead of the network.
+    gets an empty topology (the `features` object a raw URL source reads) instead of
+    the network.
     """
     from dbt_charts.core.render.geo.loader import geometry_fetcher_scope
 
@@ -258,7 +259,10 @@ def geometry_fetches() -> Iterator[list[str]]:
 
     def fetch(url: str) -> bytes:
         fetched.append(url)
-        return b'{"type": "FeatureCollection", "features": []}'
+        return (
+            b'{"type": "Topology", "arcs": [], "objects":'
+            b' {"features": {"type": "GeometryCollection", "geometries": []}}}'
+        )
 
     with geometry_fetcher_scope(fetch):
         yield fetched

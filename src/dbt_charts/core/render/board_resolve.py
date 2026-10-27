@@ -27,7 +27,7 @@ from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
-from dbt_charts.core.render.board_variables import board_data_provider
+from dbt_charts.core.render.board_variables import board_clock, board_data_provider
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.prose import plan_board_prose
@@ -298,11 +298,14 @@ def build_resolved_board(
     authored_slot_heights: dict[str, float] | EllipsisType = ...,
     hug_board: Board | EllipsisType = ...,
 ) -> tuple[ResolvedBoard, RenderCache]:
-    with regional_scope(
-        board.regional.format_locale,
-        board.regional.time_locale,
-        board.regional.week_start,
-        language=board.regional.resolved_language,
+    with (
+        regional_scope(
+            board.regional.format_locale,
+            board.regional.time_locale,
+            board.regional.week_start,
+            language=board.regional.resolved_language,
+        ),
+        board_clock(board.regional.today(executor.rendered_at)),
     ):
         return _build_resolved_board(
             board,

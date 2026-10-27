@@ -3,16 +3,15 @@
 //! Production's `render/title_band.py::row_title_shifts` puts every titled
 //! cell of a `cols` row on one first baseline and one body top;
 //! `layout_sizing.py::_assign_title_shifts_in_tree` stores the result as a
-//! `TitleShift` on each layout item, and
-//! `render/chart/spec_builders.py::shift_artifact_title` applies it before the
-//! final render. [`row_title_shifts`] and [`chart_title_metrics`] are the law
-//! and the per-chart title geometry; `board/row_shifts.rs` walks the board tree
-//! with them. [`for_family`] is the application.
+//! `TitleShift` on each layout item. [`row_title_shifts`] and
+//! [`chart_title_metrics`] are the law and the per-chart title geometry;
+//! `board/row_shifts.rs` walks the board tree with them. [`for_family`] is the
+//! application.
 //!
-//! The Vega-Lite families take the shift as a payload rewrite — the same two
-//! numbers `shift_chart_title` writes into the spec — so every family's own
+//! The Vega-family charts (cartesian, pie, geo) take the shift as a payload
+//! rewrite — a larger `title.offset` and top padding — so every family's own
 //! padding and title-gap law runs over them unchanged. Table and spark_bar
-//! read `title_shift` themselves, as their production renderers do.
+//! read `title_shift` themselves.
 
 use std::borrow::Cow;
 
@@ -38,7 +37,7 @@ impl TitleShift {
 /// The payload a `chart_type`'s renderer draws from, with the item's shift
 /// applied the way production applies it to that family.
 ///
-/// Production assigns a shift only to a titled item of a Vega-Lite family that
+/// A shift is assigned only to a titled item of a Vega-family chart that
 /// paints marks, a table, a spark_bar or a custom chart (`title_band.py::chart_title_metrics`);
 /// a kpi, a callout, a sankey and an attached-table pie are untitled for the
 /// band and always carry a zero shift. A shift anywhere else refuses by name
@@ -48,7 +47,8 @@ pub fn for_family<'a>(payload: &'a Payload, chart_type: &str) -> Result<Cow<'a, 
         return Ok(Cow::Borrowed(payload));
     }
     match chart_type {
-        "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram" | "custom" => {
+        "bar" | "line" | "area" | "scatter" | "heatmap" | "histogram" | "custom" | "geoshape"
+        | "point_map" => {
             shift_vega_payload(payload, payload.title_shift)
         }
         "pie"
@@ -65,17 +65,13 @@ pub fn for_family<'a>(payload: &'a Payload, chart_type: &str) -> Result<Cow<'a, 
         }
         "pie" => shift_vega_payload(payload, payload.title_shift),
         "table" | "spark_bar" => Ok(Cow::Borrowed(payload)),
-        "geoshape" | "point_map" => Err(format!(
-            "{chart_type}: production shifts this family, which has no renderer here"
-        )),
         other => Err(format!(
             "{other}: production assigns no title shift to this family"
         )),
     }
 }
 
-/// `shift_chart_title` (`spec_builders.py:98-121`) on a Vega-Lite family's
-/// payload.
+/// The shift on a Vega-family chart's payload.
 ///
 /// `title.offset` moves the plot alone, by the whole pixels
 /// `round(body_dy - title_dy)` (Python's round-half-even); the top padding
@@ -537,6 +533,14 @@ mod tests {
     fn the_plot_moves_body_dy_and_the_title_about_title_dy() {
         let p = payload("bar", (3.0, 4.0), |_| {});
         assert_eq!(shifted(&p, "bar").unwrap(), (16.0 + 3.0, 10.0 + 1.0));
+    }
+
+    #[test]
+    fn a_map_takes_the_shift_like_the_other_vega_families() {
+        for family in ["geoshape", "point_map"] {
+            let p = payload(family, (3.0, 4.0), |_| {});
+            assert_eq!(shifted(&p, family).unwrap(), (16.0 + 3.0, 10.0 + 1.0), "{family}");
+        }
     }
 
     // Python's round() ties to even: 0.5 -> 0, 1.5 -> 2, 2.5 -> 2.

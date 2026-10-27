@@ -1,0 +1,3 @@
+kind: Fixes
+body: An axis tick at zero or another threshold value now continues the threshold rule beside it.
+time: 2026-10-26T08:16:04.923661-07:00

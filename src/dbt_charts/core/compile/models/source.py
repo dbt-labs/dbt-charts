@@ -1377,11 +1377,11 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
     build_adapter_registry together with duckdb_config={"enable_external_access":
     True} to explicitly opt back in.
 
-    Authoring `attach`, `extensions`, or `secrets` is itself an explicit
-    opt-in that needs external access (ATTACH/INSTALL/CREATE SECRET all
-    require it): the in-process adapter does not force enable_external_access
-    off for that connection, without needing allow_external_access_in_readonly.
-    read_only itself is never relaxed: when the adapter is read_only, every
+    `attach`, `extensions`, and `secrets` need external access to set up
+    (ATTACH/INSTALL/CREATE SECRET), so the in-process adapter applies them
+    with it on, then locks the connection: SQL reads only the attach paths
+    and secret `scope` prefixes. Extensions must be listed; autoloading one
+    at query time is refused. read_only itself is never relaxed: when the adapter is read_only, every
     `attach` entry gets READ_ONLY forced onto its ATTACH statement regardless
     of `attach[].read_only`. `settings` applies as a plain SET and
     has no external-access requirement.  `plugins`, `filesystems`, `remote`,

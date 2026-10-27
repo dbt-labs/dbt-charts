@@ -986,6 +986,41 @@ ERR_RESULT_DUPLICATE_COLUMN = REGISTRY.register(
     )
 )
 
+ERR_RESULT_COLUMN_TYPE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RESULT-COLUMN-TYPE",
+        domain="execute",
+        title="A result column has no declarable type",
+        message_template="Column {column!r}: {reason}",
+        doc=(
+            "Fired when a result column's type cannot be declared: the source "
+            "reports a type dbt Charts has no mapping for, or an inline literal "
+            "(a values query or an HTTP response) mixes kinds in one column or "
+            "holds nothing to read a type from. Types come from the source's own "
+            "declaration, never from guessing at cell values, so the column has "
+            "to be cast in the query or made uniform in the literal."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_RESULT_NO_TYPE_READER = REGISTRY.register(
+    ErrorCode(
+        code="ERR-RESULT-NO-TYPE-READER",
+        domain="execute",
+        title="This connection cannot report column types",
+        message_template="{reason}",
+        doc=(
+            "Fired when the warehouse connection a query runs on has no reader "
+            "for column types: no reader exists for this dbt adapter, or the "
+            "connection protocol (ClickHouse's native client) does not report "
+            "them. This is a connection setup problem, not a column to cast; "
+            "switch the source to a supported adapter or protocol."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_WAREHOUSE_RESULT_WARNING = REGISTRY.register(
     ErrorCode(
         code="ERR-WAREHOUSE-RESULT-WARNING",

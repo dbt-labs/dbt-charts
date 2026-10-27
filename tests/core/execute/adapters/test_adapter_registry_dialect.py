@@ -14,6 +14,7 @@ from pathlib import Path
 import duckdb
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.authored import QueryDialect
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
@@ -49,7 +50,7 @@ class _RecordingAdapter(BaseAdapter):
     ) -> QueryResult:
         assert isinstance(query, SqlQuery)
         self.seen.append((query.sql, params))
-        return QueryResult(data=[])
+        return QueryResult(data=[], schema=literal_schema([]))
 
 
 def _snowflake_registry(

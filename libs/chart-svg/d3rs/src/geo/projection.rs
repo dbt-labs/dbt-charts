@@ -27,7 +27,6 @@ pub mod orthographic;
 pub mod resample;
 pub mod stereographic;
 pub mod transverse_mercator;
-pub mod vega;
 
 use super::clip::antimeridian::clip_antimeridian;
 use super::clip::circle::clip_circle;

@@ -90,6 +90,7 @@ def test_meta_and_board_regional_merge_field_by_field() -> None:
         "locale": {"number": "fr-FR", "time": None},
         "currency": "EUR",
         "language": None,
+        "time_zone": None,
     }
 
 

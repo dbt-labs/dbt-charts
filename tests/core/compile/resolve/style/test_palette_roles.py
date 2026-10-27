@@ -6,9 +6,9 @@ fields repeated the file name — so a theme named the same palette twice with
 nothing keeping the two in sync.
 
 Roles are substituted by `expand_palette_refs`, which runs once, at
-`get_theme_style()`, where the theme's own `palettes:` map is final. Board- and
-chart-level `style:` cannot bind or use a role — the map does not exist at that
-scope. A role-shaped name authored there, or a genuine typo, is caught by
+`get_theme_style()`, where the theme's own `palettes:` map (plus any rebinds a
+board or layer authors) is final. Board- and chart-level `style:` can rebind a
+role but cannot use one in a palette field. A role-shaped name authored there, or a genuine typo, is caught by
 `validate/palettes.py`'s post-normalize guard: both fail compile with
 ERR-PALETTE-UNKNOWN, exactly as an unresolvable name always did before roles
 existed.

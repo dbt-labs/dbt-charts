@@ -14,7 +14,8 @@ themselves (those are tunable theme values, and pinning them is banned — see
   * scatter is quant x quant, so both of its axes match in color *and* width;
   * the vertical grid clears a legibility floor against the canvas, yet stays exactly
     one scaffold rung quieter than the horizontal grid where the two differ;
-  * a vertical tick wears its gridline's color, so the two read as one mark.
+  * an x tick wears the horizontal measure grid's color, so it reads as an extension
+    of the plot floor it hangs from.
 """
 
 from __future__ import annotations
@@ -87,7 +88,6 @@ def test_vertical_grid_sits_one_rung_below_the_horizontal(theme):
 
 
 @pytest.mark.parametrize("theme", ALL_THEMES)
-def test_vertical_tick_wears_its_gridline_color(theme):
-    """A tick and its gridline mark the same value, so they read as one mark."""
-    _, x_grid, x_tick, _ = _resolved_axes(theme)
-    assert x_tick == x_grid
+def test_x_tick_wears_the_measure_gridline_color(theme):
+    _, _, x_tick, y_grid = _resolved_axes(theme)
+    assert x_tick == y_grid

@@ -33,6 +33,7 @@ def _write_schema_file(directory: Path, filename: str, schema: dict) -> str:
     """Write *schema* as canonical JSON and return its sha256 hex digest."""
     contents = canonical_schema_bytes(schema)
     (directory / filename).write_bytes(contents)
+    (directory / filename.replace(".json", ".warnings.json")).write_text("[]")
     return hashlib.sha256(contents).hexdigest()
 
 
@@ -685,6 +686,68 @@ def test_freeze_changed_grammar_releases_dev_and_appends_next(tmp_path: Path) ->
     assert [e.version for e in catalog.entries] == ["0.5.0", "0.4.0", "0.3.0"]
     assert catalog.dev.version == "0.5.0"
     assert catalog.latest_released.version == "0.4.0"
+
+
+def test_freeze_writes_the_registered_warning_codes_beside_the_snapshot(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.core.diagnostics import REGISTRY
+
+    directory = tmp_path / "schemas"
+    directory.mkdir()
+    old_candidate = {"type": "object", "additionalProperties": False}
+    sha = _write_schema_file(directory, "0.3.0.json", old_candidate)
+    _write_manifest(
+        directory,
+        [
+            _released_entry("0.3.0", sha256=sha, predecessor=None),
+            _dev_entry("0.4.0", predecessor="0.3.0"),
+        ],
+    )
+
+    freeze_yaml_schema(
+        directory,
+        tmp_path,
+        version="0.4.0",
+        released_at=date(2026, 8, 1),
+        candidate={**old_candidate, "title": "Board"},
+    )
+
+    written = json.loads((directory / "0.4.0.warnings.json").read_text())
+    assert written == sorted(REGISTRY.codes(level="warning"))
+    catalog = load_yaml_schema_catalog_from(directory)
+    assert catalog.warnings_newer_than("0.3.0") == REGISTRY.codes(level="warning")
+    assert catalog.warnings_newer_than("0.4.0") == frozenset()
+
+
+def test_verify_rejects_a_release_without_a_frozen_warning_list(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "schemas"
+    directory.mkdir()
+    candidate = {"type": "object", "additionalProperties": False}
+    sha = _write_schema_file(directory, "0.6.0.json", candidate)
+    _write_manifest(
+        directory,
+        [
+            _released_entry("0.6.0", sha256=sha, predecessor=None),
+            _dev_entry("0.7.0", predecessor="0.6.0"),
+        ],
+    )
+    (directory / "0.6.0.warnings.json").unlink()
+
+    with pytest.raises(ValueError, match="without a frozen warning list: 0.6.0"):
+        verify_released_yaml_schema(directory, version="0.6.0", candidate=candidate)
+
+
+def test_every_packaged_release_lists_its_warning_codes() -> None:
+    catalog = load_yaml_schema_catalog()
+    released = [e.version for e in catalog.entries if e.status == "RELEASED"]
+
+    # Raises for a release without a list; the older the release, the more codes postdate it.
+    sizes = [len(catalog.warnings_newer_than(version)) for version in released]
+
+    assert sizes == sorted(sizes)
 
 
 def test_freeze_renumbers_dev_upward_on_a_major_bump(tmp_path: Path) -> None:

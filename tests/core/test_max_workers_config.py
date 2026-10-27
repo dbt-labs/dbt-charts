@@ -46,12 +46,15 @@ def _reset():
 def board_and_executor():
     from unittest.mock import Mock
 
+    from dbt_charts.core.column_types import literal_schema
     from dbt_charts.core.execute.adapters.base import QueryResult
 
     result = compile(BOARD_YAML)
     assert result.success, result.errors
     registry = Mock()
-    registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+    registry.execute.return_value = QueryResult(
+        data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+    )
     executor = Executor(result.board, adapter_registry=registry)
     return result.board, executor
 

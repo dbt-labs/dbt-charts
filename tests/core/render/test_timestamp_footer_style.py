@@ -285,13 +285,17 @@ class TestDataFreshnessStamp:
 
 
 class TestTimestampFormatZoneGuard:
-    """The stamped value is always UTC, so a custom format that prints a clock
-    must disclose its zone; a zone-less clock is rejected at compile. A date-only
+    """The stamp prints in the board's zone, so a custom format that prints a
+    clock must disclose that zone; a zone-less clock is rejected at compile. A date-only
     caption needs none. Clock detection is behavioral, so directive-scan escapees
     (%T/%-H) are caught too."""
 
-    def _compiles(self, fmt: str) -> bool:
-        result = compile(_BOARD + f'style:\n  timestamp:\n    format: "{fmt}"\n')
+    def _compiles(self, fmt: str, zone: str = "UTC") -> bool:
+        result = compile(
+            _BOARD
+            + f'style:\n  timestamp:\n    format: "{fmt}"\n'
+            + f"regional:\n  time_zone: {zone}\n"
+        )
         return result.board is not None
 
     def test_zoneless_clock_rejected(self) -> None:
@@ -300,7 +304,16 @@ class TestTimestampFormatZoneGuard:
 
     def test_clock_with_zone_accepted(self) -> None:
         assert self._compiles("%H:%M %Z")
+        assert self._compiles("%H:%M %z")
         assert self._compiles("Data as of %H:%M UTC")
+
+    def test_a_literal_zone_must_be_the_board_zone_all_year(self) -> None:
+        assert self._compiles("%H:%M %Z", "America/New_York")
+        assert not self._compiles("Data as of %H:%M UTC", "America/New_York")
+        assert not self._compiles("%H:%M EST", "America/New_York")
+        # Today's rules, not 2001's: Casablanca was UTC+0 then, +01 now.
+        assert not self._compiles("Data as of %H:%M UTC", "Africa/Casablanca")
+        assert self._compiles("%H:%M MSK", "Europe/Moscow")
 
     def test_date_only_needs_no_zone(self) -> None:
         assert self._compiles("%-d %b %Y")
@@ -335,3 +348,22 @@ class TestFooterTimestampNamedFont:
         assert timestamp is not None and footer is not None
         for chrome in (timestamp, footer):
             assert ("Zork" in chrome.group(0)) == (name == "caption")
+
+
+def test_stamp_prints_in_the_board_zone(
+    local_project: Callable[..., Project],
+) -> None:
+    result = compile(_BOARD_UTC_CLOCK + "regional:\n  time_zone: America/New_York\n")
+    assert result.board is not None
+    rendered = render(
+        result.board,
+        Executor(
+            result.board,
+            adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+            clock=lambda: datetime(2026, 7, 1, 12, 0, tzinfo=UTC),
+        ),
+        format="svg",
+    )
+    assert isinstance(rendered.output, str)
+
+    assert _timestamp_text(rendered.output) == "08:00 EDT"

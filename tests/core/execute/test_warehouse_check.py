@@ -17,6 +17,7 @@ import pytest
 from google.api_core.exceptions import BadRequest, Forbidden, NotFound
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType, literal_schema
 from dbt_charts.core.compile.compiler import compile_file
 from dbt_charts.core.compile.models.source import BigQuerySourceConfig
 from dbt_charts.core.diagnostics.codes_execute import (
@@ -842,7 +843,7 @@ class TestWarehouseCheckBigQuery:
         registry.resolve_query_source.return_value = BigQuerySourceConfig(
             type="bigquery", project="my-proj", dataset="my-ds"
         )
-        registry.prepare_sql.return_value = QueryResult(data=[], error=None)
+        registry.prepare_sql.return_value = QueryResult(data=[], error=None, schema={})
 
         result = _check_sql("SELECT 1", registry)
 
@@ -912,7 +913,8 @@ class TestWarehouseCheckExplain:
         """A clean EXPLAIN proves the query binds but yields a plan, not a
         result schema — columns stay unchecked and unread."""
         registry = self._registry(
-            adapter_type, QueryResult(data=[{"QUERY PLAN": "Seq Scan on t"}])
+            adapter_type,
+            _result([{"QUERY PLAN": "Seq Scan on t"}]),
         )
         result = _check_sql("SELECT a FROM t", registry)
         assert result.status == "valid"
@@ -925,7 +927,7 @@ class TestWarehouseCheckExplain:
         assert "no result schema" in result.reason
 
     def test_sends_the_explain_prefixed_sql_with_no_limit(self):
-        registry = self._registry("postgres", QueryResult(data=[]))
+        registry = self._registry("postgres", _result([]))
         _check_sql("SELECT a FROM t", registry)
         sent = registry.execute.call_args.args[0]
         assert sent.sql.startswith("EXPLAIN ")
@@ -960,7 +962,7 @@ class TestWarehouseCheckExplain:
 
     def test_unwrappable_statement_names_explain(self):
         """The gate's refusal must name the keyword actually in play."""
-        registry = self._registry("postgres", QueryResult(data=[]))
+        registry = self._registry("postgres", _result([]))
         result = _check_sql("SELECT 1; SELECT 2", registry)
         assert result.status == "unchecked"
         assert "EXPLAIN" in result.reason
@@ -970,7 +972,7 @@ class TestWarehouseCheckExplain:
         """Postgres parses `EXPLAIN (SELECT …)` as EXPLAIN's *options list*,
         rejecting SQL the author wrote correctly — the gate refuses the shape
         before anything is sent."""
-        registry = self._registry("postgres", QueryResult(data=[]))
+        registry = self._registry("postgres", _result([]))
         result = _check_sql("(SELECT 1) UNION ALL (SELECT 2)", registry)
         assert result.status == "unchecked"
         registry.execute.assert_not_called()
@@ -993,7 +995,7 @@ class TestWarehouseCheckFileSource:
 
     def test_valid_query_reads_columns_from_the_materialized_table(self):
         registry = self._csv_registry(
-            QueryResult(data=[{"column_name": "region", "column_type": "VARCHAR"}])
+            _result([{"column_name": "region", "column_type": "VARCHAR"}])
         )
         result = _check_sql("SELECT region FROM orders", registry)
         assert result.status == "valid"
@@ -1003,7 +1005,7 @@ class TestWarehouseCheckFileSource:
         assert result.columns == [WarehouseCheckColumn(name="region", type="VARCHAR")]
 
     def test_sends_the_describe_prefixed_sql_with_no_limit(self):
-        registry = self._csv_registry(QueryResult(data=[]))
+        registry = self._csv_registry(_result([]))
         _check_sql("SELECT region FROM orders", registry)
         sent = registry.execute.call_args.args[0]
         assert sent.sql.startswith("DESCRIBE ")
@@ -1016,7 +1018,7 @@ class TestWarehouseCheckFileSource:
         """An authored EXPLAIN can't be led by DESCRIBE — the gate refuses the
         shape from the author's own parsed statement before anything reaches
         the materializer, same as every other DESCRIBE adapter."""
-        registry = self._csv_registry(QueryResult(data=[]))
+        registry = self._csv_registry(_result([]))
         result = _check_sql("EXPLAIN SELECT 1", registry)
         assert result.status == "unchecked"
         assert "DESCRIBE" in result.reason
@@ -1039,8 +1041,8 @@ class TestWarehouseCheckClickHouse:
 
     def test_valid_query_reads_columns_from_describe(self):
         registry = self._registry(
-            QueryResult(
-                data=[
+            _result(
+                [
                     {"name": "month", "type": "Date", "default_type": ""},
                     {"name": "revenue", "type": "Float64", "default_type": ""},
                 ]
@@ -1057,7 +1059,7 @@ class TestWarehouseCheckClickHouse:
         ]
 
     def test_sends_the_describe_prefixed_sql_with_no_limit(self):
-        registry = self._registry(QueryResult(data=[]))
+        registry = self._registry(_result([]))
         _check_sql("SELECT month FROM orders", registry)
         sent = registry.execute.call_args.args[0]
         assert sent.sql.startswith("DESCRIBE ")
@@ -1090,8 +1092,8 @@ class TestWarehouseCheckLakeCompute:
         registry.resolve_query_source.return_value = LakeComputeTokenSource(
             type="lakecompute", token="t"
         )
-        registry.execute.return_value = QueryResult(
-            data=[
+        registry.execute.return_value = _result(
+            [
                 {"column_name": "month", "column_type": "DATE"},
                 {"column_name": "revenue", "column_type": "DOUBLE"},
             ]
@@ -1126,6 +1128,12 @@ def _sqlserver_registry(
     return registry
 
 
+def _result(rows: list[dict]) -> QueryResult:
+    return QueryResult(
+        data=rows, schema=literal_schema(rows, untyped=ColumnType(kind="string"))
+    )
+
+
 def _describe_row(name, type_, *, number=None, error_type=None, message=None):
     return {
         "name": name,
@@ -1142,8 +1150,8 @@ class TestWarehouseCheckSqlServer:
 
     def test_valid_query_reads_columns_from_the_dmv(self):
         registry = _sqlserver_registry(
-            QueryResult(
-                data=[
+            _result(
+                [
                     _describe_row("Month", "date"),
                     _describe_row("revenue", "decimal(18,2)"),
                 ]
@@ -1164,7 +1172,8 @@ class TestWarehouseCheckSqlServer:
         """A value rendered into the query carries its own quotes. Wrapping
         before rendering would let them close the literal."""
         registry = _sqlserver_registry(
-            QueryResult(data=[]), prepared_sql="SELECT 1 WHERE n = 'O''Brien'"
+            _result([]),
+            prepared_sql="SELECT 1 WHERE n = 'O''Brien'",
         )
         _check_sql("SELECT 1 FROM orders WHERE n = 'x'", registry)
         wrapped = registry.execute_prepared.call_args.args[0]
@@ -1178,8 +1187,8 @@ class TestWarehouseCheckSqlServer:
 
     def test_an_unbound_query_is_invalid_with_the_servers_message(self):
         registry = _sqlserver_registry(
-            QueryResult(
-                data=[
+            _result(
+                [
                     _describe_row(
                         None,
                         None,
@@ -1200,8 +1209,8 @@ class TestWarehouseCheckSqlServer:
         """error_type 3-11 mean the function could not determine the result (a
         temp table, dynamic SQL), which says nothing about whether the query runs."""
         registry = _sqlserver_registry(
-            QueryResult(
-                data=[
+            _result(
+                [
                     _describe_row(
                         None,
                         None,
@@ -1234,7 +1243,7 @@ class TestWarehouseCheckSqlServer:
             )
         )
         assert compiled.board is not None, compiled.errors
-        registry = _sqlserver_registry(QueryResult(data=[]))
+        registry = _sqlserver_registry(_result([]))
         warehouse_check(
             SqlQuery(sql="SELECT a, b FROM t", source="s", limit=1),
             board=compiled.board,
@@ -1263,7 +1272,7 @@ class TestWarehouseCheckSqlServer:
     def test_a_setup_sql_query_is_unchecked(self):
         """The DMV binds in a scope of its own and cannot see temp objects that
         a setup_sql created in the batch around it."""
-        registry = _sqlserver_registry(QueryResult(data=[]))
+        registry = _sqlserver_registry(_result([]))
         registry.prepare_sql.return_value = PreparedSql(
             sql="SELECT * FROM #t",
             setup_sql="SELECT 1 AS x INTO #t",
@@ -1276,7 +1285,7 @@ class TestWarehouseCheckSqlServer:
         registry.execute_prepared.assert_not_called()
 
     def test_a_multi_statement_query_is_unchecked(self):
-        registry = _sqlserver_registry(QueryResult(data=[]))
+        registry = _sqlserver_registry(_result([]))
         result = _check_sql("SELECT 1; SELECT 2", registry)
         assert result.status == "unchecked"
         registry.execute_prepared.assert_not_called()
@@ -1517,7 +1526,7 @@ class TestWarehouseCheckDbtFallbackTypeResolution:
         adapter = MagicMock(spec=DbtAdapter)
         adapter.resolve_target_type.return_value = "postgres"
         registry = self._registry(adapter)
-        registry.execute.return_value = QueryResult(data=[])
+        registry.execute.return_value = _result([])
 
         result = warehouse_check(
             compiled.query_registry["agg"],

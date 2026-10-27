@@ -45,35 +45,11 @@ _DEFAULTS_DIR = files("dbt_charts.core") / "defaults"
 _THEMES_DIR = _DEFAULTS_DIR / "themes"
 
 
-# Vega/Vega-Lite's built-in named color schemes (https://vega.github.io/vega/docs/schemes/),
-# the only strings ``ScaleTargetConfig.palette`` forwards straight through to VL's
-# ``scale.scheme``. Sampled-discrete shorthand like "blues-9" is not a real scheme
-# name — VL fails deep inside rendering ("Cannot read properties of undefined")
-# rather than rejecting it up front, so this is validated at compile time instead.
-#
-# Empirically verified against this repo's pinned vl-convert (not hand-copied from
-# docs alone): every name below was round-tripped through
-# ``vlc.vegalite_to_svg`` with a quantitative ``scale.scheme`` encoding and
-# confirmed to render — see ``test_vega_scheme_names_parity.py``, which re-runs
-# that sweep and fails if this set and the bundled renderer ever diverge.
-VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
+# Vega schemes by role. A diverging scheme has a neutral center a hinge pivots on;
+# a sequential one does not. Cyclical, categorical and the light/dark helpers
+# belong to neither.
+VEGA_SEQUENTIAL_SCHEME_NAMES: frozenset[str] = frozenset(
     {
-        # Categorical
-        "accent",
-        "category10",
-        "category20",
-        "category20b",
-        "category20c",
-        "dark2",
-        "observable10",
-        "paired",
-        "pastel1",
-        "pastel2",
-        "set1",
-        "set2",
-        "set3",
-        "tableau10",
-        "tableau20",
         # Sequential (single-hue)
         "blues",
         "tealblues",
@@ -107,7 +83,22 @@ VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
         "yellowgreen",
         "yelloworangebrown",
         "yelloworangered",
-        # Diverging
+        # Sequential ramps tuned for dark / light backgrounds
+        "darkblue",
+        "darkgold",
+        "darkgreen",
+        "darkmulti",
+        "darkred",
+        "lightgreyred",
+        "lightgreyteal",
+        "lightmulti",
+        "lightorange",
+        "lighttealblue",
+    }
+)
+
+VEGA_DIVERGING_SCHEME_NAMES: frozenset[str] = frozenset(
+    {
         "blueorange",
         "brownbluegreen",
         "purplegreen",
@@ -118,21 +109,43 @@ VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
         "redyellowblue",
         "redyellowgreen",
         "spectral",
+    }
+)
+
+# Vega/Vega-Lite's built-in named color schemes (https://vega.github.io/vega/docs/schemes/),
+# the only strings ``ScaleTargetConfig.palette`` forwards straight through to VL's
+# ``scale.scheme``. Sampled-discrete shorthand like "blues-9" is not a real scheme
+# name — VL fails deep inside rendering ("Cannot read properties of undefined")
+# rather than rejecting it up front, so this is validated at compile time instead.
+#
+# Empirically verified against this repo's pinned vl-convert (not hand-copied from
+# docs alone): every name below was round-tripped through
+# ``vlc.vegalite_to_svg`` with a quantitative ``scale.scheme`` encoding and
+# confirmed to render — see ``test_vega_scheme_names_parity.py``, which re-runs
+# that sweep and fails if this set and the bundled renderer ever diverge.
+VEGA_SCHEME_NAMES: frozenset[str] = frozenset(
+    {
+        # Categorical
+        "accent",
+        "category10",
+        "category20",
+        "category20b",
+        "category20c",
+        "dark2",
+        "observable10",
+        "paired",
+        "pastel1",
+        "pastel2",
+        "set1",
+        "set2",
+        "set3",
+        "tableau10",
+        "tableau20",
+        *VEGA_SEQUENTIAL_SCHEME_NAMES,
+        *VEGA_DIVERGING_SCHEME_NAMES,
         # Cyclical
         "rainbow",
         "sinebow",
-        # For dark backgrounds
-        "darkblue",
-        "darkgold",
-        "darkgreen",
-        "darkmulti",
-        "darkred",
-        # For light backgrounds
-        "lightgreyred",
-        "lightgreyteal",
-        "lightmulti",
-        "lightorange",
-        "lighttealblue",
     }
 )
 

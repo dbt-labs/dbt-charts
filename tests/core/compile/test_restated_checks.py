@@ -133,7 +133,7 @@ _STYLE_CASES = [
     (
         "list equal as a whole",
         "style:\n  charts:\n    color:\n      categorical:\n"
-        "        single_series_palette: [category.blue.dark]\n",
+        "        single_series_palette: ['category[1].dark']\n",
         None,
         [
             (

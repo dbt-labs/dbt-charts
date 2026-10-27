@@ -18,7 +18,7 @@ from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_cont
 _CHANNEL = ("axis_x", "axis_y")
 _TYPE = ("axis_quantitative", "axis_band")
 _THEMES = [name for name in list_built_in_themes() if name != "_base"]
-# Themes whose y-axis restyles grid and tick color for the same leaves as
+# Themes whose y-axis restyles grid color for the same leaf as
 # axis_quantitative.
 _Y_STYLED = {"clarity", "neon", "paper", "vivid"}
 # Themes that also pin their own y tick width; elsewhere the base theme's
@@ -53,7 +53,7 @@ def test_builtin_theme_channel_vs_type_slot_collisions(theme: str) -> None:
     }
     expected = {("axis_x", "ticks.width")}
     if theme in _Y_STYLED:
-        expected |= {("axis_y", "grid.color"), ("axis_y", "ticks.color")}
+        expected.add(("axis_y", "grid.color"))
     if theme in _Y_HAIRLINE_TICKS:
         expected.add(("axis_y", "ticks.width"))
     assert collisions == expected

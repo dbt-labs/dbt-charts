@@ -19,14 +19,9 @@ from typing import Any
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedAxisStyle,
 )
-from dbt_charts.core.compile.models.style.theme.category_colors import (
-    CategoryColorScale,
-    series_colors,
-)
 from dbt_charts.core.compile.resolve.chart.tick_values import (
     numeric_domain_bounds,
 )
-from dbt_charts.core.render.chart._types import VLDict
 from dbt_charts.core.render.chart.type_inference import (
     is_zero_anchored,
     zero_anchor_pinned_floor,
@@ -176,33 +171,10 @@ def distinct_series_values(data: list[dict[str, Any]], series_field: str) -> lis
     )
 
 
-def spatial_color_scale(
-    series: list[str],
-    palette: tuple[str, ...],
-    order: list[str],
-    scale: CategoryColorScale | None = None,
-) -> VLDict:
-    """Explicit VL color ``{domain, range}`` reordering DISPLAY only.
-
-    ``series`` assigns palette slots; ``order`` independently becomes the
-    legend/tooltip/label display sequence. Callers that only reorder display
-    pass the alphabetical series domain. Stacked bars pass their baseline-first
-    order so stack rank and palette rank stay aligned.
-
-    A board ``scale`` overrides that positional assignment: each value takes
-    the slot it owns board-wide, so the same category is the same color on
-    every chart. Either way the color follows the value, never its new
-    display position.
-    """
-    color_of = series_colors(series, palette, scale)
-    return {"domain": list(order), "range": [color_of[s] for s in order]}
-
-
 # x is a row's raw x-field value (str/date/int, whatever the query returned);
 # only ever compared with >= below, never introspected.
 
 
 __all__ = [
     "distinct_series_values",
-    "spatial_color_scale",
 ]

@@ -5,6 +5,8 @@
 
 use std::fmt::Write;
 
+use scene::{Attrs, Node};
+
 use crate::common::TornBaseline;
 
 /// One cubic Bézier of the tear: start, two controls, end.
@@ -159,17 +161,20 @@ impl<'a> ValueTear<'a> {
         torn_edge_value(lo, hi).map(|edge| Self { tear, edge })
     }
 
-    /// Paints the wave with crests pointing into a plot `across` px deep on the
+    /// The wave with crests pointing into a plot `across` px deep on the
     /// value axis and `along` px wide the other way. `edge_px` is the edge's
     /// position on the value axis; `vertical` is an edge that runs top to bottom.
-    pub fn paint(&self, svg: &mut String, edge_px: f64, across: f64, along: f64, vertical: bool, ink: &str, width: f64) {
+    pub fn node(&self, edge_px: f64, across: f64, along: f64, vertical: bool, ink: &str, width: f64) -> Node {
         let inward = torn_inward(edge_px, 0.0, across);
         let cubics = torn_cubics(0.0, along, edge_px, inward, &[], self.tear);
         let d = torn_path(&cubics, vertical);
-        let _ = write!(
-            svg,
-            "<path class=\"torn-baseline\" d=\"{d}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{width}\"/>",
-            print::xml_escape_attr(ink)
-        );
+        Node::Path(
+            Attrs::new()
+                .set("class", "torn-baseline")
+                .set("d", d)
+                .set("fill", "none")
+                .set("stroke", ink)
+                .set("stroke-width", width.to_string()),
+        )
     }
 }

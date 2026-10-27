@@ -180,6 +180,7 @@ def warehouse_check(
         CACHE_REF_JINJA_RE,
         merge_board_variables,
         resolve_query_references,
+        utc_now,
     )
 
     # {{ queries.X.cache }} composes another query's *cached result*, which the
@@ -201,7 +202,7 @@ def warehouse_check(
     source_config = adapter_registry.resolve_query_source(
         query, board=board, query_name=query_name
     )
-    variables = merge_board_variables(board, {})
+    variables = merge_board_variables(board, {}, board.regional.today(utc_now()))
 
     # EXPLAIN-wrapping and dry runs send the SQL untranslated.
     if query.dialect is not None and (

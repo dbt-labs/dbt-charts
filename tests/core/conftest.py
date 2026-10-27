@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedAreaStyle,
     ResolvedBarStyle,
@@ -35,6 +36,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTotalValueSlot,
 )
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
+from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
 
 # Ink palette slot 0 from the default resolved theme.
 # This is rcs.single_series_palette[0] for the built-in theme.
@@ -396,3 +398,25 @@ def theme_without_tick_count(name: str):
     return style.model_copy(
         update={"charts": style.charts.model_copy(update={"axis_quantitative": unset})}
     )
+
+
+@pytest.fixture
+def typed_via_execute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the dbt-adapter data query from a mocked ``adapter.execute``.
+
+    For tests of the pool, retry and routing behavior, which script the adapter
+    and assert on what it was sent; the typed fetch itself is covered by
+    ``execute/test_typed_fetch.py``.
+    """
+
+    def fetch(adapter: Any, dialect: str, sql: str, limit: int | None) -> TypedRows:
+        _, table = adapter.execute(sql, auto_begin=False, fetch=True, limit=limit)
+        columns = list(table.column_names)
+        return TypedRows(
+            columns, list(table.rows), [ColumnType(kind="string") for _ in columns]
+        )
+
+    for module in ("sql_adapter", "dbt_adapter"):
+        monkeypatch.setattr(
+            f"dbt_charts.core.execute.adapters.{module}.fetch_typed", fetch
+        )

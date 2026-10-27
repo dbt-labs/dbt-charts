@@ -10,10 +10,18 @@ Imports nothing from ``snowflake.*``: the session is duck-typed against
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Iterator
+from datetime import UTC
 from itertools import islice
 from typing import TYPE_CHECKING, Any, Protocol
 
+from dbt_charts.core.column_types import (
+    ColumnKind,
+    ColumnType,
+    column_type_error,
+    reject_duplicate_columns,
+)
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, is_sql_query
 from dbt_charts.core.compile.models.source import SnowflakeSourceConfig
@@ -25,7 +33,6 @@ from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
     classify_warehouse_error,
     plain_error,
-    reject_duplicate_columns,
 )
 from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
@@ -45,8 +52,17 @@ def _raw_name(identifier: str) -> str:
 _Cells = Iterable[Any]  # type-state: explicit_any — untyped warehouse cells
 
 
+class SnowparkField(Protocol):
+    datatype: Any  # type-state: explicit_any — a snowflake.snowpark.types instance
+
+
+class SnowparkSchema(Protocol):
+    fields: list[SnowparkField]
+
+
 class SnowparkDataFrame(Protocol):
     columns: list[str]
+    schema: SnowparkSchema
 
     def to_local_iterator(self) -> Iterator[_Cells]: ...
 
@@ -64,6 +80,45 @@ class SnowparkSession(Protocol):
     def get_current_database(self) -> str | None: ...
 
     def get_current_schema(self) -> str | None: ...
+
+
+# Keyed by class name so this module imports nothing from snowflake.*.
+_SNOWPARK_SCALARS: dict[str, ColumnKind] = {
+    **dict.fromkeys(("ByteType", "ShortType", "IntegerType", "LongType"), "integer"),
+    **dict.fromkeys(("FloatType", "DoubleType"), "float"),
+    **dict.fromkeys(
+        ("StringType", "NullType", "GeographyType", "GeometryType"), "string"
+    ),
+    "BinaryType": "bytes",
+    "BooleanType": "boolean",
+    "DateType": "date",
+    "TimeType": "time",
+    # Snowflake hands semi-structured values back as JSON text.
+    **dict.fromkeys(("VariantType", "ArrayType", "MapType", "StructType"), "json"),
+}
+
+
+def _snowpark_column_type(
+    name: str,
+    datatype: Any,  # type-state: explicit_any — snowpark type instance
+) -> ColumnType:
+    type_name = type(datatype).__name__
+    if type_name == "TimestampType":
+        # NTZ is wall-clock; TZ and LTZ are instants. DEFAULT is the session's
+        # own mapping, which the result schema never reports.
+        zone = datatype.tz.name
+        if zone not in ("NTZ", "LTZ", "TZ"):
+            raise column_type_error(
+                name, f"the Snowpark timestamp zone {zone} has no declared mapping"
+            )
+        return ColumnType(kind="datetime" if zone == "NTZ" else "datetime_tz")
+    if type_name == "DecimalType":
+        return ColumnType(kind="integer" if datatype.scale == 0 else "decimal")
+    if type_name not in _SNOWPARK_SCALARS:
+        raise column_type_error(
+            name, f"the Snowpark type {type_name} has no declared mapping"
+        )
+    return ColumnType(kind=_SNOWPARK_SCALARS[type_name])
 
 
 def _resolved_name(name: str) -> str:
@@ -172,6 +227,7 @@ class SnowparkAdapter(BaseAdapter):
             # rewritten (DataFrame.limit() would wrap it in a subquery).
             frame = self._session.sql(prepared.sql)
             columns = [_raw_name(name).lower() for name in frame.columns]
+            datatypes = [field.datatype for field in frame.schema.fields]
             rows = list(
                 islice(frame.to_local_iterator(), prepared.row_fetch_limit.fetch_limit)
             )
@@ -182,9 +238,26 @@ class SnowparkAdapter(BaseAdapter):
             rows, prepared.row_fetch_limit
         )
         reject_duplicate_columns(columns)
+        schema = {
+            name: _snowpark_column_type(name, datatype)
+            for name, datatype in zip(columns, datatypes, strict=True)
+        }
+        json_columns = [name for name, kind in schema.items() if kind.kind == "json"]
+        instant_columns = [
+            name for name, kind in schema.items() if kind.kind == "datetime_tz"
+        ]
         data = [dict(zip(columns, row, strict=True)) for row in rows]
+        for row in data:
+            for name in instant_columns:
+                if row[name] is not None:
+                    row[name] = row[name].astimezone(UTC)
+            for name in json_columns:
+                if row[name] is not None:
+                    row[name] = json.loads(row[name])
         return QueryResult(
             data=data,
+            columns=columns,
+            schema=schema,
             resolved_relations=prepared.resolved_relations or None,
             truncated_reason=truncated_reason,
         )

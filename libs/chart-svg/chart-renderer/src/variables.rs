@@ -298,7 +298,7 @@ fn is_iso_date_prefix(v: &str) -> bool {
     if v.len() < 10 || !v.is_char_boundary(10) {
         return false;
     }
-    if parse_iso_date(&v[..10]).is_none() {
+    if full_iso_date(&v[..10]).is_none() {
         return false;
     }
     let bytes = v.as_bytes();
@@ -311,34 +311,12 @@ fn is_iso_date_prefix(v: &str) -> bool {
     true
 }
 
-fn is_leap_year(y: i32) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
-
-fn parse_iso_date(s: &str) -> Option<(i32, u32, u32)> {
-    let bytes = s.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+/// A full `YYYY-MM-DD` date, the one shape a control variable carries.
+fn full_iso_date(s: &str) -> Option<(i32, u32, u32)> {
+    if s.len() != 10 {
         return None;
     }
-    let y: i32 = s[0..4].parse().ok()?;
-    let m: u32 = s[5..7].parse().ok()?;
-    let d: u32 = s[8..10].parse().ok()?;
-    let days_in_month = match m {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(y) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => return None,
-    };
-    if d < 1 || d > days_in_month {
-        return None;
-    }
-    Some((y, m, d))
+    crate::time_axis::parse_iso_date(s).map(|(y, m, d)| (y, m.into(), d.into()))
 }
 
 fn looks_like_booleans(values: &[String]) -> bool {
@@ -959,12 +937,12 @@ fn range(start: &str, end: &str) -> Result<String, String> {
 
 /// `variables_resolve.py::format_date_label`.
 fn format_date_label(iso: &str) -> Result<String, String> {
-    parse_iso_date(iso).map_or_else(|| Ok(iso.to_string()), fmt)
+    full_iso_date(iso).map_or_else(|| Ok(iso.to_string()), fmt)
 }
 
 /// `variables_resolve.py::format_daterange_label`.
 fn format_daterange_label(start_iso: &str, end_iso: &str) -> Result<String, String> {
-    let (Some(s), Some(e)) = (parse_iso_date(start_iso), parse_iso_date(end_iso)) else {
+    let (Some(s), Some(e)) = (full_iso_date(start_iso), full_iso_date(end_iso)) else {
         return range(start_iso, end_iso);
     };
     if s == e {

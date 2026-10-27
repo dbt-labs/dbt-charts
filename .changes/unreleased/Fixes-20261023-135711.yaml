@@ -1,0 +1,3 @@
+kind: Fixes
+body: Array and struct columns from BigQuery, Postgres, Redshift and other dbt-adapter warehouses reach charts as lists and objects instead of JSON text.
+time: 2026-10-23T13:57:11.274641-07:00

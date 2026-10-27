@@ -268,34 +268,6 @@ class TestOverlapThemeCascade:
 
 
 # ---------------------------------------------------------------------------
-# 5. VL emission: label_overlap reaches labelOverlap
-# ---------------------------------------------------------------------------
-
-
-class TestVlEmission:
-    def test_label_overlap_parity_emits_to_vl(self) -> None:
-        from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
-
-        axis = _axis_x_with(overlap=_overlap())
-        vl = axis_to_vl(axis, label_overlap="parity")
-        assert vl.get("labelOverlap") == "parity"
-
-    def test_label_overlap_allow_emits_false_to_vl(self) -> None:
-        from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
-
-        axis = _axis_x_with(overlap=_overlap())
-        vl = axis_to_vl(axis, label_overlap="allow")
-        assert vl.get("labelOverlap") is False
-
-    def test_label_overlap_none_omits_from_vl(self) -> None:
-        from dbt_charts.core.render.chart.vl_field_maps import axis_to_vl
-
-        axis = _axis_x_with(overlap=_overlap())
-        vl = axis_to_vl(axis)
-        assert "labelOverlap" not in vl
-
-
-# ---------------------------------------------------------------------------
 # 6. collision_label_count: every fits=False site reports what it measured;
 #    every fits=True site reports None (nothing for a detector to read)
 # ---------------------------------------------------------------------------

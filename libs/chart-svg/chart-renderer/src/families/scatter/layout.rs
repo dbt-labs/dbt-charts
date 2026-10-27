@@ -85,7 +85,7 @@ pub(super) fn fit(
     panel: Option<&ScatterPanelOpts>,
     y_ladder: Option<(usize, u8, f64)>,
 ) -> Result<Fitted, Diagnostic> {
-    let Bound { r, overlays, wide_series, shape, .. } = bound;
+    let Bound { r, overlays, wide_series, shape, time, .. } = bound;
     let (y_nominal, x_nominal, x_dates) = (shape.y_nominal, shape.x_nominal, shape.x_dates);
     let svg_w = payload.width;
     let view_w = payload.view_width(if x_nominal { crate::ViewScale::Discrete } else { crate::ViewScale::Continuous })?;
@@ -125,7 +125,7 @@ pub(super) fn fit(
         overlays.iter().zip(layer_domain_rows.iter().copied()).collect()
     };
     let nan_years = x_dates && x_has_nan_years(payload, r)?;
-    let nan_x = |date: &str| nan_years && crate::families::temporal::timeunit_nan(date);
+    let nan_x = |date: &str| nan_years && time.get(date).is_some_and(|instant| instant.nan);
     let layer_y_extent =
         if shared_layers.is_empty() { NO_EXTENT } else { layers_value_extent(&shared_layers, &r.x, &nan_x) };
     // Every layer's x column joins the shared x scale, a pinned layer's included:
@@ -301,7 +301,7 @@ pub(super) fn fit(
     // in the swept corpus is a plain category.
     let y_is_date_like = y_nominal
         && kept.iter().all(|&(_, row)| {
-            crate::families::temporal::parse_iso_date(&row_str(row, &r.y)).is_some()
+            crate::time_axis::parse_iso_date(&row_str(row, &r.y)).is_some()
         });
     // `StructuredTooltipFeature.applies_to` refuses a wide scatter outright
     // (`features/structured_tooltip.py`: "a wide scatter falls back to the
@@ -367,6 +367,7 @@ pub(super) fn fit(
         let axis = date_axis(
             payload,
             r,
+            time,
             &drawn,
             &XLayers::of(r, overlays, &layer_domain_rows),
             svg_w,
@@ -608,7 +609,7 @@ pub(super) fn fit(
         for (i, category) in domain.iter().enumerate() {
             y_ticks.push(band(i));
             y_tick_values.push(crate::common::js_number(category));
-            y_labels.push(ax_y.labels.cased(&match (ax_y.labels.expr.as_ref(), time_format, crate::families::temporal::parse_iso_date(category)) {
+            y_labels.push(ax_y.labels.cased(&match (ax_y.labels.expr.as_ref(), time_format, crate::time_axis::parse_iso_date(category)) {
                 (Some(_), ..) => spoken[i].clone(),
                 (None, Some(format), Some((y, m, d))) => format.text(y, m, d),
                 _ => category.clone(),
@@ -1038,7 +1039,7 @@ pub(super) fn fit(
     let layered_legend =
         LayeredLegend::new(r, payload, overlays, color_domain.as_slice(), category_scale, &base_y_title, y_nominal)?;
     let layered_entries = layered_legend.entries(&r.legend);
-    let numeric_legends = crate::families::bar::numeric_legends_of(
+    let numeric_legends = crate::families::bar::legend::numeric_legends_of(
         None,
         overlays.iter().zip(&layered_legend.plan),
         &r.legend,
@@ -1373,7 +1374,7 @@ pub(super) fn fit(
                 .zip(label_marks.first())
                 .is_some_and(|(axis, mark)| axis.bucket_span(&row_str(mark.row, &r.x), pw).is_some());
             if !bucketed {
-                crate::families::bar::layer_bar_label_ink(
+                crate::families::bar::marks::layer_bar_label_ink(
         bl, rows, &label_marks, &centers, &|v| layer_y_at(overlay_index, v, ph), ph, fonts, payload.board_style.as_ref(), b,
                 )?;
             }
@@ -1766,6 +1767,20 @@ pub(super) fn fit(
         points_data.into_iter().zip(&xf.points).map(|(mut point, &x_frac)| { point.0 = x_frac; point }).collect();
     let x_pos = |frac: f64| frac * plot_w;
     let y_pos = |frac: f64| y_px(plot_h, frac, y_round);
+    let (rx1, rx2) = crate::common::floor_rule_span(plot_w, ax_x, ax_x.ticks.visible.unwrap_or(true) || temporal_x.as_ref().is_some_and(|axis| axis.draws_ticks()), xf.ticks.iter().map(|&frac| x_pos(frac).round() + 0.5));
+    // The floor rule also spans the full stroke of a vertical rule standing on its edge.
+    let x_rule_w = ax_x.grid.threshold.as_ref().map_or(0.0, |zx| zx.width.unwrap_or(2.0));
+    let floor_span = xf.rules.iter().flatten().fold((rx1, rx2), |(lo, hi), &frac| (lo.min(x_pos(frac) - x_rule_w / 2.0), hi.max(x_pos(frac) + x_rule_w / 2.0)));
+    let paint_value_axis = panel.is_none_or(|o| o.paint_value_axis);
+    let value_axis_dx = panel.filter(|o| !o.embedded_y).map_or(0.0, |o| o.value_axis_right_overhang);
+    // The value axis edges the ticks start from: a baseline rule reaches them so its continued tick meets it.
+    let y_edge_x = if y_left { 0.5 } else { plot_w + value_axis_dx + 0.5 };
+    let y_edges: Vec<f64> = if y_tick_eff > 0.0 && paint_value_axis {
+        std::iter::once(y_edge_x).chain(mirror_active.then_some(if y_left { plot_w + 0.5 } else { 0.5 })).collect()
+    } else {
+        Vec::new()
+    };
+    let (rx1, rx2) = crate::common::join_rule_to_edges(floor_span, &y_edges);
 
     // Gridlines — grid/tick positions round to whole pixels (Vega
     // tickRound), then take the axis group's +0.5 crispness shift; labels
@@ -1900,7 +1915,7 @@ pub(super) fn fit(
     // the points inherit whatever index comes after the last fired rule.
     let mut fired_rule_count = 0;
     if let Some(z) = ax_y.grid.threshold.as_ref() {
-        let zc = z.color.as_deref().unwrap_or("#8A8C8F");
+        let zc = z.stroke();
         let zw = z.width.unwrap_or(2.0);
         for (i, frac) in baseline_rule_fracs.iter().enumerate() {
             let Some(frac) = frac else { continue };
@@ -1918,9 +1933,9 @@ pub(super) fn fit(
                 |aria| {
                     Node::Line(
                         Attrs::new()
-                            .set("x1", "0.000")
+                            .set("x1", format!("{rx1:.3}"))
                             .set("y1", format!("{gy:.3}"))
-                            .set("x2", format!("{plot_w:.3}"))
+                            .set("x2", format!("{rx2:.3}"))
                             .set("y2", format!("{gy:.3}"))
                             .set("stroke", zc)
                             .set("stroke-width", zw.to_string())
@@ -1937,7 +1952,7 @@ pub(super) fn fit(
         }
     }
     if let Some(zx) = ax_x.grid.threshold.as_ref() {
-        let zc = zx.color.as_deref().unwrap_or("#8A8C8F");
+        let zc = zx.stroke();
         let zw = zx.width.unwrap_or(2.0);
         for (i, frac) in xf.rules.iter().enumerate() {
             let Some(frac) = frac else { continue };
@@ -2298,7 +2313,7 @@ pub(super) fn fit(
                         None => claimed_fill.clone(),
                     };
                     let aria = caption(mark.row, mark.value)?;
-                    bars.extend(crate::families::bar::layer_bar(
+                    bars.extend(crate::families::bar::marks::layer_bar(
                         &y_of,
                         plot_h,
                         clip,
@@ -2312,7 +2327,7 @@ pub(super) fn fit(
                 }
                 let (sited, label_centers) = bar_label_sites(bl, rows, marks, plot_w)?;
                 let label_marks: Vec<_> = sited.iter().map(|&i| marks[i]).collect();
-                bars.extend(crate::families::bar::layer_bar_labels(
+                bars.extend(crate::families::bar::marks::layer_bar_labels(
                     bl,
                     rows,
                     &label_marks,
@@ -2324,9 +2339,7 @@ pub(super) fn fit(
                     (payload.board_style.as_ref(), bg),
                 )?);
                 if clip {
-                    let id = crate::families::layers::layer_clip_id((plot_w, plot_h), &r.id);
-                    let defined = !defined_clips.insert(id.clone());
-                    plot.extend(crate::families::layers::layer_clip_group(&id, (plot_w, plot_h), defined, bars));
+                    plot.extend(crate::families::layers::clipped_layer(&mut defined_clips, (plot_w, plot_h), &r.id, bars));
                 } else {
                     plot.extend(bars);
                 }
@@ -2336,8 +2349,10 @@ pub(super) fn fit(
         if let (Some(la), Some(Some(width)), Some(zl)) =
             (layer_axes.get(index), layer_zero_rules.get(index), ax_y.grid.threshold.as_ref())
         {
-            let zc = zl.color.as_deref().unwrap_or("#8A8C8F");
+            let zc = zl.stroke();
             let gy = la.scale(plot_h).position(0.0);
+            let layer_edge = if la.side == LayerSide::Right { plot_w + 0.5 } else { 0.5 };
+            let (lx1, lx2) = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
             plot.push(crate::contract::item_group(
                 "rule",
                 &format!("layer_{}_marks", 1 + overlays.len() + index),
@@ -2346,9 +2361,9 @@ pub(super) fn fit(
                 |aria| {
                     Node::Line(
                         Attrs::new()
-                            .set("x1", "0.000")
+                            .set("x1", format!("{lx1:.3}"))
                             .set("y1", format!("{gy:.3}"))
-                            .set("x2", format!("{plot_w:.3}"))
+                            .set("x2", format!("{lx2:.3}"))
                             .set("y2", format!("{gy:.3}"))
                             .set("stroke", zc)
                             .set("stroke-width", width.to_string())
@@ -2393,8 +2408,20 @@ pub(super) fn fit(
     }
 
     // X ticks + labels.
+    let floor_rule = ax_y.grid.threshold.as_ref().and_then(|zl| {
+        let base = baseline_rule_fracs.iter().flatten().map(|&frac| y_pos(frac));
+        let nested = layer_axes.iter().zip(&layer_zero_rules).filter(|(_, width)| width.is_some()).map(|(la, _)| la.scale(plot_h).position(0.0));
+        crate::common::rule_on_edge(base.chain(nested), x_edge.edge_y(plot_h)).then(|| zl.stroke().to_string())
+    });
+    let x_rules = ax_x.grid.threshold.as_ref().map_or_else(Vec::new, |zx| {
+        let at_rules = xf.rules.iter().flatten().map(|&frac| x_pos(frac));
+        at_rules.map(|at| crate::common::PaintedRule { at, tick_at: at.round() + 0.5, stroke: zx.stroke().to_string(), width: zx.width.unwrap_or(2.0) }).collect()
+    });
+    let x_threshold_rules: Vec<_> = crate::common::thresholds(&x_rules);
     if let Some(axis) = temporal_x.as_ref().filter(|_| panel.is_none()) {
-        plot.extend(axis.nodes(ax_x, 0.0, plot_w, x_edge.edge_y(plot_h), fonts)?);
+        let mut axis = axis.clone();
+        axis.floor_rule = floor_rule.clone();
+        plot.extend(axis.nodes(ax_x, 0.0, plot_w, (x_edge.edge_y(plot_h), x_edge.edge_y(plot_h)), fonts)?);
     }
     if temporal_x.is_none() && plain_x.is_none() {
         plot.extend(plain_x_axis(
@@ -2405,6 +2432,9 @@ pub(super) fn fit(
                 plot_left: 0.0,
                 plot_w,
                 plot_bottom: x_edge.edge_y(plot_h),
+                floor_y: x_edge.edge_y(plot_h),
+                floor_rule: floor_rule.as_deref(),
+                x_rules: &x_threshold_rules,
                 angle: x_cat_angle,
                 align: x_cat_align,
                 baseline: x_cat_baseline,
@@ -2418,10 +2448,13 @@ pub(super) fn fit(
         )?);
     }
 
+    // A tick at a painted baseline rule's value is that rule continued.
+    let y_rules = ax_y.grid.threshold.as_ref().filter(|_| crate::common::rule_reaches(floor_span, y_edge_x)).map_or_else(Vec::new, |zl| {
+        crate::common::value_axis_rules(0.0, baseline_rule_fracs.iter().flatten().map(|&frac| y_pos(frac)), zl.stroke(), zl.width.unwrap_or(2.0))
+    });
+    let y_threshold_rules: Vec<_> = crate::common::thresholds(&y_rules);
     // The value axis: drawn by the panel that owns it (a facet's last
     // column), anchored `value_axis_dx` past the plot edge.
-    let paint_value_axis = panel.is_none_or(|o| o.paint_value_axis);
-    let value_axis_dx = panel.filter(|o| !o.embedded_y).map_or(0.0, |o| o.value_axis_right_overhang);
     // The axis group's origin and the direction its ticks, labels and title run.
     let (y_axis_x, y_outward) = if y_left { (0.5, -1.0) } else { (plot_w + value_axis_dx + 0.5, 1.0) };
     let value_axis_from = plot.len();
@@ -2436,7 +2469,7 @@ pub(super) fn fit(
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
             for &frac in &y_ticks {
-                let gy = y_pos(frac).round() + 0.5;
+                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, y_pos(frac).round() + 0.5, tc, tw);
                 items.push(Node::Line(
                     Attrs::new()
                         .set("x1", format!("{y_axis_x:.3}"))
@@ -2481,7 +2514,7 @@ pub(super) fn fit(
     // Each layer's own axis, on the side it sits; only the first y title
     // of the chart edits its label, so the first layer's stands in for a base title
     // that draws nothing.
-    for (axis_index, la) in layer_axes.iter().enumerate() {
+    for (axis_index, (la, zero_width)) in layer_axes.iter().zip(&layer_zero_rules).enumerate() {
         let edge_x = match la.side {
             LayerSide::Right => plot_w + 0.5,
             LayerSide::Left => 0.5,
@@ -2499,6 +2532,7 @@ pub(super) fn fit(
                 tick_size: y_tick_eff,
                 ticks: &ax_y.ticks,
                 title_style: layer_title_style,
+                zero_rule: zero_width.zip(ax_y.grid.threshold.as_ref()).filter(|_| crate::common::rule_reaches(floor_span, edge_x)).map(|(width, zl)| (zl.stroke(), width)),
             },
             (axis_index == 0 && panel.is_none() && crate::common::axis_title_band(val_title_style, &y_title_text) == 0.0)
                 .then_some(crate::contract::LabelKey::Y),
@@ -2514,7 +2548,7 @@ pub(super) fn fit(
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
             for &frac in &y_ticks {
-                let gy = y_pos(frac).round() + 0.5;
+                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, y_pos(frac).round() + 0.5, tc, tw);
                 items.push(Node::Line(
                     Attrs::new()
                         .set("x1", format!("{ghost_x:.3}"))
@@ -2622,6 +2656,7 @@ pub(super) fn fit(
                     None => legend::LegendSymbol::FilledGlyph(&glyphs[idx]),
                 }),
                 series_key: Some(&color_domain[idx]),
+                recede: None,
             })
             .collect();
         let (x, y) = (base.0 + color_off.0 + slide.0, base.1 + color_off.1 + slide.1);
@@ -2657,14 +2692,23 @@ pub(super) fn fit(
     let panel_axis: Option<PanelXAxis> = panel
         .map(|o| -> Result<PanelXAxis, String> {
             Ok(match &o.x_axis {
-                FacetX::Date(axis) => PanelXAxis::Temporal((*axis).clone()),
-                FacetX::Plain(axis) => PanelXAxis::Plain(axis.sized_for(ax_x, plot_w, fonts)?),
+                FacetX::Date(axis) => {
+                    let mut axis = (*axis).clone();
+                    axis.floor_rule = floor_rule.clone();
+                    PanelXAxis::Temporal(axis)
+                }
+                FacetX::Plain(axis) => {
+                    let mut axis = axis.sized_for(ax_x, plot_w, fonts)?;
+                    axis.floor_rule = floor_rule.clone();
+                    axis.x_rules = x_rules.clone();
+                    PanelXAxis::Plain(axis)
+                }
             })
         })
         .transpose()?;
     let panel_layer_ink = panel.map(|_| layer_ink(plot_w, plot_h)).transpose()?;
     let group = Attrs::new().set("transform", format!("translate({group_x:.3},{group_y:.3})"));
-    let cuts = panel.map(|_| frame.cuts(&head, &group, &plot, &value_axis, &[]));
+    let cuts = panel.map(|_| frame.cuts(&head, &group, &plot, &[], Some(&crate::frame::ValueAxisAt::Plot(value_axis))));
     let geometry = panel.zip(cuts).map(|(o, cuts)| {
         let (plot_left, plot_top) = (pad_l + left_margin, pad_t + top_margin);
         let (plot_right, plot_bottom) = (plot_left + plot_w, plot_top + plot_h);
@@ -2786,7 +2830,7 @@ pub(super) fn fit(
             value_title_w: if o.paint_value_axis && y_title_extra > 0.0 { y_title_w } else { 0.0 },
             legend: None,
             value_axis: paint_value_axis
-                .then(|| crate::families::facet_compose::ValueAxisInk { range: cuts.value_axis, origin: (group_x, group_y) }),
+                .then(|| crate::families::facet_compose::ValueAxisInk { range: cuts.value_axis(), origin: (group_x, group_y) }),
         }
     });
     let mut body = head;
@@ -2860,4 +2904,3 @@ pub(super) fn unauthored_measure_domain(ax: &AxisStyle, data_lo: f64, data_hi: f
     let rounds = ax.scale.get("nice").and_then(Value::as_bool).unwrap_or(layered || !ax.has_baked_edge());
     if rounds && hi > lo { d3rs::ticks::d3_nice(lo, hi, 10) } else { (lo, hi) }
 }
-

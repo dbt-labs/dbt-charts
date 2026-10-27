@@ -79,6 +79,7 @@ from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
     parse_variable_json_strings,
+    resolve_daterange_presets,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
@@ -336,8 +337,11 @@ def _memo_key(
     return (*cache_key, "forever" if ttl is None else str(ttl.total_seconds()))
 
 
-def merge_board_variables(board: Board, variables: VariableValues) -> VariableValues:
-    """Merge a board's declared variables with caller overrides, coerced to type.
+def merge_board_variables(
+    board: Board, variables: VariableValues, today: date
+) -> VariableValues:
+    """Merge a board's declared variables with caller overrides, coerced to type,
+    each daterange preset dated on the board's ``today``.
 
     Declared names first (so an undeclared-but-defaulted variable still binds),
     then board defaults, then the caller's values. Coercion is the runtime
@@ -349,7 +353,9 @@ def merge_board_variables(board: Board, variables: VariableValues) -> VariableVa
     all_variables: VariableValues = dict.fromkeys(variable_registry)
     all_variables.update(board.variable_defaults)
     merged = {**all_variables, **parse_variable_json_strings(variables)}
-    return coerce_variable_values(merged, variable_registry)
+    return resolve_daterange_presets(
+        coerce_variable_values(merged, variable_registry), variable_registry, today
+    )
 
 
 def resolve_query_references(
@@ -909,7 +915,7 @@ class Executor:
                 # query.source is set — the assertion surfaces any future drift.
                 assert query.source is not None
                 try:
-                    result_data = materializer.materialize_and_run(
+                    result_data, _ = materializer.materialize_and_run(
                         file_source,
                         query.sql,
                         variables or {},
@@ -1127,7 +1133,11 @@ class Executor:
         """
         if query_name.startswith("queries."):
             query_name = query_name[8:]
-        merged = merge_board_variables(self.board, variables or {})
+        merged = merge_board_variables(
+            self.board,
+            variables or {},  # type-state: silent_fallback — None: no caller overrides
+            self.board.regional.today(self.rendered_at),
+        )
         return query_name, self._get_query(query_name), merged
 
     def _lookup_cached(

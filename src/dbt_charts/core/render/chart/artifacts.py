@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-ArtifactKind = Literal["vega_spec", "svg", "json"]
+ArtifactKind = Literal["svg", "json"]
 
 # Shared by render functions so their signatures don't each carry their own
 # copy of this annotation.

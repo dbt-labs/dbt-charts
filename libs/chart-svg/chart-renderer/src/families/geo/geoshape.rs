@@ -18,22 +18,23 @@
 //! nodes, which `render` prints between the frame and the title.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use d3rs::geojson::{Feature, FeatureCollection, GeoJson};
-use d3rs::topojson::{self, Topology};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use super::js_cell;
 use super::projection;
+use super::source::{decode, Decoded, GeoSource};
 use crate::codes;
 use crate::common::{
-    category_scale_for, series_color, CategoryColorScale, FieldLabels, Font, ScaleTarget,
+    category_scale_for, series_color, CategoryColorScale, FieldLabels, FormatSlot, Font, ScaleTarget,
     Stroke, TitleStyle,
 };
 use crate::contract;
 use crate::diagnostic::Diagnostic;
-use crate::families::color_scale::{js_number_string, ContinuousColor, MidPivot};
+use crate::families::color_scale::{js_number_string, ContinuousColor};
 use crate::families::heatmap::{category_legend_entries, CategoryScale};
 use crate::families::color_scale::GradientAt;
 use crate::families::legend::{
@@ -92,6 +93,7 @@ struct Resolved {
 #[derive(Deserialize)]
 struct Style {
     geoshape: FamilyStyle,
+    tooltip_format: FormatSlot,
     title_font: Option<Font>,
 }
 
@@ -142,7 +144,7 @@ struct Choropleth {
 /// What the data decides: the features, the join and the colors.
 pub struct Bound {
     resolved: Resolved,
-    features: Vec<Feature>,
+    decoded: Arc<Decoded>,
     choropleth: Option<Choropleth>,
     /// The base map's link; a choropleth's overlay carries none.
     href: Option<String>,
@@ -174,52 +176,6 @@ impl Resolved {
     }
 }
 
-/// A geo source as Vega's data reader is told it: the document under `url` in
-/// `payload.geometries`, read as `format_type` (`feature` names a TopoJSON object,
-/// `property` the path to a GeoJSON feature list).
-pub(super) struct GeoSource<'a> {
-    /// What the source draws, named in its errors (`geoshape`, `basemap`).
-    pub role: &'a str,
-    pub url: &'a str,
-    pub format_type: &'a str,
-    pub feature: Option<&'a str>,
-    pub property: Option<&'a str>,
-}
-
-/// The features of a geo source, as Vega's `topojson` and `json` readers list them.
-pub(super) fn decode_features(source: &GeoSource, geometries: &HashMap<String, Value>) -> Result<Vec<Feature>, String> {
-    let (role, url) = (source.role, source.url);
-    let doc = geometries.get(url).ok_or_else(|| {
-        format!("{role}: payload.geometries has no document for geo_url {url:?}")
-    })?;
-    match source.format_type {
-        "topojson" => {
-            let name = source.feature.ok_or_else(|| format!("{role}: a topojson source names no geo_feature"))?;
-            let topology = Topology::deserialize(doc).map_err(|e| format!("{role}: geo_url {url:?}: {e}"))?;
-            match topojson::feature(&topology, name)? {
-                GeoJson::FeatureCollection(collection) => Ok(collection.features),
-                GeoJson::Feature(feature) => Ok(vec![feature]),
-                GeoJson::Geometry(_) => Err(format!("{role}: topojson object {name:?} decoded to a bare geometry")),
-            }
-        }
-        "json" => json_items(source, doc)?
-            .iter()
-            .map(|item| Feature::deserialize(item).map_err(|e| format!("{role}: geo_url {url:?}: {e}")))
-            .collect(),
-        other => Err(crate::refuse!("production errors too, Vega raises \"Unknown data format type\": geo_format_type {other:?} is not supported")),
-    }
-}
-
-/// The items of a `json` source: the array at `geo_property`, as the document spells them.
-fn json_items<'a>(source: &GeoSource, doc: &'a Value) -> Result<&'a Vec<Value>, String> {
-    let (role, url) = (source.role, source.url);
-    let path = source.property.ok_or_else(|| crate::refuse!("a json geo source with no geo_property, which Vega fits to NaN and draws as NaN paths, is not supported"))?;
-    path.split('.')
-        .try_fold(doc, |value, key| value.get(key))
-        .and_then(Value::as_array)
-        .ok_or_else(|| format!("{role}: geo_url {url:?} has no array at {path:?}"))
-}
-
 /// A member of a datum as Vega's field accessor reads it: an object's key or a list's index.
 fn member<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     match value {
@@ -230,7 +186,7 @@ fn member<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 
 /// Each feature's join key text, read by `geo_join_key`'s dotted path from the datum Vega holds: a GeoJSON
 /// item as the document spells it, a TopoJSON feature as `topojson.feature` builds it.
-fn join_keys(source: &GeoSource, geometries: &HashMap<String, Value>, features: &[Feature], path: &str) -> Result<Vec<String>, String> {
+fn join_keys(source: &GeoSource, decoded: &Decoded, path: &str) -> Result<Vec<String>, String> {
     let walk = |root: Option<&Value>| -> Result<String, String> {
         let value = path.split('.').try_fold(root, |value, key| Some(member(value?, key)));
         crate::href::js_string(value.flatten())
@@ -238,7 +194,8 @@ fn join_keys(source: &GeoSource, geometries: &HashMap<String, Value>, features: 
     let first = path.split('.').next();
     if matches!(first, Some("id" | "properties")) {
         let rest = path.split_once('.').map(|(_, rest)| rest);
-        return features
+        return decoded
+            .features
             .iter()
             .map(|feature| {
                 let root = if first == Some("id") { feature.id.as_ref() } else { Some(&feature.properties) };
@@ -248,10 +205,10 @@ fn join_keys(source: &GeoSource, geometries: &HashMap<String, Value>, features: 
             .collect();
     }
     if source.format_type == "json" {
-        let doc = geometries.get(source.url).ok_or_else(|| format!("{}: payload.geometries has no document for geo_url {:?}", source.role, source.url))?;
-        return json_items(source, doc)?.iter().map(|item| walk(Some(item))).collect();
+        return decoded.items.iter().map(|item| walk(Some(item))).collect();
     }
-    features
+    decoded
+        .features
         .iter()
         .map(|feature| walk(Some(&serde_json::to_value(feature).map_err(|e| e.to_string())?)))
         .collect()
@@ -330,6 +287,13 @@ fn native_label(color: (&str, String), lookup: Option<(&str, String)>) -> String
     contract::native_label(&rows)
 }
 
+/// The card a measure format with an affix writes (`NativeTooltipAffixFeature`): the tooltip list
+/// alone, the lookup row then the value row, one `title: value` each, a repeated title kept.
+fn affixed_label(value: Option<(&str, String)>, lookup: Option<(&str, String)>) -> String {
+    let rows = lookup.into_iter().chain(value);
+    rows.map(|(title, text)| format!("{title}: {text}")).collect::<Vec<_>>().join("; ")
+}
+
 /// The features a lookup column matches and how each is painted.
 fn bind_choropleth(
     r: &Resolved,
@@ -357,6 +321,11 @@ fn bind_choropleth(
         let text = row.map_or(Ok("null".to_string()), |row| crate::href::js_string(row.get(lookup)))?;
         Ok(Some((lookup_title.as_str(), text)))
     };
+    // The tooltip list drops the value row when the value is the lookup column itself.
+    let value_title = (value_field != lookup)
+        .then(|| display_text::slug_to_text(value_field).map(|t| r.field_labels.get(value_field).cloned().unwrap_or(t)))
+        .transpose()?;
+    let affixed = r.style.tooltip_format.has_affix();
     let own_type = crate::families::temporal::infer_vega_type(rows, value_field);
     let mut overlay = Vec::new();
     let coloring = if own_type == crate::families::temporal::VegaType::Quantitative {
@@ -378,21 +347,23 @@ fn bind_choropleth(
         let (lo, hi) = drawn
             .iter()
             .fold((f64::NAN, f64::NAN), |(lo, hi), &(_, n, _)| (if lo.is_nan() { n } else { lo.min(n) }, if hi.is_nan() { n } else { hi.max(n) }));
-        let scale = match ContinuousColor::mid_pivoted(gradient, (lo, hi))? {
-            MidPivot::Scale(scale) => scale,
-            MidPivot::NotPivoted => ContinuousColor::gradient(gradient, None, (lo, hi))?,
-        };
+        // The python seam derives the same domain from the rows that joined a feature, so the
+        // widened ends agree with the baked Vega-Lite scale; no drawn value leaves it empty.
+        let extent = (lo.is_finite() && hi.is_finite()).then_some((lo, hi));
+        let scale = ContinuousColor::gradient(gradient, extent, (lo, hi), r.legend.visible)?;
         for (feature, n, row) in drawn {
-            let label = native_label(
-                (&title, crate::number_locale::d3_format("", n)?),
-                lookup_row(Some(row))?,
-            );
+            let label = if affixed {
+                let value = value_title.as_deref().map(|t| r.style.tooltip_format.paint(n).map(|text| (t, text))).transpose()?;
+                affixed_label(value, lookup_row(Some(row))?)
+            } else {
+                native_label((&title, crate::number_locale::d3_format("", n)?), lookup_row(Some(row))?)
+            };
             overlay.push(Overlay { feature, fill: Some(scale.fill(n)), label });
         }
         // Both bounds authored, or `nice: false`: the legend labels the scale's ends
         // (`apply_geo_choropleth_legend_endpoint_labels`); a nice scale keeps Vega's ticks.
         let legend_ends = (r.legend.values.is_none()
-            && ((gradient.min.is_some() && gradient.max.is_some()) || !gradient.nice))
+            && ((gradient.min.is_some() && gradient.max.is_some()) || gradient.nice == Some(false) || (gradient.nice.is_none() && !r.legend.visible)))
             .then(|| vec![js_number_string(scale.lo), js_number_string(scale.hi)]);
         Coloring::Gradient { scale, legend_ends }
     } else {
@@ -419,7 +390,13 @@ fn bind_choropleth(
                 },
                 None => (None, "null".to_string(), None),
             };
-            overlay.push(Overlay { feature: i, fill, label: native_label((&title, value), lookup_row(row)?) });
+            let label = if affixed {
+                let value = value_title.as_deref().map(|t| (t, value));
+                affixed_label(value, lookup_row(row)?)
+            } else {
+                native_label((&title, value), lookup_row(row)?)
+            };
+            overlay.push(Overlay { feature: i, fill, label });
         }
         Coloring::Categories(CategoryScale { domain, fills, null_is_js: false })
     };
@@ -439,6 +416,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         format_type: &resolved.geo_format_type,
         feature: resolved.geo_feature.as_deref(),
         property: resolved.geo_property.as_deref(),
+        name: &resolved.geo_source_name,
     };
     if source.format_type == "json" && source.property.is_none() {
         // Vega reads the whole document as one datum and draws nothing; production turns an empty chart that
@@ -448,7 +426,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         }
         return Err(crate::refuse!("a json geo source with no geo_property and no value ink draws a blank chart that is not supported").into());
     }
-    let features = decode_features(&source, geometries)?;
+    let decoded = decode(&source, geometries)?;
     resolved.mark()?;
     let rows: Vec<Map<String, Value>> = payload.rows.iter().map(js_cell::normalized).collect();
     let rows = &rows[..];
@@ -456,8 +434,8 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let choropleth = match (&resolved.lookup_field, &resolved.value_field) {
         (Some(lookup), value) if !rows.is_empty() && (value.is_some() || has_color_channel) => {
             let value = value.as_deref().ok_or("geoshape: value_field absent (resolver required)")?;
-            let keys = join_keys(&source, geometries, &features, &resolved.geo_join_key)?;
-            Some(bind_choropleth(&resolved, &features, &keys, rows, (lookup, value))?)
+            let keys = join_keys(&source, &decoded, &resolved.geo_join_key)?;
+            Some(bind_choropleth(&resolved, &decoded.features, &keys, rows, (lookup, value))?)
         }
         _ => None,
     };
@@ -484,7 +462,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         }
         None => None,
     };
-    Ok(Bound { resolved, features, choropleth, href })
+    Ok(Bound { resolved, decoded, choropleth, href })
 }
 
 /// The legend a layout draws.
@@ -500,10 +478,11 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let reach = r.stroke_reach()?;
     let fit = r.is_fit();
     // The overlay's features are the background's, so fitting the background fits both.
-    let fit_data = vec![GeoJson::FeatureCollection(FeatureCollection { features: bound.features.clone() })];
-    let fitted_at = |pw: f64, ph: f64| {
-        projection::fitted(&r.geo_projection_type, r.geo_projection_params.as_ref(), fit_data.clone(), (pw, ph))
-    };
+    let fitter = projection::Fitter::new(
+        &r.geo_projection_type,
+        r.geo_projection_params.as_ref(),
+        vec![GeoJson::FeatureCollection(FeatureCollection { features: bound.decoded.features.clone() })],
+    );
 
     let grad_id = format!("geo_grad-{}", contract::safe_svg_id(&r.id));
     let legend_visible = r.legend.visible;
@@ -557,8 +536,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let mut failure: Option<Diagnostic> = None;
     let mut ink = |pw: f64, ph: f64, b: &mut Bounds| -> Result<(), Diagnostic> {
         if fit {
-            let path = fitted_at(pw, ph)?.into_path();
-            let [[x0, y0], [x1, y1]] = path.bounds(&fit_data[0])?;
+            let [[x0, y0], [x1, y1]] = fitter.layer_bounds((pw, ph))?;
             b.union(&Bounds::new(x0, y0, x1, y1).expand(reach));
         }
         if let Some(size) = legend_size(pw, ph)? {
@@ -579,9 +557,9 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     }
     let (plot_left, plot_top) = frame.origin(&m);
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
-    let path = fitted_at(plot_w, plot_h)?.into_path();
+    let path = fitter.at((plot_w, plot_h))?.into_path();
     let paths: Vec<Option<String>> =
-        bound.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone()))).collect::<Result<_, _>>()?;
+        bound.decoded.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone()))).collect::<Result<_, _>>()?;
 
     let dim = frame.dim;
     let clip_ids = ["geo-clip-0", "geo-clip-1"].map(|id| format!("{id}-{}", contract::safe_svg_id(&r.id)));
@@ -633,6 +611,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         Ok(Node::group(attrs.set("role", role).set("aria-roledescription", container), children))
     };
     let background = bound
+        .decoded
         .features
         .iter()
         .zip(&paths)
@@ -758,5 +737,7 @@ mod tests {
     fn a_description_lists_the_color_then_the_lookup_column() {
         assert_eq!(native_label(("Rate", "4.1".into()), Some(("State", "9".into()))), "Rate: 4.1; State: 9");
         assert_eq!(native_label(("Rate", "4.1".into()), None), "Rate: 4.1");
+        assert_eq!(affixed_label(Some(("Rate", "4.1 %".into())), Some(("State", "9".into()))), "State: 9; Rate: 4.1 %");
+        assert_eq!(affixed_label(None, Some(("State", "9".into()))), "State: 9");
     }
 }

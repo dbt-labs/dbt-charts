@@ -37,6 +37,9 @@ from dbt_charts.core.execute.adapters.sql_adapter import (
     _source_config_hash,
 )
 
+pytestmark = pytest.mark.usefixtures("typed_via_execute")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -495,7 +498,13 @@ class TestSourcePoolConcurrency:
         def _rejects_the_query(sql: str, **kwargs: object) -> tuple | None:
             sent.append(sql)
             if sql == _LIVENESS_SQL or not kwargs.get("fetch"):
-                return (None, MagicMock(column_names=["n"], rows=[(1,)]))
+                return (
+                    None,
+                    MagicMock(
+                        column_names=["n"],
+                        rows=[(1,)],
+                    ),
+                )
             raise RuntimeError('syntax error at or near "SELCT"')
 
         adapter.execute.side_effect = _rejects_the_query

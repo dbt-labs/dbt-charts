@@ -1,7 +1,7 @@
 //! Point map family (`type: point_map` / `type: bubble_map`): circles at
-//! longitude/latitude over an optional basemap (`emitters/geo.py`
-//! `PointMapEmitter`). Production hands Vega-Lite a `circle` spec, layered over a
-//! `geoshape` basemap when the chart names one; this draws what Vega draws from it:
+//! longitude/latitude over an optional basemap. The recorded
+//! parity references are Vega-Lite's `circle` spec, layered over a `geoshape` basemap
+//! when the chart names one; this draws what Vega drew from it:
 //!
 //! - the projection fitted to the basemap and the points the way Vega-Lite assembles
 //!   it ([`super::projection`]); the circles are clipped to the view;
@@ -31,7 +31,7 @@ use d3rs::geojson::{Feature, FeatureCollection, GeoJson, Geometry};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::geoshape::{decode_features, GeoSource};
+use super::source::{decode, GeoSource};
 use super::js_cell;
 use super::projection;
 use crate::codes;
@@ -106,6 +106,8 @@ struct Resolved {
     basemap_fill: Option<String>,
     basemap_stroke: Option<String>,
     basemap_geo_url: Option<String>,
+    #[serde(default)]
+    basemap_source_name: String,
     basemap_geo_format: Option<Map<String, Value>>,
     geo_projection_type: String,
     geo_projection_params: Option<Map<String, Value>>,
@@ -389,13 +391,14 @@ fn bind_basemap(payload: &Payload, r: &Resolved) -> Result<Option<Vec<GeoJson>>,
     let text = |key: &str| format.get(key).and_then(Value::as_str);
     let source = GeoSource {
         role: "basemap",
+        name: &r.basemap_source_name,
         url,
         format_type: text("type").ok_or("basemap: basemap_geo_format names no type")?,
         feature: text("feature"),
         property: text("property"),
     };
-    let features = decode_features(&source, geometries)?;
-    Ok(Some(features.into_iter().map(GeoJson::Feature).collect()))
+    let decoded = decode(&source, geometries)?;
+    Ok(Some(decoded.features.iter().cloned().map(GeoJson::Feature).collect()))
 }
 
 /// The circles of the rows production draws, and the legends' content.
@@ -820,10 +823,10 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             .collect(),
     });
     // Vega-Lite fits the layers in order: the basemap, then the points.
-    let fit_data: Vec<GeoJson> = basemap.iter().cloned().chain((!bound.fit_points.is_empty()).then_some(point_data)).collect();
-    let fitted_at = |pw: f64, ph: f64| {
-        projection::fitted(&r.geo_projection_type, r.geo_projection_params.as_ref(), fit_data.clone(), (pw, ph))
-    };
+    let has_basemap = basemap.is_some();
+    let fit_layers: Vec<GeoJson> = basemap.into_iter().chain((!bound.fit_points.is_empty()).then_some(point_data)).collect();
+    let has_layers = !fit_layers.is_empty();
+    let fitter = projection::Fitter::new(&r.geo_projection_type, r.geo_projection_params.as_ref(), fit_layers);
 
     let grad_id = format!("geo_grad-{}", contract::safe_svg_id(&r.id));
     let folded_label;
@@ -832,7 +835,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             let mut entries: Vec<LegendEntry> = domain
                 .iter()
                 .zip(fills)
-                .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::FilledCircle), series_key: None })
+                .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::FilledCircle), series_key: None, recede: None })
                 .collect();
             if let Some((kept, label)) = fold_symbol_limit(entries.len(), VEGA_LEGEND_SYMBOL_LIMIT as usize) {
                 folded_label = label;
@@ -889,9 +892,8 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let mut stack_xy = (0.0, 0.0);
     let mut failure: Option<Diagnostic> = None;
     let mut ink = |pw: f64, ph: f64, b: &mut Bounds| -> Result<(), Diagnostic> {
-        if let (true, Some(data)) = (fit, &basemap) {
-            let path = fitted_at(pw, ph)?.into_path();
-            let [[x0, y0], [x1, y1]] = path.bounds(data)?;
+        if fit && has_basemap {
+            let [[x0, y0], [x1, y1]] = fitter.layer_bounds((pw, ph))?;
             b.union(&Bounds::new(x0, y0, x1, y1).expand(stroke_reach));
         }
         let blocks = blocks_at(pw, ph)?;
@@ -915,7 +917,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let (plot_left, plot_top) = frame.origin(&m);
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     // With nothing to fit (no basemap, no coordinates) no mark needs the projection.
-    let fitted = if fit_data.is_empty() { None } else { Some(fitted_at(plot_w, plot_h)?) };
+    let fitted = if has_layers { Some(fitter.at((plot_w, plot_h))?) } else { None };
     let placed: Vec<[f64; 2]> = bound
         .points
         .iter()
@@ -934,7 +936,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         .collect::<Result<_, String>>()?;
     let basemap_paths: Vec<Option<String>> = match &bound.basemap {
         Some(features) => {
-            let path = fitted_at(plot_w, plot_h)?.into_path();
+            let path = fitter.at((plot_w, plot_h))?.into_path();
             features.iter().map(|f| path.path(f)).collect::<Result<_, _>>()?
         }
         None => Vec::new(),

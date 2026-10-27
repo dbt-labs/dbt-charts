@@ -43,7 +43,6 @@ def _make_executor(board, query_registry, rows=None):
     ok = Mock()
     ok.is_success = True
     ok.data = rows if rows is not None else [{"category": "a", "value": 1}]
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -152,7 +151,6 @@ def test_failed_query_chart_omitted_from_chart_results(
     failing_ok = Mock()
     failing_ok.is_success = True
     failing_ok.data = []
-    failing_ok.column_descriptions = None
     failing_ok.resolved_relations = None
     mock_registry = Mock()
     mock_registry.execute.side_effect = RuntimeError("query failed")

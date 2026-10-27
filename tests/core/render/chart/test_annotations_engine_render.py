@@ -44,7 +44,7 @@ def _render(family: str) -> str | None:
         chart_style_context=ctx,
         rendered_at=_RENDERED_AT,
     )
-    return BoardRenderSession.create(style).render_svg_family(
+    return BoardRenderSession(style).render_svg_family(
         resolved, rows, width=600.0, height=300.0
     )
 
@@ -98,7 +98,7 @@ def test_trend_text_on_a_colored_line_renders_by_default_and_overlaid(
         chart_style_context=ctx,
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
-    svg = BoardRenderSession.create(style).render_svg_family(
+    svg = BoardRenderSession(style).render_svg_family(
         resolved, _SEGMENT_ROWS, width=600.0, height=300.0
     )
     assert svg is not None
@@ -127,7 +127,7 @@ def test_a_trend_x_range_draws_the_trend_over_that_span() -> None:
         chart_style_context=ctx,
         rendered_at=datetime.datetime(2024, 6, 14, tzinfo=datetime.UTC),
     )
-    svg = BoardRenderSession.create(style).render_svg_family(
+    svg = BoardRenderSession(style).render_svg_family(
         resolved, _ROWS, width=600.0, height=300.0
     )
     assert svg is not None and "spanned" in svg

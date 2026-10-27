@@ -8,14 +8,13 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use super::{validate_line_layers, LineResolved};
-use crate::common::{is_year_shaped, row_str, row_str_ref};
+use crate::common::{is_year_shaped, row_str};
 use crate::diagnostic::Diagnostic;
 use crate::families::layers::OverlayLayer;
 use crate::families::multiples;
-use crate::families::temporal::{
-    days_from_civil, parse_iso_date, TimePart, TimeUnit, VegaType,
-};
+use crate::families::temporal::{TimePart, TimeUnit, VegaType};
 use crate::families::x_type::XResolution;
+use crate::time_axis::{Grain, TimeAxis};
 use crate::Payload;
 
 /// A line or area chart bound to its rows.
@@ -42,8 +41,10 @@ pub(super) struct XAxis {
     pub(super) is_band: bool,
     /// The labeled buckets and years the law rewrote to their ISO start.
     pub(super) rows_rewritten: bool,
-    /// Every distinct x parsed once; layout adds the values a layer brings.
-    pub(super) parsed: XParsed,
+    /// Every distinct x of the rows and of the layers' own columns, read once.
+    pub(super) time: TimeAxis,
+    /// The first x value no date parses from, on an axis that is not a time scale (a time scale refuses it).
+    pub(super) unparsed: Option<String>,
     /// The distinct x values: first-appearance order, but for a temporal axis, where each bucket
     /// seats by its instant whatever order the query returned.
     pub(super) domain: Vec<String>,
@@ -82,12 +83,12 @@ pub fn bind(payload: &Payload, draw_areas: bool) -> Result<Bound<'_>, Diagnostic
     if let Some(filled) = fill_calendar_buckets(&r, &prepared, draw_areas)? {
         prepared = Cow::Owned(filled);
     }
-    let x = x_axis(&r, &prepared, draw_areas)?;
+    let x = x_axis(&r, &prepared, &overlays, draw_areas)?;
     Ok(Bound { payload: prepared, r, overlays, draw_areas, wide_series: wide.series, wide_labels: wide.labels, x })
 }
 
 /// The x law over the chart's rows, and each distinct x value parsed once.
-fn x_axis(r: &LineResolved, payload: &Payload, draw_areas: bool) -> Result<XAxis, Diagnostic> {
+fn x_axis(r: &LineResolved, payload: &Payload, overlays: &[OverlayLayer], draw_areas: bool) -> Result<XAxis, Diagnostic> {
     let x_field = &r.x;
     let domain_rows = &payload.rows;
     let curve_name = if draw_areas {
@@ -122,7 +123,7 @@ fn x_axis(r: &LineResolved, payload: &Payload, draw_areas: bool) -> Result<XAxis
     let is_dates = is_year_shaped(domain_rows, x_field)
         || law.vl_type == VegaType::Temporal
         || matches!(crate::families::temporal::infer_vega_type(domain_rows, x_field), VegaType::Temporal | VegaType::Ordinal);
-    let grain: Option<TimeUnit> = match law.grain {
+    let unit: Option<TimeUnit> = match law.grain {
         crate::families::x_type::Grain::Calendar(tu) => Some(tu),
         _ => None,
     };
@@ -136,7 +137,7 @@ fn x_axis(r: &LineResolved, payload: &Payload, draw_areas: bool) -> Result<XAxis
     // flips a year or quarter grain to. `pin_sorted_domain` sorts exactly these; a
     // quantitative or temporal x ignores the sort.
     let is_band = matches!(law.vl_type, VegaType::Nominal | VegaType::Ordinal);
-    let mut parsed = XParsed { grain, part, band: is_band, rewritten, parsed: HashMap::new() };
+    let mut time = TimeAxis::new(Grain { unit, part, band: is_band }, rewritten);
     let mut domain: Vec<String> = {
         let mut seen = HashSet::new();
         let mut domain = Vec::new();
@@ -148,126 +149,38 @@ fn x_axis(r: &LineResolved, payload: &Payload, draw_areas: bool) -> Result<XAxis
         }
         domain
     };
+    // A layer's own x column joins the shared scale, at its place in time whichever order the layer lists it.
+    let mut layer_keys: Vec<(String, &str)> = Vec::new();
+    for overlay in overlays {
+        let layer_x = overlay.x().unwrap_or(x_field.as_str());
+        let layer_rows = crate::families::layers::resolve_layer_rows(payload, overlay.query_name(), r.query_name.as_deref(), fam)?;
+        let normalized = crate::families::temporal::normalize_labeled_temporal(layer_rows, layer_x)?;
+        time.rewrite(
+            layer_rows
+                .iter()
+                .zip(normalized.iter())
+                .map(|(raw, normalized)| (row_str(raw, layer_x), row_str(normalized, layer_x)))
+                .filter(|(raw, normalized)| raw != normalized),
+        );
+        layer_keys.extend(layer_rows.iter().filter(|row| row.get(layer_x).is_some_and(|v| !v.is_null())).map(|row| (row_str(row, layer_x), layer_x)));
+    }
     // First value no date parses from; a time axis refuses it, any other reads its dates only when all parse.
-    let unparsed: Option<String> = domain.iter().find(|key| parsed.add(key).is_none()).cloned();
-    if law.vl_type == VegaType::Temporal {
-        if let Some(value) = &unparsed {
-            return Err(x_value_not_a_date(&r.id, x_field, value));
+    let mut unparsed: Option<String> = None;
+    for (key, field) in domain.iter().map(|key| (key, x_field.as_str())).chain(layer_keys.iter().map(|(key, field)| (key, *field))) {
+        match time.add(key) {
+            Ok(()) => {}
+            Err(_) if law.vl_type != VegaType::Temporal => {
+                unparsed.get_or_insert_with(|| key.clone());
+            }
+            Err(unreadable) => return Err(unreadable.diagnostic(&r.id, field, fam)),
         }
+    }
+    if law.vl_type == VegaType::Temporal {
         // A line or area mark draws its vertices along the x it plots, so a temporal axis
         // seats its buckets left to right whatever order the query returned them in.
-        parsed.sort(&mut domain);
+        time.sort(&mut domain);
     }
-    Ok(XAxis { law, is_dates, is_band, rows_rewritten, parsed, domain })
-}
-
-/// `ERR-X-VALUE-NOT-A-DATE`: a time axis's x value that parses as no date or timestamp.
-pub(super) fn x_value_not_a_date(chart_id: &str, x_field: &str, value: &str) -> Diagnostic {
-    Diagnostic::new(
-        &crate::codes::ERR_X_VALUE_NOT_A_DATE,
-        [
-            ("chart_id", serde_json::json!(chart_id)),
-            ("value", serde_json::json!(value)),
-            ("x_field", serde_json::json!(x_field)),
-        ],
-    )
-}
-
-/// A temporal x value, parsed once. Every date computation reads these fields, never the text.
-#[derive(Clone, Copy)]
-pub(crate) struct XInstant {
-    /// The UTC instant in days (offset applied, millisecond precision): the ordering tiebreak and the last x.
-    pub at: f64,
-    /// Where a vertex sits: the grain's floor of the text's own wall date, the part's cycle position, else `at`.
-    pub pos: f64,
-    /// Vega's `timeunit` yields NaN for a year below 100 over a calendar grain.
-    pub nan: bool,
-}
-
-impl XInstant {
-    fn parse(text: &str, grain: Option<TimeUnit>, part: Option<TimePart>, band: bool) -> Option<Self> {
-        let at = crate::families::temporal::date_text_day(text)?;
-        let (y, m, d) = parse_iso_date(text)?;
-        let floor = grain.map(|tu| crate::families::temporal::floor_day(days_from_civil(y, m, d), tu));
-        let pos = match (floor, part) {
-            (Some(day), _) => day as f64,
-            (None, Some(part)) => part.instant(at),
-            (None, None) => at,
-        };
-        let nan = !band && floor.is_some_and(|day| crate::families::temporal::civil_from_days(day).0 < 100);
-        Some(Self { at, pos, nan })
-    }
-}
-
-/// Each distinct x text parsed once, with the ISO text the date math reads it as (a labeled bucket
-/// or year rewritten to its start, a part axis at the instant its cycle maps it to).
-#[derive(Clone)]
-pub(super) struct XParsed {
-    pub(super) grain: Option<TimeUnit>,
-    pub(super) part: Option<TimePart>,
-    pub(super) band: bool,
-    pub(super) rewritten: HashMap<String, String>,
-    pub(super) parsed: HashMap<String, (XInstant, String)>,
-}
-
-impl XParsed {
-    /// Parses `key` unless it is held already; `None` when it is no date.
-    pub(super) fn add(&mut self, key: &str) -> Option<()> {
-        if self.parsed.contains_key(key) {
-            return Some(());
-        }
-        let text = self.rewritten.get(key).map_or(key, String::as_str);
-        let instant = XInstant::parse(text, self.grain, self.part, self.band)?;
-        let iso = if self.part.is_some() { crate::families::temporal::instant_iso(instant.pos) } else { text.to_string() };
-        self.parsed.insert(key.to_string(), (instant, iso));
-        Some(())
-    }
-
-    /// Left to right: by vertex position, then by instant. Every key is parsed already.
-    pub(super) fn sort(&self, domain: &mut [String]) {
-        domain.sort_by(|a, b| {
-            let (a, b) = (self.parsed[a].0, self.parsed[b].0);
-            a.pos.total_cmp(&b.pos).then(a.at.total_cmp(&b.at))
-        });
-    }
-}
-
-/// The instants of an x domain, index-aligned with it.
-#[derive(Clone)]
-pub(crate) struct TemporalX {
-    pub at: Vec<f64>,
-    pub pos: Vec<f64>,
-    pub nan: Vec<bool>,
-    pub iso: Vec<String>,
-}
-
-impl TemporalX {
-    /// `None` when a value of `domain` is no date.
-    pub(super) fn of(domain: &[String], parsed: &XParsed) -> Option<Self> {
-        let entries = domain.iter().map(|key| parsed.parsed.get(key)).collect::<Option<Vec<_>>>()?;
-        Some(Self {
-            at: entries.iter().map(|(i, _)| i.at).collect(),
-            pos: entries.iter().map(|(i, _)| i.pos).collect(),
-            nan: entries.iter().map(|(i, _)| i.nan).collect(),
-            iso: entries.iter().map(|(_, iso)| iso.clone()).collect(),
-        })
-    }
-
-    /// The scale's extent over the rows that have a position; `None` for under two or a zero span.
-    pub(super) fn extent(&self) -> Option<(f64, f64)> {
-        let finite: Vec<f64> = self.pos.iter().zip(&self.nan).filter(|&(_, &nan)| !nan).map(|(&pos, _)| pos).collect();
-        crate::families::temporal::extent_of(&finite)
-    }
-
-    /// The domain with one more instant at its end (the end of the last bucket a bar occupies).
-    pub(super) fn extended(&self, end_day: f64, end_iso: String) -> Self {
-        let mut out = self.clone();
-        out.at.push(end_day);
-        out.pos.push(end_day);
-        out.nan.push(false);
-        out.iso.push(end_iso);
-        out
-    }
+    Ok(XAxis { law, is_dates, is_band, rows_rewritten, time, unparsed, domain })
 }
 
 /// A quarterly date a fiscal start places inside another quarter's bucket is keyed by the
@@ -320,7 +233,7 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
 /// else reads the rows: labeled buckets rewritten to their ISO start, then one
 /// row per bucket and panel, in chronological order, the missing ones null in
 /// every measure (`gap_fill_ordinal_time_per_panel`). `None` when no fill applies.
-fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) -> Result<Option<Payload>, String> {
+fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) -> Result<Option<Payload>, Diagnostic> {
     let curve = if draw_areas { r.style.area_mark.as_ref().and_then(|a| a.curve.as_deref()) } else { r.style.line_mark.curve.as_deref() };
     if payload.rows.is_empty() {
         return Ok(None);
@@ -357,7 +270,11 @@ fn fill_calendar_buckets(r: &LineResolved, payload: &Payload, draw_areas: bool) 
         rows.extend(completed);
     }
     // A stable chronological re-sort of the pooled panels (disjoint ranges concatenate out of order).
-    rows.sort_by(|a, b| row_str_ref(a, &r.x).cmp(&row_str_ref(b, &r.x)));
+    let mut instants = TimeAxis::new(Grain::default(), HashMap::new());
+    for row in &rows {
+        instants.add(&row_str(row, &r.x)).map_err(|e| e.diagnostic(&r.id, &r.x, mark))?;
+    }
+    rows.sort_by(|a, b| instants.day(&row_str(a, &r.x)).total_cmp(&instants.day(&row_str(b, &r.x))));
     let cloned = payload.with_inputs(payload.resolved.clone(), rows);
     Ok(Some(cloned))
 }

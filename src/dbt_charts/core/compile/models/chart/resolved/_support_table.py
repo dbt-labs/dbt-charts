@@ -16,6 +16,13 @@ class ResolvedSupportTableSource(ChartSupportTableSource):
     format: ResolvedFormat | None = Field(
         default=None, description="Resolved row value format."
     )
+    ink: str | None = Field(
+        default=None,
+        description=(
+            "Header ink naming the layered series this column reads, when the "
+            "legend is hidden; null keeps the board's header ink."
+        ),
+    )
 
 
 class ResolvedSupportTableAggregate(ChartSupportTableAggregate):

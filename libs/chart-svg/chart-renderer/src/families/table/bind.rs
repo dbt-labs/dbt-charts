@@ -3,6 +3,7 @@
 //! the pivot reshape. Per-row styles, links and glyphs resolve in `lay_out`.
 //! `bind` is the entry point.
 
+use crate::families::color_scale::nice_domain;
 use super::sanitize_color;
 use super::svg_font_family;
 use super::text_format;
@@ -620,12 +621,13 @@ pub(super) fn resolve_cell_style(
                 }
                 Some(v) => {
                     if let Some(num) = coerce_numeric_cell(Some(v)) {
-                        let (lo, hi) = compute_scale_domain(
+                        let raw = compute_scale_domain(
                             scale_rows,
                             col.name.as_str(),
                             target.min,
                             target.max,
                         );
+                        let (lo, hi) = nice_domain(target.min, target.max, target.nice.unwrap_or(false), raw);
                         let palette = resolve_palette_stops(target)?;
                         let col_format = col
                             .cfg
@@ -633,7 +635,7 @@ pub(super) fn resolve_cell_style(
                             .as_ref()
                             .map(|f| f.spec.as_str())
                             .map(|f| crate::common::predefined_number_spec(f).unwrap_or(f));
-                        let hinge = resolve_hinge(target.hinge.as_ref(), lo, hi, col_format);
+                        let hinge = resolve_hinge(target.hinge.as_ref(), raw.0, raw.1, col_format);
                         *slot = Some(interpolate_scale_color(
                             num,
                             lo,
@@ -1034,7 +1036,12 @@ pub(super) fn format_magnitudes(
         ..FormatParts::default()
     };
     let shared = col.cfg.shared_scale.as_ref();
-    let pad_table = &col.cfg.decimal_pad_table;
+    // A left-anchored column has no decimal lane to pad toward.
+    let pad_table: &[String] = if col.is_numeric && col.cfg.align.as_deref() == Some("left") {
+        &[]
+    } else {
+        &col.cfg.decimal_pad_table
+    };
     let sub_unit_specs = board_sub_unit_specs();
 
     // symbol_mode == "anchors" limits a numeric cell's currency prefix and
@@ -2470,8 +2477,10 @@ pub(super) fn visible_columns<'a>(
                                 _ => None,
                             }
                         })
-                        .collect()
+                        .collect::<Vec<_>>()
                 })
+                // A level whose every group lost all its leaves paints no band.
+                .filter(|level| !level.is_empty())
                 .collect();
             let new_n_row_dims = visible_flags[..p.n_row_dims].iter().filter(|&&v| v).count();
             (new_n_row_dims, remapped_levels)

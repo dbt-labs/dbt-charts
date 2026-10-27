@@ -30,8 +30,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
         # engine.py: invariants between the engine and the code registry
         ("engine.py", "_render_payload"),
-        # chart/presentation.py
-        ("chart/presentation.py", "apply_presentation_defaults"),
         # layouts.py: same theme-cascade guarantee (layout.tabs.font.case is
         # inherited from style.font, so a resolved style always carries it).
         ("layouts.py", "render_tabs_layout"),
@@ -50,23 +48,9 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("chart/time_unit_detect.py", "_cadence_token_width"),
         # chart/type_inference.py
         ("chart/type_inference.py", "<module>"),
-        # chart/emitters/_channels.py
-        ("chart/emitters/_channels.py", "channel_to_encoding"),
-        # Same validation, same debt as table_support.interpolate_scale_color's
-        # allowlist entry above — a diverging palette's minimum stop-count
-        # requirement is checked here too (VL domain breakpoints instead of a
-        # direct color lookup), not yet migrated to a compile-time check.
-        ("chart/emitters/_channels.py", "_diverging_domain"),
-        ("chart/emitters/_channels.py", "_diverging_breakpoints_truncated"),
         # chart/emitters/bar.py
-        # chart/emitters/geo.py
-        ("chart/emitters/geo.py", "GeoshapeEmitter._emit_choropleth"),
-        # chart/features/click_interactivity.py
-        ("chart/features/click_interactivity.py", "_build_href_calc_expr"),
         # chart/features/endpoint_labels.py
         # chart/vega_lite.py
-        # chart/translate.py
-        ("chart/translate.py", "translate_to_vl"),
         # converters/chart.py
         ("converters/chart.py", "render_svg_content"),
         ("converters/chart.py", "render_chart_artifact"),

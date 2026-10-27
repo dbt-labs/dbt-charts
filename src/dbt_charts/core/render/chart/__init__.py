@@ -1,8 +1,7 @@
 """Chart rendering subpackage.
 
-Holds the Vega-Lite emitters for the geo maps (``emitters/``), the feature
-pipeline (``features/``), Vega-Lite assembly (``translate.py``), and the
-orchestration that hands every other family to the Rust engine.
+Holds the orchestration that hands every chart family to the Rust engine, and
+the shared channel and series helpers the warning detectors read (``emitters/``).
 """
 
 from dbt_charts.core.render.utils import slug_to_text

@@ -41,7 +41,6 @@ def _make_executor(board: object, query_registry: object, truncated_reason: str 
     ok = Mock()
     ok.is_success = True
     ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = truncated_reason
     mock_registry = Mock()

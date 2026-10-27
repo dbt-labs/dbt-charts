@@ -46,6 +46,7 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.query.normalized import Query, ValuesQuery
 from dbt_charts.core.compile.resolve.style.axis_cascade import AUTO_AXIS_FORMAT
+from dbt_charts.core.compile.validate.walk import board_queries, boards
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_FORMAT_AFFIX_TIME_UNSUPPORTED,
     ERR_FORMAT_ALIAS_CYCLE,
@@ -499,13 +500,6 @@ def _validate_query_formats(
                 )
 
 
-def _boards(board: Board) -> Iterator[Board]:
-    yield board
-    for item in board.layout.items:
-        if item.board is not None:
-            yield from _boards(item.board)
-
-
 def _spec_name(spec: str | FormatConfig) -> str | None:
     return spec.spec if isinstance(spec, FormatConfig) else spec
 
@@ -523,7 +517,7 @@ def format_names_used(
     """
     used: set[str] = set()
     text_call = re.compile(r"""\bformat\(\s*(['"])(.+?)\1""")
-    for each in _boards(board):
+    for each in boards(board):
         slots = [
             *_iter_format_slots(each.authored_style, "", False),
             *(
@@ -536,13 +530,7 @@ def format_names_used(
         ]
         names = (_spec_name(spec) for _, spec, *_ in slots)
         used.update(name for name in names if name is not None)
-        queries = [*each.queries.values()]
-        queries += [
-            chart.query
-            for chart in each.charts.values()
-            if chart.type != "callout" and chart.query_is_inline and chart.query
-        ]
-        for query in queries:
+        for query in board_queries(each):
             if query.formats is not None:
                 used.update(query.formats.values())
     texts = (

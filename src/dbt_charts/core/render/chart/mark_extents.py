@@ -34,11 +34,9 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedAreaChart,
     ResolvedBarChart,
     ResolvedChart,
-    ResolvedGeoshapeChart,
     ResolvedHeatmapChart,
     ResolvedLineChart,
     ResolvedPieChart,
-    ResolvedPointMapChart,
     ResolvedScatterChart,
 )
 from dbt_charts.core.compile.resolve.chart._wide_fields import wide_measure_fields
@@ -196,12 +194,11 @@ def _measure_columns(chart: ResolvedChart) -> list[str]:
     the category field on both orientations"); the resolved model's own x/y
     semantics never swap. Heatmap encodes its measure through ``color`` (x/y
     are its two categorical dimensions, not measures). Pie/donut measures
-    ``theta``. Geoshape's choropleth value is ``value_field``; point_map/
-    bubble_map only has a magnitude channel when ``size`` (bubble sizing) is
-    authored — plain point_map has none.
+    ``theta``. The geo families raise ``ERR-CHART-PAINTED-NO-MARKS`` in the
+    engine and never reach this guard.
 
     Returns an empty list when the family has no resolvable measure column
-    (e.g. an unsized point_map, or a non-plotting family this is never called
+    (e.g. a non-plotting family this is never called
     for — see ``PAINTS_MARKS``) — the caller treats that as "can't tell",
     not as "all zero".
     """
@@ -218,10 +215,6 @@ def _measure_columns(chart: ResolvedChart) -> list[str]:
         column = chart.color
     elif isinstance(chart, ResolvedPieChart):
         column = chart.theta
-    elif isinstance(chart, ResolvedGeoshapeChart):
-        column = chart.value_field
-    elif isinstance(chart, ResolvedPointMapChart):
-        column = chart.size
     else:
         return []
     if column is None:

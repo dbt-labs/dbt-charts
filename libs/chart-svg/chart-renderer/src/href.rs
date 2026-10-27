@@ -336,19 +336,33 @@ pub(crate) enum LinkOpen {
 pub(crate) struct Anchor<'a> {
     pub url: &'a str,
     pub open: LinkOpen,
+    /// The mark is one a board variable does not select: its ink is mixed toward
+    /// the canvas (`selected::Selection`), and the hover runtime reads the flag.
+    pub recede: Option<crate::selected::Recede>,
+}
+
+impl Anchor<'_> {
+    /// `paint` as this mark draws it: mixed toward the canvas on a receded mark.
+    pub(crate) fn paint(anchor: Option<Self>, paint: &str) -> String {
+        match anchor.and_then(|a| a.recede) {
+            Some(recede) => recede.paint(paint),
+            None => paint.to_string(),
+        }
+    }
 }
 
 impl Anchor<'_> {
     pub(crate) fn attrs(&self) -> scene::Attrs {
         let attrs = scene::Attrs::new().set("href", self.url);
         let attrs = self.open.open_attr().map_or(attrs.clone(), |v| attrs.set("data-dbt-link-open", v));
-        self.open.target().map_or(attrs.clone(), |v| attrs.set("target", v))
+        let attrs = self.open.target().map_or(attrs.clone(), |v| attrs.set("target", v));
+        if self.recede.is_some() { attrs.set("data-dbt-receded", "true") } else { attrs }
     }
 }
 
 impl LinkOpen {
     pub(crate) fn anchor(self, href: Option<&str>) -> Option<Anchor<'_>> {
-        href.map(|url| Anchor { url, open: self })
+        href.map(|url| Anchor { url, open: self, recede: None })
     }
 
     /// The `data-dbt-link-open` value a link's `<a>` carries; a page link

@@ -140,15 +140,7 @@ def _render_svg(chart_type: str) -> str:
     artifact = render_resolved_chart(
         resolved, data, board_rs, width=_WIDTH, height=_HEIGHT, is_placeholder=False
     )
-    return render_chart_artifact(
-        artifact,
-        "svg",
-        board_rs,
-        width=_WIDTH,
-        height=_HEIGHT,
-        is_placeholder=False,
-        chart_id=resolved.id,
-    )
+    return render_chart_artifact(artifact, "svg")
 
 
 def test_registry_fully_accounted_for() -> None:

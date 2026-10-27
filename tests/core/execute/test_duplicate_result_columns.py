@@ -9,14 +9,12 @@ import duckdb
 import pyarrow as pa
 import pytest
 
+from dbt_charts.core.column_types import reject_duplicate_columns
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SQLiteSourceConfig
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_DUPLICATE_COLUMN
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.base import (
-    RowFetchLimit,
-    reject_duplicate_columns,
-)
+from dbt_charts.core.execute.adapters.base import RowFetchLimit
 from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
 from dbt_charts.core.execute.cache_composition import rows_from_result

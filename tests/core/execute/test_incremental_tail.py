@@ -65,7 +65,6 @@ def _adapter(*datasets: list[dict]) -> Mock:
         r = Mock()
         r.is_success = True
         r.data = list(data)
-        r.column_descriptions = None
         r.resolved_relations = None
         r.truncated_reason = None
         results.append(r)

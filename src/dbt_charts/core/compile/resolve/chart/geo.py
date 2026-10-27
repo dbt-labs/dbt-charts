@@ -316,7 +316,7 @@ def _with_baked_color_gradient(
 
     Threads the resolved subtype down the existing nesting so the baked
     gradient's resolved_stops survive pydantic serialization (board artifact
-    round-trip). `emitters/geo.py` reads `chart.style.geoshape.color.gradient`
+    round-trip). The engine reads `chart.style.geoshape.color.gradient`
     from the same path — the access is unchanged, now provably resolved.
     """
     if geoshape.color is None or geoshape.color.gradient is None:
@@ -353,7 +353,7 @@ def _resolve_geoshape(
     geoshape = merge_unset(chart_style_context.geoshape, primary)
     channels = _channels_for(normalized, data)
     _tf = resolve_title_font(chart_local_style_context, width)
-    # The tooltip formats chart.value_field (emitters/geo.py:357-364), which
+    # The tooltip formats chart.value_field (the choropleth tooltip), which
     # is normalized.value when authored, else the color channel
     # (_resolve_choropleth_value_field) -- vote on that same field, not the
     # color channel directly, or an authored `value:` silently outvotes it.
@@ -420,11 +420,11 @@ def _resolve_point_map(
     primary = _with_color_tokens(normalized.style, chart_style_context)
     point_map = merge_unset(chart_style_context.point_map, primary)
     channels = _channels_for(normalized, data)
-    # geo_tooltip.py formats only size_field with tooltip_format -- the
+    # The point tooltip formats only size_field with tooltip_format -- the
     # color entry gets no format at all, so voting on color would drag an
     # unformatted column's register onto size. A negative size row never
-    # paints either (emitters/geo.py's row_has_negative_size filter drops it
-    # before Vega-Lite sees it, mark AREA cannot be negative), so it must
+    # paints either (the engine drops it before drawing, mark AREA
+    # cannot be negative), so it must
     # not vote.
     tooltip_format_values = [
         v for v in _column_numeric_values(data, normalized.size) if v >= 0
@@ -455,6 +455,8 @@ def _resolve_point_map(
     bg_geo_info = geo_sources.get(bg_source) if bg_source else None
     basemap_geo_url: str | None = None
     basemap_geo_format: dict[str, Any] | None = None
+    # The registry key the author wrote; empty for a raw URL.
+    basemap_source_name = bg_source if bg_geo_info is not None and bg_source else ""
     if bg_source is not None:
         bg_url: str = str(bg_geo_info["url"]) if bg_geo_info else bg_source
         basemap_geo_url = bg_url
@@ -510,6 +512,7 @@ def _resolve_point_map(
         basemap_stroke=basemap_stroke,
         basemap_geo_url=basemap_geo_url,
         basemap_geo_format=basemap_geo_format,
+        basemap_source_name=basemap_source_name,
         geo_projection_type=proj_type,
         geo_projection_params=proj_params,
         style=ResolvedPointMapStyle(

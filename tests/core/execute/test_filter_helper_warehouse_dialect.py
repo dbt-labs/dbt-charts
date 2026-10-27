@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -75,7 +76,7 @@ def wire_sql(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         source_config: dict[str, Any] | None,
     ) -> QueryResult:
         seen["sql"] = prepared.sql
-        return QueryResult(data=[], columns=[])
+        return QueryResult(data=[], columns=[], schema=literal_schema([], []))
 
     monkeypatch.setattr(SqlAdapter, "_execute_via_dbt_adapter", _fake)
     return seen

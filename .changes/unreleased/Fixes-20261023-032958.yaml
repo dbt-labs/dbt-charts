@@ -1,0 +1,3 @@
+kind: Fixes
+body: A date axis that drops its grain for sparse data labels by the same curated cadence as any other, with no colliding full month names.
+time: 2026-10-23T03:29:58.063397-07:00

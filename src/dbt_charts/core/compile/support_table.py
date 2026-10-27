@@ -283,8 +283,9 @@ def resolve_support_table(
     query_formats: Mapping[str, str] | None,
     *,
     stamp_number: bool,
+    header_inks: Mapping[str, str],
 ) -> ResolvedSupportTable:
-    """Bake every entry's format.
+    """Bake every entry's format, and a `source:` entry's header ink.
 
     A sub-$1-floor or spec-less-affix format votes its spec over the entry's
     values and then reads as native digits, not house. With ``stamp_number``,
@@ -328,7 +329,7 @@ def resolve_support_table(
             fmt = resolve_format_parts(PredefinedNumberFormat.number, formats)
         if fmt is not None:
             reject_native(fmt, f"support_table[{len(entries)}].format")
-        entries.append(_with_resolved_format(entry, fmt))
+        entries.append(_with_resolved_format(entry, fmt, header_inks))
     return ResolvedSupportTable(entries=entries)
 
 
@@ -341,10 +342,17 @@ def _keeps_column_unit(entry: ChartSupportTableEntry) -> bool:
 
 
 def _with_resolved_format(
-    entry: ChartSupportTableEntry, fmt: ResolvedFormat | None
+    entry: ChartSupportTableEntry,
+    fmt: ResolvedFormat | None,
+    header_inks: Mapping[str, str],
 ) -> ResolvedSupportTableEntry:
     if isinstance(entry, ChartSupportTablePerSeries):
         return resolved_as(ResolvedSupportTablePerSeries, entry, format=fmt)
     if isinstance(entry, ChartSupportTableAggregate):
         return resolved_as(ResolvedSupportTableAggregate, entry, format=fmt)
-    return resolved_as(ResolvedSupportTableSource, entry, format=fmt)
+    return resolved_as(
+        ResolvedSupportTableSource,
+        entry,
+        format=fmt,
+        ink=header_inks.get(entry.source),
+    )

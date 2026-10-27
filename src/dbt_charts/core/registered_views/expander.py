@@ -59,7 +59,7 @@ import functools
 import pathlib
 from collections.abc import Callable
 from importlib.resources import files
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from jinja2 import (
     StrictUndefined,
@@ -185,18 +185,30 @@ _TEMPLATE_ENV.globals["plan_key_variables"] = _plan_key_variables
 def _pivot_column_profiles(
     cols: list[QueryRow],
     characteristics: list[list[str]],
-) -> list[
-    list[Any]  # type-state: explicit_any — pivoted row mixes label str with DB values
-]:
+) -> list[list[str | None]]:
     """Transpose column-profile rows into a describe-style table: one row per
     characteristic (from ``characteristics``, each a ``[label, field]`` pair),
-    one column per entry in ``cols``.
+    one column per entry in ``cols``. A column holds a type name, a percentage
+    and a count, so cells are text formatted here: a values column declares one
+    kind, so no column format can apply.
     """
     # QueryRow has no .get, and profile rows carry only the fields a source knows.
     return [
-        [label] + [c[field] if field in c else None for c in cols]  # noqa: SIM401
+        [label]
+        + [
+            None if field not in c or c[field] is None else _profile_text(c[field])
+            for c in cols
+        ]
         for label, field in characteristics
     ]
+
+
+def _profile_text(value: str | int | float) -> str:
+    if isinstance(value, (bool, str)):
+        return str(value)
+    if isinstance(value, int):
+        return f"{value:,}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
 
 
 _TEMPLATE_ENV.globals["pivot_column_profiles"] = _pivot_column_profiles

@@ -20,8 +20,6 @@ from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render.board_resolve import build_resolved_board
-from dbt_charts.core.render.chart.session import BoardRenderSession
-from dbt_charts.core.render.chart.spec import RenderBox
 
 from .._engine_render import render_pie_svg
 from .._svg_render import render_board_to_svg
@@ -53,37 +51,6 @@ def _resolve_board(yaml_content: str) -> tuple[Any, Any]:
     return resolved_board, executor
 
 
-def _iter_items(layout: Any) -> Any:
-    """Yield every layout item across the whole board, nested boards included."""
-    for item in layout.items:
-        yield item
-        if item.board is not None:
-            yield from _iter_items(item.board.layout)
-
-
-def _specs(yaml_content: str) -> dict[str, dict[str, Any]]:
-    resolved_board, executor = _resolve_board(yaml_content)
-    session = BoardRenderSession.create(resolved_board.style)
-    out: dict[str, dict[str, Any]] = {}
-    for chart_id, chart in resolved_board.charts.items():
-        if isinstance(chart, ResolvedPieChart):
-            continue
-        rows = executor.execute_query(chart.query_name, {}) if chart.query_name else []
-        item = next(
-            i
-            for i in _iter_items(resolved_board.layout)
-            if i.chart and i.chart.id == chart_id
-        )
-        out[chart_id] = session.finalize_vl(
-            session.emit_chart(
-                chart,
-                RenderBox(width=item.width, height=item.height),
-                {chart.query_name: rows},
-            )
-        )
-    return out
-
-
 def _pie_svg(yaml_content: str, chart_id: str) -> str:
     """The engine-drawn SVG of the board's pie ``chart_id``."""
     resolved_board, executor = _resolve_board(yaml_content)
@@ -107,50 +74,6 @@ def _slice_label_ink(svg: str, value: str) -> str:
     )
     assert match is not None, f"no slice label for {value!r}"
     return match.group(1)
-
-
-def _walk(spec: dict[str, Any], kinds: frozenset[str]) -> list[dict[str, Any] | str]:
-    """Return what paints each layer whose mark is in ``kinds``.
-
-    A literal ``mark.fill``/``mark.color`` beats ``encoding.color``, and a
-    layer-level channel def beats the shared outer one.
-    """
-    out: list[dict[str, Any] | str] = []
-
-    def visit(node: dict[str, Any], inherited: dict[str, Any] | None) -> None:
-        color = node.get("encoding", {}).get("color")
-        effective = color if isinstance(color, dict) else inherited
-        children = [
-            c
-            for k in ("layer", "hconcat", "vconcat", "concat")
-            for c in node.get(k, [])
-        ]
-        if children:
-            for child in children:
-                visit(child, effective)
-            return
-        mark = node.get("mark")
-        if mark is None:
-            return
-        kind = mark if isinstance(mark, str) else mark.get("type")
-        if kind not in kinds:
-            return
-        literal = (
-            mark.get("fill") or mark.get("color") if isinstance(mark, dict) else None
-        )
-        if isinstance(mark, dict) and literal and mark.get("stroke") == literal:
-            # A knockout halo — the backing disc under an endpoint marker,
-            # painted page-canvas on both fill and stroke so the dot reads
-            # clear of the line it sits on. It carries no series identity, so
-            # the binding leaves it alone, same as the annotation marks above.
-            return
-        if literal:
-            out.append(literal)
-        elif isinstance(effective, dict):
-            out.append(effective)
-
-    visit(spec, None)
-    return out
 
 
 def _board(charts: str, extra_queries: str = "", style: str = "") -> str:
@@ -602,48 +525,6 @@ rows:
             for c in resolved_board.charts.values()
         }
         assert bound["layered"] == {"category"}, bound
-
-    @staticmethod
-    def _layered_vs_plain(layer_extra: str = "") -> dict[str, dict[str, str]]:
-        """Color of every scale entry, per chart, for a layered chart drawing a
-        subset of the categories next to a plain chart drawing all of them."""
-        specs = _specs(
-            _board(
-                f"""
-  plain:
-    query: all
-    type: bar
-    x: status
-    y: revenue
-    color: category
-  layered:
-    query: subset
-    type: bar
-    x: status
-    y: revenue
-    color: category
-    layers:
-      - type: line
-        query: all
-        x: status
-        y: revenue
-        label: Trend{layer_extra}
-rows:
-  - plain
-  - layered
-"""
-            )
-        )
-        colors = {}
-        for chart_id in ("plain", "layered"):
-            base = next(
-                e
-                for e in _walk(specs[chart_id], frozenset({"bar"}))
-                if isinstance(e, dict) and e.get("field") == "category"
-            )
-            scale = base["scale"]
-            colors[chart_id] = dict(zip(scale["domain"], scale["range"], strict=True))
-        return colors
 
     _LAYERED_PINNED = _board(
         """

@@ -1,15 +1,14 @@
-"""Resolve a geo source to its parsed TopoJSON/GeoJSON document.
+"""Resolve a geo source to its TopoJSON/GeoJSON document.
 
 A source is either `bundled:<file>` (a document shipped in this package) or an
-http(s) URL. Python loads the geometry and hands the parsed document to whoever
-draws the map, so the draw step does no I/O. A host with its own egress policy
+http(s) URL. Python loads the geometry as raw text for the engine
+(`load_geometry_text`), so the draw step does no I/O. A host with its own egress policy
 installs a fetcher with `geometry_fetcher_scope`.
 """
 
 from __future__ import annotations
 
 import http.client
-import json
 import time
 import urllib.request
 from collections.abc import Callable, Generator
@@ -18,13 +17,11 @@ from contextvars import ContextVar
 from functools import cache
 from importlib.resources import files
 from pathlib import PurePosixPath
-from typing import IO, Any, Final
+from typing import IO, Final
 
 from dbt_charts.core.compile.config import get_config
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_GEO_SOURCE_UNAVAILABLE
-
-GeoDocument = dict[str, Any]  # type-state: explicit_any — parsed TopoJSON/GeoJSON
 
 # Returns the raw document bytes, or raises OSError (unreachable, timed out,
 # refused by policy), http.client.HTTPException (a malformed response) or
@@ -118,38 +115,36 @@ def geometry_fetcher_scope(fetcher: GeometryFetcher) -> Generator[None]:
         _fetcher.reset(token)
 
 
-def _parse(source: str, body: bytes) -> GeoDocument:
-    try:
-        document = json.loads(body)
-    except ValueError as exc:
-        raise _unavailable(source, f"not valid JSON: {exc}") from exc
-    if not isinstance(document, dict):
-        raise _unavailable(source, "not a JSON object")
-    return document
-
-
 @cache
-def _bundled_bytes(name: str) -> bytes:
+def _bundled_text(name: str) -> str:
     source = f"{BUNDLED_PREFIX}{name}"
     if PurePosixPath(name).name != name or not name.endswith(".json"):
         raise _unavailable(source, "no bundled map has that name")
     resource = files("dbt_charts.core.render.geo").joinpath(name)
     if not resource.is_file():
         raise _unavailable(source, "no bundled map has that name")
-    return resource.read_bytes()
+    return resource.read_text(encoding="utf-8")
 
 
-def load_geometry(source: str) -> GeoDocument:
-    """The parsed document for *source*, a fresh object on every call.
+def load_geometry_text(source: str) -> str:
+    """The raw JSON text of *source*'s document, unparsed.
+
+    The engine parses it, once per distinct content, so a render pays neither a
+    Python parse nor a re-serialization. A bundled map's text is package data,
+    read once per process; a fetched document is caller data and is never kept.
 
     Raises:
         ChartDataError: ERR-GEO-SOURCE-UNAVAILABLE when the source cannot be
-            read, is over the size cap, or is not a JSON object.
+            read, is over the size cap, or is not UTF-8 (a leading BOM is dropped). Whether the text is a
+            JSON object is the engine's to check.
     """
     if source.startswith(BUNDLED_PREFIX):
-        return _parse(source, _bundled_bytes(source.removeprefix(BUNDLED_PREFIX)))
+        return _bundled_text(source.removeprefix(BUNDLED_PREFIX))
     try:
         body = _fetcher.get()(source)
     except (OSError, http.client.HTTPException) as exc:
         raise _unavailable(source, str(exc) or repr(exc)) from exc
-    return _parse(source, body)
+    try:
+        return body.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise _unavailable(source, f"not valid UTF-8: {exc}") from exc

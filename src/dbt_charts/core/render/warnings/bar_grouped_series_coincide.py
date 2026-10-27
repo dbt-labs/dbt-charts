@@ -2,7 +2,7 @@
 core/diagnostics/codes_render.py for what this fires on.
 
 The engine raises it for a vertical bar whose series split a band that has no
-band scale to divide (a numeric or continuous temporal x): every series paints
+band scale to divide (a continuous temporal x): every series paints
 at the identical position and width.
 """
 

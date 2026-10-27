@@ -31,7 +31,6 @@ def _mock_adapter(rows: list[dict[str, Any]]) -> Mock:
     ok = Mock()
     ok.is_success = True
     ok.data = rows
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

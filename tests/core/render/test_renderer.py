@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -25,6 +25,7 @@ from dbt_charts.core.compile.template.daterange import resolve_daterange_preset_
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.executor import utc_now
 from dbt_charts.core.render import render
 
 
@@ -40,7 +41,6 @@ def _make_executor(board, query_registry, rows):
     ok = Mock()
     ok.is_success = True
     ok.data = rows
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -257,7 +257,6 @@ def _make_per_query_executor(board, query_registry, rows_by_query):
         ok = Mock()
         ok.is_success = True
         ok.data = rows_by_query[kwargs["query_name"]]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = None
         return ok
@@ -526,6 +525,7 @@ def _render_with_duckdb(
     local_project: Callable[..., FilesystemProject],
     yaml_text: str,
     variables: dict[str, str],
+    clock: Callable[[], datetime] = utc_now,
 ) -> str:
     (tmp_path / "dbt_charts.yml").write_text(
         'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
@@ -538,6 +538,7 @@ def _render_with_duckdb(
         result.board,
         adapter_registry=build_adapter_registry(project),
         query_registry=result.query_registry,
+        clock=clock,
     )
     svg = render(result.board, executor, format="svg", variables=variables).output
     assert isinstance(svg, str)
@@ -554,12 +555,52 @@ def test_a_preset_reaches_text_as_dates_and_the_control_as_its_id(
     variables: dict[str, str],
     preset: str,
 ) -> None:
-    svg = _render_with_duckdb(tmp_path, local_project, _BOARD, variables)
-    start, _ = resolve_daterange_preset_iso(preset, date.today())
+    now = utc_now()
+    svg = _render_with_duckdb(tmp_path, local_project, _BOARD, variables, lambda: now)
+    start, _ = resolve_daterange_preset_iso(preset, now.date())
 
     assert f"From {start}" in svg
     assert "recent" in svg
     assert re.search(rf'data-dbt-variable="span"[^>]*data-dbt-value="{preset}"', svg)
+
+
+# 03:00 UTC on Oct 21 is still Oct 20 in New York: last_7_days is Oct 14..20 there.
+_ZONED = """
+title: "From {{ span[0] }}"
+regional:
+  time_zone: America/New_York
+variables:
+  span:
+    input: daterange
+    default: last_7_days
+queries:
+  q:
+    source: db
+    sql: |
+      SELECT 'hit' AS w FROM (SELECT DATE '2026-10-14' AS d) t
+      WHERE {{ filter_date_range('d', span) }}
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+
+def test_a_preset_dates_on_the_board_zone_clock(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    svg = _render_with_duckdb(
+        tmp_path,
+        local_project,
+        _ZONED,
+        {},
+        clock=lambda: datetime(2026, 10, 21, 3, 0, tzinfo=UTC),
+    )
+
+    assert "From 2026-10-14" in svg
+    assert "hit" in svg
 
 
 def test_an_unknown_preset_in_a_template_raises_naming_the_presets(

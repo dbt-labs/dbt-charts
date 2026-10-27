@@ -32,6 +32,7 @@ from dbt_charts.core.compile.models.markers import (
     Format,
     InheritSlot,
     Merge,
+    NullHint,
     SkipInheritSlots,
     Strategy,
 )
@@ -1023,7 +1024,13 @@ class BaseAxisStyle(BaseModel):
     labels: AxisLabelStyle = Field(
         default_factory=AxisLabelStyle, description="Axis label style."
     )
-    title: AxisTitleStyle = Field(
+    title: Annotated[
+        AxisTitleStyle,
+        NullHint(
+            'To hide the axis title, set `x_label: ""` or `y_label: ""` on the '
+            "chart, or `title.visible: false` here."
+        ),
+    ] = Field(
         default_factory=AxisTitleStyle,
         description="Axis title style.",
     )

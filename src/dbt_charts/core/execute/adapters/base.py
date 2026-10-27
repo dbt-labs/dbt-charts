@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
+from dbt_charts.core.column_types import ColumnType, check_datetime_cells
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.connections import classify_connection_error
@@ -37,14 +37,13 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_UNKNOWN_COLUMN,
     ERR_BINDER_UNKNOWN_RELATION,
     ERR_QUERY_INTERRUPTED,
-    ERR_RESULT_DUPLICATE_COLUMN,
     ERR_WAREHOUSE_AUTH,
     ERR_WAREHOUSE_BYTES_CAP_EXCEEDED,
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
     UNKNOWN_RELATION_DIALECT_NOTES,
 )
-from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
 from dbt_charts.core.dialects import SQLDialect, get_dialect
 
@@ -75,8 +74,8 @@ class QueryResult:
     Attributes:
         data: List of dictionaries containing query results (each dict is a row)
         columns: List of column names
-        column_descriptions: Full PEP 249 cursor.description tuples keyed by column name.
-            Each tuple: (name, type_code, display_size, internal_size, precision, scale, null_ok)
+        schema: Declared type of each column, keyed by column name, in column
+            order. Required when the query succeeded; an error carries none.
         error: The classified failure if the query failed, None if successful. Built
             at the classification site (the adapter), carrying its own code and
             fields — the executor raises it as-is rather than reassembling one.
@@ -86,7 +85,7 @@ class QueryResult:
         self,
         data: list[dict[str, Any]],
         columns: list[str] | None = None,
-        column_descriptions: dict[str, tuple[Any, ...]] | None = None,
+        schema: dict[str, ColumnType] | None = None,
         error: DbtChartsError | None = None,
         resolved_relations: list[ResolvedRelation] | None = None,
         truncated_reason: Literal["max_rows"] | None = None,
@@ -96,10 +95,8 @@ class QueryResult:
         Args:
             data: List of dictionaries containing query results (each dict is a row)
             columns: Optional list of column names (inferred from data if not provided)
-            column_descriptions: Optional PEP 249 cursor.description tuples keyed by
-                column name. Each value is a 7-tuple: (name, type_code, display_size,
-                internal_size, precision, scale, null_ok). Populated from
-                cursor.description when a database adapter executes the query.
+            schema: The declared type of each column, in column order. Required
+                unless ``error`` is set.
             error: The classified error, when the query failed.
             resolved_relations: dbt ref/source relations resolved during execution.
             truncated_reason: Set to "max_rows" when the execution.max_rows
@@ -113,7 +110,15 @@ class QueryResult:
             self.columns = list(self.data[0].keys())
         else:
             self.columns = columns or []
-        self.column_descriptions = column_descriptions
+        if error is None:
+            if schema is None:
+                raise ValueError("a successful QueryResult needs a column schema")
+            if list(schema) != self.columns:
+                raise ValueError(
+                    f"schema columns {list(schema)} differ from columns {self.columns}"
+                )
+            check_datetime_cells(schema, self.data)
+        self.schema: dict[str, ColumnType] = {} if schema is None else schema
         self.error = error
         self.resolved_relations: list[ResolvedRelation] = resolved_relations or []
         self.truncated_reason: Literal["max_rows"] | None = truncated_reason
@@ -182,19 +187,6 @@ def apply_row_limit_truncation(
             : limit.effective_limit
         ], "max_rows" if limit.ceiling_binding else None
     return rows, None
-
-
-def reject_duplicate_columns(columns: Sequence[str]) -> None:
-    """Raise ERR-RESULT-DUPLICATE-COLUMN if *columns* repeats a name.
-
-    Call this on the final column names, before rows are keyed by them.
-    """
-    duplicated = sorted(name for name, n in Counter(columns).items() if n > 1)
-    if duplicated:
-        raise ExecutionError.from_code(
-            ERR_RESULT_DUPLICATE_COLUMN,
-            columns=", ".join(repr(c) for c in duplicated),
-        )
 
 
 def resolve_setup_sql(

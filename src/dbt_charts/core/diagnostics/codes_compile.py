@@ -447,6 +447,23 @@ ERR_PROJECT_CONFIG_SCHEMA = REGISTRY.register(
     )
 )
 
+ERR_LOCKED_SCHEMA_VERSION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LOCKED-SCHEMA-VERSION",
+        domain="compile",
+        title="Board file does not match the project's locked schema version",
+        message_template="{message}",
+        doc=(
+            "Fired when dbt_charts.yml sets `locked_schema_version` and a board, "
+            "its meta.yml, or an `extends:` file uses syntax that release does "
+            "not accept, typically because a newer dbt Charts wrote it. Rewrite "
+            "the file in the locked release's syntax, or raise the lock."
+        ),
+        summary="Fired when a board file uses syntax newer than the project's locked_schema_version.",
+        docs_topic="board",
+    )
+)
+
 ERR_CONFIG_KEY_MOVED = REGISTRY.register(
     ErrorCode(
         code="ERR-CONFIG-KEY-MOVED",
@@ -1376,6 +1393,29 @@ ERR_PALETTE_UNKNOWN = REGISTRY.register(
         summary="Fired when `palette:` names no known theme role or shipped palette.",
         docs_topic="charts",
         hint_generator=suggest_close_palette,
+    )
+)
+
+ERR_PALETTE_REBIND_UNSATISFIED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PALETTE-REBIND-UNSATISFIED",
+        domain="compile",
+        title="A palette role is rebound to a palette of the wrong family",
+        message_template=(
+            "{field_path} is set to {bound!r}, a {family} palette, but this "
+            "role needs a {required} palette."
+        ),
+        doc=(
+            "Fired when a board or project layer rebinds `category`, "
+            "`sequence`, or `diverge` under `style.palettes` to a palette of "
+            "another family. Themes read `category` as an ordered categorical "
+            "stop list and `sequence`/`diverge` as continuous ramps, so each "
+            "role accepts one family, on every theme alike. Bind a "
+            "categorical palette to `category`, a sequential one to "
+            "`sequence`, and a diverging one to `diverge`."
+        ),
+        summary="Fired when `style.palettes.category`, `sequence`, or `diverge` names a palette of the wrong family.",
+        docs_topic="charts",
     )
 )
 

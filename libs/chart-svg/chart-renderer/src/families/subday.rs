@@ -3,9 +3,9 @@
 //! (`time_unit_detect.py`'s `default_subday_label_expr_for`, `default_subday_tick_interval`,
 //! `subday_header_for`).
 
-use super::temporal::{civil_from_days, clock_instants_at, date_text_day, AuthoredTickCadence};
+use super::temporal::{civil_from_days, clock_instants_at, AuthoredTickCadence};
 use crate::common::AxisStyle;
-use super::x_type::parse_date;
+use crate::time_axis::TimeAxis;
 
 /// The clock the instants of an axis are read on: an offset or a bare date is an absolute instant, a bare
 /// timestamp is local time (the render pins the zone, so both read alike), and a mix has no single reader.
@@ -26,21 +26,16 @@ pub struct SubdaySource {
     timed: bool,
 }
 
-/// Whether `text` names an absolute instant: a bare date, or a timestamp carrying `Z` or an offset.
-fn is_absolute(text: &str) -> bool {
-    text.len() <= 10 || text.get(11..).is_some_and(|clock| clock.contains(['Z', '+', '-']))
-}
-
 impl SubdaySource {
-    /// The column's own values, unparsed ones skipped.
-    pub fn of(values: &[&str]) -> Self {
+    /// The column's own values, as the axis read them: one it did not read, or a short date form, is skipped.
+    pub(crate) fn of<'a>(axis: &TimeAxis, values: impl IntoIterator<Item = &'a str>) -> Self {
         let mut instants = Vec::new();
         let (mut absolute, mut naive, mut timed) = (false, false, false);
         for text in values {
-            let (Some(day), Some((_, wall_clock))) = (date_text_day(text), parse_date(text)) else { continue };
-            instants.push((day * DAY_MS as f64).round() as i64);
-            timed |= wall_clock;
-            if is_absolute(text) {
+            let Some(instant) = axis.get(text).filter(|_| text.len() >= 10) else { continue };
+            instants.push((instant.at * DAY_MS as f64).round() as i64);
+            timed |= instant.timed;
+            if instant.absolute {
                 absolute = true;
             } else {
                 naive = true;
@@ -66,7 +61,11 @@ impl SubdaySource {
         let (instants, zone) = match domain {
             None => (self.instants.clone(), self.zone),
             Some(pair) => {
-                let bound = Self::of(&pair);
+                let mut bounds = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
+                for text in pair {
+                    bounds.add(text).ok()?;
+                }
+                let bound = Self::of(&bounds, pair);
                 let zone = match (self.zone, bound.zone) {
                     (a, b) if a == b => a,
                     _ => Zone::Mixed,
@@ -368,6 +367,7 @@ pub fn plan_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time_axis::date_text_day;
 
     fn setup(outer_width: f64) -> AxisSetup<'static> {
         AxisSetup {
@@ -381,6 +381,14 @@ mod tests {
         }
     }
 
+    fn source_of(values: &[&str]) -> SubdaySource {
+        let mut axis = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
+        for text in values {
+            let _ = axis.add(text);
+        }
+        SubdaySource::of(&axis, values.iter().copied())
+    }
+
     /// A timestamp per hour of `day`.
     fn day_hours(day: &str, count: usize) -> Vec<String> {
         (0..count).map(|h| format!("{day}T{h:02}:00:00")).collect()
@@ -388,7 +396,7 @@ mod tests {
 
     fn plan_over(values: &[String], width: f64) -> (SubdayPlan, f64, f64) {
         let refs: Vec<&str> = values.iter().map(String::as_str).collect();
-        let source = SubdaySource::of(&refs);
+        let source = source_of(&refs);
         let (lo, hi) = (date_text_day(&values[0]).unwrap(), date_text_day(values.last().unwrap()).unwrap());
         (SubdayPlan::of(&source, &setup(width)).expect("a sub-day plan"), lo, hi)
     }
@@ -421,7 +429,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let values = day_hours("2024-03-05", 24);
         let refs: Vec<&str> = values.iter().map(String::as_str).collect();
-        let source = SubdaySource::of(&refs);
+        let source = source_of(&refs);
         let narrow = SubdayPlan::of(&source, &setup(340.0)).expect("a plan");
         assert_eq!(narrow.label(date_text_day(&values[0]).unwrap(), 0).unwrap().unwrap().0, "12am");
         let mut clock24 = setup(600.0);
@@ -435,11 +443,11 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let wide: Vec<String> = (0..400).map(|d| format!("{}T12:00:00", civil_text(date_text_day("2024-01-01").unwrap() + d as f64))).collect();
         let refs: Vec<&str> = wide.iter().map(String::as_str).collect();
-        let plan = SubdayPlan::of(&SubdaySource::of(&refs), &setup(600.0)).expect("a plan");
+        let plan = SubdayPlan::of(&source_of(&refs), &setup(600.0)).expect("a plan");
         assert!(plan.label(date_text_day(&wide[3]).unwrap(), 0).unwrap().is_none(), "a year or more spans no vocabulary");
         let utc: Vec<String> = day_hours("2024-03-05", 24).into_iter().map(|t| format!("{t}Z")).collect();
         let refs: Vec<&str> = utc.iter().map(String::as_str).collect();
-        let plan = SubdayPlan::of(&SubdaySource::of(&refs), &setup(600.0)).expect("a plan");
+        let plan = SubdayPlan::of(&source_of(&refs), &setup(600.0)).expect("a plan");
         assert!(plan.ladder.is_none(), "an absolute instant keeps Vega's ticks");
         assert!(plan.label(date_text_day(&utc[6]).unwrap(), 0).unwrap().is_some());
     }
@@ -453,19 +461,19 @@ mod tests {
     fn the_tooltip_header_names_the_time_within_two_days_and_the_date_across_midnight() {
         let _locale = crate::time_locale::en_us_scope();
         let within: Vec<&str> = vec!["2024-03-05T09:00:00", "2024-03-05T17:30:00"];
-        let header = Header::of(&SubdaySource::of(&within), Some(12)).expect("a header");
+        let header = Header::of(&source_of(&within), Some(12)).expect("a header");
         assert_eq!(header.text(date_text_day(within[1]).unwrap()).unwrap(), "5:30pm");
         let across: Vec<&str> = vec!["2024-03-05T23:00:00", "2024-03-06T01:15:30"];
-        let header = Header::of(&SubdaySource::of(&across), Some(24)).expect("a header");
+        let header = Header::of(&source_of(&across), Some(24)).expect("a header");
         assert_eq!(header.text(date_text_day(across[1]).unwrap()).unwrap(), "6 Mar 2024, 01:15:30");
         let spread: Vec<&str> = vec!["2024-03-05T09:00:00", "2024-03-09T09:00:00"];
-        assert!(Header::of(&SubdaySource::of(&spread), Some(12)).is_none(), "more than 48 hours reads the date alone");
+        assert!(Header::of(&source_of(&spread), Some(12)).is_none(), "more than 48 hours reads the date alone");
     }
 
     #[test]
     fn untimed_dates_have_no_clock_to_read() {
         let days: Vec<&str> = vec!["2024-03-05", "2024-03-06"];
-        let source = SubdaySource::of(&days);
+        let source = source_of(&days);
         assert!(SubdayPlan::of(&source, &setup(600.0)).is_none());
     }
 }

@@ -8,7 +8,7 @@ read the collected dict via ``WarningContext.text_truncations``.
 
 ``surface`` discriminates which detector owns the record:
   "axis_title"   — cartesian x/y axis title (emitters/_cartesian.py)
-  "chart_title"  — chart title or subtitle (title_overflow.py)
+  "chart_title"  — chart title or subtitle (engine)
   "kpi_label"    — KPI card label (engine)
   "kpi_support"  — KPI support explainer (engine)
   "kpi_inline_fallback" — inline KPI variant fell back to stacked (engine)

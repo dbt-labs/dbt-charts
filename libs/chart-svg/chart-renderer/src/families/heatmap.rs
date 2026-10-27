@@ -142,8 +142,8 @@ pub(crate) struct ColorGradient {
     pub(crate) min: Option<f64>,
     #[serde(default)]
     pub(crate) max: Option<f64>,
-    /// Author opt-in to the nice-widened tick ladder (themed true).
-    pub(crate) nice: bool,
+    /// The author's choice of the nice-widened tick ladder; unset follows `legend_drawn`.
+    pub(crate) nice: Option<bool>,
     #[serde(default)]
     palette: Value,
     #[serde(default)]
@@ -208,8 +208,9 @@ impl ColorGradient {
         &self,
         rows: &[serde_json::Map<String, Value>],
         field: &str,
+        legend_drawn: bool,
     ) -> Result<(f64, f64, Vec<f64>, Option<ContinuousColor>), Diagnostic> {
-        let (min, max, ticks) = gradient_ladder(rows, field, self)?;
+        let (min, max, ticks) = gradient_ladder(rows, field, self, legend_drawn)?;
         if self.resolved_stops.len() >= 2 {
             return Ok((min, max, ticks, None));
         }
@@ -227,7 +228,7 @@ impl ColorGradient {
             hinge: self.hinge.clone(),
             arm_mode: self.arm_mode.clone(),
         };
-        let scale = ContinuousColor::gradient(&target, Some(all), (min, max)).map_err(|e| format!("heatmap: {e}"))?;
+        let scale = ContinuousColor::gradient(&target, Some(all), all, legend_drawn).map_err(|e| format!("heatmap: {e}"))?;
         let Some(pivot) = scale.pivot else {
             return Ok((min, max, ticks, Some(scale)));
         };
@@ -388,6 +389,7 @@ pub(crate) fn category_legend_entries<'a>(scale: &'a CategoryScale, authored: Op
             fill: &scale.fills[i],
             symbol: Some(LegendSymbol::FilledSquare),
             series_key: None,
+            recede: None,
         })
         .collect()
 }
@@ -512,7 +514,7 @@ pub(crate) struct Cell {
 
 impl Cell {
     fn anchor(&self) -> Option<crate::href::Anchor<'_>> {
-        self.href.as_ref().map(|(url, open)| crate::href::Anchor { url, open: *open })
+        self.href.as_ref().map(|(url, open)| crate::href::Anchor { url, open: *open, recede: None })
     }
 }
 
@@ -787,13 +789,14 @@ pub(crate) fn svg_text_anchor(align: &str) -> &'static str {
 /// An authored `min` AND `max` win outright. A single-sided bound is honored
 /// as that exact edge with the raw data extent for the free one — Vega
 /// compiles it to `domainMin`/`domainMax` and nices neither side (probed on
-/// the compiled scale). `nice: false` is the author's opt-out and keeps the
+/// the compiled scale). `nice: false` (or no legend drawn, with `nice` unset) keeps the
 /// raw extent with two endpoint labels. Otherwise the domain widens to
 /// `nice_tick_values(min, max, nice_tick_count)` and EVERY rung is labeled.
 pub(crate) fn gradient_ladder(
     rows: &[serde_json::Map<String, Value>],
     field: &str,
     gradient: &ColorGradient,
+    legend_drawn: bool,
 ) -> Result<(f64, f64, Vec<f64>), Diagnostic> {
     // `is_vega_numeric_value`: a number or a boolean; a numeric string is nominal.
     let vega_numeric = |row: &serde_json::Map<String, Value>| match row.get(field)? {
@@ -810,8 +813,8 @@ pub(crate) fn gradient_ladder(
     if let (Some(lo), Some(hi)) = (gradient.min, gradient.max) {
         return Ok((lo, hi, vec![lo, hi]));
     }
-    if gradient.nice && gradient.min.is_none() && gradient.max.is_none() {
-        let ticks = d3rs::ticks::nice_tick_values(data_lo, data_hi, GRADIENT_NICE_TICK_COUNT, None);
+    if gradient.nice.unwrap_or(legend_drawn) && gradient.min.is_none() && gradient.max.is_none() {
+        let ticks = crate::families::color_scale::nice_ticks(data_lo, data_hi);
         return Ok((ticks[0], ticks[ticks.len() - 1], ticks));
     }
     let lo = gradient.min.unwrap_or(data_lo);
@@ -1371,6 +1374,22 @@ mod tests {
         assert!(!svg.contains(">60,000</text>"), "nice widening leaked: {svg}");
     }
 
+    /// `nice` unset follows the legend: a drawn legend widens to round ends, none keeps the raw extent;
+    /// an authored value wins either way.
+    #[test]
+    fn an_unset_nice_follows_the_legend() {
+        let ladder = |nice: serde_json::Value, legend: bool| {
+            let gradient: super::ColorGradient = serde_json::from_value(serde_json::json!({"nice": nice})).unwrap();
+            let rows = [12.0, 50.0, 88.0].map(|v| serde_json::json!({"c": v}).as_object().unwrap().clone());
+            let (lo, hi, _) = super::gradient_ladder(&rows, "c", &gradient, legend).unwrap();
+            (lo, hi)
+        };
+        assert_eq!(ladder(serde_json::Value::Null, true), (0.0, 100.0));
+        assert_eq!(ladder(serde_json::Value::Null, false), (12.0, 88.0));
+        assert_eq!(ladder(serde_json::json!(true), false), (0.0, 100.0));
+        assert_eq!(ladder(serde_json::json!(false), true), (12.0, 88.0));
+    }
+
     /// `nice: false` is the author's opt-out — raw extent, two endpoint
     /// labels.
     #[test]
@@ -1496,9 +1515,8 @@ mod tests {
         let svg = render_json(heatmap_payload(|j| j["height"] = json!(140.0)));
         // 140 − 32 padding − 28 title band − 24 x-label band.
         assert_eq!(plot_origin(&svg).1, 44.0, "{svg}");
-        // The x axis group rides the plot's bottom edge, `+ offset + 0.5`.
         let line = svg.split("<line ").nth(1).unwrap().split("/>").next().unwrap();
-        assert_eq!(attr(line, "y1"), 44.0 + 56.0 + 1.0 + 0.5, "{svg}");
+        assert_eq!(attr(line, "y1"), 44.0 + 56.0, "{svg}");
     }
 
     /// H7 — Vega translates each axis group by `config.axis.translate` 0.5:
@@ -1520,7 +1538,7 @@ mod tests {
         // 261.875 / 366.625, and rounding would put the last two a pixel out.
         for (i, chunk) in svg.split("<line ").skip(1).enumerate() {
             let line = chunk.split("/>").next().unwrap();
-            assert!((attr(line, "y1") - (plot_bottom + 1.0 + 0.5)).abs() < 0.01, "{line}");
+            assert!((attr(line, "y1") - plot_bottom).abs() < 0.01, "{line}");
             assert!((attr(line, "y2") - (plot_bottom + 1.0 + 0.5 + 6.0)).abs() < 0.01, "{line}");
             let center = cell_w * (i as f64 + 0.5);
             assert!((attr(line, "x1") - (plot_left + center.floor() + 0.5)).abs() < 0.01, "{line}");
@@ -1995,10 +2013,10 @@ mod tests {
         let rows = |cells: &[serde_json::Value]| -> Vec<serde_json::Map<String, serde_json::Value>> {
             cells.iter().map(|cell| serde_json::json!({"c": cell}).as_object().unwrap().clone()).collect()
         };
-        let err = super::gradient_ladder(&rows(&[serde_json::json!("n/a"), serde_json::Value::Null]), "c", &gradient).unwrap_err();
+        let err = super::gradient_ladder(&rows(&[serde_json::json!("n/a"), serde_json::Value::Null]), "c", &gradient, true).unwrap_err();
         assert_eq!(err.code, "ERR-HEATMAP-COLOR-NO-VALUES");
         assert_eq!(err.params["field"], serde_json::json!("c"));
-        assert!(super::gradient_ladder(&rows(&[serde_json::json!(true)]), "c", &gradient).is_ok());
+        assert!(super::gradient_ladder(&rows(&[serde_json::json!(true)]), "c", &gradient, true).is_ok());
     }
 
     /// The stops interpolate piecewise in sRGB and print the way d3 formats a

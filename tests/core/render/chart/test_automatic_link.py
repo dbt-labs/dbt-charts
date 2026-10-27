@@ -4001,38 +4001,6 @@ class TestFkColumnLinksFromExecutorStaysPlainOnly:
 
 
 # ---------------------------------------------------------------------------
-# _vega_encode_field unit tests: verify the Vega replace-chain structure
-# ---------------------------------------------------------------------------
-
-
-class TestVegaEncodeField:
-    """Unit tests for _vega_encode_field — the Vega replace-chain encoder.
-
-    Asserts on the expression string structure, not on vl_convert execution.
-    The round-trip correctness (vl_convert evaluating the expression against
-    data) is covered by the integration tests in TestChartFilterLinkUrlSafety.
-    """
-
-    def test_percent_encoded_first_wraps_datum_directly(self) -> None:
-        """% must be the innermost encode so later %XX outputs are not re-encoded."""
-        from dbt_charts.core.render.chart.features.click_interactivity import (
-            _vega_encode_field,
-        )
-
-        expr = _vega_encode_field("region")
-        # The % replace must wrap datum directly — it is the innermost layer.
-        assert "replace('' + datum['region'], /%/g, '%25')" in expr
-
-    def test_field_name_embedded_in_datum_reference(self) -> None:
-        from dbt_charts.core.render.chart.features.click_interactivity import (
-            _vega_encode_field,
-        )
-
-        expr = _vega_encode_field("status")
-        assert "datum['status']" in expr
-
-
-# ---------------------------------------------------------------------------
 # Positive integration test: integer multi-dimension chart produces filter link
 # (guard against synthesize_automatic_link silently over-bailing)
 # ---------------------------------------------------------------------------

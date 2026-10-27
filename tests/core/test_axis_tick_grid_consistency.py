@@ -79,7 +79,13 @@ def test_ticks_match_their_own_gridline(
     axis = _axis(theme, family, slot, channel_type)
     if not (axis.ticks.visible and axis.grid.visible):
         pytest.skip(f"{family} does not draw both on {slot}")
-    assert axis.ticks.color == axis.grid.color
+    # A temporal x axis's ticks continue the plot floor, so they wear the measure grid's color, not the vertical grid's.
+    floor = _axis(theme, family, "axis_y", "quantitative").grid
+    assert axis.ticks.color == (
+        floor.color
+        if slot == "axis_x" and channel_type == "temporal"
+        else axis.grid.color
+    )
     assert axis.ticks.width == axis.grid.width
 
 

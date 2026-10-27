@@ -4,3 +4,5 @@ pub mod geoshape;
 mod js_cell;
 pub mod point_map;
 pub mod projection;
+pub mod source;
+pub mod vega;

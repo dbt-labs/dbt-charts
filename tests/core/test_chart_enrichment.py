@@ -127,26 +127,3 @@ class TestSmartAutoZero:
         result = _pick_scale(profile, chart_type=chart_type)
         assert result is not None
         assert result.get("zero") is True
-
-
-class TestQueryResultColumnDescriptions:
-    def test_stores_descriptions(self):
-        from dbt_charts.core.execute.adapters.base import QueryResult
-
-        descs = {"a": ("a", "INTEGER", None, None, None, None, None)}
-        result = QueryResult(data=[{"a": 1}], column_descriptions=descs)
-        assert result.column_descriptions == descs
-
-    def test_defaults_none(self):
-        from dbt_charts.core.execute.adapters.base import QueryResult
-
-        result = QueryResult(data=[{"a": 1}])
-        assert result.column_descriptions is None
-
-    def test_backward_compatible(self):
-        from dbt_charts.core.execute.adapters.base import QueryResult
-
-        result = QueryResult(data=[{"x": 1}], columns=["x"], error=None)
-        assert result.data == [{"x": 1}]
-        assert result.column_descriptions is None
-        assert result.is_success

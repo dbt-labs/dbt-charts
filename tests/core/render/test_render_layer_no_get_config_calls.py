@@ -79,43 +79,6 @@ def test_c_rendering_uses_resolved_style_border_radius() -> None:
 
 
 # =============================================================================
-# D — converters/chart.render_vega_spec
-# =============================================================================
-
-
-def test_d_render_vega_spec_uses_default_chart_height() -> None:
-    """render_vega_spec must use DEFAULT_CHART_HEIGHT for placeholder height (not the global get_config())."""
-    import sys
-    import types
-    from unittest import mock
-
-    def _fake_vegalite_to_svg(spec: object) -> str:
-        return '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"></svg>'
-
-    fake_vlc = types.ModuleType("vl_convert")
-    fake_vlc.vegalite_to_svg = _fake_vegalite_to_svg  # type: ignore[attr-defined]
-    fake_vlc.register_font_directory = lambda *a, **kw: None  # type: ignore[attr-defined]
-
-    with mock.patch.dict(sys.modules, {"vl_convert": fake_vlc}):
-        from dbt_charts.core.compile.resolve.style.board import resolve_style
-        from dbt_charts.core.render.converters.chart import render_vega_spec
-
-        style = resolve_style(get_theme_style())
-
-        # is_placeholder=True exercises the height-from-DEFAULT_CHART_HEIGHT path.
-        result = render_vega_spec(
-            {"$schema": "...", "mark": "bar"},
-            "svg",
-            resolved_style=style,
-            width=None,
-            height=None,
-            is_placeholder=True,
-            chart_id="chart",
-        )
-    assert isinstance(result, str) and "<svg" in result  # got SVG content back
-
-
-# =============================================================================
 # E — boards._render_text_svg
 # =============================================================================
 

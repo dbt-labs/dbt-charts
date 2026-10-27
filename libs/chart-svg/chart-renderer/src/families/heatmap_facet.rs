@@ -36,7 +36,7 @@ use crate::families::facet_title::{layout_title, TitleLayout, TitleSource};
 use crate::families::heatmap::bind::{fold_wide_y, Prelude};
 use crate::families::heatmap::{
     dated_bands,
-    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, flat_label, rotated_label, tick_line, LabelFace, legend_labels, svg_text_anchor, bind_cells, cell_nodes, tooltip_value_title, CellFill, CellMarks, CellPaint, HeaderFmt,
+    category_legend_entries, color_categories, date_color, date_color_extent, date_legend_ticks, legend_date_label, ColorKind, drop_invalid_color_rows, GradientColors, SYMBOL_LEGEND_TICK_COUNT, CategoryScale, flat_label, rotated_label, LabelFace, legend_labels, svg_text_anchor, bind_cells, cell_nodes, tooltip_value_title, CellFill, CellMarks, CellPaint, HeaderFmt,
     HeatmapResolved, AXIS_TRANSLATE, BREATHING_ROOM_PX,
 };
 use crate::families::color_scale::{
@@ -413,14 +413,12 @@ impl HeatmapXAxis {
     /// hangs from. The axis group sits `offset` plus Vega's half-pixel crisp translate past
     /// it; a tick snaps to a whole pixel (`floor(center) + 0.5`) while its label keeps the
     /// exact band center.
-    pub(crate) fn nodes(&self, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_edge: f64) -> Result<Vec<Node>, String> {
+    pub(crate) fn nodes(&self, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, (plot_edge, floor_y): (f64, f64)) -> Result<Vec<Node>, String> {
         let scale = BandScale::new(self.domain.clone(), 0.0, plot_w, 0.0, 0.0);
         let sign = self.edge.sign();
         let axis_top = plot_edge + sign * self.offset + AXIS_TRANSLATE;
         let label_y = axis_top + sign * (self.tick_len + self.label_pad) + measure::baseline_shift(self.edge.baseline(), self.font_size);
         let row_advance = vega_fit::label_row_advance(self.font_size);
-        let tick_color = crate::common::required_ink(ax_x.ticks.color.as_deref(), "heatmap_facet", "axis_x.ticks.color")?;
-        let tick_width = ax_x.ticks.width.unwrap_or(1.0);
         let label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
         let label_weight = ax_x.labels.font.weight_str();
         let caption = category_axis_caption(&self.caption_title, ax_x, &self.domain)?;
@@ -431,14 +429,16 @@ impl HeatmapXAxis {
         let face = LabelFace { places: 2, anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, fill: label_color };
         let flat_face = LabelFace { anchor: "middle", ..face };
         let visible = self.visible(plot_w);
+        let center_of = |label: &AxisLabel| {
+            scale.position(&self.domain[label.domain_idx]).expect("a label names a band of its own domain") + scale.bandwidth() / 2.0
+        };
         let mut items = Vec::new();
+        if self.tick_len > 0.0 {
+            let xs = self.labels.iter().map(|label| plot_left + center_of(label).floor() + AXIS_TRANSLATE);
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (floor_y, axis_top + sign * self.tick_len), 2)?);
+        }
         for (label, &shown) in self.labels.iter().zip(&visible) {
-            let center = scale.position(&self.domain[label.domain_idx]).expect("a label names a band of its own domain")
-                + scale.bandwidth() / 2.0;
-            if self.tick_len > 0.0 {
-                let tick_x = plot_left + center.floor() + AXIS_TRANSLATE;
-                items.push(tick_line(2, (tick_x, axis_top), (tick_x, axis_top + sign * self.tick_len), tick_color, tick_width));
-            }
+            let center = center_of(label);
             if self.labels_hidden {
                 continue;
             }
@@ -735,6 +735,7 @@ fn render_panel(
             left + AXIS_TRANSLATE,
             -1.0,
             style.y_tick_len,
+            &[],
         )?;
         for &(band, cy) in &centers {
             let text = shown(band)?;
@@ -764,7 +765,7 @@ fn render_panel(
         crate::contract::axis_group_close(&mut svg);
     }
     if style.cell_x_axis {
-        svg.push_str(&print(&x_axis.nodes(style.ax_x, left, plot_w, plot_h)?));
+        svg.push_str(&print(&x_axis.nodes(style.ax_x, left, plot_w, (plot_h, plot_h))?));
     }
     let right_axis = (style.y_right || style.mirror) && !style.own_axis;
     let right_title_extra = if style.y_right { style.y_title_extra } else { 0.0 };
@@ -784,6 +785,7 @@ fn render_panel(
             edge_x,
             1.0,
             style.y_tick_len,
+            &[],
         )?;
         for &(band, cy) in &centers {
             let _ = write!(
@@ -1256,7 +1258,7 @@ fn render_facet(
             FacetColor::Dates { min, max }
         }
         ColorKind::Gradient => {
-            let (min, max, ticks, scale) = r.style.color_gradient.ladder(&rows, &r.color)?;
+            let (min, max, ticks, scale) = r.style.color_gradient.ladder(&rows, &r.color, r.legend.visible)?;
             FacetColor::Gradient { min, max, ticks, scale }
         }
     };
@@ -1406,7 +1408,7 @@ fn render_facet(
         FacetColor::Categories(scale) => category_legend_entries(scale, r.legend.values.as_deref()),
         FacetColor::Gradient { .. } | FacetColor::Dates { .. } => ladder
             .iter()
-            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None })
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None, recede: None })
             .collect(),
     };
     // A time-scale bar's ladder follows its drawn length, so it is measured and

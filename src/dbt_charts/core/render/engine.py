@@ -92,6 +92,11 @@ from dbt_charts.core.render.chart.series_label_truncation import (
     record_series_label_truncations,
     reset_series_label_truncations,
 )
+from dbt_charts.core.render.chart.table_align import (
+    record_table_align_no_visible_effect,
+    record_table_numeric_align_left,
+    reset_table_align,
+)
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
     TableOverflow,
@@ -115,7 +120,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
     record_x_domain_paint_order,
 )
 from dbt_charts.core.render.controls import controls_are_interactive
-from dbt_charts.core.render.geo.loader import GeoDocument, load_geometry
+from dbt_charts.core.render.geo.loader import load_geometry_text
 from dbt_charts.core.render.sizing import TABLE_PAGINATION_CONTROL_HEIGHT
 from dbt_charts.core.render.svg_utils import css_color
 from dbt_charts.core.text.format_d3 import (
@@ -289,7 +294,12 @@ def board_style_envelope(
         if category_range is not None and "category" in category_range
         else []
     )
+    hover_emphasis = board_style.chart_defaults.hover_emphasis
     return {
+        "hover_emphasis": {
+            "visible": hover_emphasis.visible,
+            "dimmed_opacity": hover_emphasis.dimmed_opacity,
+        },
         "secondary_color": board_style.secondary_color,
         "numeral_family": board_style.numeral_family,
         "tones": board_style.tones.model_dump(mode="json"),
@@ -370,9 +380,9 @@ def check_table_link_colors(chart: ResolvedTableChart) -> None:
             css_color(column.font.color)
 
 
-def chart_geometries(chart: ResolvedChart) -> dict[str, GeoDocument] | None:
-    """The geo documents a chart draws from, keyed by the source URL the engine
-    looks them up by; `None` for a chart that draws no map.
+def chart_geometries(chart: ResolvedChart) -> dict[str, str] | None:
+    """The geo documents' JSON text a chart draws from, keyed by the source URL
+    the engine looks them up by; `None` for a chart that draws no map.
 
     Raises:
         ChartDataError: ERR-GEO-SOURCE-UNAVAILABLE when a source cannot be loaded.
@@ -383,7 +393,7 @@ def chart_geometries(chart: ResolvedChart) -> dict[str, GeoDocument] | None:
         url = chart.basemap_geo_url
     else:
         return None
-    return {url: load_geometry(url)}
+    return {url: load_geometry_text(url)}
 
 
 def build_chart_payload(
@@ -570,6 +580,8 @@ _GEOMETRY_WARNINGS = (
     "WARN-BAR-GROUPED-SERIES-COINCIDE",
     "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
     "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+    "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
+    "WARN-POINT-MAP-OUT-OF-PROJECTION",
     "WARN-VALUE-LABELS-CROWD-WIDTH",
 )
 
@@ -685,6 +697,12 @@ _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
             total_rows=p["total_rows"],
         ),
     ),
+    "WARN-TABLE-NUMERIC-ALIGN-LEFT": lambda p: record_table_numeric_align_left(
+        p["chart_id"], p["column"]
+    ),
+    "WARN-TABLE-ALIGN-NO-VISIBLE-EFFECT": lambda p: (
+        record_table_align_no_visible_effect(p["chart_id"], p["column"])
+    ),
 }
 
 
@@ -787,6 +805,7 @@ def _render_payload(
         # earlier cramped trial of the same chart.
         if not any(w["code"] in _RAIL_WARNINGS for w in warnings):
             record_endpoint_label_gap_overflow(chart_id, None)
+        reset_table_align(chart_id)
     for warning in warnings:
         if warning["code"] not in _WARNING_SINKS:
             raise ValueError(f"engine emitted unmapped warning {warning['code']}")

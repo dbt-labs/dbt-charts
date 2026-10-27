@@ -227,55 +227,6 @@ interactions:
 # ---------------------------------------------------------------------------
 
 
-def test_svg_postprocess_strips_sentinel_and_fixes_href_attribute():
-    """After vl_convert, sentinel xlink:href must become plain href so variables.js works."""
-    from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
-
-    svg_input = (
-        '<g class="mark container">'
-        '<a xlink:href="http://dct.invalid?region_var=January">'
-        '<path d="M1,0"/></a>'
-        '<a xlink:href="http://dct.invalid/detail?month=February">'
-        '<path d="M2,0"/></a>'
-        "</g>"
-    )
-    result = _fix_chart_click_hrefs(svg_input, "page")
-
-    assert '<a href="?region_var=January">' in result
-    assert '<a href="/detail?month=February">' in result
-    # Sentinel must be gone
-    assert "dct.invalid" not in result
-    # xlink:href must be gone on those elements
-    assert 'xlink:href="http://dct.invalid' not in result
-
-
-def test_svg_postprocess_does_not_double_escape_multi_param_link():
-    from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
-
-    svg_input = '<a xlink:href="http://dct.invalid/detail?x=1&amp;y=2"><path/></a>'
-    result = _fix_chart_click_hrefs(svg_input, "page")
-
-    assert '<a href="/detail?x=1&amp;y=2">' in result
-    assert "&amp;amp;" not in result
-
-
-def test_svg_postprocess_keeps_external_url_as_plain_href():
-    """A non-sentinel (external) link keeps its URL, as the same plain `href`
-    every chart anchor carries, so one click handler reads them all."""
-    from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
-
-    svg_input = (
-        '<a xlink:href="https://example.com/detail?name=O\'Brien&amp;month=January">'
-        "<path/></a>"
-    )
-    result = _fix_chart_click_hrefs(svg_input, "page")
-
-    assert result == (
-        '<a href="https://example.com/detail?name=O&#x27;Brien&amp;month=January">'
-        "<path/></a>"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Table: chart-root link as default + column override
 # ---------------------------------------------------------------------------
@@ -335,40 +286,6 @@ rows:
 # ---------------------------------------------------------------------------
 # Board link resolution: chart/table links run through resolve_href
 # ---------------------------------------------------------------------------
-
-
-def test_svg_postprocess_applies_board_resolver_for_serve():
-    """After stripping sentinel, board-root paths are rewritten for serve mode."""
-    from dbt_charts.core.render.board_links import LinkContext, set_link_context
-    from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
-
-    ctx = LinkContext(root="/charts", current_board_slug="zendesk/overview")
-    set_link_context(ctx)
-    try:
-        svg_input = '<a xlink:href="http://dct.invalid/zendesk/tickets/detail?id=42"><path/></a>'
-        result = _fix_chart_click_hrefs(svg_input, "page")
-    finally:
-        set_link_context(None)
-
-    assert '<a href="/charts/zendesk/tickets/detail?id=42">' in result
-    assert "dct.invalid" not in result
-
-
-def test_svg_postprocess_query_string_link_unchanged_by_board_resolver():
-    """Variable-update links (?var=...) pass through board resolver unchanged."""
-    from dbt_charts.core.render.board_links import LinkContext, set_link_context
-    from dbt_charts.core.render.converters.chart import _fix_chart_click_hrefs
-
-    ctx = LinkContext(root="/charts", current_board_slug="zendesk/overview")
-    set_link_context(ctx)
-    try:
-        svg_input = '<a xlink:href="http://dct.invalid?region_var=North"><path/></a>'
-        result = _fix_chart_click_hrefs(svg_input, "page")
-    finally:
-        set_link_context(None)
-
-    assert '<a href="?region_var=North">' in result
-    assert "dct.invalid" not in result
 
 
 def test_kpi_link_board_resolver():

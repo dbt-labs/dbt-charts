@@ -21,12 +21,17 @@ import re
 import subprocess
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from dbt_charts.core.execute.adapters.snowpark_adapter import (
+    SnowparkField,
+    SnowparkSchema,
+)
 from dbt_charts.core.render.errors import RenderError
 
 DBT_CHARTS_YML = """\
@@ -57,10 +62,38 @@ rows:
 """
 
 
+# Named after the snowflake.snowpark.types classes the adapter keys on.
+class LongType:
+    pass
+
+
+class StringType:
+    pass
+
+
+@dataclass
+class _FakeField:
+    datatype: Any
+
+
+@dataclass
+class _FakeSchema:
+    fields: list[SnowparkField]
+
+
 class _FakeResultSet:
+    schema: SnowparkSchema
+
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.columns = list(rows[0]) if rows else []
         self._rows = [tuple(row.values()) for row in rows]
+        first = rows[0].values() if rows else []
+        self.schema = _FakeSchema(
+            [
+                _FakeField(LongType() if isinstance(v, int) else StringType())
+                for v in first
+            ]
+        )
 
     def to_local_iterator(self) -> Iterator[tuple[Any, ...]]:
         return iter(self._rows)

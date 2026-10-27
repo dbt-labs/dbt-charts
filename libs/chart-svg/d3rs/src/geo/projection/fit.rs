@@ -54,14 +54,23 @@ pub trait Fit: Sized {
     }
 
     fn fit_extent(&mut self, extent: [[f64; 2]; 2], object: &GeoJson) -> Result<&mut Self, String> {
-        self.fit(object, |p, b| {
-            let w = extent[1][0] - extent[0][0];
-            let h = extent[1][1] - extent[0][1];
-            let k = js_min(w / (b[1][0] - b[0][0]), h / (b[1][1] - b[0][1]));
-            let x = extent[0][0] + (w - k * (b[1][0] + b[0][0])) / 2.0;
-            let y = extent[0][1] + (h - k * (b[1][1] + b[0][1])) / 2.0;
-            p.set_scale(150.0 * k).set_translate([x, y]);
-        })
+        self.fit(object, |p, b| fit_extent_to(p, extent, b))
+    }
+
+    /// The bounds `fit` measures: `object` projected at scale 150 and translate [0, 0] with no clip extent.
+    /// They depend on the projection's configuration and `object`, not on the box fitted to, so a caller
+    /// fitting one configuration to several boxes measures once and applies each with [`Fit::fit_extent_to`].
+    /// Errors and leaves the projection exactly as [`Fit::fit`] does.
+    fn fit_bounds(&mut self, object: &GeoJson) -> Result<[[f64; 2]; 2], String> {
+        let mut measured = None;
+        self.fit(object, |_, b| measured = Some(b))?;
+        Ok(measured.expect("fit succeeded, so its bounds were finite"))
+    }
+
+    /// [`Fit::fit_extent`] with the bounds already measured by [`Fit::fit_bounds`] on this configuration.
+    fn fit_extent_to(&mut self, extent: [[f64; 2]; 2], bounds: [[f64; 2]; 2]) -> &mut Self {
+        fit_extent_to(self, extent, bounds);
+        self
     }
 
     fn fit_size(&mut self, size: [f64; 2], object: &GeoJson) -> Result<&mut Self, String> {
@@ -85,6 +94,15 @@ pub trait Fit: Sized {
             p.set_scale(150.0 * k).set_translate([x, y]);
         })
     }
+}
+
+fn fit_extent_to(p: &mut impl Fit, extent: [[f64; 2]; 2], b: [[f64; 2]; 2]) {
+    let w = extent[1][0] - extent[0][0];
+    let h = extent[1][1] - extent[0][1];
+    let k = js_min(w / (b[1][0] - b[0][0]), h / (b[1][1] - b[0][1]));
+    let x = extent[0][0] + (w - k * (b[1][0] + b[0][0])) / 2.0;
+    let y = extent[0][1] + (h - k * (b[1][1] + b[0][1])) / 2.0;
+    p.set_scale(150.0 * k).set_translate([x, y]);
 }
 
 impl Fit for Projection {

@@ -71,6 +71,23 @@ def _map_board() -> str:
     )
 
 
+def _no_marks_board() -> str:
+    # One coordinate field and no size: the engine draws no mark.
+    return (
+        "title: T\n"
+        "queries:\n"
+        "  q:\n"
+        "    type: values\n"
+        "    rows:\n"
+        "      - {la: 40.0, val: 10}\n"
+        "      - {la: 41.0, val: 20}\n"
+        "charts:\n"
+        "  b: {query: q, type: point_map, latitude: la, projection: mercator}\n"
+        "rows:\n"
+        "  - b\n"
+    )
+
+
 def _build_executor(
     board: Board,
     query_registry: dict[str, AnyQuery],
@@ -125,25 +142,15 @@ def test_painted_no_marks_error_reported_on_data_format_same_as_svg(
     regardless of output format — the data path must not report success on a
     chart the svg path treats as a genuine rendering failure.
     """
-    result = compile_board(_map_board())
+    result = compile_board(_no_marks_board())
     assert result.success, result.diagnostics
     board = result.board
     assert board is not None
     project = local_project(tmp_path)
 
-    marks_free_svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" '
-        'viewBox="0 0 300 200"></svg>'
-    )
-
-    from dbt_charts.core.render.converters import chart as converters_chart
-
     def _render(format: str) -> RenderResult:
         executor = _build_executor(board, result.query_registry, project)
-        with patch.object(
-            converters_chart, "render_chart_artifact", return_value=marks_free_svg
-        ):
-            return render(board, executor, format=format)
+        return render(board, executor, format=format)
 
     svg_result = _render("svg")
     svg_errors = {e.code for e in svg_result.chart_errors}

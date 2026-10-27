@@ -162,7 +162,7 @@ use crate::families::layers::{
     resolve_layer_rows, OverlayBarLayer, OverlayLayer, OverlayLineLayer,
     OverlayScatterLayer, YSides,
 };
-use crate::families::heatmap::{flat_label, rotated_label, svg_text_anchor, tick_line, LabelFace};
+use crate::families::heatmap::{flat_label, rotated_label, svg_text_anchor, LabelFace};
 use crate::families::support_table_strip;
 use crate::families::legend::{
     legend_title_text, LegendConfig,
@@ -813,8 +813,6 @@ pub(crate) struct FacetPanelOpts<'a> {
 /// panel — normalized the same way bar's own `PanelGeometry` is, so a future
 /// composer reads one shape regardless of which family drew the panel.
 pub(crate) struct LinePanelGeometry {
-    pub(crate) content_start: usize,
-    pub(crate) svg_end: usize,
     pub(crate) ink: vega_fit::Bounds,
     /// The widest line of the value axis's rotated title when this panel paints it.
     pub(crate) value_title_w: f64,
@@ -852,7 +850,8 @@ pub(crate) struct LinePanelGeometry {
     pub(crate) top_axis_overhang: f64,
     /// The chart-wide color legend a facet composer lifts off any panel.
     pub(crate) facet_legend: Option<facet_compose::FacetLegend>,
-    pub(crate) value_axis: Option<facet_compose::ValueAxisInk>,
+    /// The group origin of the value axis, when this panel paints it.
+    pub(crate) value_axis_origin: Option<(f64, f64)>,
 }
 
 /// The single-chart x-axis chrome (tick marks, labels, title — nominal,
@@ -870,6 +869,8 @@ pub(crate) struct LineXAxis {
     x_tick_eff: f64,
     x_label_pad: f64,
     x_axis_drop: f64,
+    /// The stroke of the baseline rule on the plot edge this axis hangs from, which its ticks continue.
+    floor_rule: Option<String>,
     label_rows: usize,
     edge: crate::common::XEdge,
     x_title_text: String,
@@ -920,13 +921,6 @@ fn with_dash(attrs: Attrs, dash: Option<String>) -> Attrs {
     }
 }
 
-/// `nodes` under the layer clip of a `plot`-sized box; a second clipped layer of the same plot reuses the definition.
-fn clipped_layer(defined: &mut HashSet<String>, chart_id: &str, plot: (f64, f64), nodes: Vec<Node>) -> Vec<Node> {
-    let id = crate::families::layers::layer_clip_id(plot, chart_id);
-    let reused = !defined.insert(id.clone());
-    crate::families::layers::layer_clip_group(&id, plot, reused, nodes)
-}
-
 impl LineXAxis {
     /// See `PanelXAxis::label_left_reach`. Only a nominal axis puts its first
     /// label's half width left of the plot origin; a temporal axis anchors it
@@ -946,7 +940,7 @@ impl LineXAxis {
     /// The axis at the CALLER's own `plot_left`/`plot_w`/`plot_bottom` — the
     /// panel's own (the single-chart wrapper's call), or `facet_compose::
     /// compose_facet`'s shared footer band.
-    pub(crate) fn nodes(&self, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, plot_bottom: f64, fonts: &FontBook) -> Result<Vec<Node>, String> {
+    pub(crate) fn nodes(&self, ax_x: &AxisStyle, plot_left: f64, plot_w: f64, (plot_bottom, floor_y): (f64, f64), fonts: &FontBook) -> Result<Vec<Node>, String> {
         let clip = |text: &str| ax_x.labels.clip(text, fonts);
         let x_rule_at = |pos: f64| tick_snap(pos, self.ad, self.use_band_positions);
         let sign = self.edge.sign();
@@ -954,13 +948,9 @@ impl LineXAxis {
         let rows_at = |anchor: f64, adv: f64| (anchor, anchor + adv);
         let mut items: Vec<Node> = Vec::new();
         if ax_x.ticks.visible.unwrap_or(true) {
-            let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "line", "axis_x.ticks.color")?;
-            let tw = ax_x.ticks.width.unwrap_or(1.0);
-            for &x in &self.tick_xs {
-                let gx = plot_left + x_rule_at(x);
-                let y1 = plot_bottom + self.x_axis_drop;
-                items.push(tick_line(3, (gx, y1), (gx, y1 + sign * self.x_tick_len), tc, tw));
-            }
+            let end_y = plot_bottom + self.x_axis_drop + sign * self.x_tick_len;
+            let xs = self.tick_xs.iter().map(|&x| plot_left + x_rule_at(x));
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y), 3)?);
         }
         if ax_x.labels.visible.unwrap_or(true) {
             let xf = &ax_x.labels.font;
@@ -1390,13 +1380,14 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                 if YSides::of(&bound.overlays).is_some() {
                     return Err(crate::refuse!("{fam}: multiples with a dual-axis layer not supported").into());
                 }
-                let layout::Fitted { svg: card, plot, geometry: geom, .. } =
+                let layout::Fitted { svg: card, plot, geometry: geom, cuts, .. } =
                     layout::fit(&bound, payload, &panel.rows, (pw, ph), None, fonts, Some(&facet_opts))?;
+                let cuts = cuts.expect("a facet panel is fitted with its cuts");
                 Ok((
                     print::print(&[card]),
                     facet_compose::PanelGeometry {
-                        content_start: geom.content_start,
-                        svg_end: geom.svg_end,
+                        content_start: cuts.content_start,
+                        svg_end: cuts.svg_end,
                         ink: geom.ink,
                         axis_w_overhang: geom.axis_w_overhang,
                         // `plot.left` is `m.left` alone (this call passes
@@ -1429,7 +1420,7 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                         top_axis_overhang: geom.top_axis_overhang,
                         value_title_w: geom.value_title_w,
                         legend: geom.facet_legend,
-                        value_axis: geom.value_axis,
+                        value_axis: geom.value_axis_origin.map(|origin| facet_compose::ValueAxisInk { range: cuts.value_axis(), origin }),
                     },
                 ))
             })
@@ -2377,19 +2368,13 @@ mod tests {
 
     /// `LinePanelGeometry`'s remaining measurement fields, verified against
     /// this single-chart test's own `facet: None` call (`facet_compose::
-    /// compose_facet` splices `svg[content_start..svg_end]` and reads
-    /// `widest_val_tick_label_width`/`val_gutter` the
+    /// compose_facet` reads `widest_val_tick_label_width`/`val_gutter` the
     /// same way bar's own `PanelGeometry` does off `render_vertical_panel`).
     #[test]
-    fn panel_geometry_exposes_content_bounds_and_axis_measurements() {
+    fn panel_geometry_exposes_axis_measurements() {
         let payload: Payload = serde_json::from_value(make_fit_line_payload()).unwrap();
         let fonts = test_fonts();
-        let (svg, _, geom) = render_panel(&payload, &fonts, payload.width, payload.height, None);
-        assert!(geom.content_start > 0 && geom.content_start < geom.svg_end && geom.svg_end <= svg.len());
-        assert!(
-            svg[geom.content_start..geom.svg_end].starts_with('<'),
-            "content_start lands right after the background rect, at the next tag"
-        );
+        let (_, _, geom) = render_panel(&payload, &fonts, payload.width, payload.height, None);
         assert!(geom.widest_val_tick_label_width > 0.0);
         assert!(geom.val_gutter > 0.0);
     }
@@ -2454,7 +2439,7 @@ mod tests {
         let fonts = test_fonts();
         let (svg, plot, geom) = render_panel(&payload, &fonts, payload.width, payload.height, None);
         let bound = super::bind::bind(&payload, false).unwrap();
-        let painted = print::print(&geom.axis.nodes(&bound.r.style.axis_x, 0.0, plot.plot_w, plot.plot_h, &fonts).unwrap());
+        let painted = print::print(&geom.axis.nodes(&bound.r.style.axis_x, 0.0, plot.plot_w, (plot.plot_h, plot.plot_h), &fonts).unwrap());
         assert!(!painted.is_empty());
         assert!(
             svg.contains(&painted),
@@ -5541,6 +5526,40 @@ mod tests {
         assert!(!svg.contains("NaN"), "an empty column's NaN edges paint as 0: {svg}");
     }
 
+    /// The hit targets of a column with no total sit at the plot top, never at a NaN
+    /// transform (which blanks an export). `tooltip_format` is what draws them.
+    #[test]
+    fn stacked_area_normalize_zero_total_column_hit_targets_are_finite() {
+        use serde_json::json;
+        let mut p = make_stacked_area_payload("normalize");
+        p["resolved"]["style"]["axis_y"]["scale"]["continuous"]["domain"] = json!([0.0, 1.0]);
+        p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+        p["rows"][0]["signups"] = json!(0.0);
+        p["rows"][2]["signups"] = json!(0.0);
+        let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
+        assert!(svg.contains("opacity=\"0\" data-dct-role=\"point\""), "hit targets are drawn: {svg}");
+        assert!(!svg.contains("NaN)") && !svg.contains("NaN,"), "a NaN transform blanks the export: {svg}");
+    }
+
+    /// A mirror axis rides one invisible rule per datum; on a normalized stack each
+    /// starts at the stack top, not at the raw value thousands of pixels off-canvas.
+    #[test]
+    fn stacked_area_normalize_mirror_ghosts_start_on_the_plot() {
+        use serde_json::json;
+        let mut p = make_stacked_area_payload("normalize");
+        p["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
+        p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+        let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
+        let ys: Vec<f64> = svg
+            .split("<line transform=\"translate(")
+            .skip(1)
+            .filter(|l| l.contains("opacity=\"0\""))
+            .map(|l| l.split(')').next().unwrap().split(',').nth(1).unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(ys.len(), 4, "two series x two weeks: {svg}");
+        assert!(ys.iter().all(|y| (0.0..=400.0).contains(y)), "{ys:?}");
+    }
+
     /// Each series' (y0, y1) is the SAME running sum `stack: zero` builds,
     /// divided by that x column's OWN total — never `max_col_total` (the
     /// ceiling a `zero`/`center` domain would otherwise nice against). The
@@ -5576,6 +5595,36 @@ mod tests {
                 "week {i}: a_top={:?} expected={expected} plot_bottom={plot_bottom} plot_top={plot_top}: {svg}",
                 a_top[i]
             );
+        }
+    }
+
+    /// A stacked area's invisible hover targets sit on each series' stack top,
+    /// not at the raw datum value: a raw value on a normalized `[0, 1]` axis
+    /// lands thousands of pixels off-canvas, and resvg then drops the whole
+    /// chart.
+    #[test]
+    fn stacked_area_hover_targets_sit_on_the_stack_tops() {
+        use serde_json::json;
+        for stack in ["zero", "normalize"] {
+            let mut p = make_stacked_area_payload(stack);
+            p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+            let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true)
+                .expect("renders");
+            let edges = stacked_area_edges(&svg);
+            let hover_ys: Vec<f64> = svg
+                .split("<circle transform=\"translate(")
+                .skip(1)
+                .filter(|c| c.contains("opacity=\"0\""))
+                .map(|c| c.split(')').next().unwrap().split(',').nth(1).unwrap().parse().unwrap())
+                .collect();
+            assert_eq!(hover_ys.len(), 4, "{stack}: two series x two weeks: {svg}");
+            let tops: Vec<f64> = edges.iter().flat_map(|(top, _)| top.iter().map(|v| v.1)).collect();
+            for y in &hover_ys {
+                assert!(
+                    tops.iter().any(|t| (t - y).abs() < 0.01),
+                    "{stack}: hover y {y} is not an area top edge {tops:?}: {svg}"
+                );
+            }
         }
     }
 
@@ -10285,11 +10334,10 @@ mod tests {
         p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
         let rail_payload = serde_json::from_value::<Payload>(p).unwrap();
         let rail_svg = render(&rail_payload, &test_fonts()).expect("renders");
-        // `plot_h_from_tick` reads the x-axis tick's y1, which already
-        // carries `plot_h + x_axis_drop` (offset 1 + the 0.5 crisp shift).
+        // `plot_h_from_tick` reads the x-axis tick's y1, the plot's bottom edge.
         let tick_y = plot_h_from_tick(&rail_svg);
         let label_y = attr(&text_tag(&rail_svg, "1"), "y");
-        let expected = tick_y + 6.0 + 6.0 + measure::baseline_shift("top", 11.0);
+        let expected = tick_y + 1.0 + 0.5 + 6.0 + 6.0 + measure::baseline_shift("top", 11.0);
         assert!(
             (label_y - expected).abs() < 1e-6,
             "rail label baseline {label_y} != fit-arm formula {expected}: {rail_svg}"
@@ -10764,8 +10812,8 @@ mod tests {
         let rules = baseline_rules(&svg);
         assert_eq!(rules.len(), 1, "the unity rule alone (zero: false, no data at 0): {svg}");
         let (rule_y, x1, x2) = rules[0];
-        assert_eq!(x1, 0.0, "the rule spans the pane from its left edge: {svg}");
-        assert_eq!(x2, rail_plot_w(&svg), "…to its right edge: {svg}");
+        assert!(x1 <= 0.0, "the rule spans the pane from its left edge: {svg}");
+        assert!(x2 >= rail_plot_w(&svg), "…to its right edge: {svg}");
         // The 1.0 datum's own vertex is drawn on the same scale, unrounded.
         let vertex_y: f64 = {
             let d = svg[svg.find("d=\"M").unwrap() + 4..].split('"').next().unwrap().to_string();
@@ -11393,9 +11441,9 @@ mod tests {
         );
         // X ticks snap to `floor(center) + 0.5` (a BAND scale's own
         // `tickRound` law, `tick_snap`'s doc comment).
-        assert!(svg.contains("x1=\"81.500\" y1=\"339.500\" x2=\"81.500\" y2=\"345.500\""), "{svg}");
-        assert!(svg.contains("x1=\"243.500\" y1=\"339.500\" x2=\"243.500\" y2=\"345.500\""), "{svg}");
-        assert!(svg.contains("x1=\"405.500\" y1=\"339.500\" x2=\"405.500\" y2=\"345.500\""), "{svg}");
+        assert!(svg.contains("x1=\"81.500\" y1=\"338.000\" x2=\"81.500\" y2=\"345.500\""), "{svg}");
+        assert!(svg.contains("x1=\"243.500\" y1=\"338.000\" x2=\"243.500\" y2=\"345.500\""), "{svg}");
+        assert!(svg.contains("x1=\"405.500\" y1=\"338.000\" x2=\"405.500\" y2=\"345.500\""), "{svg}");
         // Primary + ghost pair — the mirror ghost still paints (the band
         // flip changes X positions only, never the Y-axis mirror itself).
         assert!(svg.matches("text-anchor=\"end\"").count() >= 2, "primary + ghost pair: {svg}");
@@ -11470,7 +11518,7 @@ mod tests {
     /// `date` advanced by `days`, as an ISO string — the 28-day cadence
     /// `detect_time_unit` refuses.
     fn iso_plus_days(date: &str, days: i64) -> String {
-        let (y, m, d) = crate::families::temporal::parse_iso_date(date).unwrap();
+        let (y, m, d) = crate::time_axis::parse_iso_date(date).unwrap();
         let (y2, m2, d2) = crate::families::temporal::civil_from_days(
             crate::families::temporal::days_from_civil(y, m, d) + days,
         );
@@ -12845,31 +12893,119 @@ mod tests {
         }
     }
 
-    /// A year-shaped x too sparse for a yearly cadence (`1800`..`2025`, 225
-    /// years for five points) is still temporal in production: no grain, so
-    /// Vega's own bare time scale spaces the vertices by calendar and ticks
-    /// every 20 years and tilts the labels as the year-grain layout does -- never
-    /// the even nominal spacing.
-    #[test]
-    fn a_sparse_year_shaped_x_draws_vegas_bare_temporal_axis() {
-        let _locale = crate::time_locale::en_us_scope();
+    fn year_axis_payload(years: &[&str], width: f64) -> serde_json::Value {
         let mut p = make_line_payload(true, false);
-        p["rows"] = serde_json::json!([
-            {"week": "1800", "signups": 100.0},
-            {"week": "1900", "signups": 150.0},
-            {"week": "1950", "signups": 130.0},
-            {"week": "2000", "signups": 170.0},
-            {"week": "2025", "signups": 160.0},
-        ]);
+        p["rows"] = serde_json::Value::Array(
+            years.iter().map(|y| serde_json::json!({"week": y, "signups": 100.0})).collect(),
+        );
+        p["width"] = serde_json::json!(width);
         let labels = &mut p["resolved"]["style"]["axis_x"]["labels"];
         labels["overlap"] = serde_json::json!({"skip": true, "tilt": true});
         labels["tilt_increments"] = serde_json::json!([0.0, -30.0, -45.0, -60.0, -90.0]);
-        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts())
-            .expect("renders");
-        assert_eq!(svg.matches("rotate(-90)").count(), 12, "20-year ticks, tilted, none thinned: {svg}");
-        for year in ["1800", "1820", "2020"] {
-            assert!(svg.contains(&format!(">{year}</text>")), "{year}: {svg}");
+        p
+    }
+
+    fn month_end_rows() -> serde_json::Value {
+        let dates = ["2025-08-03", "2025-08-31", "2025-09-30", "2025-10-31", "2025-11-30", "2025-12-31", "2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31", "2026-06-30", "2026-07-31", "2026-08-31"];
+        serde_json::Value::Array(dates.iter().enumerate().map(|(i, d)| serde_json::json!({"week": d, "signups": 100.0 + i as f64})).collect())
+    }
+
+    /// A grain dropped for the scaffold budget (a billing start beside month ends) labels the continuous axis
+    /// by the curated two-tier ladder, a tick per label, never d3's full month names.
+    #[test]
+    fn a_dropped_grain_line_axis_labels_by_the_ladder_not_full_month_names() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_line_payload(true, false);
+        p["rows"] = month_end_rows();
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        for name in ["August", "September", "October", "December"] {
+            assert!(!svg.contains(&format!(">{name}<")), "{name}: {svg}");
         }
+        for label in ["Sep", "Jan", "2025", "2026"] {
+            assert!(svg.contains(&format!(">{label}<")), "{label}: {svg}");
+        }
+        assert_eq!(x_tick_xs(&svg).len(), 12, "a tick per month label: {svg}");
+    }
+
+    /// An authored angle or continuous domain names its own axis: the dropped-grain ladder stands down. An
+    /// unauthored domain (the null placeholder a touched `scale.continuous` carries) does not.
+    #[test]
+    fn an_authored_angle_or_domain_opts_out_of_the_dropped_grain_ladder() {
+        let _locale = crate::time_locale::en_us_scope();
+        let render_with = |edit: &dyn Fn(&mut serde_json::Value)| {
+            let mut p = make_line_payload(true, false);
+            p["rows"] = month_end_rows();
+            edit(&mut p["resolved"]["style"]["axis_x"]);
+            render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders")
+        };
+        let angled = render_with(&|ax| ax["labels"]["angle"] = serde_json::json!(-45.0));
+        assert!(angled.contains(">September<"), "d3's own labels under an authored angle: {angled}");
+        let windowed = render_with(&|ax| ax["scale"] = serde_json::json!({"continuous": {"domain": ["2025-09-01", "2026-03-01"]}}));
+        assert!(windowed.contains(">October<") && !windowed.contains(">Oct<"), "d3's own labels over an authored window: {windowed}");
+        let placeholder = render_with(&|ax| ax["scale"] = serde_json::json!({"continuous": {"zero": null, "type": null, "domain": null}}));
+        assert!(placeholder.contains(">Sep<") && !placeholder.contains(">September<"), "{placeholder}");
+    }
+
+    /// The rail-concat arm reserves the ladder's two label rows: the pane ends a row higher and the year-context row clears the x title.
+    #[test]
+    fn a_dropped_grain_ladder_on_the_rail_arm_reserves_its_two_rows() {
+        let _locale = crate::time_locale::en_us_scope();
+        use serde_json::json;
+        let mut p = make_multi_series_line_payload_with_bottom_legend();
+        p["rows"] = serde_json::Value::Array(
+            month_end_rows().as_array().unwrap().iter().flat_map(|r| {
+                [json!({"week": r["week"], "series": "Core", "signups": r["signups"]}), json!({"week": r["week"], "series": "Growth", "signups": r["signups"]})]
+            }).collect(),
+        );
+        p["resolved"]["legend"]["visible"] = json!(false);
+        p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
+        p["resolved"]["style"]["series_label"]["dark_companion_palette"] = json!(["#111111", "#222222"]);
+        p["resolved"]["style"]["axis_x"]["title"]["visible"] = json!(true);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let ys = |needle: &str| -> f64 {
+            let at = svg.find(&format!(">{needle}</text>")).unwrap_or_else(|| panic!("{needle}: {svg}"));
+            let head = &svg[..at];
+            let y = &head[head.rfind(" y=\"").unwrap() + 4..];
+            y[..y.find('"').unwrap()].parse().unwrap()
+        };
+        let (year_row, title, month_row) = (ys("2026"), ys("Week"), ys("Sep"));
+        assert!(title >= year_row + 11.0, "the title ({title}) clears the year row ({year_row}): {svg}");
+        // The band holds two rows, so the pane ends a row above where one reserved row would end it (339.5).
+        assert!(month_row <= 330.0, "month row at {month_row}: {svg}");
+    }
+
+    /// A year-shaped x too sparse for a yearly cadence (`1800`..`2025`, 225
+    /// years for five points) keeps no grain, but the year ladder still climbs
+    /// round steps (5, 10, 25, 50, 100) before it ever tilts: the labels
+    /// stay horizontal, one tick per label, at any width.
+    #[test]
+    fn a_long_year_span_steps_round_and_stays_horizontal() {
+        let _locale = crate::time_locale::en_us_scope();
+        for width in [360.0, 640.0, 1000.0] {
+            let p = year_axis_payload(&["1800", "1900", "1950", "2000", "2025"], width);
+            let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+            assert!(!svg.contains("rotate("), "{width}: {svg}");
+            let years: Vec<i32> = x_label_texts(&svg).iter().map(|t| t.parse().unwrap()).collect();
+            assert!(years.len() >= 2 && years.len() <= 12, "{width}: {years:?}");
+            let step = years[1] - years[0];
+            assert!([5, 10, 25, 50, 100].contains(&step), "{width}: {years:?}");
+            assert!(years.windows(2).all(|w| w[1] - w[0] == step), "{width}: {years:?}");
+            assert_eq!(x_tick_xs(&svg).len(), years.len(), "{width}: a tick per label: {svg}");
+        }
+    }
+
+    /// A thirty-year span is dense but short: it still steps 5 or 10, never the coarse steps.
+    #[test]
+    fn a_thirty_year_span_still_steps_five_or_ten() {
+        let _locale = crate::time_locale::en_us_scope();
+        let years: Vec<String> = (1990..=2020).map(|y| format!("{y}")).collect();
+        let refs: Vec<&str> = years.iter().map(String::as_str).collect();
+        let p = year_axis_payload(&refs, 300.0);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let labels: Vec<i32> = x_label_texts(&svg).iter().map(|t| t.parse().unwrap()).collect();
+        assert!(labels.len() >= 3, "{labels:?}");
+        let step = labels[1] - labels[0];
+        assert!((step == 5 || step == 10) && labels.windows(2).all(|w| w[1] - w[0] == step), "{labels:?}");
     }
 
     /// The tooltip header detects the yearly grain even where the axis drops it
@@ -15787,8 +15923,10 @@ mod tests {
     fn bind_refuses_a_temporal_x_value_that_is_no_date() {
         let json = plain_x_curve_payload(&["2024-01-01", "nope", "2024-03-01"], "linear", Some("temporal"));
         let payload: Payload = serde_json::from_value(json).unwrap();
-        let err = super::bind::bind(&payload, false).err().expect("bind refuses");
-        assert!(err.to_string().contains("ERR-X-VALUE-NOT-A-DATE"), "{err}");
+        for draw_areas in [false, true] {
+            let err = super::bind::bind(&payload, draw_areas).err().expect("bind refuses");
+            assert!(err.to_string().contains("ERR-X-VALUE-NOT-A-DATE"), "{err}");
+        }
     }
 
     /// A line fills the width it is given and draws in the slot sizing hands it.
@@ -15854,6 +15992,112 @@ mod tests {
             let (svg, sunk) = crate::diagnostic::collect(|| render_inner(&payload, &fonts, draw_areas));
             assert_eq!(svg.unwrap(), print::print(&laid.nodes));
             assert_eq!(sunk, laid.diagnostics);
+        }
+    }
+
+    /// A grained timestamp with an offset is bucketed by its UTC instant, as the same instant spelled in UTC is.
+    #[test]
+    fn an_offset_timestamp_draws_where_its_utc_spelling_does() {
+        let offset = ["2024-03-01T12:00:00Z", "2024-03-02T23:30:00-05:00", "2024-03-04T12:00:00Z"];
+        let utc = ["2024-03-01T12:00:00Z", "2024-03-03T04:30:00Z", "2024-03-04T12:00:00Z"];
+        for draw_areas in [false, true] {
+            let draw = |xs: &[&str]| {
+                let mut p = plain_x_curve_payload(xs, "linear", Some("temporal"));
+                p["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonthdate");
+                render_inner(&serde_json::from_value(p).unwrap(), &test_fonts(), draw_areas).expect("renders")
+            };
+            assert_eq!(
+                crate::time_axis::testing::geometry(&draw(&offset)),
+                crate::time_axis::testing::geometry(&draw(&utc)),
+                "areas: {draw_areas}"
+            );
+        }
+    }
+
+    /// A layer's own x values are read by the axis `bind` builds, so one that is no date refuses at bind.
+    #[test]
+    fn bind_refuses_a_layer_x_value_that_is_no_date() {
+        let mut p = layered_line_payload_with_cross_query_layer();
+        p["datasets"]["trend_query"][1]["week"] = serde_json::json!("later");
+        let payload: Payload = serde_json::from_value(p).unwrap();
+        let err = super::bind::bind(&payload, false).err().expect("bind refuses");
+        assert!(err.to_string().contains("ERR-X-VALUE-NOT-A-DATE"), "{err}");
+    }
+
+    /// The tooltip names the day the point sits on: `2024-03-02T01:00+05:30` is March 1 in UTC.
+    #[test]
+    fn a_tooltip_names_the_utc_day_of_an_offset_timestamp() {
+        let xs = ["2024-03-02T01:00:00+05:30", "2024-03-03T12:00:00Z", "2024-03-04T12:00:00Z"];
+        for draw_areas in [false, true] {
+            let mut p = plain_x_curve_payload(&xs, "linear", Some("temporal"));
+            p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.2~f");
+            let svg = render_inner(&serde_json::from_value(p).unwrap(), &test_fonts(), draw_areas).expect("renders");
+            assert!(svg.contains("1 Mar 2024; Signups: "), "areas {draw_areas}: {svg}");
+            assert!(!svg.contains("2 Mar 2024; Signups: "), "areas {draw_areas}: {svg}");
+        }
+    }
+
+    /// Under a day grain the bucket is the UTC day, and the axis names it in its ticks and its aria text.
+    #[test]
+    fn a_day_grain_buckets_an_offset_timestamp_by_its_utc_day() {
+        let xs = ["2024-03-01T23:30:00-05:00", "2024-03-03T12:00:00Z", "2024-03-05T23:30:00-05:00"];
+        for draw_areas in [false, true] {
+            let mut p = plain_x_curve_payload(&xs, "linear", Some("temporal"));
+            p["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonthdate");
+            p["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.2~f");
+            let svg = render_inner(&serde_json::from_value(p).unwrap(), &test_fonts(), draw_areas).expect("renders");
+            assert!(svg.contains("from March 02, 2024 to March 06, 2024"), "areas {draw_areas}: {svg}");
+            let x_axis = svg.split("aria-label=\"X-axis").nth(1).and_then(|rest| rest.split("aria-label=\"Y-axis").next()).expect("an x axis");
+            assert!(x_axis.contains(">6</text>"), "areas {draw_areas}: {x_axis}");
+            assert!(svg.contains("2 Mar 2024; Signups: "), "areas {draw_areas}: {svg}");
+        }
+    }
+
+    /// A number x that no date shape explains stays a linear scale, widened to an annotation past the data.
+    #[test]
+    fn an_annotation_past_a_quantitative_four_digit_x_widens_the_linear_scale() {
+        let mut json = make_line_payload(false, false);
+        json["rows"] = serde_json::json!([
+            {"week": 1000, "signups": 100.0}, {"week": 1100, "signups": 150.0}, {"week": 1200, "signups": 130.0},
+        ]);
+        json["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(true);
+        json["resolved"]["annotations"] = Value::Array(vec![annotation(0, value(serde_json::json!(1600)), Value::Null)]);
+        let svg = render(&serde_json::from_value::<Payload>(json).unwrap(), &test_fonts()).expect("renders");
+        assert!(svg.contains("X-axis for a linear scale with values from 1,000 to 1,600"), "{svg}");
+    }
+
+    /// A layout that fails has no `Layout` to carry its findings: the WARNs it collected before the
+    /// refusal reach the sink, as they did when the render wrote to it directly.
+    #[test]
+    fn a_failed_layout_forwards_the_warnings_it_collected() {
+        let mut json = make_line_payload(false, false);
+        json["rows"] = serde_json::json!([
+            {"week": 2019, "signups": 100.0}, {"week": 2020, "signups": 150.0}, {"week": 2021, "signups": 130.0},
+        ]);
+        json["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(true);
+        json["resolved"]["title"] = serde_json::json!("T ".repeat(300));
+        json["resolved"]["annotations"] = Value::Array(vec![annotation(0, value(serde_json::json!(2020.5)), Value::Null)]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let (rendered, sunk) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        assert_eq!(rendered.unwrap_err().code, "ERR-ANNOTATION-PAYLOAD");
+        let codes: Vec<_> = sunk.iter().map(|d| d.code).collect();
+        assert_eq!(codes, ["WARN-CHART-TITLE-TRUNCATED"]);
+    }
+
+    /// A year-shaped x is a time scale whatever `is_quantitative` says, so an annotation number past the data is
+    /// refused by name before it widens the axis, and so is one inside the data.
+    #[test]
+    fn an_annotation_number_past_a_year_shaped_x_is_refused_by_name() {
+        for anchor in [2021.5, 2025.0, 2025.5] {
+            let mut json = make_line_payload(false, false);
+            json["rows"] = serde_json::json!([
+                {"week": 2019, "signups": 100.0}, {"week": 2020, "signups": 150.0}, {"week": 2021, "signups": 130.0},
+                {"week": 2022, "signups": 140.0}, {"week": 2023, "signups": 160.0},
+            ]);
+            json["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(true);
+            json["resolved"]["annotations"] = Value::Array(vec![annotation(0, value(serde_json::json!(anchor)), Value::Null)]);
+            let err = render(&serde_json::from_value::<Payload>(json).unwrap(), &test_fonts()).expect_err("refused");
+            assert!(format!("{err:?}").contains("ERR-ANNOTATION-PAYLOAD") && format!("{err:?}").contains("a number on a time axis"), "{anchor}: {err:?}");
         }
     }
 }

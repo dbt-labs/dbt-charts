@@ -56,6 +56,7 @@ from dbt_charts.core.compile.resolve.chart._domain import (
     _zero_anchor_floats,
     resolve_y_zero,
 )
+from dbt_charts.core.compile.resolve.chart._header_inks import series_header_inks
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
@@ -502,6 +503,13 @@ def _resolve_line(
         "line",
         panel_axes=dataset.axes,
         stacked=False,
+        header_inks=series_header_inks(
+            base_y=normalized.y,
+            base_fill=None if normalized.color else single_series_fill,
+            layers=resolved_layers,
+            legend_visible=bkw["legend"].visible,
+            canvas=chart_local_style_context.ink_canvas,
+        ),
     )
     _ck, wide_measures = bake_wide_measures_kwargs(normalized.y, _ck)
     return ResolvedLineChart(

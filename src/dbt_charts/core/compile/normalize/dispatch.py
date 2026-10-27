@@ -43,6 +43,7 @@ import copy
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, field as dataclass_field
 from datetime import UTC, datetime
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any, overload
@@ -84,6 +85,10 @@ from dbt_charts.core.compile.models.refs import ChartRef
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
+from dbt_charts.core.compile.models.style.theme.page import (
+    CLOCK_HIDES_ZONE,
+    clock_hides_zone,
+)
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
@@ -179,6 +184,8 @@ def _theme_from_extends(extends: str | list[str] | None) -> str | None:
 # wrong style off the memo. A repr the other way round can only miss.
 _BoardCascadeKey = tuple[str, str, str | None, CurrencyCode | None, LanguageCode]
 _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
+_ReboundThemeKey = tuple[str, tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]]
+
 
 # Board style cascades already resolved, innermost compile last. Every cascade
 # in a compile lands in compile_board_resolved_style, and most of them
@@ -189,33 +196,61 @@ _CascadeProducts = tuple[ResolvedStyle, ChartStyleContext]
 # One compile's worth, not the process's: a resolved style is large, and near
 # all the repetition is inside a single board. A process-lifetime cache would
 # retain a lot to catch the little that repeats across boards.
-#
-# A tuple of dicts rather than `dict | None`: the empty tuple already
+@dataclass
+class _CompileMemo:
+    cascades: dict[_BoardCascadeKey, _CascadeProducts] = dataclass_field(
+        default_factory=dict
+    )
+    # Themes loaded under authored `palettes:`/`roles:` rebinds, keyed by the
+    # theme and both rebind maps; one compile's worth, never the process's.
+    rebound_themes: dict[_ReboundThemeKey, Style] = dataclass_field(
+        default_factory=dict
+    )
+
+
+# A tuple of memos rather than `_CompileMemo | None`: the empty tuple already
 # represents "nothing cached yet," so it needs no `None` sentinel on top; the
 # outer frames are never read, only the innermost.
-_BOARD_STYLE_CACHES: ContextVar[
-    tuple[dict[_BoardCascadeKey, _CascadeProducts], ...]
-] = ContextVar("board_style_caches", default=())
+_BOARD_STYLE_CACHES: ContextVar[tuple[_CompileMemo, ...]] = ContextVar(
+    "board_style_caches", default=()
+)
 
 
 @contextmanager
 def board_style_cache() -> Generator[None]:
     """Memoize board style cascades for the duration of one compile."""
-    token = _BOARD_STYLE_CACHES.set((*_BOARD_STYLE_CACHES.get(), {}))
+    token = _BOARD_STYLE_CACHES.set((*_BOARD_STYLE_CACHES.get(), _CompileMemo()))
     try:
         yield
     finally:
         _BOARD_STYLE_CACHES.reset(token)
 
 
-def _current_board_style_cache() -> dict[_BoardCascadeKey, _CascadeProducts]:
+def _current_memo() -> _CompileMemo:
     """The memo for the compile in progress.
 
     Callers outside a compile (``Board.set_theme``, render) get a throwaway they
     are welcome to write into: nothing is remembered when nothing is compiling.
     """
     caches = _BOARD_STYLE_CACHES.get()
-    return caches[-1] if caches else {}
+    return caches[-1] if caches else _CompileMemo()
+
+
+def _theme_base(theme: str, scoped_patch: StylePatch | None) -> Style:
+    """The built-in theme loaded under the palette/role rebinds this scope authors."""
+    from dbt_charts.core.compile.config import NO_REBINDS, get_theme_style
+
+    if scoped_patch is None:
+        return get_theme_style(theme)
+    palettes = NO_REBINDS if scoped_patch.palettes is None else scoped_patch.palettes
+    roles = NO_REBINDS if scoped_patch.roles is None else scoped_patch.roles
+    if not palettes and not roles:
+        return get_theme_style(theme)
+    memo = _current_memo().rebound_themes
+    key = (theme, tuple(sorted(palettes.items())), tuple(sorted(roles.items())))
+    if key not in memo:
+        memo[key] = get_theme_style(theme, palettes, roles)
+    return memo[key]
 
 
 @overload
@@ -373,7 +408,7 @@ def compile_board_resolved_style(
     before its layout exists, and the root's ``_propagate_resolved_style``
     re-resolves every nested board with the type afterward.
     """
-    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.config import get_default_theme_name
     from dbt_charts.core.compile.merge import scope_patch
 
     if (parent_resolved is None) != (parent_context is None):
@@ -383,7 +418,13 @@ def compile_board_resolved_style(
         )
 
     effective_theme = theme_name or get_default_theme_name()
-    base = get_theme_style(effective_theme)
+    is_nested = parent_context is not None
+    if is_nested and board_style is not None:
+        board_style = _block_font_sets_prose_font(board_style)
+    scoped_patch = scope_patch(parent_patch, board_style)
+    # Role bindings must be final before any token expands, so a rebind
+    # authored by this board or an ancestor layer goes into the theme load.
+    base = _theme_base(effective_theme, scoped_patch)
     # This scope's own theme differs from its immediate parent's -- the
     # cascade already falls through to the parent's theme when this board
     # authors none (see the docstring above), so a difference here can only
@@ -391,7 +432,6 @@ def compile_board_resolved_style(
     own_theme_declared = (
         parent_theme_name is not None and effective_theme != parent_theme_name
     )
-    is_nested = parent_context is not None
     # A nested board paints on top of what its PARENT scope actually
     # composited, never the theme's raw canvas underneath that -- see
     # resolve_style_and_context's own docstring. The root has no parent
@@ -433,18 +473,16 @@ def compile_board_resolved_style(
             inherited_patch,
         )
 
-    if is_nested:
-        board_style = _block_font_sets_prose_font(board_style)
-    own_patch = scope_patch(parent_patch, board_style)
+    assert scoped_patch is not None  # board_style is set, so the scope has a patch
     own_patch = _pin_unauthored_nested_background(
-        own_patch, board_style, is_nested=is_nested, replacement=replacement
+        scoped_patch, board_style, is_nested=is_nested, replacement=replacement
     )
 
     resolve_patch = (
         _with_nested_layout_gap(own_patch, layout_type) if is_nested else own_patch
     )
 
-    cache = _current_board_style_cache()
+    cache = _current_memo().cascades
     key = (
         effective_theme,
         repr(resolve_patch.model_dump(exclude_unset=True)),
@@ -1133,6 +1171,12 @@ def normalize_board(
         currency=regional.currency,
         language=regional.resolved_language,
     )
+    if clock_hides_zone(resolved_style.timestamp.format, regional.zone):
+        raise CompilationError.from_code(
+            ERR_VALIDATION_FIELD,
+            field_path="style.timestamp.format",
+            pydantic_msg=CLOCK_HIDES_ZONE,
+        )
 
     # ════════════════════════════════════════════════════════════════════
     # STEP 6: Layout

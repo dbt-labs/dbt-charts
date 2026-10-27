@@ -25,10 +25,11 @@ use crate::families::cartesian::BandGeometry;
 use crate::families::line::{bare_label_anchor, bare_label_layout, flush_anchor_px, tilted_temporal_label};
 use crate::families::subday::{SubdayPlan, SubdaySource};
 use crate::families::temporal::{
-    authored_tick_count, authored_tick_interval, bare_temporal_ticks, date_text_day, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, complete_buckets, days_from_civil, interval_tick_days, interval_tick_labels, native_tick_interval,
-    build_temporal_labels, parse_authored_time_unit, parse_iso_date, ResolvedVegaLabels, resolve_vega_x_labels, time_unit_floor, timeunit_nan, tooltip_header_date, TemporalLabel,
-    time_unit_specifier, TimePart, TimeUnit,
+    authored_tick_count, authored_tick_interval, bare_temporal_ticks, generic_layout, none_tick_labels, part_band_texts, time_part_ticks, AuthoredTickCadence, build_all_temporal_labels, complete_buckets, interval_tick_days, interval_tick_labels, native_tick_interval,
+    build_temporal_labels, parse_authored_time_unit, ResolvedVegaLabels, resolve_vega_x_labels, tooltip_header_date, TemporalLabel,
+    time_unit_specifier, BareTick, TimePart, TimeUnit,
 };
+use crate::time_axis::{date_text_day, Grain as AxisGrain, TimeAxis};
 use crate::families::x_type::{Grain, XResolution};
 use scene::{Attrs, Chars, Escape, Node, TextBlock};
 use measure::FontBook;
@@ -144,7 +145,13 @@ enum Ticks {
     },
     /// Vega's own ticks of the domain, which move with the plot width, each
     /// painted through the authored time format where there is one.
-    Bare { cadence: Option<AuthoredTickCadence>, time_format: Option<String>, subday: Option<SubdayPlan> },
+    Bare {
+        cadence: Option<AuthoredTickCadence>,
+        time_format: Option<String>,
+        subday: Option<SubdayPlan>,
+        /// A dropped grain's labels from the curated ladder, in place of d3's multi-scale text.
+        curated: Option<Vec<BareTick>>,
+    },
     /// Vega's own ticks of a time-part scale (`timeUnit: month`, ...), under
     /// the part's own text.
     Part { part: TimePart, count: Option<usize>, time_format: Option<String> },
@@ -189,8 +196,10 @@ pub(crate) struct TemporalXAxis {
     ticks_visible: bool,
     /// A thinned bar axis ticks only under the labels it paints, so the ticks draw the labels' cadence.
     ticks_under_labels: bool,
-    tick_color: String,
     tick_width: f64,
+    /// The stroke of the baseline rule on the plot edge this axis hangs from, which its ticks continue;
+    /// the arm that paints the rule sets it.
+    pub(crate) floor_rule: Option<String>,
     /// `axis.offset`; the drawn axis group adds its own half-pixel crisp
     /// translate on top (`axis_drop`).
     axis_offset: f64,
@@ -203,11 +212,10 @@ pub(crate) struct TemporalXAxis {
     flush_points: bool,
     /// Production compiles a `tickCount` interval onto this discrete scale, which Vega rejects: the chart paints no marks.
     ticks_interval_on_discrete: bool,
-    /// The data's calendar grain and the grain its labels thinned to, on a bucketed scale: the opener set a
-    /// support-table strip thins its cells to.
-    label_cadence: Option<(TimeUnit, TimeUnit)>,
     /// An authored `labels.values`, in days: a tick outside it paints no label.
     listed: Option<Vec<f64>>,
+    /// Every date the axis places, read once: the ladder, the kept dates and an authored domain's ends.
+    time: TimeAxis,
 }
 
 /// A date column as the axis sees it.
@@ -237,6 +245,9 @@ pub(crate) struct DateColumn<'a> {
     /// The dates already sit on a time part's cycle (a bar folds its rows and their bucket ends itself),
     /// so the axis must not fold them again: an end that crossed the cycle would wrap to its start.
     pub(crate) folded: bool,
+    /// The axis that read every date of the column and of the scale: the ladder, the kept dates and any bucket end the
+    /// caller will ask a place of.
+    pub(crate) time: &'a TimeAxis,
 }
 
 /// A temporal x axis laid on a point or band scale over its distinct dates, each tick a category in date order.
@@ -273,11 +284,6 @@ pub(crate) fn authored_day_domain(ax_x: &AxisStyle, family: &str) -> Result<Opti
 fn day_key(day: f64) -> String {
     let (y, m, d) = crate::families::temporal::civil_from_days(day as i64);
     if day.fract() == 0.0 { format!("{y:04}-{m:02}-{d:02}") } else { day.to_string() }
-}
-
-/// A date cell as days since the epoch, a clock as the day's fraction.
-fn day_of(date: &str) -> Result<f64, String> {
-    date_text_day(date).ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date"))
 }
 
 impl TemporalXAxis {
@@ -350,8 +356,8 @@ impl TemporalXAxis {
             tick_len: ticks_cfg.length.unwrap_or(6.0),
             ticks_visible: ticks_cfg.visible.unwrap_or(true),
             ticks_under_labels: false,
-            tick_color: crate::common::required_ink(ticks_cfg.color.as_deref(), "scatter_axis", "ticks.color")?.to_string(),
             tick_width: ticks_cfg.width.unwrap_or(1.0),
+            floor_rule: None,
             axis_offset: ticks_cfg.offset.unwrap_or(0.0),
             edge: ax_x.x_edge(),
             title_text,
@@ -359,10 +365,10 @@ impl TemporalXAxis {
             expr: None,
             flush_points: false,
             ticks_interval_on_discrete: false,
-            label_cadence: None,
             listed: labels_cfg.values.as_ref().map(|values| {
                 values.iter().filter_map(|v| v.as_str().and_then(crate::families::temporal::iso_format_day)).collect()
             }),
+            time: TimeAxis::new(AxisGrain::default(), std::collections::HashMap::new()),
         };
         let grain = match col.law.grain {
             Grain::Calendar(tu) => Some(tu),
@@ -374,6 +380,14 @@ impl TemporalXAxis {
         };
         axis.grain = grain;
         axis.part = part;
+        let unreadable = |e: crate::time_axis::Unreadable| match e {
+            crate::time_axis::Unreadable::NotADate(value) => format!("scatter: x value {value:?} is not an ISO date"),
+            outside @ crate::time_axis::Unreadable::OutsideYears(_) => outside.diagnostic("", "", "scatter").to_string(),
+        };
+        axis.time = col.time.clone();
+        for date in col.ladder.iter().chain(col.kept) {
+            axis.time.add(date).map_err(unreadable)?;
+        }
         axis.folded = col.folded;
         axis.tooltip_grain = match part {
             Some(_) => {
@@ -384,6 +398,7 @@ impl TemporalXAxis {
         };
         axis.tooltip_time = crate::families::subday::Header::of(col.timed, labels_cfg.clock).filter(|_| axis.tooltip_grain.is_none());
         let authored_domain = authored_day_domain(ax_x, "scatter")?;
+        let time = axis.time.clone();
         let pad = ax_x.scale.get("padding").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
         let fiscal = ax_x.fiscal_year_start_month;
         let label_grain = match grain {
@@ -440,27 +455,19 @@ impl TemporalXAxis {
             }
         };
         // The scale spans the kept rows' buckets, each floored to the grain.
-        let floor = |date: &String| -> Result<f64, String> {
-            let floored = match grain {
-                Some(tu) => time_unit_floor(date, tu).ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date"))?,
-                None => date.clone(),
-            };
-            day_of(&floored)
-        };
+        let floor = |date: &String| -> f64 { time.day_of_bucket(date) };
         // Vega's `timeunit` transform yields NaN for a year below 100: such a row stays out of the
         // scale domain and the ladder, and its point sits at x 0.
-        let nan = |date: &String| grain.is_some() && timeunit_nan(date);
+        let nan = |date: &String| grain.is_some() && time.get(date).is_some_and(|instant| instant.nan);
         let kept_at = col
             .kept
             .iter()
             .filter(|date| !nan(date))
             .map(|date| match part {
-                Some(part) => date_text_day(date)
-                    .map(|day| if col.folded { day } else { part.instant(day) })
-                    .ok_or_else(|| format!("scatter: x value {date:?} is not an ISO date")),
-                None => floor(date),
+                Some(_) if col.folded => time.day(date),
+                _ => floor(date),
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
         let spanned: Vec<f64> = kept_at.iter().copied().chain(col.extra_days.iter().map(|&day| day as f64)).collect();
         let span = spanned.iter().copied().reduce(f64::min).zip(spanned.iter().copied().reduce(f64::max));
 
@@ -470,6 +477,9 @@ impl TemporalXAxis {
                 Some((lo, hi)) => [lo, hi].map(day_key).to_vec(),
                 None => col.kept.to_vec(),
             };
+            for key in &domain {
+                axis.time.add(key).map_err(unreadable)?;
+            }
             axis.scale = match indexed {
                 Indexed::Point { padding } => Scale::Point { domain: domain.clone(), padding },
                 Indexed::Band { padding_inner, padding_outer } => Scale::Band {
@@ -482,8 +492,7 @@ impl TemporalXAxis {
                 // No grain explains the dates: Vega labels every category under d3's multi-scale format.
                 let mut labels = Vec::with_capacity(domain.len());
                 for (i, date) in domain.iter().enumerate() {
-                    let day = day_of(date)?;
-                    let (y, m, d) = crate::families::temporal::civil_from_days(day.floor() as i64);
+                    let (y, m, d) = axis.time.civil_of(date);
                     let text = match authored {
                         Some(format) => format.text(y, m, d),
                         None => crate::families::temporal::d3_multi_format(y, m, d)?,
@@ -591,24 +600,32 @@ impl TemporalXAxis {
                 }
                 _ => None,
             };
+            let time_format = labels_cfg.spec().filter(|f| crate::families::temporal::is_time_format(f)).map(str::to_string);
+            let subday = crate::families::subday::plan_for(col.timed, ax_x, cadence, time_format.is_some(), col.chart_width, col.chart_width);
+            let keeps_ladder = crate::families::temporal::keeps_dropped_grain_ladder(ax_x, col.law.fill_grain, cadence, time_format.is_some(), subday.is_some(), authored_domain.is_some());
+            let mut curated = None;
             let (angle, parity) = match layout_tu {
                 Some(tu) => {
                     let ladder = complete_buckets(col.ladder, tu, fiscal);
                     let resolved = layout(&ladder, tu, flushed, true, &mut measure)?;
                     axis.collision = resolved.collision;
+                    if keeps_ladder {
+                        curated = Some(crate::families::temporal::ladder_bare_ticks((lo, hi), &ladder, &resolved)?);
+                    }
                     bare_label_layout(Some(&resolved), skip, labels_cfg)
                 }
                 None => bare_label_layout(None, skip, labels_cfg),
             };
             axis.angle = labels_cfg.angle.unwrap_or(angle);
             axis.parity = if pinned { overlap.is_none() } else { parity };
-            let time_format = labels_cfg.spec().filter(|f| crate::families::temporal::is_time_format(f)).map(str::to_string);
-            let subday = crate::families::subday::plan_for(col.timed, ax_x, cadence, time_format.is_some(), col.chart_width, col.chart_width);
-            axis.ticks = Ticks::Bare { cadence, time_format, subday };
+            axis.ticks = Ticks::Bare { cadence, time_format, subday, curated };
             return Ok(axis);
         };
 
         let ladder = complete_buckets(&ladder_dates, tu, fiscal);
+        for date in &ladder {
+            axis.time.add(date).map_err(unreadable)?;
+        }
         // `labels.time_unit: none` measures the rows' own dates, not the
         // enumerated span (`_temporal_layout`'s generic branch).
         let resolved = if labels_cfg.time_unit.as_deref() == Some("none") {
@@ -619,7 +636,6 @@ impl TemporalXAxis {
         axis.angle = labels_cfg.angle.unwrap_or(resolved.angle);
         axis.parity = if pinned { overlap.is_none() } else { resolved.parity };
         axis.collision = resolved.collision;
-        axis.label_cadence = Some((tu, resolved.visibility_tu));
         // With the label grain at the data grain Vega ticks every calendar
         // boundary of the scale (`tickCount: {interval}`, `type_inference.py:
         // 1049-1052`), an empty bucket included; a thinner ladder injects its
@@ -645,7 +661,7 @@ impl TemporalXAxis {
         let mut labels = Vec::new();
         for tl in &resolved.labels {
             let date = &ladder[tl.domain_idx];
-            let day = if raw { day_of(date)? } else { floor(date)? };
+            let day = if raw { axis.time.day(date) } else { axis.time.day_of_bucket(date) };
             labels.push(axis.label(tl, At::Day(day), resolved.format_tu, fonts)?);
         }
         axis.ticks = Ticks::Fixed(labels);
@@ -705,7 +721,8 @@ impl TemporalXAxis {
     /// The ticks speak `expr` evaluated at their instants, in place of the ladder's own text. An expression that
     /// throws on a date of the axis fails Vega's whole view: the axis then only records that no mark paints.
     pub(crate) fn speak(&mut self, expr: crate::labels_expr::Expr, dates: &[String]) -> Result<(), String> {
-        let thrown = crate::families::temporal::first_throw_at_dates(&expr, dates, false, |date| Ok(day_of(date)? as f64), |day| self.default_label(day))?;
+        let days = dates.iter().map(|date| self.time.day(date)).collect::<Vec<_>>();
+        let thrown = crate::families::temporal::first_throw_at_dates(&expr, dates, &days, false, |day| self.default_label(day))?;
         if thrown.is_some() {
             self.ticks_interval_on_discrete = true;
             return Ok(());
@@ -730,7 +747,7 @@ impl TemporalXAxis {
             .map(|(i, (frac, label))| {
                 let day = match (label.at, &self.scale) {
                     (At::Day(day), _) => day,
-                    (At::Index(i), Scale::Point { domain, .. } | Scale::Band { domain, .. }) => day_of(&domain[i])? as f64,
+                    (At::Index(i), Scale::Point { domain, .. } | Scale::Band { domain, .. }) => self.time.day(&domain[i]),
                     (At::Index(_), Scale::Utc { .. }) => unreachable!("a UTC scale ticks days"),
                 };
                 let value = crate::labels_expr::Val::Date(day.floor() * 864e5);
@@ -773,10 +790,18 @@ impl TemporalXAxis {
                     })
                     .collect()
             }
-            Ticks::Bare { cadence, time_format, subday } => {
+            Ticks::Bare { cadence, time_format, subday, curated } => {
                 let (lo, hi) = self.scale.domain_at(pw);
                 let authored = crate::families::temporal::AuthoredTimeFormat::parse("scatter", time_format.as_deref())?;
-                bare_temporal_ticks((lo, hi), pw, *cadence, authored, subday.as_ref())?
+                let ticks = match curated {
+                    Some(ticks) => ticks
+                        .iter()
+                        .map(|t| BareTick { frac: (t.day - lo) / (hi - lo), ..t.clone() })
+                        .filter(|t| (0.0..=1.0).contains(&t.frac))
+                        .collect(),
+                    None => bare_temporal_ticks((lo, hi), pw, *cadence, authored, subday.as_ref())?,
+                };
+                ticks
                     .into_iter()
                     .map(|t| {
                         let listed = self.is_listed(t.day);
@@ -793,6 +818,11 @@ impl TemporalXAxis {
                     .collect()
             }
         }
+    }
+
+    /// Whether the axis draws its tick marks.
+    pub(crate) fn draws_ticks(&self) -> bool {
+        self.ticks_visible
     }
 
     /// A thinned bar axis draws a tick under each label it paints, whatever the theme says of the axis's ticks.
@@ -814,32 +844,16 @@ impl TemporalXAxis {
             .collect()
     }
 
-    /// The data's calendar grain and the grain its labels thinned to; `None` off a bucketed scale.
-    pub(crate) fn label_cadence(&self) -> Option<(TimeUnit, TimeUnit)> {
-        self.label_cadence
-    }
-
     /// The scale fraction of one row's `date` (floored to the grain) at plot
     /// width `pw`.
     pub(crate) fn frac(&self, date: &str, pw: f64) -> f64 {
         match &self.scale {
             Scale::Utc { .. } => {
-                if self.grain.is_some() && timeunit_nan(date) {
+                let instant = self.instant(date);
+                if self.grain.is_some() && instant.nan {
                     return 0.0;
                 }
-                let day = match self.part {
-                    Some(part) => {
-                        let day = date_text_day(date).expect("a kept date parsed at resolve");
-                        if self.folded { day } else { part.instant(day) }
-                    }
-                    None => {
-                        let floored = match self.grain {
-                            Some(tu) => time_unit_floor(date, tu).expect("a kept date parsed at resolve"),
-                            None => date.to_string(),
-                        };
-                        day_of(&floored).expect("a kept date parsed at resolve")
-                    }
-                };
+                let day = if self.part.is_some() && self.folded { instant.at } else { instant.pos };
                 self.scale.frac(At::Day(day), pw)
             }
             Scale::Point { domain, .. } | Scale::Band { domain, .. } => {
@@ -886,7 +900,7 @@ impl TemporalXAxis {
     /// Whether `date` is a row Vega's `timeunit` transform places at NaN (drawn at x 0): only on
     /// a UTC scale, where a bucket start is an instant.
     pub(crate) fn is_nan_at(&self, date: &str) -> bool {
-        matches!(self.scale, Scale::Utc { .. }) && self.grain.is_some() && timeunit_nan(date)
+        matches!(self.scale, Scale::Utc { .. }) && self.grain.is_some() && self.time.get(date).is_some_and(|instant| instant.nan)
     }
 
     /// A UTC scale's domain in days at plot width `pw`; `None` on a point scale.
@@ -894,19 +908,27 @@ impl TemporalXAxis {
         matches!(self.scale, Scale::Utc { .. }).then(|| self.scale.domain_at(pw))
     }
 
+    /// The instant of a date the axis read when it was resolved.
+    fn instant(&self, date: &str) -> &crate::time_axis::Instant {
+        self.time.get(date).expect("a date of the scale was read at resolve")
+    }
+
+    /// The whole UTC day a date of the axis falls on.
+    pub(crate) fn date_day(&self, date: &str) -> Option<f64> {
+        self.time.get(date).map(|instant| instant.at.floor())
+    }
+
     /// The fractions a `date`'s bucket starts and ends at on a bucketed scale at
     /// plot width `pw`; `None` on a scale no calendar grain buckets.
     pub(crate) fn bucket_span(&self, date: &str, pw: f64) -> Option<(f64, f64)> {
-        let tu = self.grain.filter(|_| matches!(self.scale, Scale::Utc { .. }))?;
+        self.grain.filter(|_| matches!(self.scale, Scale::Utc { .. }))?;
+        let instant = self.instant(date);
         // A NaN position is a bucket of no width at 0.
-        if timeunit_nan(date) {
+        if instant.nan {
             return Some((0.0, 0.0));
         }
-        let start = parse_iso_date(&time_unit_floor(date, tu).expect("a kept date parsed at resolve"))
-            .expect("a floored date parses");
-        let end = crate::families::temporal::next_bucket(start, tu);
-        let at = |(y, m, d): (i32, u8, u8)| self.scale.frac(At::Day(days_from_civil(y, m, d) as f64), pw);
-        Some((at(start), at(end)))
+        let at = |day: f64| self.scale.frac(At::Day(day), pw);
+        Some((at(instant.pos), at(instant.end.expect("a grain buckets its dates"))))
     }
 
     /// A facet panel's tooltip x value: Vega-Lite's own description of the date.
@@ -918,9 +940,9 @@ impl TemporalXAxis {
     /// (`"Jan 2024"`), the header the structured tooltip formats a date with.
     pub(crate) fn tooltip_date(&self, date: &str) -> Result<String, String> {
         if let Some(header) = self.tooltip_time {
-            return header.text(day_of(date)?);
+            return header.text(self.time.day(date));
         }
-        let (y, m, d) = parse_iso_date(date).expect("a plotted date parsed at resolve");
+        let (y, m, d) = self.time.civil_of(date);
         tooltip_header_date(y, m, d, self.tooltip_grain)
     }
 
@@ -1061,9 +1083,10 @@ impl TemporalXAxis {
                     .map(|v| match self.grain {
                         Some(unit) => Ok(bucket_text(v, Grain::Calendar(unit))),
                         // No grain explains the dates: Vega labels each category under d3's multi-scale format.
-                        None => parse_iso_date(v)
-                            .ok_or_else(|| format!("axis aria: x value {v:?} is not an ISO date"))
-                            .and_then(|(y, m, d)| crate::families::temporal::d3_multi_format(y, m, d)),
+                        None => {
+                            let (y, m, d) = self.time.civil_of(v);
+                            crate::families::temporal::d3_multi_format(y, m, d)
+                        }
                     })
                     .collect::<Result<_, String>>()?,
                 format: vega_axis_format(ax_x, false)?,
@@ -1087,26 +1110,12 @@ impl TemporalXAxis {
 
     /// Ticks, labels and title, positioned against a plot at `plot_left` of
     /// width `plot_w` whose bottom edge is `plot_bottom`.
-    pub(crate) fn paint(
-        &self,
-        svg: &mut String,
-        ax_x: &AxisStyle,
-        plot_left: f64,
-        plot_w: f64,
-        plot_bottom: f64,
-        fonts: &FontBook,
-    ) -> Result<(), String> {
-        svg.push_str(&print::print(&self.nodes(ax_x, plot_left, plot_w, plot_bottom, fonts)?));
-        Ok(())
-    }
-
-    /// [`Self::paint`] as nodes.
     pub(crate) fn nodes(
         &self,
         ax_x: &AxisStyle,
         plot_left: f64,
         plot_w: f64,
-        plot_bottom: f64,
+        (plot_bottom, floor_y): (f64, f64),
         fonts: &FontBook,
     ) -> Result<Vec<Node>, String> {
         let fs = self.font_size;
@@ -1118,18 +1127,9 @@ impl TemporalXAxis {
         let caption = self.caption(ax_x, plot_w)?;
         let mut items = Vec::new();
         if self.ticks_visible {
-            for frac in self.painted_tick_fracs(&labels, plot_w) {
-                let gx = plot_left + (plot_w * frac).round() + 0.5;
-                items.push(Node::Line(
-                    Attrs::new()
-                        .set("x1", format!("{gx:.3}"))
-                        .set("y1", format!("{group_y:.3}"))
-                        .set("x2", format!("{gx:.3}"))
-                        .set("y2", format!("{:.3}", group_y + sign * self.tick_len))
-                        .set("stroke", self.tick_color.as_str())
-                        .set("stroke-width", self.tick_width.to_string()),
-                ));
-            }
+            let xs = self.painted_tick_fracs(&labels, plot_w).into_iter().map(|frac| plot_left + (plot_w * frac).round() + 0.5);
+            let end_y = group_y + sign * self.tick_len;
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y), 3)?);
         }
         if crate::labels_expr::view::active() && self.title_key.is_some() {
             self.register_item_axis(&labels, plot_w, ax_x)?;

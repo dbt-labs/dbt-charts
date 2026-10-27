@@ -192,15 +192,15 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
         assert mat.materialize_and_run(
             CsvSourceConfig(type="csv", files={{"s": "data/s.csv"}}),
             "SELECT sum(amount) AS n FROM s", {{}}, "src",
-        ) == [{{"n": 3}}]
+        )[0] == [{{"n": 3}}]
         assert mat.materialize_and_run(
             ParquetSourceConfig(type="parquet", files={{"p": "data/p.parquet"}}),
             "SELECT amount FROM p", {{}}, "src",
-        ) == [{{"amount": 1.5}}]
+        )[0] == [{{"amount": 1.5}}]
         assert mat.materialize_and_run(
             JsonSourceConfig(type="json", files={{"j": "data/j.json"}}),
             "SELECT count(*) AS n FROM j", {{}}, "src",
-        ) == [{{"n": 2}}]
+        )[0] == [{{"n": 2}}]
 
         cache = TrivialDuckDBCache()
         cache.put("s", "q", "v", [{{"a": 1}}, {{"a": "2"}}], board_slug="b", query_name="q")

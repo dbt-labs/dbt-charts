@@ -226,30 +226,6 @@ class TestMultiYScatter:
             resolve(chart, data, chart_style_context=ctx)
         assert exc.value.code == ERR_MULTI_Y_LAYERS_CONFLICT
 
-    def test_multi_y_scatter_click_link_fields(self, make_chart):
-        """The click-interactivity y/color link fields for a wide scatter --
-        the first authored measure for y, WIDE_KEY_FIELD for color with no
-        dimension -- same convention bar/area/line already use for their own
-        wide fold (``click_interactivity.py::_channel_field``)."""
-        from dbt_charts.core.compile.resolve.chart._wide_fields import WIDE_KEY_FIELD
-        from dbt_charts.core.render.chart.features.click_interactivity import (
-            _channel_field,
-        )
-
-        chart = make_chart("scatter", x="month", y=["rev", "cost"])
-        data = _multi_measure_scatter_data()
-        ctx = resolve_chart_style_context(get_theme_style("stark"))
-        rc = resolve(chart, data, chart_style_context=ctx)
-        assert _channel_field(rc, "y") == "rev"
-        assert _channel_field(rc, "color") == WIDE_KEY_FIELD
-
-        dimensioned = make_chart(
-            "scatter", x="month", y=["rev", "cost"], color="region"
-        )
-        dim_data = [{"month": "Jan", "rev": 100, "cost": 40, "region": "west"}]
-        rc_dim = resolve(dimensioned, dim_data, chart_style_context=ctx)
-        assert _channel_field(rc_dim, "color") == "region"
-
 
 # ---------------------------------------------------------------------------
 # Line: multi-y legend.visible: false respected (Step 6 TDD)

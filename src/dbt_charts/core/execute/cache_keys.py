@@ -18,9 +18,28 @@ See also:
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from dbt_charts.core.compile.models.source import BaseSourceConfig
+
+# Folded into the key the result-cache stores (``stored_query_hash``), never into
+# ``compute_cache_key``: recordings are keyed by the latter and must survive a
+# bump. Bump it when the cells a query returns change shape for unchanged SQL, so
+# every cache holding the old shape (local and Cloud) misses instead of serving it.
+RESULT_FORMAT_VERSION = 1
+
+
+def stored_query_hash(query_hash: str) -> str:
+    """The ``query_hash`` a result-cache backend stores and looks up under.
+
+    Re-hashed with ``RESULT_FORMAT_VERSION`` (same 16-hex width), so a bump makes
+    every existing entry a miss. Applied inside the cache backends only.
+    """
+    return hashlib.sha256(f"{query_hash}:{RESULT_FORMAT_VERSION}".encode()).hexdigest()[
+        :16
+    ]
+
 
 # Field names that must NEVER appear in cache hash inputs. Match by case-
 # insensitive exact name. Conservative: anything that looks secret-shaped

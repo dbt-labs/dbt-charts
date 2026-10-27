@@ -62,7 +62,6 @@ def _make_compiled_executor(
     ok = Mock()
     ok.is_success = True
     ok.data = data
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -1197,7 +1196,6 @@ rows:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"x": 1}, {"x": 2}, {"x": 3}]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = "max_rows"
         mock_registry = Mock()

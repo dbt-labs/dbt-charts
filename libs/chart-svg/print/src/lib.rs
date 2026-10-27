@@ -180,6 +180,7 @@ fn node_into(out: &mut String, node: &Node) {
         Node::Polyline(attrs) => empty_into(out, "polyline", attrs),
         Node::Stop(attrs) => empty_into(out, "stop", attrs),
         Node::Text(block) => text_into(out, "text", block),
+        Node::EmptyText(attrs) => empty_into(out, "text", attrs),
         Node::Tspan(block) => text_into(out, "tspan", block),
         Node::TextRuns { attrs, children } => element_into(out, "text", attrs, children),
         Node::TspanRuns { attrs, children } => element_into(out, "tspan", attrs, children),
@@ -433,6 +434,7 @@ mod tests {
             (Node::Circle(attrs()), "circle"),
             (Node::Polygon(attrs()), "polygon"),
             (Node::Polyline(attrs()), "polyline"),
+            (Node::EmptyText(attrs()), "text"),
         ] {
             assert_eq!(print(&[node]), format!("<{tag} {body}"));
         }

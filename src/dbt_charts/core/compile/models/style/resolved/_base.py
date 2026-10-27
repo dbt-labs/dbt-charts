@@ -360,7 +360,7 @@ class ResolvedAxisElementStyle:
     # construction, so this field can never hold inward/outward. left/right/
     # center pass through as authored. The render layer reads it exactly as
     # before #5845 (center still needs its own away-from-plot fallback on a
-    # left/right axis — see bar.py / vl_field_maps.py).
+    # left/right axis).
     align: Literal["left", "right", "center"] | None = None
     # Resolved overlap strategy enablement. None = cascade did not populate
     # (resolver skips). Three required bools after cascade from _base.yaml.

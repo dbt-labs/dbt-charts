@@ -59,6 +59,7 @@ from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
     TruncatedReason,
 )
+from dbt_charts.core.execute.cache_keys import stored_query_hash
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +238,7 @@ class _DuckDBResultCacheBase:
         A missing row and two empty slots are the same thing to every caller, so
         an absent key comes back as ``_Slots.EMPTY`` rather than None.
         """
+        query_hash = stored_query_hash(query_hash)
         row = conn.execute(
             """
             SELECT written_at_utc, truncated_reason, payload,
@@ -313,6 +315,7 @@ class _DuckDBResultCacheBase:
         comes back under the ceiling must clear a prior truncation, not keep
         reporting one that no longer applies.
         """
+        query_hash = stored_query_hash(query_hash)
         conn.execute(
             """
             INSERT INTO _query_outcomes
@@ -362,6 +365,7 @@ class _DuckDBResultCacheBase:
         can never destroy rows another worker just computed — no read-then-write
         window.
         """
+        query_hash = stored_query_hash(query_hash)
         conn.execute(
             """
             INSERT INTO _query_outcomes
@@ -400,6 +404,7 @@ class _DuckDBResultCacheBase:
 
     def clear(self, source_hash: str, query_hash: str, variables_hash: str) -> None:
         """Remove this key's outcome row, rows and error alike."""
+        query_hash = stored_query_hash(query_hash)
         with self._connection() as conn:
             conn.execute(
                 "DELETE FROM _query_outcomes WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",

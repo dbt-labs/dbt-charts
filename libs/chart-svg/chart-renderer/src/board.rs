@@ -52,10 +52,10 @@ pub use row_shifts::{derive_title_shifts, RowShift};
 pub struct BoardPayload {
     pub resolved: Value,
     pub chart_datasets: sizing::ChartDatasets,
-    /// Every geo document the board's geo charts draw from, keyed by source
-    /// URL, parsed by Python; the engine reads no files.
+    /// Every geo document the board's geo charts draw from, as JSON text keyed by
+    /// source URL; the engine reads no files.
     #[serde(default)]
-    pub geometries: HashMap<String, Value>,
+    pub geometries: crate::families::geo::source::Geometries,
     pub background: Option<String>,
     pub fonts_dir: Option<String>,
     /// Production's own `portable_strftime` output for the data-freshness
@@ -1075,7 +1075,7 @@ fn chart_title_text(chart_json: &Value, chart_type: &str, id: &str) -> Result<St
 /// continuous `fallback_scale`. Read straight off the chart's own
 /// `resolved_channels.color` (already present on every chart item's JSON —
 /// the same data every family's own emitter reads to paint the legend).
-fn is_magnitude_colored(chart_json: &Value) -> bool {
+pub(crate) fn is_magnitude_colored(chart_json: &Value) -> bool {
     let Some(color) = chart_json
         .get("resolved_channels")
         .and_then(|c| c.get("color"))

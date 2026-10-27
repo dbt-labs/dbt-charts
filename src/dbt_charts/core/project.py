@@ -999,6 +999,13 @@ class Project(ABC):
         return get_project_warnings_ignore(self)
 
     @cached_property
+    def locked_schema_version(self) -> str | None:
+        """The released board schema version dbt_charts.yml pins, or None."""
+        from dbt_charts.core.compile.config import get_project_locked_schema_version
+
+        return get_project_locked_schema_version(self)
+
+    @cached_property
     def cache(self) -> ProjectCacheConfig:
         """The project's `cache:` block — the root of the cache cascade.
 

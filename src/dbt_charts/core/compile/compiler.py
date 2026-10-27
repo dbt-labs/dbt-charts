@@ -137,6 +137,7 @@ from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
 from dbt_charts.core.compile.validate.links import validate_board_links
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
+from dbt_charts.core.compile.validate.values import validate_values_queries
 from dbt_charts.core.compile.validate.zero_baseline import (
     validate_board_zero_baselines,
 )
@@ -154,6 +155,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
 )
 from dbt_charts.core.diagnostics.codes_query import WARN_PARSE_ERROR
 from dbt_charts.core.diagnostics.diagnostic import SourceRange
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.diagnostics.from_query_diagnostic import from_query_diagnostic
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -507,6 +509,13 @@ def compile_authored_board(
     try:
         validate_board_format_specs(compiled, chart_styles)
     except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
+    # Values queries: a column that mixes kinds, or holds only nulls, has no
+    # type to declare (see validate/values.py).
+    try:
+        validate_values_queries(compiled)
+    except ExecutionError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
     # Link fields: a chart/table-column/footer link's scheme must be a board

@@ -177,7 +177,6 @@ def test_render_dashboard_fires_warning_for_truncated_axis_title(
     ok = Mock()
     ok.is_success = True
     ok.data = [{"month": "Jan", "revenue": 5}]
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()

@@ -58,9 +58,14 @@ style:
         # inks; the cycle
         # threads through yellow-brown → tobacco → red-brown without ever
         # crossing into cool territory. Stops sit at OKLCH L 0.32–0.35
-        # alongside clarity's cool cycle (matched ink-band weight). Named
-        # roles preserve the intended hues if the family is reordered again.
-        single_series_palette: [category.brown.deep, category.gold.deep, category.orange.deep]
+        # alongside clarity's cool cycle (matched ink-band weight). Slots 8, 5, 6
+        # of editorial-10 (brown, gold, rust), addressed directly, not through
+        # the rebindable `category` role: a board may rebind `category` to a
+        # palette with fewer than eight stops.
+        single_series_palette:
+          - editorial-10.8.deep
+          - editorial-10.5.deep
+          - editorial-10.6.deep
     # bar.border.color now tracks theme.background via self-reference at the
     # structural-root level (see _base.yaml), so the cream knockout
     # falls out of theme.background = cream-025 automatically. No explicit
@@ -88,8 +93,6 @@ style:
         color: &category_grid chrome[4]
         threshold:
           color: chrome[7]
-      ticks:
-        color: *category_grid
       line:
         color: chrome[3]
       labels:
@@ -104,12 +107,8 @@ style:
     axis_y:
       grid:
         color: chrome[5]  # softer grid for the value axis (overrides default gray)
-      ticks:
-        color: chrome[5]
     axis_quantitative:
       grid:
-        color: chrome[5]
-      ticks:
         color: chrome[5]
     legend:
       label:

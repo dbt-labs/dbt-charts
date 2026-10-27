@@ -710,6 +710,23 @@ mod tests {
         serde_json::json!([{"amount": 1.0, "score": 1.0}, {"amount": 2.0, "score": 2.0}, {"amount": 3.0, "score": 3.0}])
     }
 
+    /// An author's `nice` wins; unset follows the legend, so a hidden legend keeps the drawn extent
+    /// (the lowest bar paints the first stop exactly) and a shown one widens to round ends.
+    #[test]
+    fn a_color_gradient_nices_by_author_else_by_legend() {
+        let rows = serde_json::json!([{"amount": 1.0, "score": 12.0}, {"amount": 2.0, "score": 50.0}, {"amount": 3.0, "score": 88.0}]);
+        let first_stop = |nice: serde_json::Value, legend: bool| {
+            let mut resolved = gradient_json(serde_json::json!(["#000000", "#ffffff"]));
+            resolved["resolved_channels"]["color"]["scale"]["nice"] = nice;
+            resolved["legend"]["visible"] = serde_json::json!(legend);
+            render_ok(resolved, rows.clone()).contains("fill=\"rgb(0, 0, 0)\"")
+        };
+        assert!(first_stop(serde_json::Value::Null, false));
+        assert!(!first_stop(serde_json::Value::Null, true));
+        assert!(!first_stop(serde_json::json!(true), false));
+        assert!(first_stop(serde_json::json!(false), true));
+    }
+
     /// Vega's interpolator over a one-color range gives no mark a fill, so
     /// production raises its painted-nothing error for the chart.
     #[test]
@@ -977,7 +994,7 @@ mod tests {
         let svg = own_side_fixture("right", 805.04, [0.0, 20.0]);
         assert!(svg.contains("translate(18.000,50.000)"), "plot origin: {svg}");
         assert!(
-            svg.contains("<line x1=\"0.5\" y1=\"342.500\" x2=\"732.540\" y2=\"342.500\""),
+            svg.contains("<line x1=\"0.5\" y1=\"266.500\" x2=\"732.540\" y2=\"266.500\""),
             "plot is 732.04 wide (production's gridline runs -732.04 from the axis group): {svg}"
         );
         assert!(
@@ -1006,7 +1023,7 @@ mod tests {
         let svg = own_side_fixture("left", 787.84, [0.0, 20.0]);
         assert!(svg.contains("translate(55.000,50.000)"), "plot origin: {svg}");
         assert!(
-            svg.contains("<line x1=\"0.5\" y1=\"342.500\" x2=\"715.340\" y2=\"342.500\""),
+            svg.contains("<line x1=\"0.5\" y1=\"266.500\" x2=\"715.340\" y2=\"266.500\""),
             "plot is 714.84 wide (production's gridline runs 714.84 from the axis group): {svg}"
         );
         assert!(

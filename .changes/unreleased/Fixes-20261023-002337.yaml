@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart title that gets cut now warns once instead of twice, and grouped bars on a numeric x no longer warn that their series coincide.
+time: 2026-10-23T00:23:37.995341-07:00

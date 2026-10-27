@@ -2,6 +2,8 @@
 //! segment until the projected midpoint is within `sqrt(delta2)` of the straight line, the midpoint is not
 //! near an end, and the angular distance is under 30 degrees, to a depth of 16.
 
+use std::sync::LazyLock;
+
 use crate::geo::cartesian::cartesian;
 use crate::geo::math::{asin, EPSILON, RADIANS};
 use crate::geo::stream::GeoStream;
@@ -10,9 +12,8 @@ use crate::geo::transform::{geo_transform, TransformMethods};
 
 const MAX_DEPTH: i32 = 16;
 
-fn cos_min_distance() -> f64 {
-    libm::cos(30.0 * RADIANS)
-}
+/// `cosMinDistance`, d3's `cos(30 * radians)`, computed once.
+static COS_MIN_DISTANCE: LazyLock<f64> = LazyLock::new(|| libm::cos(30.0 * RADIANS));
 
 /// `resample(project, delta2)`: `+delta2` is falsy for 0 and NaN, which is no resampling.
 pub fn resample<'a, P, S>(project: P, delta2: f64, sink: S) -> Box<dyn GeoStream + 'a>
@@ -122,7 +123,7 @@ impl<P: Fn(f64, f64) -> [f64; 2], S: GeoStream> Resample<P, S> {
         // Split on perpendicular projected distance, midpoint close to an end, or angular distance.
         if dz * dz / d2 > self.delta2
             || ((dx * dx2 + dy * dy2) / d2 - 0.5).abs() > 0.3
-            || v0.a * v1.a + v0.b * v1.b + v0.c * v1.c < cos_min_distance()
+            || v0.a * v1.a + v0.b * v1.b + v0.c * v1.c < *COS_MIN_DISTANCE
         {
             let mid = Vertex { x: x2, y: y2, lambda: lambda2, a: a / m, b: b / m, c };
             self.resample_line_to(v0, mid, depth);

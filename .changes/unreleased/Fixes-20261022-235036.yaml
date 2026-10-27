@@ -1,0 +1,3 @@
+kind: Fixes
+body: Normalized stacked areas export as a visible chart, outline bar layers paint no fill, and support-table headers name their series by color when the legend is hidden.
+time: 2026-10-22T23:50:36.529859-07:00

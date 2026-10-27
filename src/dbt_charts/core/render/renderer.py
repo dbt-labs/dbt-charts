@@ -22,6 +22,7 @@ Dependencies:
 """
 
 import contextlib
+import datetime
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Protocol
@@ -63,7 +64,12 @@ from dbt_charts.core.execute.collect import (
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
-from dbt_charts.core.render.board_variables import board_variables, daterange_presets
+from dbt_charts.core.render.board_variables import (
+    board_clock,
+    board_variables,
+    current_board_today,
+    daterange_presets,
+)
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.chart.annotation_nothing_drawn import (
     NothingDrawn,
@@ -94,6 +100,10 @@ from dbt_charts.core.render.chart.series_label_truncation import (
     collect_series_label_truncations,
 )
 from dbt_charts.core.render.chart.spec_builders import additive_padding
+from dbt_charts.core.render.chart.table_align import (
+    collect_table_align_no_visible_effects,
+    collect_table_numeric_align_lefts,
+)
 from dbt_charts.core.render.chart.table_overflow import (
     TableCramping,
     TableOverflow,
@@ -267,6 +277,8 @@ def _collect_render_warnings(
     variables: VariableValues,
     table_overflows: dict[str, TableOverflow],
     table_crampings: dict[str, TableCramping],
+    table_numeric_align_lefts: dict[str, list[str]],
+    table_align_no_visible_effects: dict[str, list[str]],
     text_truncations: dict[str, list[TextTruncation]],
     static_paginations: dict[str, StaticPagination],
     table_page_squeezes: dict[str, TablePageSqueeze],
@@ -435,6 +447,8 @@ def _collect_render_warnings(
         geometry_warnings=geometry_warnings,
         table_overflows=table_overflows,
         table_crampings=table_crampings,
+        table_numeric_align_lefts=table_numeric_align_lefts,
+        table_align_no_visible_effects=table_align_no_visible_effects,
         static_paginations=static_paginations,
         table_page_squeezes=table_page_squeezes,
         authored_chart_heights=authored_chart_heights,
@@ -471,6 +485,7 @@ def _render_variables(
     board: Board,
     parsed_variables: VariableValues,
     builtin_variables: VariableValues | None,
+    today: datetime.date,
 ) -> VariableValues:
     """The variable values a render runs every query and template with."""
     variable_registry = (
@@ -494,7 +509,7 @@ def _render_variables(
     # directly — so without this, `{{ v | join(', ') }}` on an unset multiselect
     # raises and the whole board renders as an error. Queries get the same
     # narrowing from coerce_variable_values; this is the render half.
-    return normalize_render_values(merged_variables, variable_registry)
+    return normalize_render_values(merged_variables, variable_registry, today)
 
 
 def _prefetch_query_names(board: Board, variables: VariableValues) -> frozenset[str]:
@@ -528,7 +543,10 @@ def prefetch_tab_queries(
     click re-runs that query and reports it.
     """
     merged = _render_variables(
-        board, parse_variable_json_strings(variables), builtin_variables
+        board,
+        parse_variable_json_strings(variables),
+        builtin_variables,
+        board.regional.today(executor.rendered_at),
     )
     misses = {
         name
@@ -570,6 +588,7 @@ def render(
             language=board.regional.resolved_language,
         ),
         daterange_presets(presets),
+        board_clock(board.regional.today(executor.rendered_at)),
     ):
         return _render(
             board,
@@ -661,7 +680,9 @@ def _render(
     # Trust the normalizer - use pre-computed variable_defaults
     variable_registry = board.variable_registry or {}
     parsed_variables = parse_variable_json_strings(variables or {})
-    merged_variables = _render_variables(board, parsed_variables, builtin_variables)
+    merged_variables = _render_variables(
+        board, parsed_variables, builtin_variables, current_board_today()
+    )
 
     # Board-level precondition: required variables must have a value before any query runs.
     if variable_registry:
@@ -808,8 +829,8 @@ def _render(
     from dbt_charts.core.render.board_resolve import build_resolved_board
 
     render_cache: RenderCache
-    # Open the sizing-pass sinks before build_resolved_board so that VL chart
-    # title truncations (apply_title_overflow_to_spec) and callout overflow
+    # Open the sizing-pass sinks before build_resolved_board so that chart
+    # title truncations and callout overflow
     # (height cap) detected during render-first sizing are captured. Callout
     # is cached after the sizing pass; KPI/table/spark_bar re-render in the
     # main pass and are caught by the inner sink below.
@@ -894,6 +915,8 @@ def _render(
     def _finalize_warnings(
         table_overflows: dict[str, TableOverflow],
         table_crampings: dict[str, TableCramping],
+        table_numeric_align_lefts: dict[str, list[str]],
+        table_align_no_visible_effects: dict[str, list[str]],
         text_truncations: dict[str, list[TextTruncation]],
         static_paginations: dict[str, StaticPagination],
         table_page_squeezes: dict[str, TablePageSqueeze],
@@ -911,6 +934,8 @@ def _render(
             merged_variables,
             table_overflows,
             table_crampings,
+            table_numeric_align_lefts,
+            table_align_no_visible_effects,
             text_truncations,
             static_paginations,
             table_page_squeezes,
@@ -964,6 +989,8 @@ def _render(
     # through, so these are read below even when the `with` never bound them.
     _table_overflows: dict[str, TableOverflow] = {}
     _table_crampings: dict[str, TableCramping] = {}
+    _table_numeric_align_lefts: dict[str, list[str]] = {}
+    _table_align_no_visible_effects: dict[str, list[str]] = {}
     _text_truncations: dict[str, list[TextTruncation]] = {}
     _static_paginations: dict[str, StaticPagination] = {}
     _table_page_squeezes: dict[str, TablePageSqueeze] = {}
@@ -1004,6 +1031,8 @@ def _render(
         with (
             collect_table_overflows() as _table_overflows,
             collect_table_crampings() as _table_crampings,
+            collect_table_numeric_align_lefts() as _table_numeric_align_lefts,
+            collect_table_align_no_visible_effects() as _table_align_no_visible_effects,
             collect_text_truncations() as _text_truncations,
             collect_static_paginations() as _static_paginations,
             collect_table_page_squeezes() as _table_page_squeezes,
@@ -1042,7 +1071,7 @@ def _render(
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     except Exception as e:  # noqa: BLE001
         from dbt_charts.core.diagnostics import ERR_INTERNAL
@@ -1051,7 +1080,7 @@ def _render(
             ERR_INTERNAL, message=str(e)
         ).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     finally:
         _reset_contexts()
@@ -1075,6 +1104,8 @@ def _render(
         render_warnings, suppressed_warnings = _finalize_warnings(
             _table_overflows,
             _table_crampings,
+            _table_numeric_align_lefts,
+            _table_align_no_visible_effects,
             {**_sizing_truncations, **_text_truncations},
             # A data format ships no static file: its pagination is stated by
             # the payload itself (the text format's row/page line).

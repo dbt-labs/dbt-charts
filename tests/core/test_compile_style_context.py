@@ -17,7 +17,6 @@ from dbt_charts.core.compile.config import (
 )
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.resolve.style.board import (
-    resolve_chart_style_context,
     resolve_style,
 )
 
@@ -270,25 +269,6 @@ class TestMergedStyleVegaConfig:
         assert vlc.view is not None
         # axis* removed from VegaLiteConfig — emitted at encoding level by
         # axis_to_vl (vl_field_maps.py)
-
-
-class TestRenderConsumesResolvedStyle:
-    """Render pipeline should consume resolved_style instead of re-merging."""
-
-    def test_apply_presentation_defaults_accepts_style_compiled(self):
-        """apply_presentation_defaults can use pre-compiled vega config."""
-        from dbt_charts.core.compile.vega_lite.mapping import style_to_vega_lite
-        from dbt_charts.core.render.chart.presentation import (
-            apply_presentation_defaults,
-        )
-
-        ctx = resolve_chart_style_context(get_theme_style())
-        sc_dict = style_to_vega_lite(ctx).model_dump(exclude_none=True)
-        spec = {"data": {"values": []}, "mark": "bar"}
-        result = apply_presentation_defaults(
-            spec, ctx.background, effective_vega_config=sc_dict
-        )
-        assert "config" in result
 
 
 class TestResolvedChartDefaultsGeoshapeTableTypes:

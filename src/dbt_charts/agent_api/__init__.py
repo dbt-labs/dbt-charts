@@ -155,9 +155,6 @@ if TYPE_CHECKING:
     )
     from dbt_charts.core.render.board_links import LinkContext as LinkContext
     from dbt_charts.core.render.errors import RenderError as RenderError
-    from dbt_charts.core.render.svg_cache import (
-        RenderedSvgCache as RenderedSvgCache,
-    )
 
 __all__ = [
     "compile",
@@ -191,7 +188,6 @@ __all__ = [
     "AllowlistedSourceResolver",
     "DefaultSourceResolver",
     "QueryResultCache",
-    "RenderedSvgCache",
     "SourceResolver",
     "WarehouseObserver",
     "DesignNode",
@@ -304,7 +300,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "render_dashboard": ("dbt_charts.core.board", "render_dashboard"),
     "Diagnostic": ("dbt_charts.core.diagnostics", "Diagnostic"),
     "QueryResultCache": ("dbt_charts.core.execute.cache_backend", "QueryResultCache"),
-    "RenderedSvgCache": ("dbt_charts.core.render.svg_cache", "RenderedSvgCache"),
     "WarehouseObserver": (
         "dbt_charts.core.execute.observability",
         "WarehouseObserver",

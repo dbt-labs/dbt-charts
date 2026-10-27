@@ -1,0 +1,3 @@
+kind: Fixes
+body: "`WARN-GRADIENT-HINGE-MISMATCH` warns when a color scale's hinge does not fit its palette or data."
+time: 2026-10-22T23:27:21.959642-07:00

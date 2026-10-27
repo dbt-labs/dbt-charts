@@ -618,10 +618,10 @@ def _bulk_rows_for_config(
     # Function-local like every other dbt_charts import in this module: keeping
     # the module itself leaf-light is what lets `dbt_charts.cli.main` import
     # without eagerly loading core.compile (pinned by test_lazy_imports).
+    from dbt_charts.core.column_types import reject_duplicate_columns
     from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.adapters.base import (
         apply_row_limit_truncation,
-        reject_duplicate_columns,
         resolve_effective_row_limit,
     )
     from dbt_charts.core.execute.adapters.dbt_adapter_factory import (

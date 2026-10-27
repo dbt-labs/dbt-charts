@@ -81,6 +81,7 @@ class TestDuckDBInterrupt:
             adapter.close()
 
 
+@pytest.mark.usefixtures("typed_via_execute")
 class TestSqlAdapterInterrupt:
     def test_interrupt_cancels_the_running_warehouse_query(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -135,6 +136,7 @@ class TestSqlAdapterInterrupt:
             sa.close()
 
 
+@pytest.mark.usefixtures("typed_via_execute")
 class TestDbtAdapterInterrupt:
     def test_interrupt_cancels_open_connections_and_refuses_new_queries(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

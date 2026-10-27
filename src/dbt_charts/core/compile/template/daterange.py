@@ -43,18 +43,19 @@ DATERANGE_PRESETS: Final[dict[str, _Window]] = dict(
 )
 
 
-def resolve_daterange_preset(preset: str, today: date) -> tuple[date, date]:
-    """The inclusive ``(start, end)`` a preset names on ``today``.
-
-    Raises ``ValueError`` for an unknown id, naming the known ones.
-    """
-    window = DATERANGE_PRESETS.get(preset)
-    if window is None:
+def check_daterange_preset(preset: str) -> None:
+    """Raise ``ValueError`` naming the known ids unless ``preset`` is one."""
+    if preset not in DATERANGE_PRESETS:
         raise ValueError(
             f"daterange value must be [start, end] or a preset "
             f"({', '.join(DATERANGE_PRESETS)}), got {preset!r}"
         )
-    return window(today)
+
+
+def resolve_daterange_preset(preset: str, today: date) -> tuple[date, date]:
+    """The inclusive ``(start, end)`` a preset names on ``today``."""
+    check_daterange_preset(preset)
+    return DATERANGE_PRESETS[preset](today)
 
 
 def resolve_daterange_preset_iso(preset: str, today: date) -> list[str]:

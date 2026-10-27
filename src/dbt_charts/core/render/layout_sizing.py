@@ -60,10 +60,7 @@ from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LINK_SCHEME_UNSAFE_AT_RENDER
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
-from dbt_charts.core.render.chart.spec_builders import (
-    additive_padding,
-    shift_artifact_title,
-)
+from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.engine import render_native
@@ -96,6 +93,9 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 _FIXED_ASPECT_PIE_TYPES = frozenset({"pie", "arc"})
+# A map's height is its theme aspect ratio over the slot width: there is no
+# content to measure, so it never renders to size its slot.
+_GEO_TYPES = frozenset({"geoshape", "map", "point_map", "bubble_map"})
 
 # Sizing-pass render cache: (chart_id, width, height, title_shift) → (svg_string, actual_height).
 # The shift is part of the key because one chart renders differently in rows whose
@@ -505,8 +505,7 @@ def build_chart_datasets(
 
     Always includes the base chart's own query (``resolved.query_name``,
     when set) — every chart, not just layered ones, resolves its rows from
-    this one map now (``session.emit_chart`` / ``ChartFeature.apply`` no
-    longer take a separate ``data`` parameter alongside it). Cartesian
+    this one map. Cartesian
     families additionally get each typed overlay layer's own ``query:``
     override (the target-vs-actuals idiom: the base and an overlay read
     different tables) — layers with no override share the base chart's own
@@ -575,15 +574,7 @@ def _render_chart_to_svg(
         title_shift=title_shift,
         measuring=measuring,
     )
-    shift_artifact_title(artifact, title_shift)
-    svg = render_chart_artifact(
-        artifact,
-        "svg",
-        resolved_style,
-        width=width,
-        height=height,
-        chart_id=resolved.id,
-    )
+    svg = render_chart_artifact(artifact, "svg")
     dims = extract_svg_dimensions(svg)
     return svg, dims.width, dims.height
 
@@ -806,6 +797,7 @@ def _make_data_aware_height_provider(
             if (
                 render_ctx.executor is not None
                 and item.chart.type not in NON_ASPECT_RATIO_TYPES
+                and item.chart.type not in _GEO_TYPES
             ):
                 render_inner_width = width
                 # A chart that failed to resolve falls through to the
@@ -827,7 +819,7 @@ def _make_data_aware_height_provider(
                     # of truth for this placement's chart-local padding (no
                     # separate cascade re-run).
                     chart_padding = resolved_chart.layout_padding
-                    # static_estimate approximates Vega output height: marks + Vega padding
+                    # static_estimate: the slot's content height, marks + chart padding
                     # (additive: card_pad + chart-local top/bottom).
                     static_estimate = (
                         get_chart_content_height(

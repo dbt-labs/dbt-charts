@@ -490,6 +490,13 @@ pub(super) fn calculate_column_layout_port(
     col_widths
 }
 
+/// Where a left-run cell's digits start, relative to its padding: after the
+/// row's own prefix or glyph plus the `dx = SUFFIX_GAP` the paint path puts
+/// before the number tspan (a row with no prefix has neither).
+fn left_run_digit_offset(prefix_w: Option<f64>) -> f64 {
+    prefix_w.map_or(0.0, |w| w + SUFFIX_GAP)
+}
+
 /// Production's `_compute_lane_positions` band arithmetic
 /// Shared with `pie.rs`'s attached table: the
 /// number tspan is end-anchored so its CENTER sits on the cell's content
@@ -2382,10 +2389,15 @@ impl TableBody<'_> {
                             Some(Value::Number(n)) if !n.is_f64() => n.to_string(),
                             _ => format!("{v:?}"),
                         });
+                    // A left-aligned column has no lane: the whole cell is one
+                    // start-anchored run, so its tspans carry no x of their own.
+                    let left_run = col.is_numeric && col.cfg.align.as_deref() == Some("left");
                     tree.open(
                         Open::Text,
                         Attrs::new()
                             .quick_some("class", cell_link_class)
+                            .quick_some("x", left_run.then(|| float_repr(cx + pad)))
+                            .quick_some("text-anchor", left_run.then_some("start"))
                             .quick("y", text_y_s.as_str())
                             .quick("font-size", font_size.to_string())
                             .quick("fill", fill_color)
@@ -2406,8 +2418,8 @@ impl TableBody<'_> {
                     if let Some(prefix) = full_prefix {
                         tree.tspan(
                             Attrs::new()
-                                .quick("x", float_repr(prefix_xs[ci]))
-                                .quick("text-anchor", "end")
+                                .quick_some("x", (!left_run).then(|| float_repr(prefix_xs[ci])))
+                                .quick_some("text-anchor", (!left_run).then_some("end"))
                                 .quick_some(
                                     "fill",
                                     cell_style
@@ -2429,15 +2441,21 @@ impl TableBody<'_> {
                     };
                     tree.tspan(
                         Attrs::new()
-                            .quick("x", float_repr(number_xs[ci]))
-                            .quick("text-anchor", "end"),
+                            .quick_some("x", (!left_run).then(|| float_repr(number_xs[ci])))
+                            .quick_some("text-anchor", (!left_run).then_some("end"))
+                            .quick_some(
+                                "dx",
+                                (left_run && full_prefix.is_some()).then(|| float_repr(SUFFIX_GAP)),
+                            ),
                         &number_text,
                     );
                     if let Some(suffix) = &cell.suffix {
+                        let suffix_gap = left_run && !col.is_date && is_magnitude_suffix(suffix);
                         tree.tspan(
                             Attrs::new()
-                                .quick("x", float_repr(suffix_xs[ci]))
-                                .quick("text-anchor", "start"),
+                                .quick_some("x", (!left_run).then(|| float_repr(suffix_xs[ci])))
+                                .quick_some("text-anchor", (!left_run).then_some("start"))
+                                .quick_some("dx", suffix_gap.then(|| float_repr(SUFFIX_GAP))),
                             suffix,
                         );
                     }
@@ -3578,6 +3596,12 @@ pub(super) fn lay_out(
         let mut max_num_w = 0.0_f64;
         let mut max_prefix_w = 0.0_f64;
         let mut max_suffix_w = 0.0_f64;
+        // Only a numeric column's own `align: left` leaves the lane; a date
+        // lane is never left-anchored.
+        let left_aligned_numeric = col.is_numeric && col.cfg.align.as_deref() == Some("left");
+        // Per magnitude row: (left-run digit start offset from the padding,
+        // digit width), as the left run paints them.
+        let mut left_run_rows: Vec<(f64, f64)> = Vec::new();
         for (ri, c) in cells.iter().enumerate() {
             // Production's lane pass skips a null: its placeholder is painted
             // outside the lane and must not widen it.
@@ -3618,8 +3642,20 @@ pub(super) fn lay_out(
             let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
             let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
             let effective_prefix = glyph.as_deref().or(c.prefix.as_deref());
-            if let Some(p) = effective_prefix {
-                max_prefix_w = max_prefix_w.max(fonts.measure(p, tab_measure_family, font_size)?);
+            let prefix_w = match effective_prefix {
+                Some(p) => Some(fonts.measure(p, tab_measure_family, font_size)?),
+                None => None,
+            };
+            if let Some(w) = prefix_w {
+                max_prefix_w = max_prefix_w.max(w);
+            }
+            if left_aligned_numeric && is_magnitude {
+                let sign_w = fonts.measure(
+                    &c.text[..c.text.len() - unsigned.len()],
+                    tab_measure_family,
+                    font_size,
+                )?;
+                left_run_rows.push((left_run_digit_offset(prefix_w) + sign_w, measured));
             }
             if let Some(sfx) = c.suffix.as_deref() {
                 max_suffix_w =
@@ -3645,7 +3681,35 @@ pub(super) fn lay_out(
         number_xs[ci] = num_x;
         prefix_xs[ci] = prefix_x;
         suffix_xs[ci] = suffix_x;
-        if max_num_w > 0.0 {
+        // `align: left` paints one start-anchored run per cell where the lane
+        // would decimal-align them. Differing widths never stack; equal widths
+        // stack, and the key is a silent no-op only if the lane already starts
+        // at the padding.
+        if left_aligned_numeric {
+            const ALIGN_EPSILON: f64 = 1e-6;
+            let left_x = col_x[ci] + pad;
+            let right_edges: Vec<f64> = left_run_rows.iter().map(|&(off, w)| left_x + off + w).collect();
+            let widest = right_edges.iter().copied().fold(f64::MIN, f64::max);
+            let narrowest = right_edges.iter().copied().fold(f64::MAX, f64::min);
+            let code = if widest - narrowest > ALIGN_EPSILON {
+                Some(&codes::WARN_TABLE_NUMERIC_ALIGN_LEFT)
+            } else if !left_run_rows.is_empty()
+                && left_run_rows
+                    .iter()
+                    .all(|&(off, w)| (left_x + off - (num_x - w)).abs() < ALIGN_EPSILON)
+            {
+                Some(&codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT)
+            } else {
+                None
+            };
+            if let Some(code) = code {
+                diagnostics.push(Diagnostic::new(
+                    code,
+                    [("chart_id", json!(chart_id)), ("column", json!(col.name))],
+                ));
+            }
+        }
+        if max_num_w > 0.0 && !left_aligned_numeric {
             lane_extents[ci] = Some((prefix_x - max_prefix_w, suffix_x + max_suffix_w));
         }
     }
@@ -4233,8 +4297,10 @@ pub(super) fn lay_out(
         // Center-on-midpoint invariant: a lane column and
         // an `align: center` column center their header on the cell midpoint;
         // every other header, a right-aligned text column included, stays left.
+        let align = col.cfg.align.as_deref();
+        let left_numeric = col.is_numeric && align == Some("left");
         let (x, anchor) =
-            if col.is_numeric || col.is_date || col.cfg.align.as_deref() == Some("center") {
+            if !left_numeric && (col.is_numeric || col.is_date || align == Some("center")) {
                 (cx + cw / 2.0, "middle")
             } else {
                 (cx + pad, "start")

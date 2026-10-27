@@ -90,6 +90,18 @@ exclude = [
     # `databricks` namespace is owned by `databricks-sdk` (the dist whose top_level
     # is `databricks`), so tach resolves the import to `databricks_sdk`.
     "databricks_sdk",
+    # Warehouse drivers read by execute/adapters/typed_fetch.py for their own
+    # type constants, each imported lazily inside the family that needs it and
+    # present whenever the matching dbt adapter is installed: psycopg2
+    # (dbt-postgres), redshift_connector (dbt-redshift), snowflake
+    # (dbt-snowflake), numpy (databricks-sql's nested cells), clickhouse_connect
+    # (dbt-clickhouse; only its test builds the client's type objects). Tach resolves
+    # `psycopg2` and `snowflake` to their distributions, named here.
+    "psycopg2_binary",
+    "redshift_connector",
+    "snowflake_connector_python",
+    "numpy",
+    "clickhouse_connect",
     # `dbt-charts-super-schema` is the private profiler companion package —
     # NOT on PyPI, NOT declared as a dep. The boundary is probed once at
     # startup via `importlib.util.find_spec` in `cache_factory.py`; actual
@@ -147,6 +159,7 @@ depends_on = [
     "dbt_charts.core.attribution",
     "dbt_charts.core.aliases",
     "dbt_charts.core.colors",
+    "dbt_charts.core.column_types",
     "dbt_charts.core.diagnostics",
     "dbt_charts.core.compile",
     "dbt_charts.core.dbt_manifest",
@@ -183,6 +196,13 @@ layer = "core"
 # emission); depends only on diagnostics for InvalidColorError so neither
 # compile nor render reaches into the other's layer to validate a foreign
 # color string.
+depends_on = ["dbt_charts.core.diagnostics"]
+
+[[modules]]
+path = "dbt_charts.core.column_types"
+layer = "core"
+# leaf node — declared column types and the inline-literal typing rule, shared
+# by compile (values-query validation) and execute (every result's schema).
 depends_on = ["dbt_charts.core.diagnostics"]
 
 [[modules]]
@@ -272,6 +292,7 @@ depends_on = [
     "dbt_charts.core.aliases",
     "dbt_charts.core.attribution",
     "dbt_charts.core.colors",
+    "dbt_charts.core.column_types",
     "dbt_charts.core.diagnostics",
     "dbt_charts.core.font_measure",
     "dbt_charts.core.links",

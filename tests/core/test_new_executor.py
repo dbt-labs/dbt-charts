@@ -666,7 +666,6 @@ rows:
         mock_result.is_success = True
         mock_result.data = [{"name": "Alice", "flag": 1}]
         mock_result.truncated_reason = None
-        mock_result.column_descriptions = None
         mock_result.resolved_relations = None
         mock_result.truncated_reason = None
         mock_registry.execute.return_value = mock_result
@@ -712,7 +711,6 @@ rows:
         mock_result.is_success = True
         mock_result.data = [{"sum": 1000}]
         mock_result.truncated_reason = None
-        mock_result.column_descriptions = None
         mock_result.resolved_relations = None
         mock_result.truncated_reason = None
         mock_registry.execute.return_value = mock_result
@@ -792,7 +790,6 @@ rows:
             ok = Mock()
             ok.is_success = True
             ok.data = [dict(row) for row in next(results)]
-            ok.column_descriptions = None
             ok.resolved_relations = None
             ok.truncated_reason = None
             return ok
@@ -824,7 +821,6 @@ rows:
             ok = Mock()
             ok.is_success = True
             ok.data = next(rows_by_call)
-            ok.column_descriptions = None
             ok.resolved_relations = None
             ok.truncated_reason = None
             return ok

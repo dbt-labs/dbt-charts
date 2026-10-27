@@ -11,7 +11,7 @@
 //!
 //! Two layout models coexist, matching the two production shapes:
 //!
-//! * **Composed** (`build_rows_composed`/`render_rows_composed`/`composed_ink`,
+//! * **Composed** (`build_rows_composed`/`composed_rows_nodes`/`composed_ink`,
 //!   driven by bar.rs's and line.rs's composed arms): production's
 //!   `autosize: pad` shape — the plot keeps the payload view verbatim, the
 //!   strip floats above it, and the canvas grows around the ink, the strip's
@@ -35,7 +35,6 @@ use crate::codes;
 use crate::diagnostic::Diagnostic;
 use crate::common::{row_str, slug_to_display, Divider, FormatSlot, GappedDivider, Font, SignPlacement};
 use crate::number_locale::active_number_locale;
-use crate::families::temporal::TimeUnit;
 use measure::FontBook;
 use scene::{Attrs, Node};
 
@@ -62,6 +61,8 @@ struct RawSupportTableEntry {
     per_series: Option<String>,
     #[serde(default)]
     by_measure: bool,
+    #[serde(default)]
+    ink: Option<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -80,6 +81,9 @@ pub struct SupportTableEntry {
     /// A `per_series` entry that reads one column per row: it names no series
     /// yet still retires the series legend.
     pub by_measure: bool,
+    /// The header's ink when it names the layered series its column reads
+    /// (resolve bakes it with the legend hidden); `None` keeps the style's label ink.
+    pub ink: Option<String>,
 }
 
 impl From<RawSupportTableEntry> for SupportTableEntry {
@@ -92,6 +96,7 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
                 format: raw.format,
                 per_series: None,
                 by_measure: true,
+                ink: raw.ink,
             },
             per_series => SupportTableEntry {
                 source: raw.source,
@@ -100,6 +105,7 @@ impl From<RawSupportTableEntry> for SupportTableEntry {
                 label: raw.label,
                 per_series,
                 by_measure: false,
+                ink: raw.ink,
             },
         }
     }
@@ -150,11 +156,6 @@ impl SupportTableConfig {
 #[derive(Deserialize, Clone)]
 pub struct RowPadding {
     pub vertical: f64,
-    // `horizontal` was unread until `width_sampling_step` needed
-    // `min_band_px = max_cell_w + 2 * padding.horizontal`
-    // (`support_table_attachment.py:4335`) — the payload already carries it
-    // (`SupportTableRowPaddingStyle.horizontal` is a required field), this
-    // struct just never deserialized it.
     pub horizontal: f64,
 }
 
@@ -703,31 +704,67 @@ impl StripNumerals {
         v.is_finite() && !(self.suffix_is_magnitude && v == 0.0)
     }
 
-    fn padded(&self, text: String) -> Result<String, String> {
-        let pad = crate::families::table::bind::decimal_pad_for(&self.decimal_pad, &text)?;
+    /// The fractional depth this row's cells print, once padded.
+    fn depth(&self, nums: &[f64]) -> Result<usize, String> {
+        if !self.decimal_pad.is_empty() {
+            return Ok(self.decimal_pad.len() - 2);
+        }
+        let mut depths = nums.iter().map(|&v| self.cell_text(v, false).map(|t| crate::families::table::bind::count_decimals(&t)));
+        depths.try_fold(0, |deepest, depth| depth.map(|d| deepest.max(d)))
+    }
+
+    /// Pads every cell to `precision` fractional digits, so rows of different
+    /// depths share one decimal point.
+    fn align_to(&mut self, precision: usize, pad: &DecimalPad) -> Result<(), String> {
+        self.decimal_pad = pad.table(precision)?;
+        Ok(())
+    }
+
+    fn padded(text: String, decimal_pad: &[String]) -> Result<String, String> {
+        let pad = crate::families::table::bind::decimal_pad_for(decimal_pad, &text)?;
         Ok(format!("{text}{pad}"))
     }
 
     /// The text one cell paints. `is_anchor` marks the single unit-declaring
     /// cell (the first carrying cell in paint order).
     pub fn cell_text(&self, v: f64, is_anchor: bool) -> Result<String, String> {
+        self.compose(v, is_anchor, &self.decimal_pad)
+    }
+
+    /// The anchor's text with no decimal pad before its hung suffix, and the
+    /// width that pad would have taken: the suffix hugs its digits and sits in
+    /// the fraction slot, so the caller pulls the cell left by that width.
+    pub(crate) fn hugging_anchor(
+        &self,
+        v: f64,
+        fonts: &FontBook,
+        family: &str,
+        size: f64,
+    ) -> Result<(String, f64), String> {
+        let padded = self.compose(v, true, &self.decimal_pad)?;
+        let hugging = self.compose(v, true, &[])?;
+        let slot = fonts.measure_shaped(&padded, family, size)? - fonts.measure_shaped(&hugging, family, size)?;
+        Ok((hugging, slot))
+    }
+
+    fn compose(&self, v: f64, is_anchor: bool, decimal_pad: &[String]) -> Result<String, String> {
         let is_anchor = is_anchor || self.every;
         if let Some(slot) = &self.authored {
             // `_compose_affixed_text` / `_bare_authored_text`: the declaring
             // cell leads its sign with the prefix, the rest paint the digits
             // alone.
             let text = if !self.declares_once || is_anchor {
-                slot.paint_anchored(&self.digit_spec, v, self.declares_once, &self.decimal_pad)
+                slot.paint_anchored(&self.digit_spec, v, self.declares_once, decimal_pad)
             } else {
                 d3rs::format::without_symbol(&self.digit_spec)
-                    .and_then(|bare_spec| slot.bare_digits(&bare_spec, v, &self.decimal_pad))
+                    .and_then(|bare_spec| slot.bare_digits(&bare_spec, v, decimal_pad))
             };
             return text.map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec));
         }
         if self.prefix.is_empty() && self.suffix.is_empty() {
             let text = crate::number_locale::d3_format(&self.digit_spec, v)
                 .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
-            return self.padded(text);
+            return Self::padded(text, decimal_pad);
         }
         if !self.suffix_is_magnitude && self.prefix.is_empty() {
             // Trimmed: format through the author's spec, then remove the
@@ -753,7 +790,7 @@ impl StripNumerals {
         // never shows on zero, a unit suffix does.
         let digits = crate::number_locale::d3_format(&self.digit_spec, v.abs() / self.divisor)
             .map_err(|e| format!("support_table: format {:?}: {e}", self.digit_spec))?;
-        let digits = self.padded(digits)?;
+        let digits = Self::padded(digits, decimal_pad)?;
         let locale = active_number_locale();
         let sign = if v < 0.0 { locale.locale.minus.as_str() } else { "" };
         let prefix = if is_anchor || self.prefix_repeats { self.prefix.as_str() } else { "" };
@@ -1154,6 +1191,12 @@ pub(crate) fn build_cells(
                 let is_anchor = anchor_idx == Some(i);
                 if is_anchor {
                     hang = fonts.measure(n.hung_suffix(), font_family, font_size)?;
+                    if hang_along_x && hang > 0.0 && !n.decimal_pad.is_empty() {
+                        let (text, slot) = n.hugging_anchor(*num, fonts, font_family, font_size)?;
+                        let w = fonts.measure_shaped(&text, font_family, font_size)?;
+                        cells.push(ComposedCell { x: x + hang - slot, text, w, hang, aria: String::new(), href: None });
+                        continue;
+                    }
                 }
                 n.cell_text(*num, is_anchor)?
             }
@@ -1178,7 +1221,7 @@ pub(crate) fn build_cells(
 /// = max(_vals, key=abs)`), not at whichever value the drawn-index anchor
 /// actually lands on. A CARRIES-skipped anchor (the first cell is zero, so
 /// the running sum anchors the next non-zero cell instead) can land on a
-/// value smaller than the row's own max — sizing the width-sampling budget
+/// value smaller than the row's own max — sizing the overflow check
 /// to the ACTUAL anchor cell alone would under-measure whenever some other
 /// cell in the row prints more digits than the anchor cell does. Returns
 /// 0.0 for an unanchored row (`numerals.is_none()`) or a row with no
@@ -1315,7 +1358,7 @@ pub(crate) fn entry_lines<'a>(
 /// entry dx only for a cell sitting on a band (a bar's category), and
 /// passes `dx = None` for a line/area point — where the aligned edge sits
 /// on the point's x itself. `axis_on_right` is the same value axis orient
-/// `composed_ink`/`render_rows_composed` take — a symbol format cannot
+/// `composed_ink`/`composed_rows_nodes` take — a symbol format cannot
 /// anchor on a LEFT axis (`hang = "right"` there — see
 /// `strip_numerals_for_values`'s doc comment), so every caller pinned to a
 /// right axis (both existing callers) is unaffected and the rail-concat
@@ -1355,22 +1398,43 @@ pub fn build_rows_composed(
     let (font_family, font_size) = cell_font(style)?;
     let (label_family, label_size) = label_font_resolved(style);
 
+    let pad = DecimalPad::new(fonts, style)?;
+    let mut resolved = config
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(entry_index, entry)| {
+            entry_lines(
+                entry,
+                rows,
+                x_field,
+                domain,
+                anchored,
+                axis_on_right,
+                false,
+                color_field,
+                series_order,
+                &pad,
+                chart_id,
+                entry_index,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // The numbers under one band form one decimal-aligned column: every entry
+    // pads to the deepest fractional depth any entry prints.
+    let depths = resolved
+        .iter()
+        .map(|e| e.numerals.as_ref().map_or(Ok(0), |n| n.depth(&e.nums)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let lane_depth = depths.iter().copied().max().unwrap_or(0);
+    for (entry, depth) in resolved.iter_mut().zip(depths) {
+        if let Some(numerals) = entry.numerals.as_mut().filter(|_| depth < lane_depth) {
+            numerals.align_to(lane_depth, &pad)?;
+        }
+    }
+
     let mut out: Vec<ComposedRow> = Vec::new();
-    for (entry_index, entry) in config.entries.iter().enumerate() {
-        let EntryLines { spec, lines, numerals, nums } = entry_lines(
-            entry,
-            rows,
-            x_field,
-            domain,
-            anchored,
-            axis_on_right,
-            false,
-            color_field,
-            series_order,
-            &DecimalPad::new(fonts, style)?,
-            chart_id,
-            entry_index,
-        )?;
+    for (entry, EntryLines { spec, lines, numerals, nums }) in config.entries.iter().zip(resolved) {
         // The block's own worst-case anchor width, from the SAME pooled
         // values the shared `numerals` above declared its affix from —
         // production's `band_budget_w` widening loop runs per ENTRY, and
@@ -1440,36 +1504,18 @@ pub fn build_rows_composed(
             label_w,
             cells,
             dx,
-            label_color: None,
+            label_color: entry.ink.clone(),
             stub_dx: 0.0,
             series: None,
             anchor_worst_case_w,
             copy_dx: vec![0.0; config.cell_copies()],
         });
     }
+    // The numbers under one band form one column: every banded row takes the
+    // lane of the widest cell of any row, so their edges share one x.
+    let lane_dx = out.iter().map(|row| row.dx).fold(0.0_f64, f64::max);
+    out.iter_mut().filter(|row| row.dx > 0.0).for_each(|row| row.dx = lane_dx);
     Ok(out)
-}
-
-/// Width-based sampling step for an ordered (bar band) x axis — port of
-/// `validate_support_table_against_data`'s cap-overflow `sampling_step`
-/// composed with the width-based override that widens it
-/// (`support_table_attachment.py:4335-4356`). `min_band_px` is the caller's
-/// own `max_cell_w + 2 * row.padding.horizontal` (`max_cell_w` reads
-/// straight off the already-built `ComposedCell::w`s — the same shaped
-/// measurement `_entry_cell_widths` performs, so no separate width pass is
-/// needed here). The cap-overflow step is folded in by `apply_width_sampling`.
-/// Only meaningful for a genuinely
-/// ordered x (a detected/authored calendar cadence): callers gate this to
-/// that case, mirroring production's own `validator_x_type == "temporal"`
-/// guard — an unordered nominal/ordinal domain is never sampled (dropping
-/// unordered categories is silent data loss, production's fail-closed
-/// rule).
-pub fn width_sampling_step(n: usize, axis_x_width: f64, min_band_px: f64) -> usize {
-    if n == 0 || axis_x_width <= 0.0 || min_band_px <= 0.0 {
-        return 1;
-    }
-    let fit_cols = (axis_x_width / min_band_px).floor().max(1.0);
-    ((n as f64 / fit_cols).ceil() as usize).max(1)
 }
 
 /// The typeface a strip cell is measured and painted in.
@@ -1493,10 +1539,9 @@ pub fn warn_cell_overflow(
     row_padding_horizontal: f64,
     axis_x_width: f64,
     n_bands: usize,
-    sampling_step: usize,
 ) {
     let min_band_px = min_band_px(max_cell_w, row_padding_horizontal);
-    let drawn_band_px = axis_x_width / n_bands.max(1) as f64 * sampling_step as f64;
+    let drawn_band_px = axis_x_width / n_bands.max(1) as f64;
     if n_bands > 0 && min_band_px > drawn_band_px {
         crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
             &crate::codes::WARN_SUPPORT_TABLE_CELL_OVERFLOW,
@@ -1508,79 +1553,11 @@ pub fn warn_cell_overflow(
     }
 }
 
-/// Keep every `step`-th cell, starting from the first — port of
-/// `_sampling_transforms`'s VL window+filter pair (1-indexed row_number
-/// ascending by x, `(row_number - 1) % step == 0`); `cells` is already in
-/// that same x-ascending paint order, so this is the same predicate
-/// 0-indexed. `step <= 1` is a no-op (every cell kept).
-fn sample_cell_mask(n: usize, step: usize) -> Vec<bool> {
-    if step <= 1 {
-        return vec![true; n];
-    }
-    (0..n).map(|i| i % step == 0).collect()
-}
-
-/// Port of `_label_period_filter_expr`'s opener gate, once the caller has
-/// already resolved its own x-axis cadence (`data_tu` vs `visibility_tu` —
-/// the SAME axis-label visibility resolution `resolve_vega_x_labels`/
-/// `resolve_temporal_labels` already compute for the axis itself):
-/// production's own comment is explicit that the filter "matches the
-/// opener list used by labelExpr so every visible axis label has exactly
-/// one support_table cell" (`support_table_attachment.py:2440`). `None` —
-/// no coarsening, keep every cell — when `visibility_tu == data_tu`
-/// (production's own `_label_period_filter_expr` returns `None` there too)
-/// or a domain entry fails to parse as a date (fails open, matching
-/// production's own "unsupported encoding" `None` fallback rather than
-/// guessing).
-pub fn label_period_keep(
-    domain: &[String],
-    data_tu: TimeUnit,
-    visibility_tu: TimeUnit,
-    fiscal_start: u8,
-) -> Option<Vec<bool>> {
-    if visibility_tu == data_tu {
-        return None;
-    }
-    let mut mask = Vec::with_capacity(domain.len());
-    for d in domain {
-        let (y, m, day) = crate::families::temporal::parse_iso_date(d)?;
-        mask.push(crate::families::temporal::is_opener(y, m, day, data_tu, visibility_tu, fiscal_start));
-    }
-    Some(mask)
-}
-
-/// Applies a keep-mask (from [`label_period_keep`] or [`width_sampling_step`]
-/// via [`sample_cell_mask`]) to one composed row's own cells, in place.
-pub fn filter_composed_row(row: &mut ComposedRow, keep: &[bool]) {
-    let mut i = 0;
-    row.cells.retain(|_| {
-        let k = keep[i];
-        i += 1;
-        k
-    });
-}
-
-/// [`width_sampling_step`] + [`sample_cell_mask`] + [`filter_composed_row`]
-/// composed for the common caller shape: every row shares one global step
-/// derived from the widest cell any row painted (production's own
-/// `max_cell_w = max(_entry_cell_widths(...))` scans every entry, not one
-/// row at a time).
-pub fn apply_width_sampling(
-    chart_id: &str,
-    rows: &mut [ComposedRow],
-    axis_x_width: f64,
-    row_padding_horizontal: f64,
-    ordered_x: bool,
-) {
-    // `c.w` already includes each row's own actual anchor cell's affix
-    // (`build_cells` measures the anchor's OWN decorated text), but
-    // `anchor_worst_case_w` bounds a wider case production also budgets
-    // for: the anchor's affix applied to the row's LARGEST value, wherever
-    // that value actually falls (`band_budget_w`'s own widening loop,
-    // `support_table_attachment.py:4318-4337`) — folded in here rather
-    // than at each row's own construction site so a caller building
-    // `ComposedRow`s directly (a test, a future arm) still gets a correct
-    // width budget without remembering to add it in twice.
+/// Warns when the widest strip cell needs more than a band is drawn at. The
+/// strip never thins: a number sits under every bucket, however crowded.
+pub fn warn_strip_overflow(chart_id: &str, rows: &[ComposedRow], axis_x_width: f64, row_padding_horizontal: f64) {
+    // `c.w` already includes each row's own anchor affix; `anchor_worst_case_w`
+    // bounds the wider case where the anchor lands on the row's largest value.
     let max_cell_w = rows
         .iter()
         .flat_map(|r| &r.cells)
@@ -1588,22 +1565,7 @@ pub fn apply_width_sampling(
         .chain(rows.iter().map(|r| r.anchor_worst_case_w))
         .fold(0.0_f64, f64::max);
     let n = rows.first().map_or(0, |r| r.cells.len());
-    // Only an ordered x axis is thinned; any other never drops a category.
-    let step = if ordered_x {
-        // Production's two-term `max(sampling_step, width_step)`.
-        let cap_step = n.div_ceil(SUPPORT_TABLE_MAX_X_TICKS).max(1);
-        cap_step.max(width_sampling_step(n, axis_x_width, min_band_px(max_cell_w, row_padding_horizontal)))
-    } else {
-        1
-    };
-    warn_cell_overflow(chart_id, max_cell_w, row_padding_horizontal, axis_x_width, n, step);
-    if step <= 1 {
-        return;
-    }
-    let keep = sample_cell_mask(n, step);
-    for row in rows {
-        filter_composed_row(row, &keep);
-    }
+    warn_cell_overflow(chart_id, max_cell_w, row_padding_horizontal, axis_x_width, n);
 }
 
 /// Vertical ink extent the strip's topmost row reaches above the plot top,
@@ -1826,30 +1788,11 @@ pub fn composed_rows_nodes(
     Ok(out)
 }
 
-/// [`composed_rows_nodes`] printed onto the string a family still builds.
-#[allow(clippy::too_many_arguments)]
-pub fn render_rows_composed(
-    out: &mut String,
-    rows: &[ComposedRow],
-    style: &SupportTableStyle,
-    ay_label_padding: f64,
-    plot_w: f64,
-    origin_x: f64,
-    origin_y: f64,
-    axis_on_right: bool,
-    axis_offset: f64,
-    link_open: Option<crate::href::LinkOpen>,
-) -> Result<(), String> {
-    let nodes = composed_rows_nodes(rows, style, ay_label_padding, plot_w, origin_x, origin_y, axis_on_right, axis_offset, link_open)?;
-    out.push_str(&print::print(&nodes));
-    Ok(())
-}
-
 /// Data-aware guards this config must pass before any entry is resolved —
 /// port of the checks `validate_support_table_against_data` runs at production
-/// render time (`support_table_attachment.py:213-322`). Past the tick cap an ordered
-/// (temporal or quantitative) x is sampled by the caller (`apply_width_sampling`);
-/// any other x type fails closed, as dropping categories would be silent data loss.
+/// render time (`support_table_attachment.py:213-322`). Past the tick cap an
+/// unordered x fails closed; an ordered (temporal or quantitative) x paints
+/// every cell and leaves density to `warn_strip_overflow`.
 pub(crate) fn validate_against_data(
     config: &SupportTableConfig,
     rows: &[serde_json::Map<String, Value>],
@@ -2107,6 +2050,7 @@ mod numerals_tests {
                 label: None,
                 per_series: None,
                 by_measure: false,
+                ink: None,
             };
             let rows: Vec<serde_json::Map<String, Value>> =
                 vec![serde_json::json!({"week": "2024-01-01", "units": 1500.0}).as_object().unwrap().clone()];
@@ -2538,6 +2482,7 @@ mod tests {
                     label: None,
                     per_series: Some("revenue".into()),
                     by_measure: false,
+                    ink: None,
                 },
                 SupportTableEntry {
                     source: Some("revenue".into()),
@@ -2546,6 +2491,7 @@ mod tests {
                     label: Some("Total".into()),
                     per_series: None,
                     by_measure: false,
+                    ink: None,
                 },
             ],
             fold: None,
@@ -2563,11 +2509,36 @@ mod tests {
                 label: None,
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
         let err = visual_row_count(&config, 0).unwrap_err();
         assert!(err.contains("series_count"), "names the missing input: {err}");
+    }
+
+    /// A `source:` row whose resolve baked an ink paints its label in it: with the
+    /// legend hidden the label is what names the series.
+    #[test]
+    fn a_source_row_label_takes_its_baked_ink() {
+        let config = SupportTableConfig {
+            entries: vec![SupportTableEntry {
+                source: Some("revenue".into()),
+                aggregate: None,
+                format: Some(",d".into()),
+                label: None,
+                per_series: None,
+                by_measure: false,
+                ink: Some("#123456".into()),
+            }],
+            fold: None,
+        };
+        let rows: Vec<serde_json::Map<String, Value>> =
+            vec![serde_json::json!({"week": "2024-01-01", "revenue": 100.0}).as_object().unwrap().clone()];
+        let domain = vec!["2024-01-01".to_string()];
+        let out =
+            build_rows(&config, &rows, "week", &domain, &[10.0], &test_fonts(), &label_style(), None, &[], &[]).unwrap();
+        assert_eq!(out[0].label_color.as_deref(), Some("#123456"));
     }
 
     #[test]
@@ -2580,6 +2551,7 @@ mod tests {
                 label: None,
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2605,6 +2577,7 @@ mod tests {
                 label: None,
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2653,6 +2626,7 @@ mod tests {
                 label: Some("Total".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2678,6 +2652,7 @@ mod tests {
                 label: None,
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2704,6 +2679,7 @@ mod tests {
                 label: Some("Units".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2755,6 +2731,7 @@ mod tests {
                     label: Some("Count".into()),
                     per_series: None,
                     by_measure: false,
+                    ink: None,
                 },
                 SupportTableEntry {
                     source: Some("product".into()),
@@ -2763,6 +2740,7 @@ mod tests {
                     label: Some("Distinct".into()),
                     per_series: None,
                     by_measure: false,
+                    ink: None,
                 },
             ],
             fold: None,
@@ -2822,6 +2800,7 @@ mod tests {
                 label: Some("Product".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2856,6 +2835,7 @@ mod tests {
                 label: Some("Code".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2888,6 +2868,7 @@ mod tests {
                 label: Some("Revenue".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2922,6 +2903,7 @@ mod tests {
                 label: Some("Total".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2950,6 +2932,7 @@ mod tests {
                 label: Some("Revenue".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -2981,6 +2964,7 @@ mod tests {
                 label: Some("Missing".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -3004,6 +2988,7 @@ mod tests {
                 label: Some("Revenue".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -3031,6 +3016,7 @@ mod tests {
                 label: Some("A Very Long Row Label That Overruns The Gutter Width".into()),
                 per_series: None,
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         };
@@ -3100,15 +3086,13 @@ mod tests {
             svg[start..idx].split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string()
         };
 
-        let mut right = String::new();
-        render_rows_composed(&mut right, &rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0, None).unwrap();
+        let right = print::print(&composed_rows_nodes(&rows, &s, 6.0, 100.0, 200.0, 300.0, true, 0.0, None).unwrap());
         assert_eq!(attr(&right, "$1", "text-anchor"), "end");
         assert_eq!(attr(&right, "$1", "x"), "257.00", "cell right-aligned at center + dx");
         assert_eq!(attr(&right, "Revenue", "text-anchor"), "start");
         assert_eq!(attr(&right, "Revenue", "x"), "306.00", "stub past plot_w + padding");
 
-        let mut left = String::new();
-        render_rows_composed(&mut left, &rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0, None).unwrap();
+        let left = print::print(&composed_rows_nodes(&rows, &s, 6.0, 100.0, 200.0, 300.0, false, 0.0, None).unwrap());
         assert_eq!(attr(&left, "$1", "text-anchor"), "start");
         assert_eq!(attr(&left, "$1", "x"), "243.00", "cell left-aligned at center - dx");
         assert_eq!(attr(&left, "Revenue", "text-anchor"), "end");
@@ -3124,6 +3108,7 @@ mod tests {
                 label: label.map(str::to_string),
                 per_series: Some("revenue".into()),
                 by_measure: false,
+                ink: None,
             }],
             fold: None,
         }
@@ -3226,6 +3211,127 @@ mod tests {
         assert_eq!(out[1].dx, out[0].dx, "the block shares one dx, not one per row");
     }
 
+    fn source_entry(source: &str) -> SupportTableEntry {
+        SupportTableEntry {
+            source: Some(source.into()),
+            aggregate: None,
+            format: Some(",d".into()),
+            label: Some(source.into()),
+            per_series: None,
+            by_measure: false,
+            ink: None,
+        }
+    }
+
+    /// The numbers under one band form one column: every row's lane is the
+    /// widest cell of any row, so their right edges share one x.
+    #[test]
+    fn rows_of_different_widths_share_one_lane_per_band() {
+        let config = SupportTableConfig { entries: vec![source_entry("big"), source_entry("small")], fold: None };
+        let rows: Vec<serde_json::Map<String, Value>> = vec![
+            serde_json::json!({"week": "2024-01-01", "big": 1234567.0, "small": 5.0}).as_object().unwrap().clone(),
+            serde_json::json!({"week": "2024-01-08", "big": 7.0, "small": 8.0}).as_object().unwrap().clone(),
+        ];
+        let domain = vec!["2024-01-01".to_string(), "2024-01-08".to_string()];
+        let fonts = test_fonts();
+        let out = build_rows_composed("c", &config, &rows, "week", &domain, &[10.0, 20.0], &fonts, &label_style(),
+            true, true, false, None, &[], &[], None, false)
+        .unwrap();
+        assert_eq!(out[0].dx, out[1].dx, "one lane for the column, not one per row");
+        let widest = fonts.measure("1,234,567", TEST_FONT, 11.0).unwrap();
+        assert_eq!(out[1].dx, widest / 2.0, "the lane is the widest cell of any row");
+    }
+
+    fn with_format(source: &str, spec: &str) -> SupportTableEntry {
+        SupportTableEntry { format: Some(spec.into()), ..source_entry(source) }
+    }
+
+    /// Mixed precisions under one band align on the decimal point: the units
+    /// digit of `232` and `7,852` lands where `29.50`'s does.
+    #[test]
+    fn rows_of_different_precision_align_on_the_decimal_point() {
+        let config = SupportTableConfig {
+            entries: vec![with_format("a", ",d"), with_format("b", ",d"), with_format("c", ",.2f")],
+            fold: None,
+        };
+        let rows: Vec<serde_json::Map<String, Value>> = vec![
+            serde_json::json!({"week": "2024-01-01", "a": 232.0, "b": 7852.0, "c": 29.5}).as_object().unwrap().clone(),
+        ];
+        let domain = vec!["2024-01-01".to_string()];
+        let fonts = test_fonts();
+        let out = build_rows_composed("c", &config, &rows, "week", &domain, &[10.0], &fonts, &label_style(),
+            false, true, false, None, &[], &[], None, false)
+        .unwrap();
+        // Width from the units digit to the right edge: the same on every row, to
+        // within the pad's composed-unit approximation of a digit and a dot.
+        let tail_w = |text: &str| {
+            let units_end = text.find('.').unwrap_or_else(|| text.trim_end_matches(|c: char| !c.is_ascii_digit()).len());
+            fonts.measure_shaped(&text[units_end..], TEST_FONT, 11.0).unwrap()
+        };
+        let tails: Vec<f64> = out.iter().map(|row| tail_w(&row.cells[0].text)).collect();
+        assert!(tails.iter().all(|t| (t - tails[2]).abs() < 1.5), "{tails:?} for {:?}", out.iter().map(|r| &r.cells[0].text).collect::<Vec<_>>());
+    }
+
+    /// A hung suffix hugs its digits and takes the fraction slot other rows fill
+    /// with decimals: no gap before it, units digits aligned, no cell's ink
+    /// reaching into its neighbor's.
+    #[test]
+    fn a_hung_suffix_hugs_its_digits_in_a_decimal_aligned_band() {
+        let revenue = SupportTableEntry {
+            format: Some(FormatSlot { raw: Some("currency_compact".into()), ..FormatSlot::from("$.2s") }),
+            ..source_entry("revenue")
+        };
+        let config = SupportTableConfig { entries: vec![with_format("share", ".1f"), revenue], fold: None };
+        let rows: Vec<serde_json::Map<String, Value>> = [("2024-01-01", 3.2, 280000.0), ("2024-01-08", 3.3, 283000.0), ("2024-01-15", 3.2, 278000.0)]
+            .iter()
+            .map(|(w, share, rev)| serde_json::json!({"week": w, "share": share, "revenue": rev}).as_object().unwrap().clone())
+            .collect();
+        let domain: Vec<String> = rows.iter().map(|r| r["week"].as_str().unwrap().to_string()).collect();
+        let fonts = test_fonts();
+        let out = build_rows_composed("c", &config, &rows, "week", &domain, &[50.0, 100.0, 150.0], &fonts, &label_style(),
+            true, true, true, None, &[], &[], None, false)
+        .unwrap();
+        let anchor = &out[1].cells[0];
+        assert!(anchor.text.ends_with('k') && !anchor.text.contains(char::is_whitespace), "{:?}", anchor.text);
+        assert!(anchor.text.chars().rev().nth(1).unwrap().is_ascii_digit(), "no gap before the suffix: {:?}", anchor.text);
+        // No cell's painted text overlaps its neighbor's: the anchor's right
+        // edge (digits plus suffix) stays left of the next cell's left edge.
+        for row in &out {
+            for pair in row.cells.windows(2) {
+                let right = pair[0].x + row.dx;
+                let left = pair[1].x + row.dx - pair[1].w;
+                assert!(right <= left, "{:?} overlaps {:?}", pair[0].text, pair[1].text);
+            }
+        }
+        let share_units = out[0].cells[1].x + out[0].dx - fonts.measure_shaped(".3", TEST_FONT, 11.0).unwrap();
+        let rev_units = out[1].cells[1].x + out[1].dx
+            - fonts.measure_shaped(&out[1].cells[1].text[out[1].cells[1].text.trim_end_matches(|c: char| !c.is_ascii_digit()).len()..], TEST_FONT, 11.0).unwrap();
+        assert!((share_units - rev_units).abs() < 1.5, "{share_units} vs {rev_units}");
+        let anchor_units = 50.0 + anchor.x + out[1].dx - fonts.measure_shaped("k", TEST_FONT, 11.0).unwrap();
+        assert!((anchor_units - rev_units).abs() < 1.5, "anchor {anchor_units} vs {rev_units}");
+    }
+
+    /// A strip draws a number under every bucket however crowded; density is
+    /// answered by the overflow warning alone.
+    #[test]
+    fn a_crowded_strip_keeps_every_cell_and_warns() {
+        let cell = |i: usize| ComposedCell { x: i as f64, text: "$280,000".into(), w: 50.0, hang: 0.0, aria: String::new(), href: None };
+        let rows = vec![ComposedRow {
+            label: "Revenue".into(),
+            label_w: 40.0,
+            cells: (0..26).map(cell).collect(),
+            dx: 0.0,
+            label_color: None,
+            stub_dx: 0.0,
+            series: None,
+            anchor_worst_case_w: 0.0,
+            copy_dx: vec![0.0],
+        }];
+        let ((), warnings) = crate::diagnostic::collect(|| warn_strip_overflow("c", &rows, 300.0, 4.0));
+        assert_eq!(rows[0].cells.len(), 26, "no cell is dropped");
+        assert!(warnings.iter().any(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "{warnings:?}");
+    }
+
     /// Rules between every adjacent visual row, `n_series - 1` inside the
     /// per_series block plus one trailing rule to the next entry — the same
     /// every-adjacent-pair cadence source/aggregate rows already take
@@ -3242,6 +3348,7 @@ mod tests {
                     label: None,
                     per_series: Some("revenue".into()),
                     by_measure: false,
+                    ink: None,
                 },
                 SupportTableEntry {
                     source: Some("revenue".into()),
@@ -3250,6 +3357,7 @@ mod tests {
                     label: Some("Total".into()),
                     per_series: None,
                     by_measure: false,
+                    ink: None,
                 },
             ],
             fold: None,
@@ -3281,8 +3389,7 @@ mod tests {
             &series_ink, None, false)
         .unwrap();
         assert_eq!(out.len(), 4, "3 series rows + 1 aggregate row");
-        let mut svg = String::new();
-        render_rows_composed(&mut svg, &out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0, None).unwrap();
+        let svg = print::print(&composed_rows_nodes(&out, &s, 6.0, 100.0, 0.0, 0.0, false, 0.0, None).unwrap());
         assert_eq!(
             svg.matches("<line").count(),
             3,
@@ -3344,6 +3451,7 @@ mod tests {
             label: Some("Share".into()),
             per_series: None,
             by_measure: false,
+            ink: None,
         }
     }
 

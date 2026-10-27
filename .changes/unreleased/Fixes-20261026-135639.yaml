@@ -1,0 +1,3 @@
+kind: Fixes
+body: A read-only DuckDB source that authors `attach`, `extensions`, or `secrets` no longer lets its SQL read other files or URLs; it reaches only its attach paths and secret scopes, and extensions it uses must be listed.
+time: 2026-10-26T13:56:39.269247-07:00

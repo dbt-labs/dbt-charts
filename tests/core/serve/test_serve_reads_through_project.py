@@ -112,7 +112,6 @@ class TestRenderBoardFileExistenceCheckViaProject:
 
         from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
         from dbt_charts.core.execute.executor import utc_now
-        from dbt_charts.core.render.svg_cache import MemorySvgStore
         from dbt_charts.core.serve.server import _render_board_file
 
         # Write a real board file on disk so Path.exists() returns True.
@@ -130,7 +129,6 @@ class TestRenderBoardFileExistenceCheckViaProject:
                 variables={},
                 project=project,
                 adapter_registry=AdapterRegistry(project=project),
-                svg_store=MemorySvgStore(),
                 clock=utc_now,
             )
 

@@ -851,49 +851,6 @@ ERR_PERCENT_RANGE = REGISTRY.register(
     )
 )
 
-ERR_NUMERAL_EXPR_EMPTY_SPEC = REGISTRY.register(
-    ErrorCode(
-        code="ERR-NUMERAL-EXPR-EMPTY-SPEC",
-        domain="render",
-        title="Empty format spec cannot build a numeral Vega expression",
-        message_template=(
-            "numeral_vega_expr() requires a non-empty format_spec. format_d3 "
-            "treats an empty spec as a distinct 'no d3 formatting' path (the "
-            "bare Python value) that a Vega expression cannot reproduce "
-            "byte-for-byte."
-        ),
-        doc=(
-            "Fired when numeral_vega_expr() is called with an empty format_spec. "
-            "format_d3 short-circuits an empty spec to the bare Python value, "
-            "bypassing d3 entirely: a Vega expression cannot reproduce that "
-            "byte-for-byte (Python and JS do not stringify numbers identically), "
-            "so building the expression is rejected rather than silently "
-            "diverging. This indicates an engine bug: callers should always "
-            "resolve a concrete d3 spec before reaching this emitter."
-        ),
-        docs_topic="errors",
-    )
-)
-
-ERR_EMITTER_NOT_FOUND = REGISTRY.register(
-    ErrorCode(
-        code="ERR-EMITTER-NOT-FOUND",
-        domain="render",
-        title="No emitter registered for the resolved chart type",
-        message_template=(
-            "No emitter registered for resolved chart type {resolved_type!r}. "
-            "This indicates an engine bug; the normalizer should have rejected "
-            "this chart before it reached render."
-        ),
-        doc=(
-            "Fired when the render engine cannot find an emitter for the resolved "
-            "chart type. This indicates an engine bug; the normalizer should have "
-            "rejected this chart before it reached render."
-        ),
-        docs_topic="errors",
-    )
-)
-
 ERR_STACKED_MIDDLE_ALIGNED_LABELS = REGISTRY.register(
     ErrorCode(
         code="ERR-STACKED-MIDDLE-ALIGNED-LABELS",
@@ -1116,11 +1073,13 @@ ERR_X_VALUE_NOT_A_DATE = REGISTRY.register(
             "values as categories."
         ),
         doc=(
-            "Fired when a line or area chart's x axis resolves to time (the "
-            "values are dates, or `axis_x.type: temporal` is authored) and an "
-            "x value does not parse as a date or timestamp. The chart orders "
-            "and positions every point by its parsed instant, so a value with "
-            "none cannot be drawn; the message names the first one."
+            "Fired when a line, area, bar or scatter chart's x axis resolves to time "
+            "(the values are dates, or `axis_x.type: temporal` is authored) and "
+            "an x value does not parse as a date or timestamp, such as "
+            "`2024-02-30`. The chart orders and positions every mark by its "
+            "parsed instant, so a value with none cannot be drawn; the message "
+            "names the first one and the x field it sits in. A band or ordinal "
+            "scale keeps such a value as a category."
         ),
         summary="Fired when a time-axis x value is not a date or timestamp.",
         docs_topic="charts",
@@ -1733,27 +1692,27 @@ WARN_BAR_GROUPED_SERIES_COINCIDE = REGISTRY.register(
         domain="render",
         title="Grouped bar series paint on top of each other",
         message_template=(
-            "Chart {chart_id!r}: {field!r} is quantitative (or a wide temporal "
-            "range), so its color-grouped bars have no band scale to offset "
-            "series within: every series paints at the same position, hiding "
-            "all but the last one drawn."
+            "Chart {chart_id!r}: {field!r} is a temporal axis with no calendar "
+            "grain to bucket by, so its color-grouped bars have no band to "
+            "offset series within: every series paints at the same position, "
+            "hiding all but the last one drawn."
         ),
         fix_template=(
             "Switch the x field to a categorical or bucketed-time column "
             "(so bars group side by side), or use a line/area/scatter mark, "
-            "which already draw overlapping series legibly on a continuous x."
+            "which already draw overlapping series legibly on a continuous "
+            "time axis."
         ),
         doc=(
             "Fires when a color-grouped bar (color + stack: none) sits on a "
-            "quantitative x, or a temporal x wide enough to promote to Vega-"
-            "Lite's continuous temporal type. Vega-Lite's xOffset/yOffset "
-            "sub-scale needs a discrete band to divide bars within; a "
-            "continuous position has none, so every series paints at the "
-            "identical position and width, each one occluding the series "
-            "drawn before it. The render is unchanged by this warning: bar "
-            "renders the same overlapping marks a line/area/scatter chart "
-            "already draws on the same data, just without a legible way to "
-            "tell the series apart."
+            "temporal x whose dates fall on no calendar grain, so the axis "
+            "is continuous. Offsetting series needs a discrete band to "
+            "divide bars within; a continuous time position has none, so "
+            "every series paints at the identical position and width, each "
+            "one occluding the series drawn before it. A quantitative x "
+            "dodges its series and does not fire. The render is unchanged by "
+            "this warning: bar renders the same overlapping marks a "
+            "line/area/scatter chart already draws on the same data."
         ),
         docs_topic="charts",
     )
@@ -1895,8 +1854,8 @@ WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH = REGISTRY.register(
         domain="render",
         title="Layered chart y series have a large scale mismatch",
         message_template=(
-            "Chart {chart_id!r}: y columns {col_a!r} and {col_b!r} share a y-axis "
-            "but their value ranges differ by {ratio:.0f}×: the smaller series "
+            "Chart {chart_id!r}: y columns {col_a!r} and {col_b!r} share a y-axis, "
+            "and {col_b!r} reaches only {reach:.1%} of it: the smaller series "
             "will be visually crushed to a flat line."
         ),
         fix_template=(
@@ -1906,9 +1865,11 @@ WARN_LAYERED_CHART_SHARED_Y_AXIS_SCALE_MISMATCH = REGISTRY.register(
         ),
         doc=(
             "Fires on a layered chart where the base chart's own y series and/or "
-            "its layers share the y-axis but their value ranges differ by ≥100×: "
-            "the smaller series is visually crushed to a flat line. Classic example: "
-            "revenue (millions) overlaid with conversion rate ([0, 1])."
+            "its layers share the y-axis and one series' drawn band is under 6% "
+            "of the axis (from zero when the axis includes it, else its own "
+            "variation): the smaller series is visually crushed to a flat line. "
+            "Classic example: revenue (millions) overlaid with conversion rate "
+            "([0, 1]). A layer that pins its own y-axis position opts out."
         ),
         docs_topic="charts",
     )
@@ -2083,8 +2044,8 @@ WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS = REGISTRY.register(
             "accessor reads them as UTC today, the same result its "
             "utc-prefixed equivalent would give, and no longer dependent on "
             "which machine renders the chart. It still cannot be made to read "
-            "in a different zone: there is no per-board or per-viewer "
-            "timezone setting today, in any dbt charts surface. Heatmap and "
+            "in a different zone: regional.time_zone does not apply to query "
+            "data. Heatmap and "
             "scatter are not yet covered. dbt charts never rewrites an "
             "authored label expression, so this only warns; switch to "
             "utcFormat() or utcmonth()/utcyear()/... to say what actually "
@@ -2295,7 +2256,7 @@ WARN_POINT_MAP_NEGATIVE_SIZE_VALUES = REGISTRY.register(
         doc=(
             "Fires when a bubble_map's `size:` measure contains negative "
             "values. Mark area cannot be negative, so rows with a negative "
-            "size value are dropped before Vega-Lite sees them rather than "
+            "size value are dropped before drawing rather than "
             "drawn at the smallest visible size; a negative value clamped "
             'to the scale\'s zero floor would read as "nearly zero", '
             "misrepresenting a large-magnitude negative measurement. Size "
@@ -2328,8 +2289,8 @@ WARN_POINT_MAP_OUT_OF_PROJECTION = REGISTRY.register(
         doc=(
             "Fires when a point_map chart uses a bounded projection (e.g. "
             "albersUsa) and some data points fall outside its mapped region. "
-            "The emitter drops those rows from spec.data before Vega-Lite sees "
-            "them; this warning reports how many points were dropped and why."
+            "The engine drops those rows before drawing; this warning reports "
+            "how many points were dropped and why."
         ),
         summary=(
             "Fires when a point_map chart uses a bounded projection and some "
@@ -2508,6 +2469,61 @@ WARN_TABLE_PAGE_SQUEEZED = REGISTRY.register(
     )
 )
 
+WARN_TABLE_NUMERIC_ALIGN_LEFT = REGISTRY.register(
+    WarningCode(
+        code="WARN-TABLE-NUMERIC-ALIGN-LEFT",
+        domain="render",
+        title="Left-aligned numeric column will not decimal-align",
+        message_template=(
+            "Table {chart_id!r} column {column!r} is align: left on numbers "
+            "of different width; the digits will not line up down the column."
+        ),
+        fix_template=(
+            "Drop align: left to keep this column's digits decimal-aligned, "
+            "the default for numeric columns."
+        ),
+        doc=(
+            "Fires when a numeric table column is left aligned and its "
+            "rendered values are not all the same width. A decimal-aligned "
+            "column right-anchors every value at a shared position so the "
+            "digits stack; left-anchoring starts each value at the cell's "
+            "left padding, so values of differing width no longer line up "
+            "and the column cannot be read down. A column whose values are "
+            "all one width, such as a year or an ID, stays silent because "
+            "left-anchoring still lines its digits up."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT = REGISTRY.register(
+    WarningCode(
+        code="WARN-TABLE-ALIGN-NO-VISIBLE-EFFECT",
+        domain="render",
+        title="Authored align: left on a numeric column has no visible effect",
+        message_template=(
+            "Table {chart_id!r} column {column!r}: align: left has no "
+            "visible effect. The digits already start at the cell's left "
+            "padding, so left and decimal alignment paint identically."
+        ),
+        fix_template=(
+            "Drop align: left; it isn't doing anything here. Widening the "
+            "column (an explicit width:) would let the decimal lane center "
+            "and make the key visible."
+        ),
+        doc=(
+            "Fires when a numeric table column is left aligned, its rendered "
+            "values are all the same width, and the decimal lane already "
+            "starts at the cell's left padding. Left and decimal alignment "
+            "then paint the digits at the identical x position and the "
+            "authored key changes nothing a reader can see. Where the values "
+            "differ in width, WARN-TABLE-NUMERIC-ALIGN-LEFT covers it "
+            "instead."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_TEMPORAL_SINGLE_POINT = REGISTRY.register(
     WarningCode(
         code="WARN-TEMPORAL-SINGLE-POINT",
@@ -2558,6 +2574,32 @@ WARN_TOO_MANY_COLOR_CATEGORIES = REGISTRY.register(
             "(y: [a, b]) is counted by the series its fold renders -- the "
             "measures, crossed with the color: dimension's values when one is "
             "authored."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_GRADIENT_HINGE_MISMATCH = REGISTRY.register(
+    WarningCode(
+        code="WARN-GRADIENT-HINGE-MISMATCH",
+        domain="render",
+        title="Color scale hinge does not match its palette or data",
+        message_template="Chart {chart_id!r}: the color scale on {field!r} {problem}.",
+        fix_template=(
+            "Set `hinge` to the value that should read as neutral (0 for signed "
+            "data) on a diverging palette, and omit `hinge` on a sequential one."
+        ),
+        doc=(
+            "Fires when a continuous color scale pivots somewhere the author did "
+            "not choose: a diverging palette with no hinge puts its neutral color "
+            "at the data midpoint; `hinge: auto` on data that does not cross zero "
+            "falls back to the midpoint too; a sequential palette has no neutral "
+            "center for a hinge to pivot on. Applies to heatmap, geoshape, color "
+            "channels, and table column scales."
+        ),
+        summary=(
+            "Fires when a color scale's hinge is missing on a diverging palette, "
+            "auto on data that does not cross zero, or set on a sequential palette."
         ),
         docs_topic="charts",
     )

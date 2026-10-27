@@ -26,7 +26,6 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.emitters._cartesian import (
     distinct_series_values,
-    spatial_color_scale,
 )
 
 from ._engine_render import render_pie_svg
@@ -74,16 +73,6 @@ def test_distinct_series_values_never_admits_a_none_label():
     # the unguarded ones rely on this drop.
     data = [{"s": "alpha"}, {"s": None}, {}]
     assert distinct_series_values(data, "s") == ["alpha"]
-
-
-def test_spatial_color_scale_reorders_domain_but_keeps_original_color():
-    # Alphabetical ground truth: A -> palette[0], B -> palette[1], C -> palette[2].
-    palette = ("#111", "#222", "#333")
-    series = ["A", "B", "C"]
-    scale = spatial_color_scale(series, palette, order=["C", "A", "B"])
-    assert scale["domain"] == ["C", "A", "B"]
-    # Each series keeps ITS OWN original color regardless of new position.
-    assert scale["range"] == ["#333", "#111", "#222"]
 
 
 # ---------------------------------------------------------------------------

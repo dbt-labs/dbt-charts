@@ -1213,6 +1213,21 @@ def test_board_style_envelope_carries_the_authored_numeral_family() -> None:
     assert envelope_for(patch)["numeral_family"] == "'Source Serif 4', Georgia, serif"
 
 
+def test_board_style_envelope_carries_the_themes_hover_emphasis() -> None:
+    from dbt_charts.core.render.engine import board_style_envelope
+    from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
+
+    style, _ = resolve_style_and_context(get_theme_style())
+    envelope = board_style_envelope(
+        style, None, active_format_locale(), active_time_locale()
+    )
+    hover = style.chart_defaults.hover_emphasis
+    assert envelope["hover_emphasis"] == {
+        "visible": hover.visible,
+        "dimmed_opacity": hover.dimmed_opacity,
+    }
+
+
 def test_board_style_envelope_carries_the_themes_default_view_widths() -> None:
     from dbt_charts.core.render.engine import board_style_envelope
     from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
@@ -1895,12 +1910,12 @@ def _payload_of(
 @pytest.mark.parametrize(
     ("chart_def", "rows"), [(_GEOSHAPE, []), (_POINT_MAP, _POINT_ROWS)]
 )
-def test_a_geo_chart_payload_carries_its_document_under_the_source_url(
+def test_a_geo_chart_payload_carries_its_document_text_under_the_source_url(
     chart_def: dict[str, Any], rows: list[dict[str, Any]]
 ) -> None:
     geometries = _payload_of(chart_def, rows)["geometries"]
     assert set(geometries) == {_US_STATES_URL}
-    assert geometries[_US_STATES_URL]["type"] == "Topology"
+    assert json.loads(geometries[_US_STATES_URL])["type"] == "Topology"
 
 
 def test_a_non_geo_chart_payload_carries_no_geometries() -> None:

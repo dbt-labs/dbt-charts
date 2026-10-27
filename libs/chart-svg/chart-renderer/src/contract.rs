@@ -46,18 +46,6 @@ pub fn mark_group(kind: &str, name: &str, children: Vec<Node>) -> Result<Node, S
     Ok(Node::group(mark_group_attrs(kind, name, false)?, children))
 }
 
-/// Open a value-label text mark set: the `.role-mark` group carrying the
-/// text runs a mark prints for its own value, stamped `data-dbt-value-label`
-/// (`converters/chart.py::_stamp_value_label_layers`, right after the class
-/// attribute). `chart_interactivity.js`'s `recedableMarks` reaches a text
-/// mark only through this stamp, so a pie's center total or a series-label
-/// rail -- text marks with the same `role-mark` ancestor and a `key: value`
-/// label -- never recede with a datum.
-pub fn value_label_group_open(out: &mut String, name: &str) -> Result<(), String> {
-    out.push_str(&open_tag(value_label_group(name, Vec::new())?));
-    Ok(())
-}
-
 pub fn value_label_group(name: &str, children: Vec<Node>) -> Result<Node, String> {
     Ok(Node::group(mark_group_attrs("text", name, true)?, children))
 }
@@ -154,18 +142,9 @@ fn axis_frame(channel: AxisChannel, label: &str, (ox, oy): (f64, f64), mark_bare
 /// unwraps it.
 const BARE_AXIS_ATTR: (&str, &str) = ("data-dct-bare", "1");
 
-/// Open the group Vega draws around an axis's gridlines; close with [`grid_group_close`].
-pub fn grid_group_open(out: &mut String) {
-    out.push_str(&open_tag(grid_group(Vec::new())));
-}
-
 /// The group Vega draws around an axis's gridlines, holding `children`.
 pub fn grid_group(children: Vec<Node>) -> Node {
     Node::group(Attrs::new().set("class", "mark-rule role-axis-grid").set("aria-hidden", "true"), children)
-}
-
-pub fn grid_group_close(out: &mut String) {
-    out.push_str("</g>");
 }
 
 pub fn axis_group_close(out: &mut String) {
@@ -244,12 +223,6 @@ pub fn legend_label_attrs(series_key: Option<&str>) -> Attrs {
     }
 }
 
-/// [`legend_label_attrs`] as an open tag, for `SizeLegend::paint`, which builds
-/// its markup as a string. Close with [`mark_group_close`].
-pub fn legend_label_open(out: &mut String) {
-    let _ = write!(out, "<g class=\"{LEGEND_LABEL_CLASS}\" pointer-events=\"none\">");
-}
-
 /// Open the group Vega draws around a facet header (`role-title-text`). The
 /// authored-kind stamp is the converter's regex over every such group, so a
 /// header carries the chart-title kind exactly as the chart's own title does.
@@ -287,11 +260,6 @@ pub(crate) fn has_no_mark_labels(svg: &str) -> bool {
 /// bare, as Vega leaves it.
 pub fn connected_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
     Node::group(Attrs::new().set("class", format!("mark-{kind} role-mark {name}")), children)
-}
-
-/// Close with [`mark_group_close`].
-pub fn connected_group_open(out: &mut String, kind: &str, name: &str) {
-    out.push_str(&open_tag(connected_group(kind, name, Vec::new())));
 }
 
 /// The `.role-mark` group of a mark set declared `aria: false`. Vega
@@ -336,33 +304,6 @@ pub fn item_group(
         Reads::Hidden => Ok(hidden_mark_group(kind, name, vec![item(Attrs::new())])),
         Reads::Label(label) => mark_group(kind, name, vec![item(aria_attrs(Some(label), role)?)]),
     }
-}
-
-/// Paint one mark as its own `.role-mark` group (`mark_group_open` /
-/// `hidden_mark_group_open`) around `item`, which receives the attributes the
-/// item itself carries for `reads` (the label, or nothing).
-pub fn paint_item(
-    out: &mut String,
-    kind: &str,
-    name: &str,
-    role: ItemRole,
-    reads: Reads,
-    item: impl FnOnce(&str) -> String,
-) -> Result<(), String> {
-    match reads {
-        Reads::Bare => out.push_str(&item("")),
-        Reads::Hidden => {
-            hidden_mark_group_open(out, kind, name);
-            out.push_str(&item(""));
-            mark_group_close(out);
-        }
-        Reads::Label(label) => {
-            mark_group_open(out, kind, name)?;
-            out.push_str(&item(&aria_attr(Some(label), role)?));
-            mark_group_close(out);
-        }
-    }
-    Ok(())
 }
 
 /// Mark a Vega-family chart's root `<svg>` as the view root Vega writes
@@ -548,16 +489,6 @@ pub enum GhostRun {
     ToLeftEdge,
     /// A heatmap cell's rule runs back to the plot's origin.
     ToOrigin,
-}
-
-/// A facet's mirrored far-edge axis rides an invisible rule layer, one rule per
-/// datum from the datum to the plot floor, appended after the panel's own marks
-/// (`features/mirror_axis.py`). It paints above the real marks, so the runtime
-/// resolves a hit on it and finds the real mark by its byte-identical label
-/// (`resolveSymbolMark`).
-pub fn mirror_ghost_layer(out: &mut String, rules: &[GhostRule], run: GhostRun) -> Result<(), String> {
-    out.push_str(&print(&[ghost_layer(rules, run)?]));
-    Ok(())
 }
 
 /// [`mirror_ghost_layer`]'s group.
@@ -789,7 +720,7 @@ pub fn tooltip_header_text(
     if detected_tu.is_none() && !is_standard_date {
         return Ok(cat.to_string());
     }
-    let (y, m, d) = crate::families::temporal::parse_iso_date(cat)
+    let (y, m, d) = crate::time_axis::parse_iso_date(cat)
         .ok_or_else(|| format!("tooltip header: unparsed date {cat:?}"))?;
     match grain_format {
         Some(format) => Ok(format.text(y, m, d)),
@@ -855,10 +786,9 @@ mod tests {
 
     #[test]
     fn a_hidden_mark_set_is_aria_hidden_with_bare_items() {
-        let mut svg = String::new();
-        paint_item(&mut svg, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Hidden, |aria| {
-            format!("<line{aria}/>")
-        }).unwrap();
+        let svg = print(&[
+            item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Hidden, |aria| Node::Line(aria)).unwrap()
+        ]);
         assert_eq!(
             svg,
             "<g class=\"mark-rule role-mark layer_1_marks\" aria-hidden=\"true\"><line/></g>"
@@ -866,29 +796,27 @@ mod tests {
     }
 
     #[test]
-    fn paint_item_announces_a_label_and_leaves_a_bare_mark_ungrouped() {
-        let item = |aria: &str| format!("<line{aria}/>");
-        let mut announced = String::new();
-        paint_item(&mut announced, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Label("v: 1"), item).unwrap();
+    fn item_group_announces_a_label_and_leaves_a_bare_mark_ungrouped() {
+        let item = |aria: Attrs| Node::Line(aria);
+        let announced =
+            print(&[item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Label("v: 1"), item).unwrap()]);
         assert_eq!(
             announced,
             "<g class=\"mark-rule role-mark layer_1_marks\" role=\"graphics-object\" \
              aria-roledescription=\"rule mark container\"><line data-dct-role=\"rule\" \
              aria-label=\"v: 1\" role=\"graphics-symbol\" aria-roledescription=\"rule mark\"/></g>"
         );
-        let mut bare = String::new();
-        paint_item(&mut bare, "rule", "layer_1_marks", ItemRole::RuleMark, Reads::Bare, item).unwrap();
+        let bare = print(&[item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Bare, item).unwrap()]);
         assert_eq!(bare, "<line/>");
     }
 
     #[test]
     fn value_label_group_carries_the_stamp_between_class_and_role() {
-        let mut svg = String::new();
-        value_label_group_open(&mut svg, "layer_2_marks").unwrap();
+        let svg = print(&[value_label_group("layer_2_marks", Vec::new()).unwrap()]);
         assert_eq!(
             svg,
             "<g class=\"mark-text role-mark layer_2_marks\" data-dbt-value-label=\"true\" \
-             role=\"graphics-object\" aria-roledescription=\"text mark container\">"
+             role=\"graphics-object\" aria-roledescription=\"text mark container\"></g>"
         );
     }
 
@@ -1488,9 +1416,7 @@ mod tests {
     #[test]
     fn a_ghost_layer_holds_one_invisible_rule_per_datum() {
         let rules = [GhostRule { aria: Some("a: 1"), x: 10.0, y: 20.0, stroke: "#abc", anchor: None }];
-        let mut out = String::new();
-        mirror_ghost_layer(&mut out, &rules, GhostRun::ToOrigin).unwrap();
-        assert_eq!(print(&[ghost_layer(&rules, GhostRun::ToOrigin).unwrap()]), out);
+        let out = print(&[ghost_layer(&rules, GhostRun::ToOrigin).unwrap()]);
         assert!(
             out.contains("<line transform=\"translate(10.000,20.000)\" x2=\"-10.000\" y2=\"-20.000\" stroke=\"#abc\" opacity=\"0\" data-dct-role=\"rule\" aria-label=\"a: 1\""),
             "{out}"

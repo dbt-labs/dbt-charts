@@ -18,6 +18,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
@@ -290,7 +291,9 @@ class TestColumnOptionUsesNamedQueryCache:
         assert result.success
 
         registry = Mock()
-        registry.execute.return_value = QueryResult(data=[{"name": "East"}])
+        registry.execute.return_value = QueryResult(
+            data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
+        )
         executor = Executor(board=result.board, adapter_registry=registry)
 
         # First render: pre-execute all queries (what renderer.py does)
@@ -370,7 +373,9 @@ class TestFailingColumnOptionQuery:
                 return QueryResult(
                     data=None, error=QueryError("no such table: regions")
                 )
-            return QueryResult(data=[{"x": 1, "y": 2}])
+            return QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
 
         registry = Mock()
         registry.execute.side_effect = adapter_execute

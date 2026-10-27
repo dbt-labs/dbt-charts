@@ -4,6 +4,7 @@ humanized names, letter case, theme text and placeholder data."""
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 
@@ -17,7 +18,6 @@ from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.render.controls import interactive_controls
 from dbt_charts.core.render.placeholder import generate_placeholder_data
-from dbt_charts.core.render.svg_cache import svg_cache_key
 from dbt_charts.core.render.variables_resolve import (
     format_daterange_label,
     format_variable_display_value,
@@ -88,6 +88,7 @@ def test_control_values_read_in_the_board_language() -> None:
 
 def test_the_controls_strip_carries_its_words_for_the_page() -> None:
     from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.render.board_variables import board_clock
     from dbt_charts.core.render.variables_resolve import resolve_controls
     from dbt_charts.core.render.variables_strip import render_variables_strip_svg
 
@@ -95,7 +96,11 @@ def test_the_controls_strip_carries_its_words_for_the_page() -> None:
     controls = resolve_controls(
         {"span": Variable(input="daterange")}, {}, None, style.variables
     )
-    with language_scope("de"), interactive_controls(True):
+    with (
+        language_scope("de"),
+        interactive_controls(True),
+        board_clock(datetime.date(2026, 10, 20)),
+    ):
         svg, _ = render_variables_strip_svg(
             controls, 600.0, style, "start", variables_path="variables"
         )
@@ -170,23 +175,6 @@ def test_a_german_board_resolves_german_theme_text_from_its_regional() -> None:
     result = compile("title: t\nregional:\n  locale:\n    time: de-DE\n")
     assert result.success
     assert result.board.resolved_style.footer.text == "erstellt mit dbt Charts"
-
-
-def test_the_svg_cache_key_tells_two_board_languages_apart() -> None:
-    theme = get_theme_style(get_default_theme_name())
-
-    def key(language: str) -> str:
-        return svg_cache_key(
-            {"mark": "point"},
-            output_format="svg",
-            width=100.0,
-            height=100.0,
-            is_placeholder=True,
-            resolved_style=resolve_style(theme, language=language),
-            link_context=None,
-        )
-
-    assert key("de") != key("en")
 
 
 def test_placeholder_data_is_translated() -> None:
@@ -309,13 +297,28 @@ def test_an_image_error_reads_in_the_board_language() -> None:
 
 
 def test_point_map_tooltip_titles_read_in_the_board_language() -> None:
-    from dbt_charts.core.render.chart.geo_tooltip import build_point_tooltip_fields
-
-    with language_scope("de"):
-        fields = build_point_tooltip_fields(
-            [], lat_field="lat", lng_field="lng", tooltip_format=",", field_labels={}
-        )
-    assert [field["title"] for field in fields] == ["Breitengrad", "Längengrad"]
+    svg = _rendered_svg(
+        """regional:
+  language: de
+queries:
+  q:
+    type: values
+    rows:
+      - {lat: 34.05, lng: -118.25}
+      - {lat: 40.71, lng: -74.01}
+charts:
+  c:
+    query: q
+    type: point_map
+    latitude: lat
+    longitude: lng
+    projection: mercator
+rows:
+  - c
+"""
+    )
+    assert "Breitengrad" in svg and "Längengrad" in svg
+    assert "Latitude" not in svg
 
 
 def test_an_overlay_legend_with_comma_series_counts_them_in_the_board_language() -> (

@@ -379,6 +379,7 @@ impl<'a> EmptyLegend<'a> {
                     fill,
                     symbol: Some(glyph(self.glyph, self.canvas, self.canvas)),
                     series_key: None,
+                    recede: None,
                 })
                 .collect(),
         };

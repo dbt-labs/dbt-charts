@@ -336,6 +336,24 @@ def test_a_measure_band_label_follows_the_screen_direction() -> None:
     assert _label_edge(measure) == "top"
 
 
+def test_a_note_sits_past_the_value_in_the_screen_direction() -> None:
+    note = {"type": "note", "x": "West", "y": 14, "text": "Peak"}
+    assert _label_edge(note, style={"orientation": "vertical"}) == "top"
+    assert _label_edge(note) == "right"
+    assert _one(note).style.text.position.align == "center"
+
+
+def test_an_authored_note_edge_wins_on_a_horizontal_bar() -> None:
+    note = {
+        "type": "note",
+        "x": "West",
+        "y": 14,
+        "text": "Peak",
+        "style": {"marks": {"text": {"position": {"edge": "top"}}}},
+    }
+    assert _label_edge(note) == "top"
+
+
 def test_a_category_bar_note_at_max_y_sits_at_the_max_bar() -> None:
     note = _one({"type": "note", "y": "max()", "text": "{{ value | format }}"})
     assert note.x == ResolvedCategoryAnchor(kind="category", value="West")

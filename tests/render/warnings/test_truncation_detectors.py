@@ -80,6 +80,22 @@ def test_chart_title_detector_fires_on_title_truncation() -> None:
     assert w.path == "charts.c1.title"
 
 
+def test_chart_title_detector_reports_a_field_once_across_rerenders() -> None:
+    """A chart the layout renders more than once (sizing, then painting) records its
+    cut title each time; the author sees one warning per field, not one per render."""
+    cut = TextTruncation(
+        surface="chart_title", authored_field="title", authored_text="Long"
+    )
+    cut_subtitle = TextTruncation(
+        surface="chart_title", authored_field="subtitle", authored_text="Longer"
+    )
+    ctx = _ctx("c1", [cut, cut, cut_subtitle, cut_subtitle])
+    assert [w.path for w in chart_title_truncated.detect(ctx)] == [
+        "charts.c1.title",
+        "charts.c1.subtitle",
+    ]
+
+
 def test_chart_title_detector_ignores_other_surfaces() -> None:
     ctx = _ctx(
         "c2",

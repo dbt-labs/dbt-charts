@@ -1,0 +1,3 @@
+kind: Fixes
+body: X-axis ticks now meet the plot floor with no gap and match the baseline they hang from.
+time: 2026-10-26T00:37:52.990105-07:00

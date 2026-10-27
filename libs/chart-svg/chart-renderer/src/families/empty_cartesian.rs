@@ -11,7 +11,7 @@ use crate::common::{AxisStyle, AxisTitle, FieldLabels};
 use crate::contract::AxisChannel;
 use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
 use crate::diagnostic::Diagnostic;
-use crate::families::bar::{flush_edge, flush_threshold, format_tick_labels};
+use crate::families::bar::axes::{flush_edge, flush_threshold, format_tick_labels};
 use crate::families::cartesian::{vl_default_tick_count, LinearScale};
 use crate::families::empty::{Head, LegendKind};
 use crate::families::layers::{LayerSide, OverlayLayer, YSides};

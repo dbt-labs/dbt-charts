@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SourceConfig
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
@@ -39,7 +40,9 @@ class _CapturingAdapter(BaseAdapter):
         source_config: SourceConfig | None = None,
     ) -> QueryResult:
         self.received.append(source_config)
-        return QueryResult(data=[{"x": 1}], columns=["x"])
+        return QueryResult(
+            data=[{"x": 1}], columns=["x"], schema=literal_schema([{"x": 1}], ["x"])
+        )
 
 
 def _make_registry(

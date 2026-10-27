@@ -400,7 +400,7 @@ fn stack_color(
             let values: Vec<Option<f64>> = binned_rows.iter().map(|row| row_num(row, cf)).collect();
             let all = extent(&rows.iter().filter_map(|row| row.get(cf)?.as_f64()).map(Some).collect::<Vec<_>>());
             let all = (all.0 <= all.1).then_some(all);
-            continuous(values.clone(), ContinuousColor::gradient(scale, all, extent(&values))?, &quantitative_text)?
+            continuous(values.clone(), ContinuousColor::gradient(scale, all, extent(&values), r.legend.visible)?, &quantitative_text)?
         }
         VegaType::Quantitative => {
             let values: Vec<Option<f64>> = binned_rows.iter().map(|row| row_num(row, cf)).collect();

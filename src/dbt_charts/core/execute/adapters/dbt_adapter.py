@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
     from dbt_charts.core.project import Project
 
+from dbt_charts.core.column_types import reject_duplicate_columns
 from dbt_charts.core.compile.errors import JinjaError
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
@@ -56,7 +57,6 @@ from dbt_charts.core.execute.adapters.base import (
     handle_adapter_error,
     interrupted,
     plain_error,
-    reject_duplicate_columns,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
@@ -67,6 +67,7 @@ from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
     open_connection,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+from dbt_charts.core.execute.adapters.typed_fetch import fetch_typed
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES
 from dbt_charts.core.execute.sql_literals import (
@@ -588,15 +589,13 @@ class DbtAdapter(BaseAdapter):
         except Exception as e:  # noqa: BLE001 — guard rejection, not a warehouse rejection
             return handle_adapter_error("dbt adapter setup", e)
 
-        # Bounds the driver's own fetch (execute(..., limit=...) ->
-        # cursor.fetchmany()) — resolved_sql is sent to the warehouse
-        # unmodified, so every statement shape behaves exactly as it would
-        # without this ceiling.
+        # Bounds the driver's own fetch (cursor.fetchmany()) — resolved_sql is
+        # sent to the warehouse unmodified, so every statement shape behaves
+        # exactly as it would without this ceiling.
         row_fetch_limit = resolve_effective_row_limit(query.limit)
-        # Some dbt-adapters cursors (dbt-spark's Hive/ODBC wrappers) implement
-        # fetchall but not fetchmany — passing limit= there raises AttributeError
-        # inside get_result_from_cursor. Omit it for those dialects and fall back
-        # to the post-fetch slice below.
+        # dbt-spark's Hive/ODBC cursors implement fetchall but not fetchmany.
+        # Omit the limit for those dialects and fall back to the post-fetch
+        # slice below.
         driver_limit = (
             row_fetch_limit.fetch_limit
             if get_dialect(self._dialect).cursor_supports_driver_limit
@@ -609,11 +608,11 @@ class DbtAdapter(BaseAdapter):
         try:
             with open_connection(adapter, "dbt_charts_query"):
                 try:
-                    _, table = adapter.execute(
+                    typed = fetch_typed(
+                        adapter,
+                        get_dialect(self._dialect).name,
                         resolved_sql,
-                        auto_begin=False,
-                        fetch=True,
-                        limit=driver_limit,
+                        driver_limit,
                     )
                 except Exception as e:  # noqa: BLE001 — any driver's rejection, classified below
                     if self._interrupted.is_set():
@@ -627,13 +626,13 @@ class DbtAdapter(BaseAdapter):
         # Result materialization is client-side (no further warehouse round
         # trip) — left unguarded so a defect here surfaces as a crash, not a
         # mislabeled "warehouse rejected the query".
-        columns = list(table.column_names)
-        rows = list(table.rows)
-        rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+        columns = typed.columns
+        rows, truncated_reason = apply_row_limit_truncation(typed.rows, row_fetch_limit)
         reject_duplicate_columns(columns)
         data = [dict(zip(columns, row, strict=False)) for row in rows]
+        schema = dict(zip(columns, typed.types, strict=True))
         return QueryResult(
-            data=data, columns=columns, truncated_reason=truncated_reason
+            data=data, columns=columns, schema=schema, truncated_reason=truncated_reason
         )
 
     def _resolve_target_dict(

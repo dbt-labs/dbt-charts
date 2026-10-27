@@ -35,6 +35,8 @@ class _SchemaResource(Protocol):
 
     def read_bytes(self) -> bytes: ...
 
+    def is_file(self) -> bool: ...
+
     def read_text(self, encoding: str) -> str: ...
 
 
@@ -107,6 +109,9 @@ class YamlSchemaCatalog:
     _grammars: dict[str, JsonObject] = field(
         default_factory=dict, compare=False, repr=False
     )
+    _warning_codes: dict[str, frozenset[str]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     @property
     def dev(self) -> YamlSchemaEntry:
@@ -142,6 +147,22 @@ class YamlSchemaCatalog:
             self._grammars[version] = grammar_only(self._schemas[version])
         return self._grammars[version]
 
+    def warnings_newer_than(self, version: str) -> frozenset[str]:
+        """Registered warning codes that did not exist at release *version*.
+
+        Each release freezes its registered warning codes beside its schema
+        (``<version>.warnings.json``); a code the list lacks first shipped
+        later. The set a project locked to *version* must not see.
+        """
+        from dbt_charts.core.diagnostics import REGISTRY
+
+        if version not in self._warning_codes:
+            raise ValueError(
+                f"dbt charts YAML schema {version} has no frozen warning list "
+                f"({version}.warnings.json)."
+            )
+        return REGISTRY.codes(level="warning") - self._warning_codes[version]
+
     @cached_property
     def current_grammar(self) -> JsonObject:
         """``current_schema`` without cross-field rules; see ``grammar_for``."""
@@ -149,6 +170,10 @@ class YamlSchemaCatalog:
 
         grammar: JsonObject = grammar_only(self.current_schema)
         return grammar
+
+
+def warnings_file_name(version: str) -> str:
+    return f"{version}.warnings.json"
 
 
 def _manifest_string(value: JsonObject, key: str) -> str:
@@ -334,6 +359,7 @@ def load_yaml_schema_catalog_from(
 
     current_schema = compute_current_schema()
     schemas: dict[str, JsonObject] = {}
+    warning_codes: dict[str, frozenset[str]] = {}
     predecessor: str | Literal[None] = None
     previous_date: date | Literal[None] = None
     for entry in entries:
@@ -380,10 +406,20 @@ def load_yaml_schema_catalog_from(
                     f"dbt charts YAML schema {entry.filename} must be an object."
                 )
             schemas[entry.version] = schema
+            warnings_file = directory.joinpath(warnings_file_name(entry.version))
+            if warnings_file.is_file():
+                warning_codes[entry.version] = frozenset(
+                    json.loads(warnings_file.read_text(encoding="utf-8"))
+                )
             previous_date = entry.released_at
         predecessor = entry.version
 
-    return YamlSchemaCatalog(tuple(reversed(entries)), schemas, current_schema)
+    return YamlSchemaCatalog(
+        tuple(reversed(entries)),
+        schemas,
+        current_schema,
+        _warning_codes=warning_codes,
+    )
 
 
 def compute_current_schema() -> JsonObject:

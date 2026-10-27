@@ -244,51 +244,6 @@ class TestGroupedBarQuantitativeX:
             render_chart_svg(chart, NUMERIC_X_DATA)
         assert exc.value.code.code == "ERR-BAR-OVERLAP-CONTINUOUS-AXIS"
 
-    @staticmethod
-    def _bar_scale_from_flat_or_layered(spec: dict) -> dict:
-        for layer in spec.get("layer", []):
-            mark = layer.get("mark", {})
-            if isinstance(mark, dict) and mark.get("type") == "bar":
-                enc = layer.get("encoding", {})
-                if "x" in enc:
-                    return enc["x"].get("scale", {})
-        return spec.get("encoding", {}).get("x", {}).get("scale", {})
-
-    @staticmethod
-    def _rendered_bar_widths(spec: dict) -> list[float]:
-        """Real bar widths from a vl_convert render of `spec`.
-
-        Corner-radius bars emit curved (M/L/C) paths, square-cornered bars emit
-        straight (M/h/v) ones — every coordinate pair's x is captured either
-        way, so the path's own bounding-box width is format-agnostic evidence
-        of the mark's rendered width.
-        """
-        import re
-
-        from dbt_charts.core.render.converters.chart import render_vega_spec
-
-        svg = render_vega_spec(
-            spec,
-            "svg",
-            _RESOLVED_STYLE,
-            width=400.0,
-            height=300.0,
-            is_placeholder=False,
-            chart_id="chart",
-        )
-        mark_group = re.search(
-            r'<g class="mark-rect[^"]*"[^>]*>(.*?)</g>', svg, re.DOTALL
-        )
-        assert mark_group, "no bar mark group found in rendered SVG"
-        paths = re.findall(r'<path[^>]*d="([^"]+)"', mark_group.group(1))
-        assert paths, "no bar path 'd' attributes matched — regex is stale"
-        widths = []
-        for p in paths:
-            xs = [float(x) for x in re.findall(r"(-?[0-9.]+),-?[0-9.]+", p)]
-            assert xs, f"no coordinate pairs matched in path {p!r} — regex is stale"
-            widths.append(max(xs) - min(xs))
-        return widths
-
 
 class TestGroupedBarTopRuleOffset:
     """100%-baseline rule (_top_rule_layer) must not inherit grouped xOffset/yOffset."""

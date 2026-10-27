@@ -20,6 +20,8 @@ both call directly; the sizing pass never calls ``render_board_svg``, so
 
 from __future__ import annotations
 
+import datetime
+import json
 from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -27,6 +29,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.diagnostics import ERR_INTERNAL
+from dbt_charts.core.render.errors import RenderError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -96,6 +100,8 @@ def current_board_data_provider() -> ChartDataProvider | None:
 _DATERANGE_PRESETS: ContextVar[Mapping[str, str]] = ContextVar(
     "dct_daterange_presets", default=MappingProxyType({})
 )
+# No default: a control dating a preset outside a render has no board clock.
+_BOARD_TODAY: ContextVar[datetime.date] = ContextVar("dct_board_today")
 
 
 @contextmanager
@@ -108,6 +114,44 @@ def daterange_presets(presets: Mapping[str, str]) -> Generator[None]:
         _DATERANGE_PRESETS.reset(token)
 
 
+@contextmanager
+def board_clock(today: datetime.date) -> Generator[None]:
+    """Scope the board-zone date daterange presets resolve on."""
+    token = _BOARD_TODAY.set(today)
+    try:
+        yield
+    finally:
+        _BOARD_TODAY.reset(token)
+
+
 def current_daterange_presets() -> Mapping[str, str]:
     """Variable name to committed preset id, for the render in progress."""
     return _DATERANGE_PRESETS.get()
+
+
+def committed_text(
+    value: object,  # type-state: object_annotation — any variable value; VariableValues is dict[str, Any]
+) -> str:
+    """A variable value as a host commits it, never a Python repr.
+
+    ``str()`` on a list yields ``['a', 'b']``, which no host parses back; lists
+    go out as JSON, dates as ISO.
+    """
+    if isinstance(value, (list, tuple)):
+        return json.dumps(
+            [
+                member.isoformat() if isinstance(member, datetime.date) else member
+                for member in value
+            ]
+        )
+    return str(value)
+
+
+def current_board_today() -> datetime.date:
+    """The board-zone date of the render in progress."""
+    try:
+        return _BOARD_TODAY.get()
+    except LookupError:
+        raise RenderError.from_code(
+            ERR_INTERNAL, message="no board clock in scope: render inside board_clock()"
+        ) from None

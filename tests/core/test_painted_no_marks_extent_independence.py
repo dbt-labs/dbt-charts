@@ -51,7 +51,6 @@ def _render_blank(rows: list[dict[str, Any]]) -> list[str]:
     query_result = Mock(
         is_success=True,
         data=rows,
-        column_descriptions=None,
         resolved_relations=None,
         truncated_reason=None,
     )

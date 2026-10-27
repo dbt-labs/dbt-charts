@@ -10,7 +10,6 @@ WarningContext carries everything detectors need:
   - layer_results: chart id → layer query name → list of row dicts, for
     typed overlay layers that carry their own `query:`. Sparse — only
     charts with a layer query distinct from the base chart's appear.
-  - vega_specs: chart id → Vega-Lite spec dict.
   - table_overflows: chart id → the table's slot overflow captured at render.
   - table_crampings: chart id → the table's width cramping (columns under
     their demand, headers wrapped) captured at render. Sparse.
@@ -22,12 +21,6 @@ WarningContext carries everything detectors need:
   - chart_truncations: chart id → TruncationInfo record for a query result
     truncated by execution.max_rows/max_result_bytes. Sparse — only charts
     whose query was actually truncated this render appear.
-
-vega_specs is SPARSE: KPI, text, and markdown charts do not compile to
-Vega-Lite, so their ids are OMITTED from this dict (not present as None).
-Detectors that key into vega_specs must guard with:
-    if chart_id not in ctx.vega_specs:
-        continue
 
 table_overflows is likewise SPARSE: only tables that overflowed their slot
 appear, and only on SVG-family renders (non-SVG formats never rasterize a
@@ -128,6 +121,15 @@ class WarningContext(BaseModel):
     # chart id → the table's slot cramping at render time (tables only; sparse —
     # only tables the renderer had to degrade appear, and only on SVG renders).
     table_crampings: dict[str, TableCramping] = {}
+    # chart id → authored-left-aligned numeric columns whose rendered values
+    # are not all the same width (tables only; sparse — see
+    # render/chart/table_align.py's module docstring for the two-outcome split
+    # with table_align_no_visible_effects).
+    table_numeric_align_lefts: dict[str, list[str]] = {}
+    # chart id → authored-left-aligned numeric columns with no slack beyond
+    # their content demand, where left and decimal alignment paint identically
+    # (tables only; sparse).
+    table_align_no_visible_effects: dict[str, list[str]] = {}
     # chart id → how the table paginated in a static export (tables only; sparse
     # — only a paginated table appears, and only on SVG-family renders).
     static_paginations: dict[str, StaticPagination] = {}

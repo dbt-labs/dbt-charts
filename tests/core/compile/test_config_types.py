@@ -14,6 +14,7 @@ from dbt_charts.core.compile.config import (
     reset_config,
     validate_project_config_data,
 )
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.config import (
     PUBLISHED_TO_FORM,
     CloudConfig,
@@ -242,7 +243,7 @@ def test_malformed_warnings_block_is_rejected(
 
 def test_project_config_validation_rejects_an_unregistered_warning_code() -> None:
     """A typo'd code would otherwise validate clean and fail every render."""
-    with pytest.raises(ValueError, match="WARN-TYPO"):
+    with pytest.raises(CompilationError, match="WARN-TYPO"):
         validate_project_config_data(
             {"warnings": {"ignore": ["WARN-TYPO"]}}, filename="dbt_charts.yml"
         )

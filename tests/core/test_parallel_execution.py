@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.execute import Executor
@@ -49,7 +50,9 @@ def _slow_adapter_execute(delay: float = 0.1):
         time.sleep(delay)
         entry["end"] = time.monotonic()
         call_log.append(entry)
-        return QueryResult(data=[{"x": 1, "y": 2}])
+        return QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
 
     return execute, call_log
 
@@ -192,7 +195,9 @@ class TestExecuteQueriesParallel:
         assert result.success, result.errors
 
         mock_registry = Mock()
-        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
 
         executor = Executor(result.board, adapter_registry=mock_registry)
 
@@ -218,7 +223,9 @@ class TestExecuteQueriesParallel:
         def flaky_execute(query, variables=None, params=None, **kwargs):
             if "sales" in query.sql.lower():
                 raise RuntimeError("Connection refused")
-            return QueryResult(data=[{"x": 1, "y": 2}])
+            return QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
 
         mock_registry = Mock()
         mock_registry.execute.side_effect = flaky_execute
@@ -261,7 +268,9 @@ class TestExecutorCacheThreadSafety:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
-        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
         executor = Executor(result.board, adapter_registry=mock_registry)
 
         errors = []
@@ -372,7 +381,9 @@ class TestStoredPreExecutionErrors:
             if "'sales'" in query.sql:
                 call_count += 1
                 raise RuntimeError("Connection refused")
-            return QueryResult(data=[{"x": 1, "y": 2}])
+            return QueryResult(
+                data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+            )
 
         mock_registry = Mock()
         mock_registry.execute.side_effect = counting_execute
@@ -420,7 +431,9 @@ class TestCacheHitPartitioning:
         assert result.success, result.errors
 
         mock_registry = Mock()
-        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
         executor = Executor(result.board, adapter_registry=mock_registry)
 
         # Pre-warm cache for sales and users — these are cache hits.
@@ -466,7 +479,9 @@ class TestCacheHitPartitioning:
         assert result.success, result.errors
 
         mock_registry = Mock()
-        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
         executor = Executor(result.board, adapter_registry=mock_registry)
 
         # Pre-warm all three queries.
@@ -502,7 +517,9 @@ class TestIsCached:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
-        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
         return Executor(result.board, adapter_registry=mock_registry)
 
     def test_false_before_execution(self):
@@ -531,7 +548,9 @@ class TestIsCached:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
-        mock_registry.execute.return_value = QueryResult(data=[{"x": 1, "y": 2}])
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
         executor = Executor(
             result.board, adapter_registry=mock_registry, use_cache=False
         )

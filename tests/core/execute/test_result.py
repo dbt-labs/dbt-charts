@@ -20,6 +20,7 @@ import nanoarrow as na
 import pyarrow as pa
 import pytest
 
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NUMERIC_OVERFLOW
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.base import RowFetchLimit
@@ -63,6 +64,7 @@ class TestDecimalPolicy:
         result = arrow_to_query_result(na.Array(table), _unbounded(10))
         assert result.data == [{"n": 1.5}]
         assert isinstance(result.data[0]["n"], float)
+        assert result.schema["n"] == ColumnType(kind="float")
 
     def test_decimal256_follows_the_same_policy(self) -> None:
         table = pa.table({"n": pa.array([decimal.Decimal("7")], pa.decimal256(40, 0))})
@@ -139,7 +141,7 @@ class TestOtherTypes:
         )
         assert result.data == [{"s": "x", "b": b"y"}, {"s": None, "b": None}]
 
-    def test_a_map_arrives_as_key_value_dicts_at_any_depth(self) -> None:
+    def test_a_map_arrives_as_a_dict_at_any_depth(self) -> None:
         entries = pa.map_(pa.string(), pa.int64())
         table = pa.table(
             {
@@ -149,9 +151,10 @@ class TestOtherTypes:
         )
         result = arrow_to_query_result(na.Array(table), _unbounded(10))
         assert result.data == [
-            {"m": [{"key": "k", "value": 1}], "s": {"m": [{"key": "j", "value": 2}]}},
+            {"m": {"k": 1}, "s": {"m": {"j": 2}}},
             {"m": None, "s": None},
         ]
+        assert result.schema["m"] == ColumnType(kind="json")
 
     def test_column_names_keep_the_case_the_query_gave_them(self) -> None:
         """DuckDB and lake compute preserve an alias's case, as the in-process
@@ -160,16 +163,6 @@ class TestOtherTypes:
         result = arrow_to_query_result(na.Array(table), _unbounded(10))
         assert result.columns == ["MRR"]
         assert result.data == [{"MRR": 1}]
-
-    def test_column_descriptions_are_left_unset(self) -> None:
-        """Arrow carries a schema, not PEP 249 cursor.description tuples, and
-        nothing reads them off a warehouse result. Fabricating display_size /
-        precision / null_ok from an Arrow field would invent values."""
-        table = pa.table({"a": pa.array([1], pa.int64())})
-        assert (
-            arrow_to_query_result(na.Array(table), _unbounded(10)).column_descriptions
-            is None
-        )
 
 
 class TestTruncation:

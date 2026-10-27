@@ -47,7 +47,6 @@ def _ok_adapter() -> MagicMock:
     ok = MagicMock()
     ok.is_success = True
     ok.data = [{"value": 42}]
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = MagicMock()

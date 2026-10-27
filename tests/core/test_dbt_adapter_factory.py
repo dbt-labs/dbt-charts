@@ -3,6 +3,8 @@
 TDD: these tests are written before implementation to drive the shape.
 """
 
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -1115,8 +1117,14 @@ class _FakeOdbcCursor:
         self._handle = handle
         self.description: list[tuple[str, ...]] | None = None
         self.rowcount = -1
+        self._described: list[SimpleNamespace] | None = None
 
-    def execute(self, sql: str) -> None:
+    def execute(self, sql: str, *params: str) -> None:
+        if sql.startswith("EXEC sp_describe_first_result_set"):
+            # The type-describe round trip is not a user query: not counted in
+            # ``sent``, answers one hidden-free ``int`` column like ``description``.
+            self._described = [SimpleNamespace(system_type_name="int", is_hidden=False)]
+            return
         self._handle.sent.append(sql)
         if self._handle.closed:
             raise RuntimeError("Attempt to use a closed connection.")
@@ -1129,7 +1137,10 @@ class _FakeOdbcCursor:
             raise RuntimeError("[42S22] Invalid column name 'no_such_col'. (207)")
         self.description = [("v", "int")]
 
-    def fetchall(self) -> list[tuple[int]]:
+    def fetchall(self) -> list[Any]:
+        if self._described is not None:
+            described, self._described = self._described, None
+            return described
         return [(1,)]
 
     def fetchmany(self, size: int) -> list[tuple[int]]:

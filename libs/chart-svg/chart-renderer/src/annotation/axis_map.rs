@@ -330,7 +330,7 @@ fn band_date_span(
 mod tests {
     use super::*;
     use crate::diagnostic::collect;
-    use crate::families::temporal::date_text_day;
+    use crate::time_axis::date_text_day;
 
     const SITE: Site = Site { chart_id: "c", index: 3 };
 

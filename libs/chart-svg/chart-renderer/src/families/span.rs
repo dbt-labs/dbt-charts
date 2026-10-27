@@ -10,8 +10,9 @@ use serde_json::Value;
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
 use crate::families::temporal::{
-    civil_from_days, date_text_day, month_abbr, utc_instants, AuthoredTimeFormat, TimeUnit,
+    civil_from_days, month_abbr, utc_instants, AuthoredTimeFormat, TimeUnit,
 };
+use crate::time_axis::TimeAxis;
 use crate::Payload;
 
 type Row = serde_json::Map<String, Value>;
@@ -406,14 +407,17 @@ pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_cou
 /// fraction of its day), so the numeric arms draw a date measure unchanged.
 pub(crate) fn with_day_numbers(payload: &Payload, fields: [&str; 2]) -> Result<Payload, String> {
     let mut converted = payload.clone();
+    let mut axis = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
     for (i, row) in converted.rows.iter_mut().enumerate() {
         for field in fields {
             let text = match row.get(field) {
                 Some(Value::String(text)) => text.clone(),
                 other => return Err(format!("bar: row {i}: date column {field:?} holds {other:?}, not a date")),
             };
-            let day = date_text_day(&text)
-                .ok_or_else(|| format!("bar: row {i}: date column {field:?} value {text:?} is not a date"))?;
+            let day = axis
+                .read(&text)
+                .map(|instant| instant.at)
+                .map_err(|_| format!("bar: row {i}: date column {field:?} value {text:?} is not a date"))?;
             row.insert(field.to_string(), Value::from(day));
         }
     }
@@ -437,6 +441,7 @@ pub(crate) fn with_layer_day_numbers(
     base_fields: [&str; 2],
     layers: &[Value],
 ) -> Result<Payload, String> {
+    let mut axis = TimeAxis::new(crate::time_axis::Grain::default(), std::collections::HashMap::new());
     let mut converted = payload.clone();
     // Layers can read one column twice; the second finds day numbers the first wrote.
     let mut written: std::collections::HashSet<(Option<&str>, &str)> = std::collections::HashSet::new();
@@ -455,8 +460,10 @@ pub(crate) fn with_layer_day_numbers(
             for (i, row) in rows.iter_mut().enumerate() {
                 match row.get(field) {
                     Some(Value::String(text)) => {
-                        let day = date_text_day(text.as_str())
-                            .ok_or_else(|| format!("bar: layer row {i}: date column {field:?} value {text:?} is not a date"))?;
+                        let day = axis
+                            .read(text)
+                            .map(|instant| instant.at)
+                            .map_err(|_| format!("bar: layer row {i}: date column {field:?} value {text:?} is not a date"))?;
                         row.insert(field.to_string(), Value::from(day));
                     }
                     Some(Value::Number(n)) if !converted_already && !base_fields.contains(&field) => {
@@ -473,7 +480,8 @@ pub(crate) fn with_layer_day_numbers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::families::temporal::{days_from_civil, parse_iso_date};
+    use crate::families::temporal::days_from_civil;
+    use crate::time_axis::parse_iso_date;
 
     #[test]
     fn the_median_length_picks_the_charts_one_unit() {

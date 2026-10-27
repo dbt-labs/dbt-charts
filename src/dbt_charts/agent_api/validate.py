@@ -19,6 +19,7 @@ from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
+    ERR_LOCKED_SCHEMA_VERSION,
     ERR_QUERY_FORMAT_COLUMN_MISSING,
     ERR_WAREHOUSE_QUERY_INVALID,
     WARN_COLUMN_CHECK_UNAVAILABLE,
@@ -198,6 +199,27 @@ def _validate_resolved(
         return ValidateResult(success=not errors, path=resolved.relpath, errors=errors)
 
     from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.migrations.locked_schema import locked_schema_errors
+
+    try:
+        warnings_ignore = project.warnings_ignore  # also reads the lock
+    except CompilationError as exc:
+        return ValidateResult(
+            success=False,
+            path=resolved.relpath,
+            errors=[exc.to_diagnostic(file=PROJECT_CONFIG_NAME)],
+        )
+
+    # Phase 1: the locked release's grammar, before the compile migrates to DEV.
+    try:
+        lock_errors = [
+            DbtChartsError.from_code(
+                ERR_LOCKED_SCHEMA_VERSION, message=message
+            ).to_diagnostic(file=resolved.relpath)
+            for message in locked_schema_errors(resolved, resolved.read_text(), project)
+        ]
+    except OSError:
+        lock_errors = []  # compile_file below reports the unreadable file
 
     try:
         result = compile_file(resolved.read_board())
@@ -215,14 +237,14 @@ def _validate_resolved(
         return ValidateResult(
             success=False,
             path=resolved.relpath,
-            errors=[exc.to_diagnostic(file=resolved.relpath)],
+            errors=[*lock_errors, exc.to_diagnostic(file=resolved.relpath)],
         )
 
     validate_compiled_queries(result)
     check_manifest_refs(result, project)
     check_model_columns(result, project)
 
-    errors = list(result.errors)
+    errors = [*lock_errors, *result.errors]
     warnings = list(result.warnings)
 
     # The warehouse tier runs last and only on a board that already compiled —
@@ -235,7 +257,7 @@ def _validate_resolved(
         warnings += wh_warnings
 
     warnings, _suppressed = partition_compile_warnings(
-        warnings, result.board, None, project.warnings_ignore
+        warnings, result.board, None, warnings_ignore
     )
     return ValidateResult(
         success=len(errors) == 0,

@@ -21,9 +21,6 @@ import re
 import pytest
 from pydantic import TypeAdapter
 
-from dbt_charts.core.render.chart.spec import RenderBox
-
-_DEFAULT_BOX = RenderBox(width=600.0, height=300.0)
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.authored import AuthoredChart
 from dbt_charts.core.compile.models.chart.normalized import PieChart

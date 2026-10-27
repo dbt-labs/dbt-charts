@@ -53,13 +53,6 @@ fn sequential_position(v: f64, lo: f64, hi: f64) -> f64 {
     }
 }
 
-/// What [`ContinuousColor::mid_pivoted`] makes of a scale.
-pub(crate) enum MidPivot {
-    /// The scale takes no `domainMid` pivot, or has no drawn value to pivot over; build it with `gradient`.
-    NotPivoted,
-    Scale(ContinuousColor),
-}
-
 /// A color scale over the data extent `[lo, hi]`; a date scale counts days.
 pub(crate) struct ContinuousColor {
     ramp: Ramp,
@@ -92,10 +85,11 @@ impl ContinuousColor {
     /// A sequential scale spans `kept`, either end replaced by an authored
     /// `min`/`max`. A diverging one (`hinge`) spans its bounds extended to
     /// hold the pivot, with the palette's breakpoints placed from the pivot.
-    pub(crate) fn gradient(scale: &ScaleTarget, all: Option<(f64, f64)>, kept: (f64, f64)) -> Result<Self, String> {
+    pub(crate) fn gradient(scale: &ScaleTarget, all: Option<(f64, f64)>, kept: (f64, f64), legend_drawn: bool) -> Result<Self, String> {
+        let nice = scale.nice.unwrap_or(legend_drawn);
         let palette = Palette::of(scale)?;
         if let Some(hinge) = &scale.hinge {
-            if let Some(bounds) = diverging_bounds(scale, all) {
+            if let Some(bounds) = diverging_bounds(scale, all, nice) {
                 let raw = raw_bounds(scale, all).expect("bounds resolve only from raw bounds");
                 if let Some(pivot) = resolve_hinge(Some(hinge), raw.0, raw.1, None) {
                     let (lo, hi) = (bounds.0.min(pivot), bounds.1.max(pivot));
@@ -119,6 +113,7 @@ impl ContinuousColor {
                 }
             }
         }
+        let kept = nice_domain(scale.min, scale.max, nice, kept);
         let (lo, hi) = (scale.min.unwrap_or(kept.0), scale.max.unwrap_or(kept.1));
         let ramp = match palette {
             Palette::Stops(stops) => Ramp::Stops(stops.into_iter().map(|stop| stop.vega).collect()),
@@ -126,35 +121,6 @@ impl ContinuousColor {
             Palette::Array(colors) => Ramp::Stops(colors.iter().copied().map(Color::opaque).collect()),
         };
         Ok(Self { ramp, lo, hi, dates: false, pivot: None })
-    }
-
-    /// `gradient_scale_to_vl`'s fallback for a Vega scheme pivoted at a numeric `hinge` over bounds the
-    /// caller cannot resolve: Vega-Lite's `domainMid` over `kept`, the extent of the values the marks
-    /// draw, each authored bound extended (never clamped) to hold the pivot. A pivot past a data-driven end
-    /// is spliced in as a new end of Vega's three-point domain (`configureDomain`), so the old end becomes the
-    /// middle. With no drawn value the domain is empty and the plain scale draws.
-    pub(crate) fn mid_pivoted(scale: &ScaleTarget, kept: (f64, f64)) -> Result<MidPivot, String> {
-        let Some(pivot) = scale.hinge.as_ref().and_then(serde_json::Value::as_f64) else { return Ok(MidPivot::NotPivoted) };
-        if scale.min.is_some() && scale.max.is_some() {
-            return Ok(MidPivot::NotPivoted);
-        }
-        let (lo, hi) = (scale.min.map_or(kept.0, |m| m.min(pivot)), scale.max.map_or(kept.1, |m| m.max(pivot)));
-        let (ramp, hcl) = match Palette::of(scale)? {
-            Palette::Stops(_) => return Ok(MidPivot::NotPivoted),
-            Palette::Ramp(ramp) => (ramp, false),
-            Palette::Array(colors) => (colors, true),
-        };
-        if lo.is_nan() || hi.is_nan() {
-            return Ok(MidPivot::NotPivoted);
-        }
-        let (lo, pivot, hi) = if pivot > hi {
-            (lo, hi, pivot)
-        } else if pivot < lo {
-            (pivot, lo, hi)
-        } else {
-            (lo, pivot, hi)
-        };
-        Ok(MidPivot::Scale(Self { ramp: Ramp::Halved { ramp, pivot, hcl }, lo, hi, dates: false, pivot: Some(pivot) }))
     }
 
     /// Whether the scale runs over dates, in day numbers.
@@ -414,6 +380,24 @@ impl Palette {
     }
 }
 
+/// The nice tick ladder over a data extent: the one rounding law every gradient consumer
+/// (heatmap, channel colors, maps, table columns) shares.
+pub(crate) fn nice_ticks(lo: f64, hi: f64) -> Vec<f64> {
+    d3rs::ticks::nice_tick_values(lo, hi, crate::constants::axis::GRADIENT_NICE_TICK_COUNT, None)
+}
+
+/// A gradient's color domain over the data extent `(lo, hi)`: widened to `nice_ticks`' round ends when
+/// `nice` and neither bound is authored (a single-sided bound fixes that edge exactly); otherwise the
+/// extent itself. An empty (non-finite) extent stays empty. Callers resolve `nice` as the author's
+/// value, else whether the scale's legend is drawn.
+pub(crate) fn nice_domain(min: Option<f64>, max: Option<f64>, nice: bool, (lo, hi): (f64, f64)) -> (f64, f64) {
+    if !nice || min.is_some() || max.is_some() || !lo.is_finite() || !hi.is_finite() {
+        return (lo, hi);
+    }
+    let ticks = nice_ticks(lo, hi);
+    (ticks[0], ticks[ticks.len() - 1])
+}
+
 /// The data extent a diverging pivot is decided from, never nice-widened: an
 /// authored bound wins per edge (`_raw_diverging_bounds`).
 fn raw_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>) -> Option<(f64, f64)> {
@@ -427,15 +411,12 @@ fn raw_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>) -> Option<(f64, f64)
 /// The bounds a diverging scale renders within (`_diverging_bounds`): both
 /// authored, else the nice-widened data extent when neither is, else the raw
 /// bounds.
-fn diverging_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>) -> Option<(f64, f64)> {
+fn diverging_bounds(scale: &ScaleTarget, all: Option<(f64, f64)>, nice: bool) -> Option<(f64, f64)> {
     if let (Some(lo), Some(hi)) = (scale.min, scale.max) {
         return Some((lo, hi));
     }
-    if scale.min.is_none() && scale.max.is_none() && scale.nice {
-        if let Some((lo, hi)) = all {
-            let ticks = d3rs::ticks::nice_tick_values(lo, hi, crate::constants::axis::GRADIENT_NICE_TICK_COUNT, None);
-            return Some((ticks[0], ticks[ticks.len() - 1]));
-        }
+    if scale.min.is_none() && scale.max.is_none() && nice {
+        return all.map(|extent| nice_domain(None, None, true, extent));
     }
     raw_bounds(scale, all)
 }
@@ -734,6 +715,7 @@ impl<'a> NumericLegends<'a> {
                 fill,
                 symbol: Some(crate::families::legend::LegendSymbol::Circle),
                 series_key: None,
+                recede: None,
             })
             .collect();
         Ok(crate::families::legend::drawn_symbol_legend(
@@ -783,20 +765,7 @@ impl<'a> NumericLegends<'a> {
         Ok(base)
     }
 
-    /// Paints the numeric legends stacked onto `base` from its origin `(x, y)`.
-    pub(crate) fn paint_after(
-        &self,
-        svg: &mut String,
-        base: &crate::families::legend::VegaLegend,
-        cfg: &LegendConfig,
-        fonts: &FontBook,
-        unit: (f64, f64),
-        origin: (f64, f64),
-    ) -> Result<(), String> {
-        svg.push_str(&print(&self.nodes_after(base, cfg, fonts, unit, origin)?));
-        Ok(())
-    }
-
+    /// The numeric legends stacked onto `base`, from its origin `(x, y)`.
     pub(crate) fn nodes_after(
         &self,
         base: &crate::families::legend::VegaLegend,
@@ -828,6 +797,7 @@ impl NumericPart<'_> {
                 fill,
                 symbol: Some(crate::families::legend::LegendSymbol::Circle),
                 series_key: None,
+                recede: None,
             })
             .collect();
         let legend = crate::families::legend::vega_legend(&entries, false, &self.title, cfg, fonts)?;
@@ -1077,7 +1047,7 @@ mod tests {
             scale[k] = v;
         }
         let target: ScaleTarget = serde_json::from_value(scale).expect("a scale target");
-        ContinuousColor::gradient(&target, Some((2.5, 20.0)), (2.5, 20.0)).expect("a scale")
+        ContinuousColor::gradient(&target, Some((2.5, 20.0)), (2.5, 20.0), true).expect("a scale")
     }
 
     /// An authored `legend.values` token reads as JavaScript's `Number()` does: `0x10` is 16, `inf`
@@ -1112,7 +1082,7 @@ mod tests {
     /// asymmetric pivot, or halved about a symmetric one.
     #[test]
     fn a_vega_scheme_runs_plain_windowed_or_halved() {
-        let plain = gradient(serde_json::json!("viridis"), serde_json::json!({}));
+        let plain = gradient(serde_json::json!("viridis"), serde_json::json!({"nice": false}));
         assert_eq!(fills(&plain, &[2.5, 10.0, 20.0]), ["rgb(68, 1, 84)", "rgb(39, 128, 142)", "rgb(253, 231, 37)"]);
         let windowed = gradient(serde_json::json!("viridis"), serde_json::json!({"hinge": 7.5}));
         assert_eq!(fills(&windowed, &[2.5, 7.5, 20.0]), ["rgb(53, 96, 141)", "rgb(33, 145, 141)", "rgb(253, 231, 37)"]);
@@ -1209,11 +1179,11 @@ mod tests {
 
     #[test]
     fn a_palette_color_reads_as_hex_rgb_or_a_keyword() {
-        let scale = gradient(serde_json::json!(["#f00", "blue", "rgb(0, 255, 0)"]), serde_json::json!({}));
+        let scale = gradient(serde_json::json!(["#f00", "blue", "rgb(0, 255, 0)"]), serde_json::json!({"nice": false}));
         assert_eq!(scale.fill(2.5), "rgb(255, 0, 0)");
         assert_eq!(scale.fill(20.0), "rgb(0, 255, 0)");
         // An unreadable color is d3's undefined color: it takes its neighbor's.
-        let bad = gradient(serde_json::json!(["notacolor", "red"]), serde_json::json!({}));
+        let bad = gradient(serde_json::json!(["notacolor", "red"]), serde_json::json!({"nice": false}));
         assert_eq!(bad.fill(2.5), "rgb(255, 0, 0)");
         assert_eq!(bad.fill(20.0), "rgb(255, 0, 0)");
     }
@@ -1225,13 +1195,50 @@ mod tests {
         let target = |nice: bool| -> ScaleTarget {
             serde_json::from_value(serde_json::json!({"palette": ["#ffffcc", "#41b6c4", "#0c2c84"], "nice": nice, "arm_mode": "asymmetric", "hinge": 0.0})).unwrap()
         };
-        assert_eq!(diverging_bounds(&target(true), Some((2.5, 17.0))), Some((0.0, 20.0)));
-        assert_eq!(diverging_bounds(&target(false), Some((2.5, 17.0))), Some((2.5, 17.0)));
+        assert_eq!(diverging_bounds(&target(true), Some((2.5, 17.0)), true), Some((0.0, 20.0)));
+        assert_eq!(diverging_bounds(&target(false), Some((2.5, 17.0)), false), Some((2.5, 17.0)));
         let mut bounded = target(true);
         bounded.min = Some(1.0);
         bounded.max = Some(9.0);
-        assert_eq!(diverging_bounds(&bounded, Some((2.5, 17.0))), Some((1.0, 9.0)));
-        assert_eq!(diverging_bounds(&target(true), None), None);
+        assert_eq!(diverging_bounds(&bounded, Some((2.5, 17.0)), true), Some((1.0, 9.0)));
+        assert_eq!(diverging_bounds(&target(true), None, true), None);
+    }
+
+    fn sequential_target(nice: Option<bool>, min: Option<f64>, max: Option<f64>) -> ScaleTarget {
+        let mut target: ScaleTarget = serde_json::from_value(
+            serde_json::json!({"palette": ["#000000", "#ffffff"], "nice": nice, "arm_mode": "asymmetric"}),
+        )
+        .unwrap();
+        (target.min, target.max) = (min, max);
+        target
+    }
+
+    /// Every gradient consumer widens an unbounded extent through `nice_domain`: 12-88 reads 0-100, and
+    /// `nice: false` or any authored bound keeps the extent exactly.
+    #[test]
+    fn nice_domain_widens_only_an_unbounded_extent_to_round_ends() {
+        assert_eq!(nice_domain(None, None, true, (12.0, 88.0)), (0.0, 100.0));
+        assert_eq!(nice_domain(None, None, false, (12.0, 88.0)), (12.0, 88.0));
+        assert_eq!(nice_domain(Some(5.0), None, true, (12.0, 88.0)), (12.0, 88.0));
+        assert_eq!(nice_domain(None, Some(90.0), true, (12.0, 88.0)), (12.0, 88.0));
+        assert_eq!(nice_domain(None, None, true, (7.0, 7.0)), (7.0, 7.0));
+        let (lo, hi) = nice_domain(None, None, true, (f64::NAN, f64::NAN));
+        assert!(lo.is_nan() && hi.is_nan(), "an empty extent stays empty");
+    }
+
+    /// An author's `nice` always wins; unset follows the legend: a drawn legend widens, none keeps the extent.
+    #[test]
+    fn a_sequential_channel_gradient_nices_by_author_else_by_legend() {
+        let paint = |nice, legend, min, max| {
+            let scale =
+                ContinuousColor::gradient(&sequential_target(nice, min, max), Some((12.0, 88.0)), (12.0, 88.0), legend).unwrap();
+            (scale.lo, scale.hi, scale.fill(12.0))
+        };
+        assert_eq!(paint(None, true, None, None), (0.0, 100.0, "rgb(31, 31, 31)".to_string()));
+        assert_eq!(paint(None, false, None, None).0, 12.0);
+        assert_eq!(paint(Some(true), false, None, None).0, 0.0);
+        assert_eq!(paint(Some(false), true, None, None).0, 12.0);
+        assert_eq!(paint(Some(true), true, Some(12.0), None).0, 12.0);
     }
 
     /// Breakpoints cut to the bounds keep one HCL-blended stop at a bound a

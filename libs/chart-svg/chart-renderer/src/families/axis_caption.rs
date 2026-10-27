@@ -8,8 +8,9 @@ use d3rs::format::{format, format_float, parse_parts, vega_tick_format};
 
 use super::table_dates::{strftime, Moment};
 use super::temporal::{
-    axis_time_format, date_text_day, time_unit_specifier, floor_to_bucket_start, parse_iso_date, week_floor, LabelUnit, TimeUnit, VegaType,
+    axis_time_format, time_unit_specifier, LabelUnit, TimeUnit, VegaType,
 };
+use crate::time_axis::{parse_iso_date, Grain as AxisGrain, TimeAxis};
 use super::x_type::{Grain, XResolution};
 use crate::common::{axis_title_band, AxisStyle, AxisTitle, FormatSlot};
 use crate::contract::AxisChannel;
@@ -186,20 +187,14 @@ pub fn x_axis_caption(
                 (None, Grain::Part(part)) => Some(part.format_spec().to_string()),
                 (None, Grain::None) => None,
             };
-            // A value that is no date is NaN to Vega.
-            let day = |date: &str| date_text_day(date).unwrap_or(f64::NAN);
-            let bucket_day = |date: &str| match resolution.grain {
-                Grain::Calendar(unit) => {
-                    let floored = match unit {
-                        TimeUnit::YearWeek => week_floor(date),
-                        _ => parse_iso_date(date).map(|d| floor_to_bucket_start(d, unit, 1)).map(|(y, m, d)| format!("{y:04}-{m:02}-{d:02}")),
-                    };
-                    floored.map_or(f64::NAN, |floored| day(&floored))
-                }
-                _ => day(date),
-            };
+            // The axis read every date of the domain; one that is no date has no place on it.
+            let mut time = TimeAxis::new(AxisGrain { unit: grain, part: None, band: false }, std::collections::HashMap::new());
+            for date in domain {
+                time.add(date).map_err(|_| format!("axis aria: x value {date:?} is not a date"))?;
+            }
+            let bucket_day = |date: &str| if grain.is_some() { time.day_of_bucket(date) } else { time.day(date) };
             // Vega's timeunit transform reads a year below 100 as NaN, which stays out of the domain.
-            let finite = |d: &&String| !(grain.is_some() && super::temporal::timeunit_nan(d));
+            let finite = |d: &&String| !(grain.is_some() && time.get(d).is_some_and(|instant| instant.nan));
             let mut days: Vec<f64> = domain.iter().filter(finite).map(|d| bucket_day(d)).filter(|d| !d.is_nan()).collect();
             if days.is_empty() {
                 // Every date is NaN to Vega, which prints it as `NaN`: name the dates instead.

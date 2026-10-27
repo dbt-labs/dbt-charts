@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -775,6 +775,7 @@ dependencies = [
     { name = "sqlglot" },
     { name = "tomli-w" },
     { name = "typer" },
+    { name = "tzdata" },
     { name = "uvicorn" },
     { name = "vl-convert-python" },
     { name = "watchfiles" },
@@ -891,7 +892,7 @@ requires-dist = [
     { name = "dbt-spark", marker = "extra == 'spark'", specifier = ">=1.10,<2.0" },
     { name = "dbt-sqlserver", extras = ["pyodbc"], marker = "extra == 'sqlserver'", specifier = ">=1.10,<2.0" },
     { name = "dbtlabs-vortex", specifier = ">=0.2.0" },
-    { name = "duckdb", specifier = ">=1.0.0" },
+    { name = "duckdb", specifier = ">=1.2.0" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100.0" },
     { name = "fonttools", specifier = ">=4.0" },
@@ -916,6 +917,7 @@ requires-dist = [
     { name = "tomli-w", specifier = ">=1.0.0" },
     { name = "trino", marker = "extra == 'trino'", specifier = ">=0.334" },
     { name = "typer", specifier = ">=0.27,<0.28" },
+    { name = "tzdata", specifier = ">=2025.3" },
     { name = "uvicorn", specifier = ">=0.23.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.23.0" },
     { name = "vl-convert-python", specifier = ">=1.9.0" },

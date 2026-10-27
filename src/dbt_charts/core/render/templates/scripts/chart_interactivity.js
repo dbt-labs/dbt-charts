@@ -643,6 +643,35 @@
         return !!paint && paint !== 'none' && paint !== 'transparent' && paint.indexOf('url(') !== 0;
     }
 
+    /*{# A mark the board's selected variable value does not name arrives #}*/
+    /*{# already receded: the engine baked the same mix into its paint and #}*/
+    /*{# flagged its link. Hover treats the selection as suspended -- the #}*/
+    /*{# mark's own color is recovered by undoing that mix, so the hovered #}*/
+    /*{# datum lights up at full strength and the rest recede from their #}*/
+    /*{# own color, exactly as on a board with nothing selected. #}*/
+    function isBakedReceded(el) {
+        return !!el.closest('a[data-dbt-receded]');
+    }
+
+    function rgbOf(color) {
+        const probe = document.createElement('span');
+        probe.style.color = color;
+        document.body.appendChild(probe);
+        const channels = getComputedStyle(probe).color.match(/[\d.]+/g).slice(0, 3).map(Number);
+        document.body.removeChild(probe);
+        return channels;
+    }
+
+    function restPaint(paint, background) {
+        if (!isColor(paint)) return paint;
+        const share = DCT_HOVER_EMPHASIS.opacity;
+        const ground = rgbOf(background);
+        const rest = rgbOf(paint).map(function (v, i) {
+            return Math.min(255, Math.max(0, Math.round((v - (1 - share) * ground[i]) / share)));
+        });
+        return 'rgb(' + rest.join(', ') + ')';
+    }
+
     function clearHoverEmphasis(state) {
         state.emphasis.dimmed.forEach(function (el) {
             RECEDABLE_PAINT.forEach(function (prop) { el.style.removeProperty(prop); });
@@ -676,12 +705,29 @@
         /*{# too, not just the ones the tooltip isn't describing. #}*/
         const dimmed = [];
         recedableMarks(panelScope(mark, chartEl)).forEach(function (el) {
-            if (keptLabels[el.getAttribute('aria-label')] || !isOpaqueAtRest(el)) return;
+            if (!isOpaqueAtRest(el)) return;
+            const kept = keptLabels[el.getAttribute('aria-label')];
+            const baked = isBakedReceded(el);
+            if (kept && !baked) return;
+            let touched = false;
+            RECEDABLE_PAINT.forEach(function (prop) {
+                const paint = baked ? restPaint(el.getAttribute(prop), background) : el.getAttribute(prop);
+                if (!isColor(paint)) return;
+                el.style.setProperty(prop, kept ? paint : 'color-mix(in srgb, ' + paint + ' ' + share + ', ' + background + ')');
+                touched = true;
+            });
+            if (touched) dimmed.push(el);
+        });
+        /*{# Whatever else the selection receded -- a pie slice label, an area's #}*/
+        /*{# endpoint label -- sits in the same flagged link as its mark, so #}*/
+        /*{# hover restores it with the rest of the suspended selection. #}*/
+        panelScope(mark, chartEl).querySelectorAll('a[data-dbt-receded] *').forEach(function (el) {
+            if (dimmed.indexOf(el) !== -1) return;
             let touched = false;
             RECEDABLE_PAINT.forEach(function (prop) {
                 const paint = el.getAttribute(prop);
                 if (!isColor(paint)) return;
-                el.style.setProperty(prop, 'color-mix(in srgb, ' + paint + ' ' + share + ', ' + background + ')');
+                el.style.setProperty(prop, restPaint(paint, background));
                 touched = true;
             });
             if (touched) dimmed.push(el);
@@ -1043,11 +1089,15 @@
 
     /*{# Marks paint the series color as fill (bar/pie/point) or stroke (line); #}*/
     /*{# 'none' is Vega's explicit "not painted" value, not a real color. #}*/
+    /*{# A mark the selected variable receded reports its own ink, not the #}*/
+    /*{# baked mix: the tooltip swatch and hover markers key the SERIES, and #}*/
+    /*{# the legend beside them recedes with its series, so it is no source. #}*/
     function markSeriesColor(mark) {
         const fill = mark.getAttribute('fill');
-        if (fill && fill !== 'none') return fill;
         const stroke = mark.getAttribute('stroke');
-        return stroke && stroke !== 'none' ? stroke : null;
+        const ink = fill && fill !== 'none' ? fill : stroke && stroke !== 'none' ? stroke : null;
+        const background = chartBackground(mark);
+        return ink && background && isBakedReceded(mark) ? restPaint(ink, background) : ink;
     }
 
     /*{# A line is keyed with a line, not a filled square that reads as a bar. #}*/

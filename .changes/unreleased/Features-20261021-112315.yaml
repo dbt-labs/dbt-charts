@@ -1,0 +1,3 @@
+kind: Features
+body: '`regional.time_zone` sets the zone a board resolves its daterange presets in and prints its data-freshness stamp in.'
+time: 2026-10-21T11:23:15.750869-07:00

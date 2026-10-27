@@ -214,7 +214,7 @@ def test_file_column_type_and_value(
         "FROM matrix",
         {},
         "matrix_source",
-    )
+    )[0]
 
     assert rows[0]["t"] == expected_type
     assert rows[0]["v"] == expected_value
@@ -231,7 +231,7 @@ def test_null_cells_survive_materialization(
 
     rows = mat.materialize_and_run(
         source, "SELECT b, d, dt, n FROM matrix ORDER BY i", {}, "matrix_source"
-    )
+    )[0]
 
     assert [row["b"] for row in rows] == [True, False, True, None]
     assert [row["d"] for row in rows] == [1.25, 2.50, 3.25, None]

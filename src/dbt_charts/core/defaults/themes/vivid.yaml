@@ -55,9 +55,8 @@ style:
         threshold:
           color: &value chrome[11]  # baseline anchors at max contrast
       ticks:
-        # A tick and its gridline mark the same value; they read as one mark
-        # crossing the axis line, so the tick takes the grid's rung above.
-        color: *category_grid
+        # A tick continues the floor, so it wears the measure grid.
+        color: *faint
       labels:
         font:
           color: *mid              # time labels = MID
@@ -68,7 +67,6 @@ style:
       grid:
         color: *faint              # measure grid reads above the vertical one
       ticks:
-        color: *faint              # tracks the measure grid above
         width: 1                   # the hairline this theme's grid is drawn at
     axis_band:
       labels:
@@ -82,7 +80,6 @@ style:
         font:
           color: *value
       ticks:
-        color: *faint              # tracks the quantitative grid above
         width: 1                   # the hairline this theme's grid is drawn at
     legend:
       label:

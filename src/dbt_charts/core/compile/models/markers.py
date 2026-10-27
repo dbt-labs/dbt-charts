@@ -51,6 +51,17 @@ class Absent:
 
 
 @dataclasses.dataclass(frozen=True)
+class NullHint:
+    """What to write instead when an authored ``null`` is rejected on this field.
+
+    Appended to the rejection message, for a field whose ``null`` reads as an
+    intent ("no title") that a different key expresses.
+    """
+
+    instead: str
+
+
+@dataclasses.dataclass(frozen=True)
 class AutoUnset:
     """``auto`` on this field leaves the choice to the renderer.
 

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A support table under a date axis now draws a number under every bucket, and the numbers under one band line up as a single column.
+time: 2026-10-26T06:52:58.637098-07:00

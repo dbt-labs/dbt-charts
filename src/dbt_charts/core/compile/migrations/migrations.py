@@ -855,20 +855,25 @@ def prepare_board_mapping(
         return dict(mapping)
 
 
-def migrate_board_yaml_text(yaml_text: str) -> str:
-    """Rewrite one retained board grammar to the latest frozen (released) grammar.
+def migrate_board_yaml_text(
+    yaml_text: str, *, locked_schema_version: str | None = None
+) -> str:
+    """Rewrite one retained board grammar to the project's target grammar.
 
-    Capped at ``catalog.latest_released.version``, never the live schema: this
-    is the on-disk rewrite path (``dct migrate``), so it must never write
-    syntax no released dbt charts recognizes yet. See ``migrate_yaml_text``'s
-    ``stop_target`` docstring.
+    The target is the project's ``locked_schema_version``, else the latest
+    frozen (released) grammar -- never the live schema: this is the on-disk
+    rewrite path (``dct migrate``), so it must never write syntax no released
+    dbt charts recognizes yet. A board already newer than the target is left
+    unchanged. See ``migrate_yaml_text``'s ``stop_target`` docstring.
     """
     catalog, registry = _board_migration_context()
+    target = (
+        catalog.latest_released.version
+        if locked_schema_version is None
+        else locked_schema_version
+    )
     return migrate_yaml_text(
-        yaml_text,
-        catalog=catalog,
-        registry=registry,
-        stop_target=catalog.latest_released.version,
+        yaml_text, catalog=catalog, registry=registry, stop_target=target
     )
 
 
@@ -1104,6 +1109,14 @@ def migrate_mapping(
     return result
 
 
+def _is_newer(version: str, other: str) -> bool:
+    """Whether catalog version *version* is numerically newer than *other*."""
+    parsed, parsed_other = parse_dotted_version(version), parse_dotted_version(other)
+    if parsed is None or parsed_other is None:
+        raise ValueError(f"Cannot compare schema versions {version!r} and {other!r}.")
+    return parsed > parsed_other
+
+
 def _should_stamp_schema_version(current: JsonValue | None, target: str) -> bool:
     """Whether ``dct migrate`` should (re)write ``_schema_version`` to *target*.
 
@@ -1221,7 +1234,8 @@ def migrate_yaml_text(
     ``stop_target``, when given, stops the walk at that frozen version instead
     of the DEV version -- the pending
     ``catalog.latest_released.version -> catalog.dev.version`` boundary is
-    never applied. This is how ``dct migrate`` (via ``migrate_board_yaml_text``)
+    never applied -- and returns a document already recognized as newer than
+    it unchanged. This is how ``dct migrate`` (via ``migrate_board_yaml_text``)
     avoids writing syntax no released dbt charts recognizes yet; callers that
     want the full walk to the live schema (recognition tests, in-memory
     preview) pass nothing. ``stop_target`` also gates the ``_schema_version``
@@ -1262,6 +1276,8 @@ def migrate_yaml_text(
         # stamp is written only alongside a real change (see the end of this
         # function), never as the sole reason to rewrite an otherwise-
         # untouched file.
+        return yaml_text
+    if stop_target is not None and _is_newer(identifier, stop_target):
         return yaml_text
 
     updates: dict[str, ScalarLeaf] = {}

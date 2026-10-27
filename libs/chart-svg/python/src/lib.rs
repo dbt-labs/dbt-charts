@@ -141,6 +141,13 @@ fn font_loads() -> usize {
     FONT_LOADS.load(Ordering::SeqCst)
 }
 
+/// How many geo documents this process has decoded rather than served from the
+/// engine's content-addressed geometry cache.
+#[pyfunction]
+fn geometry_decodes() -> usize {
+    chart_renderer::families::geo::source::geometry_decodes()
+}
+
 #[pyfunction]
 fn languages() -> Vec<&'static str> {
     display_text::language::LANGUAGES.to_vec()
@@ -198,6 +205,7 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(measure_table_natural_width, m)?)?;
     m.add_function(wrap_pyfunction!(table_title_geometry, m)?)?;
     m.add_function(wrap_pyfunction!(font_loads, m)?)?;
+    m.add_function(wrap_pyfunction!(geometry_decodes, m)?)?;
     m.add_function(wrap_pyfunction!(check_template, m)?)?;
     m.add_function(wrap_pyfunction!(languages, m)?)?;
     m.add_function(wrap_pyfunction!(language_for_time_locale, m)?)?;

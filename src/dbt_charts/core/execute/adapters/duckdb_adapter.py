@@ -9,21 +9,18 @@ driven by a typed DuckDBSourceConfig.  Non-DuckDB warehouses use SqlAdapter
 
 Security: DuckDB uses parameterized queries ($1, $2 placeholders). The
 read-only flag and enable_external_access config are enforced here. A source
-authoring `attach`, `extensions`, or `secrets` is an explicit opt-in that
-needs external access to do anything (ATTACH, INSTALL, CREATE SECRET all
-require it). External access is not forced off on that connection the way
-it is by default, but read_only itself is never relaxed: when the adapter
-is read_only, every ATTACH gets READ_ONLY forced onto it regardless of the
-authored `attach.read_only` flag, closing the gap where a `:memory:` main
-database (always opened read-write; there is no other way to populate it)
-would otherwise leave an attached database writable. `extensions` stays in
-that opt-in list even for a bare string (LOAD-only, already installed):
-`install_extension()` always touches the filesystem, whether or not the
-extension needs downloading, so there is no cheap way to tell "this one
-needs a network fetch" from "this one is already on disk" before calling
-it; the source authoring `extensions` at all is the signal, not the entry
-shape. `settings` applies unconditionally (plain SET, no external-access
-requirement).
+authoring `attach`, `extensions`, or `secrets` needs external access to set
+up (ATTACH, INSTALL, CREATE SECRET all require it), so a read-only adapter
+opens that connection with external access on, applies those fields, then
+locks it down: external access off, only the attach paths and secret scopes
+allowlisted, configuration locked so SQL cannot undo it. Caller SQL on that
+connection reads nothing else, absolute paths and URLs included. read_only
+itself is never relaxed: when the adapter is read_only, every ATTACH gets
+READ_ONLY forced onto it regardless of the authored `attach.read_only` flag,
+closing the gap where a `:memory:` main database (always opened read-write;
+there is no other way to populate it) would otherwise leave an attached
+database writable. `settings` applies unconditionally (plain SET, no
+external-access requirement).
 """
 
 from __future__ import annotations
@@ -86,7 +83,6 @@ from dbt_charts.core.execute.adapters.base import (
     handle_adapter_error,
     interrupted,
     plain_error,
-    reject_duplicate_columns,
     resolve_effective_row_limit,
     resolve_setup_sql,
 )
@@ -96,6 +92,7 @@ from dbt_charts.core.execute.adapters.dbt_utils import (
 )
 from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
+from dbt_charts.core.execute.duckdb_types import duckdb_schema, typed_rows
 
 # Relative read_csv()/read_parquet() paths resolve against data_dir via a
 # per-connection `SET file_search_path` applied at connection creation. This lock
@@ -392,6 +389,22 @@ def _apply_duckdb_secrets(
         conn.execute(_secret_to_sql(secret))
 
 
+def _attachment_path(attachment: dict[str, DuckDBAttachValue]) -> str:
+    path = attachment["path"]
+    if not isinstance(path, str):
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field="attach",
+            reason=f"'path' must be a string, got {type(path).__name__}",
+        )
+    # Query parameters are not supported in ATTACH; upstream strips them the
+    # same way (dbt-duckdb's Attachment.to_sql).
+    parsed = urlparse(path)
+    if parsed.query:
+        path = path.replace(f"?{parsed.query}", "")
+    return path
+
+
 def _attachment_to_sql(
     attachment: dict[str, DuckDBAttachValue], *, adapter_read_only: bool
 ) -> str:
@@ -406,19 +419,7 @@ def _attachment_to_sql(
     attachment's authored ``read_only`` field: see the module docstring for
     why the two differ.
     """
-    path = attachment["path"]
-    if not isinstance(path, str):
-        raise DbtChartsError.from_code(
-            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
-            field="attach",
-            reason=f"'path' must be a string, got {type(path).__name__}",
-        )
-    # Query parameters are not supported in ATTACH; upstream strips them the
-    # same way (dbt-duckdb's Attachment.to_sql).
-    parsed = urlparse(path)
-    if parsed.query:
-        path = path.replace(f"?{parsed.query}", "")
-    base = f"ATTACH IF NOT EXISTS '{_duckdb_literal(path)}'"
+    base = f"ATTACH IF NOT EXISTS '{_duckdb_literal(_attachment_path(attachment))}'"
     alias = attachment.get("alias")
     if alias:
         if not isinstance(alias, str):
@@ -516,6 +517,38 @@ def _apply_duckdb_attach(
         )
 
 
+def _lock_to_authored_reach(
+    conn: duckdb.DuckDBPyConnection,
+    secrets: list[dict[str, DuckDBSecretValue]] | None,
+    attachments: list[dict[str, DuckDBAttachValue]] | None,
+) -> None:
+    """Close external access on a set-up connection, keeping only what the
+    source authored readable: attach paths (a remote database is read lazily)
+    and secret scopes. A secret without a scope reaches nothing. The lock
+    stops caller SQL from re-enabling access or widening the allowlist."""
+    scopes: set[str] = set()
+    for secret in secrets if secrets is not None else ():
+        scope = secret.get("scope")
+        if scope is None:
+            continue
+        entries = [scope] if isinstance(scope, str) else scope
+        if not isinstance(entries, list) or not all(
+            isinstance(e, str) for e in entries
+        ):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+                field="secrets",
+                reason=f"'scope' must be a string or list of strings, got {scope!r}",
+            )
+        scopes.update(str(e) for e in entries)
+    attached = attachments if attachments is not None else ()
+    paths = sorted({_attachment_path(a) for a in attached})
+    conn.execute("SET allowed_directories = ?", [sorted(scopes)])
+    conn.execute("SET allowed_paths = ?", [paths])
+    conn.execute("SET enable_external_access = false")
+    conn.execute("SET lock_configuration = true")
+
+
 def _apply_duckdb_config_section(field: str, apply: Callable[[], None]) -> None:
     """Run one config-application step, naming its field on any failure.
 
@@ -578,23 +611,20 @@ class DuckDBAdapter(BaseAdapter):
                 In-memory DuckDB (:memory:): always opened read-write regardless of this flag
                 because there is no other way to populate an in-memory database; this is a
                 known exception. enable_external_access=False is still forced for :memory:
-                when read_only=True unless allow_external_access_in_readonly=True, OR the
-                connecting source itself authors attach/extensions/secrets (see below).
+                when read_only=True unless allow_external_access_in_readonly=True.
 
                 When read_only=True (and allow_external_access_in_readonly=False),
                 enable_external_access=False is forced on the DuckDB config regardless of
-                any user-supplied duckdb_config, UNLESS the per-connection source config
-                authors attach/extensions/secrets. Those fields cannot do anything without
-                external access (ATTACH/INSTALL/CREATE SECRET all require it), so authoring
-                one is itself the opt-in for that connection. read_only is never relaxed by
-                this second door; only enable_external_access is.
+                any user-supplied duckdb_config. A source authoring
+                attach/extensions/secrets gets external access only while those fields
+                are applied; the connection then ends locked to the attach paths and
+                secret scopes (see the module docstring).
             duckdb_config: Optional DuckDB config dict for the default connection.
             allow_external_access_in_readonly: Security opt-in. When True AND
                 read_only=True AND duckdb_config contains enable_external_access=True,
                 the adapter passes enable_external_access=True through to DuckDB for every
                 connection. Default False preserves the existing defense: read_only=True
-                always implies enable_external_access=False UNLESS the narrower
-                attach/extensions/secrets opt-in above applies to that connection.
+                always implies enable_external_access=False for caller SQL.
             dbt_project_path: Optional path to the dbt project root. When set and
                 source_config.path == ":memory:" (no explicit file requested), the
                 adapter scans dbt_project_path/data/ for DBT_PROJECT_DB_NAMES and
@@ -786,27 +816,23 @@ class DuckDBAdapter(BaseAdapter):
                 # Snapshot description INSIDE the lock. conn.execute() returns
                 # the connection itself, so result.description reflects whichever
                 # query last ran on the (thread-shared) default connection. Read
-                # it after the lock releases — as column_descriptions once did —
-                # and a concurrent query's execute() overwrites the metadata or
-                # closes this result handle ("Invalid Input Error: result closed"
-                # / DuckDB bad_weak_ptr). rows is materialized by fetchmany(), so
-                # it is safe to consume outside the lock.
+                # it after the lock releases and a concurrent query's execute()
+                # overwrites the metadata or closes this result handle
+                # ("Invalid Input Error: result closed" / DuckDB bad_weak_ptr).
+                # rows is materialized by fetchmany(), so it is safe to consume
+                # outside the lock.
                 description = result.description
                 rows = result.fetchmany(row_fetch_limit.fetch_limit)
 
-            columns = [desc[0] for desc in description] if description else []
+            schema = duckdb_schema(description) if description else {}
+            columns = list(schema)
             rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
 
-            reject_duplicate_columns(columns)
-            data = [dict(zip(columns, row, strict=False)) for row in rows]
-            col_descs = (
-                {desc[0]: tuple(desc) for desc in description} if description else None
-            )
-
+            data = typed_rows(description, rows)
             return QueryResult(
                 data=data,
                 columns=columns,
-                column_descriptions=col_descs,
+                schema=schema,
                 truncated_reason=truncated_reason,
             )
 
@@ -839,21 +865,19 @@ class DuckDBAdapter(BaseAdapter):
     def reads_only_its_file(self, source_config: DuckDBSourceConfig) -> bool:
         """Whether a connection for *source_config* reads nothing but its file.
 
-        False when external access is on (``attach``/``extensions``/``secrets``,
-        or an opted-in ``enable_external_access``): SQL can then read other files
-        and remote data, so the database file's version does not cover every
-        input.
+        False when SQL can read other inputs (an opted-in
+        ``enable_external_access``, ``attach`` databases, ``secrets`` scopes), so
+        the database file's version does not cover every input.
         """
         raw = source_config.model_dump(by_alias=True, exclude_none=True)
-        return not self._external_access_enabled(
-            self.read_only,
-            self._resolve_duckdb_config(raw) or None,
-            self.allow_external_access_in_readonly,
-            bool(
-                source_config.attach
-                or source_config.extensions
-                or source_config.secrets
-            ),
+        return not (
+            source_config.attach
+            or source_config.secrets
+            or self._external_access_enabled(
+                self.read_only,
+                self._resolve_duckdb_config(raw) or None,
+                self.allow_external_access_in_readonly,
+            )
         )
 
     def _resolve_duckdb_config(
@@ -940,48 +964,25 @@ class DuckDBAdapter(BaseAdapter):
                 needs_external_access,
             ),
         )
+        caller_external_access = self._external_access_enabled(
+            self.read_only, duckdb_config, self.allow_external_access_in_readonly
+        )
         # A post-connect SET (or the schema guard) that raises must not orphan the
         # just-opened connection — close it before propagating so the file lock is
         # released.
-        close_external_access_after_attach = False
         try:
             # Session-local: relative read_csv()/read_parquet() paths in queries
             # resolve against the project root instead of the process cwd. Only
-            # meaningful when external file access is on (DuckDB rejects relative
-            # reads otherwise), so skip it — and its data_path resolution — when off.
-            if self._external_access_enabled(
-                self.read_only,
-                duckdb_config,
-                self.allow_external_access_in_readonly,
-                needs_external_access,
-            ):
-                if self._data_dir is not None:
-                    conn.execute("SET file_search_path = ?", [str(self._data_dir)])
-                else:
-                    explicit_file_access_opt_in = (
-                        self.allow_external_access_in_readonly
-                        and duckdb_config is not None
-                        and duckdb_config.get("enable_external_access") is True
+            # meaningful when caller SQL keeps external file access (DuckDB rejects
+            # relative reads otherwise), so skip it — and its data_dir — when off.
+            if caller_external_access:
+                if self._data_dir is None:
+                    raise ValueError(
+                        "External file access (read_csv()/read_parquet()) "
+                        "requires a data_dir to resolve relative paths "
+                        "against; none was configured for this adapter."
                     )
-                    # attach needs external access only for the ATTACH statement
-                    # itself; extensions/secrets can still be needed at query time
-                    # (a secret authenticates a later read_csv/httpfs call), so
-                    # only an attach-only connection is safe to close back down.
-                    attach_only = bool(attach) and not extensions and not secrets
-                    if explicit_file_access_opt_in or not (
-                        self.read_only and attach_only
-                    ):
-                        # A caller that actually wants read_csv()/read_parquet()
-                        # (the default in read-write mode, or the explicit
-                        # allow_external_access_in_readonly opt-in), or a source
-                        # authoring extensions/secrets, with no data_dir is a
-                        # real misconfiguration.
-                        raise ValueError(
-                            "External file access (read_csv()/read_parquet()) "
-                            "requires a data_dir to resolve relative paths "
-                            "against; none was configured for this adapter."
-                        )
-                    close_external_access_after_attach = True
+                conn.execute("SET file_search_path = ?", [str(self._data_dir)])
             if schema:
                 if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
                     raise ValueError(
@@ -1009,12 +1010,8 @@ class DuckDBAdapter(BaseAdapter):
                         conn, attach, adapter_read_only=adapter_read_only
                     ),
                 )
-            if close_external_access_after_attach:
-                # data_dir was None and external access was on solely for the
-                # ATTACH statement just applied above; close it back down so a
-                # later read_csv()/read_parquet() in authored SQL does not
-                # silently resolve against the process cwd.
-                conn.execute("SET enable_external_access = false")
+            if needs_external_access and not caller_external_access:
+                _lock_to_authored_reach(conn, secrets, attach)
         except BaseException:
             conn.close()
             raise
@@ -1041,18 +1038,14 @@ class DuckDBAdapter(BaseAdapter):
         allow_external_access_in_readonly: bool = False,
         source_needs_external_access: bool = False,
     ) -> bool:
-        """Whether relative read_csv()/read_parquet() can resolve on this connection.
+        """Whether a connection opens with external access on.
 
-        file_search_path only affects relative file reads, which DuckDB rejects
-        unless external access is on — so the SET (and its data_dir resolution)
-        is pure overhead when this returns False. Read-only forces external
-        access off unless the caller opted in (allow_external_access_in_readonly)
-        AND set enable_external_access=True, OR the source itself authors
-        `attach`/`extensions`/`secrets` (source_needs_external_access). Those
-        fields need external access to do anything, so authoring one is an
-        explicit opt-in and the read-only default is not forced onto it.
-        An explicit enable_external_access=False in duckdb_config always wins,
-        for either opt-in path.
+        Read-only forces external access off unless the caller opted in
+        (allow_external_access_in_readonly AND enable_external_access=True), OR
+        the source authors `attach`/`extensions`/`secrets`
+        (source_needs_external_access), which need it during setup only;
+        ``_connect`` locks that connection down afterwards. An explicit
+        enable_external_access=False in duckdb_config always wins.
         """
         config = duckdb_config or {}
         if config.get("enable_external_access") is False:
@@ -1085,7 +1078,8 @@ class DuckDBAdapter(BaseAdapter):
           user-supplied duckdb_config value.
 
         When read_only=True and allow_external_access_in_readonly=True, or the
-        source authors attach/extensions/secrets (source_needs_external_access):
+        source authors attach/extensions/secrets (source_needs_external_access,
+        locked down by ``_connect`` after setup):
         - Same read_only=True driver flag for file-based paths.
         - enable_external_access is NOT forced to False; caller's duckdb_config
           passes through. Approved callsites: LOCAL_AUTHORING_REGISTRY_KWARGS.

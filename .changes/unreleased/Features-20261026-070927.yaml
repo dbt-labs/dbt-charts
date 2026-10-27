@@ -1,0 +1,3 @@
+kind: Features
+body: A gradient scale's `nice` option now rounds the color domain on table columns, color channels, and maps, not only heatmaps, and rounds by default wherever the gradient draws a legend.
+time: 2026-10-26T07:09:27.757819-07:00

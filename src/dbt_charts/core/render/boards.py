@@ -45,6 +45,7 @@ from dbt_charts.core.font_measure import (
     get_weighted_font_measurer,
 )
 from dbt_charts.core.render.board_variables import (
+    board_clock,
     board_data_provider,
     board_variables,
     root_board_width,
@@ -1038,11 +1039,14 @@ def render_board_svg(
     error_collector: list[Diagnostic] | None = None,
     embed_fonts: bool = False,
 ) -> str:
-    with regional_scope(
-        board.regional.format_locale,
-        board.regional.time_locale,
-        board.regional.week_start,
-        language=board.regional.resolved_language,
+    with (
+        regional_scope(
+            board.regional.format_locale,
+            board.regional.time_locale,
+            board.regional.week_start,
+            language=board.regional.resolved_language,
+        ),
+        board_clock(board.regional.today(executor.rendered_at)),
     ):
         return _render_board_svg(
             board,
@@ -1421,14 +1425,14 @@ def _render_board_svg(
         assert timestamp_style.font.size is not None
         assert timestamp_style.font.color is not None
         timestamp_font_size = float(timestamp_style.font.size)
-        # Stamp data freshness, not render time, always in UTC: a static export
-        # can't know the viewer's zone, and the render process's own zone is an
-        # accidental deployment artifact. min() shows the stalest cached query so
-        # the board never reads fresher than it is.
+        # Stamp data freshness, not render time, in the board's zone: a static
+        # export can't know the viewer's zone, and the render process's own zone
+        # is an accidental deployment artifact. min() shows the stalest cached
+        # query so the board never reads fresher than it is.
         cache_hit_ats = executor.cache_hit_ats
         data_as_of = min(cache_hit_ats) if cache_hit_ats else render_time_utc
         display_timestamp = portable_strftime(
-            data_as_of.astimezone(UTC), timestamp_style.format
+            data_as_of.astimezone(board.regional.zone), timestamp_style.format
         )
         if timestamp_style.position == "top":
             timestamp_y = timestamp_style.y

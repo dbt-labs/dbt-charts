@@ -1,0 +1,3 @@
+kind: Features
+body: Athena array, map and row columns must be cast to JSON in the query; uncast they raise an error naming the column.
+time: 2026-10-23T13:57:12.302157-07:00

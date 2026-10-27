@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import cache, reduce
 from pathlib import Path  # noqa: TID251 — reads package-shipped default/theme YAML
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard, get_args
 
 import yaml
@@ -67,6 +68,7 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_CONFIG_KEY_MOVED,
+    ERR_PROJECT_CONFIG_SCHEMA,
     ERR_SOURCE_CONFIG_INVALID,
 )
 from dbt_charts.core.diagnostics.hints import CHART_RENDERING_SUCCESSORS
@@ -77,6 +79,7 @@ if TYPE_CHECKING:
     from importlib_resources.abc import Traversable
 
     from dbt_charts.cli.filesystem_project import FilesystemProject
+    from dbt_charts.core.compile.models.style.theme import Style
     from dbt_charts.core.project import Project
 
 # ============================================================================
@@ -725,7 +728,72 @@ def user_facing_theme_names() -> list[str]:
     return sorted(get_args(ThemeName))
 
 
-def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
+NO_REBINDS: Mapping[str, str] = MappingProxyType({})
+
+
+def _with_rebinds(
+    style: Style, palettes: Mapping[str, str], roles: Mapping[str, str]
+) -> Style:
+    # _base seeds both maps for every built-in theme.
+    assert style.palettes is not None and style.roles is not None
+    return style.model_copy(
+        update={
+            "palettes": {**style.palettes, **palettes},
+            "roles": {**style.roles, **roles},
+        }
+    )
+
+
+def _resolve_theme_tokens(style: Style) -> Style:
+    from dbt_charts.core.compile.resolve.style.tokens import (
+        _resolve_color_tokens,
+        expand_palette_refs,
+    )
+
+    style = _resolve_color_tokens(style, keep_self_tokens=True)
+    # Roles are resolvable only now that `style.palettes` is final; expanding
+    # here keeps every downstream consumer seeing plain stop lists.
+    return expand_palette_refs(style, path="style")
+
+
+# The family each theme-expanded role needs: the theme reads `category` as an
+# ordered categorical stop list, `sequence` and `diverge` as continuous ramps.
+_ROLE_FAMILY = {
+    "category": "categorical",
+    "sequence": "sequential",
+    "diverge": "diverging",
+}
+
+
+def _require_role_families(palette_rebinds: Mapping[str, str]) -> None:
+    """Refuse a rebind that binds a role to a palette of the wrong family.
+
+    Checked for every theme alike, before the theme loads, so no theme accepts
+    a binding another refuses.
+    """
+    from dbt_charts.core.compile.errors import CompilationError
+    from dbt_charts.core.compile.resolve.style.palette import _get_index
+    from dbt_charts.core.diagnostics.codes_compile import ERR_PALETTE_REBIND_UNSATISFIED
+
+    index = _get_index()
+    for role, bound in palette_rebinds.items():
+        required = _ROLE_FAMILY.get(role)
+        family = index[bound.partition(".")[0]]["family"]
+        if required is not None and family != required:
+            raise CompilationError.from_code(
+                ERR_PALETTE_REBIND_UNSATISFIED,
+                field_path=f"style.palettes.{role}",
+                bound=bound,
+                family=family,
+                required=required,
+            )
+
+
+def get_theme_style(
+    theme_name: str | None = None,
+    palette_rebinds: Mapping[str, str] = NO_REBINDS,
+    role_rebinds: Mapping[str, str] = NO_REBINDS,
+) -> Any:  # type-state: explicit_any — Style types `.palettes`/`.roles` as `| None`; callers index them
     """Load a built-in theme as a fully-resolved Style via the resolution engine.
 
     Folds the theme's extends chain via resolve_built_in_theme, sharing the
@@ -737,26 +805,33 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
     any layer or board canvas; read knockout leaves from a resolved style,
     not from this base.
 
+    Role tokens resolve against ``style.palettes`` and ``style.roles`` as they
+    stand at that moment, so a board or layer that rebinds one has to hand its
+    rebinds in here: they overlay the theme's own maps before any token or role
+    expands. Only the shipped theme (no rebinds) is cached; a caller that
+    passes rebinds owns the memo.
+
     Args:
         theme_name: Built-in theme stem (e.g. "clarity", "paper") or None
             to use the configured default theme.
+        palette_rebinds: Role → palette name overrides authored by the board
+            or project layers; empty loads the theme as shipped.
+        role_rebinds: Shortcut → color token overrides, same provenance.
 
     Returns:
         Style with all required fields populated and tokens resolved.
 
     Raises:
         ValueError:       Theme resolved but produced no style data.
-        CompilationError: Unknown theme name, cycle, or I/O / YAML parse error.
+        CompilationError: Unknown theme name, cycle, I/O / YAML parse error, or
+            a role rebound to a palette of the wrong family
+            (ERR-PALETTE-REBIND-UNSATISFIED).
     """
     from dbt_charts.core.compile.models.style.theme import Style
-    from dbt_charts.core.compile.resolve.style.tokens import (
-        _resolve_color_tokens,
-        expand_palette_refs,
-    )
 
     name = theme_name or get_default_theme_name()
-
-    if name in _compiled_theme_cache:
+    rebound = bool(palette_rebinds) or bool(role_rebinds)
+    if not rebound and name in _compiled_theme_cache:
         return _compiled_theme_cache[name]
 
     from dbt_charts.core.compile.merge import built_in_theme_style
@@ -769,12 +844,12 @@ def get_theme_style(theme_name: str | None = None) -> Any:  # -> Style
         )
     style_data = style_obj.model_dump(exclude_unset=True)
     compiled = Style.model_validate(style_data)
-    compiled = _resolve_color_tokens(compiled, keep_self_tokens=True)
-    # Roles are resolvable only now that `style.palettes` is final; expanding
-    # here keeps every downstream consumer seeing plain stop lists.
-    compiled = expand_palette_refs(compiled, path="style")
-    _compiled_theme_cache[name] = compiled
-    return compiled
+    if not rebound:
+        compiled = _resolve_theme_tokens(compiled)
+        _compiled_theme_cache[name] = compiled
+        return compiled
+    _require_role_families(palette_rebinds)
+    return _resolve_theme_tokens(_with_rebinds(compiled, palette_rebinds, role_rebinds))
 
 
 # ============================================================================
@@ -941,6 +1016,7 @@ def validate_project_config_data(
     )
     _validate_sources_section(sources_section, filename)
     _warnings_ignore_codes(mapping.get("warnings"), filename)
+    read_locked_schema_version(mapping, filename)
 
 
 def _validate_source_registry(
@@ -997,21 +1073,68 @@ def _warnings_ignore_codes(
     if raw_ignore is None:
         return frozenset()
     if not isinstance(raw_ignore, list):
-        raise TypeError(f"{filename}: warnings.ignore must be a list of strings")
+        raise _project_config_error(
+            f"{filename}: warnings.ignore must be a list of strings"
+        )
     for entry in raw_ignore:
         if not isinstance(entry, str):
-            raise TypeError(
+            raise _project_config_error(
                 f"{filename}: warnings.ignore entries must be "
                 f"strings, got {type(entry).__name__}: {entry!r}"
             )
-    validate_suppression_codes(raw_ignore, source=f"{filename}: warnings.ignore")
+    try:
+        validate_suppression_codes(raw_ignore, source=f"{filename}: warnings.ignore")
+    except ValueError as exc:
+        raise _project_config_error(str(exc)) from None
     return frozenset(raw_ignore)
 
 
+def _project_config_error(message: str) -> CompilationError:
+    return CompilationError.from_code(ERR_PROJECT_CONFIG_SCHEMA, message=message)
+
+
 def get_project_warnings_ignore(project: Project) -> frozenset[str]:
-    """Return warning codes to suppress project-wide. Fresh read per call."""
+    """Return warning codes to suppress project-wide: the configured
+    ``warnings.ignore`` plus every warning newer than the project's
+    ``locked_schema_version``. Fresh read per call."""
+    from dbt_charts.core.compile.migrations.locked_schema import (
+        warnings_newer_than_lock,
+    )
+
     filename, warnings_map = _dbt_charts_yml_mapping_section(project, "warnings")
-    return _warnings_ignore_codes(warnings_map, filename)
+    return _warnings_ignore_codes(warnings_map, filename) | warnings_newer_than_lock(
+        get_project_locked_schema_version(project)
+    )
+
+
+def read_locked_schema_version(
+    config: dict[str, Any],  # type-state: explicit_any — raw YAML section
+    filename: str,
+) -> str | None:
+    """The ``locked_schema_version`` of a raw ``dbt_charts.yml`` mapping, checked
+    to name a released schema; ``None`` when unset."""
+    from dbt_charts.core.compile.migrations.locked_schema import (
+        validate_locked_schema_version,
+    )
+
+    value = config.get("locked_schema_version")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _project_config_error(
+            f"{filename}: locked_schema_version must be a string, "
+            f"got {type(value).__name__}: {value!r}"
+        )
+    try:
+        return validate_locked_schema_version(value, source=filename)
+    except ValueError as exc:
+        raise _project_config_error(str(exc)) from None
+
+
+def get_project_locked_schema_version(project: Project) -> str | None:
+    """The project's ``locked_schema_version``. Fresh read per call."""
+    filename, config = _load_dbt_charts_yml(project)
+    return read_locked_schema_version(config, filename)
 
 
 class ProjectSourcesConfig:

@@ -367,8 +367,9 @@ class ProjectSummary(ContractModel):
     unmapped_source_count: int | None = Field(
         description=(
             "Declared sources with no connection behind them yet; null when "
-            "config_error is set, because the count is then unknown. This "
-            "listing carries no stage, so the field itself has to say so."
+            "config_error is set, or while the project's first sync has not "
+            "finished, because the count is then unknown. This listing "
+            "carries no stage, so the field itself has to say so."
         )
     )
     git_host: str | None = Field(

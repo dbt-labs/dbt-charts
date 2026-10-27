@@ -47,7 +47,7 @@ def _labels(
         chart_style_context=ctx,
         rendered_at=rendered_at,
     )
-    svg = BoardRenderSession.create(style).render_svg_family(
+    svg = BoardRenderSession(style).render_svg_family(
         resolved, rows, width=600.0, height=300.0
     )
     assert svg is not None

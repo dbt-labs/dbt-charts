@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 import yaml
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_AUTH,
@@ -75,7 +76,9 @@ def test_credential_or_connection_failure_does_not_replay_once_fixed(
     failure: QueryResult, code: ErrorCode
 ) -> None:
     cache = TrivialDuckDBCache()
-    registry = _ScriptedRegistry(failure, QueryResult(data=[{"v": 1}]))
+    registry = _ScriptedRegistry(
+        failure, QueryResult(data=[{"v": 1}], schema=literal_schema([{"v": 1}]))
+    )
 
     with pytest.raises(QueryError) as raised:
         _executor(registry, cache).execute_query("q")
@@ -89,7 +92,7 @@ def test_ordinary_query_failure_is_still_cached() -> None:
     cache = TrivialDuckDBCache()
     registry = _ScriptedRegistry(
         _failure("Resources exceeded during query execution", "bigquery"),
-        QueryResult(data=[{"v": 1}]),
+        QueryResult(data=[{"v": 1}], schema=literal_schema([{"v": 1}])),
     )
 
     with pytest.raises(QueryError) as raised:

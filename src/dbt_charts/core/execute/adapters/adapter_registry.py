@@ -105,11 +105,9 @@ _EMPTY_PROJECT_SOURCES: Final[ProjectSourcesConfig] = ProjectSourcesConfig(sourc
 # Approved local-dev surfaces that need non-exclusive DuckDB locks AND SQL
 # read_csv/read_json_auto (see m3-duckdb-concurrency-and-file-sources initiative).
 # Grep this symbol before adding allow_external_access_in_readonly=True elsewhere.
-# There is a second, narrower opt-in door: a DuckDB source that authors
-# attach/extensions/secrets gets external access on its own connection without
-# this flag (DuckDBAdapter._connect's source_needs_external_access). Those
-# fields cannot do anything without it. That door is driven by authored YAML,
-# not by a callsite grep, and is documented on DuckDBAdapter/DuckDBSourceConfig.
+# A DuckDB source that authors attach/extensions/secrets gets external access
+# only while those fields are applied; DuckDBAdapter._connect then locks the
+# connection to the attach paths and secret scopes.
 LOCAL_AUTHORING_REGISTRY_KWARGS: dict[str, Any] = {
     "read_only": True,
     "allow_external_access_in_readonly": True,
@@ -175,9 +173,8 @@ def build_adapter_registry(
         duckdb_config: Optional DuckDB config dict passed to the default
             connection. When read_only=True (the default) and
             allow_external_access_in_readonly=False, enable_external_access is
-            hard-forced to False regardless of what this dict contains, UNLESS
-            the source itself authors attach/extensions/secrets (a second,
-            narrower opt-in; see LOCAL_AUTHORING_REGISTRY_KWARGS above). To
+            hard-forced to False for caller SQL regardless of what this dict
+            contains (see LOCAL_AUTHORING_REGISTRY_KWARGS above). To
             combine read_only=True with external file access (read_csv, httpfs,
             etc.) on every connection, set both allow_external_access_in_readonly=True
             AND duckdb_config={"enable_external_access": True}. The default path
@@ -235,8 +232,7 @@ def build_adapter_registry(
     # FilesystemProject has one. Any other host (Cloud's git-blob store, an
     # in-memory test double) passes data_dir=None; DuckDBAdapter/SqliteAdapter
     # already tolerate that (no relative-path resolution needed until a source
-    # actually references one, or authors attach/extensions/secrets on a
-    # read_only connection, which needs no data_dir either).
+    # actually references one).
     data_dir = project.root if isinstance(project, FilesystemProject) else None
 
     resolved_dbt_path = linked_dbt_path(project)
@@ -744,7 +740,7 @@ class AdapterRegistry:
             )
             with attribute(scope, authored):
                 try:
-                    rows = materializer.materialize_and_run(
+                    rows, schema = materializer.materialize_and_run(
                         source_config,
                         query.sql,
                         bound_variables,
@@ -756,7 +752,12 @@ class AdapterRegistry:
                     return handle_adapter_error("File-source execution", exc)
             rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
             status = "success"
-            return QueryResult(data=rows, truncated_reason=truncated_reason)
+            return QueryResult(
+                data=rows,
+                columns=list(schema),
+                schema=schema,
+                truncated_reason=truncated_reason,
+            )
         finally:
             notify_observers(
                 self._observers, source_config.type, status, time.perf_counter() - start

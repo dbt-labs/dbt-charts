@@ -5,6 +5,9 @@ Purpose: Execute queries against HTTP/REST API endpoints.
 
 This adapter allows fetching data from external APIs, supporting
 GET, POST, PUT, DELETE, and PATCH methods with headers, params, and body.
+
+A JSON response declares no column types, so they are read from its values as
+for a values query; a column with no non-null value is declared ``string``.
 """
 
 from __future__ import annotations
@@ -17,6 +20,11 @@ import httpx
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 
+from dbt_charts.core.column_types import (
+    ColumnType,
+    declared_literal_cells,
+    literal_schema,
+)
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
@@ -216,7 +224,12 @@ class HttpAdapter(BaseAdapter):
                         "(e.g., json_path: $.data)."
                     )
 
-                return QueryResult(data=result_data)
+                schema = literal_schema(result_data, untyped=ColumnType(kind="string"))
+                return QueryResult(
+                    data=declared_literal_cells(result_data, schema),
+                    columns=list(schema),
+                    schema=schema,
+                )
 
         except httpx.HTTPError as e:
             return handle_adapter_error("HTTP request", e)

@@ -25,6 +25,7 @@ from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import (
     get_project_warnings_ignore,
 )
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.diagnostics import (
     WARN_REAGGREGATION,
     WARN_REDUNDANT_ENCODING,
@@ -198,7 +199,7 @@ def test_project_warnings_ignore_yaml_rejects_unregistered_code(
     (tmp_path / "dbt_charts.yml").write_text(
         "warnings:\n  ignore:\n    - WARN-PIE-TOO-MANY-SEGMENT\n"  # missing trailing S
     )
-    with pytest.raises(ValueError, match="WARN-PIE-TOO-MANY-SEGMENT"):
+    with pytest.raises(CompilationError, match="WARN-PIE-TOO-MANY-SEGMENT"):
         get_project_warnings_ignore(local_project(tmp_path))
 
 
@@ -313,7 +314,6 @@ def _make_executor(board, query_registry):
     ok = Mock()
     ok.is_success = True
     ok.data = [{"category": "a", "value": 1}]
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
@@ -515,7 +515,9 @@ def test_get_project_warnings_ignore_rejects_non_string_entries(
     dbt_charts_yml = tmp_path / "dbt_charts.yml"
     dbt_charts_yml.write_text("warnings:\n  ignore:\n    - 42\n    - good_code\n")
 
-    with pytest.raises(TypeError, match="warnings.ignore entries must be strings"):
+    with pytest.raises(
+        CompilationError, match="warnings.ignore entries must be strings"
+    ):
         get_project_warnings_ignore(local_project(tmp_path))
 
 

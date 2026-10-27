@@ -32,7 +32,7 @@ from pydantic import (
     model_validator,
 )
 
-from dbt_charts.core.compile.models.markers import Absent, ResetOnSet
+from dbt_charts.core.compile.models.markers import Absent, NullHint, ResetOnSet
 
 FontAlias = Annotated[str, Field(description="Name of a ``style.fonts`` entry.")]
 
@@ -68,9 +68,10 @@ class _PatchBase(BaseModel):
                 and value[key] is None
                 and not any(isinstance(meta, Absent) for meta in field.metadata)
             ):
+                hints = [m.instead for m in field.metadata if isinstance(m, NullHint)]
                 raise ValueError(
                     f"{name}: null is not accepted here. Omit the key to leave "
-                    "the field unset."
+                    f"the field unset. {' '.join(hints)}".rstrip()
                 )
         return value
 

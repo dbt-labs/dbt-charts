@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`WARN-LAYERED-CHART-SHARED-Y-AXIS-SCALE-MISMATCH` now fires when a layered series is squeezed flat on a shared y-axis.'
+time: 2026-10-23T03:48:56.780697-07:00

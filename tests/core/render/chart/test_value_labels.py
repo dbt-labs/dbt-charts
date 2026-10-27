@@ -8,13 +8,11 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style, reset_config
-from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.theme import FontStyle
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.render.chart.vega_lite import render_chart
-from dbt_charts.core.render.numeral_expr import numeral_vega_expr
 
 from ..._engine_render import render_chart_svg
 from ...conftest import chart_pane
@@ -193,51 +191,6 @@ def _render_texts(spec: dict[str, Any]) -> list[str]:
     # (?<!/) skips a self-closing <text/> — a blanked label.
     pattern = r"<text\b[^>]*(?<!/)>(.*?)</text>"
     return [html.unescape(m) for m in re.findall(pattern, svg, re.S)]
-
-
-class TestHouseRegister:
-    """A mark label is a callout — it stands alone, so it always takes the
-    narrative register, never the axis's own (analytic or narrative) ruler
-    register, and never d3's raw, un-post-processed SI suffix."""
-
-    def test_vl_convert_parity_still_holds(self) -> None:
-        """The register wiring in this task must not disturb the parity
-        pinned by test_numeral_vega_expr.py: Python format_d3 and the emitted
-        Vega expression must still agree for every SI tier and notation."""
-        from dbt_charts.core.text.format_d3 import format_d3
-
-        expr = numeral_vega_expr("datum.value", ".3~s", "narrative")
-        spec = {
-            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-            "data": {"values": [{"value": 1_200_000.0}]},
-            "transform": [{"calculate": expr, "as": "label"}],
-            "mark": "text",
-            "encoding": {"text": {"field": "label", "type": "nominal"}},
-        }
-        rendered = _render_texts(spec)[0]
-        expected = format_d3(1_200_000.0, ".3~s", notation="narrative")
-        assert rendered == expected == "1.2mn"
-
-
-def test_affixed_digits_expr_suppresses_sign_when_value_rounds_to_zero() -> None:
-    """A negative value that rounds to zero under the digit spec must not paint a sign.
-    ``(<v> < 0 ? sign.
-    """
-    from dbt_charts.core.render.chart.vl_field_maps import _affixed_digits_expr
-
-    fmt = ResolvedFormat(spec=",.0f", prefix="€", sign_placement="before_prefix")
-    expr = _affixed_digits_expr("datum.value", fmt.spec, fmt, anchored=False)
-    spec = {
-        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-        "data": {"values": [{"value": -0.4}]},
-        "transform": [{"calculate": expr, "as": "label"}],
-        "mark": "text",
-        "encoding": {"text": {"field": "label", "type": "nominal"}},
-    }
-    rendered = _render_texts(spec)[0]
-    assert rendered == "€0", (
-        f"expected no sign on a zero-rounded value, got {rendered!r}"
-    )
 
 
 # =============================================================================

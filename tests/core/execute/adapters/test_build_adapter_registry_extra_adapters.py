@@ -16,6 +16,7 @@ import pytest
 
 from dbt_charts.agent_api import ProjectSession
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
@@ -44,7 +45,9 @@ class _StubAdapter(BaseAdapter):
         params: QueryParams = None,
         source_config: object = None,
     ) -> QueryResult:
-        return QueryResult(data=[{"stub": True}])
+        return QueryResult(
+            data=[{"stub": True}], schema=literal_schema([{"stub": True}])
+        )
 
 
 class TestExtraAdapters:

@@ -107,7 +107,7 @@ def test_migrates_a_project_backed_board_without_a_filesystem_path(
 
     from dbt_charts.core.compile import migrations
 
-    def migrate_text(text: str) -> str:
+    def migrate_text(text: str, *, locked_schema_version: str | None) -> str:
         return text + "# migrated\n"
 
     monkeypatch.setattr(
@@ -267,7 +267,7 @@ def test_migrate_paths_records_parse_error_as_migrate_error(
 
     from dbt_charts.core.compile import migrations
 
-    def migrate_text(text: str) -> str:
+    def migrate_text(text: str, *, locked_schema_version: str | None) -> str:
         raise ParseError("Empty YAML document")
 
     monkeypatch.setattr(migrations, "migrate_board_yaml_text", migrate_text)

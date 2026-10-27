@@ -32,6 +32,7 @@
 
 use crate::constants::axis::{LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
 use super::table_dates::{strftime, Moment};
+use crate::time_axis::{date_text_day, parse_iso_date};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -465,105 +466,6 @@ pub fn parse_authored_time_unit(s: &str) -> Option<TimeUnit> {
         "yearweek" => Some(TimeUnit::YearWeek),
         "yearmonthdate" => Some(TimeUnit::YearMonthDate),
         _ => None,
-    }
-}
-
-// ── Date parsing ─────────────────────────────────────────────────────────────
-
-/// A date cell as days since the epoch, with any clock `datetime.fromisoformat` takes
-/// after `[T ]` as the day's fraction and an optional `Z` or `±HH[[:]MM[[:]SS]]` offset. A clock without an
-/// offset is UTC (the render pins the zone). Fractional seconds keep V8's
-/// millisecond precision. `None` for any other shape.
-pub fn date_text_day(text: &str) -> Option<f64> {
-    let (y, m, d) = parse_iso_date(text.get(..text.len().min(10))?)?;
-    let day = days_from_civil(y, m, d) as f64;
-    if text.len() <= 10 {
-        return Some(day);
-    }
-    if !matches!(text.as_bytes()[10], b'T' | b' ') {
-        return None;
-    }
-    let clock = text.get(11..)?;
-    let (clock, offset_minutes) = match clock.find(['Z', '+', '-']) {
-        None => (clock, 0.0),
-        Some(i) => {
-            let (head, zone) = clock.split_at(i);
-            let minutes = match zone.as_bytes()[0] {
-                b'Z' if zone.len() == 1 => 0.0,
-                sign @ (b'+' | b'-') => {
-                    let [hours, minutes, seconds] = super::x_type::clock_fields(&zone[1..], 23)?;
-                    let total = f64::from(hours) * 60.0 + f64::from(minutes) + f64::from(seconds) / 60.0;
-                    if sign == b'+' { total } else { -total }
-                }
-                _ => return None,
-            };
-            (head, minutes)
-        }
-    };
-    let [hours, minutes, seconds] = super::x_type::clock_fields(clock, 23)?;
-    let millis = match clock.find(['.', ',']) {
-        None => 0.0,
-        Some(i) => format!("{:0<3}", &clock[i + 1..])[..3].parse::<f64>().ok()?,
-    };
-    let clock_seconds = f64::from(hours) * 3600.0 + f64::from(minutes) * 60.0 + f64::from(seconds) + millis / 1000.0;
-    Some(day + (clock_seconds - offset_minutes * 60.0) / 86_400.0)
-}
-
-/// Parse an ISO date string `"YYYY-MM-DD"` → `(year, month, day)`.
-/// Also accepts `"YYYY-MM"` (day = 1), `"YYYY"` (month = 1, day = 1), and a
-/// datetime `"YYYY-MM-DD[T ]…"` (date part; matches production's
-/// _ISO_DATETIME_RE in time_unit_detect.py). Returns `None` for any other shape.
-pub fn parse_iso_date(s: &str) -> Option<(i32, u8, u8)> {
-    let b = s.as_bytes();
-    if b.len() > 10 && (b[10] == b'T' || b[10] == b' ') {
-        return parse_iso_date(&s[..10]);
-    }
-    match b.len() {
-        10 if b[4] == b'-' && b[7] == b'-' => {
-            let y = parse_digits4(&b[0..4])?;
-            let m = parse_digits2(&b[5..7])?;
-            let d = parse_digits2(&b[8..10])?;
-            if m >= 1 && m <= 12 && d >= 1 && d <= 31 {
-                Some((y, m, d))
-            } else {
-                None
-            }
-        }
-        7 if b[4] == b'-' => {
-            let y = parse_digits4(&b[0..4])?;
-            let m = parse_digits2(&b[5..7])?;
-            if m >= 1 && m <= 12 {
-                Some((y, m, 1))
-            } else {
-                None
-            }
-        }
-        4 => {
-            let y = parse_digits4(&b[0..4])?;
-            Some((y, 1, 1))
-        }
-        _ => None,
-    }
-}
-
-fn parse_digits4(b: &[u8]) -> Option<i32> {
-    if b.iter().all(|c| c.is_ascii_digit()) {
-        Some(
-            (b[0] - b'0') as i32 * 1000
-                + (b[1] - b'0') as i32 * 100
-                + (b[2] - b'0') as i32 * 10
-                + (b[3] - b'0') as i32,
-        )
-    } else {
-        None
-    }
-}
-
-fn parse_digits2(b: &[u8]) -> Option<u8> {
-    if b.iter().all(|c| c.is_ascii_digit()) {
-        Some((b[0] - b'0') * 10 + (b[1] - b'0'))
-    } else {
-        None
     }
 }
 
@@ -1397,13 +1299,6 @@ fn opens_fiscal_period(m: u8, period_len: i32, fiscal_start: u8) -> bool {
 /// (`time_unit_detect.py`): same-cadence or unhandled combinations fall
 /// through to `true`. `fiscal_start` (1=Jan..12=Dec) shifts the
 /// year/yearquarter boundary check — a no-op at the default `1`.
-///
-/// `pub(crate)`, not `pub`: `openers_at` above is this module's own axis-
-/// label caller (dedups to one index per period); `support_table_strip`'s
-/// `label_period_keep` is the other in-crate caller, mirroring production's
-/// `_label_period_filter_expr` VL row filter, which runs the gate per row
-/// with NO dedup — that caller needs the raw per-row predicate, not
-/// `openers_at`'s label-specific set.
 pub(crate) fn is_opener(
     y: i32,
     m: u8,
@@ -1965,13 +1860,13 @@ pub fn speak_labels(
 pub fn first_throw_at_dates(
     expr: &crate::labels_expr::Expr,
     dates: &[String],
+    days: &[f64],
     ordinal: bool,
-    day_of: impl Fn(&str) -> Result<f64, String>,
     label: impl Fn(i64) -> Result<String, String>,
 ) -> Result<Option<String>, String> {
     use crate::labels_expr::{describe, EvalError, Tick, Val};
     for (i, date) in dates.iter().enumerate() {
-        let day = day_of(date)?;
+        let day = days[i];
         let (value, text) = if ordinal {
             (Val::string(date.clone()).map_err(|e| describe(&e, &format!("{date:?}")))?, date.clone())
         } else {
@@ -2264,11 +2159,11 @@ fn walk_label_cadence_ladder(
 
 /// Calendar-year steps a dense year axis climbs after every year's label has
 /// failed to clear: readers group on multiples of 5 and 10, so a step keeps
-/// only the years divisible by it.
-const YEAR_STEPS: [i32; 2] = [5, 10];
+/// only the years divisible by it, trying each coarser round step before any tilt.
+const YEAR_STEPS: [i32; 5] = [5, 10, 25, 50, 100];
 
 /// The rung past the last grain: at `year` cadence, label only the years that
-/// are multiples of 5, then of 10. `(unit, 1, false)` when even 10 collides.
+/// are multiples of each round step in turn (5 up to 100). `(unit, 1, false)` when even 100 collides.
 fn year_step_rung(
     dates: &[(i32, u8, u8)],
     data_tu: TimeUnit,
@@ -2607,6 +2502,35 @@ fn resolve_vega_bucketed(
             block_height: font_size,
             collision: None,
         });
+    }
+    // A year axis too dense for flat labels climbs the year steps tilted before it leaves the thinning to
+    // Vega's parity pass, which would keep a tick and a gridline at every year.
+    if tilt && skip && visibility_tu == TimeUnit::Year {
+        let increments = tilt_increments
+            .ok_or("line: labels.tilt_increments absent (theme required for overlap.tilt)")?;
+        for step in YEAR_STEPS {
+            let stepped = openers_at(dates, data_tu, visibility_tu, step, fiscal_start);
+            if stepped.len() < 2 {
+                continue;
+            }
+            let widths: Vec<f64> = stepped
+                .iter()
+                .enumerate()
+                .map(|(pos, &p)| cadence_token_width(dates, p, TimeUnit::Year, pos == 0, fiscal_start, authored, measure))
+                .collect::<Result<_, _>>()?;
+            let pick = crate::vega_fit::pick_tilt(&widths, usable_width / widths.len() as f64, increments, font_size);
+            if pick.fits {
+                return Ok(VegaLabelLayout {
+                    format_tu: TimeUnit::Year,
+                    visibility_tu,
+                    year_step: step,
+                    parity: false,
+                    angle: pick.angle,
+                    block_height: pick.block_height,
+                    collision: None,
+                });
+            }
+        }
     }
     // L4's `visible_dates[::2]` (`_label_overlap.py:406-408`) feeds ONLY the
     // tilt-angle measurement below — it is never returned as the label set;
@@ -3165,9 +3089,8 @@ fn format_label(
     })
 }
 
-/// Parse distinct ISO date strings from the x domain.
-/// Non-parseable values are silently dropped (treated as non-temporal).
-pub fn parse_domain_dates(domain: &[String]) -> Vec<(i32, u8, u8)> {
+/// The civil dates of the distinct ISO date strings of a ladder, the ones that are not dates left out.
+fn parse_domain_dates(domain: &[String]) -> Vec<(i32, u8, u8)> {
     domain.iter().filter_map(|s| parse_iso_date(s)).collect()
 }
 
@@ -3539,12 +3462,6 @@ pub fn frac_of(day: f64, extent: (f64, f64)) -> f64 {
 /// Position fraction of `date` within an `extent` from [`utc_domain_extent`].
 pub fn utc_fraction_at(date: &str, extent: (f64, f64)) -> Option<f64> {
     date_text_day(date).map(|day| frac_of(day, extent))
-}
-
-/// A date Vega's `timeunit` transform reads as NaN: JavaScript's Date constructor maps a year
-/// 0-99 to 1900-1999, which the transform's floor cannot place on the date's own bucket.
-pub fn timeunit_nan(date: &str) -> bool {
-    parse_iso_date(date).is_some_and(|(year, _, _)| year < 100)
 }
 
 /// Floors an ISO date to its containing week's Sunday — d3's
@@ -4192,6 +4109,53 @@ pub fn bare_temporal_ticks(
         (None, None) => utc_instants(lo, hi, crate::families::cartesian::vl_default_tick_count(plot_w).max(1)),
     };
     instants.into_iter().enumerate().map(|(index, at)| tick(at, index, (at - lo) / (hi - lo))).collect()
+}
+
+/// Whether a continuous axis whose grain was dropped for the scaffold budget labels by the curated ladder.
+/// An axis that names its own ticks keeps d3's: an authored cadence, time format, `labels.time_unit: none`,
+/// `labels.angle` or continuous domain (`authored_domain`, as the caller parsed it), or a clock axis.
+/// `time_format` is whether a format is authored.
+pub fn keeps_dropped_grain_ladder(
+    ax: &crate::common::AxisStyle,
+    fill_grain: crate::families::x_type::Grain,
+    cadence: Option<AuthoredTickCadence>,
+    time_format: bool,
+    clock: bool,
+    authored_domain: bool,
+) -> bool {
+    matches!(fill_grain, crate::families::x_type::Grain::Calendar(_))
+        && cadence.is_none()
+        && !time_format
+        && !clock
+        && ax.labels.time_unit.as_deref() != Some("none")
+        && ax.labels.angle.is_none()
+        && !authored_domain
+}
+
+/// The ticks of a continuous axis whose calendar grain was dropped for the scaffold budget: the curated
+/// ladder's labels (`resolved`, laid out over `ladder`, the span's buckets) at their dates, in place of d3's
+/// multi-scale text. A steep tilt folds each label's context row inline, as on a grained axis.
+pub fn ladder_bare_ticks(domain: (f64, f64), ladder: &[String], resolved: &ResolvedVegaLabels) -> Result<Vec<BareTick>, String> {
+    let (lo, hi) = domain;
+    let mut ticks = Vec::new();
+    for tl in fold_steep(resolved.labels.clone(), Some(resolved.angle), resolved.format_tu) {
+        let date = &ladder[tl.domain_idx];
+        let day = date_text_day(date).expect("a ladder bucket is an ISO date");
+        let frac = if hi == lo { 0.5 } else { (day - lo) / (hi - lo) };
+        // `ladder[0]` is `enumerate_continuous_span`'s floored opener, which can sit
+        // before the real domain minimum when the data starts mid-bucket (a board's
+        // first row need not land on a bucket boundary). `resolve_visibility_loop`'s
+        // `pair_clears` already validated this label's clearance to its neighbor
+        // assuming it paints at the left edge (index 0 sits at pixel 0 in its band
+        // model) — so pin it there instead of silently dropping it for a frac that
+        // only ever goes negative at this one position.
+        if tl.domain_idx == 0 && frac < 0.0 {
+            ticks.push(BareTick { day: lo, frac: 0.0, text: tl.row1, row2: (!tl.row2.is_empty()).then_some(tl.row2) });
+        } else if (0.0..=1.0).contains(&frac) {
+            ticks.push(BareTick { day, frac, text: tl.row1, row2: (!tl.row2.is_empty()).then_some(tl.row2) });
+        }
+    }
+    Ok(ticks)
 }
 
 /// d3's multi-scale format of a tick instant (`d3-scale`'s `calendar`): the finest unit the tick is not whole in
@@ -5856,7 +5820,7 @@ mod tests {
         .unwrap()
     }
 
-    /// A dense yearly axis steps on multiples of 5, then 10 — never parity by
+    /// A dense yearly axis steps on round multiples (5, 10, 25, 50, 100) — never parity by
     /// index, never a tilt: 36 years at 400px (11px bands, 28px labels).
     #[test]
     fn a_dense_yearly_axis_steps_on_multiples_of_5_then_10() {
@@ -5871,12 +5835,21 @@ mod tests {
         assert_eq!(all.year_step, 1, "every year clears when there is room");
     }
 
-    /// Only a width that even 10-year labels cannot clear falls back to parity.
+    /// Only a width that even the coarsest round step cannot clear falls back to parity.
     #[test]
     fn a_pathologically_narrow_yearly_axis_still_falls_back_to_parity() {
-        let layout = year_layout(&years(1990, 2025), 40.0, true);
+        let layout = year_layout(&years(1990, 2025), 10.0, true);
         assert_eq!(layout.year_step, 1);
         assert!(layout.parity);
+    }
+
+    /// Past the flat round steps the ladder tilts the stepped labels rather than leaving the thinning to
+    /// parity, which keeps a tick and a gridline at every year.
+    #[test]
+    fn a_year_axis_too_narrow_for_flat_steps_tilts_the_stepped_labels() {
+        let layout = year_layout(&years(1990, 2025), 30.0, true);
+        assert!(layout.year_step > 1 && layout.angle != 0.0 && !layout.parity, "{:?}", (layout.year_step, layout.angle, layout.parity));
+        assert!(layout.collision.is_none());
     }
 
     /// Without `overlap.skip` the ladder never thins, years included.
@@ -6053,6 +6026,41 @@ mod tests {
         assert_eq!(vl_default_format(2023, 12, 31, TimeUnit::YearWeek).unwrap(), "2023 W53");
         assert_eq!(vl_default_format(2024, 1, 7, TimeUnit::YearWeek).unwrap(), "2024 W01");
         assert_eq!(vl_default_format(2024, 1, 1, TimeUnit::YearWeek).unwrap(), "2023 W53", "a Monday names its Sunday's bucket");
+    }
+
+    /// RJ's review, 2026-10-23: a continuous axis whose first row lands
+    /// mid-bucket (here, the 3rd of the month) sees `enumerate_continuous_span`'s
+    /// floored opener (the 1st) sit left of the real domain minimum.
+    /// `ladder_bare_ticks` used to silently drop that tick instead of pinning
+    /// it to the domain edge — `resolve_visibility_loop`'s `pair_clears`
+    /// already validated its clearance assuming it paints there (index 0 sits
+    /// at pixel 0 in its band model), so the clamp needs no extra gate.
+    #[test]
+    fn ladder_bare_ticks_pins_a_mid_bucket_first_opener_to_the_domain_edge() {
+        let _locale = crate::time_locale::en_us_scope();
+        // 2025-08-03 through 2026-09-03: fourteen months, none on a bucket start.
+        let rows: Vec<String> = (0..14)
+            .map(|m| {
+                let total = 7 + m; // 7 = August, zero-based
+                format!("{:04}-{:02}-03", 2025 + total / 12, total % 12 + 1)
+            })
+            .collect();
+        let ladder = complete_buckets(&rows, TimeUnit::YearMonth, 1);
+        assert_eq!(ladder[0], "2025-08-01", "the floored opener sits before the real data minimum");
+        let resolved = resolve_vega_x_labels(
+            &ladder, TimeUnit::YearMonth, None, 1000.0, true, false, true, 1, true, true, Some(&TILT_LADDER),
+            11.0, None, None, &mut char_measure,
+        )
+        .expect("resolves");
+        let lo = days_from_civil(2025, 8, 3) as f64;
+        let hi = days_from_civil(2026, 9, 3) as f64;
+        let ticks = ladder_bare_ticks((lo, hi), &ladder, &resolved).expect("ticks");
+        let first = ticks.first().expect("a first tick");
+        assert_eq!((first.frac, first.day, first.text.as_str()), (0.0, lo, "Aug"), "{ticks:?}");
+        // The forced edge label still clears its neighbor: fracs stay strictly increasing.
+        for pair in ticks.windows(2) {
+            assert!(pair[1].frac > pair[0].frac, "{ticks:?}");
+        }
     }
 
     /// `axis_x.labels.time_unit` also accepts the five time-PART grains

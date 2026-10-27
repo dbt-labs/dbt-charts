@@ -72,7 +72,7 @@ __all__ = [
 
 # The PAINTS_MARKS families whose painted-no-marks guard still runs in Python; the
 # engine raises ERR-CHART-PAINTED-NO-MARKS for the cartesian ones itself.
-PAINTS_MARKS_GUARDED_IN_PYTHON = frozenset({"pie", "geoshape", "point_map"})
+PAINTS_MARKS_GUARDED_IN_PYTHON = frozenset({"pie"})
 
 
 def _uses_svg_family_layout_padding(chart_type: str) -> bool:
@@ -461,7 +461,6 @@ def _render_chart_item_inner(
 
         resolved_style = _rs(get_theme_style())
 
-    from dbt_charts.core.render.chart.spec_builders import shift_artifact_title
     from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
     from dbt_charts.core.render.converters.chart import render_chart_artifact
     from dbt_charts.core.render.layout_sizing import build_chart_datasets
@@ -469,7 +468,7 @@ def _render_chart_item_inner(
     chart_type = chart.chart_type
     is_svg_family = chart_type in SVG_LAYOUT_PADDED_TYPES
     # The engine raises ERR-CHART-PAINTED-NO-MARKS for the cartesian families
-    # itself; a pie's and a map's SVG still need the check here.
+    # itself; a pie's SVG still needs the check here.
     paints_marks = chart_type in PAINTS_MARKS_GUARDED_IN_PYTHON
     cache_key = (chart.id, available_width, available_height, title_shift)
     if not is_svg_family and cache_key in render_cache:
@@ -498,16 +497,7 @@ def _render_chart_item_inner(
             padding=padding,
             title_shift=title_shift,
         )
-        shift_artifact_title(artifact, title_shift)
-        chart_svg = render_chart_artifact(
-            artifact,
-            "svg",
-            resolved_style,
-            width=available_width,
-            height=available_height,
-            is_placeholder=False,
-            chart_id=chart.id,
-        )
+        chart_svg = render_chart_artifact(artifact, "svg")
 
     if paints_marks and v2_data:
         from dbt_charts.core.diagnostics.codes_render import ERR_CHART_PAINTED_NO_MARKS

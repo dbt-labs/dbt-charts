@@ -20,7 +20,6 @@ from dbt_charts.core.compile.models.primitives import (
     RegionalLocale,
     TimeLocale,
 )
-from dbt_charts.core.render.chart.presentation import apply_presentation_defaults
 from dbt_charts.core.render.variables_resolve import (
     format_date_label,
     format_daterange_label,
@@ -332,20 +331,6 @@ def test_date_variable_labels_use_the_time_locale() -> None:
         assert format_date_label("2023-03-05") == "5. Mrz 2023"
         assert format_daterange_label("2023-03-05", "2023-10-09").startswith("5. Mrz")
     assert format_date_label("2023-03-05") == "5 Mar 2023"
-
-
-def test_the_chart_config_owns_its_time_locale() -> None:
-    regional = Regional(locale=RegionalLocale(time="de-DE"))
-    with regional_scope(
-        regional.format_locale,
-        regional.time_locale,
-        regional.week_start,
-    ):
-        spec = apply_presentation_defaults({}, "#fff", {})
-    assert spec["config"]["locale"]["time"] == regional.time_locale
-    assert (
-        spec["config"]["locale"]["time"]["months"] is not regional.time_locale["months"]
-    )
 
 
 def test_the_looping_locale_is_rejected_at_parse() -> None:

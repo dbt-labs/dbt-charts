@@ -19,7 +19,9 @@ from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     next_minor,
     parse_dotted_version,
     structural_schema_bytes,
+    warnings_file_name,
 )
+from dbt_charts.core.diagnostics import REGISTRY
 
 
 def freeze_yaml_schema(
@@ -81,6 +83,10 @@ def freeze_yaml_schema(
 
     candidate_bytes = canonical_schema_bytes(candidate)
     snapshot_path.write_bytes(candidate_bytes)
+    (directory / warnings_file_name(version)).write_text(
+        json.dumps(sorted(REGISTRY.codes(level="warning")), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     released = dataclasses.replace(
         dev,
@@ -143,7 +149,8 @@ def verify_released_yaml_schema(
 ) -> None:
     """Ensure the release tag packages the current YAML grammar snapshot.
 
-    A three-part check accepting both release shapes: the live schema must
+    A check accepting both release shapes: every released schema has its
+    frozen warning list, the live schema must
     match the latest released snapshot structurally (a pure ``description``
     wording edit does not count as a mismatch), that snapshot's version must
     not be newer than the tag (an unchanged-grammar release may sit behind
@@ -151,6 +158,17 @@ def verify_released_yaml_schema(
     has caught up with the DEV name means that grammar was never frozen.
     """
     catalog = load_yaml_schema_catalog_from(directory)
+    unlisted = [
+        entry.version
+        for entry in catalog.entries
+        if entry.status == "RELEASED"
+        and not (directory / warnings_file_name(entry.version)).is_file()
+    ]
+    if unlisted:
+        raise ValueError(
+            "dbt charts YAML schema releases without a frozen warning list: "
+            f"{', '.join(unlisted)}."
+        )
     if _version_key(catalog.latest_released.version) > _version_key(version):
         raise ValueError(
             f"Latest dbt charts YAML schema {catalog.latest_released.version} is "

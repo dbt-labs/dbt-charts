@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 
 import pytest
@@ -10,8 +9,7 @@ import vl_convert as vlc
 
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.format_value import format_kpi_parts, format_value
-from dbt_charts.core.compile.models.primitives import FormatTable, ResolvedFormat
-from dbt_charts.core.render.chart.vl_field_maps import compose_axis_format
+from dbt_charts.core.compile.models.primitives import FormatTable
 from dbt_charts.core.text.format_d3 import format_d3
 from dbt_charts.core.text.predefined_formats import PREDEFINED_NATIVE
 
@@ -165,14 +163,6 @@ def test_duration_paints_on_the_axis() -> None:
     svg = render_board_to_svg(_BOARD.format(name="duration"))
     assert "2h" in svg
     assert "1h" in svg
-
-
-def test_axis_label_expr_comes_from_the_native_arm() -> None:
-    d: dict[str, object] = {}
-    compose_axis_format(d, ResolvedFormat(spec="duration"), True)
-    assert "labelExpr" in d
-    assert "format" not in d
-    assert "duration" not in json.dumps(d["labelExpr"])
 
 
 _SLOT_QUERIES = """

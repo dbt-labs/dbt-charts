@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.template.query_result import (
     QueryResult as TemplateQueryResult,
 )
@@ -51,7 +52,7 @@ def _make_view(queries: dict[str, Any] | None = None) -> RegisteredView:
 def _mock_registry(rows: list[dict[str, Any]]) -> MagicMock:
     """Build a mock AdapterRegistry that returns ``rows`` from execute()."""
     registry = MagicMock()
-    registry.execute.return_value = QueryResult(data=rows)
+    registry.execute.return_value = QueryResult(data=rows, schema=literal_schema(rows))
     return registry
 
 
@@ -200,8 +201,11 @@ class TestRunRegistryQueriesHappyPath:
         )
         registry = MagicMock()
         registry.execute.side_effect = [
-            QueryResult(data=[{"name": "id"}]),
-            QueryResult(data=[{"name": "id", "type": "BIGINT"}]),
+            QueryResult(data=[{"name": "id"}], schema=literal_schema([{"name": "id"}])),
+            QueryResult(
+                data=[{"name": "id", "type": "BIGINT"}],
+                schema=literal_schema([{"name": "id", "type": "BIGINT"}]),
+            ),
         ]
         result = run_registry_queries(view, {}, registry)
 
@@ -299,7 +303,9 @@ class TestRunRegistryQueriesValidationErrors:
         )
         registry = MagicMock()
         registry.execute.return_value = QueryResult(
-            data=[{"a": 1}], truncated_reason="max_rows"
+            data=[{"a": 1}],
+            truncated_reason="max_rows",
+            schema=literal_schema([{"a": 1}]),
         )
 
         with pytest.raises(RegistryQueryError, match="truncated"):
@@ -400,7 +406,10 @@ class TestSchemaQueryAsRegistryQuery:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """type: schema is normalized correctly and dispatched to SchemaAdapter."""
-        cols = {"order_id": {"type": "BIGINT"}, "status": {"type": "VARCHAR"}}
+        cols = {
+            "order_id": {"actual_type": "BIGINT"},
+            "status": {"actual_type": "VARCHAR"},
+        }
         envelope = _fake_table_profile_envelope(
             "warehouse", "analytics", "orders", cols
         )

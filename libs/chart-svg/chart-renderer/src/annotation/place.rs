@@ -636,7 +636,7 @@ mod tests {
     use crate::annotation::text::tests::fonts;
     use crate::annotation::{PlotRect, Reach};
     use crate::diagnostic::collect;
-    use crate::families::temporal::date_text_day;
+    use crate::time_axis::date_text_day;
     use measure::FontBook;
 
     const W: f64 = 40.0;

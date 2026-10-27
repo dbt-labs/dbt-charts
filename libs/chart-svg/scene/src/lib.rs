@@ -80,6 +80,16 @@ impl Attrs {
         }
     }
 
+    /// These attributes with each value named in `names` replaced by `f(value)`.
+    pub fn map_values(mut self, names: &[&str], f: impl Fn(&str) -> String) -> Self {
+        for (name, value, _) in &mut self.0 {
+            if names.contains(&name.as_ref()) {
+                *value = f(value);
+            }
+        }
+        self
+    }
+
     /// `(name, value, escape)` in print order.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str, Escape)> {
         self.0.iter().map(|(name, value, escape)| (name.as_ref(), value.as_str(), *escape))
@@ -120,6 +130,8 @@ pub enum Node {
     Polygon(Attrs),
     Polyline(Attrs),
     Text(TextBlock),
+    /// `<text/>`: a label with no content that still stands for its datum.
+    EmptyText(Attrs),
     /// `<text>` holding runs: `Tspan`s, `Title`s and the whitespace between them.
     TextRuns { attrs: Attrs, children: Vec<Node> },
     /// `<tspan>`: a styled run inside a `TextRuns`.

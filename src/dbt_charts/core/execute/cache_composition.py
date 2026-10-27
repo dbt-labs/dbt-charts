@@ -11,12 +11,11 @@ path (fed the materialized file rows).
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
-from dbt_charts.core.execute.adapters.base import reject_duplicate_columns
 from dbt_charts.core.execute.arrow_ingest import ingest, rows_to_arrow
 from dbt_charts.core.execute.cache_backend import CacheRows
+from dbt_charts.core.execute.duckdb_types import typed_rows
 
 if TYPE_CHECKING:
     import duckdb
@@ -31,37 +30,15 @@ def quote_identifier(identifier: str) -> str:
 def rows_from_result(
     result: duckdb.DuckDBPyConnection, limit: int | None = None
 ) -> CacheRows:
-    """Reconstruct row dicts from an executed DuckDB result, decoding JSON columns.
-
-    list/dict values are written to a JSON column as text, and DuckDB hands a
-    JSON-typed column back as a Python ``str``. Decode those columns here so the
-    round-trip is symmetric — callers (and the renderer) expect the original
-    ``list``/``dict``, not the serialized string.
+    """Reconstruct row dicts from an executed DuckDB result, each cell converted
+    to the Python value its declared type names (see ``typed_rows``).
 
     ``limit`` bounds the fetch itself via ``fetchmany()`` instead of pulling
     every row over and slicing after — None (the default) fetches everything,
     unaffected for every caller that doesn't pass one.
     """
-    description = result.description
-    columns = [d[0] for d in description]
-    json_cols = {i for i, d in enumerate(description) if str(d[1]) == "JSON"}
-    reject_duplicate_columns(columns)
     rows = result.fetchmany(limit) if limit else result.fetchall()
-    if not json_cols:
-        return [dict(zip(columns, row, strict=False)) for row in rows]
-    return [
-        dict(
-            zip(
-                columns,
-                [
-                    json.loads(v) if i in json_cols and v is not None else v
-                    for i, v in enumerate(row)
-                ],
-                strict=False,
-            )
-        )
-        for row in rows
-    ]
+    return typed_rows(result.description, rows)
 
 
 def compose_over_named_rows(

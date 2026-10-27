@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import (
     HttpQuery,
     SqlQuery,
@@ -39,6 +40,8 @@ from dbt_charts.core.execute.adapters import (
 from dbt_charts.core.execute.adapters.dbt_utils import resolve_dbt_refs_with_provenance
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
+
+pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
 
 def _ri(raw: dict) -> RefIndex:
@@ -66,7 +69,7 @@ class TestQueryResult:
             {"col1": 1, "col2": "a"},
             {"col1": 2, "col2": "b"},
         ]
-        result = QueryResult(data=data)
+        result = QueryResult(data=data, schema=literal_schema(data))
 
         assert result.is_success
         assert result.error is None
@@ -292,7 +295,7 @@ class TestAdapterRegistry:
                 return {"custom"}
 
             def _execute(self, query, variables):
-                return QueryResult(data=[])
+                return QueryResult(data=[], schema=literal_schema([]))
 
         registry.register(CustomAdapter())
 
@@ -316,7 +319,13 @@ class TestDbtAdapter:
             target_name="dev",
         )
         dbt = MagicMock()
-        dbt.execute.return_value = (None, MagicMock(column_names=["n"], rows=[(1,)]))
+        dbt.execute.return_value = (
+            None,
+            MagicMock(
+                column_names=["n"],
+                rows=[(1,)],
+            ),
+        )
         adapter._adapter = dbt
         adapter._dialect = "postgres"
 

@@ -289,6 +289,7 @@ _OMITTED_FROM_PROJECTION = {
     "basemap_fill": "resolved from basemap",
     "basemap_geo_format": "resolved from basemap",
     "basemap_geo_url": "resolved from basemap",
+    "basemap_source_name": "resolved from basemap",
     "basemap_stroke": "resolved from basemap",
     # Chart-local presentation facts baked at resolve time for VL emission
     # (background/title-overflow); no authored counterpart.

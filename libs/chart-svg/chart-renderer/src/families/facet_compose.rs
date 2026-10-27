@@ -77,11 +77,12 @@
 use crate::diagnostic::Diagnostic;
 use std::fmt::Write as _;
 
+use scene::Node;
 use serde_json::Value;
 
 use crate::common::{AxisStyle, AxisTitle};
 use crate::families::axis_caption::AxisCaption;
-use crate::families::bar::{BandXAxis, ContinuousXAxis, HorizontalValueAxis};
+use crate::families::bar::axes::{BandXAxis, ContinuousXAxis, HorizontalValueAxis};
 use crate::families::legend::{stack_legends, VEGA_LEGEND_OFFSET};
 use crate::families::facet_layout;
 use crate::families::heatmap::AXIS_TRANSLATE;
@@ -158,32 +159,39 @@ impl PanelXAxis {
         }
     }
 
-    /// Paints at the CALLER's own `plot_left`/`plot_w`/`plot_bottom` — the
-    /// facet composite's own footer-band geometry, not the panel's own.
+    /// The axis at the CALLER's own `plot_left`/`plot_w`/`plot_bottom`: the panel's own, or the
+    /// facet composite's footer-band geometry.
+    pub(crate) fn nodes(
+        &self,
+        ax_x: &AxisStyle,
+        plot_left: f64,
+        plot_w: f64,
+        edge: (f64, f64),
+        fonts: &FontBook,
+    ) -> Result<Vec<Node>, String> {
+        match self {
+            PanelXAxis::Band(x) => x.nodes(ax_x, plot_left, plot_w, edge),
+            PanelXAxis::Continuous(x) => x.nodes(ax_x, plot_left, plot_w, edge),
+            PanelXAxis::Line(x) => x.nodes(ax_x, plot_left, plot_w, edge, fonts),
+            PanelXAxis::Temporal(x) => x.nodes(ax_x, plot_left, plot_w, edge, fonts),
+            PanelXAxis::Plain(x) => x.nodes(ax_x, plot_left, plot_w, edge, fonts),
+            PanelXAxis::Heat(x) => x.nodes(ax_x, plot_left, plot_w, edge),
+            PanelXAxis::Value(x) => x.nodes(ax_x, plot_left, plot_w, edge.0),
+        }
+    }
+
+    /// [`Self::nodes`] printed onto the string the facet composite builds.
     pub(crate) fn paint(
         &self,
         svg: &mut String,
         ax_x: &AxisStyle,
         plot_left: f64,
         plot_w: f64,
-        plot_bottom: f64,
+        edge: (f64, f64),
         fonts: &FontBook,
     ) -> Result<(), String> {
-        match self {
-            PanelXAxis::Band(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
-            PanelXAxis::Continuous(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
-            PanelXAxis::Line(x) => {
-                svg.push_str(&print::print(&x.nodes(ax_x, plot_left, plot_w, plot_bottom, fonts)?));
-                Ok(())
-            }
-            PanelXAxis::Temporal(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
-            PanelXAxis::Plain(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom, fonts),
-            PanelXAxis::Heat(x) => {
-                svg.push_str(&print::print(&x.nodes(ax_x, plot_left, plot_w, plot_bottom)?));
-                Ok(())
-            }
-            PanelXAxis::Value(x) => x.paint(svg, ax_x, plot_left, plot_w, plot_bottom),
-        }
+        svg.push_str(&print::print(&self.nodes(ax_x, plot_left, plot_w, edge, fonts)?));
+        Ok(())
     }
 }
 
@@ -1012,7 +1020,7 @@ fn compose_facet_at(
         }
         let mut painted = String::new();
         let axis = &probe.last().expect("panels is non-empty (checked by the caller)").1.axis;
-        axis.paint(&mut painted, spec.axis_x, 0.0, plot_w, -axis.top_offset(), fonts)?;
+        axis.paint(&mut painted, spec.axis_x, 0.0, plot_w, (-axis.top_offset(), -axis.top_offset()), fonts)?;
         Ok((AXIS_TRANSLATE - min_ink_y(&painted)).max(probe[0].1.axis.rotated_footer_reach(plot_w, fonts)?.unwrap_or(0.0)))
     };
     let probe_top_reach = top_reach_at(panel_w_guess)?;
@@ -1215,7 +1223,7 @@ fn compose_facet_at(
         spec.axis_x,
         0.0,
         panel_w,
-        0.0,
+        (0.0, 0.0),
         fonts,
     )?;
     }
@@ -1552,6 +1560,7 @@ fn compose_facet_at(
                 canvas_x(dx, geom) + 0.5,
                 -1.0,
                 geom.val_tick_size,
+                &[],
             )?;
             if let Some((text, style)) = spec.left_title {
                 crate::common::emit_axis_title_rotated(
@@ -1591,6 +1600,7 @@ fn compose_facet_at(
                 canvas_x(dx, geom) + 0.5,
                 -1.0,
                 geom.val_tick_size,
+                &[],
             )?;
             for (abs_y, label) in &geom.val_ticks {
                 let _ = write!(
@@ -1655,13 +1665,16 @@ fn compose_facet_at(
             if top_axis {
                 let (dx, dy) = offsets[col_i];
                 let axis = &final_panels[col_i.saturating_sub(missing)].1.axis;
-                axis.paint(svg, spec.axis_x, plot_x(dx), panel_w, pad_t + margin_top + top0 + dy - axis.top_offset(), fonts)?;
+                let plot_top_y = pad_t + margin_top + top0 + dy;
+                axis.paint(svg, spec.axis_x, plot_x(dx), panel_w, (plot_top_y - axis.top_offset(), plot_top_y), fonts)?;
                 continue;
             }
             let slot = last_row_start + col_i;
-            let (dx, _) = offsets[slot];
+            let (dx, dy) = offsets[slot];
             let footer_left = plot_x(dx);
-            final_panels[slot.saturating_sub(missing)].1.axis.paint(svg, spec.axis_x, footer_left, panel_w, footer_bottom, fonts)?;
+            // The footer hangs below the cell's ink; its ticks still start on the panel's own plot floor.
+            let plot_floor = pad_t + margin_top + top0 + dy + child_height;
+            final_panels[slot.saturating_sub(missing)].1.axis.paint(svg, spec.axis_x, footer_left, panel_w, (footer_bottom, plot_floor), fonts)?;
         }
         Ok(())
     };
@@ -1754,6 +1767,7 @@ fn compose_facet_at(
                 anchor_x + 0.5,
                 1.0,
                 geom.val_tick_size,
+                &[],
             )?;
             crate::contract::axis_group_close(&mut svg);
         }

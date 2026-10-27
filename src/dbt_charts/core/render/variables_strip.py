@@ -22,7 +22,6 @@ decided in ``variables_layout``. This module only draws.
 
 from __future__ import annotations
 
-import datetime
 import html
 import json
 from typing import TYPE_CHECKING, Literal
@@ -33,6 +32,10 @@ from dbt_charts.core.compile.template.daterange import (
     resolve_daterange_preset_iso,
 )
 from dbt_charts.core.font_measure import centered_baseline_offset
+from dbt_charts.core.render.board_variables import (
+    committed_text,
+    current_board_today,
+)
 from dbt_charts.core.render.controls import controls_are_interactive, controls_language
 from dbt_charts.core.render.svg_utils import (
     attr_name,
@@ -308,7 +311,7 @@ def _draw_control(
     # date math.
     presets = ""
     if box.input == "daterange" and controls_are_interactive():
-        today = datetime.date.today()
+        today = current_board_today()
         groups = [
             [
                 {"id": preset, "range": resolve_daterange_preset_iso(preset, today)}
@@ -343,26 +346,12 @@ def _number_attr(value: float) -> str:
 
 
 def _committed_value(control: ResolvedControl) -> str:
-    """The value in the form a host commits it, never a Python repr.
-
-    A multiselect or daterange holds a list; ``str()`` on one yields
-    ``['a', 'b']``, which a host reading the attribute back would send as a
-    literal filter value. Lists go out as JSON, matching how the options beside
-    them are published.
-    """
-    current = control.current
-    if current is None:
+    """The value in the form a host commits it."""
+    if control.current is None:
         return ""
     if control.preset is not None:
         return control.preset
-    if isinstance(current, (list, tuple)):
-        return json.dumps(
-            [
-                member.isoformat() if isinstance(member, datetime.date) else member
-                for member in current
-            ]
-        )
-    return str(current)
+    return committed_text(control.current)
 
 
 def _draw_field(

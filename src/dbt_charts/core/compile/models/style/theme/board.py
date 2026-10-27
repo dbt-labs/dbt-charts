@@ -325,8 +325,7 @@ class TitleSubtitleStyle(BaseModel):
     # Cascade-managed sentinel: _base.yaml supplies the overflow value for every
     # theme; None here keeps TitleSubtitleStyle() constructable as a cascade
     # placeholder (it is built via default_factory=TitleSubtitleStyle on
-    # TitleStyle.subtitle). Render code reads this via resolve_title_overflow(),
-    # which already falls back to "wrap-two" when None.
+    # TitleStyle.subtitle).
     overflow: OverflowMode | None = Field(
         default=None,
         description="Text overflow mode for the subtitle (clip, truncate, wrap-two, wrap). "

@@ -21,10 +21,12 @@ pub mod label_template;
 pub mod labels_expr;
 pub mod number_locale;
 pub mod prose;
+pub(crate) mod selected;
 pub mod sizing;
 pub mod step_band;
 pub mod svg;
 pub mod text;
+pub mod time_axis;
 pub mod time_locale;
 pub mod torn;
 pub mod title;
@@ -87,6 +89,15 @@ pub struct TextMarkFont {
     pub size: f64,
 }
 
+/// The theme's hover emphasis: whether it draws, and how far a receded mark mixes toward
+/// its canvas (`chart_defaults.hover_emphasis`).
+#[derive(Deserialize, Clone)]
+pub struct HoverEmphasisStyle {
+    pub visible: bool,
+    /// The share of a receded mark's own color that stays; the rest is canvas.
+    pub dimmed_opacity: f64,
+}
+
 /// Board-level `ResolvedStyle` tokens shared across families — the secondary
 /// ink and the tone palette. Production hands the whole `ResolvedStyle` to
 /// every renderer alongside the chart; this envelope carries only the
@@ -96,6 +107,11 @@ pub struct TextMarkFont {
 /// rather than painting a stand-in.
 #[derive(Deserialize, Clone)]
 pub struct BoardStyle {
+    /// The theme's hover emphasis (`chart_defaults.hover_emphasis`): how far a receded
+    /// mark mixes toward the canvas, which a selected variable value also reads.
+    /// Absent where no theme was resolved; selection then emphasizes nothing.
+    #[serde(default)]
+    pub hover_emphasis: Option<HoverEmphasisStyle>,
     /// `fonts.secondary.color`: the KPI support row's no-tone ink. Every other
     /// secondary-text surface reads its own font slot.
     pub secondary_color: Option<String>,
@@ -403,11 +419,12 @@ pub struct Payload {
     /// layer authors a differing `query_name`.
     #[serde(default)]
     pub datasets: Option<HashMap<String, Vec<serde_json::Map<String, Value>>>>,
-    /// Every geo source a map chart draws, as the parsed TopoJSON or GeoJSON
-    /// document, keyed by the chart's `geo_url`. The engine does no I/O: the
-    /// host loads the documents. Absent on a payload with no map.
+    /// Every geo source a map chart draws, as the TopoJSON or GeoJSON document's
+    /// JSON text keyed by the chart's `geo_url`. The engine does no I/O: the host
+    /// loads the documents and the engine parses each distinct text once
+    /// (`families::geo::source`). Absent on a payload with no map.
     #[serde(default)]
-    pub geometries: Option<HashMap<String, Value>>,
+    pub geometries: Option<families::geo::source::Geometries>,
     /// Set by `sizing::render_first_vega_height`'s own probe render —
     /// production's ONE "static estimate, before any layout decision"
     /// measurement call (`layout_sizing.py`'s `item.height == 0` branch) —
@@ -639,6 +656,13 @@ fn unplotted(resolved: &Value, chart_type: &str) -> bool {
 }
 
 fn render_family(
+    payload: &Payload,
+    fonts: &measure::FontBook,
+) -> Result<(String, Option<f64>), Diagnostic> {
+    selected::settled(|| draw_family(payload, fonts))
+}
+
+fn draw_family(
     payload: &Payload,
     fonts: &measure::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {

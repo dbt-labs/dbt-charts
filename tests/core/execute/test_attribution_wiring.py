@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from dbt_charts.core.attribution import current_attribution
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
@@ -39,7 +40,7 @@ class _RecordingAdapter(BaseAdapter):
         source_config: Any = None,
     ) -> QueryResult:
         self.seen = current_attribution()
-        return QueryResult(data=[], columns=[])
+        return QueryResult(data=[], columns=[], schema=literal_schema([], []))
 
 
 def _registry(

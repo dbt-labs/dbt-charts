@@ -1807,14 +1807,7 @@ class TestAspectRatioDrivenSizing:
             width=560.0,
             height=height_with_subtitle,
         )
-        svg = render_chart_artifact(
-            artifact,
-            "svg",
-            _resolved,
-            width=560.0,
-            height=height_with_subtitle,
-            chart_id="chart",
-        )
+        svg = render_chart_artifact(artifact, "svg")
         assert "more rows" not in svg, (
             "Renderer truncated rows at sizer-allocated height — "
             "title-block chrome calc has drifted between sizer and renderer."
@@ -2701,13 +2694,6 @@ rows:
 class TestRenderFirstSizing:
     """Render-first Vega sizing: actual heights from vl-convert, cached for render pass."""
 
-    _MOCK_SVG_300 = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g/></svg>'
-    )
-    _MOCK_SVG_2000 = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="2000"><g/></svg>'
-    )
-
     def _compile_bar(self, local_project: Callable[..., FilesystemProject]) -> tuple:
         from dbt_charts.core.compile import compile
         from dbt_charts.core.execute.executor import Executor
@@ -2743,15 +2729,11 @@ rows:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """calculate_data_aware_layout must return (board, render_cache) tuple."""
-        from unittest.mock import patch
 
         from dbt_charts.core.render.layout_sizing import calculate_data_aware_layout
 
         board, executor = self._compile_bar(local_project)
-        with patch.object(
-            _converters_chart, "render_vega_spec", return_value=self._MOCK_SVG_300
-        ):
-            ret = calculate_data_aware_layout(board, executor, {}, pre_resolved={})
+        ret = calculate_data_aware_layout(board, executor, {}, pre_resolved={})
 
         assert isinstance(ret, tuple), (
             f"calculate_data_aware_layout must return (board, render_cache), got {type(ret)}"
@@ -2764,7 +2746,6 @@ rows:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Table charts use data-driven sizing, not render-first; not in cache."""
-        from unittest.mock import patch
 
         from dbt_charts.core.compile import compile
         from dbt_charts.core.execute.executor import Executor
@@ -2793,12 +2774,9 @@ rows:
             query_registry=result.query_registry,
         )
 
-        with patch.object(
-            _converters_chart, "render_vega_spec", return_value=self._MOCK_SVG_300
-        ):
-            sized_board, render_cache = calculate_data_aware_layout(
-                result.board, executor, {}, pre_resolved={}
-            )
+        sized_board, render_cache = calculate_data_aware_layout(
+            result.board, executor, {}, pre_resolved={}
+        )
 
         table_chart_id = sized_board.layout.items[0].chart.id
         assert not any(k[0] == table_chart_id for k in render_cache), (
@@ -2835,19 +2813,6 @@ charts:
     x: month
     y: revenue
 """
-
-    def _echo_height_render(self):
-        """Return a mock render_vega_spec that echoes the requested height in the SVG."""
-
-        def mock_render(spec, fmt, width, height, is_placeholder, **kwargs):
-            w = int(width) if width else 400
-            h = int(height) if height else 400
-            return (
-                f'<svg xmlns="http://www.w3.org/2000/svg" '
-                f'width="{w}" height="{h}"><g/></svg>'
-            )
-
-        return mock_render
 
 
 # ===========================================================================
@@ -2946,9 +2911,7 @@ charts:
 rows:
   - c1
 """
-        from unittest.mock import patch
 
-        MOCK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g/></svg>'
         result = compile(yaml_content)
         assert result.success
         executor = Executor(
@@ -2957,8 +2920,7 @@ rows:
             query_registry=result.query_registry,
         )
 
-        with patch.object(_converters_chart, "render_vega_spec", return_value=MOCK_SVG):
-            svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor, format="svg").output
 
         page_padding = float(get_theme_style().frame.margin)
         card_padding = float(get_theme_style().frame.card_padding)
@@ -2977,7 +2939,6 @@ rows:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """Board markdown text should start at page_padding + card_padding."""
-        from unittest.mock import patch
 
         from dbt_charts.core.compile import compile
         from dbt_charts.core.execute.executor import Executor
@@ -2995,10 +2956,8 @@ text: |
             adapter_registry=build_adapter_registry(local_project(Path.cwd())),
             query_registry=result.query_registry,
         )
-        mock_svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g/></svg>'
 
-        with patch.object(_converters_chart, "render_vega_spec", return_value=mock_svg):
-            svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor, format="svg").output
 
         page_padding = float(get_theme_style().frame.margin)
         card_padding = float(get_theme_style().frame.card_padding)
@@ -3124,13 +3083,11 @@ class TestCardGapBehavior:
         self, local_project: Callable[..., FilesystemProject]
     ):
         """With card_gap=true, page_padding stays at configured value (no compensation hack)."""
-        from unittest.mock import patch
 
         from dbt_charts.core.compile import compile
         from dbt_charts.core.execute.executor import Executor
         from dbt_charts.core.render.renderer import render
 
-        MOCK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><g/></svg>'
         yaml_content = """
 title: CardGap Test
 card_gap: true
@@ -3157,8 +3114,7 @@ rows:
             query_registry=result.query_registry,
         )
 
-        with patch.object(_converters_chart, "render_vega_spec", return_value=MOCK_SVG):
-            svg = render(result.board, executor, format="svg").output
+        svg = render(result.board, executor, format="svg").output
 
         page_padding = float(get_theme_style().frame.margin)
         # The root SVG <rect> background starts at (0,0) and spans the full width.

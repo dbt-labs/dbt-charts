@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, ClassVar, Literal
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.constraints import (
     ConstrainedModel,
@@ -131,6 +132,36 @@ class FooterStyle(ConstrainedModel):
     divider: FooterDividerStyle = Field(description="Hairline above the footer text.")
 
 
+CLOCK_HIDES_ZONE = (
+    "style.timestamp.format prints a clock time but never shows the board's zone; "
+    "add %Z or %z, e.g. '%H:%M %Z'"
+)
+
+
+def clock_hides_zone(fmt: str, zone: ZoneInfo) -> bool:
+    """Whether ``fmt`` prints a clock time without naming ``zone``.
+
+    The clock is detected behaviorally (the output shifts when the instant moves
+    an hour), which catches %T/%R/%X/%-H that a directive scan would miss. Both a
+    winter and a summer instant must name the zone, so a literal 'EST' fails on
+    a New York board.
+    """
+    if fmt == AUTO:
+        return False
+    for month in (1, 7):
+        # A recent year: zone rules change, and the stamp prints under today's.
+        probe = datetime(2026, month, 1, 9, 30, tzinfo=zone)
+        shown = portable_strftime(probe, fmt)
+        if shown == portable_strftime(probe + timedelta(hours=1), fmt):
+            return False
+        names = {probe.tzname(), probe.strftime("%z")}
+        if probe.utcoffset() == timedelta(0):
+            names |= {"UTC", "GMT"}
+        if not any(name and name in shown.upper() for name in names):
+            return True
+    return False
+
+
 class TimestampStyle(ConstrainedModel):
     """Authored data-freshness chrome: visibility, placement, strftime format, font, and y-offset."""
 
@@ -150,9 +181,9 @@ class TimestampStyle(ConstrainedModel):
     format: str = Field(
         description="`auto` takes the board language's wording around the time and "
         "date; else a strftime format for the data-freshness line, including any "
-        "literal label text (e.g. '%H:%M %Z on %-d %b %Y'). The value is always "
-        "UTC; a format that prints a clock must disclose the zone (%Z or a literal "
-        "'UTC'), else compile rejects it: an unlabeled clock reads as local."
+        "literal label text (e.g. '%H:%M %Z on %-d %b %Y'). The value prints in "
+        "regional.time_zone; a format that prints a clock must show that zone (%Z, "
+        "%z, or a literal 'UTC' on a UTC board), else compile rejects it."
     )
     y: float = Field(description="Y-coordinate for top-positioned timestamp in pixels.")
     gap: float = Field(
@@ -163,28 +194,3 @@ class TimestampStyle(ConstrainedModel):
         default_factory=FontStyle,
         description="Timestamp font style overrides (size, color, weight, ...).",
     )
-
-    @model_validator(mode="after")
-    def _clock_format_discloses_zone(self) -> TimestampStyle:
-        """The stamped value is always UTC. A custom format that prints a clock
-        but never shows the zone reads as local time, so reject it. The clock is
-        detected behaviorally (the output shifts when the instant moves an hour),
-        which catches %T/%R/%X/%-H that a directive scan would miss.
-        """
-        if self.format == AUTO:
-            return self
-        probe = datetime(2001, 1, 1, 9, 30, tzinfo=UTC)
-        shown = portable_strftime(probe, self.format)
-        prints_clock = shown != portable_strftime(
-            probe + timedelta(hours=1), self.format
-        )
-        discloses_zone = (
-            "UTC" in shown.upper() or "GMT" in shown.upper() or "+0000" in shown
-        )
-        if prints_clock and not discloses_zone:
-            raise ValueError(
-                "style.timestamp.format prints a clock time but never shows its "
-                "zone; the value is UTC, so add %Z (or a literal 'UTC') — e.g. "
-                "'%H:%M %Z'"
-            )
-        return self

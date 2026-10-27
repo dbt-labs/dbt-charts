@@ -15,8 +15,6 @@
 //! (`docs/laws-shared.md#font-measurement-policy`).
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
-
 use serde_json::Value;
 
 use crate::common::{slug_to_display, TAB_FONT};
@@ -26,7 +24,7 @@ use crate::families::support_table_strip::{
     CellAria, ComposedCell, DecimalPad, EntryLines, SupportTableConfig, SupportTableStyle,
 };
 use crate::svg::{py_float_str};
-use print::{vega_escape_attr, xml_escape, xml_escape_attr};
+use scene::{Attrs, Node};
 use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
 
@@ -64,6 +62,8 @@ pub struct Column {
     /// A `per_series:` column's series ink; every other column paints the
     /// style's own cell ink.
     pub ink: Option<String>,
+    /// The ink the header paints when it names its series; else the style's label ink.
+    pub header_ink: Option<String>,
     /// The series a `per_series:` column prints; `None` on every other column.
     pub series: Option<String>,
     /// The entry's hung-suffix width (`_hung_suffix_width`): the cells' digits
@@ -274,6 +274,7 @@ pub fn build_block(
                 header,
                 width,
                 ink: None,
+                header_ink: entry.ink.clone(),
                 series: None,
                 hung_w,
                 cells,
@@ -292,6 +293,7 @@ pub fn build_block(
                 header_w: header_shaped,
                 width,
                 ink: series_ink.filter(|_| entry.per_series.is_some()).map(|ink| ink[i].clone()),
+                header_ink: entry.ink.clone(),
                 series: entry.per_series.as_ref().map(|_| series_order[i].clone()),
                 hung_w,
                 cells,
@@ -382,17 +384,16 @@ impl ColumnBlock {
         }
     }
 
-    /// Paint the block with the plot's top-left at `(origin_x, origin_y)`.
-    pub fn render(
+    /// The block with the plot's top-left at `(origin_x, origin_y)`.
+    pub fn nodes(
         &self,
-        out: &mut String,
         style: &SupportTableStyle,
         plot_w: f64,
         plot_h: f64,
         origin_x: f64,
         origin_y: f64,
         link_open: Option<crate::href::LinkOpen>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<Node>, String> {
         // Headers and rules read no datum: on a linked chart each carries an undefined link.
         let undefined = link_open.and_then(|open| open.anchor(Some(crate::href::UNDEFINED_HREF)));
         let font_size = self.font_size;
@@ -406,54 +407,55 @@ impl ColumnBlock {
         let header_y = origin_y - row_height(style) / 2.0 + label_shift;
         let paint = cell_family(style);
         let last = self.columns.len() - 1;
+        let mut out = Vec::new();
         for (i, (col, edge)) in self.columns.iter().zip(self.right_edges(plot_w)).enumerate() {
             let x = origin_x + edge;
-            crate::contract::mark_group_open(out, "text", "strip")?;
-            out.push_str(&crate::href::anchor_open(undefined));
-            let _ = write!(
-                out,
-                "<text x=\"{x:.2}\" y=\"{header_y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
-                 font-size=\"{label_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                vega_escape_attr(label_family),
-                xml_escape_attr(&label_weight),
-                xml_escape_attr(label_ink),
-                xml_escape(&col.header),
+            let header = Node::text(
+                Attrs::new()
+                    .set("x", format!("{x:.2}"))
+                    .set("y", format!("{header_y:.2}"))
+                    .set("text-anchor", "end")
+                    .vega("font-family", label_family)
+                    .set("font-size", label_size.to_string())
+                    .set("font-weight", label_weight.clone())
+                    .set("fill", col.header_ink.as_deref().unwrap_or(label_ink)),
+                col.header.as_str(),
             );
-            out.push_str(crate::href::anchor_close(undefined));
-            crate::contract::mark_group_close(out);
-            crate::contract::mark_group_open(out, "text", "strip")?;
+            out.push(crate::contract::mark_group("text", "strip", vec![crate::href::linked(undefined, header)])?);
+            let mut cells = Vec::new();
             for (k, cell) in col.cells.iter().enumerate() {
                 let ink = col.cell_series.get(k).and_then(|(_, ink, _)| ink.as_deref()).or(col.ink.as_deref()).unwrap_or(cell_ink);
                 let cell_x = origin_x + col.cell_x(edge, cell);
                 let y = origin_y + cell.x + cell_shift;
                 let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
                 for _ in 0..col.copies {
-                    out.push_str(&crate::href::anchor_open(anchor));
-                    let _ = write!(
-                        out,
-                        "<text{} x=\"{cell_x:.2}\" y=\"{y:.2}\" text-anchor=\"end\" font-family=\"{}\" \
-                         font-size=\"{font_size}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
-                        print::attributes(&crate::contract::cell_label_attrs(&cell.aria)?),
-                        vega_escape_attr(paint),
-                        xml_escape_attr(&cell_weight),
-                        xml_escape_attr(ink),
-                        xml_escape(&cell.text),
+                    let text = Node::text(
+                        crate::contract::cell_label_attrs(&cell.aria)?
+                            .set("x", format!("{cell_x:.2}"))
+                            .set("y", format!("{y:.2}"))
+                            .set("text-anchor", "end")
+                            .vega("font-family", paint)
+                            .set("font-size", font_size.to_string())
+                            .set("font-weight", cell_weight.clone())
+                            .set("fill", ink),
+                        cell.text.as_str(),
                     );
-                    out.push_str(crate::href::anchor_close(anchor));
+                    cells.push(crate::href::linked(anchor, text));
                 }
             }
-            crate::contract::mark_group_close(out);
+            out.push(crate::contract::mark_group("text", "strip", cells)?);
             if style.row.divider.visible && i < last {
                 // `_column_rule_layer`: every column right-aligns AT its edge,
                 // so the line clears the left column's glyphs by one padding
                 // and still short of the next column's leftmost glyph.
                 let rule_x = x + style.row.padding.horizontal;
-                out.push_str(&crate::href::anchor_open(undefined));
-                out.push_str(&print::print(&[divider_line(rule_x, origin_y, rule_x, origin_y + plot_h, &style.row.divider)]));
-                out.push_str(crate::href::anchor_close(undefined));
+                out.push(crate::href::linked(
+                    undefined,
+                    divider_line(rule_x, origin_y, rule_x, origin_y + plot_h, &style.row.divider),
+                ));
             }
         }
-        Ok(())
+        Ok(out)
     }
 }
 
@@ -549,7 +551,7 @@ mod tests {
     /// authored order; right block starts `gutter` past the plot.
     #[test]
     fn right_edges_run_left_to_right_on_both_sides() {
-        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, series: None, hung_w: 0.0, cells: vec![], cell_series: vec![], copies: 1 };
+        let col = |width: f64| Column { header: String::new(), header_w: 0.0, width, ink: None, header_ink: None, series: None, hung_w: 0.0, cells: vec![], cell_series: vec![], copies: 1 };
         let mut block = ColumnBlock {
             columns: vec![col(50.0), col(30.0)],
             side: Side::Left,
@@ -610,6 +612,33 @@ mod tests {
         tag[..tag.find('"').unwrap()].parse().unwrap()
     }
 
+    fn text_fill(svg: &str, text: &str) -> String {
+        let end = svg.find(&format!(">{text}</text>")).unwrap_or_else(|| panic!("{text}: {svg}"));
+        let tag = &svg[svg[..end].rfind("<text x=\"").unwrap()..end];
+        let fill = &tag[tag.rfind("fill=\"").unwrap() + 6..];
+        fill[..fill.find('"').unwrap()].to_string()
+    }
+
+    /// A column's baked `header_ink` paints that header; a column without one
+    /// stays on the block's label ink.
+    #[test]
+    fn a_column_header_takes_its_baked_ink() {
+        let mut block = block_of(
+            serde_json::json!([
+                {"source": "units", "label": "U"},
+                {"source": "revenue", "label": "V"},
+            ]),
+            false,
+        )
+        .unwrap();
+        block.label_ink = "#111111".into();
+        block.columns[0].header_ink = Some("#8a5a2b".into());
+
+        let out = print::print(&block.nodes(&style(), 400.0, 300.0, 100.0, 50.0, None).unwrap());
+        assert_eq!(text_fill(&out, "U"), "#8a5a2b");
+        assert_eq!(text_fill(&out, "V"), "#111111");
+    }
+
     /// A column cell's `x` stays its band center along the category axis; the
     /// anchor carries its suffix width as `hang`, and the column paints every
     /// digit `hung_w` inside its header edge while the anchor's suffix hangs
@@ -632,8 +661,7 @@ mod tests {
         assert_eq!(hangs, vec![pct_w, 0.0, 0.0]);
         assert_eq!(col.hung_w, pct_w);
 
-        let mut out = String::new();
-        block.render(&mut out, &style(), 400.0, 300.0, 100.0, 50.0, None).unwrap();
+        let out = print::print(&block.nodes(&style(), 400.0, 300.0, 100.0, 50.0, None).unwrap());
         let edge = 100.0 + block.right_edges(400.0)[0];
         assert!((text_x(&out, "5%") - edge).abs() < 0.005, "anchor at the header edge");
         assert!((text_x(&out, "60") - (edge - pct_w)).abs() < 0.005, "bare digits one suffix in");
@@ -845,9 +873,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let mut out = String::new();
-        block.render(&mut out, style, 400.0, 300.0, 100.0, 50.0, None).unwrap();
-        out
+        print::print(&block.nodes(style, 400.0, 300.0, 100.0, 50.0, None).unwrap())
     }
 
     /// `_column_rule_layer`: every column right-aligns AT its edge, so the

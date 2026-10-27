@@ -8,10 +8,6 @@ import pytest
 import vl_convert
 
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.resolve import resolve
-from dbt_charts.core.render.chart import session
-from dbt_charts.core.render.chart.emitters import get_emitter
-from dbt_charts.core.render.errors import RenderError
 
 from .._engine_render import render_chart_svg
 
@@ -54,29 +50,10 @@ def test_a_cartesian_chart_renders_in_the_engine_without_vega_lite(
 
     monkeypatch.setattr(vl_convert, "vegalite_to_svg", refuse)
     monkeypatch.setattr(vl_convert, "vegalite_to_scenegraph", refuse)
-    monkeypatch.setattr(session, "get_emitter", refuse)
 
     svg = render_chart_svg(_chart(chart_type, **_CHARTS[chart_type]), _ROWS, width=600)
 
     assert svg.startswith("<svg")
-
-
-@pytest.mark.parametrize("chart_type", sorted(_CHARTS))
-def test_a_cartesian_chart_has_no_emitter(chart_type: str) -> None:
-    from dbt_charts.core.compile.config import get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import (
-        resolve_style_and_context,
-    )
-
-    _, context = resolve_style_and_context(get_theme_style())
-    resolved = resolve(
-        _chart(chart_type, **_CHARTS[chart_type]),
-        _ROWS,
-        chart_style_context=context,
-        width=600,
-    )
-    with pytest.raises(RenderError, match="No emitter registered"):
-        get_emitter(resolved)
 
 
 @pytest.mark.parametrize(

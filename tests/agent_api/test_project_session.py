@@ -234,52 +234,6 @@ def test_project_render_board_forwards_compile_result(
     assert captured["board"] is board
 
 
-def test_project_render_board_binds_the_svg_cache_for_the_render(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    local_project: Callable[..., FilesystemProject],
-) -> None:
-    """The memo passed to render_board must be the active one *while* the render
-    runs — binding it around the call is what lets the converter reach it without
-    every signature in between growing a parameter."""
-    from dbt_charts.core.render.svg_cache import RenderedSvgCache, active_svg_cache
-
-    svg_cache = RenderedSvgCache()
-    project = ProjectSession(project=local_project(tmp_path))
-    seen: list[object] = []
-
-    def fake_render(**kwargs: Any) -> str:
-        seen.append(active_svg_cache())
-        return "sentinel-result"
-
-    monkeypatch.setattr(_core_dashboard_module, "render_dashboard", fake_render)
-    project.render_board(format="json", svg_cache=svg_cache)
-
-    assert seen == [svg_cache]
-    assert active_svg_cache() is None
-
-
-def test_project_render_board_runs_uncached_without_an_svg_cache(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    local_project: Callable[..., FilesystemProject],
-) -> None:
-    """Opting out is the default — no memo passed means no ambient cache."""
-    from dbt_charts.core.render.svg_cache import active_svg_cache
-
-    project = ProjectSession(project=local_project(tmp_path))
-    seen: list[object] = []
-
-    def fake_render(**kwargs: Any) -> str:
-        seen.append(active_svg_cache())
-        return "sentinel-result"
-
-    monkeypatch.setattr(_core_dashboard_module, "render_dashboard", fake_render)
-    project.render_board(format="json")
-
-    assert seen == [None]
-
-
 def test_project_render_board_forwards_chart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

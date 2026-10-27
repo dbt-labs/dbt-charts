@@ -119,10 +119,10 @@ def test_exact_file_version_is_read_once_per_materializer(
 
     assert materializer.materialize_and_run(
         source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
-    ) == [{"total": 3}]
+    )[0] == [{"total": 3}]
     assert materializer.materialize_and_run(
         source, "SELECT COUNT(*) AS total FROM sales", {}, "sales"
-    ) == [{"total": 2}]
+    )[0] == [{"total": 2}]
     assert reads == ["data/sales.csv"]
 
 
@@ -150,7 +150,7 @@ def test_changed_file_version_replaces_loaded_table(
 
     assert materializer.materialize_and_run(
         source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
-    ) == [{"total": 1}]
+    )[0] == [{"total": 1}]
 
     path = tmp_path / "data/sales.csv"
     path.write_text("amount\n9\n")
@@ -159,7 +159,7 @@ def test_changed_file_version_replaces_loaded_table(
 
     assert materializer.materialize_and_run(
         source, "SELECT SUM(amount) AS total FROM sales", {}, "sales"
-    ) == [{"total": 9}]
+    )[0] == [{"total": 9}]
 
 
 def test_failed_replacement_keeps_new_version_retryable(
@@ -174,7 +174,7 @@ def test_failed_replacement_keeps_new_version_retryable(
     materializer = FileSourceMaterializer(project)
     assert materializer.materialize_and_run(
         source, "SELECT value FROM rows", {}, "rows"
-    ) == [{"value": 1}]
+    )[0] == [{"value": 1}]
 
     loaded_before = materializer._loaded.copy()
     source_hash, table_name = next(iter(loaded_before))
@@ -212,7 +212,7 @@ def test_failed_replacement_keeps_new_version_retryable(
     assert materializer._loaded == loaded_before
     assert materializer.materialize_and_run(
         source, "SELECT value FROM rows", {}, "rows"
-    ) == [{"value": 2}]
+    )[0] == [{"value": 2}]
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ class TestCsvMaterialize:
 
         rows = mat.materialize_and_run(
             source, "SELECT * FROM sales ORDER BY amount", {}, "sales"
-        )
+        )[0]
 
         # ORDER BY amount ASC: 100 (North), 150 (North), 200 (South)
         assert [r["region"] for r in rows] == ["North", "North", "South"]
@@ -276,7 +276,7 @@ class TestCsvMaterialize:
             "SELECT region, amount FROM sales WHERE region = 'North'",
             {},
             "sales",
-        )
+        )[0]
         assert len(rows) == 2
         assert all(r["region"] == "North" for r in rows)
 
@@ -293,7 +293,7 @@ class TestCsvMaterialize:
 
         rows = mat.materialize_and_run(
             source, "SELECT city FROM cities ORDER BY city", {}, "cities"
-        )
+        )[0]
         assert [r["city"] for r in rows] == ["Bergen", "Oslo"]
 
 
@@ -327,7 +327,7 @@ class TestJsonMaterialize:
             "ORDER BY value",
             {},
             "values",
-        )
+        )[0]
 
         assert rows == [{"value": 1}, {"value": 2}]
 
@@ -346,7 +346,7 @@ class TestJsonMaterialize:
             "SELECT v, typeof(v) AS type FROM values ORDER BY v",
             {},
             "values",
-        )
+        )[0]
 
         assert rows == [
             {"v": "1", "type": "VARCHAR"},
@@ -369,7 +369,7 @@ class TestJsonMaterialize:
             'typeof("array") AS array_type FROM values',
             {},
             "values",
-        )
+        )[0]
 
         assert rows == [
             {
@@ -392,7 +392,7 @@ class TestJsonMaterialize:
 
         rows = mat.materialize_and_run(
             source, "SELECT name FROM users ORDER BY id", {}, "users"
-        )
+        )[0]
         assert [r["name"] for r in rows] == ["Alice", "Bob"]
 
     def test_ndjson_detected_by_extension(
@@ -406,7 +406,7 @@ class TestJsonMaterialize:
 
         rows = mat.materialize_and_run(
             source, "SELECT id FROM items ORDER BY id", {}, "items"
-        )
+        )[0]
         assert [r["id"] for r in rows] == [1, 2]
 
     def test_json_parse_error_not_confused_with_ndjson(
@@ -452,7 +452,7 @@ class TestJsonMaterialize:
             "SELECT SUM(score) AS total FROM summaries",
             {},
             "summaries",
-        )
+        )[0]
         assert rows[0]["total"] == 42
 
     def test_union_by_name_pads_missing_columns(
@@ -479,7 +479,7 @@ class TestJsonMaterialize:
             "SELECT id, name, extra FROM summaries ORDER BY id",
             {},
             "summaries",
-        )
+        )[0]
         assert rows[0] == {"id": 1, "name": "Alice", "extra": "x"}
         assert rows[1]["id"] == 2
         assert rows[1]["name"] == "Bob"
@@ -516,7 +516,7 @@ class TestMultiTableJoin:
             "SELECT c.name, o.amount FROM orders o JOIN customers c ON o.customer_id = c.customer_id ORDER BY o.order_id",
             {},
             "orders",
-        )
+        )[0]
         assert len(rows) == 2
         assert rows[0]["name"] == "Alice"
         assert rows[1]["name"] == "Bob"
@@ -581,7 +581,7 @@ class TestExternalAccessBlocked:
         materializer = FileSourceMaterializer(project)
         assert materializer.materialize_and_run(
             source, "SELECT SUM(x) AS total FROM sales", {}, "sales"
-        ) == [{"total": 1}]
+        )[0] == [{"total": 1}]
         assert any("read_csv" in q for q in statements["scratch"])
         assert not any("sum(x)" in q for q in statements["scratch"])
         assert any("sum(x)" in q for q in statements["sandboxed"])
@@ -632,7 +632,7 @@ def test_parallel_queries_with_same_alias_are_isolated(
     def run(source: CsvSourceConfig) -> str:
         return materializer.materialize_and_run(
             source, "SELECT value FROM shared", {}, "source"
-        )[0]["value"]
+        )[0][0]["value"]
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(run, [source_a, source_b] * 10))
@@ -673,7 +673,7 @@ class TestParquetMaterialize:
             "SELECT product, sales FROM products ORDER BY sales DESC",
             {},
             "products",
-        )
+        )[0]
         assert len(rows) == 3
         assert rows[0]["product"] == "C"
 
@@ -846,7 +846,7 @@ class TestVariableSubstitution:
             "SELECT region, amount FROM sales WHERE region = '{{ region }}'",
             {"region": "North"},
             "sales",
-        )
+        )[0]
 
         # Should return only North rows, not empty (pre-fix) or all rows
         assert len(rows) == 2
@@ -961,7 +961,7 @@ class TestFileTableTypeFidelity:
 
         summed = mat.materialize_and_run(
             source, "SELECT SUM(amount) AS s FROM orders", {}, "orders"
-        )
+        )[0]
         assert summed[0]["s"] == Decimal("3.30")
 
     def test_decimal_type_survives_session_reuse(
@@ -977,7 +977,7 @@ class TestFileTableTypeFidelity:
                 "SELECT SUM(amount) AS s, ANY_VALUE(typeof(amount)) AS t FROM orders",
                 {},
                 "orders",
-            )
+            )[0]
             assert rows[0] == {"s": Decimal("3.30"), "t": "DECIMAL(18,2)"}
 
     def test_csv_date_bool_and_int_columns_keep_their_types(
@@ -999,7 +999,7 @@ class TestFileTableTypeFidelity:
             "FROM events LIMIT 1",
             {},
             "events",
-        )
+        )[0]
         assert rows[0] == {"d": "DATE", "a": "BOOLEAN", "n": "BIGINT"}
 
     def test_all_null_csv_column_is_varchar_and_reads_back_null(
@@ -1019,7 +1019,7 @@ class TestFileTableTypeFidelity:
             "FROM sparse WHERE note IS DISTINCT FROM 'x' ORDER BY region",
             {},
             "sparse",
-        )
+        )[0]
         assert [r["region"] for r in rows] == ["North", "South"]
         assert all(r["note"] is None for r in rows)
         assert rows[0]["t"] == "VARCHAR"
@@ -1077,7 +1077,7 @@ class TestFileTableTypeFidelity:
             "SELECT region, note, typeof(note) AS t FROM sales ORDER BY region",
             {},
             "sales_source",
-        )
+        )[0]
         assert [(r["region"], r["note"]) for r in rows] == [
             ("North", None),
             ("South", "ok"),
@@ -1121,7 +1121,7 @@ class TestFileTableTypeFidelity:
             "SELECT region, amount, typeof(amount) AS t FROM sales ORDER BY region",
             {},
             "sales_source",
-        )
+        )[0]
         assert [(r["region"], r["amount"]) for r in rows] == [
             ("North", None),
             ("South", expected_value),
@@ -1149,7 +1149,7 @@ class TestFileTableTypeFidelity:
             "SELECT coalesce(note, '-') AS n, typeof(note) AS t FROM sales",
             {},
             "sales_source",
-        )
+        )[0]
         assert {r["n"] for r in rows} == {"-"}
         assert rows[0]["t"] == "VARCHAR"
 
@@ -1218,7 +1218,7 @@ class TestFileTableTypeFidelity:
 
         rows = mat.materialize_and_run(
             source, "SELECT v, typeof(v) AS t FROM t", {}, "t_source"
-        )
+        )[0]
         assert len(rows) == 2
         assert {r["t"] for r in rows} == {expected_type}
         assert rows[0]["v"] == rows[1]["v"]
@@ -1251,7 +1251,7 @@ class TestFileTableTypeFidelity:
             "SELECT valid_to, typeof(valid_to) AS t FROM t ORDER BY 1",
             {},
             "t_source",
-        )
+        )[0]
         assert [r["valid_to"] for r in rows] == [
             datetime(2025, 1, 1),
             datetime(9999, 12, 31),
@@ -1305,7 +1305,7 @@ class TestFileTableTypeFidelity:
 
         rows = mat.materialize_and_run(
             source, "SELECT region, amount FROM sales ORDER BY amount", {}, "sales"
-        )
+        )[0]
         assert rows == [
             {"region": "North", "amount": 100},
             {"region": "South", "amount": 200},
@@ -1329,7 +1329,7 @@ class TestReaderParity:
             "SELECT note, blank FROM t ORDER BY id",
             {},
             "t_source",
-        )
+        )[0]
         assert rows == [{"note": "", "blank": None}, {"note": "ok", "blank": None}]
 
     def test_missing_value_tokens_are_null_except_in_text(
@@ -1347,7 +1347,7 @@ class TestReaderParity:
             "SELECT typeof(x) AS tx, x, s, n, f FROM t",
             {},
             "t_source",
-        )
+        )[0]
         assert rows == [
             {"tx": "BIGINT", "x": 1, "s": "abc", "n": None, "f": 1.5},
             {"tx": "BIGINT", "x": None, "s": "NA", "n": None, "f": None},
@@ -1367,7 +1367,7 @@ class TestReaderParity:
             "SELECT city FROM t",
             {},
             "t_source",
-        )
+        )[0]
         assert rows == [{"city": "Zürich"}]
 
     def test_an_all_null_parquet_column_keeps_its_declared_type(
@@ -1389,7 +1389,7 @@ class TestReaderParity:
             "SELECT typeof(d) AS d, typeof(n) AS n FROM t",
             {},
             "t_source",
-        )
+        )[0]
         assert rows == [{"d": "DATE", "n": "VARCHAR"}]
 
     def test_a_parquet_json_column_stays_json(
@@ -1410,7 +1410,7 @@ class TestReaderParity:
             "SELECT typeof(j) AS t, j->>'a' AS a FROM t",
             {},
             "t_source",
-        )
+        )[0]
         assert rows == [{"t": "JSON", "a": "1"}]
 
 
@@ -1503,7 +1503,7 @@ class TestParquetTypesDuckDBRefuses:
             "SELECT SUM(v) AS s, ANY_VALUE(typeof(v)) AS t FROM t",
             {},
             "t_source",
-        )
+        )[0]
         assert rows[0] == {"s": 4.0, "t": "FLOAT"}
 
     def test_decimal256_nested_in_a_list_is_refused(
@@ -1549,7 +1549,7 @@ class TestParquetTypesDuckDBRefuses:
 
         rows = mat.materialize_and_run(
             source, "SELECT typeof(v) AS t FROM t", {}, "t_source"
-        )
+        )[0]
         assert rows[0]["t"] == "STRUCT(half FLOAT)"
 
     def test_duplicate_parquet_column_names_are_stamped_not_renamed(

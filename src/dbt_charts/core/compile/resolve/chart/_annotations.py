@@ -85,6 +85,7 @@ from dbt_charts.core.compile.models.style.theme.annotations import (
     NoteAnnotationMarksStyle,
     NoteAnnotationThemeStyle,
     NoteLineMarkStyle,
+    NotePositionStyle,
     NoteRectMarkStyle,
     RuleAnnotationMarksStyle,
     RuleAnnotationStyle,
@@ -95,6 +96,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
     series_colors,
 )
+from dbt_charts.core.compile.models.style.theme.legend import LegendEdge
 from dbt_charts.core.compile.resolve.chart._annotation_stats import (
     FitError,
     TooFewRows,
@@ -1408,7 +1410,11 @@ def _style(
         marks = marks.model_copy(
             update={
                 "text": marks.text.model_copy(
-                    update={"position": theme.frame.text.position}
+                    update={
+                        "position": NotePositionStyle.model_validate(
+                            theme.frame.text.position.model_dump()
+                        )
+                    }
                 )
             }
         )
@@ -1425,7 +1431,11 @@ def _style(
     if annotation.style is not None:
         marks = merge_onto_base(marks, _with_color_tokens(annotation.style.marks, ctx))
     if isinstance(marks, BandAnnotationMarksStyle):
-        marks = _auto_band_position(marks, _band_edge(chart.horizontal, x, y))
+        marks = _auto_position(marks, _band_edge(chart.horizontal, x, y))
+    if isinstance(marks, NoteAnnotationMarksStyle) and isinstance(
+        theme, NoteAnnotationThemeStyle
+    ):
+        marks = _auto_position(marks, _note_edge(annotation, chart.horizontal, theme))
     if isinstance(marks, TrendAnnotationMarksStyle):
         marks = _label_follows_line(marks)
     if series_ink is None:
@@ -1476,9 +1486,23 @@ def _band_edge(
     return "right" if spans_screen_y and not spans_screen_x else "top"
 
 
-def _auto_band_position(
-    marks: BandAnnotationMarksStyle, edge: Literal["top", "right"]
-) -> BandAnnotationMarksStyle:
+def _note_edge(
+    annotation: Annotation, horizontal: bool, theme: NoteAnnotationThemeStyle
+) -> LegendEdge | None:
+    """A note's `auto` edge: past the value, or the frame's edge for a frame note."""
+    if _is_frame_note(annotation):
+        return theme.frame.text.position.edge
+    return "right" if horizontal else "top"
+
+
+_PositionedMarks = TypeVar(
+    "_PositionedMarks", BandAnnotationMarksStyle, NoteAnnotationMarksStyle
+)
+
+
+def _auto_position(
+    marks: _PositionedMarks, edge: LegendEdge | None
+) -> _PositionedMarks:
     position = marks.text.position
     resolved = position.model_copy(
         update={

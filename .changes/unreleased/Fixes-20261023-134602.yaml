@@ -1,0 +1,3 @@
+kind: Fixes
+body: A left-aligned numeric table column now warns when its digits won't line up, or when left align has no visible effect.
+time: 2026-10-23T13:46:02.075972-07:00

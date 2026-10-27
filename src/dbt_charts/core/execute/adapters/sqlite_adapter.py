@@ -5,6 +5,10 @@ Purpose: Execute SQL queries against a SQLite file using stdlib sqlite3 (read-on
 
 Opens every connection in URI read-only mode so the driver refuses all writes.
 Cloud never registers this adapter in its build_cloud_adapter_registry factory.
+
+SQLite is dynamically typed and the driver reports no result types, so column
+types are inferred from the returned values, as for a values query. A column
+with no non-null value (every column of an empty result) is declared ``string``.
 """
 
 from __future__ import annotations
@@ -13,6 +17,12 @@ import sqlite3
 from pathlib import Path  # noqa: TID251 — roots relative sqlite paths
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.column_types import (
+    ColumnType,
+    declared_literal_cells,
+    literal_schema,
+    reject_duplicate_columns,
+)
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
@@ -33,7 +43,6 @@ from dbt_charts.core.execute.adapters.base import (
     connection_failure,
     handle_adapter_error,
     plain_error,
-    reject_duplicate_columns,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import (
@@ -205,9 +214,11 @@ class SqliteAdapter(BaseAdapter):
 
         reject_duplicate_columns(columns)
         data = [dict(zip(columns, row, strict=False)) for row in rows]
+        schema = literal_schema(data, columns, untyped=ColumnType(kind="string"))
         return QueryResult(
-            data=data,
+            data=declared_literal_cells(data, schema),
             columns=columns,
+            schema=schema,
             resolved_relations=resolved_relations or None,
             truncated_reason=truncated_reason,
         )

@@ -258,19 +258,3 @@ def test_render_chart_routes_table_conditional_formatting_through_v2_svg(
     _route_and_compare(
         monkeypatch, "table", chart_def, query_registry, query_registry["q"].rows
     )
-
-
-@pytest.mark.parametrize("family", ["kpi", "table", "spark_bar", "callout"])
-def test_get_emitter_rejects_non_vl(family: str) -> None:
-    """get_emitter has no arms for non-VL families — they raise an ERR-coded RenderError."""
-    from dbt_charts.core.render.chart.emitters import get_emitter
-    from dbt_charts.core.render.errors import RenderError
-
-    spec = _FAMILIES[family]
-    data = _data_for(family)
-    v2_model = normalize_chart(
-        spec["chart_id"], spec["chart_def"], spec["query_registry"], sources={}
-    )
-    resolved = resolve(v2_model, data, chart_style_context=_board_ctx())
-    with pytest.raises(RenderError, match="No emitter registered"):
-        get_emitter(resolved)

@@ -67,7 +67,7 @@ class TestJsonGlob:
 
         rows = mat.materialize_and_run(
             source, "SELECT run, score FROM reports ORDER BY run", {}, "evals"
-        )
+        )[0]
 
         assert [r["run"] for r in rows] == ["a", "b"]
         assert [r["score"] for r in rows] == [10, 20]
@@ -90,7 +90,7 @@ class TestJsonGlob:
 
         rows = mat.materialize_and_run(
             source, "SELECT run_id, pass_rate FROM reports ORDER BY run_id", {}, "evals"
-        )
+        )[0]
 
         assert [r["run_id"] for r in rows] == ["a", "b"]
 
@@ -103,7 +103,9 @@ class TestJsonGlob:
         source = JsonSourceConfig(type="json", files={"report": "data/report.json"})
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT run_id FROM report", {}, "evals")
+        rows = mat.materialize_and_run(
+            source, "SELECT run_id FROM report", {}, "evals"
+        )[0]
 
         assert len(rows) == 1
         assert rows[0]["run_id"] == "x"
@@ -123,7 +125,7 @@ class TestJsonGlob:
 
         rows = mat.materialize_and_run(
             source, "SELECT n FROM reports ORDER BY n", {}, "evals"
-        )
+        )[0]
 
         assert [r["n"] for r in rows] == [1, 2, 3]
 
@@ -160,7 +162,7 @@ class TestCsvGlob:
             "SELECT region, amount FROM sales ORDER BY amount",
             {},
             "sales_source",
-        )
+        )[0]
 
         assert [r["region"] for r in rows] == ["North", "South"]
         assert [r["amount"] for r in rows] == [100, 200]
@@ -211,7 +213,7 @@ class TestGlobFanoutCap:
 
         rows = mat.materialize_and_run(
             source, "SELECT count(*) AS n FROM reports", {}, "evals"
-        )
+        )[0]
         assert rows[0]["n"] == cap
 
 
@@ -266,7 +268,7 @@ class TestFileSourceMaxTablesCap:
         )
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM a", {}, "evals")
+        rows = mat.materialize_and_run(source, "SELECT id FROM a", {}, "evals")[0]
         assert rows[0]["id"] == 1
 
     def test_project_config_cannot_raise_above_ceiling(
@@ -337,7 +339,7 @@ class TestFileSourceMaxBytesCap:
         source = JsonSourceConfig(type="json", files={"small": "data/small.json"})
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM small", {}, "evals")
+        rows = mat.materialize_and_run(source, "SELECT id FROM small", {}, "evals")[0]
         assert rows[0]["id"] == 1
 
     def test_project_config_cannot_raise_above_ceiling(
@@ -376,7 +378,7 @@ class TestFileSourceMaxBytesCap:
         source = JsonSourceConfig(type="json", files={"rows": "data/rows.json"})
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM rows", {}, "evals")
+        rows = mat.materialize_and_run(source, "SELECT id FROM rows", {}, "evals")[0]
         assert rows[0]["id"] == 1
 
     def test_parquet_is_measured_from_its_footer_not_a_multiplier(
@@ -414,7 +416,7 @@ class TestFileSourceMaxBytesCap:
         )
         mat = _mat(project)
 
-        rows = mat.materialize_and_run(source, "SELECT id FROM events", {}, "evals")
+        rows = mat.materialize_and_run(source, "SELECT id FROM events", {}, "evals")[0]
         assert len(rows) == 50
 
     def test_parquet_over_the_cap_by_measured_size_still_raises(
@@ -493,7 +495,7 @@ class TestFileSourceMaxBytesCap:
             "SELECT id FROM events",
             {},
             "evals",
-        )
+        )[0]
         parquet_rows = _mat(project).materialize_and_run(
             ParquetSourceConfig(
                 type="parquet", files={"events": "data/events.parquet"}
@@ -501,7 +503,7 @@ class TestFileSourceMaxBytesCap:
             "SELECT id FROM events",
             {},
             "evals",
-        )
+        )[0]
 
         assert len(csv_rows) == len(parquet_rows) == 2_000
 
@@ -615,7 +617,7 @@ class TestGlobColumnConsistency:
 
         rows = mat.materialize_and_run(
             source, "SELECT region, amount FROM sales", {}, "sales_source"
-        )
+        )[0]
 
         assert rows == [{"region": "North", "amount": 100}]
 
@@ -633,7 +635,7 @@ class TestGlobColumnConsistency:
 
         rows = mat.materialize_and_run(
             source, "SELECT id, score FROM reports ORDER BY id", {}, "evals"
-        )
+        )[0]
         assert [r["id"] for r in rows] == [1, 2]
 
 

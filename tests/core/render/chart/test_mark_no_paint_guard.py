@@ -4,7 +4,7 @@
 ...)`` when a plotting-family chart's query returns rows, at least one measure value
 is genuinely non-zero, and every mark it drew is degenerate — a chart-shaped hole with
 no error and no warning. The engine raises the same error itself for the cartesian
-families; the guard here covers a pie's and a map's SVG. All-zero measure data is a faithful blank render (the engine
+families and the geo families; the guard here covers a pie's SVG. All-zero measure data is a faithful blank render (the engine
 painting exactly what the data said) and must not error. These tests pin: a linked
 chart (marks wrapped in ``<a xlink:href>``) must not be misread as blank; a chart with
 one legitimate zero-valued bar among several must not be flagged as fully blank; an
@@ -26,7 +26,7 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_yaml
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.models.chart.normalized import Chart, PointMapChart
+from dbt_charts.core.compile.models.chart.normalized import Chart, PieChart
 from dbt_charts.core.compile.models.primitives import BoardLinks
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
@@ -118,17 +118,15 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
     from dbt_charts.core.render.converters import chart as converters_chart
 
     data = [
-        {"lat": 40.0, "lng": -100.0, "val": 10},
-        {"lat": 41.0, "lng": -101.0, "val": 20},
+        {"kind": "a", "val": 10},
+        {"kind": "b", "val": 20},
     ]
-    chart = PointMapChart(
-        id="test_map",
-        type="point_map",
-        projection="albersUsa",
+    chart = PieChart(
+        id="test_pie",
+        type="pie",
         query_name="q",
-        latitude="lat",
-        longitude="lng",
-        size="val",
+        theta="val",
+        color="kind",
     )
     executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
     executor.execute_query.return_value = data
@@ -141,7 +139,7 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
         converters_chart, "render_chart_artifact", return_value=marks_free_svg
     ):
         svg, _height = render_chart_item(
-            resolve(chart, data, chart_style_context=_CHART_CTX),
+            resolve(chart, data, chart_style_context=_CHART_CTX, width=300),
             executor,
             variables={},
             available_width=300,

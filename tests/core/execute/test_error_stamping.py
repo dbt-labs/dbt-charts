@@ -28,6 +28,9 @@ _EXECUTE_ROOT = DBT_CHARTS_PKG_DIR / "core" / "execute"
 # touching this list. Shrinks only.
 ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
+        # adapters/base.py — an adapter returning a malformed result is an
+        # implementer contract breach; no authored input reaches this raise.
+        ("adapters/base.py", "QueryResult.__init__"),
         # adapters/databricks_connection_manager.py
         (
             "adapters/databricks_connection_manager.py",

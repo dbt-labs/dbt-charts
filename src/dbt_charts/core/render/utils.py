@@ -28,28 +28,6 @@ def resolve_tone_color(tone: ToneLiteral, tones: KpiTonesStyle) -> str:
     return getattr(tones, tone)
 
 
-def is_integer_key_value(value: Any) -> bool:
-    """Return True when a runtime value can join an integer-valued lookup key."""
-    if value is None or isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return True
-    if isinstance(value, float):
-        return value.is_integer()
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return False
-        if stripped.isdigit():
-            return True
-        try:
-            parsed = float(stripped)
-        except ValueError:
-            return False
-        return parsed.is_integer()
-    return False
-
-
 from dbt_charts.core.text.humanize import slug_to_text as slug_to_text  # re-exported
 
 

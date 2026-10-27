@@ -177,6 +177,7 @@ class TestClassifyWarehouseErrorPreservesDbtChartsErrorCode:
         assert result.error.code is ERR_UNPARSEABLE_SQL
 
 
+@pytest.mark.usefixtures("typed_via_execute")
 class TestDbtAdapterSurfacesClassifiedErrorCode:
     """End-to-end through DbtAdapter._execute: a warehouse failure gets a
     typed code, not the ERR-INTERNAL fallback."""
@@ -344,6 +345,7 @@ class _CleanupCrashingAdapter:
             raise AttributeError("'NoneType' object has no attribute 'close'")
 
 
+@pytest.mark.usefixtures("typed_via_execute")
 class TestDbtAdapterConnectFailureSurvivesCleanupCrash:
     def test_reports_the_credential_error_not_the_cleanup_crash(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

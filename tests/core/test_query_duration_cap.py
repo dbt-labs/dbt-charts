@@ -139,6 +139,7 @@ class TestResolveMaxQueryDurationSeconds:
             )
 
 
+@pytest.mark.usefixtures("typed_via_execute")
 class TestStatementTimeoutInjection:
     """The dialect-native timeout SQL is sent once at connection setup so
     the warehouse enforces a per-statement cap for all queries on that
@@ -243,6 +244,7 @@ class TestStatementTimeoutInjection:
         assert f"SET statement_timeout = '{global_default}s'" in sql
 
 
+@pytest.mark.usefixtures("typed_via_execute")
 class TestQueryDurationExceeded:
     """When the warehouse raises a statement-timeout error, the adapter
     reclassifies it as a clean duration-exceeded error and does not retry —

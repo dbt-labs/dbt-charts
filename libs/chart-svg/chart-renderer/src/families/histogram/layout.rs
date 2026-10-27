@@ -137,7 +137,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let symbol_entries: Vec<legend::LegendEntry> = match &bound.legend {
         Some(LegendPaint::Symbols(entries)) if r.legend.visible => entries
             .iter()
-            .map(|(label, fill)| legend::LegendEntry { label, fill, symbol: Some(swatch), series_key: None })
+            .map(|(label, fill)| legend::LegendEntry { label, fill, symbol: Some(swatch), series_key: None, recede: None })
             .collect(),
         _ => Vec::new(),
     };
@@ -393,15 +393,23 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), "histogram", "axis_y.grid.color")?;
         let gw = ax_y.grid.width.unwrap_or(1.0);
         let go = ax_y.grid.opacity.unwrap_or(1.0);
+        // The gridline on the axis edge also reaches under the outermost tick strokes.
+        let (floor_x1, floor_x2) =
+            crate::common::floor_rule_span(plot_w, ax_x, x_ticks_visible, x_ticks_domain.iter().map(|&tv| x_scale.position(tv).round() + 0.5));
         let lines = y_ticks
             .iter()
             .map(|&tv| {
                 let gy = y_pos(tv).round() + 0.5;
+                let (x1, x2) = if crate::common::rule_on_edge([gy - 0.5], x_edge.edge_y(plot_h)) {
+                    (format!("{:.3}", floor_x1.min(0.5)), format!("{:.3}", floor_x2.max(plot_w + 0.5)))
+                } else {
+                    ("0.5".to_string(), format!("{:.3}", plot_w + 0.5))
+                };
                 Node::Line(
                     Attrs::new()
-                        .set("x1", "0.5")
+                        .set("x1", x1)
                         .set("y1", format!("{gy:.3}"))
-                        .set("x2", format!("{:.3}", plot_w + 0.5))
+                        .set("x2", x2)
                         .set("y2", format!("{gy:.3}"))
                         .set("stroke", gc)
                         .set("stroke-width", gw.to_string())
@@ -481,12 +489,9 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let x_group_y = x_edge.at(plot_h, x_axis_offset) + 0.5;
     let mut x_items = Vec::new();
     if x_ticks_visible {
-        let tc = crate::common::required_ink(ax_x.ticks.color.as_deref(), "histogram", "axis_x.ticks.color")?;
-        let tw = ax_x.ticks.width.unwrap_or(1.0);
-        for &tv in x_ticks_domain {
-            let gx = x_scale.position(tv).round() + 0.5;
-            x_items.push(tick_line(PLACES, (gx, x_group_y), (gx, x_group_y + x_edge.sign() * x_tick_len), tc, tw));
-        }
+        let xs = x_ticks_domain.iter().map(|&tv| x_scale.position(tv).round() + 0.5);
+        let end_y = x_group_y + x_edge.sign() * x_tick_len;
+        x_items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (x_edge.edge_y(plot_h), end_y), PLACES)?);
     }
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();

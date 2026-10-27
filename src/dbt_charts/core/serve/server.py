@@ -101,11 +101,6 @@ from dbt_charts.core.registered_views.loader import load_builtin_registry
 from dbt_charts.core.registered_views.router import RouteRouter
 from dbt_charts.core.render.dir_context import directory_listing
 from dbt_charts.core.render.nav import nav_content_left, render_nav_html
-from dbt_charts.core.render.svg_cache import (
-    MemorySvgStore,
-    RenderedSvgCache,
-    svg_cache_scope,
-)
 from dbt_charts.core.serve.alias_index import AliasIndex, board_file_candidates
 from dbt_charts.core.serve.watcher import FileWatcher
 
@@ -451,7 +446,6 @@ def _render_board_file(
     variables: dict[str, Any],
     project: FilesystemProject,
     adapter_registry: AdapterRegistry,
-    svg_store: MemorySvgStore,
     clock: Callable[[], datetime],
     serve_storage_prefix: str | None = None,
     max_workers: int | None = None,
@@ -515,28 +509,25 @@ def _render_board_file(
         else ""
     )
 
-    svg_memo = RenderedSvgCache(loader=svg_store.load)
-    with svg_cache_scope(svg_memo):
-        result = render_dashboard(
-            board=board,
-            variables=variables,
-            strict_variables=False,
-            restated_check=True,
-            project=project,
-            adapter_registry=adapter_registry,
-            format="html",
-            link_context=link_context,
-            url_mount_dir=url_mount_dir,
-            result_cache=result_cache,
-            max_workers=max_workers,
-            compile_result=compile_result,
-            chrome=nav_fragment,
-            livereload=True,
-            # A served board can re-run its queries, so it gets live controls.
-            controls=True,
-            clock=clock,
-        )
-    svg_store.save(svg_memo.minted)
+    result = render_dashboard(
+        board=board,
+        variables=variables,
+        strict_variables=False,
+        restated_check=True,
+        project=project,
+        adapter_registry=adapter_registry,
+        format="html",
+        link_context=link_context,
+        url_mount_dir=url_mount_dir,
+        result_cache=result_cache,
+        max_workers=max_workers,
+        compile_result=compile_result,
+        chrome=nav_fragment,
+        livereload=True,
+        # A served board can re-run its queries, so it gets live controls.
+        controls=True,
+        clock=clock,
+    )
 
     if result.status == "ok":
         data = result.data
@@ -1086,7 +1077,6 @@ def create_server(
     # root, not charts_dir, which lives under it and need not exist yet.
     app.state.watcher = FileWatcher(str(core_project.root), cache_path=boot.path)
     app.state.registry_leases = RegistryLeases()
-    app.state.svg_store = MemorySvgStore()
     # Serializes concurrent registry / alias-index rebuilds.
     _refresh_lock = asyncio.Lock()
 
@@ -1121,7 +1111,12 @@ def create_server(
             # handle; only its cached config needs busting so the rebuild sees the edit.
             config_mtime = _config_mtime(project.root)
             if config_mtime != state.config_mtime:
-                for key in ("config_file", "sources", "warnings_ignore"):
+                for key in (
+                    "config_file",
+                    "sources",
+                    "warnings_ignore",
+                    "locked_schema_version",
+                ):
                     vars(project).pop(key, None)
                 old_registry = state.adapter_registry
                 state.adapter_registry = _build_registry(project)
@@ -1345,7 +1340,6 @@ def create_server(
                     adapter_registry=request.state.adapter_registry,
                     serve_storage_prefix=app.state.serve_storage_prefix,
                     max_workers=app.state.max_workers,
-                    svg_store=app.state.svg_store,
                     clock=clock,
                     result_cache=app.state.result_cache,
                     download_format=fmt,
@@ -1416,7 +1410,6 @@ def create_server(
                 adapter_registry=request.state.adapter_registry,
                 serve_storage_prefix=app.state.serve_storage_prefix,
                 max_workers=app.state.max_workers,
-                svg_store=app.state.svg_store,
                 clock=clock,
                 result_cache=app.state.result_cache,
                 download_format=download_format,
@@ -1495,7 +1488,6 @@ def create_server(
             adapter_registry=request.state.adapter_registry,
             serve_storage_prefix=app.state.serve_storage_prefix,
             max_workers=app.state.max_workers,
-            svg_store=app.state.svg_store,
             clock=clock,
             result_cache=app.state.result_cache,
             download_format=download_format,

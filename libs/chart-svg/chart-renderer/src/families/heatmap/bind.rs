@@ -138,7 +138,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     } else if kind == ColorKind::Categories {
         Coloring::Categories(color_categories(&r, &rows)?)
     } else {
-        let (min, max, ticks, scale) = r.style.color_gradient.ladder(&rows, &r.color)?;
+        let (min, max, ticks, scale) = r.style.color_gradient.ladder(&rows, &r.color, r.legend.visible)?;
         Coloring::Gradient { min, max, ticks, scale }
     };
 

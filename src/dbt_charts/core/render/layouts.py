@@ -39,6 +39,10 @@ from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
+from dbt_charts.core.render.board_variables import (
+    committed_text,
+    current_daterange_presets,
+)
 from dbt_charts.core.render.chart.rendering import render_layout_item
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import resolve_active_tab_index
@@ -303,11 +307,17 @@ def _build_toggle_url(
 ) -> str:
     """Build URL that changes one param while preserving all others.
 
-    Only includes non-default variable values to keep URLs clean.
+    Every set variable rides along; a preset daterange links its preset id,
+    so the link stays rolling.
     """
     from urllib.parse import urlencode
 
-    params = {k: str(v) for k, v in variables.items() if v is not None}
+    presets = current_daterange_presets()
+    params = {
+        k: presets[k] if k in presets else committed_text(v)
+        for k, v in variables.items()
+        if v is not None
+    }
     params[param_name] = new_value
     return "?" + urlencode(params)
 

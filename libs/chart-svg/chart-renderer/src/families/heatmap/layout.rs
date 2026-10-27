@@ -352,7 +352,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         _ => bound
             .ladder
             .iter()
-            .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::Circle), series_key: None })
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::Circle), series_key: None, recede: None })
             .collect(),
     };
     let symbol_legend_box = (has_legend && (ladder_symbols || matches!(bound.coloring, Coloring::Categories(_))))
@@ -576,25 +576,23 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let x_label_row = x_axis_top + x_sign * (x_tick_len + x_label_pad);
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
-    let x_tick_color = crate::common::required_ink(ax_x.ticks.color.as_deref(), "heatmap", "axis_x.ticks.color")?;
-    let x_tick_w_px = ax_x.ticks.width.unwrap_or(1.0);
     let x_title_y = x_label_row
         + x_sign * (x_label_reach + ax_x.title.padding.unwrap_or(10.0))
         + measure::baseline_shift(x_edge.baseline(), ax_x.title.font.size_or(11.0));
     let x_title = crate::common::axis_title_at(&x_title_text, &ax_x.title, plot_left + plot_w / 2.0, x_title_y, None);
     let x_axis = if let Some(axis) = &x_dates {
-        let mut nodes = axis.nodes(ax_x, plot_left, plot_w, plot_top + x_edge.edge_y(plot_h))?;
+        let mut nodes = axis.nodes(ax_x, plot_left, plot_w, (plot_top + x_edge.edge_y(plot_h), plot_top + x_edge.edge_y(plot_h)))?;
         nodes.extend(x_title);
         nodes
     } else {
         let caption = category_axis_caption(&x_title_text, ax_x, x_domain)?;
         let mut items = Vec::new();
+        if x_tick_visible {
+            let xs = (0..x_texts.len()).map(|i| plot_left + (x_scale.position_at(i) + cell_w / 2.0).floor() + AXIS_TRANSLATE);
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (plot_top + x_edge.edge_y(plot_h), x_axis_top + x_sign * x_tick_len), 2)?);
+        }
         for (i, band_text) in x_texts.iter().enumerate() {
             let center = x_scale.position_at(i) + cell_w / 2.0;
-            if x_tick_visible {
-                let tick_x = plot_left + center.floor() + AXIS_TRANSLATE;
-                items.push(tick_line(2, (tick_x, x_axis_top), (tick_x, x_axis_top + x_sign * x_tick_len), x_tick_color, x_tick_w_px));
-            }
             let label_x = plot_left + center;
             let dy = measure::baseline_shift(x_baseline, x_label_fs);
             let face = LabelFace {

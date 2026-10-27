@@ -1443,6 +1443,22 @@ def list_palettes(
     return sorted(n for n, e in idx.items() if e["family"] == family)
 
 
+def palette_family(name: str) -> PaletteFamily:
+    """The family of a palette reference, resolved the way ``palette()`` resolves it.
+
+    Raises ``UnknownPaletteError`` for a name ``palette()`` would reject.
+    """
+    base, _ = _split_trailing_variants(name)
+    if ":" in base or base.endswith("_r"):
+        base = _parse_palette_reference(base)[0]
+    if base in PALETTE_WARN_ALIASES:
+        base = PALETTE_WARN_ALIASES[base]
+    entry = _get_index().get(base)
+    if entry is None:
+        raise UnknownPaletteError(_unknown_palette_message(base, authored=name))
+    return entry["family"]
+
+
 # ── Continuous dark-companion lookup (sequential/diverging table swap) ──────
 #
 # Categorical label ink is now derived live (label_ink()); this lookup is the

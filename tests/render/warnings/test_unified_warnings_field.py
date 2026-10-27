@@ -63,7 +63,6 @@ class TestBoardRenderResultUnifiedWarnings:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"x": 1, "y": 2}]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry = Mock()
@@ -115,7 +114,6 @@ class TestBoardRenderResultUnifiedWarnings:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"x": 1, "y": 2}]
-        ok.column_descriptions = None
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry = Mock()

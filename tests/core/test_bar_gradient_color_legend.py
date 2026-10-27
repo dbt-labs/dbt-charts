@@ -26,6 +26,7 @@ charts:
       color:
         gradient:
           palette: ["#ffffff", "#0000ff"]
+          nice: false
 {multiples}
 rows:
   - c
@@ -44,5 +45,5 @@ def test_gradient_bar_draws_one_gradient_legend_and_the_authored_ramp(
 
     assert svg.count("<linearGradient") == 1
     assert "role-legend-symbol" not in svg
-    # The ramp's own end: the highest w paints the palette's blue.
+    # The ramp's own end (`nice: false` keeps the drawn extent): the highest w paints the palette's blue.
     assert 'fill="rgb(0, 0, 255)"' in svg

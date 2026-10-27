@@ -20,6 +20,7 @@ from dbt_charts.core.compile import compile as df_compile
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
+from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 
@@ -27,7 +28,6 @@ def _ok_adapter(value: int = 1) -> Mock:
     ok = Mock()
     ok.is_success = True
     ok.data = [{"value": value}]
-    ok.column_descriptions = None
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()
@@ -252,7 +252,7 @@ class TestTtlLazyExpiry:
                 conn.execute(
                     "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
                     "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
-                    list(key),
+                    [key[0], stored_query_hash(key[1]), key[2]],
                 )
 
             adapter.execute.return_value.data = [{"value": 2}]
@@ -320,7 +320,7 @@ class TestTtlLazyExpiry:
                 conn.execute(
                     "UPDATE _query_outcomes SET written_at_utc = TIMESTAMP '2000-01-01' "
                     "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
-                    list(key),
+                    [key[0], stored_query_hash(key[1]), key[2]],
                 )
 
             executor2 = Executor(
@@ -490,7 +490,7 @@ def _age_shared_entry(cache, board, names: tuple[str, str], hours: int) -> None:
         conn.execute(
             "UPDATE _query_outcomes SET written_at_utc = ? "
             "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ?",
-            [aged, *key],
+            [aged, key[0], stored_query_hash(key[1]), key[2]],
         )
 
 
@@ -848,7 +848,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             ok = Mock()
             ok.is_success = True
             ok.data = [{"value": i} for i in range(10)]
-            ok.column_descriptions = None
             ok.resolved_relations = None
             ok.truncated_reason = None
             adapter.execute.return_value = ok
@@ -892,7 +891,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
                 {"value": "x" * 500},
                 {"value": "also small"},
             ]
-            ok.column_descriptions = None
             ok.resolved_relations = None
             ok.truncated_reason = None
             adapter.execute.return_value = ok
@@ -936,7 +934,6 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
             ok = Mock()
             ok.is_success = True
             ok.data = [{"value": "x" * 500}, {"value": "small"}]
-            ok.column_descriptions = None
             ok.resolved_relations = None
             ok.truncated_reason = None
             adapter.execute.return_value = ok

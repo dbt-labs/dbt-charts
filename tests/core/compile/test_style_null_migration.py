@@ -128,6 +128,56 @@ def test_null_on_other_field_fails_naming_the_path() -> None:
     assert "inner_radius: null is not accepted" in str(raised.value)
 
 
+@pytest.mark.parametrize("axis", ["axis_x", "axis_y"])
+def test_null_axis_title_names_the_field_and_the_label_that_hides_it(
+    axis: str,
+) -> None:
+    with pytest.raises(ValidationError) as raised:
+        AuthoredBoard.model_validate(
+            {"title": "t", "style": {"charts": {axis: {"title": None}}}},
+            context=AUTHORED_INPUT,
+        )
+    message = str(raised.value)
+    assert f"style.charts.{axis}" in message
+    assert "title: null is not accepted" in message
+    assert 'x_label: ""' in message
+    assert 'y_label: ""' in message
+
+
+@pytest.mark.parametrize(
+    ("axis_style", "accepted"),
+    [
+        ({"title": None}, False),
+        ({"title": {"visible": False}}, True),
+        ({"labels": {"format": None}}, True),
+        ({}, True),
+    ],
+)
+def test_axis_title_null_accept_reject_table(
+    axis_style: dict[str, object], accepted: bool
+) -> None:
+    def parse() -> AuthoredBoard:
+        return AuthoredBoard.model_validate(
+            {"title": "t", "style": {"charts": {"axis_y": axis_style}}},
+            context=AUTHORED_INPUT,
+        )
+
+    if accepted:
+        parse()
+    else:
+        with pytest.raises(ValidationError, match="title: null is not accepted"):
+            parse()
+
+
+def test_an_other_null_gets_no_axis_label_hint() -> None:
+    with pytest.raises(ValidationError) as raised:
+        AuthoredBoard.model_validate(
+            {"title": "t", "style": {"charts": {"pie": {"inner_radius": None}}}},
+            context=AUTHORED_INPUT,
+        )
+    assert "y_label" not in str(raised.value)
+
+
 def test_map_entry_null_is_untouched() -> None:
     style = {"formats": {"a": None}, "font": {"size": None}}
     assert _rewrite_style_nulls(style, (StylePatch,)) == {

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.dbt_manifest import LoadedManifest, RefIndex, ref_index
 from dbt_charts.core.execute.adapters.base import QueryResult, ResolvedRelation
 from dbt_charts.core.execute.adapters.dbt_utils import resolve_dbt_refs_with_provenance
@@ -34,6 +35,7 @@ class TestResolvedRelation:
         result = QueryResult(
             data=[{"id": 1}],
             resolved_relations=[rel],
+            schema=literal_schema([{"id": 1}]),
         )
         assert len(result.resolved_relations) == 1
         assert result.resolved_relations[0].schema == "analytics"
@@ -141,6 +143,7 @@ class TestExecutorProvenance:
         from unittest.mock import MagicMock
 
         from dbt_charts.core.compile.models.board.normalized import Board
+        from dbt_charts.core.compile.models.primitives import Regional
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.execute.executor import Executor
 
@@ -151,11 +154,13 @@ class TestExecutorProvenance:
         board.variable_defaults = {}
         board.variable_registry = {}
         board.sources = {}
+        board.regional = Regional()
 
         rel = ResolvedRelation(ref_name="orders", schema="dev_dave")
         mock_result = QueryResult(
             data=[{"id": 1}],
             resolved_relations=[rel],
+            schema=literal_schema([{"id": 1}]),
         )
 
         mock_registry = MagicMock()

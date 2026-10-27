@@ -37,8 +37,8 @@ if TYPE_CHECKING:
 # mdsvg's own pattern for an inline image, the one its parser matches.
 _IMAGE_SYNTAX = MarkdownParser.IMAGE
 
-# The project the compile or render in flight reads images from. Scoped, like
-# ``svg_cache_scope``, because images resolve in painters a dozen frames below
+# The project the compile or render in flight reads images from. Scoped,
+# because images resolve in painters a dozen frames below
 # the entry point. The anchor is never ambient: each surface passes its
 # content's own ``base_dir``.
 _image_source: ContextVar[Project | None] = ContextVar("_image_source", default=None)

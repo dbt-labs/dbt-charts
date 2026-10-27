@@ -5,6 +5,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+import duckdb
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
@@ -17,7 +19,9 @@ class _BlockingCursor:
         entered: threading.Event,
         release: threading.Event | None = None,
     ) -> None:
-        self.description = [("answer", None, None, None, None, None, None)]
+        self.description = [
+            ("answer", duckdb.sqltype("INTEGER"), None, None, None, None, None)
+        ]
         self._entered = entered
         self._release = release
 

@@ -1,0 +1,3 @@
+kind: Features
+body: 'Add `locked_schema_version` to dbt_charts.yml to pin the board syntax a project targets: `dct validate` and Cloud reject newer syntax, `dct migrate` stops at the lock, and warnings added after that release are silenced.'
+time: 2026-10-26T15:00:24.104201-07:00

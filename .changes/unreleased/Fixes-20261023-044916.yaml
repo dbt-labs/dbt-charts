@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'A table column with align: left on numbers now left-aligns them.'
+time: 2026-10-23T04:49:16.294676-07:00

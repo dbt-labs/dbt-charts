@@ -20,7 +20,6 @@ from dbt_charts.agent_api.project_session import ProjectSession
 from dbt_charts.core.compile import compile_file
 from dbt_charts.core.compile.config import reset_config
 from dbt_charts.core.project import InMemoryBoard
-from dbt_charts.core.render.svg_cache import RenderedSvgCache
 
 _STAMP = re.compile(r'data-rendered-at="[^"]*"|(?<=clip)\d+(?=-)')
 
@@ -74,7 +73,6 @@ def _render(session: ProjectSession, path: Any, text: str) -> str:
         format="svg",
         scale=2.0,
         standalone=True,
-        svg_cache=RenderedSvgCache(),
     )
     assert isinstance(result.data, str)
     return _STAMP.sub("", result.data)

@@ -19,13 +19,20 @@ from typing import TYPE_CHECKING, Any
 
 import nanoarrow as na
 
+from dbt_charts.core.column_types import (
+    ColumnKind,
+    ColumnType,
+    as_declared,
+    column_type_error,
+    map_to_json,
+    reject_duplicate_columns,
+)
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NUMERIC_OVERFLOW
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.base import (
     QueryResult,
     RowFetchLimit,
     apply_row_limit_truncation,
-    reject_duplicate_columns,
 )
 from dbt_charts.core.execute.arrow_ingest import relabel
 
@@ -105,12 +112,9 @@ def arrow_to_query_result(
     """Convert a driver's Arrow table into the engine's row-dict result.
 
     Column names keep the case the query gave them, as the in-process DuckDB
-    adapter does. A map value becomes a list of ``{"key", "value"}`` dicts.
+    adapter does. A map becomes a JSON object (see ``map_to_json``).
 
-    ``column_descriptions`` is deliberately left unset. Arrow carries a schema,
-    not PEP 249 ``cursor.description`` tuples, and nothing downstream reads them
-    off a warehouse result: filling ``display_size`` / ``precision`` /
-    ``null_ok`` from an Arrow field would invent values rather than report them.
+    The result's schema is the Arrow schema, mapped by :func:`declared_arrow_type`.
 
     Args:
         table: The driver's result, already bounded to ``limit.fetch_limit`` rows
@@ -122,24 +126,10 @@ def arrow_to_query_result(
 
     Raises:
         ExecutionError: ERR-RESULT-NUMERIC-OVERFLOW when a scale-0 decimal
-            column holds a value wider than a 64-bit integer.
+            column holds a value wider than a 64-bit integer;
+            ERR-RESULT-COLUMN-TYPE when a column's Arrow type has no mapping.
     """
-    schema = na.c_schema(table.schema)
-    fields = list(schema.children)
-    names = [_name(field) for field in fields]
-    reject_duplicate_columns(names)
-    storage = _storage(schema)
-    if _needs_decoding(schema):
-        chunks = [relabel(na.c_array(chunk), storage) for chunk in table.iter_chunks()]
-        table = (
-            na.Array.from_chunks(chunks)
-            if chunks
-            else na.Array.from_chunks([], storage)
-        )
-    columns = [
-        _narrow_decimals(name, field, _decoded(table.child(i).to_pylist(), field))
-        for i, (name, field) in enumerate(zip(names, fields, strict=True))
-    ]
+    names, column_types, columns = arrow_columns(table)
     data: list[dict[str, Any]] = (  # type-state: explicit_any — warehouse row values
         [dict(zip(names, values, strict=True)) for values in zip(*columns, strict=True)]
         if columns
@@ -149,8 +139,117 @@ def arrow_to_query_result(
     return QueryResult(
         data=rows,
         columns=names,
+        schema=column_types,
         resolved_relations=resolved_relations,
         truncated_reason=truncated_reason,
+    )
+
+
+def arrow_columns(
+    table: na.Array,
+) -> tuple[
+    list[str],
+    dict[str, ColumnType],
+    list[list[Any]],  # type-state: explicit_any — warehouse cell values
+]:
+    """The column names, declared types and declared-form cells of *table*."""
+    schema = na.c_schema(table.schema)
+    fields = list(schema.children)
+    names = [_name(field) for field in fields]
+    reject_duplicate_columns(names)
+    column_types = {
+        name: declared_arrow_type(name, field, narrowed=True)
+        for name, field in zip(names, fields, strict=True)
+    }
+    storage = _storage(schema)
+    if _needs_decoding(schema):
+        chunks = [relabel(na.c_array(chunk), storage) for chunk in table.iter_chunks()]
+        table = (
+            na.Array.from_chunks(chunks)
+            if chunks
+            else na.Array.from_chunks([], storage)
+        )
+    columns = [
+        _narrow_decimals(name, field, _decoded(name, table.child(i).to_pylist(), field))
+        for i, (name, field) in enumerate(zip(names, fields, strict=True))
+    ]
+    # A zoned timestamp arrives in its own zone; the declared cell is UTC.
+    columns = [
+        [as_declared(cell, column_types[name]) for cell in values]
+        if "datetime_tz" in str(column_types[name])
+        else values
+        for name, values in zip(names, columns, strict=True)
+    ]
+    return names, column_types, columns
+
+
+# Arrow C data interface format strings.
+_ARROW_SCALARS: dict[str, ColumnKind] = {
+    **dict.fromkeys("cCsSiIlL", "integer"),
+    **dict.fromkeys("efg", "float"),
+    "b": "boolean",
+    **dict.fromkeys(("u", "U"), "string"),
+    **dict.fromkeys(("z", "Z"), "bytes"),
+    "n": "string",
+    **dict.fromkeys(("tdD", "tdm"), "date"),
+}
+# Times carry their unit after the prefix; a fixed-size binary its width.
+_ARROW_PREFIXES: tuple[tuple[str, ColumnKind], ...] = (
+    ("tt", "time"),
+    ("w:", "bytes"),
+)
+
+
+def declared_arrow_type(
+    name: str, field: CSchema, *, narrowed: bool = False
+) -> ColumnType:
+    """The declared type of the Arrow *field* that holds column *name*.
+
+    A map is ``json``, its cells a dict, and a NULL-typed column is ``string``.
+    With *narrowed*, a top-level decimal is an ``integer`` (scale 0) or a
+    ``float``: what its cells are narrowed to (:func:`_narrow_decimals`).
+
+    Raises:
+        ExecutionError: ERR-RESULT-COLUMN-TYPE for a type outside the
+            vocabulary (duration, interval, union, a map keyed by a nested
+            type, ...).
+    """
+    field = _held(field)
+    form = field.format
+    if form == "+m":
+        (entries,) = field.children
+        key_form = _held(next(iter(entries.children))).format
+        if key_form.startswith(("+", "z", "Z", "w:")):
+            raise column_type_error(
+                name, f"the map key of Arrow format {key_form!r} has no JSON form"
+            )
+        return ColumnType(kind="json")
+    if form in ("+l", "+L") or form.startswith("+w:"):
+        (item,) = field.children
+        return ColumnType(kind="list", element=declared_arrow_type(name, item))
+    if form == "+s":
+        return ColumnType(
+            kind="struct",
+            fields=tuple(
+                (_name(child), declared_arrow_type(name, child))
+                for child in field.children
+            ),
+        )
+    if _is_decimal(field):
+        if not narrowed:
+            return ColumnType(kind="decimal")
+        return ColumnType(kind="integer" if _decimal_params(field)[1] == 0 else "float")
+    if form in _ARROW_SCALARS:
+        return ColumnType(kind=_ARROW_SCALARS[form])
+    if form.startswith("ts"):  # tsu:<zone>: a zone makes it an instant
+        return ColumnType(kind="datetime_tz" if form.partition(":")[2] else "datetime")
+    for prefix, kind in _ARROW_PREFIXES:
+        if form.startswith(prefix):
+            return ColumnType(kind=kind)
+    raise column_type_error(
+        name,
+        f"the Arrow format {form!r} has no declared mapping; "
+        "cast it in the query (e.g. to VARCHAR)",
     )
 
 
@@ -201,15 +300,17 @@ def _storage(schema: CSchema) -> CSchema:
 
 
 def _decoded(
+    name: str,
     values: list[Any],  # type-state: explicit_any — warehouse cell values
     field: CSchema,
 ) -> list[Any]:  # type-state: explicit_any — warehouse cell values
     if not _needs_decoding(field):
         return values
-    return [_decode(value, field) for value in values]
+    return [_decode(name, value, field) for value in values]
 
 
 def _decode(
+    name: str,
     value: Any,  # type-state: explicit_any — one warehouse cell value
     field: CSchema,
 ) -> Any:  # type-state: explicit_any — one warehouse cell value
@@ -223,10 +324,15 @@ def _decode(
             -scale, Context(prec=precision)
         )
     children = list(field.children)
+    if field.format == "+m":
+        entries = [_decode(name, item, children[0]) for item in value]
+        return map_to_json(name, ((e["key"], e["value"]) for e in entries))
     if field.format == "+s":
-        return {child.name: _decode(value[child.name], child) for child in children}
+        return {
+            child.name: _decode(name, value[child.name], child) for child in children
+        }
     if children:
-        return [_decode(item, children[0]) for item in value]
+        return [_decode(name, item, children[0]) for item in value]
     return value
 
 

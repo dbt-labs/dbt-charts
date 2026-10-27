@@ -66,6 +66,7 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.compile.resolve.style.palette import (
     palette as resolve_named_palette,
+    palette_family,
 )
 from dbt_charts.core.compile.resolve.style.typography import (
     concrete_title_style,
@@ -587,6 +588,7 @@ def _with_resolved_scale_stops(
                         {
                             **target.model_dump(exclude_unset=True),
                             "resolved_stops": stops,
+                            "family": palette_family(target.palette),
                         }
                     )
                 )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+import tempfile
 from collections.abc import Callable
 from datetime import time, timedelta
 from decimal import Decimal
@@ -25,9 +26,10 @@ from dbt_charts.core.render.sizing import get_markdown_text_height
 _QUERIES = """
 queries:
   summary:
-    columns: [net_revenue, vs_plan, churn]
-    values:
-      - [4210000.5, 0.042, null]
+    source: mem
+    sql: >-
+      SELECT CAST(4210000.5 AS DOUBLE) AS net_revenue,
+      CAST(0.042 AS DOUBLE) AS vs_plan, CAST(NULL AS DOUBLE) AS churn
   top_regions:
     columns: [region, revenue]
     values:
@@ -56,13 +58,21 @@ queries:
 """
 
 
+# A typed NULL needs a SQL source; a values column of only nulls has no type.
+_SOURCES_DIR = Path(tempfile.mkdtemp(prefix="dct-text-query-refs-"))
+(_SOURCES_DIR / "dbt_charts.yml").write_text(
+    'sources:\n  mem:\n    type: duckdb\n    path: ":memory:"\n'
+)
+
+
 def _executor(yaml: str, local_project: Callable[..., Project]) -> Executor:
-    result = compile(yaml)
+    project = local_project(_SOURCES_DIR)
+    result = compile(yaml, project_sources=project.sources)
     assert result.success, result.errors
     assert result.board is not None
     return Executor(
         result.board,
-        adapter_registry=build_adapter_registry(local_project(Path.cwd())),
+        adapter_registry=build_adapter_registry(project),
         query_registry=result.query_registry,
     )
 

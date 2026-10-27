@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
@@ -17,6 +18,9 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_UNPARSEABLE_SQL
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
+from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
+
+pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
 
 def _make_query(sql: str, source: str = "db") -> SqlQuery:
@@ -1284,11 +1288,10 @@ class TestExecutePrepared:
         prepared = adapter.prepare_sql(query, source_config=source)
         assert not isinstance(prepared, QueryResult)
 
-        table = MagicMock()
-        table.column_names = ["N"]
-        table.rows = [(1,)]
         pool = MagicMock()
-        pool.execute.return_value = table
+        pool.execute.return_value = TypedRows(
+            ["N"], [(1,)], [ColumnType(kind="integer")]
+        )
         # A placeholder-shaped literal that a second render would corrupt.
         wrapped = prepared.model_copy(update={"sql": "SELECT '{{ x }}' AS wrapped"})
         with patch.object(adapter, "_get_source_pool", return_value=pool):

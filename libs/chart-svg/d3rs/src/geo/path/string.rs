@@ -4,6 +4,7 @@
 
 use crate::geo::stream::GeoStream;
 use crate::js_math::js_round;
+use std::fmt::Write;
 
 #[derive(Clone, Copy)]
 enum Point {
@@ -43,11 +44,17 @@ impl PathString {
     }
 
     fn number(&self, v: f64) -> String {
-        js_number_string(self.rounding.map_or(v, |k| js_round(v * k) / k))
+        let mut out = String::new();
+        push_number(&mut out, self.rounding, v);
+        out
     }
 
-    fn append(&self, command: char, x: f64, y: f64) -> String {
-        format!("{command}{},{}", self.number(x), self.number(y))
+    /// `command` and the point, written straight into the path.
+    fn append(&mut self, command: char, x: f64, y: f64) {
+        self.out.push(command);
+        push_number(&mut self.out, self.rounding, x);
+        self.out.push(',');
+        push_number(&mut self.out, self.rounding, y);
     }
 
     fn circle_fragment(&self) -> String {
@@ -80,12 +87,12 @@ impl GeoStream for PathString {
     fn point(&mut self, x: f64, y: f64, _z: Option<f64>) {
         match self.point {
             Point::First => {
-                self.out.push_str(&self.append('M', x, y));
+                self.append('M', x, y);
                 self.point = Point::Rest;
             }
-            Point::Rest => self.out.push_str(&self.append('L', x, y)),
+            Point::Rest => self.append('L', x, y),
             Point::Isolated => {
-                self.out.push_str(&self.append('M', x, y));
+                self.append('M', x, y);
                 if self.circle.is_none() {
                     self.circle = Some(self.circle_fragment());
                 }
@@ -96,6 +103,19 @@ impl GeoStream for PathString {
 
     fn sphere(&mut self) {
         unreachable!("d3's PathString has no sphere: a projection's pre-clip consumes it, and geoPath rejects it otherwise");
+    }
+}
+
+/// `v` rounded to `rounding` as d3 does, then printed as JavaScript prints a number.
+///
+/// Between 1e-6 and 1e21 JavaScript prints the shortest round-trip digits in positional notation, which is what
+/// Rust's `Display` prints, so those write straight into `out`; the rest take [`js_number_string`].
+fn push_number(out: &mut String, rounding: Option<f64>, v: f64) {
+    let v = rounding.map_or(v, |k| js_round(v * k) / k);
+    if (1e-6..1e21).contains(&v.abs()) {
+        write!(out, "{v}").expect("writing to a String cannot fail");
+    } else {
+        out.push_str(&js_number_string(v));
     }
 }
 
@@ -133,4 +153,43 @@ fn js_number_string(v: f64) -> String {
         }
     };
     format!("{sign}{body}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The positional fast path must print what JavaScript's algorithm does for every double it takes.
+    #[test]
+    fn the_fast_number_path_prints_what_javascript_prints() {
+        // A xorshift stream of doubles across magnitudes, rounded to three digits as paths are and raw.
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut checked = 0;
+        for _ in 0..400_000 {
+            let bits = next();
+            let magnitude = 10f64.powi((bits % 30) as i32 - 8);
+            let unit = (next() >> 11) as f64 / (1u64 << 53) as f64;
+            let sign = if next() & 1 == 0 { 1.0 } else { -1.0 };
+            let raw = sign * unit * magnitude;
+            for (rounding, v) in [(None, raw), (Some(1000.0), raw), (Some(1000.0), (raw * 1000.0).round() / 1000.0)] {
+                let mut fast = String::new();
+                push_number(&mut fast, rounding, v);
+                let expected = js_number_string(rounding.map_or(v, |k| js_round(v * k) / k));
+                assert_eq!(fast, expected, "{v:e}");
+                checked += 1;
+            }
+        }
+        for v in [1e-6, 9.999999999999999e-7, 1e-7, 1e21, 9.999999999999999e20, 123456789012345680000.0, -0.0, 0.0, 5e-324, f64::MAX] {
+            let mut fast = String::new();
+            push_number(&mut fast, None, v);
+            assert_eq!(fast, js_number_string(v), "{v:e}");
+        }
+        assert!(checked > 1_000_000);
+    }
 }

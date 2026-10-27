@@ -11,14 +11,17 @@ Covers:
 
 from __future__ import annotations
 
+import datetime as dt
 import subprocess
 import sys
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
@@ -43,13 +46,68 @@ class _FakeRow:
         return iter(self._data.values())
 
 
+# Named after the snowflake.snowpark.types classes the adapter keys on.
+class LongType:
+    pass
+
+
+class StringType:
+    pass
+
+
+class VariantType:
+    pass
+
+
+class NullType:
+    pass
+
+
+class VectorType:
+    pass
+
+
+class GeographyType:
+    pass
+
+
+@dataclass
+class DecimalType:
+    scale: int
+
+
+@dataclass
+class _Zone:
+    name: str
+
+
+@dataclass
+class TimestampType:
+    tz: _Zone
+
+
+@dataclass
+class _FakeField:
+    datatype: Any
+
+
+@dataclass
+class _FakeSchema:
+    fields: list[_FakeField]
+
+
 class _FakeResultSet:
     def __init__(
-        self, rows: list[_FakeRow], fetched: list[_FakeRow], columns: list[str]
+        self,
+        rows: list[_FakeRow],
+        fetched: list[_FakeRow],
+        columns: list[str],
+        datatypes: list[Any],
     ) -> None:
         self._rows = rows
         self._fetched = fetched
         self.columns = columns
+        self.schema = _FakeSchema([_FakeField(datatype) for datatype in datatypes])
 
     def to_local_iterator(self) -> Iterator[_FakeRow]:
         for row in self._rows:
@@ -69,7 +127,9 @@ class _FakeSession:
         database: str | None = '"ANALYTICS"',
         schema: str | None = '"PUBLIC"',
         columns: list[str] | None = None,
+        datatypes: list[Any] | None = None,
     ) -> None:
+        self._datatypes = datatypes
         self._rows = [_FakeRow(r) for r in (rows or [])]
         self._columns = columns or list((rows or [{}])[0])
         self._raises = raises
@@ -88,7 +148,11 @@ class _FakeSession:
         self.received_sql.append(sql)
         if self._raises is not None:
             raise self._raises
-        return _FakeResultSet(self._rows, self.fetched, self._columns)
+        datatypes = self._datatypes or [
+            LongType() if isinstance(value, int) else StringType()
+            for value in (self._rows[0] if self._rows else [None] * len(self._columns))
+        ]
+        return _FakeResultSet(self._rows, self.fetched, self._columns, datatypes)
 
 
 def _snowflake_source() -> SnowflakeSourceConfig:
@@ -271,6 +335,7 @@ def test_stream_is_closed_when_the_ceiling_stops_the_fetch_early(
 
     class _Stream:
         columns = ["ID"]
+        schema = _FakeSchema([_FakeField(LongType())])
 
         def sql(self, sql: str) -> _Stream:
             return self
@@ -294,6 +359,95 @@ def test_stream_is_closed_when_the_ceiling_stops_the_fetch_early(
         source_config=_snowflake_source(),
     )
     assert closed == [True]
+
+
+def test_variant_is_json_and_decoded(tmp_path: Any) -> None:
+    session = _FakeSession(
+        rows=[{"V": '{"a": [1, 2]}'}, {"V": None}], datatypes=[VariantType()]
+    )
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    result = adapter.execute(
+        SqlQuery(sql="SELECT v FROM t", source="sf"), source_config=_snowflake_source()
+    )
+    assert result.schema == {"v": ColumnType(kind="json")}
+    assert result.data == [{"v": {"a": [1, 2]}}, {"v": None}]
+
+
+def test_null_type_is_string(tmp_path: Any) -> None:
+    session = _FakeSession(rows=[{"N": None}], datatypes=[NullType()])
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    result = adapter.execute(
+        SqlQuery(sql="SELECT null AS n", source="sf"), source_config=_snowflake_source()
+    )
+    assert result.schema == {"n": ColumnType(kind="string")}
+
+
+def test_an_unmapped_type_raises_naming_the_column(tmp_path: Any) -> None:
+    session = _FakeSession(rows=[{"V": 1}], datatypes=[VectorType()])
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    with pytest.raises(ExecutionError) as excinfo:
+        adapter.execute(
+            SqlQuery(sql="SELECT v FROM t", source="sf"),
+            source_config=_snowflake_source(),
+        )
+    assert "'v'" in str(excinfo.value)
+    assert "VectorType" in str(excinfo.value)
+
+
+def test_geography_is_declared_string(tmp_path: Any) -> None:
+    session = _FakeSession(rows=[{"G": "{}"}], datatypes=[GeographyType()])
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    result = adapter.execute(
+        SqlQuery(sql="SELECT g FROM t", source="sf"), source_config=_snowflake_source()
+    )
+    assert result.schema == {"g": ColumnType(kind="string")}
+
+
+def test_decimal_scale_splits_integer_from_decimal(tmp_path: Any) -> None:
+    session = _FakeSession(
+        rows=[{"A": 1, "B": 1}], datatypes=[DecimalType(0), DecimalType(2)]
+    )
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    result = adapter.execute(
+        SqlQuery(sql="SELECT a, b FROM t", source="sf"),
+        source_config=_snowflake_source(),
+    )
+    assert result.schema == {
+        "a": ColumnType(kind="integer"),
+        "b": ColumnType(kind="decimal"),
+    }
+
+
+def test_timestamp_zone_splits_wall_clock_from_instant(tmp_path: Any) -> None:
+    plus_two = dt.timezone(dt.timedelta(hours=2))
+    session = _FakeSession(
+        rows=[
+            {
+                "N": dt.datetime(2024, 1, 1, 12),
+                "Z": dt.datetime(2024, 1, 1, 12, tzinfo=plus_two),
+                "L": dt.datetime(2024, 1, 1, 12, tzinfo=plus_two),
+            }
+        ],
+        datatypes=[
+            TimestampType(_Zone("NTZ")),
+            TimestampType(_Zone("TZ")),
+            TimestampType(_Zone("LTZ")),
+        ],
+    )
+    adapter = SnowparkAdapter(session=session, project=FilesystemProject(tmp_path))
+    result = adapter.execute(
+        SqlQuery(sql="SELECT n, z, l FROM t", source="sf"),
+        source_config=_snowflake_source(),
+    )
+    assert [result.schema[c].kind for c in ("n", "z", "l")] == [
+        "datetime",
+        "datetime_tz",
+        "datetime_tz",
+    ]
+    row = result.data[0]
+    assert row["n"].tzinfo is None
+    assert row["z"] == dt.datetime(2024, 1, 1, 10, tzinfo=dt.UTC)
+    assert row["z"].tzinfo is dt.UTC
 
 
 def test_identifier_quoted_columns_become_raw_names(tmp_path: Any) -> None:

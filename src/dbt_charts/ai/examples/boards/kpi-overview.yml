@@ -51,11 +51,10 @@ charts:
         format: currency
       support:
         format: percent_delta
-        tone: positive
     support:
       value: revenue_delta
       label: vs prior period
-      glyph: "▲"
+      good: up
 
   orders_kpi:
     type: kpi
@@ -65,11 +64,10 @@ charts:
     support:
       value: orders_delta
       label: vs prior period
-      glyph: "▼"
+      good: up
     style:
       support:
         format: percent_delta
-        tone: negative
 
   aov_kpi:
     type: kpi

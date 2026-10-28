@@ -259,8 +259,6 @@ commands:
   - {cmd: serve, flags: ["--detach", "--port 8080"], option: "--detach"}
   - {cmd: serve, flags: ["--stop", "--port 8080"], option: "--stop"}
 
-init_flags: [--yes, --no-mcp, --no-vscode, --no-cursor]
-
 source_types: [postgres, snowflake, bigquery, databricks]
 
 formats:

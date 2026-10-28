@@ -19,6 +19,8 @@ from dbt_charts.agent_api import looker as module
 from dbt_charts.agent_api.looker import import_looker
 from dbt_charts.agent_api.source_bundle import BundleError
 
+from .._outline import missing_options, tile_block
+
 FIXTURES = Path(__file__).parent / "looker_fixtures"
 SECRET = "sekrit-client-secret"
 TOKEN = "tok-abc-123"
@@ -96,6 +98,7 @@ def test_writes_complete_bundle(http: Any, tmp_path: Path) -> None:
         "png/dashboard.png",
         "kpi/total-revenue-11.csv",
         "queries/101.sql",
+        "queries/101.totals.sql",
         "queries/101.json",
         "queries/102.sql",
         "queries/102.json",
@@ -319,3 +322,94 @@ def test_reused_out_dir_is_refused_without_force_and_replaced_with_it(
     import_looker("3539", out=out, base_url=BASE, force=True)
     assert not (out / "kpi/stale-9.csv").exists()
     assert (out / "source.json").is_file()
+
+
+def test_pivot_totals_statements_are_split_from_the_main_query(
+    http: Any, tmp_path: Path
+) -> None:
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+    queries = tmp_path / "b" / "queries"
+
+    assert (queries / "101.sql").read_text() == "SELECT 1 AS m FROM orders\nLIMIT 500\n"
+    totals = (queries / "101.totals.sql").read_text()
+    assert totals.startswith("-- sql for creating the total and/or determining pivot")
+    assert "SELECT 3 AS g" in totals
+    assert not (queries / "102.totals.sql").exists()
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    assert "queries/101.sql" in outline and "queries/101.totals.sql" in outline
+
+
+def test_source_json_marks_the_outline_version(http: Any, tmp_path: Path) -> None:
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    source = json.loads((tmp_path / "b" / "source.json").read_text())
+    assert source["outline_version"] == 2
+
+
+def test_every_tile_names_the_file_holding_its_full_config(
+    http: Any, tmp_path: Path
+) -> None:
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+    outline = (tmp_path / "b" / "outline.md").read_text()
+
+    assert "config: queries/101.json" in tile_block(outline, "10")
+    assert "config: queries/102.json" in tile_block(outline, "11")
+
+
+def test_outline_carries_reader_visible_options_without_hex_colors(
+    http: Any, tmp_path: Path
+) -> None:
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+    block = tile_block((tmp_path / "b" / "outline.md").read_text(), "10")
+
+    assert "row_total: right" in block and "total: true" in block
+    assert "stacking: normal" in block
+    assert "growth" in block and "0.0%" in block
+    assert "Average order" in block
+    assert '"type":"greater than","value":1000' in block
+    assert '"bold":true' in block
+    assert '"is_active":true' in block
+    assert "#FF9D99" not in block and "#bfdfff" not in block
+    assert "palette" not in block
+
+
+def test_every_raw_option_is_in_the_outline_or_the_styling_set(
+    http: Any, tmp_path: Path
+) -> None:
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+    block = tile_block((tmp_path / "b" / "outline.md").read_text(), "10")
+    query = json.loads(_fixture("query_101.json"))
+
+    assert missing_options(query, block, lambda k: k in module.NON_OPTION_KEYS) == []
+    assert missing_options(query["vis_config"], block, module.is_styling_key) == []
+
+
+def test_unlisted_vis_option_still_reaches_the_outline(
+    http: Any, tmp_path: Path
+) -> None:
+    query = json.loads(_fixture("query_101.json"))
+    query["vis_config"]["brand_new_vendor_option"] = "on"
+    http[("GET", "/queries/101")] = lambda: json.dumps(query).encode()
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    block = tile_block((tmp_path / "b" / "outline.md").read_text(), "10")
+    assert "brand_new_vendor_option: on" in block
+
+
+def test_every_raw_element_and_merge_option_is_in_the_outline_or_dropped(
+    http: Any, tmp_path: Path
+) -> None:
+    import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+    outline = (tmp_path / "b" / "outline.md").read_text()
+    dashboard = json.loads(_fixture("dashboard.json"))
+
+    for element in dashboard["dashboard_elements"]:
+        block = tile_block(outline, element["id"])
+        assert (
+            missing_options(element, block, module.ELEMENT_NON_OPTION_KEYS.__contains__)
+            == []
+        ), element["id"]
+    merge = json.loads(_fixture("merge_query_m7.json"))
+    block = tile_block(outline, "12")
+    assert missing_options(merge, block, module.NON_OPTION_KEYS.__contains__) == []
+    assert "merge_fields=" in block

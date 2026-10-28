@@ -288,6 +288,9 @@ pub(crate) struct BandXAxis {
     /// The category labels as drawn: cut to the axis's `labelLimit`, which their ink is not.
     pub(super) cat_shown: Vec<String>,
     pub(super) temporal_labels: Option<Vec<TemporalLabel>>,
+    /// Labels named over a calendar period coarser than the buckets: each label's x and every boundary
+    /// tick's x in plot pixels, replacing the per-band ticks and band-centered labels.
+    pub(super) interval: Option<BandInterval>,
     pub(super) cat_angle: f64,
     pub(super) cat_baseline: String,
     pub(super) cat_align: String,
@@ -312,6 +315,35 @@ pub(crate) struct BandXAxis {
     /// labels are painted rotated; the title then follows Vega's
     /// `axisTitleLayout` (`s + titlePadding`) instead of the flat row's law.
     pub(super) cat_title_reach: Option<f64>,
+}
+
+/// The x a band axis tick at plot position `x` snaps to: the pixel `x` falls in, centered. One snap for every band tick
+/// (boundary or band center), so a tick at the plot's left edge lands inside it.
+pub(super) fn band_tick_snap(x: f64) -> f64 {
+    x.floor() + 0.5
+}
+
+#[derive(Clone)]
+pub(crate) struct BandInterval {
+    pub(super) ticks: Vec<f64>,
+    pub(super) labels: Vec<(TemporalLabel, f64)>,
+}
+
+/// The x in plot pixels of bucket coordinate `at` on `band` (bucket `i` spans `i..i + 1`): inside a
+/// bucket its own bar span, on a boundary the middle of the gap between the neighboring bars. `None`
+/// where a bucket the coordinate touches has no band.
+pub(super) fn bucket_x(band: &BandScale, domain: &[String], at: f64) -> Option<f64> {
+    let edges = |i: usize| band.position(&domain[i]).map(|left| (left, left + band.bandwidth()));
+    let i = at.floor() as usize;
+    if at.fract() != 0.0 {
+        return Some(edges(i)?.0 + at.fract() * band.bandwidth());
+    }
+    match (i.checked_sub(1).map(edges), domain.get(i).map(|_| edges(i))) {
+        (Some(prev), Some(next)) => Some((prev?.1 + next?.0) / 2.0),
+        (None, Some(next)) => Some(next?.0),
+        (Some(prev), None) => Some(prev?.1),
+        (None, None) => None,
+    }
 }
 
 /// The continuous-x arm's own x-axis (ticks, flush-anchored d3 labels, and
@@ -452,19 +484,18 @@ impl BandXAxis {
         // tick x 9), spanning the axis offset to offset + length below the plot.
         // Thinned labels draw the cadence of the labels: no tick under an unlabeled band.
         if x_tick_len > 0.0 {
-            let ticked: Vec<&String> = match &self.temporal_labels {
-                Some(tls) => tls
+            let tick_xs: Vec<f64> = match (&self.interval, &self.temporal_labels) {
+                (Some(iv), _) => iv.ticks.clone(),
+                (None, Some(tls)) => tls
                     .iter()
                     .enumerate()
                     .filter(|(k, tl)| crate::families::scatter_axis::is_painted(parity_shown.get(*k).copied().unwrap_or(true), &tl.row1))
-                    .map(|(_, tl)| &cat_domain[tl.domain_idx])
+                    .filter_map(|(_, tl)| band.position(&cat_domain[tl.domain_idx]))
+                    .map(|x| x + band.bandwidth() / 2.0)
                     .collect(),
-                None => cat_domain.iter().collect(),
+                (None, None) => cat_domain.iter().filter_map(|cat| band.position(cat)).map(|x| x + band.bandwidth() / 2.0).collect(),
             };
-            let xs = ticked
-                .into_iter()
-                .filter_map(|cat| band.position(cat))
-                .map(|band_x| plot_left + (band_x + band.bandwidth() / 2.0 - 0.5).round() + 0.5);
+            let xs = tick_xs.into_iter().map(|x| plot_left + band_tick_snap(x));
             let end_y = group_y + sign * x_tick_len;
             items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y), 2)?);
         }
@@ -484,10 +515,15 @@ impl BandXAxis {
             )
         };
         if let Some(tlabels) = temporal_labels.filter(|_| cat_angle == 0.0 && ax_x.labels.visible != Some(false)) {
-            for (k, tl) in tlabels.iter().enumerate() {
-                let cat = &cat_domain[tl.domain_idx];
-                let Some(band_x) = band.position(cat) else { continue };
-                let label_x = plot_left + band_x + band.bandwidth() / 2.0;
+            let placed: Vec<(usize, f64, &TemporalLabel)> = match &self.interval {
+                Some(iv) => iv.labels.iter().enumerate().map(|(k, (tl, x))| (k, plot_left + x, tl)).collect(),
+                None => tlabels
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, tl)| Some((k, plot_left + band.position(&cat_domain[tl.domain_idx])? + band.bandwidth() / 2.0, tl)))
+                    .collect(),
+            };
+            for (k, label_x, tl) in placed {
                 let hidden = hidden_at(k);
                 let (row1_y, row2_y) = rows_at(cat_label_y, !tl.row2.is_empty());
                 items.push(label(label_x, row1_y, hidden, &tl.row1));

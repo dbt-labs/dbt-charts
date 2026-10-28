@@ -113,6 +113,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     plan_cartesian,
     quantitative_channel_values,
 )
+from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     WIDE_LABEL_FIELD,
     WIDE_VALUE_FIELD,
@@ -147,6 +148,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_ANNOTATION_INVALID,
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
+    ERR_LABELS_LAST_UNSUPPORTED,
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.category_label import category_label_text
@@ -1261,6 +1263,13 @@ def _resolve_bar(
         chart_style_context.formats,
         tooltip_format_values,
     )
+    if bar.marks.bar.labels.visible == "last" and x_ch_type != "temporal":
+        raise CompilationError.from_code(
+            ERR_LABELS_LAST_UNSUPPORTED,
+            chart_id=normalized.id,
+            field_path=f"charts.{normalized.id}.style.marks.bar.labels.visible",
+            where="a bar chart whose category axis is not a time axis",
+        )
     resolved_labels, label_is_house = _label_format_fallback(
         bar.marks.bar.labels,
         ResolvedBarLabels,
@@ -1305,6 +1314,7 @@ def _resolve_bar(
     return ResolvedBarChart(
         **bkw,
         **_ck,
+        tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="bar",

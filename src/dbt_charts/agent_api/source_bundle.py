@@ -2,8 +2,10 @@
 
 Layout (``<root>/``)::
 
-    outline.md        tiles in reading order: type, title, position, filters
-    source.json       tool, url, fetched_at, raw_sha256, plus tool extras
+    outline.md        tiles in reading order: type, title, position, filters,
+                      and every reader-visible option as ``key: value`` lines
+    source.json       tool, url, fetched_at, raw_sha256, outline_version, plus
+                      tool extras
     <raw>             the tool's raw definition, byte for byte
     queries/          compiled SQL (``*.sql``) and query definitions
     kpi/              ``*.csv`` of single-value tiles (may be empty)
@@ -18,10 +20,13 @@ import re
 import shutil
 import tempfile
 import urllib.parse
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
+
+OUTLINE_VERSION = 2
 
 
 def url_origin(parts: urllib.parse.SplitResult) -> str:
@@ -39,6 +44,57 @@ def public_url(ref: str) -> str:
 def slug(text: str, *, fallback: str) -> str:
     """Lowercase ``text`` as a filename-safe slug; ``fallback`` when nothing is left."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or fallback
+
+
+def compact(value: Any) -> str:  # JSON values from vendor APIs are untyped
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False, default=_iso)
+
+
+def _iso(value: object) -> str:
+    """A date a YAML export (Hex) parsed from text, printed as it was written."""
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"{type(value).__name__} is not JSON serializable")
+
+
+def is_empty(value: Any) -> bool:  # JSON values from vendor APIs are untyped
+    """True for null, blank text and empty containers; ``False`` and ``0`` are values."""
+    return (
+        value is None
+        or value in ("", [], {})
+        or (isinstance(value, str) and not value.strip())
+    )
+
+
+def _without(value: Any, keys: frozenset[str]) -> Any:
+    if isinstance(value, dict):
+        kept = {k: _without(v, keys) for k, v in value.items() if k not in keys}
+        return {k: v for k, v in kept.items() if not is_empty(v)}
+    if isinstance(value, list):
+        return [_without(v, keys) for v in value]
+    return value
+
+
+def option_lines(
+    options: dict[str, Any],
+    *,
+    dropped: Callable[[str], bool],
+    nested_dropped: frozenset[str],
+) -> list[str]:
+    """One ``key: value`` line per non-empty option the reader would see.
+
+    Top-level keys for which ``dropped`` is true are styling the target theme
+    owns. Inside the remaining values, dict keys in ``nested_dropped`` (hex
+    colors, palettes) are removed so a rule keeps its threshold but not its hue.
+    """
+    lines: list[str] = []
+    for key, value in options.items():
+        if is_empty(value) or dropped(key):
+            continue
+        kept = _without(value, nested_dropped)
+        if not is_empty(kept):
+            lines.append(f"{key}: {kept if isinstance(kept, str) else compact(kept)}")
+    return lines
 
 
 class BundleError(Exception):
@@ -72,6 +128,7 @@ class SourceBundle:
             "url": self.url,
             "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "raw_sha256": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+            "outline_version": OUTLINE_VERSION,
             **(extra or {}),
         }
         self.write("source.json", json.dumps(source, indent=2) + "\n")

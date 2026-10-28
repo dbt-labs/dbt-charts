@@ -96,6 +96,7 @@ pub(super) fn bar_datum_aria(
     value: f64,
     percent: Option<f64>,
     total: Option<(&'static str, f64)>,
+    extra: &[String],
     native: Option<&NativeTitles>,
 ) -> Result<Option<String>, String> {
     if !tooltip_labels {
@@ -104,7 +105,12 @@ pub(super) fn bar_datum_aria(
     if let Some(titles) = native {
         let mut rows = vec![(titles.x.as_str(), cat.to_string()), (value_title, value_format.paint(value)?)];
         rows.extend(series.map(|s| (titles.series.as_str(), s.to_string())));
-        return Ok(Some(crate::contract::native_label(&rows)));
+        let mut label = crate::contract::native_label(&rows);
+        for row in extra {
+            label.push_str("; ");
+            label.push_str(row);
+        }
+        return Ok(Some(label));
     }
     // `is_standard_date`: line/area's own STRICT `all_temporal` gate
     // (`x_values_are_standard_dates`) -- a field this strict types
@@ -124,6 +130,7 @@ pub(super) fn bar_datum_aria(
         value_format,
         percent,
         total,
+        extra,
     };
     Ok(Some(crate::contract::bar_aria_label(&tt, value)?))
 }
@@ -139,23 +146,12 @@ pub(super) fn imputed_datum_aria(
     grain_format: Option<AuthoredTimeFormat>,
     series: &str,
     order: Option<i64>,
-    value_title: &str,
-    value_format: &FormatSlot,
 ) -> Result<Option<String>, String> {
     if !tooltip_labels {
         return Ok(None);
     }
     let header = crate::contract::tooltip_header_text(cat, detected_tu, is_standard_date, grain_format)?;
-    let tt = crate::contract::BarTooltip {
-        header: &header,
-        series: Some(series),
-        order,
-        value_title,
-        value_format,
-        percent: None,
-        total: None,
-    };
-    Ok(Some(crate::contract::imputed_aria_label(&tt)?))
+    Ok(Some(crate::contract::imputed_aria_label(&header, series, order)))
 }
 
 #[cfg(test)]

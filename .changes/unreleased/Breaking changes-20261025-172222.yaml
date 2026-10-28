@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: 'dct init no longer prompts: it always installs the dct agent skill, skips MCP setup, and prints the VS Code extension link; its --yes, --skills, --mcp, --vscode and --cursor options are removed.'
+time: 2026-10-25T17:22:22.78636235Z

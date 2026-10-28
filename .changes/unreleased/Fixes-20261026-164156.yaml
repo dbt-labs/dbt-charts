@@ -1,0 +1,3 @@
+kind: Fixes
+body: dct validate reports a rejected source config as a formatted diagnostic instead of printing tracebacks.
+time: 2026-10-26T16:41:56.629438-07:00

@@ -41,6 +41,7 @@ def _regional(
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         yield FormatTable(aliases={}, currency=currency)
 

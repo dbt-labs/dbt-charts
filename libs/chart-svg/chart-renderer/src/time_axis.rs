@@ -21,7 +21,7 @@ pub fn date_text_day(text: &str) -> Option<f64> {
 
 /// [`date_text_day`] with whether the wall clock (before any offset) has a nonzero hour, minute or second.
 fn read_clock(text: &str) -> Option<(f64, bool)> {
-    let (y, m, d) = parse_iso_date(text.get(..text.len().min(10))?)?;
+    let (y, m, d) = parse_date_part(text.get(..text.len().min(10))?)?;
     if text.len() <= 10 {
         return Some((days_from_civil(y, m, d) as f64, false));
     }
@@ -57,16 +57,27 @@ fn read_clock(text: &str) -> Option<(f64, bool)> {
     Some((total_ms as f64 / 86_400_000.0, hours != 0 || minutes != 0 || seconds != 0))
 }
 
-/// Parse an ISO date string `"YYYY-MM-DD"` → `(year, month, day)`.
-/// Also accepts `"YYYY-MM"` (day = 1), `"YYYY"` (month = 1, day = 1), and a
-/// datetime `"YYYY-MM-DD[T ]…"` (date part; matches production's
-/// _ISO_DATETIME_RE in time_unit_detect.py). Returns `None` for any other shape
-/// and for a day the month does not have.
+/// A date cell's calendar date on the board's wall clock, `(year, month, day)`: a timestamp carrying `Z` or an
+/// offset is an instant, read in the board zone (`crate::time_zone`); a bare date or a naive timestamp is already
+/// a wall-clock reading. Accepts `"YYYY-MM-DD"`, `"YYYY-MM"` (day 1), `"YYYY"` (January 1) and a datetime
+/// `"YYYY-MM-DD[T ]…"` (production's `_ISO_DATETIME_RE` in time_unit_detect.py). `None` for any other shape, a
+/// day the month does not have, and an instant whose clock does not parse or that lies outside the years the
+/// zone converts.
 pub fn parse_iso_date(s: &str) -> Option<(i32, u8, u8)> {
     let b = s.as_bytes();
     if b.len() > 10 && (b[10] == b'T' || b[10] == b' ') {
-        return parse_iso_date(&s[..10]);
+        if !crate::time_zone::is_aware(s) {
+            return parse_date_part(&s[..10]);
+        }
+        let wall = crate::time_zone::wall_day(date_text_day(s)?).ok()?;
+        return Some(civil_from_days(wall.floor() as i64));
     }
+    parse_date_part(s)
+}
+
+/// `"YYYY-MM-DD"`, `"YYYY-MM"` or `"YYYY"` as written.
+fn parse_date_part(s: &str) -> Option<(i32, u8, u8)> {
+    let b = s.as_bytes();
     match b.len() {
         10 if b[4] == b'-' && b[7] == b'-' => {
             let y = parse_digits4(&b[0..4])?;
@@ -154,11 +165,18 @@ pub(crate) struct Grain {
 impl Instant {
     fn read(text: &str, grain: Grain) -> Result<Self, Unreadable> {
         let (at, timed) = read_clock(text).ok_or_else(|| Unreadable::NotADate(text.to_string()))?;
-        let absolute = text.len() <= 10 || text.get(11..).is_some_and(|clock| clock.contains(['Z', '+', '-']));
-        let floor = grain.unit.map(|tu| floor_day(at.floor() as i64, tu));
+        let absolute = text.len() <= 10 || crate::time_zone::is_aware(text);
+        // An aware instant buckets, and reads its time part and time of day, on the board zone's wall clock.
+        let (wall, timed) = if crate::time_zone::is_aware(text) {
+            let wall = crate::time_zone::wall_day(at).map_err(|_| Unreadable::OutsideYears(text.to_string()))?;
+            (wall, ((wall * 86_400_000.0).round() as i64).rem_euclid(86_400_000) >= 1000)
+        } else {
+            (at, timed)
+        };
+        let floor = grain.unit.map(|tu| floor_day(wall.floor() as i64, tu));
         let pos = match (floor, grain.part) {
             (Some(day), _) => day as f64,
-            (None, Some(part)) => part.instant(at),
+            (None, Some(part)) => part.instant(wall),
             (None, None) => at,
         };
         let nan = !grain.band && floor.is_some_and(|day| civil_from_days(day).0 < 100);

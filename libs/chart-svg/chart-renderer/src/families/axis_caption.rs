@@ -67,7 +67,8 @@ pub enum CaptionScale {
     Numeric { kind: NumericScale, domain: (f64, f64), format: Option<String> },
     /// A `time` (local) or `utc` scale over millisecond instants. `format` is
     /// the axis's strftime `format`.
-    Time { utc: bool, domain: (f64, f64), format: Option<String> },
+    /// `aware`: the instants print their wall clock in the board zone.
+    Time { utc: bool, aware: bool, domain: (f64, f64), format: Option<String> },
 }
 
 /// One axis's caption inputs.
@@ -126,8 +127,8 @@ impl AxisCaption {
             CaptionScale::Numeric { kind, domain, format } => {
                 (kind.name(), span_caption(domain, |v| numeric_text(*kind, *domain, format.as_deref(), v))?)
             }
-            CaptionScale::Time { utc, domain, format } => {
-                (if *utc { "utc" } else { "time" }, span_caption(domain, |v| time_text(*utc, format.as_deref(), v))?)
+            CaptionScale::Time { utc, aware, domain, format } => {
+                (if *utc { "utc" } else { "time" }, span_caption(domain, |v| time_text(*utc, *aware, format.as_deref(), v))?)
             }
         };
         Ok(format!("{xy}-axis{titled} for a {kind} scale with {domain}"))
@@ -152,6 +153,7 @@ pub fn value_axis_caption(
 pub fn date_value_caption(text: &str, axis: &AxisStyle, domain: (f64, f64)) -> Result<AxisCaption, String> {
     let scale = CaptionScale::Time {
         utc: false,
+        aware: false,
         domain: (domain.0 * MS_PER_DAY, domain.1 * MS_PER_DAY),
         format: vega_axis_format(axis, false)?.filter(|spec| super::temporal::is_time_format(spec)),
     };
@@ -163,13 +165,15 @@ pub fn date_value_caption(text: &str, axis: &AxisStyle, domain: (f64, f64)) -> R
 /// calendar grain, a `time` scale over the raw instants without one, and a
 /// numeric scale for a quantitative type. `domain` is the axis's x values,
 /// year-shaped values already read as dates, and for a category the scale's
-/// own order.
+/// own order. `aware`: the column's values are instants, which an unbucketed
+/// axis captions in the board zone.
 pub fn x_axis_caption(
     text: &str,
     axis: &AxisStyle,
     resolution: &XResolution,
     domain: &[String],
     plot_w: f64,
+    aware: bool,
 ) -> Result<AxisCaption, String> {
     match resolution.vl_type {
         VegaType::Ordinal | VegaType::Nominal => {
@@ -213,6 +217,8 @@ pub fn x_axis_caption(
             let (lo, hi) = padded_day_domain((lo, hi), plot_w, pad);
             let scale = CaptionScale::Time {
                 utc: grain.is_some(),
+                // A bucket start is a UTC-midnight date, not an instant: it prints as written.
+                aware: resolution.grain == Grain::None && aware,
                 domain: (lo * MS_PER_DAY, hi * MS_PER_DAY),
                 format,
             };
@@ -312,7 +318,7 @@ fn numeric_text(kind: NumericScale, domain: (f64, f64), spec: Option<&str>, valu
     vega_tick_format(locale, spec, domain.0, domain.1, CAPTION_TICK_COUNT, *value)
 }
 
-fn time_text(utc: bool, spec: Option<&str>, value: &f64) -> Result<String, String> {
+fn time_text(utc: bool, aware: bool, spec: Option<&str>, value: &f64) -> Result<String, String> {
     if !value.is_finite() {
         return Ok("NaN".to_string());
     }
@@ -321,9 +327,16 @@ fn time_text(utc: bool, spec: Option<&str>, value: &f64) -> Result<String, Strin
         None if utc => "%A, %d %B %Y, %X UTC".to_string(),
         None => "%A, %d %B %Y, %X".to_string(),
     };
-    let moment = Moment::from_epoch_millis(value.round() as i64)?;
-    // d3-time-format pads `%Y` to four digits; strftime does not below 1000.
-    strftime(moment, &spec.replace("%Y", &format!("{:04}", moment.year())))
+    let ms = value.round() as i64;
+    let moment = Moment::from_epoch_millis(ms)?;
+    // d3-time-format pads `%Y` to four digits; strftime does not below 1000. The year is the printed clock's.
+    let year = if aware { Moment::from_epoch_millis(crate::time_zone::wall_ms(ms)?)?.year() } else { moment.year() };
+    let text = || strftime(moment, &spec.replace("%Y", &format!("{year:04}")));
+    if aware {
+        return text();
+    }
+    // A naive axis holds wall clocks on the UTC reckoning: they print as written.
+    crate::time_zone::with_time_zone(&crate::time_zone::utc(), text)
 }
 
 /// The `format` Vega's axis carries for `axis.labels.format`
@@ -450,6 +463,7 @@ mod tests {
     fn utc_names_its_domain_through_the_axis_format() {
         let scale = CaptionScale::Time {
             utc: true,
+            aware: false,
             domain: (1_767_225_600_000.0, 1_780_272_000_000.0),
             format: Some("%b %Y".into()),
         };
@@ -458,13 +472,13 @@ mod tests {
 
     #[test]
     fn time_and_utc_without_a_format_spell_out_the_instant() {
-        let utc = CaptionScale::Time { utc: true, domain: (1_767_225_600_000.0, 1_780_272_000_000.0), format: None };
+        let utc = CaptionScale::Time { utc: true, aware: false, domain: (1_767_225_600_000.0, 1_780_272_000_000.0), format: None };
         assert_eq!(
             describe(utc, None),
             "X-axis for a utc scale with values from Thursday, 01 January 2026, 12:00:00 AM UTC \
              to Monday, 01 June 2026, 12:00:00 AM UTC"
         );
-        let local = CaptionScale::Time { utc: false, domain: (0.0, 1_000_000_000_000.0), format: None };
+        let local = CaptionScale::Time { utc: false, aware: false, domain: (0.0, 1_000_000_000_000.0), format: None };
         assert_eq!(
             describe(local, None),
             "X-axis for a time scale with values from Thursday, 01 January 1970, 12:00:00 AM \
@@ -508,7 +522,8 @@ mod tests {
     fn x_caption(axis: &AxisStyle, vl_type: VegaType, grain: Grain, domain: &[&str]) -> String {
         let resolution = XResolution { vl_type, from_data: vl_type, grain, fill_grain: grain };
         let domain: Vec<String> = domain.iter().map(|d| d.to_string()).collect();
-        let caption = x_axis_caption("", axis, &resolution, &domain, 600.0).expect("a caption");
+        let aware = crate::time_zone::all_aware(domain.iter().map(String::as_str));
+        let caption = x_axis_caption("", axis, &resolution, &domain, 600.0, aware).expect("a caption");
         with_number_locale(&NumberLocale::en_us(), || {
             with_time_locale(&en_us(), || caption.describe(AxisChannel::X).expect("describes"))
         })
@@ -576,6 +591,22 @@ mod tests {
         assert_eq!(
             x_caption(&axis, VegaType::Temporal, year, &["0099-01-01", "0100-01-01", "0102-01-01"]),
             "X-axis for a utc scale with values from 0100 to 0102"
+        );
+    }
+
+    #[test]
+    fn aware_instants_caption_in_the_board_zone_and_bucket_on_its_calendar() {
+        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let axis = plain(axis(serde_json::json!({})));
+        let instants = x_caption(&axis, VegaType::Temporal, Grain::None, &["2024-03-10T07:30:00Z", "2024-03-10T09:30:00Z"]);
+        assert!(instants.contains("3:30:00 AM") && instants.contains("5:30:00 AM"), "{instants}");
+        let new_year = x_caption(&axis, VegaType::Temporal, Grain::None, &["2024-01-01T02:00:00Z", "2024-01-01T04:00:00Z"]);
+        assert!(new_year.contains("31 December 2023"), "the year is the printed clock's: {new_year}");
+        let month = Grain::Calendar(TimeUnit::YearMonth);
+        assert_eq!(
+            x_caption(&axis, VegaType::Temporal, month, &["2024-03-01T00:00:00+00:00", "2024-05-01T00:00:00+00:00"]),
+            "X-axis for a utc scale with values from February 2024 to April 2024",
+            "UTC midnights are New York's previous evenings"
         );
     }
 

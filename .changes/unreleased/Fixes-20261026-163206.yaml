@@ -1,0 +1,3 @@
+kind: Fixes
+body: Editing a query now refreshes cached results for every query that references it.
+time: 2026-10-26T16:32:06.523651-07:00

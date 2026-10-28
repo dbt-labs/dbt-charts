@@ -11,9 +11,10 @@ Timezone policy (documented here per acceptance criteria):
   - ISO strings "YYYY-MM-DD" and "YYYY-MM-DDTHH:MM:SS": parsed in UTC
     so the display is identical under any runtime TZ.
   - timezone-aware datetime objects and ISO strings carrying a TZ offset:
-    normalized to UTC before formatting, to match naive-string behavior. A
-    date-only spec reads the UTC date (crossing a day boundary where the
-    original offset would not); a time directive reads the UTC time of day.
+    instants, converted to the board's ``regional.time_zone`` (UTC by default)
+    before formatting. A date-only spec reads the board-zone date (crossing a
+    day boundary where the original offset would not); a time directive reads
+    the board-zone time of day.
     A genuinely date-only value (no time component at all) has no time to
     convert and is taken as its own calendar date.
 """
@@ -29,11 +30,13 @@ from dbt_charts.core.compile.format_value import (
 )
 from dbt_charts.core.compile.models.chart.normalized import TableChart
 from dbt_charts.core.compile.models.chart.resolved.table import ResolvedTableChart
+from dbt_charts.core.compile.models.primitives import Regional
 from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_TABLE_TEMPORAL_FORMAT_INVALID
+from dbt_charts.core.text.format_d3 import regional_scope
 from dbt_charts.core.utils import is_date_like
 
 from .._engine_render import render_table_svg
@@ -340,6 +343,35 @@ class TestFormatTableCellValueTemporal:
             "2024-13-99", None, {"date_short": _DATE_SHORT_FORMAT}
         )
         assert result == "2024-13-99"
+
+
+def _in_new_york(value: object, spec: str) -> str:
+    regional = Regional(time_zone="America/New_York")
+    with regional_scope(
+        regional.format_locale,
+        regional.time_locale,
+        regional.week_start,
+        regional.zone,
+    ):
+        return format_table_cell_value(value, spec, {})
+
+
+class TestBoardTimeZone:
+    """An aware value is an instant and prints in the board zone; a naive one
+    is wall-clock time and prints as written."""
+
+    def test_aware_datetime_prints_in_board_zone(self) -> None:
+        aware = datetime.datetime(2024, 7, 15, 14, 30, tzinfo=datetime.UTC)
+        assert _in_new_york(aware, "%H:%M %Z %z") == "10:30 EDT -0400"
+
+    def test_offset_iso_string_prints_in_board_zone(self) -> None:
+        assert _in_new_york("2024-01-16T02:00:00Z", "%-d %b %H:%M %Z") == (
+            "15 Jan 21:00 EST"
+        )
+
+    def test_naive_datetime_prints_unchanged(self) -> None:
+        naive = datetime.datetime(2024, 7, 15, 14, 30)
+        assert _in_new_york(naive, "%-d %b %H:%M") == "15 Jul 14:30"
 
 
 class TestIsDateLikeWithTemporalObjects:

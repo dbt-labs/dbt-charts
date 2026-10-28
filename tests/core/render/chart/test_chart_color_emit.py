@@ -48,12 +48,12 @@ def _bar_chart(**kwargs: Any) -> Chart:
 
 
 # ============================================================================
-# §8c: color gradient on bar chart
+# color gradient on bar chart
 # ============================================================================
 
 
 # ============================================================================
-# §8h: literal chart.style.color (already works, regression guard)
+# literal chart.style.color (already works, regression guard)
 # ============================================================================
 
 
@@ -104,7 +104,7 @@ def test_heatmap_chart_local_palette_overrides_theme_for_colorless_rect_fill():
 
 
 # ============================================================================
-# §8a partial: KPI chart with color.when evaluates against data row
+# Partial: KPI chart with color.when evaluates against data row
 # ============================================================================
 
 

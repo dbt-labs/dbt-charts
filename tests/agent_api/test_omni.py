@@ -19,6 +19,8 @@ from dbt_charts.agent_api import omni as module
 from dbt_charts.agent_api.omni import OmniDashboard, import_omni, list_omni_dashboards
 from dbt_charts.agent_api.source_bundle import BundleError
 
+from .._outline import missing_options, tile_block
+
 FIXTURES = Path(__file__).parent / "omni_fixtures"
 KEY = "sekrit-omni-key"
 BASE = "https://acme.omniapp.test"
@@ -494,3 +496,89 @@ def test_title_is_the_first_non_blank_line_without_heading_marks(
     text: str, title: str
 ) -> None:
     assert module._title(text) == title
+
+
+def test_source_json_marks_the_outline_version(http: Any, tmp_path: Path) -> None:
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    assert json.loads((tmp_path / "source.json").read_text())["outline_version"] == 2
+
+
+def test_every_tile_names_where_its_full_config_lives(
+    http: Any, tmp_path: Path
+) -> None:
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+    block = tile_block((tmp_path / "outline.md").read_text(), "2")
+
+    assert "config: queries/2.json, dashboard.json#queryPresentation[p2]" in block
+
+
+def test_outline_carries_query_and_chart_options_without_colors(
+    http: Any, tmp_path: Path
+) -> None:
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+    block = tile_block((tmp_path / "outline.md").read_text(), "2")
+
+    assert "limit: 1000" in block and "column_limit: 50" in block
+    assert '"label":"Revenue","format":"CURRENCY_0"' in block
+    assert "transposed_measures:" in block and "controls:" in block
+    assert "table calc: calc_1 'Running total'" in block and '"name":"SUM"' in block
+    assert "chartType: lineColor" in block and "visType: basic" in block
+    assert '"rule":{"type":"greater-than","value":0.5' in block
+    assert "columnDisplay:" in block and "frozenColumn: orders.region" in block
+    assert "#1DB9B9" not in block and "export-palette-1" not in block
+    assert "bandSize" not in block
+
+
+def test_every_raw_tile_option_is_in_the_outline_or_the_styling_set(
+    http: Any, tmp_path: Path
+) -> None:
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+    outline = (tmp_path / "outline.md").read_text()
+    saved = json.loads(_fixture("queries.json"))["queries"]
+    export = json.loads(_fixture("export.json"))["dashboard"]
+    presentations = {
+        m["queryPresentation"]["id"]: m["queryPresentation"]
+        for m in export["queryPresentationCollection"][
+            "queryPresentationCollectionMemberships"
+        ]
+    }
+    for query in (q for q in saved if q["id"] != "p3"):  # p3 is hidden, not fetched
+        block = tile_block(outline, query["queryIdentifierMapKey"])
+        presentation = presentations[query["id"]]
+        vis = presentation["visConfig"]
+        assert (
+            missing_options(
+                query["query"], block, module.QUERY_NON_OPTION_KEYS.__contains__
+            )
+            == []
+        ), query["id"]
+        assert (
+            missing_options(
+                presentation, block, module.PRESENTATION_NON_OPTION_KEYS.__contains__
+            )
+            == []
+        ), query["id"]
+        assert (
+            missing_options(vis, block, module.VIS_NON_OPTION_KEYS.__contains__) == []
+        ), query["id"]
+        assert (
+            missing_options(
+                vis.get("spec", {}), block, module.SPEC_STYLING_KEYS.__contains__
+            )
+            == []
+        ), query["id"]
+
+
+def test_unlisted_chart_option_still_reaches_the_outline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    export = json.loads(_fixture("export.json"))
+    memberships = export["dashboard"]["queryPresentationCollection"][
+        "queryPresentationCollectionMemberships"
+    ]
+    memberships[1]["queryPresentation"]["visConfig"]["spec"]["brandNew"] = "on"
+    _install(monkeypatch, _routes(json.dumps(export).encode()))
+    import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
+
+    assert "brandNew: on" in tile_block((tmp_path / "outline.md").read_text(), "2")

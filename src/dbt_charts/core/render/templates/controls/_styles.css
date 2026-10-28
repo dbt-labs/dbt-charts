@@ -41,6 +41,63 @@
   display: flex;
 }
 
+{# A table's header menu: the sort rows, then a searchable value checklist. #}
+.dbt-table-menu {
+  flex-direction: column;
+  padding: 4px 0;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: calc(100vh - 16px);
+}
+
+{# Sort rows are buttons, so they take focus and Enter/Space like any menu item. #}
+.dbt-table-menu button.dbt-select-option {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.dbt-table-menu button.dbt-select-option:focus-visible {
+  outline: 2px solid var(--dbt-system-accent, #667eea);
+  outline-offset: -2px;
+}
+
+.dbt-table-menu-filter {
+  border-top: 1px solid var(--dbt-system-input-border, #ced4da);
+  margin-top: 4px;
+  padding: 8px 0 0;
+}
+
+.dbt-table-menu-search {
+  box-sizing: border-box;
+  width: calc(100% - 20px);
+  margin: 0 10px 4px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dbt-system-text, #333333);
+  background: transparent;
+  border: 1px solid var(--dbt-system-input-border, #ced4da);
+  border-radius: 6px;
+}
+
+.dbt-table-menu-values {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.dbt-table-menu-value {
+  display: block;
+}
+
+.dbt-table-menu-value input {
+  margin-right: 6px;
+}
+
 .dbt-select-popover {
   flex-direction: column;
   padding: 4px 0;
@@ -530,6 +587,26 @@
 .dbt-chart .dbt-page-target {
   pointer-events: all;
   cursor: pointer;
+}
+
+{# A pooled table draws each anchored affix on every row; once the table runtime has #}
+{# bound it, only the ones it marks shown are visible. A rule outranks the #}
+{# presentation attribute the engine puts on the rows it hides. #}
+.dbt-chart [data-dbt-table][data-dbt-bound] .dbt-table-affix {
+  visibility: hidden;
+}
+
+.dbt-chart [data-dbt-table][data-dbt-bound] .dbt-table-affix-shown {
+  visibility: visible;
+}
+
+{# A sortable table header opens the table's menu. #}
+.dbt-chart text[data-dbt-sortable] {
+  cursor: pointer;
+}
+
+.dbt-chart text[data-dbt-sortable]:hover {
+  text-decoration: underline;
 }
 
 .dbt-chart .dbt-paginator text,

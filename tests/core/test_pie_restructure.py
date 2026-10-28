@@ -1,4 +1,4 @@
-"""TDD tests for the pie style restructure (ADR-005 / ADR-006).
+"""TDD tests for the pie style restructure.
 
 Covers:
 - axis_x/axis_y rejection on pie

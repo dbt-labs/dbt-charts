@@ -7,7 +7,9 @@
 
 use crate::codes;
 use crate::diagnostic::Diagnostic;
+use scene::{Attrs, Chars, Escape, Node, TextBlock};
 use serde_json::json;
+use std::collections::HashMap;
 
 /// Ordinal band scale: maps string values to pixel bands.
 ///
@@ -809,7 +811,251 @@ pub(crate) fn rail_pane_width(
     Ok((widest + RAIL_LABEL_GAP).min(rail_cap(chart_w)))
 }
 
+/// The four layouts a rail can take, in the order it prefers them. One rail takes one step:
+/// every label on it reads at the same step.
+const STEP_ONE_LINE: usize = 0;
+const STEP_WRAPPED: usize = 1;
+const STEP_NAME_ONLY: usize = 2;
+const STEP_CUT: usize = 3;
+
+/// How one rail label can be laid out at each step, `None` where the label does not fit that
+/// step in width. The cut step always exists.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RailPlan {
+    steps: [Option<Vec<String>>; 4],
+    has_value: bool,
+    step: usize,
+    /// What the label reads uncut: `{value} {name}`, or the name alone.
+    full: String,
+}
+
+impl RailPlan {
+    /// This label's lines at `step`: a step it has no layout for reads as the closest earlier
+    /// one it has, so a label that fits on one line stays on one line while its neighbors wrap.
+    fn lines_at(&self, step: usize) -> Option<&Vec<String>> {
+        match step {
+            STEP_WRAPPED => self.steps[STEP_ONE_LINE].as_ref().or(self.steps[STEP_WRAPPED].as_ref()),
+            STEP_CUT => self.steps[STEP_ONE_LINE].as_ref().or(self.steps[STEP_WRAPPED].as_ref()).or(self.steps[STEP_CUT].as_ref()),
+            _ => self.steps[step].as_ref(),
+        }
+    }
+
+    /// The lines this label paints.
+    pub(crate) fn lines(&self) -> &[String] {
+        self.lines_at(self.step).expect("a plan's step is one every label has a layout for")
+    }
+
+    /// The pixels this label stands taller than a one-line one.
+    pub(crate) fn extra_px(&self, line_height: f64) -> f64 {
+        (self.lines().len() - 1) as f64 * line_height
+    }
+
+    /// The full text of a label painted cut with an ellipsis, for its hover `<title>`.
+    pub(crate) fn cut_full_text(&self) -> Option<&str> {
+        self.is_cut().then_some(self.full.as_str())
+    }
+
+    /// Whether this label paints its name cut with an ellipsis.
+    fn is_cut(&self) -> bool {
+        self.step == STEP_CUT && self.steps[STEP_ONE_LINE].is_none() && self.steps[STEP_WRAPPED].is_none()
+    }
+}
+
+/// The first step every label on the rail has a layout for.
+fn first_viable_step(plans: &HashMap<String, RailPlan>) -> usize {
+    (STEP_ONE_LINE..STEP_CUT).find(|&step| plans.values().all(|plan| plan.lines_at(step).is_some())).unwrap_or(STEP_CUT)
+}
+
+/// Every line the rail may paint: those of its first viable step and, because the rail may
+/// move on when the stack has no room, of each later one. A rail that fits on one line never
+/// moves, so it reserves just that.
+pub(crate) fn rail_reserved_lines(plans: &HashMap<String, RailPlan>) -> Vec<String> {
+    let first = first_viable_step(plans);
+    let last = if first == STEP_ONE_LINE { STEP_ONE_LINE } else { STEP_CUT };
+    (first..=last)
+        .filter(|&step| plans.values().all(|plan| plan.lines_at(step).is_some()))
+        .flat_map(|step| plans.values().flat_map(move |plan| plan.lines_at(step).expect("checked above").clone()))
+        .collect()
+}
+
+/// One rail label as one text mark: a wrapped label's lines are `<tspan>`s that step a line
+/// height down from the first (`attrs` place it), and a label cut with an ellipsis carries its
+/// full text in a hover `<title>`.
+pub(crate) fn rail_label_node(attrs: Attrs, plan: &RailPlan, line_height: f64) -> Node {
+    lines_label_node(attrs, plan.lines(), plan.cut_full_text(), "0", line_height)
+}
+
+/// A label of one or more lines as one text mark: each line after the first is a `<tspan>` at `x`,
+/// a line height below the one before, and a cut label carries its `full` text in a hover `<title>`.
+pub(crate) fn lines_label_node(attrs: Attrs, lines: &[String], full: Option<&str>, x: &str, line_height: f64) -> Node {
+    match lines {
+        [line] => crate::families::legend::text_revealing_full_name(attrs, line, full),
+        lines => {
+            let run = |attrs: Attrs, line: &str| Node::Tspan(TextBlock { attrs, text: Chars::new(line, Escape::Attr) });
+            let step = Attrs::new().set("x", x).set("dy", line_height.to_string());
+            let mut children: Vec<Node> =
+                lines.iter().enumerate().map(|(i, line)| run(if i == 0 { Attrs::new() } else { step.clone() }, line)).collect();
+            children.extend(full.map(|full| Node::Title(Chars::new(full, Escape::Attr))));
+            Node::TextRuns { attrs, children }
+        }
+    }
+}
+
+/// The height of one rail text line (Vega's default `lineHeight`: font size + 2).
+pub(crate) fn rail_line_height(font_size: f64) -> f64 {
+    font_size + 2.0
+}
+
+/// The widest prefix of `words` (at least one when it fits) that fits `first` within the cap;
+/// returns the grown line and how many words it took.
+fn fill_line(first: String, words: &[&str], fits: &impl Fn(&str) -> Result<bool, String>) -> Result<(String, usize), String> {
+    let (mut line, mut taken) = (first, 0);
+    for word in words {
+        let grown = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+        if !fits(&grown)? {
+            break;
+        }
+        line = grown;
+        taken += 1;
+    }
+    Ok((line, taken))
+}
+
+/// The one wrap law of a label that outgrows its cap: the name on one line, else wrapped at a
+/// word boundary onto two, else (when `may_cut`) cut with an ellipsis at the end of line two, or
+/// of line one when no word fits it. `None` when it fits neither and may not be cut.
+pub(crate) fn two_line_label(
+    name: &str,
+    fits: &impl Fn(&str) -> Result<bool, String>,
+    cut: &impl Fn(&str) -> Result<String, String>,
+    may_cut: bool,
+) -> Result<Option<Vec<String>>, String> {
+    if fits(name)? {
+        return Ok(Some(vec![name.to_string()]));
+    }
+    let words: Vec<&str> = name.split(' ').collect();
+    let (first, taken) = fill_line(String::new(), &words, fits)?;
+    if taken == 0 {
+        return may_cut.then(|| cut(name).map(|cut| vec![cut])).transpose();
+    }
+    let rest = words[taken..].join(" ");
+    if fits(&rest)? {
+        return Ok(Some(vec![first, rest]));
+    }
+    if !may_cut {
+        return Ok(None);
+    }
+    Ok(Some(vec![first, cut(&rest)?]))
+}
+
+/// The layouts one rail label can take. The value, when there is one, leads: `{value} {name}`
+/// on one line within the value cap; else the name wraps at a word boundary onto a second
+/// line; else the value is set aside and the name alone wraps within the rail cap; and a name
+/// that fits none of these is cut with an ellipsis at the end of its second line.
+pub(crate) fn plan_rail_label(
+    value: Option<&str>,
+    name: &str,
+    chart_w: f64,
+    font: (&str, f64, &str),
+    fonts: &measure::FontBook,
+) -> Result<RailPlan, String> {
+    let (family, size, weight) = font;
+    let measured = |text: &str| crate::common::measure_at_css_weight(fonts, text, family, size, weight);
+    let fits_rail = |text: &str| Ok(measured(text)? <= rail_cap(chart_w));
+    let words: Vec<&str> = name.split(' ').collect();
+    let name_alone = |may_cut: bool| {
+        let cut = |text: &str| crate::common::truncate_label(text, rail_cap(chart_w), family, size, fonts, false);
+        two_line_label(name, &fits_rail, &cut, may_cut)
+    };
+    let Some(value) = value else {
+        let whole = name_alone(false)?;
+        let cut = name_alone(true)?.expect("a cut layout always exists");
+        return Ok(RailPlan { steps: [whole.clone().filter(|l| l.len() == 1), whole.clone().filter(|l| l.len() == 2), whole, Some(cut)], has_value: false, step: STEP_ONE_LINE, full: name.to_string() });
+    };
+    let cap = rail_value_cap(chart_w);
+    let fits_value = |text: &str| Ok(measured(text)? <= cap);
+    let one_line = format!("{value} {name}");
+    let one = fits_value(&one_line)?.then(|| vec![one_line]);
+    let (first, taken) = fill_line(value.to_string(), &words, &fits_value)?;
+    let rest = words[taken..].join(" ");
+    let wrapped = (!rest.is_empty() && fits_value(&first)? && fits_value(&rest)?).then(|| vec![first.clone(), rest.clone()]);
+    let cut = vec![first, crate::common::truncate_label(&rest, cap, family, size, fonts, false)?];
+    Ok(RailPlan { steps: [one, wrapped, name_alone(false)?, Some(cut)], has_value: true, step: STEP_ONE_LINE, full: format!("{value} {name}") })
+}
+
+/// A rail's labels, each with the layouts it can take. Each entry is `(key, value, name)`.
+pub(crate) fn plan_rail_labels(
+    entries: &[(String, Option<String>, String)],
+    chart_w: f64,
+    font: (&str, f64, &str),
+    fonts: &measure::FontBook,
+) -> Result<HashMap<String, RailPlan>, String> {
+    entries
+        .iter()
+        .map(|(key, value, name)| Ok((key.clone(), plan_rail_label(value.as_deref(), name, chart_w, font, fonts)?)))
+        .collect()
+}
+
+/// The warnings a rail's final layout earns: `WARN-RAIL-VALUE-DROPPED` naming the series whose
+/// fit forced the values off, and `WARN-SERIES-LABEL-TRUNCATED` for each name cut with an
+/// ellipsis.
+pub(crate) fn warn_rail_plan(
+    chart_id: &str,
+    authored_field: &str,
+    keys: &[String],
+    name_of: impl Fn(&str) -> String,
+    plans: &HashMap<String, RailPlan>,
+    forcing: &[String],
+) {
+    let cut: Vec<String> = keys.iter().filter(|key| plans[*key].is_cut()).map(|key| name_of(key)).collect();
+    warn_rail_labels_cut(chart_id, authored_field, &cut);
+    let forcing_names: Vec<String> = forcing.iter().map(|key| name_of(key)).collect();
+    warn_rail_values_dropped(chart_id, authored_field, &forcing_names);
+}
+
+/// `WARN-RAIL-VALUE-DROPPED`: the series whose rail label lost its value because neither one
+/// line nor two fit the rail.
+pub(crate) fn warn_rail_values_dropped(chart_id: &str, authored_field: &str, names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    let many = names.len() != 1;
+    let quoted: Vec<String> = names.iter().map(|n| crate::diagnostic::py_repr(&json!(n))).collect();
+    let labels = match quoted.split_at_checked(3) {
+        Some((head, rest)) if !rest.is_empty() => format!("{} and {} more", head.join(", "), rest.len()),
+        _ => quoted.join(", "),
+    };
+    crate::diagnostic::warn(
+        Diagnostic::new(
+            &codes::WARN_RAIL_VALUE_DROPPED,
+            [
+                ("authored_field", json!(authored_field)),
+                ("chart_id", json!(chart_id)),
+                ("count", json!(names.len())),
+                ("labels", json!(labels)),
+                ("labels_noun", json!(if many { "labels" } else { "label" })),
+                ("were", json!(if many { "were" } else { "was" })),
+            ],
+        )
+        .with_sink_param("series_names", json!(names)),
+    );
+}
+
+/// A rail label's number: the series' own final datum through the y axis's tick-label
+/// law (`format_y_label`: ruler, then `tick_label`, then `labels.format`, then the
+/// default), as the sole tick of its axis, so an anchored affix such as a currency
+/// symbol always shows.
+pub(crate) fn rail_value_text(value: f64, ax_y: &crate::common::AxisStyle) -> Result<String, String> {
+    crate::common::format_y_label(value, ax_y.ruler.as_ref(), ax_y.tick_label.as_ref(), ax_y.labels.format.as_ref(), 0, 1)
+}
+
 pub(crate) const RAIL_LABEL_GAP: f64 = 4.0;
+
+/// The widest a label carrying a value may be, so the plot keeps its
+/// width on a narrow card. Past it the label wraps, then loses its value.
+fn rail_value_cap(chart_w: f64) -> f64 {
+    chart_w * crate::constants::marks::ENDPOINT_LABEL_VALUE_MAX_WIDTH_FRACTION
+}
 
 /// The widest a rail may grow: `endpoint_labels.max_width_fraction` of the chart.
 fn rail_cap(chart_w: f64) -> f64 {
@@ -848,32 +1094,14 @@ pub(crate) fn warn_x_domain_paint_order(chart_id: &str, x_field: &str, layer_onl
     );
 }
 
-/// `WARN-SERIES-LABEL-TRUNCATED` for the rail names wider than the rail's cap
-/// (`measure_label_pane_width`): Vega cuts them at the pane's mark limit.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn warn_rail_labels_cut(
-    chart_id: &str,
-    authored_field: &str,
-    series: &[String],
-    font_family: &str,
-    font_size: f64,
-    font_weight: &str,
-    fonts: &measure::FontBook,
-    chart_w: f64,
-) -> Result<(), String> {
-    let cap = rail_cap(chart_w);
-    let mut cut = Vec::new();
+/// `WARN-SERIES-LABEL-TRUNCATED` for the rail names cut with an ellipsis.
+pub(crate) fn warn_rail_labels_cut(chart_id: &str, authored_field: &str, series: &[String]) {
+    if series.is_empty() {
+        return;
+    }
     // Production lists the cut names in sorted order.
-    let mut series: Vec<&String> = series.iter().collect();
-    series.sort();
-    for name in series {
-        if crate::common::measure_at_css_weight(fonts, name, font_family, font_size, font_weight)? > cap {
-            cut.push(name.as_str());
-        }
-    }
-    if cut.is_empty() {
-        return Ok(());
-    }
+    let mut cut: Vec<&str> = series.iter().map(String::as_str).collect();
+    cut.sort_unstable();
     let many = cut.len() != 1;
     let quoted: Vec<String> = cut.iter().map(|n| crate::diagnostic::py_repr(&json!(n))).collect();
     let labels = match quoted.split_at_checked(3) {
@@ -894,7 +1122,6 @@ pub(crate) fn warn_rail_labels_cut(
         )
         .with_sink_param("series_names", json!(cut)),
     );
-    Ok(())
 }
 
 /// Bidirectional greedy collision-avoidance over a set of rail anchors, in
@@ -909,6 +1136,7 @@ pub(crate) fn warn_rail_labels_cut(
 pub(crate) fn cascade_rail_anchors(
     anchors: &[(String, f64)],
     min_gap: f64,
+    extra: &HashMap<String, f64>,
     y_domain_min: f64,
     y_domain_max: f64,
 ) -> (Vec<(String, f64)>, Vec<String>) {
@@ -921,14 +1149,16 @@ pub(crate) fn cascade_rail_anchors(
     }
     let domain_mid = (y_domain_min + y_domain_max) / 2.0;
     let mean = clamped.iter().map(|(_, v)| *v).sum::<f64>() / clamped.len() as f64;
+    // Two neighbors stand `min_gap` apart plus half of what each is taller than one line.
+    let gap = |a: &str, b: &str| min_gap + (extra[a] + extra[b]) / 2.0;
 
     let mut items = clamped;
     if mean >= domain_mid {
         items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        pack_against_bound(items, |anchor, prev| anchor.min(prev - min_gap), |y| y < y_domain_min)
+        pack_against_bound(items, |anchor, prev, prev_name, name| anchor.min(prev - gap(prev_name, name)), |y| y < y_domain_min)
     } else {
         items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        pack_against_bound(items, |anchor, prev| anchor.max(prev + min_gap), |y| y > y_domain_max)
+        pack_against_bound(items, |anchor, prev, prev_name, name| anchor.max(prev + gap(prev_name, name)), |y| y > y_domain_max)
     }
 }
 
@@ -938,13 +1168,15 @@ pub(crate) fn cascade_rail_anchors(
 /// label with real room is never dropped for a neighbor's crowding.
 fn pack_against_bound(
     items: Vec<(String, f64)>,
-    push: impl Fn(f64, f64) -> f64,
+    push: impl Fn(f64, f64, &str, &str) -> f64,
     overflows: impl Fn(f64) -> bool,
 ) -> (Vec<(String, f64)>, Vec<String>) {
     let mut stack: Vec<(String, f64, f64)> = Vec::new(); // (name, forced_y, own_anchor)
     let mut dropped = Vec::new();
     for (name, anchor) in items {
-        let forced = |stack: &[(String, f64, f64)]| stack.last().map_or(anchor, |top| push(anchor, top.1));
+        let forced = |stack: &[(String, f64, f64)]| {
+            stack.last().map_or(anchor, |top| push(anchor, top.1, &top.0, &name))
+        };
         let mut y = forced(&stack);
         while overflows(y) && stack.last().is_some_and(|top| top.1 != top.2) {
             dropped.push(stack.pop().expect("checked non-empty").0);
@@ -971,6 +1203,45 @@ fn spread_evenly(anchors: &[(String, f64)], y_domain_min: f64, y_domain_max: f64
     placed
 }
 
+/// Extra heights for labels that are all one line.
+pub(crate) fn one_line_extras(anchors: &[(String, f64)]) -> HashMap<String, f64> {
+    anchors.iter().map(|(name, _)| (name.clone(), 0.0)).collect()
+}
+
+/// How a rail's labels stack in a pane: the one reading of the pixel gap, the labels' extra
+/// heights and the domain behind both `recascade_rail_anchors` and the cascade's room test.
+enum RailRoom {
+    /// The y scale has no slope, or there is no neighbor to clear.
+    Unsloped,
+    /// The gaps alone exceed the domain.
+    Overflow,
+    /// The cascade's placement and the labels it found no room for.
+    Packed(Vec<(String, f64)>, Vec<String>),
+}
+
+fn rail_room(
+    anchors: &[(String, f64)],
+    pixel_gap: f64,
+    extra_px: &HashMap<String, f64>,
+    px_per_unit: Option<f64>,
+    y_domain_min: f64,
+    y_domain_max: f64,
+) -> Result<RailRoom, String> {
+    if let Some((name, _)) = anchors.iter().find(|(name, _)| !extra_px.contains_key(name)) {
+        return Err(format!("rail label {name:?} has no layout plan"));
+    }
+    let Some(px_per_unit) = px_per_unit.filter(|_| y_domain_max > y_domain_min && anchors.len() > 1) else {
+        return Ok(RailRoom::Unsloped);
+    };
+    let min_data_gap = pixel_gap / px_per_unit;
+    let extra: HashMap<String, f64> = anchors.iter().map(|(name, _)| (name.clone(), extra_px[name] / px_per_unit)).collect();
+    if (anchors.len() - 1) as f64 * min_data_gap + extra.values().sum::<f64>() > y_domain_max - y_domain_min {
+        return Ok(RailRoom::Overflow);
+    }
+    let (placed, dropped) = cascade_rail_anchors(anchors, min_data_gap, &extra, y_domain_min, y_domain_max);
+    Ok(RailRoom::Packed(placed, dropped))
+}
+
 /// `recascade_endpoint_labels`: the rail's final label positions for an
 /// intended `pixel_gap`, converted to data units through `px_per_unit` (`None`
 /// when the y scale has no slope). A gap that cannot be honored spreads the
@@ -980,48 +1251,197 @@ pub(crate) fn recascade_rail_anchors(
     chart_id: &str,
     anchors: &[(String, f64)],
     pixel_gap: f64,
+    extra_px: &HashMap<String, f64>,
     px_per_unit: Option<f64>,
     y_domain_min: f64,
     y_domain_max: f64,
-) -> Vec<(String, f64)> {
+) -> Result<Vec<(String, f64)>, String> {
     let n = anchors.len();
     if n <= 1 {
-        return cascade_rail_anchors(anchors, 0.0, y_domain_min, y_domain_max).0;
+        return Ok(cascade_rail_anchors(anchors, 0.0, &one_line_extras(anchors), y_domain_min, y_domain_max).0);
     }
-    // Tied anchors spread across a cascade domain with no span still tie, so no
-    // slope is measurable from them either.
-    let Some(px_per_unit) = px_per_unit.filter(|_| y_domain_max > y_domain_min) else {
-        crate::diagnostic::warn(
-            Diagnostic::new(&codes::WARN_ENDPOINT_LABEL_RAIL_TIED, [("chart_id", json!(chart_id)), ("series_count", json!(n))])
-                .with_sink_param("gap_px", json!(pixel_gap)),
-        );
-        return spread_evenly(anchors, y_domain_min, y_domain_max);
+    match rail_room(anchors, pixel_gap, extra_px, px_per_unit, y_domain_min, y_domain_max)? {
+        // Tied anchors spread across a cascade domain with no span still tie, so no
+        // slope is measurable from them either.
+        RailRoom::Unsloped => {
+            crate::diagnostic::warn(
+                Diagnostic::new(&codes::WARN_ENDPOINT_LABEL_RAIL_TIED, [("chart_id", json!(chart_id)), ("series_count", json!(n))])
+                    .with_sink_param("gap_px", json!(pixel_gap)),
+            );
+            Ok(spread_evenly(anchors, y_domain_min, y_domain_max))
+        }
+        RailRoom::Overflow => {
+            crate::diagnostic::warn(Diagnostic::new(
+                &codes::WARN_ENDPOINT_LABEL_GAP_OVERFLOW,
+                [("chart_id", json!(chart_id)), ("gap_px", json!(pixel_gap)), ("series_count", json!(n))],
+            ));
+            Ok(spread_evenly(anchors, y_domain_min, y_domain_max))
+        }
+        RailRoom::Packed(placed, dropped) => {
+            if !dropped.is_empty() {
+                crate::diagnostic::warn(
+                    Diagnostic::new(
+                        &codes::WARN_ENDPOINT_LABEL_RAIL_OVERFLOW,
+                        [
+                            ("chart_id", json!(chart_id)),
+                            ("dropped_count", json!(dropped.len())),
+                            ("gap_px", json!(pixel_gap)),
+                            ("series_count", json!(n)),
+                        ],
+                    )
+                    .with_sink_param("dropped_series", json!(dropped)),
+                );
+            }
+            Ok(placed)
+        }
+    }
+}
+
+/// The rail's final label positions and the one layout step they read at: the first step every
+/// label fits in width, moved on to the next that the stack has room for, as the cascade has
+/// no room for two-line labels. Dropping values helps only if the shorter layout then fits;
+/// else the rail keeps what the width allows. Returns the series whose fit forced the values
+/// off, for the warning.
+pub(crate) fn place_rail_labels(
+    chart_id: &str,
+    anchors: &[(String, f64)],
+    plans: &HashMap<String, RailPlan>,
+    pixel_gap: f64,
+    line_height: f64,
+    px_per_unit: Option<f64>,
+    bounds: (f64, f64),
+) -> Result<(Vec<(String, f64)>, HashMap<String, RailPlan>, Vec<String>), String> {
+    let mut plans = plans.clone();
+    let extras_at = |plans: &HashMap<String, RailPlan>, step: usize| -> Option<HashMap<String, f64>> {
+        plans
+            .iter()
+            .map(|(name, plan)| plan.lines_at(step).map(|lines| (name.clone(), (lines.len() - 1) as f64 * line_height)))
+            .collect()
     };
-    let min_data_gap = pixel_gap / px_per_unit;
-    let span = y_domain_max - y_domain_min;
-    if span > 0.0 && (n - 1) as f64 * min_data_gap > span {
-        crate::diagnostic::warn(Diagnostic::new(
-            &codes::WARN_ENDPOINT_LABEL_GAP_OVERFLOW,
-            [("chart_id", json!(chart_id)), ("gap_px", json!(pixel_gap)), ("series_count", json!(n))],
-        ));
-        return spread_evenly(anchors, y_domain_min, y_domain_max);
+    let fits = |extra_px: &HashMap<String, f64>| -> Result<bool, String> {
+        Ok(match rail_room(anchors, pixel_gap, extra_px, px_per_unit, bounds.0, bounds.1)? {
+            RailRoom::Unsloped => true,
+            RailRoom::Overflow => false,
+            RailRoom::Packed(_, lost) => lost.is_empty(),
+        })
+    };
+    let first = first_viable_step(&plans);
+    let mut chosen = first;
+    if first != STEP_ONE_LINE {
+        for step in first..=STEP_CUT {
+            if let Some(extras) = extras_at(&plans, step) {
+                if fits(&extras)? {
+                    chosen = step;
+                    break;
+                }
+            }
+        }
     }
-    let (placed, dropped) = cascade_rail_anchors(anchors, min_data_gap, y_domain_min, y_domain_max);
-    if !dropped.is_empty() {
-        crate::diagnostic::warn(
-            Diagnostic::new(
-                &codes::WARN_ENDPOINT_LABEL_RAIL_OVERFLOW,
-                [
-                    ("chart_id", json!(chart_id)),
-                    ("dropped_count", json!(dropped.len())),
-                    ("gap_px", json!(pixel_gap)),
-                    ("series_count", json!(n)),
-                ],
-            )
-            .with_sink_param("dropped_series", json!(dropped)),
-        );
+    plans.values_mut().for_each(|plan| plan.step = chosen);
+    let mut forcing = Vec::new();
+    if chosen == STEP_NAME_ONLY {
+        let width_forced = |plan: &RailPlan| plan.has_value && plan.lines_at(STEP_WRAPPED).is_none();
+        forcing = anchors.iter().filter(|(name, _)| width_forced(&plans[name])).map(|(name, _)| name.clone()).collect();
+        if forcing.is_empty() {
+            let wrapped = |plan: &RailPlan| plan.has_value && plan.lines_at(STEP_WRAPPED).is_some_and(|lines| lines.len() > 1);
+            forcing.extend(anchors.iter().find(|(name, _)| wrapped(&plans[name])).map(|(name, _)| name.clone()));
+        }
     }
-    placed
+    let extras = extras_at(&plans, chosen).expect("the chosen step is one every label has a layout for");
+    let placed = recascade_rail_anchors(chart_id, anchors, pixel_gap, &extras, px_per_unit, bounds.0, bounds.1)?;
+    Ok((placed, plans, forcing))
+}
+
+#[cfg(test)]
+mod rail_cascade_tests {
+    use super::{place_rail_labels, rail_reserved_lines, RailPlan, STEP_ONE_LINE};
+    use std::collections::HashMap;
+
+    type Steps<'a> = [Option<&'a [&'a str]>; 4];
+
+    fn plan(steps: Steps) -> RailPlan {
+        let owned = steps.map(|lines| lines.map(|l| l.iter().map(|s| s.to_string()).collect()));
+        RailPlan { steps: owned, has_value: true, step: STEP_ONE_LINE, full: "50 a name".into() }
+    }
+
+    /// Series `a` and `b`, 5 data units apart on a 1px/unit scale, line height 13, gap 8.
+    fn place(a: Steps, bounds: (f64, f64)) -> (HashMap<String, RailPlan>, Vec<String>) {
+        let b: Steps = [Some(&["60 b"]), Some(&["60 b"]), Some(&["b"]), Some(&["60 b"])];
+        let plans = HashMap::from([("a".to_string(), plan(a)), ("b".to_string(), plan(b))]);
+        let anchors = vec![("a".to_string(), 50.0), ("b".to_string(), 55.0)];
+        let (_, plans, forcing) = place_rail_labels("c1", &anchors, &plans, 8.0, 13.0, Some(1.0), bounds).unwrap();
+        (plans, forcing)
+    }
+
+    fn lines(plans: &HashMap<String, RailPlan>, key: &str) -> Vec<String> {
+        plans[key].lines().to_vec()
+    }
+
+    const FITS_ONE: Steps = [Some(&["50 a"]), Some(&["50 a"]), Some(&["a"]), Some(&["50 a"])];
+    const FITS_WRAPPED: Steps = [None, Some(&["50", "a name"]), Some(&["a", "name"]), Some(&["50", "a name"])];
+    const NAME_FITS_ONE_LINE: Steps = [None, Some(&["50", "a name"]), Some(&["a"]), Some(&["50", "a name"])];
+    const FITS_NAME_ONLY: Steps = [None, None, Some(&["a", "name"]), Some(&["50", "a n\u{2026}"])];
+    const FITS_CUT_ONLY: Steps = [None, None, None, Some(&["50", "a n\u{2026}"])];
+
+    #[test]
+    fn step_one_a_rail_that_fits_on_one_line_keeps_every_value() {
+        let (plans, forcing) = place(FITS_ONE, (0.0, 200.0));
+        assert_eq!((lines(&plans, "a"), lines(&plans, "b")), (vec!["50 a".into()], vec!["60 b".into()]));
+        assert!(forcing.is_empty());
+    }
+
+    #[test]
+    fn step_two_wrapped_values_stay_while_the_stack_has_room_and_neighbors_keep_one_line() {
+        let (plans, forcing) = place(FITS_WRAPPED, (0.0, 200.0));
+        assert_eq!((lines(&plans, "a"), lines(&plans, "b")), (vec!["50".into(), "a name".into()], vec!["60 b".into()]));
+        assert!(forcing.is_empty());
+    }
+
+    #[test]
+    fn step_three_by_vertical_room_every_label_drops_its_value_and_the_wrapped_one_is_named() {
+        // 14px fits two one-line labels (8px apart) but not the taller pair (14.5px apart).
+        let (plans, forcing) = place(NAME_FITS_ONE_LINE, (0.0, 14.0));
+        assert_eq!(forcing, vec!["a".to_string()]);
+        assert_eq!((lines(&plans, "a"), lines(&plans, "b")), (vec!["a".into()], vec!["b".into()]));
+    }
+
+    #[test]
+    fn step_three_by_width_drops_every_value_and_names_the_label_that_forced_it() {
+        let (plans, forcing) = place(FITS_NAME_ONLY, (0.0, 200.0));
+        assert_eq!(forcing, vec!["a".to_string()]);
+        assert_eq!((lines(&plans, "a"), lines(&plans, "b")), (vec!["a".into(), "name".into()], vec!["b".into()]));
+        assert!(!plans["a"].is_cut());
+    }
+
+    #[test]
+    fn step_four_when_dropping_values_would_still_cut_the_values_stay_and_line_two_is_cut() {
+        let (plans, forcing) = place(FITS_CUT_ONLY, (0.0, 200.0));
+        assert!(forcing.is_empty(), "no value drop when it would not prevent the cut");
+        assert_eq!((lines(&plans, "a"), lines(&plans, "b")), (vec!["50".into(), "a n\u{2026}".into()], vec!["60 b".into()]));
+        assert!(plans["a"].is_cut() && !plans["b"].is_cut());
+    }
+
+    #[test]
+    fn a_rail_too_cramped_for_the_name_only_layout_keeps_its_values() {
+        // Two-line names stand 14.5px apart; 5px of room fits nothing, so the width answer stands.
+        let (plans, forcing) = place(FITS_WRAPPED, (0.0, 5.0));
+        assert!(forcing.is_empty());
+        assert_eq!(lines(&plans, "a"), vec!["50".to_string(), "a name".to_string()]);
+    }
+
+    #[test]
+    fn a_late_move_paints_only_lines_the_pane_reserved() {
+        let plans = HashMap::from([("a".to_string(), plan(NAME_FITS_ONE_LINE))]);
+        let reserved = rail_reserved_lines(&plans);
+        let (placed, _) = place(NAME_FITS_ONE_LINE, (0.0, 14.0));
+        assert!(lines(&placed, "a").iter().all(|line| reserved.contains(line)), "{reserved:?}");
+    }
+
+    #[test]
+    fn a_rail_that_fits_on_one_line_reserves_nothing_more() {
+        let plans = HashMap::from([("a".to_string(), plan(FITS_ONE))]);
+        assert_eq!(rail_reserved_lines(&plans), vec!["50 a".to_string()]);
+    }
 }
 
 #[cfg(test)]
@@ -1033,7 +1453,7 @@ mod recascade_tests {
     #[test]
     fn a_rail_on_a_scale_with_no_slope_spreads_evenly_and_reports_it() {
         let anchors = vec![("a".to_string(), 5.0), ("b".to_string(), 5.0), ("c".to_string(), 5.0)];
-        let (placed, warnings) = collect(|| recascade_rail_anchors("c1", &anchors, 18.2, None, 0.0, 10.0));
+        let (placed, warnings) = collect(|| recascade_rail_anchors("c1", &anchors, 18.2, &super::one_line_extras(&anchors), None, 0.0, 10.0).unwrap());
         assert_eq!(placed, vec![("c".into(), 10.0), ("b".into(), 5.0), ("a".into(), 0.0)]);
         let [tied] = warnings.as_slice() else { panic!("{warnings:?}") };
         assert_eq!(tied.code, "WARN-ENDPOINT-LABEL-RAIL-TIED");
@@ -1086,5 +1506,23 @@ mod band_geometry_tests {
         // Unclamped, the leading edge is `step * paddingOuter`.
         let g = BandGeometry::new(4, 0.0, 100.0, 0.2, 0.1);
         assert!((g.edge(0, 0.0) - g.step() * 0.1).abs() < 1e-12);
+    }
+}
+
+#[cfg(test)]
+mod lines_label_tests {
+    use super::*;
+
+    /// The rail's wrapped label keeps its anchor and a line-height step at `x = 0`: the bar
+    /// category axis shares the builder but places its own first baseline.
+    #[test]
+    fn a_two_line_rail_label_steps_a_line_height_from_the_given_baseline() {
+        let lines = ["105 Region 03".to_string(), "Growth Segment".to_string()];
+        let node = lines_label_node(Attrs::new().set("y", "10"), &lines, None, "0", 15.4);
+        let svg = print::print(&[node]);
+        assert_eq!(
+            svg,
+            "<text y=\"10\"><tspan>105 Region 03</tspan><tspan x=\"0\" dy=\"15.4\">Growth Segment</tspan></text>"
+        );
     }
 }

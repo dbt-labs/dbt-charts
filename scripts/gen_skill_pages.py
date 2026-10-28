@@ -377,18 +377,6 @@ class Generator:
         msgs = [m for m in dict.fromkeys(plain) if any(w in m for w in wanted)]
         return self._wrap("\n".join(f"- {m}" for m in msgs))
 
-    def init_command(self) -> str:
-        """`dct init` with the opt-outs for the integrations an agent run does not want."""
-        cmd = _cli_commands()["init"]
-        known = {
-            o for p in cmd.params for o in [*p.opts, *getattr(p, "secondary_opts", [])]
-        }
-        flags = self.cfg["init_flags"]
-        missing = [f for f in flags if f not in known]
-        if missing:
-            raise KeyError(f"init_flags: `dct init` has no option {missing}")
-        return self._wrap(" ".join(["dct init", *flags]))
-
     def commands(self) -> str:
         cmds = _cli_commands()
         rows = ["| Command | What it does |", "|---|---|"]

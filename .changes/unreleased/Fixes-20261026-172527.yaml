@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Custom chart templates: text_width measures digits as the tabular numerals axis labels use.'
+time: 2026-10-26T17:25:27.215598-07:00

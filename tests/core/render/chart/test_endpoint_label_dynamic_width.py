@@ -63,7 +63,10 @@ def test_truncating_labels_records_the_full_series_names(make_resolved_chart):
         render_resolved_chart(resolved, data, _BOARD_STYLE, width=600)
 
     assert truncations[resolved.id] == [
-        SeriesLabelTruncation(authored_field="color", series_name=long_name)
+        # An unbreakable name is cut even without its value, so the values stay.
+        SeriesLabelTruncation(
+            authored_field="color", series_name=long_name, fate="truncated"
+        ),
     ]
 
 

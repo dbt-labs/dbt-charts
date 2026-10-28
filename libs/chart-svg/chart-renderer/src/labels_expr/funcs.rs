@@ -269,7 +269,8 @@ fn new_date(args: &[Val]) -> Res<f64> {
         [one] => to_date_ms(one)?,
         many => {
             let n = |i: usize, default: f64| many.get(i).map_or(default, Val::to_number);
-            date::make_time(date::full_year(n(0, f64::NAN)), n(1, 0.0), n(2, 1.0), n(3, 0.0), n(4, 0.0), n(5, 0.0), n(6, 0.0))
+            let wall = date::make_time(date::full_year(n(0, f64::NAN)), n(1, 0.0), n(2, 1.0), n(3, 0.0), n(4, 0.0), n(5, 0.0), n(6, 0.0));
+            crate::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)?
         }
     })
 }
@@ -940,7 +941,12 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
     let a = Args(vals);
     let n = |i: usize| a.num(i);
     let date_arg = || to_date_ms(a.get(0));
-    let part = |f: fn(&date::Dt) -> i64| -> Res<Val> { Ok(Val::Num(date::breakdown(date_arg()?).map_or(f64::NAN, |d| f(&d) as f64))) };
+    // A local part reads the wall clock in the expression's local zone; `utc*` reads UTC.
+    let local_ms = || -> Res<f64> {
+        let ms = date_arg()?;
+        Ok(if name.starts_with("utc") { ms } else { ms + date::local_offset_ms(ms)? })
+    };
+    let part = |f: fn(&date::Dt) -> i64| -> Res<Val> { Ok(Val::Num(date::breakdown(local_ms()?).map_or(f64::NAN, |d| f(&d) as f64))) };
     Ok(match name {
         // ---- math
         "isNaN" => Val::Bool(matches!(a.get(0), Val::Num(x) if x.is_nan())),
@@ -981,10 +987,13 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
         "seconds" | "utcseconds" => part(|d| d.second)?,
         "milliseconds" | "utcmilliseconds" => part(|d| d.milli)?,
         "time" => Val::Num(date_arg()?),
-        "timezoneoffset" => Val::Num(if date_arg()?.is_nan() { f64::NAN } else { 0.0 }),
-        "quarter" | "utcquarter" => Val::Num(1.0 + date::breakdown(date_arg()?).map_or(0, |d| d.month / 3) as f64),
-        "week" | "utcweek" => Val::Num(date::week_vega(to_date_ms(a.get(0))?)),
-        "dayofyear" | "utcdayofyear" => Val::Num(date::day_of_year_vega(to_date_ms(a.get(0))?)),
+        "timezoneoffset" => {
+            let ms = date_arg()?;
+            Val::Num(if ms.is_nan() { f64::NAN } else { -date::local_offset_ms(ms)? / 60_000.0 + 0.0 })
+        }
+        "quarter" | "utcquarter" => Val::Num(1.0 + date::breakdown(local_ms()?).map_or(0, |d| d.month / 3) as f64),
+        "week" | "utcweek" => Val::Num(date::week_vega(local_ms()?)),
+        "dayofyear" | "utcdayofyear" => Val::Num(date::day_of_year_vega(local_ms()?)),
         // ---- sequence
         "length" => match a.get(0) {
             Val::Str(s) => Val::Num(utf16(s)?.len() as f64),
@@ -1359,7 +1368,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
             if matches!(a.get(0), Val::Null) {
                 Val::Str("null".into())
             } else {
-                date::time_parse(&a.string(1)?, &a.string(0)?, &*time_locale()?).map_or(Val::Null, Val::Date)
+                date::time_parse(&a.string(1)?, &a.string(0)?, &*time_locale()?, name == "utcParse")?.map_or(Val::Null, Val::Date)
             }
         }
         "monthFormat" | "monthAbbrevFormat" | "dayFormat" | "dayAbbrevFormat" => {
@@ -1375,18 +1384,32 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
                     "dayFormat" => (0.0, 2.0 + k, "%A"),
                     _ => (0.0, 2.0 + k, "%a"),
                 };
-                Val::Str(date::time_format(spec, date::make_time(2000.0, month, day, 0.0, 0.0, 0.0, 0.0), false, &*time_locale()?)?)
+                // A name lookup, not an instant: read on the UTC clock it was built on.
+                Val::Str(date::time_format(spec, date::make_time(2000.0, month, day, 0.0, 0.0, 0.0, 0.0), true, &*time_locale()?)?)
             }
         }
         "timeUnitSpecifier" => time_unit_specifier(&a)?,
         "timeOffset" | "utcOffset" => match Unit::parse(&a.string(0)?) {
-            Some(unit) => Val::Date(unit.offset(n(1), if matches!(a.get(2), Val::Undefined | Val::Null) { None } else { Some(n(2)) })),
+            Some(unit) => {
+                let step = if matches!(a.get(2), Val::Undefined | Val::Null) { None } else { Some(n(2)) };
+                Val::Date(if name == "utcOffset" || unit.is_fixed() { unit.offset(n(1), step) } else { date::from_local_wall(unit.offset(date::to_local_wall(n(1))?, step))? })
+            }
             None => Val::Undefined,
         },
         "timeSequence" | "utcSequence" => match Unit::parse(&a.string(0)?) {
             Some(unit) => {
                 let step = if matches!(a.get(3), Val::Undefined | Val::Null) { None } else { Some(n(3)) };
-                let dates = unit.range(n(1), n(2), step, MAX_SEQUENCE).ok_or_else(sequence_too_long)?;
+                let dates = if name == "utcSequence" {
+                    unit.range(n(1), n(2), step, MAX_SEQUENCE).ok_or_else(sequence_too_long)?
+                } else if unit.is_fixed() {
+                    // A local hour starts on the zone's clock, off the UTC hour in a half-hour zone.
+                    let shift = date::local_offset_ms(n(1))?.rem_euclid(3_600_000.0);
+                    let shifted = unit.range(n(1) + shift, n(2) + shift, step, MAX_SEQUENCE).ok_or_else(sequence_too_long)?;
+                    shifted.into_iter().map(|t| t - shift).collect()
+                } else {
+                    let walls = unit.range(date::to_local_wall(n(1))?, date::to_local_wall(n(2))?, step, MAX_SEQUENCE).ok_or_else(sequence_too_long)?;
+                    walls.into_iter().map(date::from_local_wall).collect::<Res<Vec<f64>>>()?
+                };
                 val::reserve(dates.len().saturating_mul(val::ELEMENT_BYTES * 2))?;
                 Val::Array(dates.into_iter().map(Val::Date).collect())
             }

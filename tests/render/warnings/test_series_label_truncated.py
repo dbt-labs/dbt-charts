@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from dbt_charts.core.diagnostics import WARN_SERIES_LABEL_TRUNCATED
+from dbt_charts.core.diagnostics import (
+    WARN_RAIL_VALUE_DROPPED,
+    WARN_SERIES_LABEL_TRUNCATED,
+)
 from dbt_charts.core.render.chart.series_label_truncation import (
     SeriesLabelSource,
     SeriesLabelTruncation,
@@ -47,7 +50,9 @@ def _cut(
     *names: str, authored_field: SeriesLabelSource = "color"
 ) -> list[SeriesLabelTruncation]:
     return [
-        SeriesLabelTruncation(authored_field=authored_field, series_name=n)
+        SeriesLabelTruncation(
+            authored_field=authored_field, series_name=n, fate="truncated"
+        )
         for n in names
     ]
 
@@ -86,6 +91,42 @@ def test_detector_folds_many_cut_labels_into_one_warning() -> None:
     assert len(warnings) == 1
     assert "30 series labels" in warnings[0].message
     assert "and 27 more" in warnings[0].message
+
+
+def test_detector_names_a_label_whose_value_was_dropped_under_its_own_code() -> None:
+    """A dropped value is a different fact from a cut name: its own code, one per fate."""
+    dropped = SeriesLabelTruncation(
+        authored_field="color", series_name=_LONG, fate="value_dropped"
+    )
+    warnings = detector.detect(_ctx({"c1": [*_cut("Other long name"), dropped]}))
+
+    assert {w.code for w in warnings} == {
+        WARN_SERIES_LABEL_TRUNCATED.code,
+        WARN_RAIL_VALUE_DROPPED.code,
+    }
+    value_warning = next(w for w in warnings if w.code == WARN_RAIL_VALUE_DROPPED.code)
+    assert value_warning.path == "charts.c1.color"
+    assert _LONG in value_warning.message
+    assert "without the final value" in value_warning.message
+
+
+def test_engine_warning_for_a_dropped_value_reaches_the_sink() -> None:
+    """The engine's WARN-RAIL-VALUE-DROPPED is mapped to a sink, not refused as unmapped."""
+    from dbt_charts.core.render.chart.series_label_truncation import (
+        collect_series_label_truncations,
+    )
+    from dbt_charts.core.render.engine import _WARNING_SINKS
+
+    with collect_series_label_truncations() as sink:
+        _WARNING_SINKS["WARN-RAIL-VALUE-DROPPED"](
+            {"chart_id": "c1", "authored_field": "color", "series_names": [_LONG]}
+        )
+
+    assert sink["c1"] == [
+        SeriesLabelTruncation(
+            authored_field="color", series_name=_LONG, fate="value_dropped"
+        )
+    ]
 
 
 def test_detector_silent_when_nothing_was_truncated() -> None:

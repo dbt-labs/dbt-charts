@@ -34,11 +34,10 @@ charts:
       variant: stacked
       support:
         format: percent_delta
-        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      glyph: ▲
+      good: up
   stacked_label_only:
     type: kpi
     query: q
@@ -58,11 +57,10 @@ charts:
       variant: stacked
       support:
         format: percent_delta
-        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      glyph: ▲
+      good: up
   stacked_value_only:
     type: kpi
     query: q
@@ -84,11 +82,10 @@ charts:
       variant: inline
       support:
         format: percent_delta
-        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      glyph: ▲
+      good: up
   inline_label_only:
     type: kpi
     query: q
@@ -108,11 +105,10 @@ charts:
       variant: inline
       support:
         format: percent_delta
-        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      glyph: ▲
+      good: up
   inline_value_only:
     type: kpi
     query: q
@@ -134,11 +130,10 @@ charts:
       variant: compact
       support:
         format: percent_delta
-        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      glyph: ▲
+      good: up
   compact_label_only:
     type: kpi
     query: q
@@ -158,11 +153,10 @@ charts:
       variant: compact
       support:
         format: percent_delta
-        tone: positive
     support:
       value: delta_pct
       label: of Opus spend
-      glyph: ▲
+      good: up
   compact_value_only:
     type: kpi
     query: q

@@ -574,8 +574,6 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
         payload.chart_id()?,
         &r,
         &payload.rows,
-        fonts,
-        payload.board_style.as_ref(),
         multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, 0.0),
         series.get(),
         XScale::of(&x_resolution(&r, &payload.rows)?.resolution),

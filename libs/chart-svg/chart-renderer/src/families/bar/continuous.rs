@@ -200,7 +200,6 @@ pub(super) fn render_vertical_continuous_x_panel(
     let x_title_text = axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
     let ((x_extent, x_panels), (y_extent, y_panels)) = title_boxes.unwrap_or(((svg_w, 1.0), (svg_h, 1.0)));
     let x_title_paint = crate::common::wrapped_axis_title(&r.id, "x_label", &x_title_text, &ax_x.title.font, x_extent, x_panels, fonts)?;
-    let zero_text = zero_label(r, rows)?;
     let pad_l = pad.map(|p| p.left).unwrap_or(0.0);
     let pad_r = pad.map(|p| p.right).unwrap_or(0.0);
     let pad_t = pad.map(|p| p.top).unwrap_or(0.0);
@@ -213,6 +212,7 @@ pub(super) fn render_vertical_continuous_x_panel(
     let mut bar_x_text: Vec<String> = Vec::new();
     // The row key each bar's link template reads its channels through.
     let mut bar_cat: Vec<String> = Vec::new();
+    let mut bar_extra: Vec<Vec<String>> = Vec::new();
     let mut y_dmin = f64::INFINITY;
     let mut y_dmax = f64::NEG_INFINITY;
     // The step ladder reads the x COLUMN alone (production sorts the
@@ -230,6 +230,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         bars_data.push((xv, yv));
         bar_x_text.push(row_str(row, &r.x));
         bar_cat.push(row_str(row, &r.x));
+        bar_extra.push(crate::families::tooltip_extra::rows_for(&r.tooltip, row)?);
     }
     if bars_data.is_empty() {
         return Ok(None);
@@ -341,6 +342,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         (y_min, y_max, None)
     };
     let y_span = y_max - y_min;
+    let zero_text = zero_label(r, rows, &LinearScale::new(y_min, y_max, svg_h, 0.0))?;
     // Vega-Lite anchors the bars at the zero rule only when the pair, read as
     // authored, holds 0 (`domainHasZero`: `first <= 0 <= last`); otherwise
     // (a descending pair too) they hang from the plot bottom.
@@ -491,6 +493,7 @@ pub(super) fn render_vertical_continuous_x_panel(
             fonts,
             canvas: r.canvas.as_str(),
             clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), panel.map_or(0, |(_, ordinal)| ordinal)),
+            occupied: Vec::new(),
         }
     };
     // A line or scatter layer's value labels join the fit like any text mark:
@@ -848,7 +851,9 @@ pub(super) fn render_vertical_continuous_x_panel(
                 if let (Some(ml), Some(font)) = (&zero_text, &zero_label_font) {
                     let linear = LinearScale::new(y_min, y_max, ph, 0.0);
                     let spec = LabelSpec::new(ml, false, false, rows, &r.y);
-                    for ((&(_, yv), p), &width) in bars_data.iter().zip(&placed).zip(&zero_label_widths) {
+                    // A layer that labels nothing at this size moves nothing.
+                    let labels_any = bars_data.iter().any(|&(_, yv)| !zero_label_at(&spec, yv, &linear, ph, font.size).2);
+                    for ((&(_, yv), p), &width) in bars_data.iter().zip(&placed).zip(&zero_label_widths).filter(|_| labels_any) {
                         let (extent, side, blank) = zero_label_at(&spec, yv, &linear, ph, font.size);
                         let spot = label_spot(ml, "above", None, p.center, extent, None, side);
                         b.union(&vega_fit::text_ink(spot.x, spot.y, if blank { 0.0 } else { width }, font.size, spot.align(), spot.baseline));
@@ -1019,11 +1024,13 @@ pub(super) fn render_vertical_continuous_x_panel(
     } else {
         String::new()
     };
-    for (((&(_, yv), x_text), cat), p) in bars_data.iter().zip(&bar_x_text).zip(&bar_cat).zip(&placed) {
+    // The base bars, which annotation text tests for its halo.
+    let mut under = Vec::new();
+    for ((((&(_, yv), x_text), cat), p), extra) in bars_data.iter().zip(&bar_x_text).zip(&bar_cat).zip(&placed).zip(&bar_extra) {
         let yt = y_pos(yv);
         let (top, h) = if yt <= y0 { (yt, y0 - yt) } else { (y0, yt - y0) };
         let aria = bar_datum_aria(
-            tooltip_labels, x_text, None, false, None, combo_series, None, &value_title, tooltip_fmt, yv, None, None, native.as_ref(),
+            tooltip_labels, x_text, None, false, None, combo_series, None, &value_title, tooltip_fmt, yv, None, None, extra, native.as_ref(),
         )?;
         bar_arias.push(aria.clone());
         if let Some(band) = hover_band.as_mut() {
@@ -1033,12 +1040,13 @@ pub(super) fn render_vertical_continuous_x_panel(
         if ghosts_on {
             ghost_points.push((aria.clone(), p.left + p.width / 2.0, yt, ghost_ink.clone(), hrefs.get(&key).cloned()));
         }
+        under.push(crate::annotation::DataMark::rect(p.left, top, p.width, h));
         plot.extend(bar_passes(false, p.left,
             top,
             p.width,
             h,
             fill,
-            None,
+            mark.opacity,
             stroke_color,
             stroke_w,
             corner_r,
@@ -1072,7 +1080,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         let series = layer_series_text(name, color_value);
         bar_datum_aria(
             tooltip_labels, &row_str(row, x_field), None, false, None, Some(series.as_str()), None, name,
-            axis.tooltip_format_or(tooltip_fmt), val, None, None, native.as_ref(),
+            axis.tooltip_format_or(tooltip_fmt), val, None, None, &[], native.as_ref(),
         )
     };
     let layer_caption = |x_field: &str, name: &str, row: &serde_json::Map<String, Value>, val: f64| {
@@ -1122,6 +1130,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                     |mark| layer_caption(x_title, &name, mark.row, mark.value),
                     crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
                     (board_style, r.canvas.as_str()),
+                    (crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts }, &vec![bw; marks.len()]),
                 )?);
             }
             OverlayLayer::Line(l) => {
@@ -1150,6 +1159,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                         0.0,
                         stacked,
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
+crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
 )
                     .map_err(|e| format!("bar: {e}"))
                 };
@@ -1189,7 +1199,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                         }
                         bar_datum_aria(
                             tooltip_labels, &row_str(row, x_field), None, false, None, combo_series, None, &value_title,
-                            tooltip_fmt, val, None, None, native.as_ref(),
+                            tooltip_fmt, val, None, None, &[], native.as_ref(),
                         )
                     },
                     match &claims[i].fill {
@@ -1200,6 +1210,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                     board_style,
                     |row, val| Ok(layer_caption(x_title, &name, row, val)),
 crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clipped.then_some((plot_w, plot_h)),
+crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
 )
                 .map_err(|e| format!("bar: {e}"))?);
             }
@@ -1277,6 +1288,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
             .collect::<Result<Vec<LabelPoint>, String>>()?;
         plot.extend(mark_labels(ml, false, false, true, &points, painted_layers, board_style, 0.0, 0.0, r.canvas.as_str(), r.link_open)?);
     }
+    let annotations = crate::annotation::AnnotationCtx { occupied: under, ..annotations };
     plot.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?);
 
     // X ticks + labels + title (flush anchors at the plot edges) — a facet

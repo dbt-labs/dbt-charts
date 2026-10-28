@@ -31,6 +31,7 @@ import yaml
 from dbt_charts.agent_api.source_bundle import (
     BundleError,
     SourceBundle,
+    option_lines,
     public_url,
     staged_bundle,
     url_origin,
@@ -45,6 +46,41 @@ TIMEOUT_SECONDS = 120
 # Hex sits behind Cloudflare, which rejects the default Python-urllib agent (error 1010).
 USER_AGENT = "dct-import-hex"
 CHART_SIZE = "width=1200&height=800"
+# Config keys the outline lists as their own lines.
+CELL_SHOWN_KEYS = frozenset(
+    {
+        "cells",
+        "comparisonColumn",
+        "dataFrameVariableName",
+        "dataframe",
+        "dataframeName",
+        "defaultValue",
+        "inputType",
+        "name",
+        "resultVariableName",
+        "richText",
+        "showComparison",
+        "source",
+        "title",
+        "valueAggregate",
+        "valueColumn",
+        "valueVariableName",
+    }
+)
+# Config keys whose listed sub-keys are their own lines; the rest are options.
+CELL_PARTLY_SHOWN = {
+    "chartSpec": frozenset({"type", "layers"}),
+    "filters": frozenset({"filters"}),
+    "options": frozenset({"valueOptions"}),
+    "pivotConfig": frozenset({"values"}),
+    "spec": frozenset({"fields"}),
+}
+# Hex color assignments, which the dbt Charts theme owns; a color-by column
+# (`colorDataFrameColumn`) is an encoding and stays in the outline.
+CELL_STYLING_KEYS = frozenset(
+    {"color", "colorMappings", "colorOrder", "colorsBySeriesValues"}
+)
+NESTED_STYLING_KEYS = CELL_STYLING_KEYS
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
@@ -169,6 +205,26 @@ def _name(cell: dict[str, Any]) -> str:
     return repr(title) if title else "(untitled)"
 
 
+_SERIES_SHOWN = ("type", "dataFrameColumns", "axis")
+
+
+def _options(options: dict[str, Any]) -> list[str]:
+    return option_lines(
+        options,
+        dropped=CELL_STYLING_KEYS.__contains__,
+        nested_dropped=NESTED_STYLING_KEYS,
+    )
+
+
+def _cell_options(cell: dict[str, Any]) -> list[str]:
+    config = cell["config"]
+    options = {k: v for k, v in config.items() if k not in CELL_SHOWN_KEYS}
+    for key, shown in CELL_PARTLY_SHOWN.items():
+        if config.get(key):
+            options[key] = {k: v for k, v in config[key].items() if k not in shown}
+    return _options(options)
+
+
 def _chart_lines(cell: dict[str, Any]) -> list[str]:
     spec = cell["config"]["chartSpec"]
     if spec["type"] != "layered":
@@ -177,13 +233,27 @@ def _chart_lines(cell: dict[str, Any]) -> list[str]:
         )
     lines = []
     for layer in spec["layers"]:
+        x_axis = layer["xAxis"]
         for series in layer["series"]:
-            aggregate = series["axis"].get("aggregate")
+            axis = series["axis"]
+            aggregate = axis.get("aggregate")
             columns = ", ".join(series["dataFrameColumns"])
             value = f"{aggregate}({columns})" if aggregate else columns
             lines.append(
-                f"layer: {series['type']}, x={layer['xAxis']['dataFrameColumn']}, y={value}"
+                f"layer: {series['type']}, x={x_axis['dataFrameColumn']}, y={value}"
             )
+            lines += _options(
+                {
+                    **{k: v for k, v in series.items() if k not in _SERIES_SHOWN},
+                    **{k: v for k, v in axis.items() if k != "aggregate"},
+                }
+            )
+        lines += _options(
+            {
+                **{k: v for k, v in x_axis.items() if k != "dataFrameColumn"},
+                **{k: v for k, v in layer.items() if k not in ("xAxis", "series")},
+            }
+        )
     return lines
 
 
@@ -260,7 +330,17 @@ def _describe(cell: dict[str, Any], render: str | None) -> list[str]:
     head = f"- **{kind}** `{cell['cellId']}` {_name(cell)}"
     if kind == "CODE":
         head += ": UNMIGRATED (Python cell)"
-    lines = [head, *(f"    - {line}" for line in _cell_lines(cell))]
+    lines = [
+        head,
+        *(
+            f"    - {line}"
+            for line in [
+                f"config: {RAW}#cells[{cell['cellId']}]",
+                *_cell_lines(cell),
+                *_cell_options(cell),
+            ]
+        ),
+    ]
     if render:
         lines.append(f"    - {render}")
     return lines

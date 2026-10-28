@@ -264,11 +264,10 @@ charts:
         format: ",.0f"
       support:
         format: .0%
-        tone: negative
     support:
       value: aging_share
       label: aging > 90 days
-      glyph: "▲"
+      good: down
 
   kpi_aging:
     type: kpi
@@ -296,11 +295,10 @@ charts:
         format: ",.0f"
       support:
         format: +.0%
-        tone: positive
     support:
       value: solved_30_growth
       label: vs prior 30 days
-      glyph: "▲"
+      good: up
 
   kpi_oldest:
     type: kpi

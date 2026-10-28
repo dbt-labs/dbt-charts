@@ -103,6 +103,9 @@ pub(crate) struct LinearX {
     raw: (f64, f64),
     zero: bool,
     nice: bool,
+    /// The domain is the data extent itself (no authored pair, zero not joined):
+    /// no point may sit on a non-zero edge.
+    fit: bool,
     pad: f64,
     bend: vega_fit::Bend,
     tick_count: usize,
@@ -120,6 +123,11 @@ pub(crate) struct LinearX {
     rule_datums: [Option<f64>; 2],
 }
 
+/// `to`, unless moving from `from` would cross zero: a zero edge is fine, a past-zero one is not.
+fn clamp_to_zero(from: f64, to: f64) -> f64 {
+    if from.signum() == to.signum() { to } else { 0.0 }
+}
+
 impl LinearX {
     /// The scale's domain on a plot `pw` wide.
     pub(crate) fn domain_at(&self, pw: f64) -> (f64, f64) {
@@ -131,9 +139,29 @@ impl LinearX {
         } else if lo > hi {
             let (nice_hi, nice_lo) = d3rs::ticks::d3_nice(hi, lo, 10);
             (nice_lo, nice_hi)
+        } else if self.fit {
+            self.nice_clear_of_data(lo, hi)
         } else {
             d3rs::ticks::d3_nice(lo, hi, 10)
         }
+    }
+
+    /// A data-fit domain rounded out to the axis's own tick boundaries, then
+    /// one tick step further past a non-zero end a data value still lands on:
+    /// a dot on the plot edge reads as clipped, unless the edge is zero.
+    fn nice_clear_of_data(&self, lo: f64, hi: f64) -> (f64, f64) {
+        let (nice_lo, nice_hi) = d3rs::ticks::d3_nice(lo, hi, self.tick_count);
+        if nice_hi <= nice_lo {
+            return (nice_lo, nice_hi);
+        }
+        let count = d3rs::ticks::vega_tick_count(nice_lo, nice_hi, self.tick_count, self.min_step);
+        let step = d3rs::ticks::d3_tick_step(nice_lo, nice_hi, count);
+        let (data_lo, data_hi) = self.raw;
+        // An authored tick step can exceed the step the domain rounded to, so clamp at zero.
+        (
+            if data_lo == nice_lo && nice_lo != 0.0 { clamp_to_zero(nice_lo, nice_lo - step) } else { nice_lo },
+            if data_hi == nice_hi && nice_hi != 0.0 { clamp_to_zero(nice_hi, nice_hi + step) } else { nice_hi },
+        )
     }
 
     /// A position as a fraction of the plot. d3 puts every value of a
@@ -214,6 +242,8 @@ struct ScatterResolved {
     #[serde(default)]
     y_label: Option<String>,
     field_labels: crate::common::FieldLabels,
+    #[serde(default)]
+    tooltip: Vec<crate::families::tooltip_extra::TooltipField>,
     /// The format a quantitative x's tooltip row names for itself; absent, x
     /// keeps the measure format's digits without its affix.
     #[serde(default)]
@@ -967,13 +997,14 @@ fn rows_at<'a>(rows: &'a [serde_json::Map<String, Value>], at: &[usize]) -> Vec<
 /// otherwise the scale spans the data joined to zero (unless authored off) and
 /// rounds out unless `nice: false`.
 fn linear_x_scale(r: &ScatterResolved, x_min: f64, x_max: f64, rules: (bool, bool)) -> Result<LinearX, String> {
-    Ok(LinearX::over(&r.style.axis_x, x_min, x_max, rules, !r.style.axis_x.is_zero_false()))
+    Ok(LinearX::over(&r.style.axis_x, x_min, x_max, rules, !r.style.axis_x.is_zero_false(), true))
 }
 
 impl LinearX {
     /// The scale `ax_x` draws over the data extent `[x_min, x_max]`, with the threshold rules `rules` fires and
-    /// the family's default for joining the domain to zero.
-    pub(crate) fn over(ax_x: &AxisStyle, x_min: f64, x_max: f64, rules: (bool, bool), zero: bool) -> Self {
+    /// the family's default for joining the domain to zero. `clear_edges` keeps a data-fit domain's
+    /// non-zero ends off the data (scatter's law).
+    pub(crate) fn over(ax_x: &AxisStyle, x_min: f64, x_max: f64, rules: (bool, bool), zero: bool, clear_edges: bool) -> Self {
         let authored = ax_x.coerced_continuous_domain();
         let nice = ax_x.scale.get("nice").and_then(Value::as_bool);
         let (raw, zero, nice) = match authored {
@@ -984,6 +1015,7 @@ impl LinearX {
             raw,
             zero,
             nice,
+            fit: clear_edges && authored.is_none() && !zero,
             pad: ax_x.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0),
             bend: ax_x.bend(),
             tick_count: ax_x.ticks.count.unwrap_or(6.0) as usize,
@@ -1283,6 +1315,7 @@ impl PlainXAxis {
                 raw: (0.0, 1.0),
                 zero: false,
                 nice: false,
+                fit: false,
                 pad: 0.0,
                 bend: vega_fit::Bend::Linear,
                 tick_count: 0,
@@ -4445,6 +4478,7 @@ mod tests {
             raw: (0.0, 10.0),
             zero: false,
             nice: false,
+            fit: false,
             pad: 10.0,
             bend: crate::vega_fit::Bend::Linear,
             tick_count: 5,
@@ -4468,10 +4502,10 @@ mod tests {
     /// fixed point at the precision the tick step implies.
     #[test]
     fn an_x_without_a_label_format_reads_d3s_default_tick_format() {
-        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 3, min_step: None, format: None, ruler: None, tick_label: None, expr: None, case: None, rule_datums: [None, None] };
+        let lin = LinearX { raw: (0.0, 3000.0), zero: false, nice: true, fit: false, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 3, min_step: None, format: None, ruler: None, tick_label: None, expr: None, case: None, rule_datums: [None, None] };
         let (_, labels, _, _) = lin.at(400.0).unwrap();
         assert_eq!(labels, ["0", "1,000", "2,000", "3,000"]);
-        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 2, min_step: None, format: None, ruler: None, tick_label: None, expr: None, case: None, rule_datums: [None, None] };
+        let lin = LinearX { raw: (0.0, 1.0), zero: false, nice: true, fit: false, pad: 0.0, bend: crate::vega_fit::Bend::Linear, tick_count: 2, min_step: None, format: None, ruler: None, tick_label: None, expr: None, case: None, rule_datums: [None, None] };
         let (_, labels, _, _) = lin.at(400.0).unwrap();
         assert_eq!(labels, ["0.0", "0.5", "1.0"]);
     }
@@ -4785,6 +4819,108 @@ mod tests {
         }
         let labels = aria(&render_json(dated));
         assert!(labels.iter().any(|a| a.contains(": Jan 2024; ")), "{labels:?}");
+    }
+
+    /// Month labels over daily dates name their period: centered between boundary ticks (the short name, the year on
+    /// the first), not d3's full month name on the tick.
+    #[test]
+    fn a_time_axis_names_months_between_boundary_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+        json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearmonth");
+        json["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonthdate");
+        let days = (0..60).map(|i| {
+            let d = crate::families::temporal::civil_from_days(crate::families::temporal::days_from_civil(2026, 1, 1) + 3 * i);
+            serde_json::json!({"spend": format!("{:04}-{:02}-{:02}", d.0, d.1, d.2), "pipeline": 100.0 + i as f64})
+        });
+        json["rows"] = serde_json::Value::Array(days.collect());
+        let svg = render_json(json);
+        for label in ["Feb", "Jun", "2026"] {
+            assert!(svg.contains(&format!(">{label}</text>")), "no {label} label");
+        }
+        assert!(!svg.contains(">February</text>"), "d3's full month name sits on the tick");
+    }
+
+    /// An authored `labels.align` turns interval mode off: d3's month names stay on the ticks instead of interval quarters.
+    #[test]
+    fn an_authored_label_align_turns_interval_labels_off() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+        json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
+        json["resolved"]["style"]["axis_x"]["labels"]["align"] = serde_json::json!("left");
+        json["resolved"]["style"]["axis_x"]["ticks"]["count"] = serde_json::Value::Null;
+        let days = (0..60).map(|i| {
+            let d = crate::families::temporal::civil_from_days(crate::families::temporal::days_from_civil(2026, 1, 1) + 30 * i);
+            serde_json::json!({"spend": format!("{:04}-{:02}-{:02}", d.0, d.1, d.2), "pipeline": 100.0 + i as f64})
+        });
+        json["rows"] = serde_json::Value::Array(days.collect());
+        let svg = render_json(json);
+        let grid = regex::Regex::new(r#"role-axis-grid.*?</g>"#).expect("pattern").find(&svg).expect("grid").as_str().to_string();
+        let ticks: Vec<f64> = regex::Regex::new(r#"x1="([\d.]+)""#).expect("pattern").captures_iter(&grid).map(|c| c[1].parse().expect("x1")).collect();
+        let labels: Vec<f64> = regex::Regex::new(r#"<text x="([\d.]+)"[^>]*>Q2</text>"#).expect("pattern").captures_iter(&svg).map(|c| c[1].parse().expect("x")).collect();
+        assert!(!labels.is_empty(), "no Q2 labels: {svg}");
+        for at in labels {
+            assert!(ticks.iter().any(|t| (t - at).abs() < 1.0), "Q2 at {at} is off the ticks {ticks:?}");
+        }
+    }
+
+    /// An authored `labels.angle` takes effect: it turns interval mode off rather than being dropped by it.
+    #[test]
+    fn an_authored_angle_on_a_grainless_date_axis_is_kept() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+        json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("year");
+        json["resolved"]["style"]["axis_x"]["labels"]["angle"] = serde_json::json!(-45);
+        json["resolved"]["style"]["axis_x"]["ticks"]["count"] = serde_json::Value::Null;
+        let days = (0..60).map(|i| {
+            let d = crate::families::temporal::civil_from_days(crate::families::temporal::days_from_civil(2026, 1, 1) + 90 * i);
+            serde_json::json!({"spend": format!("{:04}-{:02}-{:02}", d.0, d.1, d.2), "pipeline": 100.0 + i as f64})
+        });
+        json["rows"] = serde_json::Value::Array(days.collect());
+        let svg = render_json(json);
+        assert!(svg.contains("rotate(-45"), "authored angle dropped");
+    }
+
+    /// Daily scatter rows from 2026-03-03 over `days` days, 600px wide, on a daily-grain time axis.
+    fn daily_scatter_labels(days: i64, label_unit: Option<&str>) -> Vec<String> {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut json = make_scatter_payload(false);
+        json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+        json["resolved"]["style"]["axis_x"]["time_unit"] = serde_json::json!("yearmonthdate");
+        json["resolved"]["style"]["axis_x"]["ticks"]["count"] = serde_json::Value::Null;
+        if let Some(unit) = label_unit {
+            json["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!(unit);
+        }
+        let first = crate::families::temporal::days_from_civil(2026, 3, 3);
+        let rows = (0..days).map(|i| {
+            let d = crate::families::temporal::civil_from_days(first + i);
+            serde_json::json!({"spend": format!("{:04}-{:02}-{:02}", d.0, d.1, d.2), "pipeline": 100.0 + i as f64})
+        });
+        json["rows"] = serde_json::Value::Array(rows.collect());
+        let svg = render_json(json);
+        let text = regex::Regex::new(r">([^<>]+)</text>").expect("pattern");
+        text.captures_iter(&svg).map(|c| c[1].to_string()).collect()
+    }
+
+    /// On weekly ticks the first and last data points are named when they keep room beside the outermost tick's
+    /// label; the first carries the context row its tick hands over.
+    #[test]
+    fn a_week_ticked_time_axis_labels_a_first_and_last_point_with_room_beside_their_neighbor() {
+        let labels = daily_scatter_labels(76, None);
+        assert_eq!(labels.first().map(String::as_str), Some("3"), "{labels:?}");
+        assert!(labels.iter().any(|l| l == "Mar'26"), "{labels:?}");
+        assert!(labels.iter().any(|l| l == "17"), "{labels:?}");
+    }
+
+    /// A month label over a domain inside one month has no boundary to center between: weekly labels stay.
+    #[test]
+    fn a_month_label_over_a_one_month_scatter_domain_falls_back_to_week_ticks() {
+        let labels = daily_scatter_labels(23, Some("yearmonth"));
+        assert!(labels.iter().any(|l| l == "16"), "weekly day labels: {labels:?}");
+        assert!(!labels.iter().any(|l| l == "Mar"), "no single month label: {labels:?}");
     }
 
     /// A year-shaped x (2019-2023) is a time axis, as on line: the plot spans the years, never
@@ -5927,6 +6063,42 @@ mod tests {
         assert!(attr(tags[0], "x1").abs() < 1e-2, "at the domain floor: {tags:?}");
     }
 
+    /// The scale joins BOTH ends with 0 under `zero: true`, so an all-negative
+    /// percent x renders with its top edge at 0 — the x=0 rule must fire there,
+    /// at the plot's right edge, not be declined by a gate that only lowers lo.
+    #[test]
+    fn x_threshold_zero_anchor_fires_at_the_top_of_an_all_negative_domain() {
+        let svg = render_json(x_threshold_payload(|p| {
+            p["rows"] = serde_json::json!([
+                {"spend": -0.4, "pipeline": 0.1},
+                {"spend": -0.25, "pipeline": 0.5},
+                {"spend": -0.1, "pipeline": 0.9},
+            ]);
+            p["resolved"]["style"]["axis_x"]["scale"] =
+                serde_json::json!({"continuous": {"zero": true}});
+        }));
+        let tags = x_rule_tags(&svg);
+        assert_eq!(tags.len(), 1, "the joined top edge 0 holds the rule: {svg}");
+        assert!(attr(tags[0], "x1") > 0.0, "at the right edge, not off-plot: {tags:?}");
+    }
+
+    /// A string-spelled authored domain is what the scale renders (`0.2..0.8`);
+    /// the gate must read that same pair, so no rule paints at the off-plot
+    /// position the data extent `0..0.6` would have implied.
+    #[test]
+    fn x_threshold_gate_reads_the_coerced_string_domain() {
+        let svg = render_json(x_threshold_payload(|p| {
+            p["rows"] = serde_json::json!([
+                {"spend": 0.0, "pipeline": 0.1},
+                {"spend": 0.3, "pipeline": 0.5},
+                {"spend": 0.6, "pipeline": 0.9},
+            ]);
+            p["resolved"]["style"]["axis_x"]["scale"] =
+                serde_json::json!({"continuous": {"domain": ["0.2", "0.8"]}});
+        }));
+        assert!(x_rule_tags(&svg).is_empty(), "0 lies outside the rendered 0.2..0.8: {svg}");
+    }
+
     /// Regression-shaped (mirrors `zero_rule_suppressed_by_threshold_
     /// visible_false_even_with_grid_visible`): `axis_x.grid.threshold.
     /// visible` is an independent off-switch from `axis_x.grid.visible` —
@@ -6071,6 +6243,7 @@ mod tests {
             raw: (0.0, 55.0),
             zero: false,
             nice: false,
+            fit: false,
             pad: 0.0,
             bend: crate::vega_fit::Bend::Linear,
             tick_count: 6,
@@ -6495,7 +6668,7 @@ mod tests {
         let mut trend = annotation(12, serde_json::Value::Null, serde_json::Value::Null);
         trend["text"] = "a trend label wider than the gap".into();
         trend["trend"] = serde_json::json!({"line": [[10.0, 10.0], [30.0, 20.0]], "interval": null});
-        trend["style"]["text"]["position"] = serde_json::json!({"edge": "right", "align": "center", "overlay": false});
+        trend["style"]["text"]["position"] = serde_json::json!({"edge": "right", "align": "center", "overlay": false, "auto_edge": false, "auto_align": false});
         json["resolved"]["annotations"] = serde_json::json!([trend]);
         let svg = render_json(json);
         let text_x: f64 = svg.split("<text x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
@@ -6503,6 +6676,27 @@ mod tests {
         let legend_x: f64 = label.split("<text x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
         // 32 characters at 11px are wider than 100px.
         assert!(legend_x > text_x + 100.0, "legend at {legend_x}, trend text at {text_x}: {svg}");
+    }
+
+    #[test]
+    fn a_corner_note_moves_off_a_point_and_needs_no_halo() {
+        let corner = |align: &str| {
+            let mut note = annotation(10, serde_json::Value::Null, serde_json::Value::Null);
+            note["panel"] = serde_json::Value::Null;
+            note["style"]["text"]["halo_over_marks"] = true.into();
+            note["style"]["text"]["position"] = serde_json::json!({"edge": "top", "align": align, "overlay": true, "auto_edge": false, "auto_align": false});
+            annotated_scatter(vec![note])
+        };
+        let haloed = |svg: &str| svg.contains("stroke-linejoin=\"round\">Dashed = forecast");
+        let attr = |svg: &str, from: &str, name: &str| -> f64 {
+            let at = svg.find(from).unwrap_or_else(|| panic!("{from} missing: {svg}"));
+            svg[at..].split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+        };
+        // The highest point sits in the top-end corner: the text there slides
+        // in from the plot's right edge, off the point.
+        let end = corner("end");
+        assert!(attr(&end, "annotations-text", "x") < attr(&end, "<clipPath", "width"), "{end}");
+        assert!(!haloed(&end) && !haloed(&corner("start")));
     }
 
     #[test]
@@ -6685,6 +6879,37 @@ mod tests {
         let offset = render_json(dated_scatter(["2024-03-01T23:30:00-05:00", "2024-03-03T01:00:00+05:30", "2024-03-04T08:00:00+0100"], Vec::new()));
         let utc = render_json(dated_scatter(["2024-03-02T04:30:00Z", "2024-03-02T19:30:00Z", "2024-03-04T07:00:00Z"], Vec::new()));
         assert_eq!(crate::time_axis::testing::geometry(&offset), crate::time_axis::testing::geometry(&utc));
+    }
+
+    /// On a New York board an aware point's tooltip header reads the New York clock; a naive one as written.
+    #[test]
+    fn an_aware_point_reads_its_tooltip_clock_in_the_board_zone() {
+        let _locale = crate::time_locale::en_us_scope();
+        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let headers = |xs: [&str; 3]| {
+            let mut json = make_wide_quantitative_x_payload();
+            json["resolved"]["style"]["tooltip_format"] = serde_json::json!(",.0f");
+            json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+            for (row, x) in json["rows"].as_array_mut().expect("rows").iter_mut().zip(xs) {
+                row["spend"] = serde_json::json!(x);
+            }
+            let svg = render_json(json);
+            svg.split("aria-label=\"").skip(1).filter_map(|a| a.split('"').next()).filter(|a| a.contains("; ")).map(str::to_string).collect::<Vec<_>>()
+        };
+        let aware = headers(["2024-03-10T05:00:00Z", "2024-03-10T07:00:00Z", "2024-03-10T09:00:00Z"]);
+        assert!(aware.iter().any(|a| a.contains("3:00am")) && !aware.iter().any(|a| a.contains("7:00am")), "{aware:?}");
+        let naive = headers(["2024-03-10T05:00:00", "2024-03-10T07:00:00", "2024-03-10T09:00:00"]);
+        assert!(naive.iter().any(|a| a.contains("7:00am")), "{naive:?}");
+        // A sub-day tick reaches labels.expr as its instant, not floored to the day.
+        let mut json = make_wide_quantitative_x_payload();
+        for (row, x) in json["rows"].as_array_mut().expect("rows").iter_mut().zip(["2024-03-10T05:00:00Z", "2024-03-10T07:00:00Z", "2024-03-10T09:00:00Z"]) {
+            row["spend"] = serde_json::json!(x);
+        }
+        json["resolved"]["style"]["label_usable_ratio"] = serde_json::json!(0.85);
+        json["resolved"]["style"]["axis_x"]["labels"]["expr"] = serde_json::json!("timeFormat(datum.value, '%H') + 'h'");
+        let svg = render_json(json);
+        let hours: std::collections::BTreeSet<&str> = svg.split('>').filter_map(|t| t.strip_suffix("h</text")).collect();
+        assert!(hours.contains("03") && hours.len() > 2, "{hours:?}");
     }
 
     /// A date-shaped x value that is no date (a February 30th) refuses by the code every x-axis family raises,

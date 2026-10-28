@@ -14,10 +14,10 @@ from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.resolved import ResolvedScatterStyle
 
-from ._base import _CartesianResolvedChartFields
+from ._base import _CartesianResolvedChartFields, _TooltipResolvedField
 
 
-class ResolvedScatterChart(_CartesianResolvedChartFields):
+class ResolvedScatterChart(_CartesianResolvedChartFields, _TooltipResolvedField):
     """Render-ready scatter chart."""
 
     # Narrows base y from str | list[str] | None to str | None — scatter

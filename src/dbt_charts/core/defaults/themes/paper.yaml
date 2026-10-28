@@ -26,9 +26,6 @@ style:
     # Color inherits from `font.color` (InheritSlot) — no pin here so a
     # board-root style.font.color override reaches prose.
     code:
-      # Inline code keeps clarity's gray ink, not a cream stop.
-      font:
-        color: dbt-grays.10
       background: chrome[2]
       border:
         color: chrome[4]
@@ -43,15 +40,6 @@ style:
       divider:
         color: chrome[4]
   charts:
-    pie:
-      # The donut total keeps clarity's gray inks, not cream stops.
-      total:
-        value:
-          font:
-            color: dbt-grays.11
-        label:
-          font:
-            color: dbt-grays.7
     color:
       categorical:
         # Single-series ink rhythm: brown, gold, rust. Warm canvas takes warm

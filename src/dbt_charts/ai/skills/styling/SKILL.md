@@ -135,7 +135,7 @@ Also exist: `log`, `pow`, `symlog`.
 Also exist: `padding`, `size`, `gap`, `min_size`, `max_size`, `opacity`.
 
 `marks.bar.labels`:
-- `visible` (bool): Show numeric value labels on each mark; False by default
+- `visible` (bool|last): Show numeric value labels on each mark
 - `format` (name|text|{spec, prefix, suffix, notation, sign_placement, repeat}): Value label format: a name or d3 spec. Without one it takes the axis format, also when `field` names another column
 - `position` (above|top|middle|middle_aligned|bottom): Label position: `above` (past the bar's end, outside), `top` (inside the end), `middle`, `middle_aligned` (all at one height), `bottom` (inside the start)
 - `field`: Column whose text labels each mark; `''` where unlabeled, never NULL. Default: the y column
@@ -179,6 +179,8 @@ A palette is named, never spelled as colors.
 - Diverging: `dbt-div-blue-red`, `dbt-div-coolwarm`, `dbt-div-crimson-green`, `dbt-div-orange-teal`, `dbt-div-sunset` (each also as `<name>-dark`).
 - Tones: `info`, `negative`, `positive`, `warning`.
 - Scaffolds `dbt-creams`, `dbt-grays`, addressed by step number from lightest to darkest (`dbt-grays.8`, or `chrome[8]` to follow the theme's scaffold); stops of `dbt-grays`: `0`, `1-12`, `100`. `white` and `black` name the endpoints.
+
+A color request ("make Created orange") pins `category.<hue>` under `style.charts.category_colors`, never a raw hex. If the palette lacks the hue, say so and name the nearest alias it does have.
 
 ## KPI
 

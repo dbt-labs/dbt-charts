@@ -7,7 +7,7 @@ After the restructure:
 - ResolvedChartsStyle.dashes and the render gate (chart_has_active_dashes) are
   unchanged — dashes behavior is driven by the board-level field only.
 
-Structural rejection here mirrors the pie-axis-cut precedent (ADR-015): the type
+Structural rejection here mirrors the pie-axis-cut precedent: the type
 system is honest — if a field has no behavioral effect on a surface, that surface
 must not carry it.
 """

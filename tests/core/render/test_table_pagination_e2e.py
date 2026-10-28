@@ -19,6 +19,8 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.render import render
 from dbt_charts.core.render.controls import controls_stylesheet
 
+from .._pooled_table import visible_svg
+
 _BOARD_YAML = """\
 title: Probe
 charts:
@@ -76,8 +78,8 @@ def test_variables_page_reaches_the_table_renderer() -> None:
         result.board, executor, format="svg", variables={"t_page": 2}, controls=True
     )
     assert render_result.board_error is None, render_result.board_error
-    svg = render_result.output
-    assert isinstance(svg, str)
+    assert isinstance(render_result.output, str)
+    svg = visible_svg(render_result.output)
 
     assert "row_6" in svg
     assert "row_10" in svg

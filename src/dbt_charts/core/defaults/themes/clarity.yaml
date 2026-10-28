@@ -134,6 +134,9 @@ style:
           font:
             extends: label
             family: *serif
+          arrow:
+            font:
+              family: *serif
     bar:
       # Inward-align the category (row) labels on horizontal bars into the
       # measured margin. axis_x is the category axis on both orientations;

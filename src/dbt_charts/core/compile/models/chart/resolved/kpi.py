@@ -64,6 +64,14 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         default=None,
         description="Text drawn before the headline value; None draws none.",
     )
+    good: Literal["up", "down"] | None = Field(
+        default=None,
+        description="Which direction of the headline value is good; None leaves it neutral.",
+    )
+    value_rules: tuple[ConditionalRule, ...] | None = Field(
+        default=None,
+        description="Sign rules the chart-root `good` lowers to on the headline; None when `good` is unset.",
+    )
     variant: Literal["stacked", "inline", "compact"] = Field(
         description="Resolved `style.variant`; dispatches to a distinct SVG emit path.",
     )

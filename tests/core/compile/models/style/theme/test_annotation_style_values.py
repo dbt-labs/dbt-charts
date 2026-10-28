@@ -96,8 +96,6 @@ _AUTO_VALUES = [
     ("note", {"circle": {"opacity": "auto"}}),
     ("note", {"circle": {"stroke": None}}),
     ("rule", {"text": {"box": {"stroke": {"width": "auto", "color": "red"}}}}),
-    ("rule", {"text": {"position": {"edge": "auto"}}}),
-    ("rule", {"text": {"position": {"align": "auto"}}}),
     ("rule", {"text": {"position": {"overlay": "auto"}}}),
 ]
 

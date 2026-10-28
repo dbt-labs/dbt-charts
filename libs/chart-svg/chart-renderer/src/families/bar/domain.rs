@@ -628,16 +628,7 @@ pub(super) fn grouped_rail_anchors(
     authored: Option<(f64, f64)>,
 ) -> Result<(Vec<(String, f64)>, (f64, f64)), String> {
     // The walk-back reads the axis's own order, not raw x.
-    let rank: HashMap<&str, usize> = cat_domain.iter().enumerate().map(|(i, x)| (x.as_str(), i)).collect();
-    let ranked: Vec<serde_json::Map<String, Value>> = rows
-        .iter()
-        .filter_map(|row| {
-            let i = *rank.get(row_str(row, cat_field).as_str())?;
-            let mut ranked = row.clone();
-            ranked.insert(cat_field.to_string(), Value::from(i));
-            Some(ranked)
-        })
-        .collect();
+    let ranked = crate::common::x_ranked_rows(rows, cat_field, cat_domain)?;
     let last = crate::common::last_nonnull_value_per_series(&ranked, cat_field, val_field, color_field)?;
     let mut seen = HashSet::new();
     let anchors = rows
@@ -856,6 +847,37 @@ pub(super) fn build_data_map(
         data_map.insert(key, val);
     }
     Ok(data_map)
+}
+
+/// The authored `tooltip:` rows of each `(category, series)` datum, keyed as `build_data_map` keys its values.
+pub(super) struct Extras(HashMap<(String, String), Vec<String>>);
+
+impl Extras {
+    pub(super) fn build(
+        rows: &[serde_json::Map<String, Value>],
+        cat_field: &str,
+        color_field: Option<&str>,
+        tiered: bool,
+        fields: &[crate::families::tooltip_extra::TooltipField],
+    ) -> Result<Self, String> {
+        let mut by_key = HashMap::new();
+        if !fields.is_empty() {
+            for (row, key) in rows.iter().zip(row_keys(rows, cat_field, color_field, tiered)) {
+                by_key.insert(key, crate::families::tooltip_extra::rows_for(fields, row)?);
+            }
+        }
+        Ok(Self(by_key))
+    }
+
+    pub(super) fn of(&self, key: &(String, String)) -> Result<&[String], String> {
+        if self.0.is_empty() {
+            return Ok(&[]);
+        }
+        self.0
+            .get(key)
+            .map(Vec::as_slice)
+            .ok_or_else(|| format!("bar: internal error -- no row for the tooltip datum {key:?}"))
+    }
 }
 
 /// The dates a time axis's tooltips name: a row floored to its bucket keeps the date it carried, which

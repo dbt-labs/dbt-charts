@@ -1233,6 +1233,7 @@ def test_a_date_control_publishes_the_boards_time_locale(input_type: str) -> Non
             regional.format_locale,
             regional.time_locale,
             regional.week_start,
+            regional.zone,
         ),
     ):
         svg, _ = _strip({"when": Variable(input=input_type)})

@@ -401,6 +401,8 @@ pub(super) struct LabelBuild<'a> {
     /// The rows a colorless bar labels, in the order the arm paints them.
     pub(super) plain_rows: &'a [&'a serde_json::Map<String, Value>],
     pub(super) cat_field: &'a str,
+    /// The drawn category axis, which `visible: last` ranks the rows on.
+    pub(super) cat_domain: &'a [String],
     pub(super) val_field: &'a str,
     pub(super) color_field: Option<&'a str>,
     pub(super) is_grouped: bool,
@@ -418,6 +420,42 @@ pub(super) struct LabelBuild<'a> {
     pub(super) fonts: &'a FontBook,
     pub(super) board_style: Option<&'a crate::BoardStyle>,
     pub(super) link: Option<&'a crate::href::DatumLink<'a>>,
+}
+
+/// `labels.visible: last`: each series' sites at its most recent date, the rank
+/// `x_ranked_rows` gives its rows over the dates in time order (not the drawn
+/// order, which a horizontal bar sorts by value). Only a time axis has one; the
+/// compile stage refuses the rest. A stacked bar keeps every segment of its last
+/// stack (each series ends there); the total label has its own switch.
+fn last_sites(sites: Vec<LabelSite>, b: &LabelBuild) -> Result<Vec<LabelSite>, String> {
+    let dates: Vec<&str> = b.cat_domain.iter().map(String::as_str).collect();
+    let mut chronological = b.cat_domain.to_vec();
+    if crate::families::temporal::x_values_are_standard_dates(&dates) {
+        let mut axis = crate::time_axis::TimeAxis::new(Default::default(), HashMap::new());
+        for date in &dates {
+            axis.add(date).map_err(|e| e.diagnostic(&b.r.id, b.cat_field, "bar").to_string())?;
+        }
+        axis.sort_by_instant(&mut chronological);
+    } else if crate::common::is_year_shaped(b.rows, b.cat_field) {
+        // A year-shaped integer axis is a time axis: its years order numerically.
+        let mut years = chronological
+            .iter()
+            .map(|c| c.parse::<i32>().map(|y| (y, c.clone())).map_err(|_| format!("bar: category {c:?} is no year on a year axis")))
+            .collect::<Result<Vec<_>, _>>()?;
+        years.sort();
+        chronological = years.into_iter().map(|(_, c)| c).collect();
+    } else {
+        return Err("bar: labels.visible \"last\" needs a time axis on a bar chart; a categorical axis has no most-recent bar".into());
+    }
+    let series_of = |row: &serde_json::Map<String, Value>| b.color_field.map(|cf| row_str(row, cf)).unwrap_or_default();
+    let mut last: HashMap<String, u64> = HashMap::new();
+    for row in crate::common::x_ranked_rows(b.rows, b.cat_field, &chronological)? {
+        let (Some(at), Some(_)) = (row.get(b.cat_field).and_then(Value::as_u64), row_num(&row, b.val_field)) else { continue };
+        let slot = last.entry(series_of(&row)).or_insert(at);
+        *slot = (*slot).max(at);
+    }
+    let rank: HashMap<&str, u64> = chronological.iter().enumerate().map(|(at, c)| (c.as_str(), at as u64)).collect();
+    Ok(sites.into_iter().filter(|s| last.get(&s.key.1) == rank.get(s.cat.as_str())).collect())
 }
 
 /// A bar's value-label layers, one law for both orientations: the authored
@@ -449,6 +487,7 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
                 b.label_spans,
             )?,
         };
+        let sites = if ml.last_only { last_sites(sites, b)? } else { sites };
         layers.push(LabelLayer::new(
             spec,
             sites,
@@ -496,15 +535,18 @@ pub(super) struct LabelLayer {
     pub(super) horizontal: bool,
 }
 
-/// Which side of its anchor a plain bar's label sits on, as a pixel direction
-/// (`1.0` or `-1.0`) along the measure axis. The side follows the bar's own
-/// direction, so a negative bar's label never lands on the wrong side of it.
+/// Where a plain bar's label sits relative to its anchor and which ink it takes.
+/// `Out` and `In` carry a pixel direction (`1.0` or `-1.0`) along the measure
+/// axis that follows the bar's own direction, so a negative bar's label never
+/// lands on the wrong side of it; `Bare` stays at its position's own spot.
 #[derive(Clone, Copy)]
 pub(super) enum LabelSide {
     /// Just past the anchor, in ink.
     Out(f64),
     /// Just inside the anchor, over the bar, in the canvas color.
     In(f64),
+    /// At the position's own spot, with no bar under the text: in ink.
+    Bare,
 }
 
 impl LabelSide {
@@ -513,12 +555,13 @@ impl LabelSide {
         match self {
             LabelSide::Out(dir) => dir,
             LabelSide::In(dir) => -dir,
+            LabelSide::Bare => 0.0,
         }
     }
 }
 
-/// Where `LabelLayer::place` puts one site. `side` is `None` where the label
-/// sits at its position's own spot.
+/// Where `LabelLayer::place` puts one site. `side` is `None` or `Some(Bare)`
+/// where the label sits at its position's own spot; `Bare` paints in ink.
 pub(super) struct LabelPlace {
     pub(super) center: f64,
     pub(super) extent: f64,
@@ -534,9 +577,18 @@ pub(super) const AXIS_CRISPNESS_SHIFT: f64 = 0.5;
 /// inside it), and each side of the room a horizontal label needs.
 pub(super) const LABEL_FIT_PADDING: f64 = 4.0;
 
-/// A bar painted shorter than this many pixels draws no visible mark; a label
-/// that stands in for a genuine-zero label treats it like a zero.
-pub(super) const INVISIBLE_BAR_PX: f64 = 1.0;
+/// A bar painted shorter than this many drawn units (the board's own SVG
+/// units, not device pixels) draws no visible mark; its label stands in for a
+/// genuine-zero label and treats it like a zero. 1.5 is where a bar edge's
+/// anti-aliasing stops reading as a mark at the board's natural width: a 1px
+/// bar still shows as a faint hairline, a 1.5px one is lost beside the
+/// baseline. A heuristic parameter, not a theme value.
+pub(super) const INVISIBLE_BAR_PX: f64 = 1.5;
+
+/// The least of the canvas a plot spans along the measure axis, which the
+/// invisible-bar pre-test (`zero_label`) assumes before the plot is fitted.
+/// A plot narrower than this drops a sliver's label. A heuristic parameter.
+pub(super) const MIN_PLOT_SHARE: f64 = 0.25;
 
 /// The room a label needs inside its bar along the measure axis: its measured
 /// width plus padding on a horizontal bar, one line on a vertical one.
@@ -596,7 +648,8 @@ pub(super) fn zero_label_at(spec: &LabelSpec, value: f64, linear: &LinearScale, 
 /// text runs. A `top`/`middle`/`bottom` label that does not fit its painted
 /// extent flips past the bar's own far end, in ink; a negative bar's `top`,
 /// `bottom` and `above` labels follow the bar's direction. `middle_aligned`
-/// floats free of its bar and keeps its spot. Every path that places a plain
+/// floats free of its bar and keeps its spot, in ink wherever its bar does not
+/// reach under the text. Every path that places a plain
 /// bar's label calls this, so one authored layer reads the same on any base.
 pub(super) fn plain_label_place(
     position: &str,
@@ -617,6 +670,12 @@ pub(super) fn plain_label_place(
         "top" if negative => (at, Some(LabelSide::In(bar_dir))),
         "bottom" if negative => (at, Some(LabelSide::In(-bar_dir))),
         "above" if negative => (at, Some(LabelSide::Out(bar_dir))),
+        "middle_aligned" => {
+            let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+            let (a, b) = (px(0.0).clamp(lo, hi), px(value).clamp(lo, hi));
+            let covered = a.min(b) <= at - need / 2.0 && at + need / 2.0 <= a.max(b);
+            (at, (!covered).then_some(LabelSide::Bare))
+        }
         _ => (at, None),
     }
 }
@@ -703,14 +762,20 @@ impl LabelLayer {
         Ok(points)
     }
 
-    /// Each site's text ink at this pass's geometry: a blanked mark keeps a
-    /// zero-width box one line tall (`autosize: fit` bounds it).
-    pub(super) fn site_inks<'a>(
+    /// A blanked mark keeps a zero-width box one line tall (`autosize: fit` bounds it), except
+    /// in a genuine-zero layer that labels nothing at this size, whose marks are all blank and
+    /// move nothing.
+    fn placements<'a>(
         &'a self,
         geom: &'a LabelGeometry,
         hide: Option<FitHide>,
-    ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds)> + 'a {
+    ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds, Option<LabelSide>)> + 'a {
+        let silent = self.zero_only
+            && self.sites.iter().zip(&self.widths).all(|(site, &width)| self.place(site, width, geom, hide).is_none_or(|p| p.blank));
         self.sites.iter().zip(&self.widths).filter_map(move |(site, &width)| {
+            if silent {
+                return None;
+            }
             let LabelPlace { center, extent, blank, side } = self.place(site, width, geom, hide)?;
             let spot = label_spot(
                 &self.spec.ml,
@@ -722,8 +787,41 @@ impl LabelLayer {
                 side,
             );
             let w = if blank { 0.0 } else { width };
-            Some((site, vega_fit::text_ink(spot.x, spot.y, w, self.font.size, spot.align(), spot.baseline)))
+            Some((site, vega_fit::text_ink(spot.x, spot.y, w, self.font.size, spot.align(), spot.baseline), side))
         })
+    }
+
+    pub(super) fn site_inks<'a>(
+        &'a self,
+        geom: &'a LabelGeometry,
+        hide: Option<FitHide>,
+    ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds)> + 'a {
+        self.placements(geom, hide).map(|(site, ink, _)| (site, ink))
+    }
+
+    /// `WARN-VALUE-LABELS-CROWD-WIDTH` over the labels this layer paints; `layer` is the authored
+    /// layer index. A label drawn over its bar must also fit `bar_width(site)`. A horizontal bar
+    /// passes none: its text runs along the bar, and `plain_label_place` flips it out when it
+    /// does not fit. The stack-total and auto-zero layers are not the authored `labels` block.
+    pub(super) fn warn_if_crowded(
+        &self,
+        chart_id: &str,
+        layer: Option<usize>,
+        geom: &LabelGeometry,
+        hide: Option<FitHide>,
+        bar_width: Option<&dyn Fn(&LabelSite) -> f64>,
+    ) {
+        if self.total || self.zero_only {
+            return;
+        }
+        crate::common::warn_value_labels_crowd(
+            chart_id,
+            layer,
+            self.placements(geom, hide).map(|(site, ink, side)| {
+                let drawn_over_bar = self.style.inside_bar && !matches!(side, Some(LabelSide::Out(_)));
+                (ink, bar_width.filter(|_| drawn_over_bar).map(|width| width(site)))
+            }),
+        );
     }
 
     pub(super) fn ink(&self, geom: &LabelGeometry, hide: Option<FitHide>, b: &mut vega_fit::Bounds) {
@@ -829,7 +927,7 @@ pub(crate) struct LabelFont {
 
 pub(crate) fn label_font(ml: &MarkLabels, board_style: Option<&crate::BoardStyle>) -> Result<LabelFont, String> {
     let f = ml.font.as_ref();
-    let (family, size) = crate::common::crowd_label_font(f, board_style)?;
+    let (family, size) = crate::common::value_label_face(f, board_style)?;
     Ok(LabelFont {
         family,
         size,
@@ -892,7 +990,7 @@ pub(super) fn label_spot(
     span: Option<SpanLabel>,
     side: Option<LabelSide>,
 ) -> LabelSpot {
-    if let Some(side) = side {
+    if let Some(side @ (LabelSide::Out(_) | LabelSide::In(_))) = side {
         let dir = side.run();
         let off = dir * LABEL_FIT_PADDING;
         return if horizontal_offset.is_some() {
@@ -1008,7 +1106,7 @@ pub(super) fn mark_labels(
     for point in points {
         let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
-        let color = style.font.color.as_deref().unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_))) {
+        let color = style.font.color.as_deref().unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare)) {
             canvas
         } else {
             series_fill.as_deref().unwrap_or("#313233")

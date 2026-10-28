@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.models.primitives import FontStyle, ResolvedFontStyle
+from dbt_charts.core.text.case import apply_case
 from dbt_charts.core.text.humanize import slug_to_text
 
 # ---------------------------------------------------------------------------
@@ -294,3 +295,18 @@ def test_inline_derived_label_matches_the_rust_twin(label: str, expected: str) -
     from dbt_charts.core.text.case import inline_derived_label
 
     assert inline_derived_label(label) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "titled"),
+    [
+        ("2 · the language", "2 · The Language"),
+        ("2: the language", "2: The Language"),
+        ("2. the language", "2. The Language"),
+        ("2024 vs 2025", "2024 vs 2025"),
+    ],
+)
+def test_title_case_opens_at_the_first_word_after_a_numeral_and_separator(
+    text: str, titled: str
+) -> None:
+    assert apply_case(text, "title") == titled

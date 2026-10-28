@@ -37,9 +37,6 @@ class TestInitNoSubcommandScaffolds:
                 "init",
                 "--project-dir",
                 str(tmp_path),
-                "--no-mcp",
-                "--no-vscode",
-                "--no-cursor",
             ],
         )
         assert result.exit_code == 0, result.stdout

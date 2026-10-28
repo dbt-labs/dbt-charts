@@ -17,7 +17,6 @@ use std::collections::HashSet;
 use super::bind::Bound;
 use super::continuous::{XLayers, render_vertical_continuous_x};
 use super::horizontal::render_horizontal;
-use super::labels::{SpanLabel, label_text};
 use super::vertical::render_vertical;
 use super::{BarResolved, ContinuousWidth, MarkStyle, continuous_max_size, x_resolution};
 
@@ -76,8 +75,6 @@ fn draw(bound: &Bound, payload: &Payload, fonts: &FontBook) -> Result<Drawn, Dia
                         payload.chart_id()?,
                         r,
                         &payload.rows,
-                        fonts,
-                        payload.board_style.as_ref(),
                         payload.width,
                         1,
                         XScale::of(&x_resolution(r, &payload.rows)?.resolution),
@@ -197,54 +194,13 @@ pub(super) fn warn_continuous_bars_overlap(
     Ok(())
 }
 
-/// `WARN-VALUE-LABELS-CROWD-WIDTH` for a vertical bar's value labels over a
-/// band scale of `distinct` bands across `width` px.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn warn_crowded_bar_labels(
-    chart_id: &str,
-    r: &BarResolved,
-    rows: &[serde_json::Map<String, Value>],
-    fonts: &FontBook,
-    board_style: Option<&crate::BoardStyle>,
-    width: f64,
-    distinct: usize,
-) -> Result<(), String> {
-    let Some(ml) = r.style.mark.labels.as_ref().filter(|l| l.visible) else { return Ok(()) };
-    // A wide chart's `y` is a measure list, not one labeled field.
-    if !r.wide_measures.is_empty() {
-        return Ok(());
-    }
-    let label_field = ml.field.as_deref().unwrap_or(&r.y);
-    let span_start = if ml.field.is_none() { r.y_start.as_deref() } else { None };
-    // Production skips anything that is not a JSON number, so a numeric string is not measured.
-    let (family, size) = crate::common::crowd_label_font(ml.font.as_ref(), board_style)?;
-    let mut widest = 0.0_f64;
-    for row in rows {
-        let Some(value) = row.get(label_field).and_then(Value::as_f64) else { continue };
-        let text = match span_start {
-            None => label_text(ml, r.style.label_is_house, value, None)?,
-            Some(start_field) => {
-                let Some(start) = row.get(start_field).and_then(Value::as_f64) else { continue };
-                let (magnitude, span) = SpanLabel::of(start, value);
-                label_text(ml, r.style.label_is_house, magnitude, Some(span))?
-            }
-        };
-        widest = widest.max(fonts.measure(&text, &family, size)?);
-    }
-    crate::common::warn_value_labels_crowd(chart_id, width, distinct, widest);
-    Ok(())
-}
-
 /// The density warnings of a vertical bar chart's x axis over `width` px:
 /// production's detectors read the spec's own `width`, which is the card
 /// width (or a facet's naive panel width), never the fitted plot.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn warn_vertical_density(
     chart_id: &str,
     r: &BarResolved,
     rows: &[serde_json::Map<String, Value>],
-    fonts: &FontBook,
-    board_style: Option<&crate::BoardStyle>,
     width: f64,
     series: usize,
     x: XScale,
@@ -253,9 +209,8 @@ pub(super) fn warn_vertical_density(
         XScale::GrainedTemporal | XScale::ContinuousTemporal => Ok(()),
         XScale::Numeric => warn_continuous_bars_overlap(chart_id, &r.style.mark, rows, &r.x, width),
         XScale::Band => {
-            let distinct = distinct_values(rows, &r.x);
-            warn_band_too_narrow(chart_id, width, distinct, series);
-            warn_crowded_bar_labels(chart_id, r, rows, fonts, board_style, width, distinct)
+            warn_band_too_narrow(chart_id, width, distinct_values(rows, &r.x), series);
+            Ok(())
         }
     }
 }

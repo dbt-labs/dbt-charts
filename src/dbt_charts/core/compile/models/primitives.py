@@ -561,7 +561,9 @@ class Regional(BaseModel):
         default=TimeZoneName("UTC"),
         description=(
             "IANA time zone of the board's clock: the date daterange presets "
-            "resolve on and the zone of the data-freshness stamp."
+            "resolve on, the zone of the data-freshness stamp, and the zone a "
+            "query timestamp carrying a zone or offset prints, buckets and "
+            "ticks in."
         ),
     )
 

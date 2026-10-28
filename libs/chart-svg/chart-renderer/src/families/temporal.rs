@@ -30,7 +30,7 @@
 //! with its own single row of text, at every grain; the ladder measures that
 //! text instead.
 
-use crate::constants::axis::{LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
+use crate::constants::axis::{EDGE_LABEL_MIN_GAP_RATIO, LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
 use super::table_dates::{strftime, Moment};
 use crate::time_axis::{date_text_day, parse_iso_date};
 use std::collections::BTreeMap;
@@ -1900,7 +1900,7 @@ pub fn speak_bare(ticks: Vec<BareTick>, expr: &crate::labels_expr::Expr) -> Resu
 /// Which buckets an authored `labels.expr` rewrites on an ordinal date axis.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExprBands {
-    /// Every bucket `values` keeps, ungated: a bar keeps one tick per bucket.
+    /// Every bucket `values` keeps, ungated: a bar rewrites each bucket's label.
     AllBuckets,
     /// The ticks the cadence ladder keeps: a heatmap collapses `values` to them.
     KeptByLadder,
@@ -1919,6 +1919,10 @@ pub struct OrdinalDateLabels {
     pub angle: Option<f64>,
     /// Vega's `labelOverlap: parity` is asked for: label text only, never ticks.
     pub parity: bool,
+    /// The calendar period the labels name once the cadence ladder has stepped up; the data grain for raw labels.
+    pub visibility_tu: TimeUnit,
+    /// At `year` cadence, only the years divisible by this are labeled.
+    pub year_step: i32,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1940,7 +1944,7 @@ pub fn ordinal_date_labels(
     font_size: f64,
 ) -> Result<OrdinalDateLabels, String> {
     let skip = labels_cfg.overlap.as_ref().is_some_and(|o| o.skip);
-    let (mut labels, ticks_restored, angle, parity) = match unit {
+    let (mut labels, ticks_restored, angle, parity, visibility_tu, year_step) = match unit {
         LabelUnit::Raw(_) => {
             let (mut angle, mut parity) = (None, false);
             if let (None, Some(overlap)) = (labels_cfg.angle, &labels_cfg.overlap) {
@@ -1965,11 +1969,11 @@ pub fn ordinal_date_labels(
                 .enumerate()
                 .map(|(domain_idx, band)| TemporalLabel { domain_idx, row1: band.clone(), row2: String::new() })
                 .collect();
-            (labels, false, angle, parity)
+            (labels, false, angle, parity, data_tu, 1)
         }
         LabelUnit::Calendar(label_tu) if labels_cfg.angle.is_some() => {
             let labels = build_temporal_labels(domain, data_tu, label_tu, label_tu, 1, fiscal_start, authored)?;
-            (fold_steep(labels, labels_cfg.angle, label_tu), label_tu != data_tu, None, false)
+            (fold_steep(labels, labels_cfg.angle, label_tu), label_tu != data_tu, None, false, label_tu, 1)
         }
         LabelUnit::Calendar(label_tu) => {
             let authored_label_tu = labels_cfg.time_unit.as_deref().filter(|u| *u != "auto").map(|_| label_tu);
@@ -1988,7 +1992,7 @@ pub fn ordinal_date_labels(
                 authored,
                 measure,
             )?;
-            (labels, visibility_tu != data_tu || year_step > 1, None, false)
+            (labels, visibility_tu != data_tu || year_step > 1, None, false, visibility_tu, year_step)
         }
     };
     if let Some(expr) = expr {
@@ -2008,7 +2012,7 @@ pub fn ordinal_date_labels(
         let listed: Vec<f64> = values.iter().filter_map(|v| v.as_str().and_then(iso_format_day)).collect();
         labels.retain(|l| date_text_day(&domain[l.domain_idx]).is_none_or(|day| listed.iter().any(|d| (d - day).abs() < 1e-9)));
     }
-    Ok(OrdinalDateLabels { labels, ticks_restored, angle, parity })
+    Ok(OrdinalDateLabels { labels, ticks_restored, angle, parity, visibility_tu, year_step })
 }
 
 /// L1's outcome once a native/bucketed cadence is chosen: whether Vega's
@@ -2727,6 +2731,32 @@ pub struct ResolvedVegaLabels {
     pub visibility_tu: TimeUnit,
     /// At `year` cadence, only the years divisible by this are labeled.
     pub year_step: i32,
+}
+
+/// The label periods a cadence ladder settled on.
+#[derive(Clone, Copy, Debug)]
+pub struct LabelPeriods {
+    pub format_tu: TimeUnit,
+    pub visibility_tu: TimeUnit,
+    /// The labels fit only by hiding some (every nth year, parity), tilting or colliding. An interval axis names
+    /// every span in view, so it never takes a thinned layout: the labels stay on their ticks.
+    pub thinned: bool,
+}
+
+impl LabelPeriods {
+    pub const fn unthinned(format_tu: TimeUnit, visibility_tu: TimeUnit) -> Self {
+        Self { format_tu, visibility_tu, thinned: false }
+    }
+}
+
+impl ResolvedVegaLabels {
+    pub fn periods(&self) -> LabelPeriods {
+        LabelPeriods {
+            format_tu: self.format_tu,
+            visibility_tu: self.visibility_tu,
+            thinned: self.year_step > 1 || self.parity || self.angle != 0.0 || self.collision.is_some(),
+        }
+    }
 }
 
 /// One shared entry point for line/area's fit and rail-concat arms: L1-L5
@@ -3552,6 +3582,16 @@ pub struct BareTick {
     pub text: String,
     /// The date row a sub-day axis stacks under a midnight's label.
     pub row2: Option<String>,
+    pub mark: BareMark,
+}
+
+/// What a bare axis draws at a [`BareTick`]: an interval axis ticks the boundaries and labels the spans between
+/// them, and an end label names a data point no tick marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum BareMark {
+    Both,
+    TickOnly,
+    LabelOnly,
 }
 
 impl BareTick {
@@ -3648,6 +3688,48 @@ pub fn utc_instants(lo: f64, hi: f64, count: usize) -> Vec<f64> {
     })
 }
 
+/// The zone a time axis over instants ticks in: the board zone when the axis's values are `aware` (each carries
+/// `Z` or an offset) and the board is outside UTC; `None` otherwise, UTC days, where a naive wall clock reads as
+/// UTC and a calendar bucket is a bare date.
+pub fn ladder_zone(aware: bool) -> Option<jiff::tz::TimeZone> {
+    let zone = crate::time_zone::active_time_zone();
+    (aware && zone != jiff::tz::TimeZone::UTC).then_some(zone)
+}
+
+fn ms_of(day: f64) -> i64 {
+    (day * MS_PER_DAY).round() as i64
+}
+
+/// [`utc_instants`] in a [`ladder_zone`]: d3-time's local ladder (`timeTicks`, [`d3rs::time::ticks`]), whose day,
+/// week, month and year rungs fall on the zone's midnights across its transitions.
+pub fn zone_instants(lo: f64, hi: f64, count: usize, zone: Option<&jiff::tz::TimeZone>) -> Result<Vec<f64>, String> {
+    let Some(zone) = zone else { return Ok(utc_instants(lo, hi, count)) };
+    let ms = d3rs::time::ticks(ms_of(lo), ms_of(hi), count, zone, crate::time_locale::active_week_start())?;
+    Ok(last_of_each_second(&ms))
+}
+
+/// Vega keys an axis tick by its `Date`, whose string stops at the second, so the ticks of one second collapse
+/// into the last of them.
+fn last_of_each_second(ms: &[i64]) -> Vec<f64> {
+    let kept = ms.iter().enumerate().filter(|&(i, &at)| ms.get(i + 1).is_none_or(|&next| next.div_euclid(1000) != at.div_euclid(1000)));
+    kept.map(|(_, &at)| at as f64 / MS_PER_DAY).collect()
+}
+
+/// Every tick of an authored `interval` inside `[lo, hi]`, as instants: [`day_instants`] in UTC, else the
+/// interval's local twin in the [`ladder_zone`]. d3-time has no local epoch day, so that arm steps local days.
+pub fn interval_instants(interval: UtcTickInterval, lo: f64, hi: f64, zone: Option<&jiff::tz::TimeZone>) -> Result<Vec<f64>, String> {
+    use d3rs::time::Unit;
+    let Some(zone) = zone else { return Ok(day_instants(interval, lo, hi)) };
+    let (unit, step) = match interval {
+        UtcTickInterval::Day(step) | UtcTickInterval::EpochDay(step) => (Unit::Day, step),
+        UtcTickInterval::Week(step) => (Unit::Week(crate::time_locale::active_week_start()), step),
+        UtcTickInterval::Month(step) => (Unit::Month, step),
+        UtcTickInterval::Year(step) => (Unit::Year, step),
+    };
+    let interval = d3rs::time::Interval::every(unit, step as f64, zone).expect("a tick interval steps at least 1");
+    Ok(interval.range(ms_of(lo), ms_of(hi) + 1)?.into_iter().map(|at| at as f64 / MS_PER_DAY).collect())
+}
+
 /// Every day tick of `interval` inside `[lo, hi]`, as instants.
 fn day_instants(interval: UtcTickInterval, lo: f64, hi: f64) -> Vec<f64> {
     utc_tick_days(interval, lo.floor() as i64, hi.ceil() as i64).into_iter().map(|day| day as f64).filter(|&day| lo <= day && day <= hi).collect()
@@ -3673,11 +3755,7 @@ fn clock_instants(lo: f64, hi: f64, count: usize) -> Option<Vec<f64>> {
     // Below the ladder's first rung d3 ticks the milliseconds that divide `tickStep` (`millisecond.every`).
     if (hi - lo) * MS_PER_DAY / (count.max(1) as f64) < D3_TICK_INTERVAL_MS[0] {
         let step = d3rs::ticks::d3_tick_step(lo * MS_PER_DAY, hi * MS_PER_DAY, count).max(1.0).floor() as i64;
-        // Vega keys an axis tick by its `Date`, whose string stops at the second, so the ticks of one second
-        // collapse into the last of them.
-        let ms = clock_ticks_ms(lo, hi, step, 1, 1);
-        let kept = ms.iter().enumerate().filter(|&(i, &at)| ms.get(i + 1).is_none_or(|&next| next.div_euclid(1000) != at.div_euclid(1000)));
-        return Some(kept.map(|(_, &at)| at as f64 / MS_PER_DAY).collect());
+        return Some(last_of_each_second(&clock_ticks_ms(lo, hi, step, 1, 1)));
     }
     let rung = utc_tick_rung(lo, hi, count);
     let &(unit_ms, parent, step) = STEPS.get(rung)?;
@@ -3942,6 +4020,261 @@ pub fn interval_tick_labels(
     Ok(labels)
 }
 
+/// A continuous time axis whose labels name a calendar period coarser than the
+/// data: ticks sit on the period boundaries, each label at the midpoint of its
+/// period clipped to the visible extent. `TemporalLabel.domain_idx` indexes
+/// `label_spans`, the visible slice (start, end in days) each label centers on.
+pub struct IntervalAxis {
+    pub tick_days: Vec<f64>,
+    pub label_spans: Vec<(f64, f64)>,
+    pub labels: Vec<TemporalLabel>,
+}
+
+impl IntervalAxis {
+    /// Whether a label comes closer than a space to its neighbor across `plot_w` over `extent`, the layout a
+    /// cadence ladder would thin.
+    pub fn crowded(&self, extent: (f64, f64), plot_w: f64, measure: &mut dyn FnMut(&str) -> Result<f64, String>) -> Result<bool, String> {
+        let gap = LABEL_GAP_SPACES as f64 * measure(" ")?;
+        let per_day = plot_w / (extent.1 - extent.0);
+        let mut placed = Vec::with_capacity(self.labels.len());
+        for (tl, &(from, to)) in self.labels.iter().zip(&self.label_spans) {
+            let width = measure(&tl.row1)?.max(if tl.row2.is_empty() { 0.0 } else { measure(&tl.row2)? });
+            placed.push(((from + to) / 2.0 * per_day, width));
+        }
+        Ok(placed.windows(2).any(|pair| pair[1].0 - pair[0].0 < (pair[0].1 + pair[1].1) / 2.0 + gap))
+    }
+}
+
+/// How coarse a label or data period is; a day label over timed data is the one day-sized interval label.
+fn period_rank(tu: Option<TimeUnit>) -> u8 {
+    match tu {
+        None => 0,
+        Some(TimeUnit::YearMonthDate) => 1,
+        Some(TimeUnit::YearWeek) => 2,
+        Some(TimeUnit::YearMonth) => 3,
+        Some(TimeUnit::YearQuarter) => 4,
+        Some(TimeUnit::Year) => 5,
+    }
+}
+
+/// Whether a label of `tu` names a span rather than an instant: a month or coarser, or a day over timed data. A week
+/// or a day over daily data names an instant, so it stays on its tick.
+fn names_span(data_tu: Option<TimeUnit>, tu: TimeUnit) -> bool {
+    let rank = period_rank(Some(tu));
+    rank >= period_rank(Some(TimeUnit::YearMonth)) || (data_tu.is_none() && rank == period_rank(Some(TimeUnit::YearMonthDate)))
+}
+
+/// Whether the author left the x labels' text and place to the engine: a pinned `labels.values`, `angle` or `expr`,
+/// a raw `labels.time_unit` (`none` or a time part) or an authored tick cadence keeps them as authored, so
+/// the engine adds no end-point labels.
+pub fn labels_unpinned(labels: &crate::common::AxisLabels, tick_cadence: bool) -> bool {
+    !tick_cadence
+        && labels.values.is_none()
+        && labels.angle.is_none()
+        && labels.expr.is_none()
+        && !labels.time_unit.as_deref().is_some_and(|unit| unit == "none" || TimePart::parse(unit).is_some())
+}
+
+/// Whether labels may sit mid-period between boundary ticks: [`labels_unpinned`], with labels shown, no authored
+/// `align` (it places each label against its tick) and no redefined date format (`labels.format` or `date_<grain>`) whose text the interval layout would have to re-fit.
+pub fn interval_labels_allowed(labels: &crate::common::AxisLabels, tick_cadence: bool, redefined_format: bool) -> bool {
+    labels_unpinned(labels, tick_cadence) && labels.align.is_none() && !redefined_format && labels.visible != Some(false)
+}
+
+/// The authored label unit, or `None` (the engine's own cadence) when `extent` sits inside one period of it: no
+/// boundary to center between, so the finer on-tick labels read better than a single one.
+pub fn label_unit_with_boundary(authored: Option<&str>, extent: (f64, f64), fiscal_start: u8) -> Option<&str> {
+    let unit = authored?;
+    let Some(tu) = parse_authored_time_unit(unit).filter(|&tu| names_span(None, tu)) else { return authored };
+    let (y, m, d) = civil_from_days(extent.0.floor() as i64);
+    let (ny, nm, nd) = next_bucket(floor_to_bucket_start((y, m, d), tu, fiscal_start), tu);
+    (days_from_civil(ny, nm, nd) as f64 <= extent.1).then_some(unit)
+}
+
+/// The interval-centered axis over `extent` (day numbers), or `None` where labels stay on their ticks.
+///
+/// Labels are never thinned (the caller steps `visibility_tu` up, and a `thinned` layout stays on its ticks); a
+/// clipped edge period loses its label when the
+/// text plus [`LABEL_GAP_SPACES`] does not fit its visible slice of `plot_w`, measured through `coord` (a monotone
+/// day-to-position map).
+#[allow(clippy::too_many_arguments)]
+pub fn interval_axis(
+    extent: (f64, f64),
+    coord: &dyn Fn(f64) -> f64,
+    data_tu: Option<TimeUnit>,
+    periods: LabelPeriods,
+    plot_w: f64,
+    fiscal_start: u8,
+    measure: &mut dyn FnMut(&str) -> Result<f64, String>,
+) -> Result<Option<IntervalAxis>, String> {
+    let LabelPeriods { format_tu, visibility_tu, thinned } = periods;
+    if thinned
+        || !names_span(data_tu, format_tu)
+        || !names_span(data_tu, visibility_tu)
+        || period_rank(Some(visibility_tu)) <= period_rank(data_tu)
+    {
+        return Ok(None);
+    }
+    let (lo, hi) = extent;
+    let (y, m, d) = civil_from_days(lo.floor() as i64);
+    let mut start = floor_to_bucket_start((y, m, d), visibility_tu, fiscal_start);
+    let mut periods = Vec::new();
+    while (days_from_civil(start.0, start.1, start.2) as f64) <= hi {
+        let end = next_bucket(start, visibility_tu);
+        periods.push((start, days_from_civil(start.0, start.1, start.2) as f64, days_from_civil(end.0, end.1, end.2) as f64));
+        start = end;
+    }
+    let tick_days: Vec<f64> = periods.iter().map(|&(_, from, _)| from).filter(|&from| from >= lo).collect();
+    if !tick_days.iter().any(|&day| day > lo) {
+        return Ok(None);
+    }
+    let gap = LABEL_GAP_SPACES as f64 * measure(" ")?;
+    let (mut label_spans, mut labels) = (Vec::new(), Vec::new());
+    for &((y, m, d), from, to) in &periods {
+        let (slice_lo, slice_hi) = (from.max(lo), to.min(hi));
+        // A period `coord` collapses (a gap in a band domain, or one starting at `hi`) has no room for a label.
+        if coord(slice_hi) <= coord(slice_lo) {
+            continue;
+        }
+        let (row1, row2) = format_label(y, m, d, visibility_tu, labels.is_empty(), fiscal_start)?;
+        let clipped = slice_lo != from || slice_hi != to;
+        let text_w = measure(&row1)?.max(if row2.is_empty() { 0.0 } else { measure(&row2)? });
+        if clipped && text_w + gap > (coord(slice_hi) - coord(slice_lo)) / (coord(hi) - coord(lo)) * plot_w {
+            continue;
+        }
+        labels.push(TemporalLabel { domain_idx: labels.len(), row1, row2 });
+        label_spans.push((slice_lo, slice_hi));
+    }
+    Ok(Some(IntervalAxis { tick_days, label_spans, labels }))
+}
+
+/// Whether the labels of an on-tick axis's first and last data points keep their place: each needs empty space
+/// beside the label it neighbors of at least [`EDGE_LABEL_MIN_GAP_RATIO`] of the tick spacing. `ticks` are the
+/// ticks' scale fractions, `widths` the end labels' own, `neighbors` the (center fraction, width) of the label
+/// beside each, `None` where nothing is; the end labels anchor at the plot edges.
+pub(crate) fn end_labels_fit(plot_w: f64, ticks: &[f64], widths: (f64, f64), neighbors: [Option<(f64, f64)>; 2]) -> (bool, bool) {
+    let n = ticks.len();
+    let clear = |width: f64, from_edge: Option<(f64, f64)>, pitch: f64| match from_edge {
+        Some((at, neighbor_w)) if width > 0.0 => at * plot_w - neighbor_w / 2.0 - width >= EDGE_LABEL_MIN_GAP_RATIO * pitch * plot_w,
+        _ => true,
+    };
+    (
+        clear(widths.0, neighbors[0], ticks[1] - ticks[0]),
+        clear(widths.1, neighbors[1].map(|(at, w)| (1.0 - at, w)), ticks[n - 1] - ticks[n - 2]),
+    )
+}
+
+/// The tick labels of an on-tick calendar axis with the data's first and last points labeled where
+/// [`end_labels_fit`]: the first anchors at the plot's left edge and carries the context row the first tick's label
+/// would, the last at the right edge. `label_fracs` are the scale fractions of `labels`, `tick_fracs` those of every
+/// tick; the edge labels take the indices `edge_idx`, which the caller positions at fractions 0 and 1.
+#[allow(clippy::too_many_arguments)]
+pub fn with_edge_point_labels(
+    mut labels: Vec<TemporalLabel>,
+    label_fracs: &[f64],
+    tick_fracs: &[f64],
+    edge_idx: (usize, usize),
+    extent: (f64, f64),
+    format_tu: TimeUnit,
+    fiscal_start: u8,
+    authored: Option<AuthoredTimeFormat>,
+    plot_w: f64,
+    measure: &mut dyn FnMut(&str) -> Result<f64, String>,
+) -> Result<Vec<TemporalLabel>, String> {
+    if tick_fracs.len() < 2 || labels.is_empty() {
+        return Ok(labels);
+    }
+    let point = |day: f64, is_first: bool, idx: usize| -> Result<TemporalLabel, String> {
+        let (y, m, d) = civil_from_days(day.floor() as i64);
+        let (row1, row2) = label_rows(y, m, d, format_tu, is_first, fiscal_start, authored)?;
+        Ok(TemporalLabel { domain_idx: idx, row1, row2 })
+    };
+    let first = point(extent.0, true, edge_idx.0)?;
+    let last = point(extent.1, false, edge_idx.1)?;
+    let first_row2 = std::mem::take(&mut labels[0].row2);
+    let handed_over = first_row2 == first.row2;
+    if !handed_over {
+        labels[0].row2 = first_row2.clone();
+    }
+    let mut row_widths = |tl: &TemporalLabel| -> Result<(f64, f64), String> {
+        Ok((measure(&tl.row1)?, if tl.row2.is_empty() { 0.0 } else { measure(&tl.row2)? }))
+    };
+    let widths = labels.iter().map(&mut row_widths).collect::<Result<Vec<_>, _>>()?;
+    let (first_w, last_w) = (row_widths(&first)?, row_widths(&last)?);
+    let last_at = labels.len() - 1;
+    // Row one clears the end tick's label, the context row the nearest label that has one.
+    let context_of = |k: usize| (label_fracs[k], widths[k].1);
+    let has_context = |&k: &usize| !labels[k].row2.is_empty();
+    let (first_fits, last_fits) = end_labels_fit(
+        plot_w,
+        tick_fracs,
+        (first_w.0, last_w.0),
+        [Some((label_fracs[0], widths[0].0)), Some((label_fracs[last_at], widths[last_at].0))],
+    );
+    let (first_context_fits, last_context_fits) = end_labels_fit(
+        plot_w,
+        tick_fracs,
+        (first_w.1, last_w.1),
+        [(0..labels.len()).find(has_context).map(context_of), (0..labels.len()).rev().find(has_context).map(context_of)],
+    );
+    // A month or coarser names a period: an end point in the period its outermost tick already names repeats it.
+    let names_period = period_rank(Some(format_tu)) >= period_rank(Some(TimeUnit::YearMonth));
+    let first_repeats = names_period && first.row1 == labels[0].row1;
+    let last_repeats = names_period && last.row1 == labels[last_at].row1;
+    if first_fits && first_context_fits && !first_repeats {
+        labels.insert(0, first);
+    } else if handed_over {
+        labels[0].row2 = first_row2;
+    }
+    if last_fits && last_context_fits && !last_repeats {
+        labels.push(last);
+    }
+    Ok(labels)
+}
+
+/// [`interval_axis`] over a band scale of ascending buckets: ticks and label slices in bucket
+/// coordinates (bucket `i` spans `i..i + 1`, a gap between buckets collapses to its edge), so the
+/// caller maps them onto whatever bands it draws.
+pub struct BandIntervals {
+    pub ticks: Vec<f64>,
+    pub labels: Vec<TemporalLabel>,
+    pub label_spans: Vec<(f64, f64)>,
+}
+
+pub fn band_interval_axis(
+    domain: &[String],
+    data_tu: TimeUnit,
+    periods: LabelPeriods,
+    plot_w: f64,
+    fiscal_start: u8,
+    measure: &mut dyn FnMut(&str) -> Result<f64, String>,
+) -> Result<Option<BandIntervals>, String> {
+    let dates = parse_domain_dates(domain);
+    let starts: Vec<f64> = dates.iter().map(|&(y, m, d)| days_from_civil(y, m, d) as f64).collect();
+    if dates.len() != domain.len() || !starts.windows(2).all(|w| w[0] < w[1]) || starts.is_empty() {
+        return Ok(None);
+    }
+    let ends: Vec<f64> = dates.iter().map(|&date| next_bucket(date, data_tu)).map(|(y, m, d)| days_from_civil(y, m, d) as f64).collect();
+    let extent = (starts[0], ends[ends.len() - 1]);
+    let coord = |day: f64| match ends.iter().position(|&end| end > day) {
+        Some(i) if day >= starts[i] => i as f64 + (day - starts[i]) / (ends[i] - starts[i]),
+        Some(i) => i as f64,
+        None => domain.len() as f64,
+    };
+    let Some(axis) = interval_axis(extent, &coord, Some(data_tu), periods, plot_w, fiscal_start, measure)? else {
+        return Ok(None);
+    };
+    Ok(Some(BandIntervals {
+        ticks: {
+            let mut ticks: Vec<f64> = axis.tick_days.iter().map(|&day| coord(day)).collect();
+            ticks.dedup();
+            ticks
+        },
+        label_spans: axis.label_spans.iter().map(|&(from, to)| (coord(from), coord(to))).collect(),
+        labels: axis.labels,
+    }))
+}
+
 /// strftime `%U`: the Sunday-based week of the year, 0 before the year's
 /// first Sunday (d3-time-format `formatWeekNumberSunday`,
 /// `timeSunday.count(timeYear(d) - 1, d)`; Vega's `utcFormat` is its UTC twin).
@@ -4066,7 +4399,7 @@ pub fn part_temporal_ticks(
 ) -> Result<Vec<BareTick>, String> {
     Ok(time_part_ticks(domain, plot_w, part, count, format)?
         .into_iter()
-        .map(|t| BareTick { day: t.at, frac: t.frac, text: t.text, row2: None })
+        .map(|t| BareTick { day: t.at, frac: t.frac, text: t.text, row2: None, mark: BareMark::Both })
         .collect())
 }
 
@@ -4077,36 +4410,41 @@ pub fn part_temporal_ticks(
 /// `ticks.count` replaces the default count, an authored `ticks.time_unit`
 /// ([`authored_tick_interval`]) names the interval outright; an authored time
 /// `format` replaces the multi-scale text on every tick. `extent` is
-/// [`utc_domain_extent`]'s.
+/// [`utc_domain_extent`]'s. An `aware` axis prints each tick's wall clock in
+/// the board zone.
 pub fn bare_temporal_ticks(
     domain: (f64, f64),
     plot_w: f64,
     authored: Option<AuthoredTickCadence>,
     format: Option<AuthoredTimeFormat>,
     subday: Option<&super::subday::SubdayPlan>,
+    aware: bool,
 ) -> Result<Vec<BareTick>, String> {
     let (lo, hi) = domain;
     let tick = |at: f64, index: usize, frac: f64| -> Result<BareTick, String> {
+        let wall = if aware { crate::time_zone::wall_day(at)? } else { at };
         let (text, row2) = match (format, subday) {
-            (Some(f), _) => (f.text_at(at), None),
-            (None, Some(plan)) => match plan.label(at, index)? {
+            (Some(f), _) => (f.text_at(wall), None),
+            (None, Some(plan)) => match plan.label(wall, index)? {
                 Some((text, row2)) => (text, row2),
-                None => (multi_format_at(at)?, None),
+                None => (multi_format_at(wall)?, None),
             },
-            (None, None) => (multi_format_at(at)?, None),
+            (None, None) => (multi_format_at(wall)?, None),
         };
-        Ok(BareTick { day: at, frac, text, row2 })
+        Ok(BareTick { day: at, frac, text, row2, mark: BareMark::Both })
     };
     // A one-instant domain ticks that instant, the finest interval d3 tries.
     if lo == hi {
         return Ok(vec![tick(lo, 0, 0.5)?]);
     }
+    let zone = ladder_zone(aware);
+    let zone = zone.as_ref();
     let instants: Vec<f64> = match (subday.and_then(|plan| plan.ladder), authored) {
         (Some(step), _) => step.instants(lo, hi),
-        (None, Some(AuthoredTickCadence::Interval(interval))) => day_instants(interval, lo, hi),
+        (None, Some(AuthoredTickCadence::Interval(interval))) => interval_instants(interval, lo, hi, zone)?,
         (None, Some(AuthoredTickCadence::Count(0))) => Vec::new(),
-        (None, Some(AuthoredTickCadence::Count(count) | AuthoredTickCadence::UncappedCount(count))) => utc_instants(lo, hi, count),
-        (None, None) => utc_instants(lo, hi, crate::families::cartesian::vl_default_tick_count(plot_w).max(1)),
+        (None, Some(AuthoredTickCadence::Count(count) | AuthoredTickCadence::UncappedCount(count))) => zone_instants(lo, hi, count, zone)?,
+        (None, None) => zone_instants(lo, hi, crate::families::cartesian::vl_default_tick_count(plot_w).max(1), zone)?,
     };
     instants.into_iter().enumerate().map(|(index, at)| tick(at, index, (at - lo) / (hi - lo))).collect()
 }
@@ -4150,9 +4488,9 @@ pub fn ladder_bare_ticks(domain: (f64, f64), ladder: &[String], resolved: &Resol
         // model) — so pin it there instead of silently dropping it for a frac that
         // only ever goes negative at this one position.
         if tl.domain_idx == 0 && frac < 0.0 {
-            ticks.push(BareTick { day: lo, frac: 0.0, text: tl.row1, row2: (!tl.row2.is_empty()).then_some(tl.row2) });
+            ticks.push(BareTick { day: lo, frac: 0.0, text: tl.row1, row2: (!tl.row2.is_empty()).then_some(tl.row2), mark: BareMark::Both });
         } else if (0.0..=1.0).contains(&frac) {
-            ticks.push(BareTick { day, frac, text: tl.row1, row2: (!tl.row2.is_empty()).then_some(tl.row2) });
+            ticks.push(BareTick { day, frac, text: tl.row1, row2: (!tl.row2.is_empty()).then_some(tl.row2), mark: BareMark::Both });
         }
     }
     Ok(ticks)
@@ -5501,6 +5839,81 @@ mod tests {
         assert!((label_frac0 - 1.0 / 14.0).abs() < 1e-12, "{label_frac0}");
     }
 
+    /// Every hour of 2024-03-09 .. 2024-03-11 in Los Angeles, as UTC instants.
+    fn los_angeles_hours() -> Vec<String> {
+        let start = days_from_civil(2024, 3, 9) * 24 + 8;
+        (0..71)
+            .map(|h| {
+                let (y, m, d) = civil_from_days((start + h).div_euclid(24));
+                format!("{y:04}-{m:02}-{d:02}T{:02}:00:00Z", (start + h).rem_euclid(24))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hourly_instants_bucket_on_the_board_zones_days() {
+        let _la = crate::time_zone::zone_scope("America/Los_Angeles");
+        let hours = los_angeles_hours();
+        let days: std::collections::BTreeSet<String> =
+            hours.iter().map(|h| time_unit_floor(h, TimeUnit::YearMonthDate).unwrap()).collect();
+        assert_eq!(days.into_iter().collect::<Vec<_>>(), ["2024-03-09", "2024-03-10", "2024-03-11"]);
+        assert_eq!(parse_iso_date("2024-03-10T07:30:00Z"), Some((2024, 3, 9)), "23:30 PST is still the 9th");
+        assert_eq!(parse_iso_date("2024-03-10T07:30:00"), Some((2024, 3, 10)), "a naive clock is read as written");
+        assert_eq!(complete_buckets(&hours, TimeUnit::YearMonthDate, 1).len(), 71, "every row is kept, no day synthesized");
+    }
+
+    #[test]
+    fn utc_board_buckets_an_offset_instant_on_its_utc_day() {
+        assert_eq!(parse_iso_date("2024-01-01T23:00:00-05:00"), Some((2024, 1, 2)));
+        assert_eq!(time_unit_floor("2024-01-01T23:00:00-05:00", TimeUnit::YearMonth).as_deref(), Some("2024-01-01"));
+        assert_eq!(utc_instants(19_000.0, 19_100.0, 10), zone_instants(19_000.0, 19_100.0, 10, ladder_zone(true).as_ref()).unwrap());
+    }
+
+    #[test]
+    fn an_aware_axis_across_spring_forward_ticks_local_midnights() {
+        let _locale = crate::time_locale::en_us_scope();
+        let _la = crate::time_zone::zone_scope("America/Los_Angeles");
+        let (lo, hi) = (days_from_civil(2024, 3, 8) as f64 + 8.0 / 24.0, days_from_civil(2024, 3, 13) as f64 + 7.0 / 24.0);
+        let ticks = bare_temporal_ticks((lo, hi), 200.0, None, None, None, true).unwrap();
+        let walls: Vec<f64> = ticks.iter().map(|t| crate::time_zone::wall_day(t.day).unwrap()).collect();
+        assert!(walls.iter().all(|w| w.fract() == 0.0), "every tick on a local midnight: {walls:?}");
+        let hours: Vec<f64> = ticks.windows(2).map(|w| ((w[1].day - w[0].day) * 24.0).round()).collect();
+        assert_eq!(hours, [24.0, 24.0, 23.0, 24.0, 24.0], "the 10th is 23 hours long");
+        let texts: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(texts, ["Fri 08", "Sat 09", "Mar 10", "Mon 11", "Tue 12", "Wed 13"], "local days, never a clock time");
+        let naive = bare_temporal_ticks((lo, hi), 200.0, None, None, None, false).unwrap();
+        assert!(naive.iter().all(|t| t.day.fract() == 0.0), "a naive axis keeps UTC days");
+    }
+
+    #[test]
+    fn a_zoned_week_rung_starts_on_the_boards_week_start() {
+        let _berlin = crate::time_zone::zone_scope("Europe/Berlin");
+        let zone = ladder_zone(true);
+        let (lo, hi) = (days_from_civil(2024, 3, 1) as f64, days_from_civil(2024, 5, 10) as f64);
+        let weekdays = |ticks: Vec<f64>| -> Vec<u8> {
+            ticks.iter().map(|&t| crate::time_zone::wall_day(t).unwrap()).map(|w| {
+                assert_eq!(w.fract(), 0.0, "a local midnight");
+                let (y, m, d) = civil_from_days(w as i64);
+                weekday(y, m, d)
+            }).collect()
+        };
+        let sundays = weekdays(zone_instants(lo, hi, 10, zone.as_ref()).unwrap());
+        assert!(sundays.len() > 5 && sundays.iter().all(|&d| d == 6), "d3's week is Sunday's: {sundays:?}");
+        let mondays = crate::time_locale::with_week_start(1, || weekdays(zone_instants(lo, hi, 10, zone.as_ref()).unwrap()));
+        assert!(mondays.iter().all(|&d| d == 0), "{mondays:?}");
+    }
+
+    #[test]
+    fn an_authored_month_interval_on_an_aware_axis_ticks_local_month_starts() {
+        let _la = crate::time_zone::zone_scope("America/Los_Angeles");
+        let (lo, hi) = (days_from_civil(2024, 1, 15) as f64, days_from_civil(2024, 6, 15) as f64);
+        let ticks = interval_instants(UtcTickInterval::Month(1), lo, hi, ladder_zone(true).as_ref()).unwrap();
+        let walls: Vec<(i32, u8, u8)> = ticks.iter().map(|&t| civil_from_days(crate::time_zone::wall_day(t).unwrap() as i64)).collect();
+        assert_eq!(walls, [(2024, 2, 1), (2024, 3, 1), (2024, 4, 1), (2024, 5, 1), (2024, 6, 1)]);
+        let offsets: Vec<f64> = ticks.iter().map(|t| (t.fract() * 24.0).round()).collect();
+        assert_eq!(offsets, [8.0, 8.0, 7.0, 7.0, 7.0], "PST, then PDT after March 10");
+    }
+
     #[test]
     fn complete_buckets_enumerates_every_bucket_from_the_floored_minimum() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
@@ -6171,7 +6584,7 @@ mod tests {
         ];
         for &(lo, hi, plot_w, want) in cases {
             let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
-            let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), plot_w, None, None, None).expect("ticks");
+            let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), plot_w, None, None, None, false).expect("ticks");
             let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
             assert_eq!(got, want, "{lo}..{hi} at {plot_w}px");
             let span = (extent.1 - extent.0) as f64;
@@ -6224,7 +6637,7 @@ mod tests {
                     (extent.0 as f64, extent.1 as f64),
                     plot_w,
                     Some(AuthoredTickCadence::Count(count)),
-                    None, None,
+                    None, None, false,
                 )
                 .expect("ticks");
                 let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
@@ -6240,7 +6653,7 @@ mod tests {
             assert_eq!(authored_tick_count(count), 0);
         }
         let extent = utc_domain_extent(&["2022-03-17".to_string(), "2024-12-19".to_string()]).unwrap();
-        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, Some(AuthoredTickCadence::Count(0)), None, None).expect("ticks");
+        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, Some(AuthoredTickCadence::Count(0)), None, None, false).expect("ticks");
         assert!(ticks.is_empty());
         assert!(AuthoredTickCadence::Count(0).bucketed_ticks(TimeUnit::YearMonth, (0.0, 90.0)).is_empty());
     }
@@ -6248,7 +6661,7 @@ mod tests {
     fn authored_tick_texts(lo: &str, hi: &str, unit: &str, step: Option<f64>) -> Vec<String> {
         let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
         let authored = Some(authored_tick_interval(unit, step).expect("modeled interval"));
-        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None, None).expect("ticks");
+        let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None, None, false).expect("ticks");
         ticks.into_iter().map(|t| t.text).collect()
     }
 
@@ -6554,12 +6967,12 @@ mod tests {
     fn a_sub_day_domain_ticks_its_hours_under_the_multi_scale_format() {
         let _locale = crate::time_locale::en_us_scope();
         let lo = days_from_civil(2024, 1, 3) as f64;
-        let ticks = bare_temporal_ticks((lo, lo + 2.0), 1200.0, None, None, None).expect("ticks");
+        let ticks = bare_temporal_ticks((lo, lo + 2.0), 1200.0, None, None, None, false).expect("ticks");
         assert_eq!(ticks.len(), 49, "an hourly rung over two days");
         assert_eq!(ticks[0].text, "Wed 03");
         assert_eq!(ticks[1].text, "01 AM");
         assert_eq!(ticks[12].text, "12 PM");
-        let tight = bare_temporal_ticks((lo + 0.40, lo + 0.45), 600.0, None, None, None).expect("ticks");
+        let tight = bare_temporal_ticks((lo + 0.40, lo + 0.45), 600.0, None, None, None, false).expect("ticks");
         assert_eq!(tight[0].text, "09:40");
     }
 
@@ -6570,7 +6983,7 @@ mod tests {
         locale.periods = ["vorm.".into(), "nachm.".into()];
         let lo = days_from_civil(2024, 3, 5) as f64 + 9.0 / 24.0;
         let ticks = crate::time_locale::with_time_locale(&locale, || {
-            bare_temporal_ticks((lo, lo + 3.0 / 24.0), 600.0, None, None, None).expect("ticks")
+            bare_temporal_ticks((lo, lo + 3.0 / 24.0), 600.0, None, None, None, false).expect("ticks")
         });
         assert_eq!(ticks[0].text, "09 vorm.", "{ticks:?}");
     }
@@ -6588,7 +7001,7 @@ mod tests {
     #[test]
     fn ticks_within_one_second_collapse_to_the_last_of_each_second() {
         let lo = days_from_civil(2024, 3, 5) as f64 + (10.0 * 3600.0 + 3.0 * 60.0 + 10.0) / 86_400.0;
-        let ticks = bare_temporal_ticks((lo, lo + 1.005 / 86_400.0), 460.0, None, None, None).expect("ticks");
+        let ticks = bare_temporal_ticks((lo, lo + 1.005 / 86_400.0), 460.0, None, None, None, false).expect("ticks");
         assert_eq!(ticks.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), [".900", ":11"]);
     }
 
@@ -6641,6 +7054,19 @@ mod tests {
             let err = AuthoredTimeFormat::parse("bar", Some(fmt)).expect_err(fmt);
             assert!(err.contains(named), "{fmt}: {err}");
         }
+    }
+
+    #[test]
+    fn an_aware_axis_prints_its_ticks_on_the_board_zone_clock() {
+        let _locale = crate::time_locale::en_us_scope();
+        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let (lo, hi) = (date_text_day("2024-03-10T05:00:00Z").unwrap(), date_text_day("2024-03-10T09:00:00Z").unwrap());
+        let texts = |aware: bool| -> Vec<String> {
+            bare_temporal_ticks((lo, hi), 600.0, None, None, None, aware).expect("ticks").into_iter().map(|t| t.text).collect()
+        };
+        // 07:00Z is 03:00 EDT: New York springs forward at 2am.
+        assert!(texts(true).contains(&"03 AM".to_string()) && !texts(true).contains(&"02 AM".to_string()), "{:?}", texts(true));
+        assert!(texts(false).contains(&"07 AM".to_string()), "{:?}", texts(false));
     }
 
     /// Every directive of the gate paints: a bucket is a UTC midnight, and an
@@ -7043,7 +7469,217 @@ mod speak_tests {
     fn bare_ticks_speak_their_day() {
         let _locale = crate::time_locale::en_us_scope();
         let expr = Expr::parse("timeFormat(datum.value, '%Y') + datum.label").unwrap();
-        let tick = BareTick { day: 10957.0, frac: 0.0, text: "Jan".into(), row2: None };
+        let tick = BareTick { day: 10957.0, frac: 0.0, text: "Jan".into(), row2: None, mark: BareMark::Both };
         assert_eq!(speak_bare(vec![tick], &expr).unwrap()[0].text, "2000Jan");
+    }
+}
+
+#[cfg(test)]
+mod interval_axis_tests {
+    use super::*;
+
+    const CHAR_PX: f64 = 6.0;
+
+    fn extent(lo: (i32, u8, u8), hi: (i32, u8, u8)) -> (f64, f64) {
+        (days_from_civil(lo.0, lo.1, lo.2) as f64, days_from_civil(hi.0, hi.1, hi.2) as f64)
+    }
+
+    fn axis(
+        extent: (f64, f64),
+        data_tu: TimeUnit,
+        format_tu: TimeUnit,
+        visibility_tu: TimeUnit,
+    ) -> Option<IntervalAxis> {
+        let _locale = crate::time_locale::en_us_scope();
+        interval_axis(extent, &|day| day, Some(data_tu), LabelPeriods::unthinned(format_tu, visibility_tu), 600.0, 1, &mut |t| {
+            Ok(t.chars().count() as f64 * CHAR_PX)
+        })
+        .expect("interval axis")
+    }
+
+    fn rows(axis: &IntervalAxis) -> Vec<(&str, &str)> {
+        axis.labels.iter().map(|l| (l.row1.as_str(), l.row2.as_str())).collect()
+    }
+
+    #[test]
+    fn month_labels_over_daily_data_sit_between_their_boundary_ticks() {
+        let e = extent((2026, 1, 1), (2026, 6, 30));
+        let a = axis(e, TimeUnit::YearMonthDate, TimeUnit::YearMonth, TimeUnit::YearMonth).expect("interval mode");
+        let d = |m: u8| days_from_civil(2026, m, 1) as f64;
+        assert_eq!(a.tick_days, (1..=6).map(d).collect::<Vec<_>>());
+        assert_eq!(rows(&a), [("Jan", "2026"), ("Feb", ""), ("Mar", ""), ("Apr", ""), ("May", ""), ("Jun", "")]);
+        assert_eq!(a.label_spans[0], (d(1), d(2)));
+        assert_eq!(a.label_spans[5], (d(6), e.1), "the last period is clipped to the visible domain");
+    }
+
+    #[test]
+    fn an_extent_ending_on_a_period_boundary_labels_no_zero_width_final_period() {
+        let e = extent((2026, 1, 1), (2026, 7, 1));
+        let a = axis(e, TimeUnit::YearMonthDate, TimeUnit::YearMonth, TimeUnit::YearMonth).expect("interval mode");
+        assert_eq!(rows(&a).len(), 6, "{:?}", rows(&a));
+        assert_eq!(rows(&a).last(), Some(&("Jun", "")));
+    }
+
+    #[test]
+    fn a_gap_in_a_band_domain_labels_no_collapsed_month() {
+        let _locale = crate::time_locale::en_us_scope();
+        let domain: Vec<String> = (1..=31).map(|d| format!("2026-01-{d:02}")).chain((1..=30).map(|d| format!("2026-04-{d:02}"))).collect();
+        let iv = band_interval_axis(&domain, TimeUnit::YearMonthDate, LabelPeriods::unthinned(TimeUnit::YearMonth, TimeUnit::YearMonth), 600.0, 1, &mut |t| {
+            Ok(t.chars().count() as f64 * CHAR_PX)
+        })
+        .expect("band intervals")
+        .expect("interval mode");
+        let texts: Vec<&str> = iv.labels.iter().map(|l| l.row1.as_str()).collect();
+        assert_eq!(texts, ["Jan", "Apr"]);
+        assert!(iv.ticks.windows(2).all(|w| w[0] < w[1]), "{:?}", iv.ticks);
+    }
+
+    /// A Nov fiscal year opens its quarters in Nov, Feb, May and Aug, and names them Q1 to Q4.
+    #[test]
+    fn quarter_intervals_follow_the_fiscal_year_start() {
+        let _locale = crate::time_locale::en_us_scope();
+        let e = extent((2023, 11, 1), (2024, 10, 31));
+        let a = interval_axis(e, &|day| day, Some(TimeUnit::YearMonth), LabelPeriods::unthinned(TimeUnit::YearQuarter, TimeUnit::YearQuarter), 600.0, 11, &mut |t| {
+            Ok(t.chars().count() as f64 * CHAR_PX)
+        })
+        .expect("interval axis")
+        .expect("interval mode");
+        let d = |y, m| days_from_civil(y, m, 1) as f64;
+        assert_eq!(a.tick_days, [d(2023, 11), d(2024, 2), d(2024, 5), d(2024, 8)]);
+        assert_eq!(rows(&a), [("Q1", "2023"), ("Q2", ""), ("Q3", ""), ("Q4", "")]);
+    }
+
+    #[test]
+    fn equal_grain_week_labels_and_a_single_period_stay_on_tick() {
+        let months = extent((2026, 1, 1), (2026, 12, 1));
+        assert!(axis(months, TimeUnit::YearMonth, TimeUnit::YearMonth, TimeUnit::YearMonth).is_none());
+        let days = extent((2026, 1, 1), (2026, 6, 30));
+        assert!(axis(days, TimeUnit::YearMonthDate, TimeUnit::YearWeek, TimeUnit::YearWeek).is_none());
+        let one_month = extent((2026, 3, 3), (2026, 3, 25));
+        assert!(axis(one_month, TimeUnit::YearMonthDate, TimeUnit::YearMonth, TimeUnit::YearMonth).is_none());
+    }
+
+    #[test]
+    fn a_partial_edge_label_needs_its_slice_to_fit_the_label_and_the_gap() {
+        let roomy = extent((2026, 1, 17), (2026, 6, 10));
+        let a = axis(roomy, TimeUnit::YearMonthDate, TimeUnit::YearMonth, TimeUnit::YearMonth).expect("interval mode");
+        assert_eq!(rows(&a).first(), Some(&("Jan", "2026")));
+        assert_eq!(rows(&a).last(), Some(&("Jun", "")));
+        let narrow = extent((2026, 1, 29), (2026, 6, 3));
+        let a = axis(narrow, TimeUnit::YearMonthDate, TimeUnit::YearMonth, TimeUnit::YearMonth).expect("interval mode");
+        assert_eq!(rows(&a), [("Feb", "2026"), ("Mar", ""), ("Apr", ""), ("May", "")]);
+    }
+
+    #[test]
+    fn a_coarser_visibility_period_drops_the_finer_boundaries() {
+        let e = extent((2024, 7, 1), (2026, 6, 30));
+        let a = axis(e, TimeUnit::YearMonthDate, TimeUnit::YearMonth, TimeUnit::YearQuarter).expect("interval mode");
+        let starts: Vec<f64> = [(2024, 7), (2024, 10), (2025, 1), (2025, 4), (2025, 7), (2025, 10), (2026, 1), (2026, 4)]
+            .iter()
+            .map(|&(y, m)| days_from_civil(y, m, 1) as f64)
+            .collect();
+        assert_eq!(a.tick_days, starts);
+        assert_eq!(rows(&a)[..3], [("Q3", "2024"), ("Q4", ""), ("Q1", "2025")]);
+    }
+
+    #[test]
+    fn a_domain_inside_one_period_keeps_the_engines_own_labels() {
+        let one_month = extent((2026, 3, 3), (2026, 3, 25));
+        assert_eq!(label_unit_with_boundary(Some("yearmonth"), one_month, 1), None);
+        let half_year = extent((2026, 1, 1), (2026, 6, 30));
+        assert_eq!(label_unit_with_boundary(Some("yearmonth"), half_year, 1), Some("yearmonth"));
+        assert_eq!(label_unit_with_boundary(Some("yearweek"), one_month, 1), Some("yearweek"));
+    }
+
+    #[test]
+    fn day_labels_over_timed_data_center_at_noon_between_midnight_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let e = (days_from_civil(2026, 3, 2) as f64, days_from_civil(2026, 3, 5) as f64 + 23.0 / 24.0);
+        let a = interval_axis(e, &|day| day, None, LabelPeriods::unthinned(TimeUnit::YearMonthDate, TimeUnit::YearMonthDate), 600.0, 1, &mut |t| {
+            Ok(t.chars().count() as f64 * CHAR_PX)
+        })
+        .expect("interval axis")
+        .expect("interval mode");
+        assert_eq!(a.tick_days, (2..=5).map(|d| days_from_civil(2026, 3, d) as f64).collect::<Vec<_>>());
+        assert_eq!(a.label_spans[1], (days_from_civil(2026, 3, 3) as f64, days_from_civil(2026, 3, 4) as f64));
+        assert_eq!(rows(&a)[..2], [("2", "Mar'26"), ("3", "")]);
+        let daily = interval_axis(e, &|day| day, Some(TimeUnit::YearMonthDate), LabelPeriods::unthinned(TimeUnit::YearMonthDate, TimeUnit::YearMonthDate), 600.0, 1, &mut |_| Ok(6.0));
+        assert!(daily.expect("interval axis").is_none(), "a day label over daily data names an instant");
+    }
+
+    /// Weekly Monday ticks (Mar 9 to May 11) from `first` to May `last_day`, `plot_w` px wide.
+    fn edge_labels(first: (i32, u8, u8), last_day: u8, plot_w: f64) -> Vec<(String, String)> {
+        let _locale = crate::time_locale::en_us_scope();
+        let e = (days_from_civil(first.0, first.1, first.2) as f64, days_from_civil(2026, 5, last_day) as f64);
+        let mondays: Vec<f64> = (0..).map(|k| days_from_civil(2026, 3, 9) as f64 + 7.0 * k as f64).take_while(|&d| d <= e.1).collect();
+        let fracs: Vec<f64> = mondays.iter().map(|&d| (d - e.0) / (e.1 - e.0)).collect();
+        let labels: Vec<TemporalLabel> = mondays
+            .iter()
+            .enumerate()
+            .map(|(domain_idx, &d)| {
+                let (_, _, day) = civil_from_days(d as i64);
+                TemporalLabel { domain_idx, row1: day.to_string(), row2: if domain_idx == 0 { "Mar'26".into() } else { String::new() } }
+            })
+            .collect();
+        let n = fracs.len();
+        with_edge_point_labels(labels, &fracs, &fracs, (n, n + 1), e, TimeUnit::YearWeek, 1, None, plot_w, &mut |t| {
+            Ok(t.chars().count() as f64 * CHAR_PX)
+        })
+        .expect("edge labels")
+        .into_iter()
+        .map(|l| (l.row1, l.row2))
+        .collect()
+    }
+
+    #[test]
+    fn an_end_point_with_room_beside_its_neighbor_is_labeled_and_hands_over_the_context_row() {
+        let labels = edge_labels((2026, 3, 3), 17, 600.0);
+        assert_eq!(labels.first(), Some(&("3".to_string(), "Mar'26".to_string())));
+        assert_eq!(labels[1], ("9".to_string(), String::new()), "the first tick's context row moved to the first point");
+        assert_eq!(labels.last().map(|l| l.0.as_str()), Some("17"));
+    }
+
+    #[test]
+    fn an_end_point_crowding_its_neighbor_stays_unlabeled() {
+        let labels = edge_labels((2026, 3, 6), 12, 600.0);
+        assert_eq!(labels.first().map(|l| l.0.as_str()), Some("9"), "Mar 6 leaves 15px of the 25px a label needs");
+        assert_eq!(labels.last().map(|l| l.0.as_str()), Some("11"), "May 12 is one day past the May 11 tick");
+    }
+
+    fn labels_with(json: serde_json::Value) -> crate::common::AxisLabels {
+        let mut base = serde_json::json!({"font": {}, "padding": null, "visible": null});
+        base.as_object_mut().unwrap().extend(json.as_object().unwrap().clone());
+        serde_json::from_value(base).expect("axis labels")
+    }
+
+    /// Each authored key that fixes where or how the labels sit keeps them on their ticks, whichever family asks.
+    #[test]
+    fn every_authored_label_key_opts_out_of_interval_labels() {
+        assert!(interval_labels_allowed(&labels_with(serde_json::json!({})), false, false));
+        for pinned in [
+            serde_json::json!({"values": ["2026-01-01"]}),
+            serde_json::json!({"align": "left"}),
+            serde_json::json!({"angle": 0.0}),
+            serde_json::json!({"expr": "datum.label"}),
+            serde_json::json!({"time_unit": "none"}),
+            serde_json::json!({"time_unit": "monthofyear"}),
+            serde_json::json!({"visible": false}),
+        ] {
+            assert!(!interval_labels_allowed(&labels_with(pinned.clone()), false, false), "{pinned}");
+        }
+        let plain = labels_with(serde_json::json!({"time_unit": "yearquarter"}));
+        assert!(!interval_labels_allowed(&plain, true, false), "an authored tick cadence");
+        assert!(!interval_labels_allowed(&plain, false, true), "a redefined date format");
+    }
+
+    /// Labels 10px wide on a plot 100px wide with ticks 30px apart, the last neighbor centered at `at`: its
+    /// empty space is `85 - 100 * at` px.
+    #[test]
+    fn an_end_label_needs_empty_space_of_45_percent_of_the_tick_spacing() {
+        let last_fits = |at: f64| end_labels_fit(100.0, &[at - 0.3, at], (10.0, 10.0), [None, Some((at, 10.0))]).1;
+        assert!(!last_fits(0.79), "6px of 30 is 0.20");
+        assert!(!last_fits(0.736), "11.4px is 0.38");
+        assert!(last_fits(0.703), "14.7px is 0.49");
+        assert!(end_labels_fit(100.0, &[0.297, 0.597], (10.0, 10.0), [Some((0.297, 10.0)), None]).0, "the first label mirrors it");
     }
 }

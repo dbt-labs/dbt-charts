@@ -1,0 +1,3 @@
+kind: Features
+body: 'Add a chart-level tooltip: list that puts extra query columns on the hover card of bar, line, area, scatter and pie charts.'
+time: 2026-10-23T16:17:09.888858-07:00

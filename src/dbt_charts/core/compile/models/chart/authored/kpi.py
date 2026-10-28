@@ -8,8 +8,11 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from dbt_charts.core.compile.models.constraints import (
     AtLeastOneOf,
+    AtMostOneOf,
     ConstrainedModel,
     Constraint,
+    IsSet,
+    Requires,
 )
 from dbt_charts.core.compile.models.markers import Channel, DisplayText
 from dbt_charts.core.compile.models.style.authored import KpiChartStylePatch
@@ -28,6 +31,18 @@ class KpiSupportConfig(ConstrainedModel):
             "Empty `support:` block. Set at least one of `value`, "
             "`label`, or `glyph`, or omit the block entirely.",
         ),
+        Requires(
+            ("value",),
+            "`support.good` needs `support.value`: the direction is read from "
+            "the value's sign.",
+            when=(IsSet("good"),),
+        ),
+        AtMostOneOf(
+            ("good", "glyph"),
+            "`support.good` and `support.glyph` cannot both be set: `good` "
+            "picks the glyph from the value's sign. Choose the symbols with "
+            "`style.support.glyph.up`, `.down`, and `.neutral`.",
+        ),
     )
 
     value: str | None = Field(
@@ -41,6 +56,14 @@ class KpiSupportConfig(ConstrainedModel):
     glyph: str | None = Field(
         default=None,
         description="Text shown before the value (e.g. '▲', '▼', '●').",
+    )
+    good: Literal["up", "down"] | None = Field(
+        default=None,
+        description=(
+            "Which direction of `value` is good. The glyph and tone follow the "
+            "value's sign: a change in the good direction reads positive, the "
+            "opposite reads negative, and zero or null reads neutral."
+        ),
     )
 
     @model_validator(mode="before")
@@ -111,6 +134,18 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
             description="Text shown before the headline value (e.g. '▲', '●').",
         ),
     ]
+    good: Annotated[
+        Literal["up", "down"] | None,
+        Field(
+            default=None,
+            description=(
+                "Which direction of `value` is good. The headline glyph and tone "
+                "follow the value's sign: a change in the good direction reads "
+                "positive, the opposite reads negative, and zero or null reads "
+                "neutral."
+            ),
+        ),
+    ]
     support: Annotated[
         KpiSupportConfig | None,
         Field(
@@ -132,6 +167,43 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
             ),
         ),
     ]
+
+    @model_validator(mode="after")
+    def _reject_good_beside_static_marks_or_catch_all(self) -> KpiChart:
+        if self.good is not None:
+            if self.glyph is not None:
+                raise ValueError(
+                    "`good` and the chart-root `glyph` cannot both be set: `good` "
+                    "picks the glyph from the value's sign. Choose the symbols "
+                    "with `style.value.glyph.up`, `.down`, and `.neutral`."
+                )
+            self._reject_default_rule_beside_good(self.value, "good")
+        support = self.support
+        if support is None or support.good is None:
+            return self
+        # A runtime patch leaves every style field optional, `support` included.
+        support_style = self.style.support if self.style is not None else None
+        if support_style is not None and support_style.tone is not None:
+            raise ValueError(
+                "`support.good` and `style.support.tone` cannot both be set: "
+                "`good` picks the tone from the value's sign. Remove one."
+            )
+        # A column shared with the headline keeps its rules on the headline.
+        if support.value is not None and support.value != self.value:
+            self._reject_default_rule_beside_good(support.value, "support.good")
+        return self
+
+    def _reject_default_rule_beside_good(self, column: str, key: str) -> None:
+        if self.conditional_formatting is None:
+            return
+        entry = self.conditional_formatting.get(column)
+        if entry is not None and any(rule.default for rule in entry.when):
+            raise ValueError(
+                f"conditional_formatting.{column} has a `default: true` rule "
+                f"beside `{key}`, whose sign rules cover every nonzero value, "
+                "so the default rule would apply only at zero or null. Replace "
+                "it with an explicit predicate such as `eq: 0` or `between`."
+            )
 
     @field_validator("value", mode="before")
     @classmethod
@@ -174,7 +246,8 @@ class KpiChart(_BaseChartFields, _ConditionalFormattingField):
                 raise ValueError(
                     "'tone:' is not a KPI chart root field.\n"
                     "Tone lives on the block it paints: the headline value stays "
-                    "neutral, and only the support row carries semantic color.\n"
+                    "neutral unless `good:` colors it by sign, and the support row "
+                    "takes a static tone.\n"
                     "Use style.support.tone instead:\n\n"
                     "  style:\n"
                     "    support:\n"

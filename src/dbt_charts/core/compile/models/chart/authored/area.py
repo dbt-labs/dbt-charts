@@ -6,20 +6,31 @@ from typing import Annotated, ClassVar, Literal
 
 from pydantic import ConfigDict, Field
 
-from dbt_charts.core.compile.models.constraints import Constraint, Forbids, IsList
+from dbt_charts.core.compile.models.constraints import (
+    Constraint,
+    Forbids,
+    IsList,
+    IsSet,
+)
 from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
 
 from ._annotation import Annotation
 from ._base import _CartesianChartFields
 from ._layer import CartesianLayer
+from ._tooltip import _TooltipFields
 
 
-class AreaChart(_CartesianChartFields):
+class AreaChart(_CartesianChartFields, _TooltipFields):
     """Authored patch for area charts."""
 
     model_config = ConfigDict(extra="forbid")
 
     __constraints__: ClassVar[tuple[Constraint, ...]] = (
+        Forbids(
+            ("tooltip",),
+            "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query.",
+            when=(IsSet("layers"),),
+        ),
         Forbids(
             ("layers",),
             "Area chart: layers are not supported with multi-metric "

@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbt_charts.core.compile.models.chart.authored._layer import AreaLayer, LineLayer
 from dbt_charts.core.compile.models.chart.normalized import BarChart
 from dbt_charts.core.diagnostics import (
+    WARN_ANNOTATION_NOTE_MOVED,
     WARN_BAR_BAND_WIDTH_TOO_NARROW,
     WARN_BAR_GROUPED_SERIES_COINCIDE,
     WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
@@ -22,6 +24,7 @@ from dbt_charts.core.diagnostics import (
 from dbt_charts.core.diagnostics.registry import WarningCode
 from dbt_charts.core.render.warnings import (
     WarningContext,
+    annotation_note_moved,
     bar_band_width_too_narrow,
     bar_grouped_series_coincide,
     facet_panel_width_below_minimum,
@@ -52,9 +55,12 @@ def _only(diagnostics: list[Diagnostic]) -> Diagnostic:
 
 
 def test_engine_warnings_yield_every_record_for_a_code() -> None:
-    ctx = _ctx(WARN_VALUE_LABELS_CROWD_WIDTH, {"label_width": 31.0, "slot_width": 18.0})
+    ctx = _ctx(
+        WARN_VALUE_LABELS_CROWD_WIDTH,
+        {"label_width": 31.0, "slot_width": 18.0, "layer": None},
+    )
     ctx.geometry_warnings["c1"][WARN_VALUE_LABELS_CROWD_WIDTH.code].append(
-        {"chart_id": "c1", "label_width": 40.0, "slot_width": 18.0}
+        {"chart_id": "c1", "label_width": 40.0, "slot_width": 18.0, "layer": None}
     )
     found = list(engine_warnings(ctx, WARN_VALUE_LABELS_CROWD_WIDTH))
     assert [(cid, p["label_width"]) for cid, p in found] == [("c1", 31.0), ("c1", 40.0)]
@@ -66,6 +72,7 @@ def test_a_chart_the_engine_raised_nothing_for_has_no_diagnostic() -> None:
         board_spec=make_test_resolved_board(), chart_results={}, geometry_warnings={}
     )
     for detector in (
+        annotation_note_moved,
         bar_band_width_too_narrow,
         bar_grouped_series_coincide,
         facet_panel_width_below_minimum,
@@ -139,10 +146,94 @@ def test_a_category_floor_above_the_authored_height_prints_both() -> None:
     assert "120px" in diagnostic.message
 
 
+def _crowd(**params: Any) -> dict[str, Any]:
+    return {"label_width": 31.0, "slot_width": 18.0, "layer": None, **params}
+
+
 def test_crowded_value_labels_name_the_bar_mark_labels() -> None:
-    params = {"label_width": 31.0, "slot_width": 18.0}
     diagnostic = _only(
-        value_labels_crowd_width.detect(_ctx(WARN_VALUE_LABELS_CROWD_WIDTH, params))
+        value_labels_crowd_width.detect(_ctx(WARN_VALUE_LABELS_CROWD_WIDTH, _crowd()))
     )
     assert diagnostic.path == "charts.c1.style.marks.bar.labels"
     assert diagnostic.field == "val"
+    assert "31px wide but has only 18px of room" in diagnostic.message
+
+
+def _layered_ctx(*records: dict[str, Any]) -> WarningContext:
+    labeled = {"labels": {"visible": True}}
+    layers = [
+        LineLayer.model_validate(
+            {"type": "line", "y": "line_y", "style": {"marks": {"line": labeled}}}
+        ),
+        AreaLayer.model_validate(
+            {"type": "area", "y": "area_y", "style": {"marks": {"line": labeled}}}
+        ),
+        LineLayer.model_validate(
+            {"type": "line", "y": "dot_y", "style": {"marks": {"point": labeled}}}
+        ),
+    ]
+    chart = make_test_resolved_chart(
+        BarChart(id="c1", type="bar", query_name="q", x="cat", y="val", layers=layers),
+        _ROWS,
+    )
+    return WarningContext(
+        board_spec=make_test_resolved_board(charts={"c1": chart}),
+        chart_results={"c1": _ROWS},
+        geometry_warnings={
+            "c1": {
+                WARN_VALUE_LABELS_CROWD_WIDTH.code: [
+                    {"chart_id": "c1", **record} for record in records
+                ]
+            }
+        },
+    )
+
+
+def test_a_layers_crowded_labels_name_that_layers_mark_labels() -> None:
+    diagnostics = value_labels_crowd_width.detect(
+        _layered_ctx(_crowd(layer=0), _crowd(layer=1), _crowd(layer=2))
+    )
+    assert [(d.path, d.field) for d in diagnostics] == [
+        ("charts.c1.layers.0.style.marks.line.labels", "line_y"),
+        ("charts.c1.layers.1.style.marks.line.labels", "area_y"),
+        ("charts.c1.layers.2.style.marks.point.labels", "dot_y"),
+    ]
+
+
+def test_one_label_set_raised_many_times_is_one_diagnostic_keeping_the_worst() -> None:
+    diagnostics = value_labels_crowd_width.detect(
+        _layered_ctx(
+            _crowd(layer=0, label_width=30.0, slot_width=25.0),
+            _crowd(layer=None, label_width=30.0, slot_width=25.0),
+            _crowd(layer=0, label_width=30.0, slot_width=10.0),
+            _crowd(layer=0, label_width=30.0, slot_width=20.0),
+        )
+    )
+    assert [d.path for d in diagnostics] == [
+        "charts.c1.layers.0.style.marks.line.labels",
+        "charts.c1.style.marks.bar.labels",
+    ]
+    assert "30px wide but has only 10px of room" in diagnostics[0].message
+
+
+def test_a_wide_charts_crowded_labels_name_no_synthetic_measure() -> None:
+    rows = [{"cat": "a", "x": 1, "y": 2}, {"cat": "b", "x": 3, "y": 4}]
+    chart = make_test_resolved_chart(
+        BarChart(id="c1", type="bar", query_name="q", x="cat", y=["x", "y"]), rows
+    )
+    ctx = WarningContext(
+        board_spec=make_test_resolved_board(charts={"c1": chart}),
+        chart_results={"c1": rows},
+        geometry_warnings={
+            "c1": {WARN_VALUE_LABELS_CROWD_WIDTH.code: [{"chart_id": "c1", **_crowd()}]}
+        },
+    )
+    assert _only(value_labels_crowd_width.detect(ctx)).field is None
+
+
+def test_a_moved_note_anchors_on_its_annotation() -> None:
+    diagnostic = _only(
+        annotation_note_moved.detect(_ctx(WARN_ANNOTATION_NOTE_MOVED, {"index": 2}))
+    )
+    assert diagnostic.path == "charts.c1.annotations[2]"
+    assert "annotation 2" in diagnostic.message

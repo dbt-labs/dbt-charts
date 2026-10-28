@@ -147,8 +147,7 @@ demo port="":
     set -euo pipefail
     if [ ! -f "{{demo_dir}}/dbt_charts.yml" ]; then
         mkdir -p "{{demo_dir}}"
-        uv run dct init -y --project-dir "{{demo_dir}}" \
-            --no-skills --no-mcp --no-vscode --no-cursor
+        uv run dct init --project-dir "{{demo_dir}}"
     fi
     port_args=""
     if [ -n "{{port}}" ]; then port_args="--port {{port}}"; fi

@@ -1,6 +1,6 @@
 """Tests for the chart.support_table style cascade.
 
-Spec §4 three-tier cascade, ADR-002 + ADR-006:
+Three-tier cascade:
   Tier 1: style.charts.support_table.*
   Tier 2: style.charts.<chart_type>.support_table.*
   Tier 3: chart.style.support_table.*
@@ -61,7 +61,7 @@ def test_resolved_charts_style_has_support_table_field():
 
 
 def test_compiled_support_table_style_has_all_spec_leaves():
-    # Spec §4.3 leaves (structure only — no value pinning).
+    # Leaves (structure only — no value pinning).
 
     s = get_theme_style().charts.support_table
     assert hasattr(s, "font")
@@ -77,7 +77,7 @@ def test_compiled_support_table_style_has_all_spec_leaves():
 
 
 def test_compiled_support_table_style_forbids_header_key():
-    # ADR-006 + Q2: the old `header:` block is renamed to `divider:`.
+    # The old `header:` block is renamed to `divider:`.
     # Supplying `header:` must raise (extra="forbid").
     with pytest.raises(ValidationError):
         SupportTableStyle.model_validate({"header": {"font": {"size": 12}}})
@@ -97,7 +97,7 @@ def test_support_table_tier1_universal_override():
 
 
 def test_support_table_tier1_override_does_not_cross_into_bar_font():
-    # Scope rule (spec §4.4): support_table style does NOT cascade into sibling
+    # Scope rule: support_table style does NOT cascade into sibling
     # chart-type styles. Setting support_table.font.size must not touch bar mark.
     theme = _theme_with_support_table(font=SupportTableFontStyle(size=77.0))
     resolved = resolve_chart_style_context(theme)

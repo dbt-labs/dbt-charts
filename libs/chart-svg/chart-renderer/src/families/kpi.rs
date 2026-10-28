@@ -52,6 +52,10 @@ struct Resolved {
     /// when none. Always serialized.
     #[serde(deserialize_with = "Option::deserialize")]
     glyph: Option<String>,
+    /// The sign rules `good` lowers to on the headline column
+    /// (`ResolvedKpiChart.value_rules`), null when the chart sets none.
+    #[serde(deserialize_with = "Option::deserialize")]
+    value_rules: Option<Vec<WhenRule>>,
     #[serde(deserialize_with = "Option::deserialize")]
     support: Option<SupportCfg>,
     variant: Variant,
@@ -132,7 +136,15 @@ struct CardInk {
 struct ValueStyle {
     font: FontPayload,
     affix: TextSlot,
-    glyph: TextSlot,
+    glyph: GlyphSlot,
+}
+
+/// `KpiValueGlyphStyle`: the authored glyph's font, and the font of the
+/// glyphs a `good` rule draws.
+#[derive(Deserialize)]
+struct GlyphSlot {
+    font: FontPayload,
+    arrow: TextSlot,
 }
 
 #[derive(Deserialize)]
@@ -292,6 +304,7 @@ struct Slots {
     value: SlotFont,
     affix: SlotFont,
     glyph: SlotFont,
+    arrow: SlotFont,
     label: SlotFont,
     support: SlotFont,
     support_glyph: SlotFont,
@@ -303,6 +316,7 @@ impl Slots {
             value: SlotFont::resolve(&kpi.value.font, "value.font")?,
             affix: SlotFont::resolve(&kpi.value.affix.font, "value.affix.font")?,
             glyph: SlotFont::resolve(&kpi.value.glyph.font, "value.glyph.font")?,
+            arrow: SlotFont::resolve(&kpi.value.glyph.arrow.font, "value.glyph.arrow.font")?,
             label: SlotFont::resolve(&kpi.label.font, "label.font")?,
             support: SlotFont::resolve(&kpi.support.font, "support.font")?,
             support_glyph: SlotFont::resolve(&kpi.support.glyph.font, "support.glyph.font")?,
@@ -559,6 +573,7 @@ fn resolve_colors(
     kpi: &KpiChartStyle,
     board_background: Option<&str>,
     secondary: &str,
+    tone_color: Option<String>,
 ) -> Result<Colors, String> {
     let col_format = r
         .format
@@ -569,7 +584,9 @@ fn resolve_colors(
         crate::common::predefined_number_spec(spec).unwrap_or(spec)
     });
     let channel_bg = evaluate_channel(&r.resolved_channels, "background", row, col_format)?;
-    let channel_color = evaluate_channel(&r.resolved_channels, "color", row, col_format)?;
+    // An authored color channel outranks the derived tone.
+    let channel_color = evaluate_channel(&r.resolved_channels, "color", row, col_format)?
+        .or(tone_color);
     // Card background: channel > explicit chart-local override, which counts
     // only when it differs from the board background: board
     // propagation (the same color) is transparent to the KPI card.
@@ -587,8 +604,7 @@ fn resolve_colors(
         .color
         .as_deref()
         .ok_or("kpi: style.kpi.font.color is unresolved: the cascade fills it from charts.font.color")?;
-    // Channel > the value slot's own
-    // ink > the card ink. No tone arm: the headline stays neutral.
+    // Channel (or derived tone) > the value slot's own ink > the card ink.
     let value_fill = match (&channel_color, slots.value.color.as_deref()) {
         (Some(channel), _) => channel.clone(),
         (None, Some(ink)) if !ink.is_empty() => own_fill(Some(ink), card_ink)?,
@@ -700,7 +716,8 @@ fn resolve_support_row(
     };
     let row_color = explicit_color(slots.support.color.as_deref())?;
     let glyph_ink = explicit_color(slots.support_glyph.color.as_deref())?;
-    let cf_color = styled.color.filter(|c| !c.is_empty());
+    // A matched rule's `tone` colors the value like its `font.color` does.
+    let cf_color = styled.color.filter(|c| !c.is_empty()).or(styled.tone_color);
     let value_fill = cf_color
         .clone()
         .or_else(|| row_color.clone())
@@ -879,7 +896,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         }
     }
     let row = &row;
-    let slots = Slots::resolve(kpi)?;
+    let mut slots = Slots::resolve(kpi)?;
     let cell = column_cell(row, &r.value, &r.id)?;
     let board_formats = payload
         .board_style
@@ -901,17 +918,6 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         board_formats,
         sub_unit_specs,
     )?;
-    let value = ValueRun {
-        glyph: slots.glyph.cased(r.glyph.as_deref().unwrap_or_default())?,
-        prefix: slots.affix.cased(&prefix)?,
-        number: slots.value.cased(&number_str)?,
-        suffix: slots.affix.cased(&suffix)?,
-        is_numeric,
-    };
-    // An empty label is honored as "no label": the slot stays reserved, no
-    // text is emitted.
-    let label_text = slots.label.cased(&r.label)?;
-
     // Support-row and no-tone fills use the board-level `secondary_color` token and tone
     // palette (`ResolvedStyle.secondary_color` / `.tones`), carried in the envelope's
     // `board_style` slice.
@@ -921,7 +927,43 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     )?;
     let tones = board.and_then(|b| b.tones.as_ref());
 
-    let colors = resolve_colors(&r, row, &slots, kpi, payload.background.as_deref(), secondary)?;
+    // The headline's rules see the raw cell; a matched rule's glyph replaces the
+    // authored one and its tone colors the whole run.
+    let value_styled = resolve_conditional_styles(
+        r.value_rules.as_deref().unwrap_or(&[]),
+        Some(cell).filter(|v| !v.is_null()),
+        tones,
+    )
+    .map_err(|e| format!("kpi: value {e}"))?;
+    if value_styled.tone_needs_board_tones {
+        return Err("kpi: value conditional rule tone with no board tones".into());
+    }
+    // A glyph a rule draws takes the arrow font; an authored `glyph` keeps its own.
+    if value_styled.glyph.is_some() {
+        std::mem::swap(&mut slots.glyph, &mut slots.arrow);
+    }
+    let value = ValueRun {
+        glyph: slots.glyph.cased(
+            &value_styled.glyph.or_else(|| r.glyph.clone()).unwrap_or_default(),
+        )?,
+        prefix: slots.affix.cased(&prefix)?,
+        number: slots.value.cased(&number_str)?,
+        suffix: slots.affix.cased(&suffix)?,
+        is_numeric,
+    };
+    // An empty label is honored as "no label": the slot stays reserved, no
+    // text is emitted.
+    let label_text = slots.label.cased(&r.label)?;
+
+    let colors = resolve_colors(
+        &r,
+        row,
+        &slots,
+        kpi,
+        payload.background.as_deref(),
+        secondary,
+        value_styled.tone_color,
+    )?;
     let support = resolve_support_row(
         &r.support,
         row,
@@ -2135,6 +2177,7 @@ mod render_tests {
             "label": "Quarterly Revenue",
             "value": "revenue",
             "glyph": null,
+            "value_rules": null,
             "variant": variant,
             "support": null,
             "format": {"spec": ",.0f", "raw": "integer"},
@@ -2150,7 +2193,10 @@ mod render_tests {
                     "font": slot(SERIF, 24.0, json!(500.0), None),
                     "format": null,
                     "affix": {"font": slot(SERIF, 11.0, json!(500.0), None)},
-                    "glyph": {"font": slot(SERIF, 11.0, json!(500.0), None)}
+                    "glyph": {
+                        "font": slot(SERIF, 11.0, json!(500.0), None),
+                        "arrow": {"font": slot(SANS, 16.0, json!(500.0), None)}
+                    }
                 },
                 "label": {
                     "font": slot(SANS, 11.0, json!(500.0), None),
@@ -2794,6 +2840,48 @@ mod render_tests {
         p.resolved["support"]["rules"] = json!([{"gt": 0, "glyph": "up"}]);
         set(&mut p, "/style/kpi/support/glyph/font/case", json!("upper"));
         assert!(svg_of(&p).contains(">UP </tspan>"));
+    }
+
+    #[test]
+    fn headline_rules_set_the_glyph_and_tone_the_whole_value_run() {
+        let mut p = kpi_payload("stacked", 300.0);
+        p.resolved["value_rules"] = json!([
+            {"gt": 0, "glyph": "↑", "tone": "positive"},
+            {"lt": 0, "glyph": "↓", "tone": "negative"}
+        ]);
+        let up = svg_of(&p);
+        assert!(up.contains("fill=\"#00884d\">↑ "), "{up}");
+        p.rows[0].insert("revenue".into(), json!(-5.0));
+        let down = svg_of(&p);
+        assert!(down.contains("↓ ") && !down.contains("↑"), "{down}");
+        p.rows[0].insert("revenue".into(), json!(0.0));
+        assert!(!svg_of(&p).contains('↑'));
+    }
+
+    #[test]
+    fn a_rule_glyph_takes_the_arrow_font_and_an_authored_glyph_keeps_its_own() {
+        let mut p = kpi_payload("stacked", 300.0);
+        set(&mut p, "/glyph", json!("●"));
+        let authored = svg_of(&p);
+        assert!(authored.contains("font-size=\"11.0\"") && !authored.contains("font-size=\"16.0\""), "{authored}");
+        p.resolved["value_rules"] = json!([{"gt": 0, "glyph": "↑"}]);
+        let derived = svg_of(&p);
+        assert!(derived.contains("font-size=\"16.0\"") && derived.contains("↑ "), "{derived}");
+    }
+
+    #[test]
+    fn headline_without_the_value_rules_key_refuses_by_name() {
+        let mut p = kpi_payload("stacked", 300.0);
+        p.resolved.as_object_mut().unwrap().remove("value_rules");
+        assert!(err_of(&p).contains("missing field `value_rules`"));
+    }
+
+    #[test]
+    fn a_headline_rule_tone_without_board_tones_refuses_by_name() {
+        let mut p = kpi_payload("stacked", 300.0);
+        p.resolved["value_rules"] = json!([{"gt": 0, "tone": "positive"}]);
+        p.board_style.as_mut().unwrap().tones = None;
+        assert!(err_of(&p).contains("value conditional rule tone"));
     }
 
     // ── Inline ────────────────────────────────────────────

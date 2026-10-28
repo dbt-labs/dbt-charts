@@ -43,6 +43,8 @@ pub struct TextDoc {
     pub max_chars: Option<i64>,
     /// `column.divider` — the vertical line between prose columns.
     pub divider: Divider,
+    /// `style.text.font.case` — applied to the words of every block.
+    pub case: Option<String>,
 }
 
 /// `compile/models/board/normalized.py::ProsePlan` — the card grid one run of
@@ -372,7 +374,10 @@ pub fn render_prose_svg(
     let family = style.font_family.clone();
     let char_px = max_chars_to_px(&fonts.regular, style.base_font_size, 1);
 
-    let blocks = mdsvg::parser::parse(markdown);
+    let mut blocks = mdsvg::parser::parse(markdown);
+    if let Some(case) = &col.case {
+        crate::title::case_blocks(&mut blocks, case)?;
+    }
     // `html_policy: trusted-raw` (`allow_raw_html`) is the one tier where
     // production renders raw HTML via `foreignObject` and nh3 instead of
     // painting its source as escaped text (`boards.py`'s

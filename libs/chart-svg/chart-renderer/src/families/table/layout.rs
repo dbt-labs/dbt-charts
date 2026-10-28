@@ -14,6 +14,7 @@ use super::bind::is_plain_date_lane_cell;
 use super::bind::is_summary_role;
 use super::bind::is_swatch;
 use super::bind::measured_cell_text;
+use super::anchor_variant;
 use super::bind::numeric_value;
 use super::bind::parse_spark_thresholds;
 use super::bind::resolve_cell_glyph;
@@ -27,7 +28,6 @@ use super::bind::urlencode_plus;
 use super::bind::wants_tabular_font;
 use super::sanitize_color;
 use super::svg_font_family;
-use super::BarLabel;
 use super::BoardFormats;
 use super::Bound;
 use super::Cell;
@@ -42,7 +42,6 @@ use super::PyNum;
 use super::Resolved;
 use super::Rows;
 use super::RowRole;
-use super::SparkBarLabelTheme;
 use super::SparkColumnsTheme;
 use super::SparkConfig;
 use super::SparkEmptyTheme;
@@ -69,7 +68,9 @@ use super::PAGINATOR_ELLIPSIS;
 use super::PAGINATOR_NEXT_CHEVRON;
 use super::PAGINATOR_PREV_CHEVRON;
 use super::PAGINATOR_SIBLING_COUNT;
+use super::POOL_PAGER_MAX_PAGES;
 use super::PROPORTIONAL_CAP;
+use super::ROW_POOL_CAP;
 use super::SPARK_LINE_STROKE_WIDTH;
 use super::STATIC_MULTI_PAGE_MAX_PAGES;
 use super::SWATCH_CELL_DEMAND;
@@ -107,6 +108,26 @@ use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+
+/// The words `table_runtime.js` prints, by the last segment of their
+/// `controls.*` catalog id. The page has no catalog, so the pool root carries
+/// them in the board's language; the page range keeps its placeholders.
+const POOL_RUNTIME_WORDS: [&str; 6] =
+    ["sort_ascending", "sort_descending", "clear_sort", "search", "search_values", "page_range"];
+
+fn pool_runtime_words() -> Result<String, String> {
+    let mut words = serde_json::Map::new();
+    for word in POOL_RUNTIME_WORDS {
+        let args: &[(&str, &str)] = if word == "page_range" {
+            &[("first", "{first}"), ("last", "{last}"), ("total", "{total}")]
+        } else {
+            &[]
+        };
+        let text = display_text::language::tr(&format!("controls.{word}"), None, args)?;
+        words.insert(word.to_string(), serde_json::Value::String(text));
+    }
+    Ok(serde_json::Value::Object(words).to_string())
+}
 
 /// Python's `sum(d.values())` over a column map.
 pub(super) fn sum_values(map: &BTreeMap<String, f64>) -> f64 {
@@ -756,6 +777,23 @@ pub(super) fn largest_safe_page_rows(
     1
 }
 
+/// Largest page size whose TALLEST rows, wherever they sit, fit `available`:
+/// a pooled table can sort any rows onto one page.
+fn tallest_safe_page_rows(row_heights: &[f64], available: f64, max_page_rows: usize) -> usize {
+    let mut tallest = row_heights.to_vec();
+    tallest.sort_by(|a, b| b.total_cmp(a));
+    let mut sum = 0.0;
+    let mut fit = 0;
+    for height in tallest.iter().take(max_page_rows) {
+        if sum + height > available {
+            break;
+        }
+        sum += height;
+        fit += 1;
+    }
+    fit.max(1)
+}
+
 /// Max over every contiguous page-sized window of `row_heights` —
 /// A static multi-page export paints every page
 /// onto one shared canvas, so the control bar anchors below the TALLEST
@@ -869,9 +907,10 @@ pub(super) fn render_pagination_controls(
     total_rows: usize,
     padding: f64,
     interactive: bool,
+    compact: bool,
     fonts: &FontBook,
 ) -> Result<(), String> {
-    let window = paginator_window(page, total_pages);
+    let window = if compact { Vec::new() } else { paginator_window(page, total_pages) };
     enum Role {
         Prev,
         Next,
@@ -888,24 +927,28 @@ pub(super) fn render_pagination_controls(
             }
         }
     }
-    let prev_target = if page > 1 { page - 1 } else { 0 };
-    let next_target = if page < last_enabled_page {
-        page + 1
+    // A compact pager names its neighbors relatively: the host runtime knows
+    // the filtered page count, this render does not.
+    let (prev_target, next_target) = if compact {
+        ("prev".to_string(), "next".to_string())
     } else {
-        0
+        (
+            (if page > 1 { page - 1 } else { 0 }).to_string(),
+            (if page < last_enabled_page { page + 1 } else { 0 }).to_string(),
+        )
     };
 
-    let mut sequence: Vec<(Role, String, i64)> =
+    let mut sequence: Vec<(Role, String, String)> =
         vec![(Role::Prev, PAGINATOR_PREV_CHEVRON.to_string(), prev_target)];
     for item in window {
         match item {
             PageItem::Ellipsis => {
-                sequence.push((Role::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), 0))
+                sequence.push((Role::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), "0".to_string()))
             }
             PageItem::Page(p) => sequence.push((
                 Role::Page,
                 p.to_string(),
-                if p <= last_enabled_page { p } else { 0 },
+                (if p <= last_enabled_page { p } else { 0 }).to_string(),
             )),
         }
     }
@@ -959,13 +1002,17 @@ pub(super) fn render_pagination_controls(
         }
     }
 
-    // A muted "{row_start}–{row_end} / {total_rows}" label at
+    // A muted row-range label (`controls.page_range`) at
     // `padding`, left of the page sequence —: an
     // unlabeled "‹ 1 2 … 37 ›" reads as "37 pages of dashboards", not "this
     // table has 37 pages of rows". Dropped entirely (never shrunk) if it
     // would collide with the right-anchored sequence — production gates on
     // the sequence's own left edge.
-    let label_text = format!("{row_start}\u{2013}{row_end} / {total_rows}");
+    let label_text = display_text::language::tr(
+        "controls.page_range",
+        None,
+        &[("first", &row_start.to_string()), ("last", &row_end.to_string()), ("total", &total_rows.to_string())],
+    )?;
     // `get_font_measurer(font_family)`: every non-serif
     // family measures as Inter, whatever the label paints in.
     let label_w = fonts.measure(
@@ -983,7 +1030,8 @@ pub(super) fn render_pagination_controls(
                 .quick("fill", theme.color_inactive.as_str())
                 .quick("font-family", font_family)
                 .quick("font-weight", theme.weight_inactive.to_string())
-                .quick("style", "font-variant-numeric: tabular-nums;"),
+                .quick("style", "font-variant-numeric: tabular-nums;")
+                .set_if(compact, "data-dbt-pager-label", ""),
             &label_text,
         );
     }
@@ -997,11 +1045,11 @@ pub(super) fn render_pagination_controls(
     for (i, (role, glyph, target)) in sequence.iter().enumerate() {
         let center_x = centers[i];
 
-        let is_active_page = matches!(role, Role::Page) && *target == page;
-        let is_disabled_chevron = matches!(role, Role::Prev | Role::Next) && *target == 0;
+        let is_active_page = matches!(role, Role::Page) && *target == page.to_string();
+        let is_disabled_chevron = matches!(role, Role::Prev | Role::Next) && target == "0";
         let is_ellipsis = matches!(role, Role::Ellipsis);
 
-        let is_disabled_page = matches!(role, Role::Page) && *target == 0;
+        let is_disabled_page = matches!(role, Role::Page) && target == "0";
         let (color, weight, clickable) = if is_active_page {
             (theme.color_active.as_str(), theme.weight_active, false)
         } else if is_disabled_chevron {
@@ -1029,7 +1077,7 @@ pub(super) fn render_pagination_controls(
                     .quick("height", format!("{rect_h:.1}"))
                     .quick("fill", "transparent")
                     .quick_some("data-dbt-page-var", interactive.then_some(page_var_name))
-                    .quick("data-dbt-page-target", target.to_string()),
+                    .quick("data-dbt-page-target", target.as_str()),
             );
         }
 
@@ -1045,6 +1093,9 @@ pub(super) fn render_pagination_controls(
                 .quick("class", "dbt-paginator-glyph")
                 .quick("style", "font-variant-numeric: tabular-nums;")
                 .quick("data-paginator-role", role.as_str())
+                // The compact pager's ends flip between enabled and disabled in the page.
+                .set_if(compact, "data-dbt-fill-enabled", theme.color_active.as_str())
+                .set_if(compact, "data-dbt-fill-disabled", theme.color_disabled.as_str())
                 .quick_some("data-pagination-current", is_active_page.then_some(page_var_name)),
             glyph,
         );
@@ -1083,32 +1134,6 @@ pub(super) fn signed_fraction(value: f64, max_value: f64, signed: bool) -> (f64,
     (fraction, clamped < 0.0)
 }
 
-/// Python's `f"{v:g}"`: six significant digits, trailing zeros dropped,
-/// exponent form past `1e6` and under `1e-4`.
-pub(super) fn py_g(v: f64) -> String {
-    if v == 0.0 {
-        return "0".to_string();
-    }
-    let exp = v.abs().log10().floor() as i32;
-    if !(-4..6).contains(&exp) {
-        let text = format!("{v:.5e}");
-        let (mantissa, e) = text.split_once('e').expect("exponent form");
-        let mantissa = if mantissa.contains('.') {
-            mantissa.trim_end_matches('0').trim_end_matches('.')
-        } else {
-            mantissa
-        };
-        let e: i32 = e.parse().expect("exponent");
-        return format!("{mantissa}e{}{:02}", if e < 0 { '-' } else { '+' }, e.abs());
-    }
-    let text = format!("{v:.*}", (5 - exp).max(0) as usize);
-    if text.contains('.') {
-        text.trim_end_matches('0').trim_end_matches('.').to_string()
-    } else {
-        text
-    }
-}
-
 /// A signed column grows each bar from
 /// its midline (`has_negative`); `width`/`height` print bare — production's
 /// `int(...)`-computed size is a genuine Python int, and this renderer's
@@ -1125,7 +1150,6 @@ pub(super) fn render_spark_bar(
     background: &str,
     border_radius: f64,
     has_negative: bool,
-    label: Option<(&BarLabel, &SparkBarLabelTheme)>,
 ) -> Vec<Node> {
     let (fraction, is_negative) = signed_fraction(value, max_value, has_negative);
     let (fill_x, fill_width) = if has_negative {
@@ -1167,21 +1191,6 @@ pub(super) fn render_spark_bar(
                 .quick("height", height.to_string())
                 .quick("fill", color)
                 .quick("rx", radius_s.as_str()),
-        );
-    }
-    if let Some((label, theme)) = label {
-        tree.text_el(
-            Attrs::new()
-                .quick("x", float_repr(width - theme.inset_x))
-                .quick("y", float_repr(height / 2.0))
-                .quick("font-size", float_repr(label.font_size))
-                .quick("fill", theme.fill.as_str())
-                .quick("fill-opacity", float_repr(theme.fill_opacity))
-                .quick("text-anchor", "end")
-                .quick("dominant-baseline", "central")
-                .quick("font-family", label.family)
-                .quick("style", "font-variant-numeric: tabular-nums lining-nums;"),
-            &label.text,
         );
     }
     tree.finish()
@@ -1579,21 +1588,6 @@ pub(super) fn render_spark_cell<'a>(
             let color = bar_color(v, max_value, is_negative)?;
             let border_radius = spark.border_radius.unwrap_or(theme.bar.border.radius);
             let background = spark.background.as_deref().unwrap_or(&theme.bar.background);
-            let label = (spark.value_visible == Some(true)).then(|| {
-                let mut text = if v.fract() == 0.0 {
-                    py_g(v)
-                } else {
-                    format!("{v:.1}")
-                };
-                if let Some(suffix) = &spark.value_suffix {
-                    text.push_str(suffix);
-                }
-                BarLabel {
-                    text,
-                    font_size: layout.font_size,
-                    family: layout.body_family,
-                }
-            });
             let content = render_spark_bar(
                 v,
                 max_value,
@@ -1604,7 +1598,6 @@ pub(super) fn render_spark_cell<'a>(
                 background,
                 border_radius,
                 signed,
-                label.as_ref().map(|l| (l, &theme.bar.label)),
             );
             Ok(Some((content, spark_width, spark_height)))
         }
@@ -1716,6 +1709,72 @@ pub(super) fn render_spark_cell<'a>(
     }
 }
 
+/// The class on a pooled affix tspan that only some anchor variants paint. Its
+/// `data-dbt-affix` is the bitmask of [`anchor_variant`] slots that do; the host
+/// stylesheet hides it and shows the ones the table runtime marks.
+const AFFIX_CLASS: &str = "dbt-table-affix";
+
+/// One affix tspan; `gate` is its anchor-variant mask and the row's own variant.
+fn affix_tspan(
+    tree: &mut Tree,
+    x: f64,
+    anchor: &str,
+    text: &str,
+    gate: Option<(u8, usize)>,
+    fill: Option<&str>,
+) {
+    tree.tspan(
+        Attrs::new()
+            .quick("x", float_repr(x))
+            .quick("text-anchor", anchor)
+            .quick_some("fill", fill)
+            .set_if(gate.is_some(), "class", AFFIX_CLASS)
+            .quick_some("data-dbt-affix", gate.map(|(mask, _)| mask.to_string()))
+            .set_if(
+                gate.is_some_and(|(mask, variant)| mask >> variant & 1 == 0),
+                "visibility",
+                "hidden",
+            ),
+        text,
+    );
+}
+
+/// The tspans one affix lane draws. A pooled anchored cell lists each distinct
+/// text with the variants that paint it (`None` when all four do, so it is plain);
+/// any other cell draws what it painted.
+fn affix_lane<'a>(
+    by_anchor: Option<&'a [(Option<String>, Option<String>); 4]>,
+    lane: fn(&(Option<String>, Option<String>)) -> Option<&str>,
+    painted: Option<&'a str>,
+) -> Vec<(&'a str, Option<u8>)> {
+    let Some(variants) = by_anchor else {
+        return painted.into_iter().map(|text| (text, None)).collect();
+    };
+    let mut texts: Vec<(&str, u8)> = Vec::new();
+    for (slot, variant) in variants.iter().enumerate() {
+        let Some(text) = lane(variant) else { continue };
+        match texts.iter_mut().find(|(seen, _)| *seen == text) {
+            Some((_, mask)) => *mask |= 1 << slot,
+            None => texts.push((text, 1 << slot)),
+        }
+    }
+    texts
+        .into_iter()
+        .map(|(text, mask)| (text, (mask != 0b1111).then_some(mask)))
+        .collect()
+}
+
+/// The raw query value a pooled cell sorts by, printed as the engine prints
+/// it; a null (or a non-scalar) has none.
+fn sort_key(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(text) => Some(text.clone()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
 /// Count one cut element for column `name`, keeping columns in first-cut
 /// order: production's warning lists them in the order its sink recorded them.
 pub(super) fn count_cut(truncations: &RefCell<Vec<(String, usize)>>, name: &str) {
@@ -1786,7 +1845,9 @@ impl TableBody<'_> {
             row_number_ink,
             wrapped_lines,
             prefix_xs,
+            glyph_xs,
             number_xs,
+            number_ws,
             suffix_xs,
             outer,
             pad,
@@ -1803,6 +1864,8 @@ impl TableBody<'_> {
             link_open,
             filter_variables,
             link_context,
+            pool_page_rows,
+            pool_first_page,
             ..
         } = *self;
         let row_text_baseline = |ri: usize| row_heights[ri] / 2.0 + th.text_baseline_offset;
@@ -1833,7 +1896,14 @@ impl TableBody<'_> {
             let mut gap_acc = 0.0_f64;
             for local_ri in 0..page_n_shown {
                 let ri = page_offset + local_ri;
-                if local_ri > 0
+                // A pooled table's pages share one slot space: each starts afresh.
+                if pool_page_rows.is_some_and(|p| local_ri % p == 0) {
+                    acc = 0.0;
+                    gap_acc = 0.0;
+                }
+                let starts_page =
+                    local_ri == 0 || pool_page_rows.is_some_and(|p| local_ri % p == 0);
+                if !starts_page
                     && is_summary_role(row_roles[ri])
                     && !is_summary_role(row_roles[ri - 1])
                 {
@@ -1868,11 +1938,36 @@ impl TableBody<'_> {
         // inside the existing row band, so the table never grows.
         let row_divider = &th.row.divider.line;
         let row_rule_width = row_divider.width;
-        let mut row_rules = Tree::new();
         let outer_s = float_repr(outer);
         let content_w_s = float_repr(content_w);
         // The row link covers the data columns, never the index gutter.
         let (band_x_s, band_w_s) = (float_repr(outer + rn_w), float_repr(content_w - rn_w));
+
+        // The row each column's `shared_scale` magnitude word anchors on in the page
+        // a pool opens with: its first nonzero value, else the first row.
+        let magnitude_rows: Vec<usize> = cols
+            .iter()
+            .map(|col| {
+                let start = pool_page_rows.map_or(0, |p| (pool_first_page - 1) * p);
+                (start..page_n_shown)
+                    .find(|&ri| {
+                        numeric_value(rows[ri].get(col.name.as_str())).is_some_and(|v| v != 0.0)
+                    })
+                    .unwrap_or(start)
+            })
+            .collect();
+
+        // The row each column's `$` and unit suffix anchor on in the opening
+        // page: its first non-null detail row.
+        let symbol_rows: Vec<Option<usize>> = (0..cols.len())
+            .map(|ci| {
+                let start = pool_page_rows.map_or(0, |p| (pool_first_page - 1) * p);
+                let end = pool_page_rows.map_or(page_n_shown, |p| (start + p).min(page_n_shown));
+                (start..end).find(|&ri| {
+                    !cell_data[ci][ri].is_null && !is_summary_role(row_roles[page_offset + ri])
+                })
+            })
+            .collect();
 
         // Data rows.
         for local_ri in 0..page_n_shown {
@@ -1886,8 +1981,14 @@ impl TableBody<'_> {
 
             let is_last_row = local_ri == page_n_shown - 1;
             let next_is_summary = local_ri + 1 < page_n_shown && is_summary_role(row_roles[ri + 1]);
-            let will_draw_row_rule =
-                row_divider.visible && !is_last_row && !next_is_summary && !is_summary;
+            // A pooled row can land anywhere, so it always carries its rule;
+            // the runtime shows it only where a rule belongs.
+            let rule_hidden = is_last_row
+                || next_is_summary
+                || pool_page_rows.is_some_and(|p| (local_ri + 1) % p == 0);
+            let will_draw_row_rule = row_divider.visible
+                && !is_summary
+                && (pool_page_rows.is_some() || !rule_hidden);
             let rule_reserve_px = if will_draw_row_rule {
                 python_round(row_rule_width).max(1.0)
             } else {
@@ -1895,10 +1996,35 @@ impl TableBody<'_> {
             };
             let fill_height = this_row_h - rule_reserve_px;
 
+            // One group per row: the unit the host table runtime moves,
+            // hides, and pages, and the hover scope of a row link's band.
+            // Coordinates stay absolute; the runtime translates the group.
+            tree.open(
+                Open::Group,
+                Attrs::new()
+                    .quick("class", "dbt-table-row")
+                    .quick("data-dbt-row", ri.to_string())
+                    .set_if(
+                        pool_page_rows.is_some_and(|p| local_ri / p != pool_first_page - 1),
+                        "display",
+                        "none",
+                    )
+                    .set_if(
+                        is_summary,
+                        "data-dbt-row-role",
+                        if matches!(role, RowRole::Total) { "total" } else { "summary" },
+                    )
+                    .set_if(pool_page_rows.is_some(), "data-dbt-y", row_y.to_string())
+                    .set_if(pool_page_rows.is_some(), "data-dbt-h", this_row_h.to_string()),
+            );
+
             // Alternating stripe on odd rows (1, 3, …) — suppressed on
             // summary/total rows, which stand out against a clean background
-            // (a summary row takes no stripe).
-            if local_ri % 2 == 1 && !is_summary {
+            // (a summary row takes no stripe). A pooled row carries its own
+            // stripe, hidden on even slots, so the runtime restripes by slot
+            // parity wherever the row lands.
+            let slot = pool_page_rows.map_or(local_ri, |p| local_ri % p);
+            if (slot % 2 == 1 || pool_page_rows.is_some()) && !is_summary {
                 if let Some(stripe_color) = th
                     .row
                     .stripe
@@ -1917,7 +2043,9 @@ impl TableBody<'_> {
                             .quick("y", row_y.to_string())
                             .quick("width", content_w_s.as_str())
                             .quick("height", fill_height.to_string())
-                            .quick("fill", stripe_color.as_str()),
+                            .quick("fill", stripe_color.as_str())
+                            .set_if(pool_page_rows.is_some(), "data-dbt-stripe", "")
+                            .set_if(pool_page_rows.is_some() && slot % 2 == 0, "display", "none"),
                     );
                 }
             }
@@ -2045,9 +2173,8 @@ impl TableBody<'_> {
                         .map(py_str)
                         .filter(|s| !s.is_empty())
                         .unwrap_or_else(|| row_href.clone());
-                    // The row's hover scope: the band tints while the pointer
-                    // is anywhere in the row, a cell's own link included.
-                    tree.open(Open::Group, Attrs::new().quick("class", "dbt-table-row"));
+                    // The row group is the hover scope: the band tints while the
+                    // pointer is anywhere in the row, a cell's own link included.
                     tree.open(
                         Open::Link,
                         Attrs::new()
@@ -2092,7 +2219,8 @@ impl TableBody<'_> {
                         .quick("fill", ink)
                         .quick("text-anchor", anchor)
                         .quick("font-family", TAB_FONT)
-                        .quick("data-col", "0"),
+                        .quick("data-col", "0")
+                        .set_if(pool_page_rows.is_some(), "data-dbt-row-number", ""),
                     &(ri + 1).to_string(),
                 );
             }
@@ -2167,8 +2295,6 @@ impl TableBody<'_> {
                             let spark_layout = SparkLayout {
                                 has_negative: signed_columns.contains(col.name.as_str()),
                                 negative_tone: tones.map(|t| t.negative.as_str()),
-                                font_size,
-                                body_family,
                             };
                             if let Some((content, spark_w, spark_h)) = render_spark_cell(
                                 col.name.as_str(),
@@ -2217,6 +2343,7 @@ impl TableBody<'_> {
                 // below, since production paints the background rect before
                 // deciding which text shape to draw.
                 let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
+                let sort_key = pool_page_rows.and_then(|_| sort_key(raw_value));
                 let cell_style =
                     resolve_cell_style(col, &rows[ri], raw_value, &scale_rows, role, tones)?;
                 let (column_font_color, column_font_weight) = column_font_lanes(col, &rows[ri]);
@@ -2296,22 +2423,9 @@ impl TableBody<'_> {
                 let font_style = cell_style.style.as_ref();
                 let font_decoration = cell_style.decoration.as_ref();
 
-                // A formatless null fails production's per-cell
-                // `_is_numeric_cell` gate and takes the
-                // non-lane branch, which places it by the column's RESOLVED
-                // `align` field — None for a plain
-                // numeric column (fill_table_column_defaults leaves it unset;
-                // the three-lane invariant is unconditional on `align` for
-                // numeric-VALUED cells only), "right" for a date lane. So a
-                // plain column's null paints START-anchored at content left,
-                // an align-right column's null END-anchors at the lane's own
-                // number_x — both in the BODY font with no tabular styling
-                // (`_wants_tabular_font(None, no-format)` is False,
-                // A null in a column WITH an explicit
-                // format: stays on the tabular lane path unchanged. This
-                // branch pre-dates conditional formatting and does not (yet)
-                // honor a rule's color/glyph — no corpus row has a null cell in
-                // a CF-active numeric column (see AGENTS.md).
+                // A formatless null takes the body-font branch, not the lane. Every null
+                // dash is centered; one under an explicit `format:` is centered on its lane.
+                // This branch does not honor a rule's color or glyph.
                 // Anchor wrapper (2712): opens before every
                 // shape branch below since production paints the background
                 // rect outside the anchor but the cell's own text inside it,
@@ -2359,22 +2473,18 @@ impl TableBody<'_> {
                 let tabular_text = wants_tabular_font(col, cell_raw);
                 let null_body_font = cell.is_null && col.cfg.format.is_none();
                 if (col.is_numeric || col.is_date) && null_body_font {
-                    let (x, anchor) = match col.cfg.align.as_deref() {
-                        Some("center") => (cx + col_ws[ci] / 2.0, "middle"),
-                        Some("right") => (number_xs[ci], "end"),
-                        _ => (cx + pad, "start"),
-                    };
                     tree.text_el(
                         Attrs::new()
                             .quick_some("class", cell_link_class)
-                            .quick("x", float_repr(x))
+                            .quick("x", float_repr(cx + col_ws[ci] / 2.0))
                             .quick("y", text_y_s.as_str())
                             .quick("font-size", font_size.to_string())
                             .quick("fill", fill_color)
-                            .quick("text-anchor", anchor)
+                            .quick("text-anchor", "middle")
                             .quick("font-family", body_family)
                             .quick_some("font-weight", row_font_weight.as_deref())
-                            .quick("data-col", data_col.to_string()),
+                            .quick("data-col", data_col.to_string())
+                            .quick_some("data-dbt-sort", sort_key.as_deref()),
                         &cell.text,
                     );
                 } else if (col.is_numeric || col.is_date)
@@ -2407,28 +2517,42 @@ impl TableBody<'_> {
                             .quick_some("font-style", font_style)
                             .quick_some("text-decoration", font_decoration)
                             .quick("data-col", data_col.to_string())
-                            .quick_some("data-value", lane_value),
+                            .quick_some("data-value", lane_value)
+                            .quick_some("data-dbt-sort", sort_key.as_deref()),
                     );
-                    // Prefix tspan: end-anchored at prefix_x (left of the
-                    // number), its own tspan — invariant #11's symbol lane. A
-                    // glyph replaces the format prefix entirely and carries its own
-                    // `fill` only when BOTH a glyph and a glyph_color are set —
-                    // otherwise it inherits the enclosing `<text>`'s fill.
-                    let full_prefix = cell_style.glyph.as_deref().or(cell.prefix.as_deref());
-                    if let Some(prefix) = full_prefix {
-                        tree.tspan(
-                            Attrs::new()
-                                .quick_some("x", (!left_run).then(|| float_repr(prefix_xs[ci])))
-                                .quick_some("text-anchor", (!left_run).then_some("end"))
-                                .quick_some(
-                                    "fill",
-                                    cell_style
-                                        .glyph
-                                        .as_ref()
-                                        .and(cell_style.glyph_color.as_deref()),
-                                ),
-                            prefix,
-                        );
+                    // A glyph is the row's own and rides with it; the format's affixes
+                    // follow the page's anchor rows. The glyph sits left of the
+                    // prefix lane and carries its own `fill` only when BOTH a glyph
+                    // and a glyph_color are set. A left-aligned run flows instead,
+                    // so its affixes carry no x and no anchor variants.
+                    let by_anchor = cell
+                        .by_anchor
+                        .as_ref()
+                        .filter(|_| pool_page_rows.is_some() && !is_summary && !left_run);
+                    let variant =
+                        anchor_variant(symbol_rows[ci] == Some(local_ri), ri == magnitude_rows[ci]);
+                    let glyph = cell_style.glyph.as_deref();
+                    let glyph_fill = glyph.and(cell_style.glyph_color.as_deref());
+                    if left_run {
+                        if let Some(glyph) = glyph {
+                            let text = match cell.prefix {
+                                Some(_) => format!("{glyph} "),
+                                None => glyph.to_string(),
+                            };
+                            tree.tspan(Attrs::new().quick_some("fill", glyph_fill), &text);
+                        }
+                        if let Some(prefix) = cell.prefix.as_deref() {
+                            tree.tspan(Attrs::new(), prefix);
+                        }
+                    } else {
+                        if let Some(glyph) = glyph {
+                            affix_tspan(tree, glyph_xs[ci], "end", glyph, None, glyph_fill);
+                        }
+                        for (prefix, mask) in
+                            affix_lane(by_anchor, |v| v.0.as_deref(), cell.prefix.as_deref())
+                        {
+                            affix_tspan(tree, prefix_xs[ci], "end", prefix, mask.map(|m| (m, variant)), None);
+                        }
                     }
                     // A date-like cell leaves the lane branch for the cutting text
                     // branch, so a date wider than its column is cut, not spilled.
@@ -2439,25 +2563,31 @@ impl TableBody<'_> {
                     } else {
                         cell.text.clone()
                     };
+                    // A null is always centered on the number lane, even in a run.
+                    let placed = !left_run || cell.is_null;
+                    let (number_x, number_anchor) = if cell.is_null {
+                        (number_xs[ci] - number_ws[ci] / 2.0, "middle")
+                    } else {
+                        (number_xs[ci], "end")
+                    };
+                    let led = glyph.is_some() || cell.prefix.is_some();
                     tree.tspan(
                         Attrs::new()
-                            .quick_some("x", (!left_run).then(|| float_repr(number_xs[ci])))
-                            .quick_some("text-anchor", (!left_run).then_some("end"))
-                            .quick_some(
-                                "dx",
-                                (left_run && full_prefix.is_some()).then(|| float_repr(SUFFIX_GAP)),
-                            ),
+                            .quick_some("x", placed.then(|| float_repr(number_x)))
+                            .quick_some("text-anchor", placed.then_some(number_anchor))
+                            .quick_some("dx", (!placed && led).then(|| float_repr(SUFFIX_GAP))),
                         &number_text,
                     );
-                    if let Some(suffix) = &cell.suffix {
-                        let suffix_gap = left_run && !col.is_date && is_magnitude_suffix(suffix);
-                        tree.tspan(
-                            Attrs::new()
-                                .quick_some("x", (!left_run).then(|| float_repr(suffix_xs[ci])))
-                                .quick_some("text-anchor", (!left_run).then_some("start"))
-                                .quick_some("dx", suffix_gap.then(|| float_repr(SUFFIX_GAP))),
-                            suffix,
-                        );
+                    for (suffix, mask) in affix_lane(by_anchor, |v| v.1.as_deref(), cell.suffix.as_deref()) {
+                        if left_run {
+                            let gap = !col.is_date && is_magnitude_suffix(suffix);
+                            tree.tspan(
+                                Attrs::new().quick_some("dx", gap.then(|| float_repr(SUFFIX_GAP))),
+                                suffix,
+                            );
+                        } else {
+                            affix_tspan(tree, suffix_xs[ci], "start", suffix, mask.map(|m| (m, variant)), None);
+                        }
                     }
                     tree.close(Open::Text);
                 } else {
@@ -2468,6 +2598,7 @@ impl TableBody<'_> {
                     // on the lane's number edge.
                     let in_lane = col.is_numeric || col.is_date;
                     let (tx, anchor) = match col.cfg.align.as_deref() {
+                        _ if cell.is_null => (cx + col_ws[ci] / 2.0, "middle"),
                         Some("center") => (cx + col_ws[ci] / 2.0, "middle"),
                         align
                             if in_lane
@@ -2515,7 +2646,8 @@ impl TableBody<'_> {
                                     .quick_some("font-weight", cell_font_weight.as_deref())
                                     .quick_some("font-style", font_style)
                                     .quick_some("text-decoration", font_decoration)
-                                    .quick("data-col", data_col.to_string()),
+                                    .quick("data-col", data_col.to_string())
+                                    .quick_some("data-dbt-sort", sort_key.as_deref()),
                             );
                             for (li, line) in lines.iter().enumerate() {
                                 let ly = first_y + li as f64 * line_height;
@@ -2556,7 +2688,8 @@ impl TableBody<'_> {
                                     .quick_some("font-weight", cell_font_weight.as_deref())
                                     .quick_some("font-style", font_style)
                                     .quick_some("text-decoration", font_decoration)
-                                    .quick("data-col", data_col.to_string()),
+                                    .quick("data-col", data_col.to_string())
+                                    .quick_some("data-dbt-sort", sort_key.as_deref()),
                             );
                             emit_glyph_prefix(tree);
                             tree.text(&text);
@@ -2569,9 +2702,6 @@ impl TableBody<'_> {
                     tree.close(Open::Link);
                 }
             }
-            if row_has_band {
-                tree.close(Open::Group);
-            }
 
             if will_draw_row_rule {
                 // `rule_y = row_y + per_row_height - rule_reserve_px`
@@ -2583,8 +2713,16 @@ impl TableBody<'_> {
                 // or it reopens a dead strip in the band beneath it
                 // Unlinked tables stay byte-identical.
                 let rule_class = link.is_some().then_some("dbt-pointer-inert");
+                if pool_page_rows.is_some() {
+                    tree.open(
+                        Open::Group,
+                        Attrs::new()
+                            .quick("data-dbt-row-rule", "")
+                            .set_if(rule_hidden, "display", "none"),
+                    );
+                }
                 emit_divider_segment(
-                    &mut row_rules,
+                    tree,
                     outer + pad,
                     outer + content_w - pad,
                     PyNum::Int(rule_y),
@@ -2592,11 +2730,12 @@ impl TableBody<'_> {
                     row_divider,
                     rule_class,
                 );
+                if pool_page_rows.is_some() {
+                    tree.close(Open::Group);
+                }
             }
+            tree.close(Open::Group);
         }
-        // Row rules paint after every row's own fill/text, on top of them —
-        // Deferred row rules flush after the rows.
-        tree.extend(row_rules.finish());
         Ok(())
     }
 }
@@ -3220,7 +3359,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
 /// slot pages to fit it and pins the height to it, so `layout` at the natural
 /// height is not the natural render. `render` and `height_for_width` take the
 /// unbounded path.
-pub(super) fn lay_out(
+pub(crate) fn lay_out(
     bound: &Bound,
     width: f64,
     slot: Option<f64>,
@@ -3573,7 +3712,9 @@ pub(super) fn lay_out(
     // (`numeric_lane_positions`, invariant #11) so prefix/number/suffix each
     // render as their own tspan, every column's numbers sharing one rhythm.
     let mut prefix_xs: Vec<f64> = vec![0.0; cols.len()];
+    let mut glyph_xs: Vec<f64> = vec![0.0; cols.len()];
     let mut number_xs: Vec<f64> = vec![0.0; cols.len()];
+    let mut number_ws: Vec<f64> = vec![0.0; cols.len()];
     let mut suffix_xs: Vec<f64> = vec![0.0; cols.len()];
     // `_compute_lane_positions`' `(content_left, content_right)`: the lane's full extent, prefix left edge to suffix right edge. A
     // column earns a lane entry only when it measured content
@@ -3595,6 +3736,7 @@ pub(super) fn lay_out(
         // left of production's position — port the no-op, not the intent.
         let mut max_num_w = 0.0_f64;
         let mut max_prefix_w = 0.0_f64;
+        let mut max_glyph_w = 0.0_f64;
         let mut max_suffix_w = 0.0_f64;
         // Only a numeric column's own `align: left` leaves the lane; a date
         // lane is never left-anchored.
@@ -3636,26 +3778,32 @@ pub(super) fn lay_out(
             } else {
                 measured
             });
-            // A glyph replaces the format prefix in the prefix lane, so the
-            // lane is measured on whichever the cell will actually render
-            // (`effective_prefix = cell_glyph or _p`).
+            // A glyph sits left of the prefix lane; both are measured so the
+            // lane reserves glyph + gap + prefix.
             let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
             let glyph = resolve_cell_glyph(&col.cfg, &col.when_rules, raw_value)?;
-            let effective_prefix = glyph.as_deref().or(c.prefix.as_deref());
-            let prefix_w = match effective_prefix {
-                Some(p) => Some(fonts.measure(p, tab_measure_family, font_size)?),
-                None => None,
-            };
-            if let Some(w) = prefix_w {
-                max_prefix_w = max_prefix_w.max(w);
+            if let Some(g) = glyph.as_deref() {
+                max_glyph_w = max_glyph_w.max(fonts.measure(g, tab_measure_family, font_size)?);
+            }
+            if let Some(p) = c.prefix.as_deref() {
+                max_prefix_w = max_prefix_w.max(fonts.measure(p, tab_measure_family, font_size)?);
             }
             if left_aligned_numeric && is_magnitude {
+                let lead = match (glyph.as_deref(), c.prefix.as_deref()) {
+                    (Some(g), Some(p)) => Some(format!("{g} {p}")),
+                    (Some(g), None) => Some(g.to_string()),
+                    (None, p) => p.map(str::to_string),
+                };
+                let lead_w = match lead {
+                    Some(text) => Some(fonts.measure(&text, tab_measure_family, font_size)?),
+                    None => None,
+                };
                 let sign_w = fonts.measure(
                     &c.text[..c.text.len() - unsigned.len()],
                     tab_measure_family,
                     font_size,
                 )?;
-                left_run_rows.push((left_run_digit_offset(prefix_w) + sign_w, measured));
+                left_run_rows.push((left_run_digit_offset(lead_w) + sign_w, measured));
             }
             if let Some(sfx) = c.suffix.as_deref() {
                 max_suffix_w =
@@ -3669,16 +3817,24 @@ pub(super) fn lay_out(
                 .iter()
                 .find_map(|c| c.suffix.as_deref())
                 .is_some_and(|suffix| is_magnitude_suffix(suffix));
+        let glyph_gap = if max_glyph_w > 0.0 && max_prefix_w > 0.0 {
+            fonts.measure(" ", tab_measure_family, font_size)?
+        } else {
+            0.0
+        };
+        let reserved_prefix_w = max_prefix_w + glyph_gap + max_glyph_w;
         let (prefix_x, num_x, suffix_x) = numeric_lane_positions(
             col_x[ci],
             col_ws[ci],
             pad,
             max_num_w,
-            max_prefix_w,
+            reserved_prefix_w,
             max_suffix_w,
             is_magnitude,
         );
+        glyph_xs[ci] = prefix_x - if max_prefix_w > 0.0 { max_prefix_w + glyph_gap } else { 0.0 };
         number_xs[ci] = num_x;
+        number_ws[ci] = max_num_w;
         prefix_xs[ci] = prefix_x;
         suffix_xs[ci] = suffix_x;
         // `align: left` paints one start-anchored run per cell where the lane
@@ -3710,7 +3866,7 @@ pub(super) fn lay_out(
             }
         }
         if max_num_w > 0.0 && !left_aligned_numeric {
-            lane_extents[ci] = Some((prefix_x - max_prefix_w, suffix_x + max_suffix_w));
+            lane_extents[ci] = Some((prefix_x - reserved_prefix_w, suffix_x + max_suffix_w));
         }
     }
 
@@ -3888,6 +4044,20 @@ pub(super) fn lay_out(
     // uniform row-height squeeze fired: rebuild the row-height-derived state
     let mut squeezed: Option<f64> = None;
 
+    // Row pool: an interactive flat table with an id and summary rows only at
+    // the end draws every row once and lets the host runtime sort, filter, and
+    // page them in the page. The runtime pins a trailing run of summary rows;
+    // a subtotal between detail rows is the query's placement, so it is not pooled.
+    let first_summary = row_roles.iter().position(|role| is_summary_role(*role));
+    let summary_is_trailing = first_summary
+        .is_none_or(|at| row_roles[at..].iter().all(|role| is_summary_role(*role)));
+    let has_summary_transition = first_summary.is_some_and(|at| at > 0);
+    let pool_eligible = drawn.interactive_controls
+        && !chart.pivoted
+        && !chart_id.is_empty()
+        && (1..=ROW_POOL_CAP).contains(&n_rows)
+        && summary_is_trailing;
+
     if let (true, Some(slot_h)) = (th.pagination.enabled, slot_h) {
         // header_height in production's budget is the post-pivot-bump total.
         let header_total_h = group_row_height * n_group_levels as f64 + header_h;
@@ -3899,12 +4069,22 @@ pub(super) fn lay_out(
         // the paint agree on the corpus; don't "fix" one side alone.
         let available =
             slot_h - title_area_h - header_total_h - header_body_gap - outer - th.bottom_padding;
+        // A pooled page may hold the summary gap and any rows a sort gathers.
+        let pool_gap = if pool_eligible && has_summary_transition {
+            (row_h * 0.4) as i64 as f64
+        } else {
+            0.0
+        };
         let safe_page_rows = |avail: f64| -> usize {
-            if have_heights {
+            if pool_eligible && have_heights {
+                tallest_safe_page_rows(&row_heights, avail - pool_gap, page_rows)
+            } else if have_heights {
                 largest_safe_page_rows(&row_heights, avail, page_rows)
             } else {
                 // production: min(max(1, int(avail / row_height)), page_rows)
-                (((avail / row_h) as i64).max(1) as usize).min(page_rows)
+                (((avail - pool_gap) / row_h) as i64)
+                    .max(1)
+                    .min(page_rows as i64) as usize
             }
         };
         let total_data_h: f64 = row_heights.iter().sum();
@@ -3980,6 +4160,7 @@ pub(super) fn lay_out(
     let paginated = true_total_pages > 1;
     let static_multi_page = paginated && !chart_id.is_empty() && !drawn.interactive_controls;
     let total_pages = true_total_pages.min(STATIC_MULTI_PAGE_MAX_PAGES);
+    let pool_page_rows = pool_eligible.then_some(n_shown);
 
     // Extra breathing room before the first summary/total row
     // (`int(row_height * 0.4)`) so the double rule doesn't
@@ -4034,6 +4215,11 @@ pub(super) fn lay_out(
     // label sits below the header instead of over it.
     let canvas_rows_h: f64 = if n_rows == 0 {
         row_h
+    } else if pool_page_rows.is_some() && paginated {
+        // A sort can bring the tallest rows onto one page.
+        let mut tallest = row_heights.clone();
+        tallest.sort_by(|a, b| b.total_cmp(a));
+        tallest[..n_shown].iter().sum()
     } else if paginated && have_heights {
         max_page_sum(&row_heights, n_shown)
     } else {
@@ -4041,7 +4227,14 @@ pub(super) fn lay_out(
     };
     // Every page paints into one canvas, so it holds the gap of whichever
     // page needs the most (`_max_page_summary_gap`).
-    let canvas_gap = if static_multi_page {
+    let canvas_gap = if pool_page_rows.is_some() && paginated {
+        // A sort pins summary rows last, so one page can hold the gap.
+        if has_summary_transition {
+            summary_gap_unit
+        } else {
+            0.0
+        }
+    } else if static_multi_page {
         (0..n_rows.div_ceil(n_shown.max(1)))
             .map(|page| {
                 let window = page * n_shown..((page + 1) * n_shown).min(n_rows);
@@ -4133,6 +4326,18 @@ pub(super) fn lay_out(
         );
     }
 
+    if let Some(page_rows) = pool_page_rows {
+        tree.open(
+            Open::Group,
+            Attrs::new()
+                .quick("data-dbt-table", chart_id)
+                .quick("data-dbt-page-rows", page_rows.to_string())
+                .quick("data-dbt-page", current_page.to_string())
+                .quick("data-dbt-rows-y", rows_start_y.to_string())
+                .quick("data-dbt-summary-gap", summary_gap_unit.to_string())
+                .quick("data-dbt-language", pool_runtime_words()?),
+        );
+    }
     emit_title_band(&mut tree, &band, outer);
 
     let header_fill = sanitize_color(th.header.background.as_deref())?
@@ -4306,8 +4511,23 @@ pub(super) fn lay_out(
                 (cx + pad, "start")
             };
         let x_s = float_repr(x);
+        let sortable = pool_page_rows.is_some()
+            && col.cfg.spark.is_none()
+            && !is_swatch(col)
+            && col.cfg.header_link.is_none();
         let header_attrs = || {
             Attrs::new()
+                .set_if(
+                    pool_page_rows.is_some(),
+                    "data-col",
+                    (ci + usize::from(rn.visible)).to_string(),
+                )
+                .set_if(sortable, "data-dbt-sortable", "true")
+                .set_if(
+                    sortable,
+                    "data-dbt-sort-type",
+                    if col.is_numeric { "number" } else { "text" },
+                )
                 .quick("font-size", header_size.to_string())
                 .quick("font-weight", header_weight.as_str())
                 .quick("fill", header_color)
@@ -4369,7 +4589,9 @@ pub(super) fn lay_out(
         content_w,
         wrapped_lines: &wrapped_lines,
         prefix_xs: &prefix_xs,
+        glyph_xs: &glyph_xs,
         number_xs: &number_xs,
+        number_ws: &number_ws,
         suffix_xs: &suffix_xs,
         outer,
         pad,
@@ -4401,6 +4623,8 @@ pub(super) fn lay_out(
         fonts,
         measure_family,
         chart_id,
+        pool_page_rows,
+        pool_first_page: current_page,
         truncations: &truncations,
     };
     if static_multi_page {
@@ -4465,6 +4689,7 @@ pub(super) fn lay_out(
                 n_rows,
                 outer,
                 false,
+                false,
                 fonts,
             )?;
             tree.close(Open::Group);
@@ -4486,6 +4711,71 @@ pub(super) fn lay_out(
             .with_sink_param("cap_note_dropped", json!(false)),
         );
         embed_table_pagination_script(&mut tree);
+    } else if pool_page_rows.is_some() {
+        // Every row once, in query order; the runtime lays out the page. The
+        // symbol anchors and the color-scale domain are the whole table's.
+        body.render_data_rows(&mut tree, 0, n_rows, &cell_data)?;
+        if paginated {
+            let page_var_name = format!("{chart_id}_page");
+            // Past the cap only the compact pager is drawn, and it shows from the start.
+            let per_page = true_total_pages <= POOL_PAGER_MAX_PAGES;
+            for page in (1..=true_total_pages).filter(|_| per_page) {
+                let first = (page - 1) * n_shown;
+                let last = (first + n_shown).min(n_rows);
+                tree.open(
+                    Open::Group,
+                    Attrs::new()
+                        .quick("data-dbt-pager", page.to_string())
+                        .set_if(page != current_page, "display", "none"),
+                );
+                render_pagination_controls(
+                    &mut tree,
+                    &th.paginator,
+                    &body_family,
+                    page as i64,
+                    true_total_pages as i64,
+                    true_total_pages as i64,
+                    &page_var_name,
+                    svg_w,
+                    canvas_y,
+                    first + 1,
+                    last,
+                    n_rows,
+                    outer,
+                    false,
+                    false,
+                    fonts,
+                )?;
+                tree.close(Open::Group);
+            }
+            // Filtered, the page count changes: one prev/label/next the
+            // runtime relabels and retargets.
+            tree.open(
+                Open::Group,
+                Attrs::new()
+                    .quick("data-dbt-pager", "compact")
+                    .set_if(per_page, "display", "none"),
+            );
+            render_pagination_controls(
+                &mut tree,
+                &th.paginator,
+                &body_family,
+                current_page as i64,
+                2,
+                2,
+                &page_var_name,
+                svg_w,
+                canvas_y,
+                1,
+                n_shown.min(n_rows),
+                n_rows,
+                outer,
+                false,
+                true,
+                fonts,
+            )?;
+            tree.close(Open::Group);
+        }
     } else {
         // The page this render shows: every anchor (`symbol_mode: anchors`,
         // scale domain) is that page's own, as the static loop does.
@@ -4520,6 +4810,7 @@ pub(super) fn lay_out(
                     n_rows,
                     outer,
                     drawn.interactive_controls,
+                    false,
                     fonts,
                 )?;
             } else {
@@ -4590,6 +4881,9 @@ pub(super) fn lay_out(
                 .quick("font-family", body_family.as_str()),
             "\u{2014}",
         );
+    }
+    if pool_page_rows.is_some() {
+        tree.close(Open::Group);
     }
     if content_overflows {
         tree.close(Open::Group);

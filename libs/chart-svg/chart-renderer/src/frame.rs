@@ -117,7 +117,7 @@ impl<'a> ChartFrame<'a> {
     }
 
     /// The root `<svg>` around `children`.
-    fn root_node(&self, children: Vec<Node>) -> Node {
+    pub(crate) fn root_node(&self, children: Vec<Node>) -> Node {
         let (w, h) = ((self.dim)(self.view_w), (self.dim)(self.h));
         let attrs = Attrs::new()
             .set("xmlns", "http://www.w3.org/2000/svg")
@@ -127,7 +127,7 @@ impl<'a> ChartFrame<'a> {
         Node::Svg { extent: Extent { width: self.view_w, height: self.h }, attrs, children }
     }
 
-    fn background_node(&self) -> Node {
+    pub(crate) fn background_node(&self) -> Node {
         Node::Rect(
             Attrs::new()
                 .set("width", (self.dim)(self.view_w))

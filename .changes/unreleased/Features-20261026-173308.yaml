@@ -1,0 +1,3 @@
+kind: Features
+body: Custom chart templates can call label_ink(color) and variant(color, kind), the engine's color math.
+time: 2026-10-26T17:33:08.149271-07:00

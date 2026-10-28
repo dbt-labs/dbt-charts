@@ -1,4 +1,4 @@
-"""Tests for the chart-family style base-class hierarchy (ADR-015).
+"""Tests for the chart-family style base-class hierarchy.
 
 Verifies that the extra="forbid" config on chart style classes rejects unknown fields.
 Structural field presence/absence is covered by the theme corpus smoke test

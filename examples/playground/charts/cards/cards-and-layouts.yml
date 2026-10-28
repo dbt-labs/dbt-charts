@@ -141,11 +141,10 @@ charts:
         format: currency
       support:
         format: percent_delta
-        tone: positive
     support:
       value: revenue_delta
       label: vs last month
-      glyph: ▲
+      good: up
   kpi_active_users:
     type: kpi
     query: kpi_metrics
@@ -156,11 +155,10 @@ charts:
         format: integer
       support:
         format: percent_delta
-        tone: negative
     support:
       value: active_users_delta
       label: vs last month
-      glyph: ▼
+      good: up
   kpi_documents_completed:
     type: kpi
     query: kpi_metrics
@@ -171,11 +169,10 @@ charts:
         format: integer
       support:
         format: percent_delta
-        tone: negative
     support:
       value: documents_completed_delta
       label: vs last month
-      glyph: ▼
+      good: up
   kpi_tickets_resolved:
     type: kpi
     query: kpi_metrics
@@ -186,11 +183,10 @@ charts:
         format: integer
       support:
         format: percent_delta
-        tone: positive
     support:
       value: tickets_resolved_delta
       label: vs last month
-      glyph: ▲
+      good: up
   callout_card:
     type: callout
     style:

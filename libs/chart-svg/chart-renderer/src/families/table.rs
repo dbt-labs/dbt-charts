@@ -19,7 +19,7 @@
 //! a `tone` rule with no board `tones`,
 //! an `in` rule whose candidate list holds a non-scalar, a rule with no
 //! active predicate (unreachable on a validated payload), spark types
-//! `area`/`column`, spark `value_visible`/`negative_color`, a spark `columns`
+//! `area`/`column`, spark `negative_color`, a spark `columns`
 //! cell whose value isn't an array, a `columns` array containing a
 //! non-numeric element, a `bar` spark column with any negative detail-row
 //! value (midline layout not ported), a header
@@ -329,15 +329,6 @@ struct SparkBarTheme {
     color: String,
     default_max: f64,
     border: SparkRadiusTheme,
-    label: SparkBarLabelTheme,
-}
-
-/// The value label a `bar` draws when `value_visible` (`spark.bar.label`).
-#[derive(Deserialize)]
-struct SparkBarLabelTheme {
-    inset_x: f64,
-    fill: String,
-    fill_opacity: f64,
 }
 
 /// The narrow vertical mark's own size (`spark.column`).
@@ -360,9 +351,7 @@ struct SparkRadiusTheme {
 }
 
 /// Typed `style.columns.<name>.spark`, narrowed to the four supported marks (`line`, `bar`,
-/// `bar-normalize`, `columns`); `value_visible` and `negative_color` are read
-/// only to gate the refusal for them in `render()`, never consumed by the
-/// renderers below. A field a mark does not read is ignored, as production
+/// `bar-normalize`, `columns`). A field a mark does not read is ignored, as production
 /// ignores it (`render_spark` hands each mark only its own options).
 #[derive(Deserialize, Clone)]
 struct SparkConfig {
@@ -375,8 +364,6 @@ struct SparkConfig {
     thresholds: Option<Value>,
     background: Option<String>,
     border_radius: Option<f64>,
-    value_visible: Option<bool>,
-    value_suffix: Option<String>,
     fill_opacity: Option<f64>,
     negative_color: Option<bool>,
     last_visible: Option<bool>,
@@ -557,6 +544,13 @@ struct PaginationCfg {
     page_rows: Option<usize>,
 }
 
+/// The most rows an interactive table draws into the page for in-page sort
+/// and filter (every row is pre-drawn, about 2.5 KB each); a larger table
+/// keeps today's variable-driven paging.
+const ROW_POOL_CAP: usize = 1000;
+/// Past this many pages a pool draws only the compact pager: a per-page
+/// pager costs about a hundred elements, and a squeezed slot can mean hundreds of pages.
+const POOL_PAGER_MAX_PAGES: usize = 50;
 // Grow-by-2 ( `_PAGINATION_GROW_CAP`): an overflow past page_rows
 // within this cap draws every row on one page instead of paginating —
 // always when unbounded, in a slot only when the rows fit.
@@ -862,6 +856,9 @@ pub(crate) struct RuleOverrides {
     decoration: Option<String>,
     pub(crate) glyph: Option<String>,
     pub(crate) glyph_color: Option<String>,
+    /// The matched rule's `tone` color, kept apart from `glyph_color` so a
+    /// painter of more than the glyph (the KPI support value) can use it.
+    pub(crate) tone_color: Option<String>,
     // Set when a matched (or default) rule's `tone` needed board tones to
     // resolve `glyph_color` and none were passed. `apply_rule_outputs`
     // never errors on this itself — production's own `tones is None` is a
@@ -1063,6 +1060,13 @@ struct Cell {
     text: String,            // number (or raw text for non-numeric columns)
     prefix: Option<String>,  // "$" — only when the anchor gate allows it
     suffix: Option<String>,  // "%", "K", "M", … only when the anchor gate allows it
+    // `symbol_mode: anchors` columns: the (prefix, suffix) this value paints for
+    // each combination of the two anchor rules, indexed by [`anchor_variant`]: `$`
+    // and `%` anchor on a page's first row, a `shared_scale` magnitude word on its
+    // first nonzero one. A row-pool draws every distinct variant on every row,
+    // hidden off the rows the opening page anchors, so the runtime can show
+    // whichever matches the order.
+    by_anchor: Option<[(Option<String>, Option<String>); 4]>,
     // The same affixes UNGATED — what production's measure_column_demands
     // sees (it formats every cell as its own anchor); the paint fields
     // above carry the declare-once gate, these carry the full display.
@@ -1078,6 +1082,12 @@ struct Cell {
     // column carries an explicit `format:` — the paint loop reads this to
     // route the em-dash onto the text path for unformatted columns.
     is_null: bool,
+}
+
+/// The `Cell::by_anchor` slot for a row that is (`symbol_anchor`) the page's first
+/// and (`scale_anchor`) its magnitude anchor.
+fn anchor_variant(symbol_anchor: bool, scale_anchor: bool) -> usize {
+    2 * usize::from(symbol_anchor) + usize::from(scale_anchor)
 }
 
 /// A coordinate as Python's `str()` writes it: an `Int` prints bare (`81`), a
@@ -1157,24 +1167,15 @@ enum PageItem {
     Ellipsis,
 }
 
-/// What a `bar`'s optional value label needs beyond the mark itself.
-struct BarLabel<'a> {
-    text: String,
-    font_size: f64,
-    family: &'a str,
-}
-
 /// `render_spark_line`'s `stroke_width: float = 1.5` default;
 /// `render_spark` (:623-680) never passes another.
 const SPARK_LINE_STROKE_WIDTH: &str = "1.5";
 
 /// What a spark cell reads from beyond its own config: the column's signed
-/// layout, the negative tone, and the table font a `bar`'s label inherits.
+/// layout and the negative tone.
 struct SparkLayout<'a> {
     has_negative: bool,
     negative_tone: Option<&'a str>,
-    font_size: f64,
-    body_family: &'a str,
 }
 
 /// One table's resolved body — everything `render_data_rows` paints a
@@ -1200,7 +1201,10 @@ struct TableBody<'a> {
     row_number_ink: Option<&'a str>,
     wrapped_lines: &'a [Vec<Option<Vec<String>>>],
     prefix_xs: &'a [f64],
+    glyph_xs: &'a [f64],
     number_xs: &'a [f64],
+    /// Per column, the widest formatted number of the lane (nulls excluded).
+    number_ws: &'a [f64],
     suffix_xs: &'a [f64],
     outer: f64,
     pad: f64,
@@ -1229,6 +1233,11 @@ struct TableBody<'a> {
     /// `get_font_measurer(cell_font.family)`: the family a cell is cut in.
     measure_family: &'a str,
     chart_id: &'a str,
+    /// `Some(rows per page)` in pool mode: every row is drawn once, rows past
+    /// page one hidden, each carrying the hooks the host table runtime reads.
+    pool_page_rows: Option<usize>,
+    /// The page a pooled table opens on (1-based); the other pages' rows start hidden.
+    pool_first_page: usize,
     /// Cut elements per column (header and cells alike) in first-cut order,
     /// flushed once into WARN-TABLE-TEXT-TRUNCATED.
     truncations: &'a RefCell<Vec<(String, usize)>>,
@@ -1564,8 +1573,7 @@ pub(crate) mod tests {
                 "column": {"width": 16.0, "height": 24.0},
                 "area": {"fill_opacity": 0.3},
                 "bar": {
-                    "background": "#e5e7eb", "color": "#23467f", "default_max": 100.0, "border": {"radius": 0.0},
-                    "label": {"inset_x": 4.0, "fill": "#FFFFFF", "fill_opacity": 0.9, "min_size": 9.0, "height_offset": 5.0}
+                    "background": "#e5e7eb", "color": "#23467f", "default_max": 100.0, "border": {"radius": 0.0}
                 }
             },
             "paginator": {
@@ -1611,7 +1619,27 @@ pub(crate) mod tests {
         payload
     }
 
-    /// The payload as a live host renders it: one page, controls that commit the variable.
+    /// The SVG a reader sees in a pooled table: hidden row groups and hidden
+    /// pager variants dropped.
+    pub(super) fn visible(svg: &str) -> String {
+        let mut starts: Vec<usize> = svg
+            .match_indices("<g class=\"dbt-table-row\"")
+            .chain(svg.match_indices("<g data-dbt-pager="))
+            .map(|(i, _)| i)
+            .collect();
+        starts.sort_unstable();
+        let mut out = svg[..starts.first().copied().unwrap_or(svg.len())].to_string();
+        for (n, &start) in starts.iter().enumerate() {
+            let end = starts.get(n + 1).copied().unwrap_or(svg.len());
+            let segment = &svg[start..end];
+            if !segment[..segment.find('>').unwrap()].contains("display=\"none\"") {
+                out.push_str(segment);
+            }
+        }
+        out
+    }
+
+    /// The payload as a live host renders it: in a row pool.
     pub(super) fn live(mut payload: Payload) -> Payload {
         payload.interactive_controls = true;
         payload
@@ -1992,6 +2020,7 @@ pub(crate) mod tests {
         let payload = live(make_payload(columns, rows, None, 20));
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("static pagination renders instead of erroring");
+        let svg = visible(&svg);
         assert!(svg.contains("Row 0"), "first page row present");
         assert!(!svg.contains("Row 20"), "second page row must not be painted");
         assert!(svg.contains("dbt-paginator"), "pagination control bar present");
@@ -2861,11 +2890,11 @@ pub(crate) mod tests {
         crate::test_payload(payload_json)
     }
 
-    /// A host that commits `data-dbt-page-var` draws only the page its
-    /// variable names, and every clickable control names that variable.
+    /// Past the pool cap a live host still draws one page and its controls
+    /// name the variable.
     #[test]
-    fn an_interactive_host_draws_one_page_and_its_controls_name_the_variable() {
-        let rows: Vec<Value> = (0..7)
+    fn over_the_row_pool_cap_a_live_host_draws_one_page_and_names_the_variable() {
+        let rows: Vec<Value> = (0..ROW_POOL_CAP + 7)
             .map(|i| json!({"product": format!("Row {i}"), "revenue": i as f64}))
             .collect();
         let columns = json!({"product": {"label": "Product"}, "revenue": {"label": "Revenue"}});
@@ -2877,7 +2906,543 @@ pub(crate) mod tests {
         assert!(!svg.contains(">Row 0<") && !svg.contains(">Row 6<"), "only page 2:\n{svg}");
         assert!(!svg.contains("dbt-table-page") && !svg.contains("<script"), "{svg}");
         assert!(svg.contains("data-dbt-page-var=\"t1_page\" data-dbt-page-target=\"1\""), "{svg}");
+        assert!(svg.contains(&format!("4\u{2013}6 / {}", ROW_POOL_CAP + 7)), "{svg}");
+        assert!(!svg.contains("data-dbt-table="), "{svg}");
+    }
+
+    // ── row pool (in-page sort and filter) ────────────────────────────────────
+
+    /// A paginated table with a stripe and row dividers, a summary row when
+    /// `with_total`, and a text, an integer, and a nullable column.
+    fn pool_payload(id: &str, n_rows: usize, page_rows: usize, interactive: bool, with_total: bool) -> Payload {
+        let mut rows: Vec<Value> = (0..n_rows)
+            .map(|i| {
+                json!({
+                    "product": format!("Row {i}"),
+                    "revenue": i,
+                    "note": if i % 2 == 0 { Value::Null } else { json!(format!("n{i}")) },
+                    "row_role": "value",
+                })
+            })
+            .collect();
+        if with_total {
+            rows.push(json!({"product": "Total", "revenue": 99, "note": null, "row_role": "total"}));
+        }
+        let columns = json!({
+            "product": {"label": "Product"},
+            "revenue": {"label": "Revenue"},
+            "note": {"label": "Note"},
+        });
+        let mut payload = make_paginated_payload_with_id(id, columns, rows, page_rows, 800.0);
+        payload.resolved["style"]["table"]["row"]["stripe"]["color"] = json!("#eeeeee");
+        payload.resolved["style"]["table"]["row"]["divider"]["visible"] = json!(true);
+        payload.resolved["style"]["table"]["row"]["role"] = json!("row_role");
+        payload.interactive_controls = interactive;
+        payload
+    }
+
+    fn row_group<'a>(svg: &'a str, i: usize) -> &'a str {
+        let open = format!("<g class=\"dbt-table-row\" data-dbt-row=\"{i}\"");
+        let start = svg.find(&open).unwrap_or_else(|| panic!("no group for row {i}:\n{svg}"));
+        let after = start + open.len();
+        let end = svg[after..].find("<g class=\"dbt-table-row\"").map_or(svg.len(), |e| after + e);
+        &svg[start..end]
+    }
+
+    #[test]
+    fn a_static_table_wraps_each_data_row_in_one_group_and_carries_no_pool_hooks() {
+        let svg = render(&pool_payload("t1", 7, 3, false, true), &test_fonts()).expect("renders");
+        // Static multi-page draws each row once, in its page's group.
+        assert_eq!(svg.matches("<g class=\"dbt-table-row\" data-dbt-row=\"").count(), 8, "{svg}");
+        assert!(row_group(&svg, 4).contains(">Row 4<"), "{svg}");
+        assert!(!svg.contains("data-dbt-table=") && !svg.contains("data-dbt-sort"), "{svg}");
+        assert!(!svg.contains("data-dbt-sortable"), "{svg}");
+    }
+
+    #[test]
+    fn a_total_row_group_carries_its_role() {
+        let svg = render(&pool_payload("t1", 2, 20, false, true), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-row=\"2\" data-dbt-row-role=\"total\""), "{svg}");
+        assert!(!svg.contains("data-dbt-row=\"1\" data-dbt-row-role"), "{svg}");
+    }
+
+    #[test]
+    fn pool_mode_draws_every_row_once_and_hides_those_past_page_one() {
+        let svg = render(&pool_payload("t1", 7, 3, true, false), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\" data-dbt-page-rows=\"3\""), "{svg}");
+        assert!(svg.contains("data-dbt-rows-y=\""), "{svg}");
+        assert!(!svg.contains("dbt-table-page") && !svg.contains("<script"), "{svg}");
+        for i in 0..7 {
+            let group = row_group(&svg, i);
+            assert!(group.contains(&format!(">Row {i}<")), "{group}");
+            assert!(group.contains("data-dbt-y=\"") && group.contains("data-dbt-h=\""), "{group}");
+            assert_eq!(group.starts_with(&format!("<g class=\"dbt-table-row\" data-dbt-row=\"{i}\" display=\"none\"")), i >= 3, "{group}");
+        }
+    }
+
+    #[test]
+    fn pool_mode_opens_on_the_page_variable_with_rows_at_page_local_y() {
+        let mut payload = pool_payload("t1", 7, 3, true, true);
+        payload.variables = json!({"t1_page": 2}).as_object().unwrap().clone();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-page=\"2\""), "{svg}");
+        let y_of = |i: usize| {
+            let group = row_group(&svg, i);
+            group.split("data-dbt-y=\"").nth(1).unwrap().split('"').next().unwrap().to_string()
+        };
+        assert_eq!(y_of(0), y_of(3), "page 2's first row sits where page 1's does");
+        assert!(!row_group(&svg, 3).contains("display=\"none\" data-dbt-y"), "page 2 is shown");
+        assert!(row_group(&svg, 0).starts_with("<g class=\"dbt-table-row\" data-dbt-row=\"0\" display=\"none\""));
+        assert!(svg.contains("<g data-dbt-pager=\"1\" display=\"none\">"), "{svg}");
+        assert!(svg.contains("<g data-dbt-pager=\"2\">"), "{svg}");
+    }
+
+    #[test]
+    fn pool_mode_cells_carry_raw_sort_keys_and_a_null_omits_it() {
+        let svg = render(&pool_payload("t1", 4, 20, true, false), &test_fonts()).expect("renders");
+        let row1 = row_group(&svg, 1);
+        assert!(row1.contains("data-dbt-sort=\"Row 1\""), "{row1}");
+        assert!(row1.contains("data-dbt-sort=\"1\""), "{row1}");
+        assert!(row1.contains("data-dbt-sort=\"n1\""), "{row1}");
+        let row0 = row_group(&svg, 0);
+        assert_eq!(row0.matches("data-dbt-sort=").count(), 2, "the null note has no key:\n{row0}");
+    }
+
+    #[test]
+    fn pool_mode_headers_are_sortable_columns() {
+        let svg = render(&pool_payload("t1", 4, 20, true, false), &test_fonts()).expect("renders");
+        let header = svg.split(">Product<").next().unwrap();
+        let tag = &header[header.rfind("<text").unwrap()..];
+        assert!(tag.contains("data-col=\"0\"") && tag.contains("data-dbt-sortable=\"true\""), "{tag}");
+        let static_svg = render(&pool_payload("t1", 4, 20, false, false), &test_fonts()).expect("renders");
+        assert!(!static_svg.contains("data-dbt-sortable"), "{static_svg}");
+    }
+
+    #[test]
+    fn pool_mode_headers_name_the_sort_type_the_engine_classified() {
+        let mut payload = pool_payload("t1", 4, 20, true, false);
+        payload.rows[1]["revenue"] = json!("N/A");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let tag_of = |label: &str| {
+            let head = svg.split(&format!(">{label}<")).next().unwrap();
+            head[head.rfind("<text").unwrap()..].to_string()
+        };
+        assert!(tag_of("Revenue").contains("data-dbt-sort-type=\"number\""), "{svg}");
+        assert!(tag_of("Product").contains("data-dbt-sort-type=\"text\""), "{svg}");
+        assert!(tag_of("Note").contains("data-dbt-sort-type=\"text\""), "{svg}");
+        let static_svg = render(&pool_payload("t1", 4, 20, false, false), &test_fonts()).expect("renders");
+        assert!(!static_svg.contains("data-dbt-sort-type"), "{static_svg}");
+    }
+
+    /// A pool whose revenue column prints `$` under `symbol_mode: anchors`.
+    fn anchored_pool_payload(with_total: bool) -> Payload {
+        let mut payload = pool_payload("t1", 4, 20, true, with_total);
+        payload.resolved["columns"]["revenue"]["format"] = json!("currency");
+        payload.resolved["style"]["table"]["symbol_mode"] = json!("anchors");
+        payload
+    }
+
+    /// Every `<tspan ...>$</tspan>` tag in `svg`.
+    fn dollar_tspans(svg: &str) -> Vec<&str> {
+        svg.match_indices(">$</tspan>")
+            .map(|(end, _)| &svg[svg[..end].rfind("<tspan").unwrap()..end])
+            .collect()
+    }
+
+    #[test]
+    fn an_anchored_pool_draws_the_affix_on_every_data_row_hidden_off_the_first() {
+        let svg = render(&anchored_pool_payload(true), &test_fonts()).expect("renders");
+        for i in 0..4 {
+            let affixes = dollar_tspans(row_group(&svg, i));
+            assert_eq!(affixes.len(), 1, "row {i} carries the prefix lane:\n{svg}");
+            assert!(affixes[0].contains("class=\"dbt-table-affix\""), "{}", affixes[0]);
+            assert_eq!(affixes[0].contains("visibility=\"hidden\""), i != 0, "row {i}: {}", affixes[0]);
+        }
+        let total = dollar_tspans(row_group(&svg, 4));
+        assert_eq!(total.len(), 1, "{svg}");
+        assert!(!total[0].contains("dbt-table-affix") && !total[0].contains("visibility"), "{}", total[0]);
+    }
+
+    #[test]
+    fn an_anchored_pool_paints_the_same_visible_affixes_as_the_static_table() {
+        let pooled = render(&anchored_pool_payload(true), &test_fonts()).expect("renders");
+        let mut static_payload = anchored_pool_payload(true);
+        static_payload.interactive_controls = false;
+        let flat = render(&static_payload, &test_fonts()).expect("renders");
+        let positions = |svg: &str| -> Vec<String> {
+            dollar_tspans(svg)
+                .into_iter()
+                .filter(|tag| !tag.contains("visibility=\"hidden\""))
+                .map(|tag| tag.split(" class=").next().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(positions(&pooled), positions(&flat), "{pooled}");
+    }
+
+    /// A pool over `values` whose revenue shares one millions scale under
+    /// `symbol_mode: anchors`: `$` anchors on the first row, `M` on the first nonzero one.
+    fn scaled_pool_payload(values: &[f64], interactive: bool) -> Payload {
+        let mut payload = pool_payload("t1", values.len(), 20, interactive, false);
+        for (row, value) in payload.rows.iter_mut().zip(values) {
+            row["revenue"] = json!(value);
+        }
+        payload.resolved["columns"]["revenue"]["format"] = json!("currency");
+        payload.resolved["columns"]["revenue"]["shared_scale"] =
+            json!({"exponent": 6, "mode": "anchor", "digit_spec": ",.2~f"});
+        payload.resolved["style"]["table"]["symbol_mode"] = json!("anchors");
+        payload
+    }
+
+    /// Every unhidden lane tspan (`text-anchor` tspans: prefix, number, suffix) of `svg`,
+    /// less the attributes only a pool adds.
+    fn visible_lane_tspans(svg: &str) -> Vec<String> {
+        svg.split("<tspan ")
+            .skip(1)
+            .filter(|tag| tag.contains("text-anchor") && !tag.contains("visibility=\"hidden\""))
+            .map(|tag| {
+                let end = tag.find("</tspan>").unwrap();
+                let (attrs, text) = tag[..end].split_once('>').unwrap();
+                let attrs: Vec<&str> = attrs
+                    .split(' ')
+                    .filter(|a| !a.starts_with("class=\"dbt-table-affix") && !a.starts_with("data-dbt-affix="))
+                    .collect();
+                format!("{}>{text}", attrs.join(" "))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pool_paints_the_same_visible_affixes_as_the_static_table_when_the_first_row_is_zero() {
+        for values in [
+            vec![0.0, 1_200_000.0, 2_400_000.0, 3_100_000.0],
+            vec![1_200_000.0, 0.0, 2_400_000.0],
+            vec![0.0, 0.0, 0.0],
+        ] {
+            let pooled = render(&scaled_pool_payload(&values, true), &test_fonts()).expect("renders");
+            let flat = render(&scaled_pool_payload(&values, false), &test_fonts()).expect("renders");
+            assert_eq!(visible_lane_tspans(&pooled), visible_lane_tspans(&flat), "{values:?}:\n{pooled}");
+        }
+    }
+
+    #[test]
+    fn a_pool_gives_the_magnitude_word_its_own_anchor_rule() {
+        let svg = render(&scaled_pool_payload(&[0.0, 1_200_000.0, 2_400_000.0], true), &test_fonts()).expect("renders");
+        // `$` anchors on row 0, `M` on row 1: each is on every row, hidden off its anchor.
+        let affix = |row: usize, text: &str| {
+            let tags: Vec<&str> = row_group(&svg, row).split("<tspan ").skip(1).filter(|t| t.contains(&format!(">{text}</tspan>"))).collect();
+            assert_eq!(tags.len(), 1, "row {row} `{text}`:\n{svg}");
+            tags[0].to_string()
+        };
+        assert!(!affix(0, "$").contains("visibility"), "{svg}");
+        assert!(affix(1, "$").contains("visibility=\"hidden\""), "{svg}");
+        assert!(!row_group(&svg, 0).contains(">M</tspan>"), "a zero carries no magnitude word:\n{svg}");
+        assert!(!affix(1, "M").contains("visibility"), "{svg}");
+        assert!(affix(2, "M").contains("visibility=\"hidden\""), "{svg}");
+    }
+
+    #[test]
+    fn a_null_first_row_hands_the_affix_to_the_first_non_null_row() {
+        let mut payload = anchored_pool_payload(false);
+        payload.rows[0]["revenue"] = Value::Null;
+        let pooled = render(&payload, &test_fonts()).expect("renders");
+        assert!(!row_group(&pooled, 0).contains("dbt-table-affix"), "{pooled}");
+        let on_row_1 = dollar_tspans(row_group(&pooled, 1));
+        assert_eq!(on_row_1.len(), 1, "{pooled}");
+        assert!(on_row_1[0].contains("data-dbt-affix=\"12\"") && !on_row_1[0].contains("visibility"), "{}", on_row_1[0]);
+        let hidden_on_row_2 = dollar_tspans(row_group(&pooled, 2));
+        assert!(hidden_on_row_2[0].contains("visibility=\"hidden\""), "{pooled}");
+        payload.interactive_controls = false;
+        let flat = render(&payload, &test_fonts()).expect("renders");
+        assert_eq!(dollar_tspans(&flat).len(), 1, "one anchor per column:\n{flat}");
+        assert_eq!(dollar_tspans(row_group(&flat, 1)).len(), 1, "{flat}");
+    }
+
+    /// A pool of `$` revenue whose negative values (rows 0 and 2) carry a `▼` glyph.
+    fn glyph_payload(interactive: bool) -> Payload {
+        let mut payload = anchored_pool_payload(false);
+        payload.interactive_controls = interactive;
+        for (row, value) in payload.rows.iter_mut().zip([-3.5, 4.0, -1.0, 7.0]) {
+            row["revenue"] = json!(value);
+        }
+        payload.resolved["conditional_formatting"] =
+            json!({"revenue": {"when": [{"lt": 0, "glyph": "\u{25bc}"}]}});
+        payload
+    }
+
+    #[test]
+    fn a_glyph_row_keeps_its_dollar_and_the_glyph_sits_one_space_left_of_it() {
+        let fonts = test_fonts();
+        for interactive in [true, false] {
+            let svg = render(&glyph_payload(interactive), &fonts).expect("renders");
+            let tspans = revenue_tspans(&svg, 0);
+            let glyph = tspans.iter().find(|(_, t)| t == "\u{25bc}").unwrap_or_else(|| panic!("{interactive}: no glyph:\n{svg}"));
+            let dollar = tspans.iter().find(|(_, t)| t == "$").unwrap_or_else(|| panic!("{interactive}: glyph row lost its $:\n{svg}"));
+            let gap = dollar.0 - fonts.measure("$", TAB_FONT, 11.0).unwrap() - glyph.0;
+            let space = fonts.measure(" ", TAB_FONT, 11.0).unwrap();
+            assert!((gap - space).abs() < 0.01, "{interactive}: gap {gap} vs space {space}:\n{svg}");
+            let plain = revenue_tspans(&svg, 1);
+            assert!(plain.iter().all(|(_, t)| t != "\u{25bc}"), "{svg}");
+        }
+    }
+
+    /// The cell tspans of `row`'s revenue column: `(x, text)` per tspan.
+    fn revenue_tspans(svg: &str, row: usize) -> Vec<(f64, String)> {
+        let cell = row_group(svg, row).split("data-col=\"1\"").nth(1).unwrap();
+        cell[..cell.find("</text>").unwrap()]
+            .split("<tspan ")
+            .skip(1)
+            .map(|tag| {
+                let x = &tag[tag.find("x=\"").unwrap() + 3..];
+                (x[..x.find('"').unwrap()].parse().unwrap(), tag[tag.find('>').unwrap() + 1..tag.find("</tspan>").unwrap()].to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_formatted_null_is_centered_on_the_number_lane_and_carries_no_affix() {
+        for interactive in [true, false] {
+            let mut payload = anchored_pool_payload(false);
+            payload.interactive_controls = interactive;
+            payload.rows[2]["revenue"] = Value::Null;
+            let svg = render(&payload, &test_fonts()).expect("renders");
+            let fonts = test_fonts();
+            let numbers: Vec<(f64, String)> = [0, 1, 3].map(|i| revenue_tspans(&svg, i).pop().unwrap()).to_vec();
+            let lane_right = numbers[0].0;
+            let widest = numbers.iter().map(|(_, t)| fonts.measure(t, TAB_FONT, 11.0).unwrap()).fold(0.0, f64::max);
+            let null = revenue_tspans(&svg, 2);
+            assert_eq!(null.len(), 1, "{interactive}: the dash is the null cell's only tspan:\n{svg}");
+            assert_eq!(null[0].1, NULL_DISPLAY);
+            assert!((null[0].0 - (lane_right - widest / 2.0)).abs() < 0.01, "{interactive}: {} vs {lane_right} - {widest}/2", null[0].0);
+        }
+    }
+
+    #[test]
+    fn pool_mode_rows_carry_a_stripe_hidden_on_even_slots() {
+        let svg = render(&pool_payload("t1", 4, 20, true, true), &test_fonts()).expect("renders");
+        for (i, hidden) in [(0, true), (1, false), (2, true), (3, false)] {
+            let group = row_group(&svg, i);
+            let stripe = group.find("data-dbt-stripe").map(|p| &group[group[..p].rfind("<rect").unwrap()..]).expect("stripe");
+            let tag = &stripe[..stripe.find("/>").unwrap()];
+            assert_eq!(tag.contains("display=\"none\""), hidden, "row {i}: {tag}");
+        }
+        assert!(!row_group(&svg, 4).contains("data-dbt-stripe"), "a total row takes no stripe");
+        assert!(!svg.contains("style=\"display"), "no inline style on new elements");
+    }
+
+    #[test]
+    fn pool_mode_draws_a_pager_per_page_and_a_compact_one_that_never_names_a_variable() {
+        let svg = render(&pool_payload("t1", 7, 3, true, false), &test_fonts()).expect("renders");
+        for page in 1..=3 {
+            assert!(svg.contains(&format!("data-dbt-pager=\"{page}\"")), "{svg}");
+        }
+        assert!(svg.contains("data-dbt-pager=\"compact\""), "{svg}");
         assert!(svg.contains("4\u{2013}6 / 7"), "{svg}");
+        assert!(svg.contains("data-dbt-page-target=\"2\""), "{svg}");
+        assert!(svg.contains("data-dbt-page-target=\"next\""), "{svg}");
+        assert!(!svg.contains("data-dbt-page-var"), "{svg}");
+    }
+
+    #[test]
+    fn the_compact_pager_publishes_the_theme_inks_its_ends_flip_between() {
+        let svg = render(&pool_payload("t1", 7, 3, true, false), &test_fonts()).expect("renders");
+        let compact = svg.split("data-dbt-pager=\"compact\"").nth(1).expect("compact pager");
+        assert_eq!(compact.matches("data-dbt-fill-enabled=\"").count(), 2, "{compact}");
+        assert_eq!(compact.matches("data-dbt-fill-disabled=\"").count(), 2, "{compact}");
+        let per_page = svg.split("data-dbt-pager=\"1\"").nth(1).unwrap().split("data-dbt-pager=\"2\"").next().unwrap();
+        assert!(!per_page.contains("data-dbt-fill"), "{per_page}");
+    }
+
+    #[test]
+    fn pool_mode_on_a_single_page_draws_no_pager() {
+        let svg = render(&pool_payload("t1", 4, 20, true, false), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\" data-dbt-page-rows=\"4\""), "{svg}");
+        assert!(!svg.contains("data-dbt-pager"), "{svg}");
+    }
+
+    fn row_of(value: Value) -> serde_json::Map<String, Value> {
+        value.as_object().expect("a row is an object").clone()
+    }
+
+    /// Subtotals between detail rows are the query's placement; the runtime
+    /// pins only a trailing run, so such a table is not pooled.
+    #[test]
+    fn a_table_with_a_mid_table_subtotal_is_not_a_row_pool() {
+        let mut payload = pool_payload("t1", 6, 3, true, false);
+        payload.rows.insert(
+            2,
+            row_of(json!({"product": "Subtotal", "revenue": 3, "note": null, "row_role": "summary"})),
+        );
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(!svg.contains("data-dbt-table=") && !svg.contains("data-dbt-sort"), "{svg}");
+        let trailing = render(&pool_payload("t1", 6, 3, true, true), &test_fonts()).expect("renders");
+        assert!(trailing.contains("data-dbt-table=\"t1\""), "a trailing total pools");
+    }
+
+    #[test]
+    fn a_header_link_column_is_not_sortable() {
+        let mut payload = pool_payload("t1", 4, 20, true, false);
+        payload.resolved["columns"]["revenue"]["header_link"] = json!("https://example.com/docs");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("<a href=\"https://example.com/docs\""), "{svg}");
+        assert_eq!(svg.matches("data-dbt-sortable").count(), 2, "{svg}");
+        let revenue = svg.split(">Revenue<").next().unwrap();
+        assert!(!revenue[revenue.rfind("<text").unwrap()..].contains("data-dbt-sortable"), "{svg}");
+    }
+
+    /// The pool the host runtime's jsdom suite loads: every hook it reads.
+    fn pool_fixture_payload() -> Payload {
+        let mut payload = pool_payload("t1", 6, 3, true, true);
+        payload.resolved["style"]["table"]["row_numbers"] = json!({"visible": true, "header": "#", "align": "right", "font": {"color": "#626366"}});
+        payload.resolved["columns"]["revenue"]["format"] = json!("currency");
+        payload.resolved["style"]["table"]["symbol_mode"] = json!("anchors");
+        payload.board_style = crate::test_board_style(json!({"muted": "#999999"}));
+        payload
+    }
+
+    /// `libs/playground/tests/js/table-sort-filter-runtime.test.js` loads this engine
+    /// output, so a renamed or dropped hook fails the JS suite. Regenerate
+    /// with `UPDATE_TABLE_POOL_FIXTURE=1 cargo test -p chart-renderer --lib table_pool_fixture`.
+    #[test]
+    fn table_pool_fixture_is_current_engine_output() {
+        let svg = render(&pool_fixture_payload(), &test_fonts()).expect("renders");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../playground/tests/js/fixtures/table_pool.svg");
+        if std::env::var_os("UPDATE_TABLE_POOL_FIXTURE").is_some() {
+            std::fs::write(path, format!("{svg}\n")).expect("fixture written");
+        }
+        let committed = std::fs::read_to_string(path).expect("fixture exists");
+        assert_eq!(committed, format!("{svg}\n"), "regenerate with UPDATE_TABLE_POOL_FIXTURE=1");
+    }
+
+    #[test]
+    fn pool_mode_publishes_rules_row_numbers_the_summary_gap_and_the_compact_label() {
+        let svg = render(&pool_fixture_payload(), &test_fonts()).expect("renders");
+        // Rules ride with their row; a page's last row hides its rule, a
+        // total row has none.
+        let rule_hidden = |i: usize| row_group(&svg, i).contains("<g data-dbt-row-rule=\"\" display=\"none\">");
+        assert!(!rule_hidden(0) && !rule_hidden(1), "{svg}");
+        assert!(rule_hidden(2) && rule_hidden(5), "{svg}");
+        assert!(!row_group(&svg, 6).contains("data-dbt-row-rule"), "{svg}");
+        // Index text is marked for renumbering, the total row has none.
+        assert!(row_group(&svg, 0).contains("data-col=\"0\" data-dbt-row-number=\"\">1<"), "{svg}");
+        assert!(!row_group(&svg, 6).contains("data-dbt-row-number"), "{svg}");
+        assert!(svg.contains("data-dbt-summary-gap=\""), "{svg}");
+        let compact = svg.split("data-dbt-pager=\"compact\"").nth(1).expect("compact pager");
+        assert!(compact.contains("data-dbt-pager-label=\"\""), "{compact}");
+        assert!(compact.contains("data-dbt-page-target=\"prev\"") && compact.contains("data-paginator-role=\"next\""));
+    }
+
+    fn pool_words(svg: &str) -> Value {
+        let root = svg.split("data-dbt-table=\"t1\"").nth(1).expect("pool root");
+        let raw = root.split("data-dbt-language=\"").nth(1).expect("words").split('"').next().unwrap();
+        serde_json::from_str(&raw.replace("&quot;", "\"")).expect("json")
+    }
+
+    #[test]
+    fn the_pool_root_carries_the_board_languages_menu_words() {
+        let de = display_text::language::Language::new("de").unwrap();
+        let svg = display_text::language::with_language(de, || {
+            render(&pool_payload("t1", 7, 3, true, false), &test_fonts()).expect("renders")
+        });
+        let words = pool_words(&svg);
+        assert_eq!(words["sort_ascending"], "Aufsteigend sortieren", "{words}");
+        assert_eq!(words["clear_sort"], "Sortierung aufheben", "{words}");
+        assert_eq!(words["search_values"], "Werte durchsuchen", "{words}");
+        assert_eq!(words["page_range"], "{first}\u{2013}{last} / {total}", "{words}");
+        let static_svg = render(&pool_payload("t1", 7, 3, false, false), &test_fonts()).expect("renders");
+        assert!(!static_svg.contains("data-dbt-language"), "{static_svg}");
+    }
+
+    #[test]
+    fn the_pager_label_takes_the_board_languages_range_shape() {
+        let ja = display_text::language::Language::new("ja").unwrap();
+        let svg = display_text::language::with_language(ja, || {
+            render(&pool_payload("t1", 7, 3, true, false), &test_fonts()).expect("renders")
+        });
+        assert!(svg.contains("4\u{ff5e}6 / 7"), "{svg}");
+    }
+
+    /// A pooled table keeps the engine's per-page pagers only while they stay
+    /// few; past that one compact pager serves every state.
+    #[test]
+    fn a_pool_over_the_pager_page_cap_draws_only_the_compact_pager() {
+        let svg = render(&pool_payload("t1", 5 * (POOL_PAGER_MAX_PAGES + 1), 5, true, false), &test_fonts())
+            .expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\""), "still a pool");
+        assert!(!svg.contains("data-dbt-pager=\"1\""), "no per-page variants");
+        assert!(svg.contains("<g data-dbt-pager=\"compact\">"), "compact shows from the start: {svg}");
+        let at_cap = render(&pool_payload("t1", 5 * POOL_PAGER_MAX_PAGES, 5, true, false), &test_fonts()).expect("renders");
+        assert!(at_cap.contains("data-dbt-pager=\"1\""), "the cap itself keeps per-page pagers");
+    }
+
+    /// Wrapped rows of uneven height: the pool canvas, pager included, stays
+    /// inside the slot it was given and holds the tallest page a sort can build.
+    fn uneven_wrapped_pool(height: f64) -> Payload {
+        let rows: Vec<Value> = (0..30)
+            .map(|i| json!({"product": format!("Row {i}"), "note": if i % 7 == 3 { "word ".repeat(40) } else { "ok".to_string() }}))
+            .collect();
+        let columns = json!({"product": {"label": "Product"}, "note": {"label": "Note", "width": 80}});
+        let mut payload = make_paginated_payload_with_id("t1", columns, rows, 10, height);
+        payload.interactive_controls = true;
+        payload
+    }
+
+    fn rendered_height(svg: &str) -> f64 {
+        svg.split("<svg ").nth(1).unwrap().split("height=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
+    fn pager_baseline_y(svg: &str) -> f64 {
+        let glyph = svg.split("data-paginator-role=\"prev\"").next().unwrap();
+        let tag = &glyph[glyph.rfind("<text").unwrap()..];
+        tag.split(" y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn a_slotted_pool_with_uneven_wrapped_rows_keeps_its_pager_inside_the_slot() {
+        let slot = 520.0;
+        let svg = render(&uneven_wrapped_pool(slot), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\""), "{svg}");
+        let heights: std::collections::BTreeSet<String> =
+            svg.split("data-dbt-h=\"").skip(1).map(|s| s.split('"').next().unwrap().to_string()).collect();
+        assert!(heights.len() > 1, "the rows are uneven: {heights:?}");
+        assert_eq!(rendered_height(&svg), slot, "the canvas is the slot");
+        assert!(pager_baseline_y(&svg) <= slot, "pager baseline {} is outside {slot}:\n{svg}", pager_baseline_y(&svg));
+    }
+
+    #[test]
+    fn an_unslotted_pool_with_uneven_wrapped_rows_is_as_tall_as_its_pager() {
+        let svg = render(&uneven_wrapped_pool(0.0), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\""), "{svg}");
+        assert!(pager_baseline_y(&svg) <= rendered_height(&svg), "{svg}");
+        // The tallest page a sort can build fits above the pager.
+        let mut heights: Vec<f64> = svg
+            .split("data-dbt-h=\"")
+            .skip(1)
+            .map(|s| s.split('"').next().unwrap().parse().unwrap())
+            .collect();
+        heights.sort_by(|a, b| b.total_cmp(a));
+        let tallest_page: f64 = heights.iter().take(10).sum();
+        let rows_y: f64 = svg.split("data-dbt-rows-y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+        assert!(rows_y + tallest_page <= pager_baseline_y(&svg), "{svg}");
+    }
+
+    #[test]
+    fn a_slotted_pool_budgets_the_summary_gap() {
+        let mut payload = uneven_wrapped_pool(520.0);
+        payload.rows.push(row_of(json!({"product": "Total", "note": "t", "row_role": "total"})));
+        payload.resolved["style"]["table"]["row"]["role"] = json!("row_role");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\""), "{svg}");
+        assert!(pager_baseline_y(&svg) <= 520.0, "{svg}");
+    }
+
+    #[test]
+    fn no_pool_without_a_chart_id_or_over_the_row_cap() {
+        let svg = render(&pool_payload("", 4, 20, true, false), &test_fonts()).expect("renders");
+        assert!(!svg.contains("data-dbt-table=") && !svg.contains("data-dbt-sort"), "{svg}");
+        let svg = render(&pool_payload("t1", ROW_POOL_CAP + 1, 20, true, false), &test_fonts()).expect("renders");
+        assert!(!svg.contains("data-dbt-table=") && !svg.contains("data-dbt-sort"), "{svg}");
+        let svg = render(&pool_payload("t1", ROW_POOL_CAP, 20, true, false), &test_fonts()).expect("renders");
+        assert!(svg.contains("data-dbt-table=\"t1\""), "the cap itself is in");
     }
 
     #[test]
@@ -3082,9 +3647,12 @@ pub(crate) mod tests {
             .collect();
         let columns = json!({"company": {"label": "Company"}, "revenue": {"label": "Revenue"}});
         let mut payload = make_paginated_payload_with_id("t1", columns, rows, 3, 800.0);
-        payload.interactive_controls = true;
         let fonts = test_fonts();
-        let svg = render(&payload, &fonts).expect("renders");
+        let full = render(&payload, &fonts).expect("renders");
+        // A static export draws a pager per page; page 1's is the one on screen.
+        let start = full.find("data-page=\"1\"").expect("page-1 pager");
+        let end = full[start..].find("data-page=\"2\"").map_or(full.len(), |i| start + i);
+        let svg = &full[start..end];
         let attr = |t: &str, name: &str| -> String {
             format!(" {t}").split(&format!(" {name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string()
         };
@@ -3167,7 +3735,7 @@ pub(crate) mod tests {
             if let Value::Object(th) = &mut payload.resolved["style"]["table"] {
                 th.insert("wrap".into(), json!(false));
             }
-            render(&payload, &test_fonts()).expect("renders")
+            visible(&render(&payload, &test_fonts()).expect("renders"))
         };
         let grown = render_n(22);
         assert!(grown.contains("Row 21"), "every row renders:\n{grown}");
@@ -3195,11 +3763,13 @@ pub(crate) mod tests {
         payload.resolved["style"]["table"]["pagination"]["page_rows"] = Value::Null;
         payload.height = 0.0;
         let unbounded = render(&payload, &test_fonts()).expect("renders");
+        let unbounded = visible(&unbounded);
         assert!(unbounded.contains(">Row 39</text>"), "every row draws:\n{unbounded}");
         assert!(!unbounded.contains("dbt-paginator"), "no paginator unbounded");
 
         payload.height = 400.0;
         let slotted = render(&payload, &test_fonts()).expect("renders");
+        let slotted = visible(&slotted);
         assert!(slotted.contains("dbt-paginator"), "the slot paginates");
         assert!(slotted.contains(">Row 0</text>"), "page 1 draws:\n{slotted}");
         assert!(!slotted.contains(">Row 20</text>"), "past page_rows' old 20 is cut");
@@ -3290,6 +3860,7 @@ pub(crate) mod tests {
         payload.height = 1000.0;
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("bounded pagination renders");
+        let svg = visible(&svg);
         assert!(
             svg.contains("height=\"1000\""),
             "svg height must echo the slot, not shrink to content:\n{svg}"
@@ -3345,6 +3916,7 @@ pub(crate) mod tests {
         let payload = live(make_payload(columns, rows, None, 20));
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("short-slot pagination renders");
+        let svg = visible(&svg);
         assert!(svg.contains("height=\"400\""), "svg height echoes the slot:\n{svg}");
         assert!(svg.contains("Row 7"), "8th row still on page 1");
         assert!(!svg.contains("Row 8"), "9th row must fall to page 2:\n{svg}");
@@ -3486,25 +4058,20 @@ pub(crate) mod tests {
         assert!(!wrapped.split("<text ").nth(1).unwrap().contains('\u{2026}'));
     }
 
-    // Production routes a NULL cell through the per-CELL gate
-    // `_is_numeric_cell(value, col_config)`: a formatless
-    // None fails it and takes the non-lane branch, which places it by the
-    // column's RESOLVED `align` field — None for a
-    // plain numeric column, so its dash paints start-anchored at content
-    // left in the BODY font; only an align-right column's null lands on
-    // the lane (pinned separately for the date lane below). A null in a
-    // column WITH an explicit `format:` stays on the tabular lane path.
+    // A null dash is centered on its cell whatever the column's type or align; one
+    // under an explicit `format:` is centered on the number lane instead.
     #[test]
-    fn null_cells_follow_productions_per_cell_gate() {
+    fn null_cells_are_centered() {
         let rows = vec![
-            json!({"company": "Acme", "plain": 12.0, "formatted": null, "void": null}),
-            json!({"company": "Globex", "plain": null, "formatted": 8.0, "void": null}),
+            json!({"company": "Acme", "plain": 12.0, "formatted": null, "void": null, "right": null}),
+            json!({"company": "Globex", "plain": null, "formatted": 8.0, "void": null, "right": 4.0}),
         ];
         let columns = json!({
             "company": {},
             "plain": {},
             "formatted": {"format": "currency_whole"},
             "void": {},
+            "right": {"align": "right"},
         });
         let resolved = json!({
             "link_open": "page",
@@ -3527,33 +4094,27 @@ pub(crate) mod tests {
         let payload: Payload = crate::test_payload(payload_json);
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
-        // Unformatted lane column with NO authored align: production's
-        // non-lane branch reads the resolved `align` field, which
-        // fill_table_column_defaults leaves None for a plain numeric
-        // column — so the dash paints START-anchored at content left in
-        // the body font (verified against a live production render: the
-        // column's number at x=266.2, its null at x=202.5 start-anchored).
+        for col in [1, 3, 4] {
+            assert!(
+                svg.contains(&format!("text-anchor=\"middle\" font-family=\"Inter, sans-serif\" data-col=\"{col}\">{NULL_DISPLAY}</text>")),
+                "column {col}'s null paints centered, body font:\n{svg}"
+            );
+        }
+        for anchor in ["start", "end"] {
+            assert!(
+                !svg.contains(&format!("text-anchor=\"{anchor}\" font-family=\"Inter, sans-serif\" data-col=\"1\">{NULL_DISPLAY}</text>")),
+                "no body-font null is {anchor}-anchored:\n{svg}"
+            );
+        }
         assert!(
-            svg.contains("text-anchor=\"start\" font-family=\"Inter, sans-serif\" data-col=\"1\">\u{2014}</text>"),
-            "the plain column's null paints start-anchored, body font:\n{svg}"
-        );
-        assert!(
-            !svg.contains("text-anchor=\"end\" font-family=\"Inter, sans-serif\" data-col=\"1\">\u{2014}</text>"),
-            "no body-font null END-anchors here — none of these columns is align: right:\n{svg}"
-        );
-        // Formatted column: the null stays on the tabular lane path.
-        assert!(
-            svg.contains("text-anchor=\"end\">\u{2014}</tspan>"),
-            "the formatted column's null stays on the tabular lane:\n{svg}"
+            svg.contains("text-anchor=\"middle\">\u{2014}</tspan>"),
+            "the formatted column's null is centered on the tabular lane:\n{svg}"
         );
     }
 
-    // A null in a DATE column follows the same non-lane branch: the date
-    // lane requires align "right" ( sends the dash to the
-    // lane's number_x, end-anchored, body font) — it must never drop to the
-    // column's left edge.
+    // A null in a right-aligned DATE column is centered like every other null.
     #[test]
-    fn null_date_cell_anchors_on_the_date_lane() {
+    fn null_date_cell_is_centered() {
         let _locale = crate::time_locale::en_us_scope();
         let rows = vec![
             json!({"company": "Acme", "when": "2024-03-15"}),
@@ -3586,12 +4147,8 @@ pub(crate) mod tests {
         let svg = render(&payload, &fonts).expect("renders");
         assert!(svg.contains("15 Mar 2024"), "date row formats:\n{svg}");
         assert!(
-            svg.contains("text-anchor=\"end\" font-family=\"Inter, sans-serif\" data-col=\"1\">\u{2014}</text>"),
-            "the date column's null end-anchors on the lane in the body font:\n{svg}"
-        );
-        assert!(
-            !svg.contains("text-anchor=\"start\" font-family=\"Inter, sans-serif\" data-col=\"1\">\u{2014}</text>"),
-            "the date column's null must not fall to the column's left edge:\n{svg}"
+            svg.contains("text-anchor=\"middle\" font-family=\"Inter, sans-serif\" data-col=\"1\">\u{2014}</text>"),
+            "the date column's null is centered in the body font:\n{svg}"
         );
     }
 
@@ -4243,6 +4800,7 @@ pub(crate) mod tests {
         let payload = live(crate::test_payload(payload_json));
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
+        let svg = visible(&svg);
         assert!(svg.contains("dbt-paginator"), "pager sequence still renders:\n{svg}");
         // " / 30", not the literal "1–20 / 30": the 400px slot caps this page
         // at 10 rows, so a deleted fit gate would draw "1–10 / 30", a
@@ -6411,7 +6969,7 @@ pub(crate) mod tests {
     // ── In-cell spark marks: bar / bar-normalize / columns ──────────────────
 
     fn unsigned() -> SparkLayout<'static> {
-        SparkLayout { has_negative: false, negative_tone: None, font_size: 11.0, body_family: "Inter" }
+        SparkLayout { has_negative: false, negative_tone: None }
     }
 
     fn test_spark_theme() -> SparkTheme {
@@ -6438,7 +6996,6 @@ pub(crate) mod tests {
                 color: "#23467f".to_string(),
                 default_max: 100.0,
                 border: SparkRadiusTheme { radius: 0.0 },
-                label: SparkBarLabelTheme { inset_x: 4.0, fill: "#FFFFFF".to_string(), fill_opacity: 0.9 },
             },
             column: SparkColumnTheme { width: 16.0 },
             area: SparkAreaTheme { fill_opacity: 0.3 },
@@ -6455,8 +7012,6 @@ pub(crate) mod tests {
             thresholds: None,
             background: None,
             border_radius: None,
-            value_visible: None,
-            value_suffix: None,
             fill_opacity: None,
             negative_color: None,
             last_visible: None,
@@ -6471,7 +7026,7 @@ pub(crate) mod tests {
         // bar-normalize): no background track, fill_x bare "0", fill_width
         // genuine `:.1f`, height bare (a Python int), rx `py_float` of the
         // theme's 0.0 border radius.
-        let got = print(&render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false, None));
+        let got = print(&render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"160.1\" height=\"16\" fill=\"#222222\" rx=\"0.0\"/>"
@@ -6483,7 +7038,7 @@ pub(crate) mod tests {
         // Ground truth: render_spark_bar(61, max_value=100, width=214,
         // height=16, normalize=True) — track first (fill="e5e7eb"), then
         // the fill rect on top.
-        let got = print(&render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false, None));
+        let got = print(&render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\" rx=\"0.0\"/>\
@@ -6495,7 +7050,7 @@ pub(crate) mod tests {
     fn spark_bar_zero_fill_draws_the_track_but_no_fill_rect() {
         // The `fill_width > 0` gate: a zero value draws
         // the normalize track alone.
-        let got = print(&render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false, None));
+        let got = print(&render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false));
         assert_eq!(
             got,
             "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\" rx=\"0.0\"/>"
@@ -6833,13 +7388,6 @@ pub(crate) mod tests {
         let payload = spark_payload(json!({"type": "column"}), json!(50));
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(svg.contains("width=\"16\" height=\"12.0\""), "{svg}");
-    }
-
-    #[test]
-    fn spark_value_visible_labels_the_bar() {
-        let payload = spark_payload(json!({"type": "bar", "value_visible": true}), json!(20));
-        let svg = render(&payload, &test_fonts()).unwrap();
-        assert!(svg.contains("dominant-baseline=\"central\"") && svg.contains(">20</text>"), "{svg}");
     }
 
     /// A column holding a negative detail value draws every bar from its
@@ -8372,6 +8920,7 @@ mod floor_source_tests {
                 fonts_dir: None,
                 format_locale: crate::number_locale::NumberLocale::en_us(),
                 time_locale: crate::time_locale::en_us(),
+                time_zone: crate::time_zone::utc(),
                 language: Default::default(),
                 formats: None,
                 sub_unit_specs: Some(super::tests::en_us_siblings()),

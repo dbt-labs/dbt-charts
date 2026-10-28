@@ -1,4 +1,4 @@
-"""TDD tests for ADR-007 Piece 2: channels are always column references.
+"""TDD tests: KPI channels are always column references.
 
 Verifies that numeric literals at KPI `value:` and `support.value:` are
 rejected at parse time (Pydantic validation), and that string values not

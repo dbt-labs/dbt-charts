@@ -57,6 +57,22 @@ def test_the_host_stylesheet_carries_the_bound_control_affordances() -> None:
     assert "stroke: var(--dbt-system-accent" in overlay_rule
 
 
+def test_the_host_stylesheet_styles_the_table_header_menu() -> None:
+    css = controls_stylesheet()
+
+    assert ".dbt-table-menu" in css
+    assert "[data-dbt-sortable]" in css
+
+
+def test_the_host_stylesheet_shows_only_the_marked_affixes() -> None:
+    css = controls_stylesheet()
+
+    hide = ".dbt-chart [data-dbt-table][data-dbt-bound] .dbt-table-affix {"
+    show = ".dbt-chart [data-dbt-table][data-dbt-bound] .dbt-table-affix-shown {"
+    assert "visibility: hidden" in css[css.index(hide) :].split("}")[0]
+    assert "visibility: visible" in css[css.index(show) :].split("}")[0]
+
+
 _LINKED_PAGED_BOARD = """\
 title: Every kind of interaction a board can draw
 variables:

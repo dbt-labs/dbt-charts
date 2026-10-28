@@ -1883,6 +1883,28 @@ ERR_GEO_PROJECTION_REQUIRED = REGISTRY.register(
     )
 )
 
+ERR_LABELS_LAST_UNSUPPORTED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LABELS-LAST-UNSUPPORTED",
+        domain="compile",
+        title="`labels.visible: last` needs the chart's own series",
+        message_template=(
+            "Chart {chart_id!r} sets {field_path} to `last`, which labels "
+            "each series' most recent mark and is not supported on {where}. "
+            "Use `true` to label every mark."
+        ),
+        doc=(
+            "`visible: last` on point, line or bar value labels prints each "
+            "series' most recent mark. A bar chart has a most recent bar "
+            "only on a time axis; a categorical axis has none. A scatter "
+            "chart has no ordered series and a layer has no series of its "
+            "own. Set `visible: true` or remove the key."
+        ),
+        summary="`labels.visible: last` on a scatter chart, a layer, or a categorical bar axis.",
+        docs_topic="charts",
+    )
+)
+
 ERR_BAR_ZERO_BASELINE_CROPPED = REGISTRY.register(
     ErrorCode(
         code="ERR-BAR-ZERO-BASELINE-CROPPED",

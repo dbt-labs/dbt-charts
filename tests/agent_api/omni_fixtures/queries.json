@@ -56,11 +56,48 @@
             "label": "Running total",
             "calc_name": "calc_1",
             "sql_expression": {
-              "type": "call"
-            }
+              "type": "call",
+              "name": "SUM",
+              "args": [
+                {
+                  "type": "field",
+                  "name": "orders.total_revenue"
+                }
+              ]
+            },
+            "format": "NUMBER_0"
           }
         ],
-        "modelId": "model-1"
+        "modelId": "model-1",
+        "column_limit": 50,
+        "fill_fields": [
+          "orders.created_at[month]"
+        ],
+        "metadata": {
+          "orders.total_revenue": {
+            "label": "Revenue",
+            "format": "CURRENCY_0"
+          }
+        },
+        "controls": [
+          {
+            "id": "c1",
+            "kind": "TIMEFRAME",
+            "type": "FIELD_SELECTION",
+            "field": "orders.created_at[month]",
+            "label": "Month"
+          }
+        ],
+        "transposed_measures": [
+          "orders.total_revenue"
+        ],
+        "version": 8,
+        "dbtMode": false,
+        "rewriteSql": true,
+        "default_group_by": true,
+        "dimensionIndex": 1,
+        "join_paths_from_topic_name": "orders",
+        "manualSort": true
       }
     },
     {

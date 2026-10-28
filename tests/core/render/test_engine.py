@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -302,11 +303,15 @@ def test_column_types_report_a_column_mixing_cell_kinds_as_mixed(
 
 def test_payload_carries_the_active_time_locale() -> None:
     chart = _resolved(_KPI, _REVENUE)
-    regional = Regional(locale=RegionalLocale(number="de-DE", time="de-DE"))
+    regional = Regional(
+        locale=RegionalLocale(number="de-DE", time="de-DE"),
+        time_zone="Europe/Berlin",
+    )
     with regional_scope(
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         payload = build_chart_payload(
             chart,
@@ -322,6 +327,31 @@ def test_payload_carries_the_active_time_locale() -> None:
         )
     assert payload["board_style"]["time_locale"] == regional.time_locale
     assert payload["board_style"]["time_locale"]["shortMonths"][2] == "Mrz"
+    assert payload["board_style"]["time_zone"] == "Europe/Berlin"
+    assert payload["board_style"]["week_start"] == 1, "de-DE weeks start on Monday"
+
+
+def test_a_table_prints_an_aware_cell_in_the_board_zone_and_a_naive_one_as_written() -> (
+    None
+):
+    instant = datetime.datetime(2024, 3, 10, 7, 30, tzinfo=datetime.UTC)
+    rows = [{"at": instant}, {"at": instant.replace(tzinfo=None)}]
+    table = {
+        "type": "table",
+        "query": "q",
+        "style": {"columns": {"at": {"format": "%H:%M %Z"}}},
+    }
+    utc = Regional()
+    with regional_scope(
+        utc.format_locale,
+        utc.time_locale,
+        utc.week_start,
+        ZoneInfo("America/New_York"),
+    ):
+        svg, _ = _native(table, rows, width=400.0, height=0.0)
+    texts = re.findall(r">([^<>]+)</(?:tspan|text)>", svg)
+    assert "03:30 EDT" in texts
+    assert "07:30" in [text.strip() for text in texts]
 
 
 def test_render_native_returns_svg_and_natural_height() -> None:
@@ -383,6 +413,7 @@ def test_kpi_and_spark_bar_numbers_print_under_the_active_number_locale() -> Non
         german.format_locale,
         german.time_locale,
         german.week_start,
+        german.zone,
     ):
         assert texts(kpi)[:2] == ["4,8", "Mio."]
         assert "1.234.567" in texts(spark)
@@ -1080,7 +1111,7 @@ def test_cartesian_engine_warnings_land_in_their_sinks(
         ("support_table_cell_overflow", "support_table", "82px needed, 47px per band"),
     ]
     assert series["c1"] == [
-        SeriesLabelTruncation(authored_field="color", series_name="A")
+        SeriesLabelTruncation(authored_field="color", series_name="A", fate="truncated")
     ]
     assert rails["c1"] == EndpointLabelGapOverflow(
         series_count=3, gap_px=18.2, cause="rail_overflow", dropped_series=("B",)
@@ -1176,7 +1207,7 @@ def test_board_style_envelope_carries_the_sizers_pagination_control_height() -> 
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale()
+        style, None, active_format_locale(), active_time_locale(), "UTC", 0
     )
     assert envelope["pagination_control_height"] == TABLE_PAGINATION_CONTROL_HEIGHT
 
@@ -1187,7 +1218,7 @@ def test_board_style_envelope_carries_the_resolved_text_mark_font() -> None:
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale()
+        style, None, active_format_locale(), active_time_locale(), "UTC", 0
     )
     font = style.chart_defaults.marks.text.font
     assert envelope["text_mark_font"] == {"family": font.family, "size": font.size}
@@ -1201,7 +1232,7 @@ def test_board_style_envelope_carries_the_authored_numeral_family() -> None:
     def envelope_for(patch: StylePatch | None) -> dict:
         style, _ = resolve_style_and_context(get_theme_style(), patch)
         return board_style_envelope(
-            style, None, active_format_locale(), active_time_locale()
+            style, None, active_format_locale(), active_time_locale(), "UTC", 0
         )
 
     assert envelope_for(None)["numeral_family"] == (
@@ -1219,7 +1250,7 @@ def test_board_style_envelope_carries_the_themes_hover_emphasis() -> None:
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale()
+        style, None, active_format_locale(), active_time_locale(), "UTC", 0
     )
     hover = style.chart_defaults.hover_emphasis
     assert envelope["hover_emphasis"] == {
@@ -1234,7 +1265,7 @@ def test_board_style_envelope_carries_the_themes_default_view_widths() -> None:
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale()
+        style, None, active_format_locale(), active_time_locale(), "UTC", 0
     )
     view = style.chart_defaults.view
     assert envelope["continuous_width"] == view.continuous_width
@@ -1249,7 +1280,7 @@ def test_board_style_envelope_carries_the_board_palette_a_chart_with_none_falls_
 
     style, context = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale()
+        style, None, active_format_locale(), active_time_locale(), "UTC", 0
     )
     assert envelope["palette"] == context.palette
 
@@ -1307,6 +1338,29 @@ def test_the_width_measure_labels_decimal_pivot_dimensions_as_the_render_does() 
     assert as_text != as_floats
 
 
+def test_the_width_measure_sizes_an_aware_cell_as_the_board_zone_prints_it() -> None:
+    from dbt_charts.core.render import engine
+
+    # 03:00Z on March 1 is February 29 in New York.
+    rows = [{"at": datetime.datetime(2024, 3, 1, 3, tzinfo=datetime.UTC)}]
+    table = {
+        "type": "table",
+        "query": "q",
+        "style": {"columns": {"at": {"format": "%B"}}},
+    }
+
+    def width(zone: str) -> float | None:
+        utc = Regional()
+        with regional_scope(
+            utc.format_locale, utc.time_locale, utc.week_start, ZoneInfo(zone)
+        ):
+            return engine.measure_table_natural_width(
+                _resolved(table, rows), rows, _BOARD_RS
+            )
+
+    assert width("America/New_York") != width("UTC")
+
+
 def test_the_width_measure_carries_the_active_time_locale(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1321,14 +1375,16 @@ def test_the_width_measure_carries_the_active_time_locale(
     monkeypatch.setattr(engine._engine, "measure_table_natural_width", capture)
     table = {"type": "table", "query": "q"}
     rows = [{"d": "2024-03-05"}]
-    german = Regional(locale=RegionalLocale(time="de-DE"))
+    german = Regional(locale=RegionalLocale(time="de-DE"), time_zone="Europe/Berlin")
     with regional_scope(
         german.format_locale,
         german.time_locale,
         german.week_start,
+        german.zone,
     ):
         engine.measure_table_natural_width(_resolved(table, rows), rows, _BOARD_RS)
     assert sent[0]["time_locale"] == german.time_locale
+    assert sent[0]["time_zone"] == "Europe/Berlin"
 
 
 @pytest.mark.parametrize(

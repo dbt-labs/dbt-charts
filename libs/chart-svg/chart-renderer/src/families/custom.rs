@@ -47,6 +47,11 @@ const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 /// The channels a custom chart's `link:` may name as `{{ channel }}`.
 const LINK_CHANNELS: &[&str] = &["x", "y", "color", "size", "shape", "theta", "value"];
 
+/// Marks a null the template printed. Text keeps the Python-style `None`; an
+/// attribute carrying the mark is refused, because a geometry or width the
+/// renderer cannot read is dropped silently.
+const NULL_MARK: char = '\u{E000}';
+
 /// Elements nested deeper than this fail the chart: the serializer recurses
 /// once per level, and a template can nest without bound.
 const MAX_DEPTH: usize = 64;
@@ -117,6 +122,9 @@ struct Resolved {
     category_pins: BTreeMap<String, BTreeMap<String, String>>,
     palette: Vec<String>,
     background: String,
+    /// The chart's opaque composited canvas, which `label_ink` reads against.
+    #[serde(deserialize_with = "crate::common::de_canvas")]
+    canvas: String,
     style: CustomStyle,
     title_style: TitleStyle,
 }
@@ -139,6 +147,13 @@ fn diagnostic(code: &crate::diagnostic::Code, chart_id: &str, reason: String) ->
 
 pub(super) fn invalid(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidOperation, message.into())
+}
+
+/// A helper's color argument: a string, which the color math then parses.
+fn color_arg<'a>(helper: &str, color: &'a Value) -> Result<&'a str, Error> {
+    color
+        .as_str()
+        .ok_or_else(|| invalid(format!("{helper}(): color must be a string, got {color:?}")))
 }
 
 /// Python's `str(value)` for the values a template passes a helper.
@@ -338,6 +353,14 @@ fn environment(
     let mut env = Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Strict);
     env.set_auto_escape_callback(|_| AutoEscape::Html);
+    env.set_formatter(|out, state, value| {
+        if value.is_none() {
+            write!(out, "{NULL_MARK}None")?;
+            Ok(())
+        } else {
+            minijinja::escape_formatter(out, state, value)
+        }
+    });
     env.set_fuel(Some(FUEL));
     env.add_filter(
         "format",
@@ -497,6 +520,8 @@ fn render_template(r: &Resolved, job: &Job, fonts: &FontBook) -> Result<String, 
     let budget = job.budget;
     let (width, height) = (job.width, job.height);
     let font_path = fonts.font_path(&job.family)?;
+    // Axis numerals are drawn tabular, so digits measure in the numeric face.
+    let digit_path = fonts.font_path(measure::weighted::font_file(&job.family, false, true))?;
 
     let text_width = Value::from_function(
         move |text: Value, size: Value, rest: Rest<Value>| -> Result<Value, Error> {
@@ -519,7 +544,42 @@ fn render_template(r: &Resolved, job: &Job, fonts: &FontBook) -> Result<String, 
             }
             let axis = font_weight(rest.first())?;
             let measurer = measure::fonts::cached_measurer(&font_path, 0, Some(axis));
-            Ok(Value::from(measurer.measure(text, px)))
+            let digits = measure::fonts::cached_measurer(&digit_path, 0, Some(axis));
+            let mut width = 0.0;
+            let mut rest = text;
+            while let Some(first) = rest.chars().next() {
+                let is_digit = first.is_ascii_digit();
+                let end = rest
+                    .find(|c: char| c.is_ascii_digit() != is_digit)
+                    .unwrap_or(rest.len());
+                let run_measurer = if is_digit { &digits } else { &measurer };
+                width += run_measurer.measure(&rest[..end], px);
+                rest = &rest[end..];
+            }
+            Ok(Value::from(width))
+        },
+    );
+
+    let label_ink = {
+        let canvas = r.canvas.clone();
+        Value::from_function(move |color: Value| -> Result<Value, Error> {
+            let color = color_arg("label_ink", &color)?;
+            dbt_charts_color::label_ink(color, &canvas)
+                .map(Value::from)
+                .map_err(|e| invalid(format!("label_ink(): {e}")))
+        })
+    };
+    let variant = Value::from_function(
+        move |color: Value, kind: Option<Value>, rest: Rest<Value>| -> Result<Value, Error> {
+            let (Some(kind), true) = (kind, rest.is_empty()) else {
+                return Err(invalid("variant() takes a color and a kind"));
+            };
+            let kind = kind.as_str().ok_or_else(|| {
+                invalid(format!("variant(): kind must be a string, got {kind:?}"))
+            })?;
+            dbt_charts_color::variant(color_arg("variant", &color)?, kind)
+                .map(Value::from)
+                .map_err(|e| invalid(format!("variant(): {e}")))
         },
     );
 
@@ -613,6 +673,8 @@ fn render_template(r: &Resolved, job: &Job, fonts: &FontBook) -> Result<String, 
         d3 => super::custom_d3::d3_namespace(),
         text_width => text_width,
         color_for => color_for,
+        label_ink => label_ink,
+        variant => variant,
         href => href_fn,
         raise_error => raise_error,
     };
@@ -818,7 +880,8 @@ fn serialize_children(parent: roxmltree::Node<'_, '_>, depth: usize) -> Result<V
         if child.is_element() {
             children.push(Child::Element(serialize(child, depth + 1)?));
         } else if child.is_text() {
-            children.push(Child::Text(Chars::new(child.text().unwrap_or(""), Escape::Attr)));
+            let text = child.text().unwrap_or("").replace(NULL_MARK, "");
+            children.push(Child::Text(Chars::new(&text, Escape::Attr)));
         } else {
             return Err("a comment or processing instruction is not allowed".to_string());
         }
@@ -871,6 +934,9 @@ fn checked_attribute<'a>(
         None | Some("") => {}
         Some(XLINK_NS) if lowered == "href" => {}
         Some(_) => return Err(format!("namespaced attribute {site} is not allowed")),
+    }
+    if value.contains(NULL_MARK) {
+        return Err(format!("a null was interpolated into {site}"));
     }
     if lowered.starts_with("on") {
         return Err(format!("event attribute {site} is not allowed"));
@@ -1075,6 +1141,7 @@ mod tests {
                 "position": {"offset": null},
             },
             "background": "#ffffff",
+            "canvas": "#ffffff",
         });
         patch(&mut resolved);
         serde_json::from_value(json!({
@@ -1209,6 +1276,59 @@ mod tests {
                 .contains("text_width(): weight must be"),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn text_width_measures_digits_as_the_tabular_numerals_the_axis_draws() {
+        let svg = template_svg(
+            "<text>{{ text_width('111', 12) == text_width('000', 12) }} {{ text_width('100', 12) == 3 * text_width('0', 12) }} {{ text_width('1 a', 12) == text_width('0', 12) + text_width(' a', 12) }}</text>",
+        );
+        assert!(svg.contains("<text>True True True</text>"), "{svg}");
+    }
+
+    #[test]
+    fn label_ink_and_variant_are_the_engines_color_math() {
+        use dbt_charts_color as color;
+        let svg = template_svg(
+            "<text>{{ label_ink('#e6b800') }} {{ variant('#3366cc', 'light') }} {{ variant('#3366cc', 'deep') }}</text>",
+        );
+        let expected = format!(
+            "<text>{} {} {}</text>",
+            color::label_ink("#e6b800", "#ffffff").unwrap(),
+            color::variant("#3366cc", "light").unwrap(),
+            color::variant("#3366cc", "deep").unwrap(),
+        );
+        assert!(svg.contains(&expected), "{svg}");
+        assert_ne!(color::label_ink("#e6b800", "#ffffff").unwrap(), "#e6b800");
+    }
+
+    #[test]
+    fn label_ink_reads_against_the_charts_own_canvas() {
+        use dbt_charts_color as color;
+        let svg = render(
+            &payload("<text>{{ label_ink('#3366cc') }}</text>", |r| {
+                r["canvas"] = json!("#111111");
+            }),
+            &test_fonts(),
+        )
+        .unwrap();
+        let ink = color::label_ink("#3366cc", "#111111").unwrap();
+        assert!(svg.contains(&format!("<text>{ink}</text>")), "{svg}");
+    }
+
+    #[test]
+    fn color_helpers_name_their_misuse() {
+        for (call, want) in [
+            ("variant('#3366cc', 'huge')", "unknown variant"),
+            ("variant('#3366cc')", "variant() takes a color and a kind"),
+            ("label_ink('blue')", "label_ink()"),
+            ("label_ink(5)", "label_ink(): color must be a string"),
+        ] {
+            let err = render(&payload(&format!("{{{{ {call} }}}}"), |_| {}), &test_fonts())
+                .unwrap_err();
+            let reason = err.params["reason"].as_str().unwrap().to_string();
+            assert!(reason.contains(want), "{call}: {reason}");
+        }
     }
 
     fn template_svg(template: &str) -> String {

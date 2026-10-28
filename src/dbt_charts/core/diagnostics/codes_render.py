@@ -2044,8 +2044,8 @@ WARN_LOCAL_TIME_LABEL_EXPR_ON_BUCKETED_AXIS = REGISTRY.register(
             "accessor reads them as UTC today, the same result its "
             "utc-prefixed equivalent would give, and no longer dependent on "
             "which machine renders the chart. It still cannot be made to read "
-            "in a different zone: regional.time_zone does not apply to query "
-            "data. Heatmap and "
+            "in a different zone: a bucket is its calendar date's UTC midnight "
+            "whatever the board's regional.time_zone. Heatmap and "
             "scatter are not yet covered. dbt charts never rewrites an "
             "authored label expression, so this only warns; switch to "
             "utcFormat() or utcmonth()/utcyear()/... to say what actually "
@@ -2667,22 +2667,26 @@ WARN_VALUE_LABELS_CROWD_WIDTH = REGISTRY.register(
     WarningCode(
         code="WARN-VALUE-LABELS-CROWD-WIDTH",
         domain="render",
-        title="Value labels are wider than their per-mark slot",
+        title="Value labels overflow their marks or collide",
         message_template=(
-            "Chart {chart_id!r}: widest value label is {label_width:.0f}px "
-            "but each mark only has {slot_width:.0f}px; labels will overflow "
-            "and collide with neighbors."
+            "Chart {chart_id!r}: a value label is {label_width:.0f}px wide "
+            "but has only {slot_width:.0f}px of room; labels spill past their "
+            "marks or overlap their neighbors."
         ),
         fix_template=(
-            "Shorten the number format (e.g. use SI suffix `.2~s` instead of "
-            "full precision), reduce the number of labeled marks, or widen the chart."
+            "Shorten the number format (e.g. SI suffix `.2~s`), label fewer "
+            "marks, widen the chart, or turn the labels off and show the exact "
+            "values in a `support_table`."
         ),
         doc=(
-            "Fires when a chart's value labels are wider than the horizontal room "
-            "each one gets. Value labels are drawn at the mark, fixed size, with "
-            "no adaptive avoidance, so they are the label kind that genuinely "
-            "overflows. The check uses the panel's real rendered width and font "
-            "metrics; it fires exactly when the widest label is wider than its slot."
+            "Fires when painted value labels collide or overflow their marks. "
+            "Value labels are drawn at the mark, fixed size, with no adaptive "
+            "avoidance, so they are the label kind that genuinely overflows. "
+            "The check measures the placed label boxes, on any x axis: it fires "
+            "when two labels' boxes overlap, or when a label drawn inside its "
+            "bar is wider than the bar. It judges the chart's own labels and "
+            "each layer's labels separately; labels that sit at different "
+            "heights and never touch are quiet however close their marks are."
         ),
         docs_topic="charts",
     )
@@ -2739,6 +2743,35 @@ WARN_SERIES_LABEL_TRUNCATED = REGISTRY.register(
             "truncation, so you can see exactly what was cut. Only the drawn "
             "label is shortened: the underlying values, the color scale, and "
             "tooltips still carry the full text."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_RAIL_VALUE_DROPPED = REGISTRY.register(
+    WarningCode(
+        code="WARN-RAIL-VALUE-DROPPED",
+        domain="render",
+        title="Endpoint label shows its series name without the value",
+        message_template=(
+            "Chart {chart_id!r}: {count} endpoint {labels_noun} from "
+            "{authored_field!r} {were} drawn without the final value, because "
+            "the value and the name fit neither one line nor two in the rail: "
+            "{labels}."
+        ),
+        fix_template=(
+            "Shorten the {authored_field} values, widen the chart, or set "
+            "style.endpoint_labels.visible: false to keep the series names in "
+            "the legend."
+        ),
+        doc=(
+            "Fires when an endpoint label cannot show its series' final value. "
+            "A label reads `value name` on one line; when that is too wide for "
+            "the rail it wraps onto a second line, and when two lines do not "
+            "fit either, or the rail has no vertical room for two-line labels, "
+            "the value is dropped and the name is drawn alone (cut with an "
+            "ellipsis if it is still too long). The labels in the message are "
+            "the full series names."
         ),
         docs_topic="charts",
     )
@@ -3781,7 +3814,8 @@ ERR_CUSTOM_SVG = REGISTRY.register(
             "`role-`/`dbt-` class; a paint attribute that is not a color; an "
             "`<a href>` outside the link rules (board path, http, https, "
             "mailto); any other `href` that is not a `#local` reference; "
-            "`url(...)` that is not `url(#local)`; `javascript:`; nesting "
+            "`url(...)` that is not `url(#local)`; `javascript:`; a null "
+            "interpolated into any attribute; nesting "
             "past 64 levels; or a DOCTYPE or ENTITY declaration. Nothing is "
             "stripped; the chart fails."
         ),
@@ -3996,6 +4030,30 @@ ERR_ANNOTATION_UNSUPPORTED = REGISTRY.register(
             "without its annotations."
         ),
         summary="Fired when a chart's annotations cannot draw yet.",
+        docs_topic="charts",
+    )
+)
+
+WARN_ANNOTATION_NOTE_MOVED = REGISTRY.register(
+    WarningCode(
+        code="WARN-ANNOTATION-NOTE-MOVED",
+        domain="render",
+        title="Annotation note moved away from its point",
+        message_template=(
+            "Chart {chart_id!r}: annotation {index}'s text moved to another side "
+            "of its point to clear the chart, with no connector back to it."
+        ),
+        fix_template=(
+            "Set `connector: line` so the note points at its anchor, or set "
+            "`style.marks.text.position.edge` to keep the text on one side."
+        ),
+        doc=(
+            "Fired when a note's `auto` text edge could not stay on its preferred "
+            "side without covering the data or other annotation text, so the text "
+            "moved to another side of its point, and the note draws no connector "
+            "to say which point it names."
+        ),
+        summary="Fired when a note's text moves off its point without a connector.",
         docs_topic="charts",
     )
 )

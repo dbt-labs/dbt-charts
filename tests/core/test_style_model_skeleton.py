@@ -495,7 +495,7 @@ def test_style_to_vega_lite_maps_view_fields():
 def test_style_to_vega_lite_maps_text_mark():
     """style_to_vega_lite maps marks.text font.family, font.color (→fill), font.size, align.
 
-    text mark renamed from label to marks.text under ADR-015.
+    text mark renamed from label to marks.text.
     """
     from dbt_charts.core.compile.models.primitives import FontStyle
     from dbt_charts.core.compile.models.style.theme import TextMarkStyle
@@ -532,7 +532,7 @@ def test_style_to_vega_lite_maps_text_mark():
 def test_style_to_vega_lite_maps_bar_border_radius():
     """marks.bar.border.radius maps to spec.mark.cornerRadius (not VL config layer).
 
-    bar mark fields live under marks.bar after ADR-015. The VL config layer
+    bar mark fields live under marks.bar. The VL config layer
     does not emit bar-specific keys — bar.border.radius goes to spec.mark.
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
@@ -566,7 +566,7 @@ def test_style_to_vega_lite_maps_bar_border_radius():
 def test_histogram_has_border_style():
     """charts.marks.bar.border is a BorderStyle (histogram renders bar marks).
 
-    After ADR-015, bar mark geometry (including border) lives in the global
+    Bar mark geometry (including border) lives in the global
     marks tier under charts.marks.bar. Histogram chart style no longer has a
     flat border field.
     """
@@ -798,7 +798,7 @@ def test_cascade_placeholder_overlay_font(model_copy_at):
 def test_cascade_charts_label_font(model_copy_at):
     """charts.marks.text.font cascades from charts.font.
 
-    text mark renamed from label to marks.text under ADR-015.
+    text mark renamed from label to marks.text.
     """
     from dbt_charts.core.compile.models.primitives import FontStyle
 

@@ -135,7 +135,7 @@ def test_resolve_style_input_focus_color_inherits_accent():
 def test_resolve_style_rule_stroke_inherits_font_color():
     """After resolve, marks.rule.stroke.color equals root font.color.
 
-    rule moved from charts.rule to charts.marks.rule under ADR-015.
+    rule moved from charts.rule to charts.marks.rule.
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
@@ -185,7 +185,7 @@ def test_secondary_font_override_does_not_touch_spark_bar_track():
 def test_font_color_override_propagates_to_rule_stroke():
     """font.color cascades to marks.rule.stroke.color when rule.stroke.color is unset.
 
-    rule moved to charts.marks.rule under ADR-015.
+    rule moved to charts.marks.rule.
     stroke is now FontColorStrokeStyle (non-nullable); clear stroke.color to test inherit.
     """
     from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context

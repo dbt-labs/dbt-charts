@@ -634,6 +634,19 @@ mod tests {
         assert_eq!(svg.matches("aria-roledescription=\"bar\"").count(), 3, "{svg}");
     }
 
+    /// A bin 4.68px wide takes a quarter of its width, not the authored
+    /// radius: the corner never reads as a dome.
+    #[test]
+    fn a_thin_bin_rounds_to_a_quarter_of_its_width() {
+        let rows = serde_json::json!([{"amount": 1.0, "bucket": "A"}, {"amount": 9.0, "bucket": "A"}]);
+        let mut resolved = minimal_valid_json(Some("bucket"), None, None);
+        resolved["style"]["mark"]["border"]["radius"] = serde_json::json!(2.0);
+        resolved["style"]["mark"]["band_width"] = serde_json::json!(0.08);
+        let svg = render_ok(resolved, rows);
+        assert!(svg.contains("A 1.1700,1.1700"), "{svg}");
+        assert!(!svg.contains("A 2.0000,2.0000"), "{svg}");
+    }
+
     /// Tied counts rank by name; a board color scale never reaches a histogram.
     #[test]
     fn tied_series_rank_by_name_and_ignore_a_board_color_scale() {

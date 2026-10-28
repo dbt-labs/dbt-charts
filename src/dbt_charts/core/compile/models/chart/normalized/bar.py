@@ -10,10 +10,10 @@ from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
-from ._base import _CartesianChartFields
+from ._base import _CartesianChartFields, _TooltipFields
 
 
-class BarChart(_CartesianChartFields):
+class BarChart(_CartesianChartFields, _TooltipFields):
     """Normalized bar or histogram chart."""
 
     type: Literal["bar", "histogram"]

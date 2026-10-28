@@ -10,10 +10,10 @@ from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
 from dbt_charts.core.compile.models.style.authored import ScatterChartStylePatch
 
-from ._base import _CartesianChartFields
+from ._base import _CartesianChartFields, _TooltipFields
 
 
-class ScatterChart(_CartesianChartFields):
+class ScatterChart(_CartesianChartFields, _TooltipFields):
     """Normalized scatter chart."""
 
     type: Literal["scatter"]

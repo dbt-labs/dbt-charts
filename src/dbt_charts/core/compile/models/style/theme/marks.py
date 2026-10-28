@@ -267,9 +267,12 @@ class MarkLabelsStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Cascade tier sentinel: None means "not specified at this tier".
-    visible: bool | None = Field(
+    visible: bool | Literal["last"] | None = Field(
         default=None,
-        description="Show numeric value labels on each mark; False by default.",
+        description=(
+            "Show numeric value labels on each mark; `last` labels only each "
+            "series' most recent mark, and a bar chart needs a time axis for it."
+        ),
     )
     # Authored-only override (not theme-populated): name a data column to draw the
     # label text from instead of the chart's y-field. Lets the axis keep the true y

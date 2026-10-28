@@ -10,10 +10,10 @@ from dbt_charts.core.compile.models.chart.authored import ChartTotal
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
 
-from ._base import _FieldLabelsField, _SharedChartFields
+from ._base import _FieldLabelsField, _SharedChartFields, _TooltipFields
 
 
-class PieChart(_SharedChartFields, _FieldLabelsField):
+class PieChart(_SharedChartFields, _FieldLabelsField, _TooltipFields):
     """Normalized pie or donut chart."""
 
     type: Literal["pie", "donut"]

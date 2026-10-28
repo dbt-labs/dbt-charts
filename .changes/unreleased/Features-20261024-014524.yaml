@@ -1,0 +1,3 @@
+kind: Features
+body: Value-label crowding warnings now cover time axes, layer labels, and labels wider than the bar they sit inside.
+time: 2026-10-24T01:45:24.810394-07:00

@@ -148,6 +148,8 @@ pub(crate) struct BarResolved {
     #[serde(default)]
     y_label: Option<String>,
     field_labels: crate::common::FieldLabels,
+    #[serde(default)]
+    tooltip: Vec<crate::families::tooltip_extra::TooltipField>,
     color: Option<String>,
     /// Only the presence of `color` is read (a genuine-zero label needs a
     /// colorless bar).
@@ -321,9 +323,9 @@ struct BarStyle {
     single_series_fill: String,
     series_label: SeriesLabel,
     endpoint_labels: EndpointLabels,
-    /// Author-facing stack ordering. Only the default (`None`, matching
-    /// Python's "value" / largest-global-sum-first) is implemented; any
-    /// other value is an unverified shape this renderer refuses.
+    /// Author-facing stack ordering: `value` (the default when `None`,
+    /// largest global sum first), `data`, or `alphabetical`. Any other
+    /// string is refused by `common::sorted_series_by_stack_order`.
     #[serde(default)]
     stack_order: Option<String>,
     #[serde(default)]
@@ -504,6 +506,7 @@ impl TotalLabel {
         let font = self.font.clone().ok_or("bar: total_label.font absent (theme required)")?;
         Ok(MarkLabels {
             visible: true,
+            last_only: false,
             field: None,
             format: self.format.clone(),
             dx: self.dx,
@@ -701,7 +704,7 @@ struct EmptyBarExtra {
 ///   zero-extent scale sits at mid-axis.
 /// - No zero rule: `BaselineFeature.apply` returns before `_insert_zero_rule`
 ///   when the chart has no rows (`baseline.py:354`).
-pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<scene::Node, Diagnostic> {
     let head = crate::families::empty::Head::parse("bar", &payload.resolved)?;
     let extra: EmptyBarExtra = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("bar payload: {e}"))?;
@@ -778,7 +781,6 @@ impl BarResolved {
 mod tests {
     use super::continuous::{render_vertical_continuous_x, XLayers};
     use super::domain::{build_data_map, niced_rail_domain, row_keys, value_domain_and_ticks, CenterStack};
-    use super::layout::warn_crowded_bar_labels;
     use super::marks::{
         bar_passes, baseline_rule_layers, baseline_rules, collapsed_bars, layer_day_numbers, painted_series_bars,
         BandColumns, Rounded,
@@ -959,7 +961,7 @@ mod tests {
 
         let axis_x = json!({
             "grid": {"visible": false, "threshold": null, "width": 1.0, "color": "#D0D3D9", "opacity": 1.0},
-            "ticks": {"color": "#EDEFF2", "visible": true, "count": 6.0},
+            "ticks": {"color": "#EDEFF2", "visible": false, "count": 6.0},
             "labels": {
                 "font": {"family": TEST_FONT, "color": "#626366", "size": 11.0, "weight": "400"},
                 "padding": 6.0,
@@ -1051,7 +1053,8 @@ mod tests {
                 "mark": {
                     "band_width": 0.7,
                     "size": 20.0,
-                    "border": {"width": null, "color": null, "radius": 4.0}
+                    "border": {"width": null, "color": null, "radius": 4.0},
+                    "labels": {"visible": false}
                 },
                 "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#3164a3",
@@ -4233,6 +4236,26 @@ mod tests {
         payload_json
     }
 
+    /// A century of yearly bars steps its labels to every 10th year: 1901 lies 9 of 10 years before the 1910 tick, but
+    /// its label would leave less than `EDGE_LABEL_MIN_GAP_RATIO` of the tick spacing empty beside 1910's, so it stays unnamed.
+    #[test]
+    fn a_stepped_year_bar_axis_leaves_a_first_point_crowding_its_neighbor_unlabeled() {
+        let dates: Vec<String> = (0..100).map(|i| format!("{}-01-01", 1901 + i)).collect();
+        let svg = render(&make_payload(make_time_payload(&dates)), &test_fonts()).expect("renders");
+        assert_eq!(svg_year_labels(&svg), [1910, 1920, 1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000]);
+    }
+
+    /// A stepped year axis names a year that no tick names (1991 before the 10-year ticks from 2000), so the first
+    /// point keeps its label wherever the gap rule leaves room.
+    #[test]
+    fn a_stepped_year_bar_axis_labels_a_first_point_no_tick_names() {
+        let dates: Vec<String> = (0..90).map(|i| format!("{}-01-01", 1991 + i)).collect();
+        let mut payload = make_payload(make_time_payload(&dates));
+        payload.width = 900.0;
+        let years = svg_year_labels(&render(&payload, &test_fonts()).expect("renders"));
+        assert_eq!(years[..3], [1991, 2000, 2010], "{years:?}");
+    }
+
     fn months_from_2000(n: usize) -> Vec<String> {
         (0..n).map(|i| format!("{}-{:02}-01", 2000 + i / 12, i % 12 + 1)).collect()
     }
@@ -4268,16 +4291,163 @@ mod tests {
     #[test]
     fn a_bucketed_time_axis_spans_each_bucket_and_draws_its_opener_ticks() {
         let _locale = crate::time_locale::en_us_scope();
-        let mut payload_json = make_time_payload(&months_from_2000(72));
-        let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
+        let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
         let ext = bar_extents(&svg);
         assert_eq!(ext.len(), 72);
         // `0.8 * span - 1` is a bar's width, its span the bucket's pixel width.
         let span = |i: usize| (ext[i].1 + 1.0) / 0.8;
         assert!((span(0) / span(1) - 31.0 / 29.0).abs() < 0.01, "Jan 2000 over Feb 2000: {}", span(0) / span(1));
         assert!(svg.contains(">2005</text>") && !svg.contains(">Jul</text>"), "year labels only");
-        let ticks = vertical_line_spans(&svg).len();
-        assert_eq!(ticks, 6, "one tick per labeled year");
+        let ticks = tick_xs(&svg).len();
+        assert_eq!(ticks, 7, "the six labeled years' boundaries, closed at the axis end");
+    }
+
+    /// The x of the `<text>` painting `label`, and of every vertical tick rule.
+    fn label_x(svg: &str, label: &str) -> f64 {
+        let at = svg.find(&format!(">{label}</text>")).unwrap_or_else(|| panic!("no {label} label"));
+        svg[..at].rsplit("<text x=\"").next().unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
+    fn tick_xs(svg: &str) -> Vec<f64> {
+        let rules = svg.split("<line x1=\"").skip(1).filter(|l| l.contains("stroke-width=\"1\"/>"));
+        rules
+            .filter_map(|l| {
+                let x1: f64 = l.split('"').next()?.parse().ok()?;
+                let x2: f64 = l.split("x2=\"").nth(1)?.split('"').next()?.parse().ok()?;
+                (x1 == x2).then_some(x1)
+            })
+            .collect()
+    }
+
+    /// Year labels over monthly bars on a UTC time axis sit between their boundary ticks, not on a tick.
+    #[test]
+    fn a_time_axis_centers_year_labels_between_their_boundary_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
+        let ticks = tick_xs(&svg);
+        assert_eq!(ticks.len(), 7, "six years framed by seven boundaries: {ticks:?}");
+        for (k, year) in ["2000", "2002", "2004"].into_iter().enumerate() {
+            let i = 2 * k;
+            assert!((label_x(&svg, year) - (ticks[i] + ticks[i + 1]) / 2.0).abs() < 1.0, "{year}: {ticks:?}");
+        }
+    }
+
+    /// Twenty-four years of monthly bars on a 300px card cannot name every year between its ticks: the years thin to
+    /// every fifth, on their ticks.
+    #[test]
+    fn a_long_time_axis_thins_year_labels_on_their_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(288));
+        p["width"] = serde_json::json!(300.0);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let ticks = tick_xs(&svg);
+        for year in ["2000", "2005", "2010", "2015", "2020"] {
+            let at = label_x(&svg, year);
+            assert!(ticks.iter().any(|t| (t - at).abs() < 1.0), "{year} at {at} is off the ticks {ticks:?}");
+        }
+        assert!(!svg.contains(">2001</text>"), "an unthinned year label");
+    }
+
+    /// Interval boundary ticks sit inside the plot, and the floor rule reaches under the outermost one.
+    #[test]
+    fn interval_boundary_ticks_sit_inside_the_plot_under_the_floor_rule() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = render(&make_payload(make_time_payload(&months_from_2000(72))), &test_fonts()).expect("renders");
+        let plot_left: f64 = svg.split("<g transform=\"translate(").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
+        let ticks: Vec<f64> = tick_xs(&svg).into_iter().map(|x| x - plot_left).collect();
+        let rule = svg
+            .split("<line ")
+            .find(|l| l.contains("stroke-width=\"2\""))
+            .expect("a floor rule");
+        let attr = |name: &str| -> f64 { rule.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap() };
+        let (first, last) = (ticks[0], *ticks.last().unwrap());
+        assert!(first >= 0.5, "the first boundary lands inside the plot: {ticks:?}");
+        assert!(attr("x1") <= first - 0.5 && attr("x2") >= last + 0.5, "rule {}..{} vs ticks {first}..{last}", attr("x1"), attr("x2"));
+    }
+
+    /// Monthly bars under quarterly labels: the label centers on its quarter's middle bar and the ticks fall in the
+    /// gap between quarters (positions relative to the bar step, the axis and the bars paint in different frames).
+    #[test]
+    fn a_band_axis_centers_quarter_labels_under_their_bars_with_ticks_in_the_gaps() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(24));
+        p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let step = bar_extents(&svg)[1].0 - bar_extents(&svg)[0].0;
+        let ticks = tick_xs(&svg);
+        assert_eq!(ticks.len(), 9, "eight quarters framed by nine boundaries: {ticks:?}");
+        let q1 = label_x(&svg, "Q1");
+        assert!((ticks[0] + 1.5 * step - q1).abs() < 1.0, "Q1 centered on its middle bar: {q1} {ticks:?}");
+        assert!((ticks[1] - ticks[0] - 3.0 * step).abs() < 1.0, "one tick per quarter gap: {ticks:?}");
+    }
+
+    /// An authored `labels.align` keeps interval labels on their ticks rather than centering them on the period.
+    #[test]
+    fn an_authored_label_align_keeps_band_quarter_labels_on_the_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(24));
+        p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
+        p["resolved"]["style"]["axis_x"]["labels"]["align"] = serde_json::json!("left");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let ticks = tick_xs(&svg);
+        assert!(!ticks.is_empty(), "no ticks: {svg}");
+        let q1 = label_x(&svg, "Q1");
+        assert!(ticks.iter().any(|t| (t - q1).abs() < 1.0), "Q1 at {q1} is off the ticks {ticks:?}");
+    }
+
+    /// An authored tick cadence keeps labels on their ticks for every family, bars included.
+    #[test]
+    fn an_authored_tick_count_keeps_band_quarter_labels_on_the_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(24));
+        p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
+        p["resolved"]["style"]["axis_x"]["ticks"]["count"] = serde_json::json!(8.0);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let ticks = tick_xs(&svg);
+        assert!(!ticks.is_empty(), "no ticks: {svg}");
+        let q1 = label_x(&svg, "Q1");
+        assert!(ticks.iter().any(|t| (t - q1).abs() < 1.0), "Q1 at {q1} is off the ticks {ticks:?}");
+    }
+
+    /// `labelOverlap: parity` thins the on-tick labels by index; a bottom strip asks for it, but interval labels are
+    /// never thinned, so none is hidden.
+    #[test]
+    fn interval_labels_over_a_bottom_strip_are_never_parity_hidden() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(48));
+        p["width"] = serde_json::json!(100.0);
+        p["resolved"]["style"]["axis_x"]["labels"]["tilt_increments"] = serde_json::json!([0.0]);
+        p["resolved"]["style"]["axis_x"]["labels"]["time_unit"] = serde_json::json!("yearquarter");
+        p["resolved"]["support_table"] = serde_json::json!({
+            "entries": [{"source": "revenue", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Revenue"}]
+        });
+        p["resolved"]["effective_support_table_style"] = support_table_style_json_bottom();
+        p["resolved"]["support_table_axis_offset"] = serde_json::json!(17.0);
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        assert!(!svg.contains("opacity=\"0\""), "an interval label was parity-hidden");
+    }
+
+    /// An authored label format names the period its text reads (a month here), not the cadence's: the labels stay on
+    /// their bars rather than centering on a coarser period.
+    #[test]
+    fn an_authored_month_format_keeps_its_labels_on_their_bars() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_payload(&months_from_2000(36));
+        p["width"] = serde_json::json!(300.0);
+        p["resolved"]["style"]["axis_x"]["labels"]["format"] = serde_json::json!("%b %Y");
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let at = label_x(&svg, "Jan 2000");
+        assert!(tick_xs(&svg).iter().any(|t| (t - at).abs() < 1.0), "no tick under the label: {at} {:?}", tick_xs(&svg));
+    }
+
+    /// Label period equal to the data grain stays on its own bar.
+    #[test]
+    fn a_band_axis_keeps_equal_grain_labels_on_their_bars() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = render(&make_payload(make_time_payload(&months_from_2000(12))), &test_fonts()).expect("renders");
+        let step = bar_extents(&svg)[1].0 - bar_extents(&svg)[0].0;
+        assert!((label_x(&svg, "Mar") - label_x(&svg, "Jan") - 2.0 * step).abs() < 1.0);
+        assert!(tick_xs(&svg).is_empty(), "no restored ticks");
     }
 
     /// A time-axis bar payload over `(date, revenue)` rows, in the order given.
@@ -4401,15 +4571,35 @@ mod tests {
         assert!((span(0) / span(1) - 31.0 / 29.0).abs() < 0.01, "Jan 2000 over Feb 2000: {}", span(0) / span(1));
     }
 
-    /// Grouped series under endpoint labels take the right rail a stack does: each series' name at its own last value.
+    /// The outline a continuous-time stack strokes around its whole bar rounds at a quarter of the bar's
+    /// width, not the authored radius.
+    #[test]
+    fn a_thin_time_stack_outline_rounds_to_a_quarter_of_its_width() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut p = make_time_series_payload("zero");
+        p["resolved"]["style"]["mark"]["border"] = serde_json::json!({"width": 1.0, "color": "#FFFFFF", "radius": 2.0});
+        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
+        let outline = svg.split("<path d=\"").skip(1).find(|seg| seg.contains("fill=\"none\"") && seg.split('"').next().unwrap().contains(" V ")).expect("an outline path");
+        let radius = outline.split(" A ").nth(1).unwrap().split(',').next().unwrap();
+        assert_eq!(radius, "1.07", "{outline}");
+    }
+
+    /// Grouped series under endpoint labels take the right rail a stack does, a value then a name
+    /// (this fixture is flat, so it pins the shape, not which bar the value comes from); a stack's
+    /// midpoint anchor is no series value, so it stays name-only.
     #[test]
     fn endpoint_labels_on_grouped_series_over_a_time_axis_draw_the_rail() {
         let _locale = crate::time_locale::en_us_scope();
-        let mut p = make_time_series_payload("none");
-        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0, "height": 20.0});
-        p["resolved"]["style"]["series_label"]["gap_px"] = serde_json::json!(8.0);
-        let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains(">x</text>") && svg.contains(">y</text>"), "{svg}");
+        let rail = |stack: &str| {
+            let mut p = make_time_series_payload(stack);
+            p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0, "height": 20.0});
+            p["resolved"]["style"]["series_label"]["gap_px"] = serde_json::json!(8.0);
+            render(&make_payload(p), &test_fonts()).expect("renders")
+        };
+        let grouped = rail("none");
+        assert!(grouped.contains(">10 x</text>") && grouped.contains(">30 y</text>"), "{grouped}");
+        let stacked = rail("zero");
+        assert!(stacked.contains(">x</text>") && stacked.contains(">y</text>"), "{stacked}");
     }
 
     fn with_value_labels(mut p: serde_json::Value) -> serde_json::Value {
@@ -4715,8 +4905,11 @@ mod tests {
             p["resolved"]["style"]["mark"]["labels"] = serde_json::json!({
                 "visible": false, "position": "above", "field": null, "format": null, "dx": null, "dy": null, "font": null
             });
-            // A bar short of the domain's top needs the hover band's room.
-            p["rows"][3]["revenue"] = serde_json::json!(if zero { 0.0 } else { 1.0 });
+            p["resolved"]["style"]["axis_y"]["domain_max"] = serde_json::json!(180.0);
+            p["resolved"]["style"]["axis_y"]["tick_values"] = serde_json::json!([0.0, 100.0]);
+            // A bar short of the domain's top needs the hover band's room; 3 is under
+            // its trigger share of the 171 max, yet long enough to draw.
+            p["rows"][3]["revenue"] = serde_json::json!(if zero { 0.0 } else { 3.0 });
             render(&make_payload(p), &test_fonts()).expect("renders").contains("opacity=\"0\" data-dct-role=\"bar\"")
         };
         assert!(hover(false), "an unlayered bar keeps its hover band");
@@ -5348,8 +5541,8 @@ mod tests {
         };
         let mut zeros = make_vertical_payload(&[("A", 0.0), ("B", 0.0)], false);
         zoomed(&mut zeros);
-        let err = render(&make_payload(zeros), &test_fonts()).expect_err("refuses");
-        assert_ne!(err.code, "ERR-CHART-PAINTED-NO-MARKS", "{err:?}");
+        let code = render(&make_payload(zeros), &test_fonts()).err().map(|err| err.code);
+        assert_ne!(code.as_deref(), Some("ERR-CHART-PAINTED-NO-MARKS"));
     }
 
     /// The fit closure's tick-ink probe reads the single-series negative
@@ -5955,33 +6148,6 @@ mod tests {
         v
     }
 
-    /// A ranged bar's label prints its signed change, so the crowd check measures
-    /// that text (`+19.2`) and not the end value (`90.8`).
-    #[test]
-    fn crowd_check_measures_a_ranged_bars_painted_change() {
-        let payload: Payload = serde_json::from_str(include_str!("../../../fixtures/composed/floating-bar.json")).unwrap();
-        let mut resolved = payload.resolved.clone();
-        resolved["style"]["mark"]["labels"]["visible"] = serde_json::json!(true);
-        let widest = |y_start: bool| {
-            let mut resolved = resolved.clone();
-            if !y_start {
-                resolved["y_start"] = serde_json::Value::Null;
-            }
-            let mut r: BarResolved = serde_json::from_value(resolved).unwrap();
-            r.series_palette = r.palette.clone();
-            let fonts = test_fonts();
-            let (_, warnings) = crate::diagnostic::collect(|| {
-                warn_crowded_bar_labels("c", &r, &payload.rows, &fonts, payload.board_style.as_ref(), 8.0, 8)
-            });
-            let w = warnings.iter().find(|d| d.code == "WARN-VALUE-LABELS-CROWD-WIDTH").expect("warns");
-            serde_json::to_value(&w.params).unwrap()["label_width"].as_f64().unwrap()
-        };
-        let (family, size) = crate::common::crowd_label_font(None, payload.board_style.as_ref()).unwrap();
-        let measure = |t: &str| test_fonts().measure(t, &family, size).unwrap();
-        assert_eq!(widest(true), ["+19.2", "+26.9", "+10.6"].iter().map(|t| measure(t)).fold(0.0, f64::max));
-        assert_ne!(widest(true), widest(false));
-    }
-
     /// A support table leaves the chart's root encoding in place, so production
     /// still judges the bands.
     #[test]
@@ -6485,7 +6651,7 @@ mod tests {
                     "ruler": null, "tick_label": {"format": ",.0~f"},
                     "time_unit": null, "fiscal_year_start_month": 1, "is_quantitative": true, "zero_anchored": false, "fill": null, "line": null
                 },
-                "mark": {"band_width": 0.7, "size": 20.0, "border": {"width": null, "color": null, "radius": 0.0}},
+                "mark": {"band_width": 0.7, "size": 20.0, "border": {"width": null, "color": null, "radius": 0.0}, "labels": {"visible": false}},
                 "grouped": {"padding_inner": 0.2, "padding_outer": 0.2},
                 "single_series_fill": "#3164a3",
                 "series_label": {"font_family": "'Inter'", "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": []},
@@ -6804,7 +6970,7 @@ mod tests {
     /// truncated measure — this pins the wiring by checking the drawn
     /// text's own measured width never exceeds the authored limit.
     #[test]
-    fn horizontal_bar_category_label_truncates_past_the_label_limit() {
+    fn horizontal_bar_category_label_wraps_then_truncates_past_the_label_limit() {
         use serde_json::json;
         let mut payload_json = make_horizontal_payload();
         payload_json["rows"] = json!([
@@ -6816,33 +6982,38 @@ mod tests {
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
 
-        assert!(
-            !svg.contains("Emerging Product and Innovation Bets<"),
-            "full label must not draw untruncated: {svg}"
-        );
-        assert!(svg.contains('\u{2026}'), "truncated label carries the ellipsis: {svg}");
-
-        let tag_start =
-            svg.find("Emerging").and_then(|p| svg[..p].rfind("<text")).expect("category label tag");
+        let tag_start = svg
+            .find("<title>Emerging Product and Innovation Bets</title>")
+            .and_then(|p| svg[..p].rfind("<text"))
+            .expect("a cut label keeps its full name on hover");
         let tag_end = tag_start + svg[tag_start..].find("</text>").expect("closing tag");
-        let text_start = tag_start + svg[tag_start..tag_end].rfind('>').expect("tag close") + 1;
-        let drawn = &svg[text_start..tag_end];
+        let label = &svg[tag_start..tag_end];
+        assert!(
+            label.contains("<title>Emerging Product and Innovation Bets</title>"),
+            "a cut label keeps its full name on hover: {label}"
+        );
+        let lines: Vec<&str> = label
+            .split("<tspan")
+            .skip(1)
+            .map(|t| t.split_once('>').expect("tag close").1.split("</tspan>").next().expect("closing tspan"))
+            .collect();
+        assert_eq!(lines.len(), 2, "wraps onto two lines: {label}");
+        assert!(!lines[0].contains('\u{2026}') && lines[1].ends_with('\u{2026}'), "only line two is cut: {lines:?}");
         // Vega's own invariant: the CUTOFF decision measures the drawn
         // prefix with trailing whitespace ignored (`truncate_label`'s
-        // `measure_cand`), not the untrimmed emitted string — so the drawn
-        // text itself can sit a hair over `limit` when the cut lands right
-        // after a word boundary (`"Emerging …"` at a 60px limit measures
-        // 62.06px; `"Emerging …".trim_end()` is what the reservation
-        // actually bounds).
-        let trimmed_prefix = drawn.trim_end_matches('\u{2026}').trim_end();
-        let w = fonts
-            .measure(&format!("{trimmed_prefix}\u{2026}"), TEST_FONT, 11.0)
-            .expect("measure");
-        assert!(
-            w <= 60.0 + 1e-6,
-            "drawn text {drawn:?} trimmed-prefix width {w} exceeds the authored 60px \
-             limit — the drawn string and the reserved gutter must agree"
-        );
+        // `measure_cand`), not the untrimmed emitted string, so a cut that
+        // lands right after a word boundary can sit a hair over `limit`.
+        for drawn in lines {
+            let trimmed_prefix = drawn.trim_end_matches('\u{2026}').trim_end();
+            let w = fonts
+                .measure(&format!("{trimmed_prefix}\u{2026}"), TEST_FONT, 11.0)
+                .expect("measure");
+            assert!(
+                w <= 60.0 + 1e-6,
+                "drawn line {drawn:?} trimmed-prefix width {w} exceeds the authored 60px \
+                 limit — the drawn string and the reserved gutter must agree"
+            );
+        }
     }
 
     /// B8 — Vega's `labelFlush`: `flush(range, scale(datum.value), 1, "left",
@@ -8878,12 +9049,9 @@ mod tests {
             .collect()
     }
 
-    /// `_LABEL_THINNING_TICK_MARK_TYPES` flips the compiled spec to
-    /// `ticks: True` for bar once calendar labels grow sparser than buckets
-    /// (spied wk_26/wk_52: `ticks: False` on the every-bucket wk_8, `True`
-    /// on the thinned cases, overriding the theme's hidden default), so a
-    /// tick paints at every band — the positional cue for the unlabeled
-    /// buckets — and the label band sits a tick-length lower.
+    /// Once calendar labels grow sparser than buckets, ticks are restored
+    /// over the theme's hidden default, one under each painted label (not
+    /// one per band), and the label band sits a tick-length lower.
     #[test]
     fn thinned_temporal_band_axis_restores_ticks_below_the_plot() {
         use serde_json::json;
@@ -10316,6 +10484,35 @@ mod tests {
         payload_json["resolved"]["legend"]["position"] = json!({"edge": "right", "align": "start", "overlay": false});
         let svg = render(&make_payload(payload_json), &test_fonts()).expect("rail with a kept legend and a strip renders");
         assert!(svg.contains(">Units<"), "{svg}");
+    }
+
+    /// The grouped bar rail runs the same label cascade as the line rail: a label too wide for one
+    /// line wraps with the value leading, and one too long for two keeps its value and cuts line two.
+    #[test]
+    fn a_grouped_bar_rail_wraps_then_drops_the_value() {
+        let _locale = crate::time_locale::en_us_scope();
+        let render_named = |name: &str| {
+            let mut p = make_time_series_payload("none");
+            p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0, "height": 20.0});
+            p["resolved"]["style"]["series_label"]["gap_px"] = serde_json::json!(8.0);
+            for row in p["rows"].as_array_mut().unwrap() {
+                if row["series"] == "x" {
+                    row["series"] = serde_json::json!(name);
+                } else {
+                    // Far enough from `x` that the stack has room for a taller label.
+                    row["revenue"] = serde_json::json!(300.0);
+                }
+            }
+            crate::diagnostic::collect(|| render(&make_payload(p), &test_fonts()).expect("renders"))
+        };
+        let (wrapped, warnings) = render_named("Northern Operations Division");
+        assert!(wrapped.contains("<tspan>10 Northern</tspan>") && wrapped.contains("dy=\"13\">Operations Division</tspan>"), "{wrapped}");
+        assert!(warnings.iter().all(|w| w.code != "WARN-RAIL-VALUE-DROPPED" && w.code != "WARN-SERIES-LABEL-TRUNCATED"), "{warnings:?}");
+        let long = "Northwest Regional Operations and Field Support Division for the Greater Metropolitan Area and Surrounding Counties Coordination Office";
+        let (dropped, warnings) = render_named(long);
+        assert!(dropped.contains("<tspan>10 Northwest Regional</tspan>") && dropped.contains("\u{2026}</tspan>"), "values stay, line two is cut: {dropped}");
+        assert!(warnings.iter().all(|w| w.code != "WARN-RAIL-VALUE-DROPPED"), "{warnings:?}");
+        assert!(warnings.iter().any(|w| w.code == "WARN-SERIES-LABEL-TRUNCATED"), "{warnings:?}");
     }
 
     /// Each series anchors at its OWN last non-null column, never one
@@ -14073,6 +14270,137 @@ mod tests {
             assert!(at("B") < at("A") && at("A") < at("C"), "sums 130, 120, 115: {svg}");
         }
 
+        /// The cumulative `translate` x of every `<g>` open at `pos`.
+        fn group_x_at(svg: &str, pos: usize) -> f64 {
+            let mut stack: Vec<f64> = Vec::new();
+            let mut at = 0;
+            while let Some(found) = svg[at..pos].find('<') {
+                let tag_start = at + found;
+                let tag = &svg[tag_start..];
+                if tag.starts_with("</g>") {
+                    stack.pop();
+                } else if tag.starts_with("<g") && tag[..tag.find('>').unwrap()].ends_with('/') == false {
+                    let open = &tag[..tag.find('>').unwrap()];
+                    let dx = open
+                        .split("transform=\"translate(")
+                        .nth(1)
+                        .map_or(0.0, |t| t.split(',').next().unwrap().parse::<f64>().unwrap());
+                    stack.push(dx);
+                }
+                at = tag_start + 1;
+            }
+            stack.iter().sum()
+        }
+
+        /// The plot's left edge and the right edge of the widest wrapped, start-anchored category
+        /// label left of the plot (the `(plot_left, label_right)` of the first bar and of every label with lines).
+        fn plot_left_and_label_right(svg: &str, fonts: &measure::FontBook, ink: &str) -> (f64, f64) {
+            let plot_left = group_x_at(svg, svg.find("fill=\"#3164a3\"").expect("a bar"));
+            let mut right = f64::MIN;
+            for (pos, _) in svg.match_indices("<text") {
+                let tag = &svg[pos..pos + svg[pos..].find("</text>").unwrap()];
+                if !tag.contains("<tspan>") || !tag.contains(&format!("fill=\"{ink}\"")) || !tag.contains("text-anchor=\"start\"") {
+                    continue;
+                }
+                let x: f64 = tag.split(" x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                let widest = tag
+                    .split("<tspan")
+                    .skip(1)
+                    .map(|t| fonts.measure(t.split_once('>').unwrap().1.split('<').next().unwrap(), TEST_FONT, 11.0).unwrap())
+                    .fold(0.0_f64, f64::max);
+                if group_x_at(svg, pos) + x < plot_left {
+                    right = right.max(group_x_at(svg, pos) + x + widest);
+                }
+            }
+            (plot_left, right)
+        }
+
+        fn wrapped_names_payload(faceted: bool) -> serde_json::Value {
+            let long = "Europe Middle East and Africa Enterprise Accounts";
+            let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
+            let mut rows = vec![
+                json!({"product": long, "panel": "A", "revenue": 60.0}),
+                json!({"product": "Short", "panel": "A", "revenue": 200.0}),
+            ];
+            if faceted {
+                rows.push(json!({"product": long, "panel": "B", "revenue": 60.0}));
+                rows.push(json!({"product": "Short", "panel": "B", "revenue": 45.0}));
+            } else {
+                payload_json["resolved"]["multiples"] = json!(null);
+                payload_json["resolved"]["panel_axes"] = json!([]);
+            }
+            payload_json["rows"] = json!(rows);
+            payload_json
+        }
+
+        /// A faceted row header's gutter fits the labels it paints, as a single chart's does.
+        #[test]
+        fn a_faceted_wrapped_header_leaves_the_gap_a_single_chart_does() {
+            let fonts = test_fonts();
+            let gap = |faceted: bool| {
+                let svg = crate::text::expand_lines(rendered(wrapped_names_payload(faceted)));
+                let (plot_left, label_right) = plot_left_and_label_right(&svg, &fonts, "#626366");
+                plot_left - label_right
+            };
+            let (single, faceted) = (gap(false), gap(true));
+            // The composer anchors the row header at the cell's ink edge, which sits up to 2px off
+            // the plot; the gutter is otherwise the labels' own width and the label gap.
+            assert!((single - faceted).abs() < 2.5, "single {single} vs faceted {faceted}");
+            assert!(single < 6.0, "the gap is the label gap, not the one-line gutter: {single}");
+        }
+
+        /// A mirrored axis's labels begin a label gap past the plot, as the left labels end one
+        /// before it, and stay inside the canvas.
+        #[test]
+        fn a_mirrored_wrapped_axis_starts_its_right_labels_one_label_gap_past_the_plot() {
+            let fonts = test_fonts();
+            let mut payload_json = wrapped_names_payload(false);
+            payload_json["resolved"]["style"]["axis_y"]["mirror"] = json!(true);
+            payload_json["resolved"]["style"]["mark"]["border"]["radius"] = json!(0.0);
+            payload_json["rows"][1]["revenue"] = json!(1000.0);
+            payload_json["resolved"]["style"]["axis_y"]["domain_max"] = json!(1000.0);
+            payload_json["resolved"]["style"]["axis_y"]["tick_values"] = json!([0.0, 500.0, 1000.0]);
+            let svg = crate::text::expand_lines(rendered(payload_json));
+            let (plot_left, left_right) = plot_left_and_label_right(&svg, &fonts, "#626366");
+            let bar = svg.find("fill=\"#3164a3\"").expect("a bar");
+            let widest_bar_right = svg
+                .match_indices("<rect x=\"0.00\"")
+                .map(|(pos, _)| {
+                    let tag = &svg[pos..];
+                    let width: f64 = tag.split("width=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                    group_x_at(&svg, pos) + width
+                })
+                .fold(f64::MIN, f64::max);
+            assert!(group_x_at(&svg, bar) == plot_left);
+            let ghost_x = svg
+                .match_indices("<text")
+                .filter_map(|(pos, _)| {
+                    let tag = &svg[pos..pos + svg[pos..].find("</text>").unwrap()];
+                    (tag.contains("<tspan>Europe") && tag.contains("text-anchor=\"start\"")).then(|| {
+                        let x: f64 = tag.split(" x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+                        group_x_at(&svg, pos) + x
+                    })
+                })
+                .fold(f64::MIN, f64::max);
+            let (left_gap, right_gap) = (plot_left - left_right, ghost_x - widest_bar_right);
+            assert!((right_gap - left_gap).abs() <= 1.01, "left {left_gap} vs right {right_gap}");
+        }
+
+        /// A facet's shared category header wraps a long name the way a single chart's axis does.
+        #[test]
+        fn a_horizontal_facets_row_header_wraps_a_long_category() {
+            let long = "Europe Middle East and Africa Enterprise Accounts";
+            let mut payload_json = horizontal_facet_payload(json!({"rows": "panel", "columns": null, "scale": "shared"}));
+            payload_json["rows"] = json!([
+                {"product": long, "panel": "A", "revenue": 60.0},
+                {"product": "Short", "panel": "A", "revenue": 200.0},
+                {"product": long, "panel": "B", "revenue": 60.0},
+                {"product": "Short", "panel": "B", "revenue": 45.0},
+            ]);
+            let svg = crate::text::expand_lines(rendered(payload_json));
+            assert_eq!(svg.matches("<tspan>Europe Middle East and Africa</tspan><tspan x=").count(), 2, "one wrapped header a row: {svg}");
+        }
+
         /// Whether a grouped bar's color is 1:1 with its category is decided over
         /// the whole chart (`_is_color_1to1_with_x`): a panel whose own colors
         /// happen to be 1:1 still splits its bands like its siblings.
@@ -15757,7 +16085,7 @@ mod tests {
         #[test]
         fn a_link_mode_stamps_only_non_page_bar_anchors() {
             let render_with = |mode: Option<&str>| {
-                let mut payload_json = make_vertical_payload(&[("a", 1.0), ("b", 2.0)], false);
+                let mut payload_json = make_vertical_payload(&[("a", 1000.0), ("b", 2000.0)], false);
                 payload_json["resolved"]["link"] = json!("/x/?r={{ x }}");
                 if let Some(mode) = mode {
                     payload_json["resolved"]["link_open"] = json!(mode);
@@ -16014,11 +16342,37 @@ mod tests {
         fn a_null_category_links_the_js_null_text() {
             let mut payload_json = linked_json(&[("A", 1000.0)], "/x/?status={{ x }}");
             payload_json["rows"] = json!([
-                {"product": null, "revenue": 5.0},
-                {"product": "B", "revenue": 7.0},
+                {"product": null, "revenue": 1000.0},
+                {"product": "B", "revenue": 1200.0},
             ]);
             let svg = render(&make_payload(payload_json), &test_fonts()).expect("renders");
             assert_eq!(hrefs(&svg), ["/x/?status=null", "/x/?status=B"], "{svg}");
+        }
+
+        /// The first arc radius an emitted bar path carries.
+        fn arc_radius(svg: &str) -> f64 {
+            let at = svg.find("A ").unwrap_or_else(|| panic!("no arc in {svg}")) + 2;
+            svg[at..].split(',').next().unwrap().parse().unwrap()
+        }
+
+        /// A corner takes at most a quarter of the bar's thickness (cross
+        /// axis) and half its length, in both orientations.
+        #[test]
+        fn a_bar_corner_is_capped_by_its_thickness_not_its_length() {
+            let drawn = |horizontal: bool, w: f64, h: f64, r: f64| {
+                print::print(
+                    &bar_passes(horizontal, 0.0, 0.0, w, h, "#111", None, "none", 0.0, r, Rounded::Positive, false, None, None, None).unwrap(),
+                )
+            };
+            assert_eq!(arc_radius(&drawn(true, 50.0, 4.0, 2.0)), 1.0);
+            assert_eq!(arc_radius(&drawn(false, 4.0, 50.0, 2.0)), 1.0);
+            assert_eq!(arc_radius(&drawn(true, 50.0, 24.0, 2.0)), 2.0);
+            assert_eq!(arc_radius(&drawn(false, 24.0, 50.0, 2.0)), 2.0);
+            assert_eq!(arc_radius(&drawn(true, 2.0, 24.0, 6.0)), 1.0, "length / 2 still caps a short bar");
+            assert_eq!(arc_radius(&drawn(false, 24.0, 2.0, 6.0)), 1.0, "length / 2 still caps a short column");
+            for svg in [drawn(true, 50.0, 4.0, 0.0), drawn(false, 4.0, 50.0, 0.0)] {
+                assert!(svg.starts_with("<rect") && !svg.contains("<path"), "{svg}");
+            }
         }
 
         /// The `<a>` opens inside the mark group and closes BEFORE the
@@ -16274,6 +16628,20 @@ mod tests {
         }
 
         #[test]
+        fn a_note_on_a_horizontal_bar_slides_off_it_and_needs_no_halo() {
+            let mut note = annotation(10, Value::Null, Value::Null);
+            note["panel"] = Value::Null;
+            note["style"]["text"]["halo_over_marks"] = true.into();
+            note["style"]["text"]["position"] = json!({"edge": "bottom", "align": "start", "overlay": true, "auto_edge": false, "auto_align": false});
+            // Up from under the last bar onto it.
+            note["style"]["text"]["dy"] = json!(-30.0);
+            let svg = rendered(make_horizontal_payload(), vec![note]);
+            // Beta's bar ends at 320.4: the text starts 8px past it, on open ground.
+            assert!(svg.contains("<text x=\"328.4\""), "{svg}");
+            assert!(!svg.contains("stroke-linejoin=\"round\">Dashed = forecast"), "{svg}");
+        }
+
+        #[test]
         fn a_vertical_bar_paints_annotations_behind_and_over_the_bars() {
             let svg = rendered(vertical(), rule_and_band());
             assert_plane_order(&svg);
@@ -16390,7 +16758,7 @@ mod tests {
             trend["text"] = json!("a trend label wider than the gap");
             trend["style"]["text"]["max_width"] = Value::Null;
             trend["trend"] = json!({"line": [["2024-01-01", 40.0], ["2024-02-01", 25.0]], "interval": null});
-            trend["style"]["text"]["position"] = json!({"edge": "right", "align": "center", "overlay": false});
+            trend["style"]["text"]["position"] = json!({"edge": "right", "align": "center", "overlay": false, "auto_edge": false, "auto_align": false});
             let svg = rendered(payload, vec![trend]);
             let text = &svg[at(&svg, ">a trend label wider than the gap</text>")..];
             let tag = &svg[..svg.len() - text.len()];
@@ -16411,7 +16779,7 @@ mod tests {
 
         #[test]
         fn a_stacked_rail_trend_label_outside_the_line_end_reserves_the_right_margin() {
-            let outside = json!({"edge": "right", "align": "center", "overlay": false});
+            let outside = json!({"edge": "right", "align": "center", "overlay": false, "auto_edge": false, "auto_align": false});
             let svg = dated_rail_with_trend(outside).expect("trend text beside the rail arm renders");
             assert!(svg.contains(">total trend, wider than the last band</text>"), "{svg}");
         }

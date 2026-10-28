@@ -1,0 +1,3 @@
+kind: Fixes
+body: Board text now honors style.text.font.case instead of silently ignoring it.
+time: 2026-10-26T18:04:03.246913-07:00

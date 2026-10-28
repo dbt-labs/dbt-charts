@@ -67,7 +67,7 @@ Changes in this release:
   they do not pin an exact color value.
 
   ``solid`` briefly carried the same rebind (its five categorical roles onto
-  the editorial family instead of vivid) earlier in this same unreleased
+  the editorial family instead of vivid) earlier in this same release
   window; it is moot now that ``solid`` is one of the two themes deleted
   below, so there is nothing left for a board to have observed it.
 
@@ -643,7 +643,7 @@ AXIS_Y_LABEL_RENAMES: tuple[tuple[YamlKeyPath, YamlKeyPath], ...] = (
 def moves(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Move, ...]:
-    """Return Move objects for the 0.5.0 -> current boundary."""
+    """Return Move objects for the 0.5.0 -> 0.6.0 boundary."""
     from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 
     renamed_field_moves = suffix_rename_moves(
@@ -737,7 +737,7 @@ _RETIRED_PAINT_REASONS: dict[YamlKeyPath, str] = {
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
-    """Return Deletion objects for the 0.5.0 -> current boundary."""
+    """Return Deletion objects for the 0.5.0 -> 0.6.0 boundary."""
     return tuple(
         Deletion(
             source_schema,

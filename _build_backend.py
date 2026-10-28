@@ -60,8 +60,11 @@ def _stamp_version(text: str, old_version: str, version: str) -> str:
 
 def _version() -> str:
     # Only `dbt-charts-vX.Y.Z` tags count: sibling packages tag this repo too.
+    # `dist_name` scopes the override to SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DBT_CHARTS,
+    # which a build with no git history (a container image) uses to pin the version.
     version: str = setuptools_scm.get_version(
         root=str(REPO_ROOT),
+        dist_name="dbt-charts",
         git_describe_command=[
             "git",
             "describe",
@@ -248,8 +251,12 @@ def build_editable(
 
 
 if __name__ == "__main__":
-    # Release CI builds the platform wheels with maturin-action (manylinux
-    # containers); this gives them the stamped version and vendored packages
-    # build_wheel would have.
-    for built in sys.argv[1:]:
-        print(_finalize(Path(built), editable=False))
+    # `--version` prints the version a build from this checkout would stamp, for a
+    # build that cannot see git to be handed. Otherwise: release CI builds the
+    # platform wheels with maturin-action (manylinux containers); this gives them
+    # the stamped version and vendored packages build_wheel would have.
+    if sys.argv[1:] == ["--version"]:
+        print(_version())
+    else:
+        for built in sys.argv[1:]:
+            print(_finalize(Path(built), editable=False))

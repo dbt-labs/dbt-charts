@@ -187,6 +187,7 @@ _OMITTED_FROM_PROJECTION = {
     "query_name": "emitted as `query`",
     "pivot_columns": "emitted as `columns` (pure rename of authored `columns`)",
     "id": "the key of the charts map",
+    "value_rules": "derived at resolve from the chart-root `good`, which is projected",
     "measure_type": "derived at resolve from the y and y_start columns' data",
     "span_date_format": "baked from `style.formats.date_short` for a date-span tooltip",
     "x_tooltip_format": "baked from the query's `formats:` for a numeric scatter x tooltip",

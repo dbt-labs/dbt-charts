@@ -206,6 +206,30 @@ class _FieldLabelsResolvedField(BaseModel):
     )
 
 
+class ResolvedTooltipField(BaseModel):
+    """One column the hover card adds, final: the engine paints it as written."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    column: str = Field(description="Query column whose value the row shows.")
+    label: str = Field(description="Row label, painted verbatim.")
+    format: ResolvedFormat | None = Field(
+        description=(
+            "How the column's values print: a number or time format for a "
+            "numeric or date column, None for a column painted as text."
+        ),
+    )
+
+
+class _TooltipResolvedField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tooltip: tuple[ResolvedTooltipField, ...] = Field(
+        default=(),
+        description="Columns the hover card adds after the chart's own rows, in authored order.",
+    )
+
+
 class _CartesianResolvedChartFields(
     _SharedResolvedChartFields, _FieldLabelsResolvedField
 ):
@@ -315,6 +339,8 @@ __all__ = [
     "_CartesianResolvedChartFields",
     "_FieldLabelsResolvedField",
     "_PieResolvedChartFields",
+    "_TooltipResolvedField",
+    "ResolvedTooltipField",
     "_GeoResolvedChartFields",
     "_SharedResolvedChartFields",
 ]

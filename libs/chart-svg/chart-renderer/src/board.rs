@@ -566,7 +566,13 @@ struct TitleFontDoc {
 }
 
 #[derive(Deserialize)]
+struct TextFontDoc {
+    case: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct TextStyleDoc {
+    font: TextFontDoc,
     column: TextColumnStyleDoc,
 }
 
@@ -583,6 +589,7 @@ impl TextStyleDoc {
             max_number: self.column.max_number,
             max_chars: self.column.max_chars,
             divider: self.column.divider.clone(),
+            case: self.font.case.clone(),
         }
     }
 }
@@ -1063,11 +1070,6 @@ fn chart_title_text(chart_json: &Value, chart_type: &str, id: &str) -> Result<St
     }
 }
 
-/// The port of `chart/rendering.py:628-748` (`_wrap_rendered_chart_svg`):
-/// the `<g class="dbt-chart" ...>` handle every chart item carries in
-/// production, with its selection boxes and (for an SVG family) the nested
-/// `<svg>` viewport replaced by `extract_svg_inner_content`'s law. Returns
-/// (wrapped_svg, actual_height).
 /// `compile/models/board/resolved.py::_is_magnitude_colored`: true when
 /// this chart's `color` channel paints a quantitative value — a `gradient`
 /// mode ramp, bare `color: <field>` authoring flagged `quantitative_data`
@@ -1244,6 +1246,11 @@ fn card_layers(
     Ok(layers)
 }
 
+/// The port of `chart/rendering.py:628-748` (`_wrap_rendered_chart_svg`):
+/// the `<g class="dbt-chart" ...>` handle every chart item carries in
+/// production, with its selection boxes and (for an SVG family) the nested
+/// `<svg>` viewport replaced by `extract_svg_inner_content`'s law. Returns
+/// (wrapped_svg, actual_height).
 fn wrap_chart_svg(
     chart_json: &Value,
     chart_type: &str,
@@ -5555,7 +5562,7 @@ mod nested_box_sidecar_tests {
                 "timestamp": {"visible": false, "position": "footer", "align": "left", "y": 14.0, "gap": 12.0,
                               "font": {"family": "Inter", "size": 11.0, "color": "#999999"}},
                 "title": {"min_height": 0.0, "font": {"case": null, "color": null}},
-                "text": {"column": {"max_number": null, "gap": null, "max_chars": null,
+                "text": {"font": {"case": null}, "column": {"max_number": null, "gap": null, "max_chars": null,
                                     "divider": {"visible": false, "color": "#e0e0e0", "width": 1.0, "dasharray": null}}},
                 "variables": style_variables,
                 "frame": {"card_padding": 8.0},

@@ -1233,18 +1233,23 @@ pub fn symbol_legend(
             .set("font-size", size.to_string())
             .set("font-weight", weight.clone())
             .set("fill", crate::selected::ink(entry.recede, color));
-        // A label cut at `labelLimit` shows its full name on hover.
-        let label = match entry.series_key.map(str::trim).filter(|full| *full != entry.label) {
-            Some(full) => Node::TextRuns {
-                attrs: label_attrs,
-                children: vec![Node::Chars(Chars::new(entry.label, Escape::Attr)), Node::Title(Chars::new(full, Escape::Attr))],
-            },
-            None => Node::text(label_attrs, entry.label),
-        };
+        let label = text_revealing_full_name(label_attrs, entry.label, entry.series_key.map(str::trim).filter(|full| *full != entry.label));
         cells.push(Node::group(contract::legend_label_attrs(series_key), vec![label]));
     }
     children.push(Node::group(contract::legend_entries_attrs(), cells));
     Node::group(contract::legend_attrs(aria.as_deref()), children)
+}
+
+/// A text mark painting `shown`; when `full` is the untruncated text it was cut from, the
+/// full text rides a `<title>` so hover reveals it.
+pub(crate) fn text_revealing_full_name(attrs: Attrs, shown: &str, full: Option<&str>) -> Node {
+    match full {
+        Some(full) => Node::TextRuns {
+            attrs,
+            children: vec![Node::Chars(Chars::new(shown, Escape::Attr)), Node::Title(Chars::new(full, Escape::Attr))],
+        },
+        None => Node::text(attrs, shown),
+    }
 }
 
 /// One legend swatch drawn centered on `(cx, cy)`.

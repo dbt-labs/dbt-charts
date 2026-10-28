@@ -44,6 +44,34 @@ class KpiTextSlotStyle(BaseModel):
     )
 
 
+class KpiGlyphSet(BaseModel):
+    """The glyphs a block's `good` direction draws."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    up: Annotated[str | None, Absent("no glyph")] = Field(
+        default=None,
+        description="Glyph drawn when a block with `good` has a positive value.",
+    )
+    down: Annotated[str | None, Absent("no glyph")] = Field(
+        default=None,
+        description="Glyph drawn when a block with `good` has a negative value.",
+    )
+    neutral: Annotated[str | None, Absent("no glyph")] = Field(
+        default=None,
+        description="Glyph drawn when a block with `good` has a value of exactly zero.",
+    )
+
+
+class KpiValueGlyphStyle(KpiTextSlotStyle, KpiGlyphSet):
+    """The headline glyph slot: its font and the glyphs `good` draws."""
+
+    arrow: KpiTextSlotStyle = Field(
+        default_factory=KpiTextSlotStyle,
+        description="Font for the glyphs `good` draws; an authored `glyph` keeps `font`.",
+    )
+
+
 class KpiCompactStyle(BaseModel):
     """When an unformatted KPI headline compacts, and to what."""
 
@@ -79,8 +107,8 @@ class KpiValueStyle(BaseModel):
         default_factory=KpiTextSlotStyle,
         description="Currency or percent sign written around the headline number.",
     )
-    glyph: KpiTextSlotStyle = Field(
-        default_factory=KpiTextSlotStyle,
+    glyph: KpiValueGlyphStyle = Field(
+        default_factory=KpiValueGlyphStyle,
         description="Indicator glyph drawn before the headline value.",
     )
 
@@ -112,7 +140,7 @@ class KpiSupportFontStyle(SingleLineFontStyle):
     )
 
 
-class KpiSupportGlyphStyle(BaseModel):
+class KpiSupportGlyphStyle(KpiGlyphSet):
     """KPI support-row glyph slot."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -165,9 +193,10 @@ class KpiTonesStyle(BaseModel):
     and table read it.
 
     Four tones — positive, negative, warning, info (neutral blue). Tone
-    lives on the block it paints: a KPI's headline value stays neutral by
-    design (NYT/FT convention — the absolute number is direction-neutral),
-    so only ``style.support.tone`` reads this palette for KPI.
+    lives on the block it paints: a KPI's headline value stays neutral unless
+    the chart sets ``good`` (the absolute number is direction-neutral by
+    default), so only ``style.support.tone`` and the sign rules ``good``
+    lowers to read this palette for KPI.
     A support row without a tone uses default chrome colors.
     """
 

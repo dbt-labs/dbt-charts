@@ -136,12 +136,29 @@ class BandPositionStyle(BaseModel):
     )
 
 
+class RulePositionStyle(AnnotationPositionStyle):
+    """A rule's text position; `auto` lets placement move it off the chart's ink."""
+
+    edge: LegendEdge | Literal["auto"] | None = Field(
+        default=None,
+        description="Side of the rule the text sits on; `auto` is top, or another side when that one is taken.",
+    )
+    align: LegendAlign | Literal["auto"] | None = Field(
+        default=None,
+        description="Position along the edge; `auto` is end, or another spot when that one is taken.",
+    )
+
+
 class NotePositionStyle(AnnotationPositionStyle):
     """A note's text position; `auto` follows the value axis."""
 
     edge: LegendEdge | Literal["auto"] | None = Field(
         default=None,
         description="Side of the anchor the text sits on; `auto` is past the value: top on a vertical chart, right on a horizontal one.",
+    )
+    align: LegendAlign | Literal["auto"] | None = Field(
+        default=None,
+        description="Position along the edge; `auto` is center, or another spot when that one is taken.",
     )
 
 
@@ -182,10 +199,15 @@ class AnnotationTextMarkStyle(BaseModel):
     )
     # SkipInheritSlots: the global text mark has no such fields to fall back to;
     # the annotation theme slot sets each one. None means "not set at this tier".
-    halo: Annotated[float | None, SkipInheritSlots()] = Field(
+    halo: Annotated[
+        Annotated[float, Field(ge=0)] | Literal["auto"] | None, SkipInheritSlots()
+    ] = Field(
         default=None,
-        ge=0,
-        description="Width of the canvas-colored outline behind the text, in pixels; 0 draws none.",
+        description=(
+            "Width of the canvas-colored outline behind the text, in pixels; 0 "
+            "draws none. `auto` draws a 3px outline only on text that overlaps a "
+            "bar, point or area fill."
+        ),
     )
     halo_opacity: Annotated[float | None, SkipInheritSlots()] = Field(
         default=None,
@@ -214,6 +236,15 @@ class BandTextMarkStyle(AnnotationTextMarkStyle):
     position: Annotated[BandPositionStyle, SkipInheritSlots()] = Field(
         default_factory=BandPositionStyle,
         description="Which side of the band the text sits on, and where along it.",
+    )
+
+
+class RuleTextMarkStyle(AnnotationTextMarkStyle):
+    """A rule's text."""
+
+    position: Annotated[RulePositionStyle, SkipInheritSlots()] = Field(
+        default_factory=RulePositionStyle,
+        description="Which side of the rule the text sits on, and where along it.",
     )
 
 
@@ -374,8 +405,8 @@ class RuleAnnotationMarksStyle(_AnnotationMarksStyle):
     rule: AnnotationRuleMarkStyle = Field(
         default_factory=AnnotationRuleMarkStyle, description="The line of the rule."
     )
-    text: AnnotationTextMarkStyle = Field(
-        default_factory=AnnotationTextMarkStyle, description="The rule's text."
+    text: RuleTextMarkStyle = Field(
+        default_factory=RuleTextMarkStyle, description="The rule's text."
     )
 
 

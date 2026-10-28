@@ -98,13 +98,15 @@ def effective_measure_domain(
        ``zero_anchor_pinned_floor``, the emitter's own decision, so this
        cannot drift from what is really written; an authored ``scale.values``
        list may not source a domain bound, and when no rung supplies a floor
-       the axis reports where ``zero: true`` auto-fits instead.
+       the axis reports where ``zero: true`` auto-fits instead. The same
+       ``zero: true`` joins 0 to the top edge too, so an unbaked ``domain_max``
+       reads ``max(0, data_hi)`` and an all-negative axis tops out at 0.
     4. **The data extent**, which is what Vega-Lite auto-fits from.
 
     On an unauthored x-axis, branch 2 never fires: resolve bakes no
     ``domain_min``/``domain_max`` for x. Branch 3 fires only for a
     percent-formatted quantitative x, whose zero anchor resolve bakes
-    (``_bake_percent_x_zero``); any other x reduces to "authored domain, else
+    (``_bake_x_zero``); any other x reduces to "authored domain, else
     the data extent" — exactly what Vega-Lite auto-fits an unpinned x-axis
     to. An x-side headroom bake added later would start populating the
     baked edges and invalidate that reduction.
@@ -133,7 +135,14 @@ def effective_measure_domain(
     if data_extent is None:
         return None
     data_lo, data_hi = data_extent
-    hi = axis.domain_max if axis.domain_max is not None else data_hi
+    # `zero: true` joins 0 to both ends of the fitted extent, so an all-negative
+    # axis tops out at 0 (the scatter x scale does the same).
+    if axis.domain_max is not None:
+        hi = axis.domain_max
+    elif is_zero_anchored(axis.scale):
+        hi = max(0.0, data_hi)
+    else:
+        hi = data_hi
     if axis.domain_min is not None:
         lo = axis.domain_min
     elif is_zero_anchored(axis.scale):

@@ -166,6 +166,40 @@ class TestCompactFormats:
     def test_currency_compact(self, value, expected):
         assert format_value(value, "currency_compact") == expected
 
+    @pytest.mark.parametrize("value", [999_960, 999_999.5, 999_499])
+    def test_a_lone_value_rolls_over_to_the_next_prefix(self, value):
+        """`$1,000K` is acceptable only beside other K values; one value steps up."""
+        assert format_value(value, "currency_compact") == "$1M"
+        assert format_value(value, "compact") == "1M"
+        assert format_kpi_parts(value, "currency_compact") == ("$", "1", "M")
+
+    def test_a_lone_bar_data_label_prints_the_next_prefix(self):
+        """The engine's value label for a lone 999,960 reads `$1M`; the ruler's
+        `$1,000K` beside `$500K` is the other values of its set."""
+        from pydantic import TypeAdapter
+
+        from dbt_charts.core.compile.models.chart.normalized import Chart
+
+        from ._engine_render import render_chart_svg
+
+        chart = TypeAdapter(Chart).validate_python(
+            {
+                "id": "t",
+                "type": "bar",
+                "x": "x",
+                "y": "y",
+                "style": {
+                    "marks": {
+                        "bar": {
+                            "labels": {"visible": True, "format": "currency_compact"}
+                        }
+                    }
+                },
+            }
+        )
+        svg = render_chart_svg(chart, [{"x": "a", "y": 999_960.0}])
+        assert ">$1M</text>" in svg
+
     def test_kpi_parts_split_the_magnitude_letter_into_the_suffix(self):
         assert format_kpi_parts(1234567, "compact") == ("", "1.2", "M")
         assert format_kpi_parts(1.2e9, "currency_compact") == ("$", "1.2", "B")

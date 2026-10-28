@@ -96,7 +96,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     category_scale_for,
     series_colors,
 )
-from dbt_charts.core.compile.models.style.theme.legend import LegendEdge
+from dbt_charts.core.compile.models.style.theme.legend import LegendAlign, LegendEdge
 from dbt_charts.core.compile.resolve.chart._annotation_stats import (
     FitError,
     TooFewRows,
@@ -146,6 +146,8 @@ _EPOCH = date(1970, 1, 1)
 _TEXT_GAP = 4.0
 _MIN_AUTO_RADIUS = 6.0
 _AUTO_WRAP_CHARS = 28
+# An `auto` halo's width, px; it draws only on text over a data mark.
+_AUTO_HALO = 3.0
 # The area range, px squared, a scatter's size channel scales its marks over
 # (`SIZE_SCALE_RANGE` in the engine's scatter family).
 _SIZE_SCALE_RANGE = (4.0, 361.0)
@@ -1430,12 +1432,17 @@ def _style(
         )
     if annotation.style is not None:
         marks = merge_onto_base(marks, _with_color_tokens(annotation.style.marks, ctx))
+    position = marks.text.position
+    free = (position.edge == "auto", position.align == "auto")
+    if isinstance(marks, RuleAnnotationMarksStyle):
+        marks = _auto_position(marks, "top", "end")
     if isinstance(marks, BandAnnotationMarksStyle):
-        marks = _auto_position(marks, _band_edge(chart.horizontal, x, y))
+        marks = _auto_position(marks, _band_edge(chart.horizontal, x, y), "center")
     if isinstance(marks, NoteAnnotationMarksStyle) and isinstance(
         theme, NoteAnnotationThemeStyle
     ):
-        marks = _auto_position(marks, _note_edge(annotation, chart.horizontal, theme))
+        edge = _note_edge(annotation, chart.horizontal, theme)
+        marks = _auto_position(marks, edge, "center")
     if isinstance(marks, TrendAnnotationMarksStyle):
         marks = _label_follows_line(marks)
     if series_ink is None:
@@ -1456,6 +1463,7 @@ def _style(
         substitute_tokens(marks, tokens),
         *_wrap(annotation, marks, theme),
         point_radius,
+        free,
     )
 
 
@@ -1496,18 +1504,22 @@ def _note_edge(
 
 
 _PositionedMarks = TypeVar(
-    "_PositionedMarks", BandAnnotationMarksStyle, NoteAnnotationMarksStyle
+    "_PositionedMarks",
+    RuleAnnotationMarksStyle,
+    BandAnnotationMarksStyle,
+    NoteAnnotationMarksStyle,
 )
 
 
 def _auto_position(
-    marks: _PositionedMarks, edge: LegendEdge | None
+    marks: _PositionedMarks, edge: LegendEdge | None, align: LegendAlign
 ) -> _PositionedMarks:
+    """`auto` keys at their preferred side; placement may still move them."""
     position = marks.text.position
     resolved = position.model_copy(
         update={
             "edge": edge if position.edge == "auto" else position.edge,
-            "align": "center" if position.align == "auto" else position.align,
+            "align": align if position.align == "auto" else position.align,
             "overlay": True if position.overlay == "auto" else position.overlay,
         }
     )
@@ -1588,8 +1600,9 @@ def _resolved_style(
     max_width: float | Literal["auto"] | None,
     max_share: float | None,
     point_radius: float | None,
+    free: tuple[bool, bool],
 ) -> ResolvedAnnotationStyle:
-    text = _resolved_text(marks.text, max_width, max_share)
+    text = _resolved_text(marks.text, max_width, max_share, free)
     match marks:
         case RuleAnnotationMarksStyle():
             return ResolvedAnnotationStyle(rule=_resolved_rule(marks), text=text)
@@ -1670,6 +1683,7 @@ def _resolved_text(
     text: AnnotationTextMarkStyle,
     max_width: float | Literal["auto"] | None,
     max_share: float | None,
+    free: tuple[bool, bool],
 ) -> ResolvedAnnotationText:
     box = text.box
     font = ResolvedAnnotationFont(
@@ -1683,10 +1697,12 @@ def _resolved_text(
         line_height=_set(text.font.line_height, "marks.text.font.line_height"),
         color=_set(text.font.color, "marks.text.font.color"),
     )
+    halo = _set(text.halo, "marks.text.halo")
     return ResolvedAnnotationText(
         font=font,
-        halo=_set(text.halo, "marks.text.halo"),
+        halo=_AUTO_HALO if isinstance(halo, str) else halo,
         halo_opacity=_set(text.halo_opacity, "marks.text.halo_opacity"),
+        halo_over_marks=halo == "auto",
         box=ResolvedAnnotationBox(
             visible=_set(box.visible, "marks.text.box.visible"),
             fill=_set(box.fill, "marks.text.box.fill"),
@@ -1700,7 +1716,7 @@ def _resolved_text(
                 width=_set(box.stroke.width, "marks.text.box.stroke.width"),
             ),
         ),
-        position=_position(text.position),
+        position=_position(text.position, free),
         dx=_set(text.dx, "marks.text.dx"),
         dy=_set(text.dy, "marks.text.dy"),
         max_width=_auto_measure(font) if max_width == "auto" else max_width,
@@ -1713,9 +1729,13 @@ def _auto_measure(font: ResolvedAnnotationFont) -> float:
     return measurer.measure("n" * _AUTO_WRAP_CHARS, font.size)
 
 
-def _position(position: AnnotationPositionStyle) -> ResolvedAnnotationPosition:
+def _position(
+    position: AnnotationPositionStyle, free: tuple[bool, bool]
+) -> ResolvedAnnotationPosition:
     return ResolvedAnnotationPosition(
         edge=_set(position.edge, "marks.text.position.edge"),
         align=_set(position.align, "marks.text.position.align"),
         overlay=_set(position.overlay, "marks.text.position.overlay"),
+        auto_edge=free[0],
+        auto_align=free[1],
     )

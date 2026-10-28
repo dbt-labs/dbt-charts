@@ -25,29 +25,34 @@ use crate::frame::{ChartFrame, FrameTitle};
 use measure::FontBook;
 use crate::Payload;
 
+/// A zero-row chart's root, printed and stamped as the view root.
+fn printed_view_root(root: scene::Node) -> Result<String, String> {
+    stamp_view_root(print::print(&[root]))
+}
+
 pub fn render(chart_type: &str, payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     Ok(match chart_type {
-        "bar" => stamp_view_root(bar::render_empty(payload, fonts)?)?,
-        "line" | "area" => stamp_view_root(empty_cartesian::render(
+        "bar" => printed_view_root(bar::render_empty(payload, fonts)?)?,
+        "line" | "area" => printed_view_root(empty_cartesian::render(
             chart_type,
             payload,
             fonts,
             ValueAxis::Linear { horizontal: false, zero_rung: false },
         )?)?,
         // A wide scatter folds its measures into one quantitative value, a linear scale with no rung.
-        "scatter" if wide_measures(payload) => stamp_view_root(empty_cartesian::render(
+        "scatter" if wide_measures(payload) => printed_view_root(empty_cartesian::render(
             chart_type,
             payload,
             fonts,
             ValueAxis::Linear { horizontal: false, zero_rung: false },
         )?)?,
-        "scatter" | "heatmap" => stamp_view_root(empty_cartesian::render(
+        "scatter" | "heatmap" => printed_view_root(empty_cartesian::render(
             chart_type,
             payload,
             fonts,
             ValueAxis::Point { pins_domain: chart_type == "scatter" },
         )?)?,
-        "pie" => pie::render_empty(payload, fonts).and_then(stamp_view_root)?,
+        "pie" => stamp_view_root(pie::render_empty(payload, fonts)?)?,
         // `table::bind` decides its own empty result.
         "table" => table::render(payload, fonts)?,
         // A KPI has no empty drawing: no rows is `ERR-KPI-NO-DATA`.

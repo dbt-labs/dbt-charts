@@ -5,7 +5,7 @@ zero anchor only for a percent-formatted x (``test_scatter_x_zero_anchor.py``).
 So on a non-percent x the function reduces
 to "authored domain, else the data extent" — exactly what Vega-Lite auto-fits
 an unpinned axis to. This is the fact the quantitative-x zero rule
-(``BaselineFeature._apply_x_threshold``) depends on; a future x-side headroom bake
+(``x_threshold_fires`` in ``libs/chart-svg``) depends on; a future x-side headroom bake
 that silently starts populating ``domain_min``/``domain_max`` for x would
 change this reduction, and this test would catch it because it resolves a
 real scatter chart through ``resolve()`` -> ``plan_cartesian()`` ->

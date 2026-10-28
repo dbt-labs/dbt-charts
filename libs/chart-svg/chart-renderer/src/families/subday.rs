@@ -3,7 +3,9 @@
 //! (`time_unit_detect.py`'s `default_subday_label_expr_for`, `default_subday_tick_interval`,
 //! `subday_header_for`).
 
-use super::temporal::{civil_from_days, clock_instants_at, AuthoredTickCadence};
+use super::temporal::{
+    civil_from_days, clock_instants_at, end_labels_fit, interval_axis, AuthoredTickCadence, BareMark, BareTick, LabelPeriods, TimeUnit,
+};
 use crate::common::AxisStyle;
 use crate::time_axis::TimeAxis;
 
@@ -24,17 +26,20 @@ pub struct SubdaySource {
     instants: Vec<i64>,
     zone: Zone,
     timed: bool,
+    /// Every timestamp carries an offset: the clock prints in the board zone.
+    aware: bool,
 }
 
 impl SubdaySource {
     /// The column's own values, as the axis read them: one it did not read, or a short date form, is skipped.
     pub(crate) fn of<'a>(axis: &TimeAxis, values: impl IntoIterator<Item = &'a str>) -> Self {
         let mut instants = Vec::new();
-        let (mut absolute, mut naive, mut timed) = (false, false, false);
+        let (mut absolute, mut naive, mut timed, mut read) = (false, false, false, Vec::new());
         for text in values {
             let Some(instant) = axis.get(text).filter(|_| text.len() >= 10) else { continue };
             instants.push((instant.at * DAY_MS as f64).round() as i64);
             timed |= instant.timed;
+            read.push(text);
             if instant.absolute {
                 absolute = true;
             } else {
@@ -48,7 +53,12 @@ impl SubdaySource {
             (_, true) => Zone::Naive,
             _ => Zone::Absolute,
         };
-        Self { instants, zone, timed }
+        Self { instants, zone, timed, aware: crate::time_zone::all_aware(read) }
+    }
+
+    /// Whether the column's instants print their clock in the board zone.
+    pub fn aware(&self) -> bool {
+        self.aware
     }
 
     /// `_subday_instants`: the sorted distinct instants the axis spans, and whether they read as absolute ones.
@@ -128,7 +138,8 @@ const LADDER: [ClockStep; 10] = [
 ];
 
 impl ClockStep {
-    /// Every aligned instant of `[lo, hi]`, d3's `interval.every(step).range(lo, hi + 1)`.
+    /// Every aligned instant of `[lo, hi]`, d3's `interval.every(step).range(lo, hi + 1)`. Only a naive column
+    /// steps a clock ladder, so its clock is UTC's.
     pub fn instants(self, lo: f64, hi: f64) -> Vec<f64> {
         clock_instants_at(lo, hi, self.unit_ms, self.parent, self.step)
     }
@@ -140,6 +151,19 @@ pub struct SubdayPlan {
     /// The clock-aligned tick step, where the axis keeps no authored cadence.
     pub ladder: Option<ClockStep>,
     vocab: Option<Vocab>,
+    /// Whether the labels name each midnight-bounded day, centered at noon.
+    day_labels: DayLabels,
+    /// The data's first and last instants may be labeled (no authored domain).
+    edge_points: bool,
+}
+
+/// Day labels over timed data: asked for by `labels.time_unit: yearmonthdate`, or left to the axis, which draws them
+/// where its clock ticks are no finer than 12 hours, too sparse to name more than the days.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum DayLabels {
+    Off,
+    Authored,
+    OnDayTicks,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -162,6 +186,8 @@ pub struct AxisSetup<'a> {
     pub domain: Option<[&'a str; 2]>,
     /// `labels.clock`: 24 or 12 (anything else reads the 12-hour clock).
     pub clock: Option<i64>,
+    /// The day labels the authored `labels.time_unit` asks for.
+    pub day_labels: DayLabels,
     /// The chart's outer width, and the width left of it once the endpoint rail is reserved.
     pub outer_width: f64,
     pub available_width: f64,
@@ -192,6 +218,9 @@ impl SubdayPlan {
                 }
             },
         };
+        // An aware column's midnights and hours are the board zone's.
+        let wall = |ms: i64| if source.aware { crate::time_zone::wall_ms(ms).ok() } else { Some(ms) };
+        let (first, last) = (wall(extent.first)?, wall(extent.last)?);
         let vocab = count.zip(ceiling).and_then(|(count, ceiling)| {
             let span_ms = span_ms as f64;
             if span_ms >= SPAN_CEILING_MS as f64
@@ -203,11 +232,11 @@ impl SubdayPlan {
             Some(Vocab {
                 clock24: axis.clock == Some(24),
                 narrow: axis.outer_width < TINY_MAX_PX,
-                date_row: midnight_count(extent.first, extent.last) > 1,
-                hour_boundary: (extent.first + HOUR - 1).div_euclid(HOUR) * HOUR <= extent.last,
+                date_row: midnight_count(first, last) > 1,
+                hour_boundary: (first + HOUR - 1).div_euclid(HOUR) * HOUR <= last,
             })
         });
-        Some(Self { ladder, vocab })
+        Some(Self { ladder, vocab, day_labels: if axis.cadence.is_none() && !axis.authored_values { axis.day_labels } else { DayLabels::Off }, edge_points: axis.domain.is_none() })
     }
 
     /// Whether every label stacks a date row under its text.
@@ -219,6 +248,75 @@ impl SubdayPlan {
     /// axis crosses a midnight.
     pub fn label(&self, at: f64, index: usize) -> Result<Option<(String, Option<String>)>, String> {
         self.vocab.map(|vocab| vocab.label(at, index)).transpose()
+    }
+}
+
+impl SubdayPlan {
+    /// A line's bare axis `ticks` over `domain` (days) with the labels that name more than a tick: a day label per
+    /// midnight-bounded day, centered at noon between midnight ticks, and otherwise the data's first and last
+    /// instants labeled where [`end_labels_fit`] past the outermost tick.
+    pub fn with_points(
+        &self,
+        ticks: Vec<BareTick>,
+        domain: (f64, f64),
+        plot_w: f64,
+        measure: &mut dyn FnMut(&str) -> Result<f64, String>,
+    ) -> Result<Vec<BareTick>, String> {
+        let (lo, hi) = domain;
+        let day_ticks = ticks.len() >= 2 && ticks.windows(2).all(|pair| pair[1].day - pair[0].day >= 0.5);
+        if self.day_labels == DayLabels::Authored || self.day_labels == DayLabels::OnDayTicks && day_ticks {
+            let Some(days) = interval_axis(domain, &|day| day, None, LabelPeriods::unthinned(TimeUnit::YearMonthDate, TimeUnit::YearMonthDate), plot_w, 1, measure)?
+            else {
+                return Ok(ticks);
+            };
+            if days.crowded(domain, plot_w, measure)? {
+                return Ok(ticks);
+            }
+            let at = |day: f64, text: String, row2: String, mark| BareTick {
+                day,
+                frac: (day - lo) / (hi - lo),
+                text,
+                row2: (!row2.is_empty()).then_some(row2),
+                mark,
+            };
+            let boundaries = days.tick_days.iter().map(|&day| at(day, String::new(), String::new(), BareMark::TickOnly));
+            let labels = days.labels.into_iter().zip(&days.label_spans).map(|(tl, &(from, to))| {
+                at((from + to) / 2.0, tl.row1, tl.row2, BareMark::LabelOnly)
+            });
+            return Ok(boundaries.chain(labels).collect());
+        }
+        let (Some(vocab), Some(_), true) = (self.vocab, self.ladder, self.edge_points) else { return Ok(ticks) };
+        let n = ticks.len();
+        if n < 2 || (hi - lo) <= 0.0 {
+            return Ok(ticks);
+        }
+        let mut width = |t: &BareTick| -> Result<f64, String> {
+            Ok(measure(&t.text)?.max(match &t.row2 {
+                Some(row) if !row.is_empty() => measure(row)?,
+                _ => 0.0,
+            }))
+        };
+        let point = |at: f64, with_date: bool, frac: f64| -> Result<BareTick, String> {
+            let (text, row2) = vocab.point_label(at, with_date)?;
+            Ok(BareTick { day: at, frac, text, row2, mark: BareMark::LabelOnly })
+        };
+        let (first, last) = (point(lo, true, 0.0)?, point(hi, false, 1.0)?);
+        let fracs: Vec<f64> = ticks.iter().map(|t| t.frac).collect();
+        let (keep_first, keep_last) = end_labels_fit(
+            plot_w,
+            &fracs,
+            (width(&first)?, width(&last)?),
+            [Some((ticks[0].frac, width(&ticks[0])?)), Some((ticks[n - 1].frac, width(&ticks[n - 1])?))],
+        );
+        let mut out = Vec::with_capacity(n + 2);
+        if keep_first {
+            out.push(first);
+        }
+        out.extend(ticks);
+        if keep_last {
+            out.push(last);
+        }
+        Ok(out)
     }
 }
 
@@ -284,6 +382,19 @@ impl Vocab {
     }
 }
 
+impl Vocab {
+    /// An instant no tick marks: its time to the minute, and the date row where the axis crosses a midnight.
+    fn point_label(self, at: f64, with_date: bool) -> Result<(String, Option<String>), String> {
+        let text = if self.clock24 {
+            clock_text(at, "%H:%M")?
+        } else {
+            format!("{}{}", clock_text(at, "%-I:%M")?, meridiem(at)?)
+        };
+        let row2 = (self.date_row && with_date).then(|| date_text(at, "%b %-d")).transpose()?;
+        Ok((text, row2))
+    }
+}
+
 /// `strftime` of the day `at` falls on, in the board's time locale.
 fn date_text(at: f64, spec: &str) -> Result<String, String> {
     let (y, m, d) = civil_from_days(at.floor() as i64);
@@ -296,8 +407,11 @@ fn date_text(at: f64, spec: &str) -> Result<String, String> {
 #[derive(Clone, Copy, Debug)]
 pub struct Header {
     clock24: bool,
-    with_date: bool,
     seconds: bool,
+    aware: bool,
+    /// The first and last instant (ms), whose days decide whether the header names the date.
+    first: i64,
+    last: i64,
 }
 
 impl Header {
@@ -308,18 +422,25 @@ impl Header {
             return None;
         }
         let seconds = extent.instants.iter().any(|ms| ms.rem_euclid(MINUTE) / 1000 != 0);
-        Some(Self { clock24: clock == Some(24), with_date: extent.first.div_euclid(DAY_MS) != extent.last.div_euclid(DAY_MS), seconds })
+        Some(Self { clock24: clock == Some(24), seconds, aware: source.aware, first: extent.first, last: extent.last })
     }
 
-    /// The header of the row at `at`.
+    /// Whether the rows cross a midnight of the clock they print on.
+    fn with_date(self) -> Result<bool, String> {
+        let day = |ms: i64| Ok::<_, String>(if self.aware { crate::time_zone::wall_ms(ms)? } else { ms }.div_euclid(DAY_MS));
+        Ok(day(self.first)? != day(self.last)?)
+    }
+
+    /// The header of the row at `at`: its wall clock, in the board zone when the column is aware.
     pub fn text(self, at: f64) -> Result<String, String> {
+        let at = if self.aware { crate::time_zone::wall_day(at)? } else { at };
         let seconds = if self.seconds { ":%S" } else { "" };
         let time = if self.clock24 {
             clock_text(at, &format!("%H:%M{seconds}"))?
         } else {
             format!("{}{}", clock_text(at, &format!("%-I:%M{seconds}"))?, meridiem(at)?)
         };
-        if !self.with_date {
+        if !self.with_date()? {
             return Ok(time);
         }
         Ok(format!("{}, {time}", date_text(at, "%-d %b %Y")?))
@@ -358,6 +479,13 @@ pub fn plan_for(
             label_override: authored_format || ax_x.labels.expr.is_some(),
             domain: domain.as_ref().map(|[lo, hi]| [lo.as_str(), hi.as_str()]),
             clock: ax_x.labels.clock,
+            day_labels: match ax_x.labels.time_unit.as_deref() {
+                Some("yearmonthdate") => DayLabels::Authored,
+                None | Some("auto") if crate::families::temporal::interval_labels_allowed(&ax_x.labels, cadence.is_some(), authored_format) => {
+                    DayLabels::OnDayTicks
+                }
+                _ => DayLabels::Off,
+            },
             outer_width: outer,
             available_width: available,
         },
@@ -376,6 +504,7 @@ mod tests {
             label_override: false,
             domain: None,
             clock: Some(12),
+            day_labels: DayLabels::Off,
             outer_width,
             available_width: outer_width,
         }
@@ -425,6 +554,16 @@ mod tests {
     }
 
     #[test]
+    fn an_aware_span_stacks_its_date_row_on_the_board_zones_midnights() {
+        // 2024-03-09 20:00 to 03-11 04:00 in Los Angeles: two local midnights, one UTC midnight.
+        let values = ["2024-03-10T04:00:00Z", "2024-03-10T20:00:00Z", "2024-03-11T11:00:00Z"];
+        let source = source_of(&values);
+        assert!(!SubdayPlan::of(&source, &setup(600.0)).expect("a plan").stacked());
+        let _la = crate::time_zone::zone_scope("America/Los_Angeles");
+        assert!(SubdayPlan::of(&source, &setup(600.0)).expect("a plan").stacked());
+    }
+
+    #[test]
     fn a_narrow_card_reads_numerals_and_the_24_hour_clock_its_own() {
         let _locale = crate::time_locale::en_us_scope();
         let values = day_hours("2024-03-05", 24);
@@ -458,6 +597,24 @@ mod tests {
     }
 
     #[test]
+    fn an_aware_clock_reads_the_board_zone_across_a_dst_change_and_a_naive_one_as_written() {
+        let _locale = crate::time_locale::en_us_scope();
+        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let header = |values: &[String]| {
+            let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+            Header::of(&source_of(&refs), Some(24)).expect("a header")
+        };
+        let aware: Vec<String> = (5..10).map(|h| format!("2024-03-10T{h:02}:00:00Z")).collect();
+        let texts: Vec<String> = aware.iter().map(|v| header(&aware).text(date_text_day(v).unwrap()).unwrap()).collect();
+        assert_eq!(texts, ["00:00", "01:00", "03:00", "04:00", "05:00"]);
+        let naive: Vec<String> = (5..10).map(|h| format!("2024-03-10T{h:02}:00:00")).collect();
+        assert_eq!(header(&naive).text(date_text_day(&naive[2]).unwrap()).unwrap(), "07:00");
+        // 03:00Z to 05:00Z crosses New York's midnight: the header names the date.
+        let midnight: Vec<String> = (3..6).map(|h| format!("2024-03-10T{h:02}:00:00Z")).collect();
+        assert_eq!(header(&midnight).text(date_text_day(&midnight[0]).unwrap()).unwrap(), "9 Mar 2024, 22:00");
+    }
+
+    #[test]
     fn the_tooltip_header_names_the_time_within_two_days_and_the_date_across_midnight() {
         let _locale = crate::time_locale::en_us_scope();
         let within: Vec<&str> = vec!["2024-03-05T09:00:00", "2024-03-05T17:30:00"];
@@ -476,4 +633,75 @@ mod tests {
         let source = source_of(&days);
         assert!(SubdayPlan::of(&source, &setup(600.0)).is_none());
     }
+    fn marks(ticks: &[BareTick]) -> Vec<(BareMark, &str)> {
+        ticks.iter().map(|t| (t.mark, t.text.as_str())).collect()
+    }
+
+    #[test]
+    fn day_labels_over_hourly_data_sit_at_noon_between_midnight_ticks() {
+        let _locale = crate::time_locale::en_us_scope();
+        let values: Vec<String> = (5..8).flat_map(|d| day_hours(&format!("2024-03-0{d}"), 24)).collect();
+        let (mut plan, lo, hi) = plan_over(&values, 600.0);
+        plan.day_labels = DayLabels::Authored;
+        let ticks = super::super::temporal::bare_temporal_ticks((lo, hi), 600.0, None, None, Some(&plan), false).unwrap();
+        let ticks = plan.with_points(ticks, (lo, hi), 600.0, &mut |t| Ok(t.chars().count() as f64 * 6.0)).unwrap();
+        let boundaries: Vec<f64> = ticks.iter().filter(|t| t.mark == BareMark::TickOnly).map(|t| t.day).collect();
+        assert_eq!(boundaries, [lo, lo + 1.0, lo + 2.0]);
+        let labels: Vec<(f64, &str)> = ticks.iter().filter(|t| t.mark == BareMark::LabelOnly).map(|t| (t.day - lo, t.text.as_str())).collect();
+        let clipped_mid = (2.0 + (hi - lo)) / 2.0;
+        assert_eq!(labels.iter().map(|l| l.1).collect::<Vec<_>>(), ["5", "6", "7"]);
+        assert_eq!(labels[..2], [(0.5, "5"), (1.5, "6")]);
+        assert!((labels[2].0 - clipped_mid).abs() < 1e-9, "the last day is centered on its visible slice");
+    }
+
+    /// Forty days of hours leave each day too narrow to name: the day labels give way to the clock axis rather than
+    /// drawing a midnight gridline under every other label.
+    #[test]
+    fn day_labels_too_crowded_to_name_every_day_keep_the_clock_axis() {
+        let _locale = crate::time_locale::en_us_scope();
+        let first = crate::time_axis::date_text_day("2024-03-01").unwrap();
+        let values: Vec<String> = (0..40).flat_map(|d| day_hours(&civil_text(first + d as f64), 24)).collect();
+        let (mut plan, lo, hi) = plan_over(&values, 600.0);
+        plan.day_labels = DayLabels::Authored;
+        let ticks = super::super::temporal::bare_temporal_ticks((lo, hi), 600.0, None, None, Some(&plan), false).unwrap();
+        let ticks = plan.with_points(ticks, (lo, hi), 600.0, &mut |t| Ok(t.chars().count() as f64 * 6.0)).unwrap();
+        assert!(ticks.iter().all(|t| t.mark != BareMark::TickOnly), "{:?}", marks(&ticks));
+    }
+
+    /// Noon day labels replace the authored ticks and hide under `labels.values`, so either override keeps the clock axis.
+    #[test]
+    fn authored_ticks_or_label_values_keep_the_clock_axis_over_day_labels() {
+        let values = day_hours("2024-03-05", 24);
+        let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+        let source = source_of(&refs);
+        let plan = |cadence, authored_values| SubdayPlan::of(&source, &AxisSetup { day_labels: DayLabels::Authored, cadence, authored_values, ..setup(600.0) }).expect("a plan");
+        assert_eq!(plan(None, false).day_labels, DayLabels::Authored);
+        assert_eq!(plan(Some(AuthoredTickCadence::Count(4)), false).day_labels, DayLabels::Off);
+        assert_eq!(plan(None, true).day_labels, DayLabels::Off);
+    }
+
+    /// Five-minute data from `from` with 6-hour ticks.
+    fn five_minute_day(from: &str, width: f64) -> Vec<(BareMark, String)> {
+        let _locale = crate::time_locale::en_us_scope();
+        let values: Vec<String> = (0..).map(|k| 5 * k).take_while(|m| *m < 24 * 60).map(|m| format!("2024-03-05T{:02}:{:02}:00", m / 60, m % 60)).filter(|v| v.as_str() >= from).collect();
+        let (plan, lo, hi) = plan_over(&values, width);
+        let ticks = super::super::temporal::bare_temporal_ticks((lo, hi), width, None, None, Some(&plan), false).unwrap();
+        let ticks = plan.with_points(ticks, (lo, hi), width, &mut |t| Ok(t.chars().count() as f64 * 6.0)).unwrap();
+        ticks.into_iter().map(|t| (t.mark, t.text)).collect()
+    }
+
+    #[test]
+    fn the_first_and_last_instants_are_labeled_with_room_beside_their_neighbor() {
+        let labels = five_minute_day("2024-03-05T00:35:00", 600.0);
+        assert_eq!(labels.first(), Some(&(BareMark::LabelOnly, "12:35am".to_string())));
+        assert_eq!(labels.last(), Some(&(BareMark::LabelOnly, "11:55pm".to_string())));
+        assert_eq!(labels.iter().filter(|(mark, _)| *mark == BareMark::Both).count(), 3);
+    }
+
+    #[test]
+    fn an_end_instant_crowding_its_neighbor_stays_unlabeled() {
+        let labels = five_minute_day("2024-03-05T04:35:00", 600.0);
+        assert_ne!(labels.first().map(|l| l.0), Some(BareMark::LabelOnly));
+    }
+
 }

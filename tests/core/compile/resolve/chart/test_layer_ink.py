@@ -94,6 +94,7 @@ def _inks(
         board_scales=(),
         single_series_fill=palette[0],
         rows_of=lambda _layer: [],
+        field_labels={},
     )
 
 
@@ -129,6 +130,7 @@ def test_a_colored_layer_without_a_palette_raises() -> None:
             board_scales=(),
             single_series_fill="#aaaaaa",
             rows_of=lambda _layer: [{"region": "East"}],
+            field_labels={},
         )
 
 
@@ -143,11 +145,49 @@ def test_a_gradient_layer_takes_no_slot_on_the_shared_scale() -> None:
         board_scales=(),
         single_series_fill="#aaaaaa",
         rows_of=lambda _layer: [{"score": 1}, {"score": 2}],
+        field_labels={},
     )
     assert [i.ink for i in inks] == ["#aaaaaa", "#bbbbbb"]
 
 
 # --- the baked field -------------------------------------------------------
+
+
+def test_a_layer_named_like_an_earlier_layer_wears_its_ink() -> None:
+    """The legend draws one entry per name: a second layer under the same
+    name must paint that entry's ink, not a color no swatch shows."""
+    inks = layer_inks(
+        [_plain(y="plan"), _plain(y="plan")],
+        [None, None],
+        LayerBase(shared=True, series={"Revenue": "#aaaaaa"}),
+        chart_id="c",
+        palette=["#aaaaaa", "#bbbbbb", "#cccccc"],
+        board_scales=(),
+        single_series_fill="#aaaaaa",
+        rows_of=lambda _layer: [],
+        field_labels={},
+    )
+    assert [i.ink for i in inks] == ["#bbbbbb", "#bbbbbb"]
+
+
+def test_a_layer_labeled_like_the_base_wears_the_base_ink() -> None:
+    [ink] = layer_inks(
+        [_plain(y="plan", label="Revenue")],
+        [None],
+        LayerBase(shared=True, series={"Revenue": "#aaaaaa"}),
+        chart_id="c",
+        palette=["#aaaaaa", "#bbbbbb"],
+        board_scales=(),
+        single_series_fill="#aaaaaa",
+        rows_of=lambda _layer: [],
+        field_labels={},
+    )
+    assert ink.ink == "#aaaaaa"
+
+
+def test_a_layer_redrawing_the_base_column_wears_the_base_ink() -> None:
+    chart = _line(MONTHS, layers=[{"type": "scatter", "y": "revenue"}])
+    assert chart.layers[0].ink == PALETTE[0]
 
 
 def test_an_unauthored_layer_takes_the_first_palette_color_the_base_lacks() -> None:
@@ -161,7 +201,10 @@ def test_an_authored_stroke_color_is_the_layer_ink() -> None:
         **CHURN,
         "style": {"marks": {"line": {"stroke": {"color": "#c0ffee"}}}},
     }
-    chart = _line(MONTHS, layers=[layer, {"type": "line", "y": "revenue"}])
+    chart = _line(
+        MONTHS,
+        layers=[layer, {"type": "line", "y": "revenue", "label": "Revenue plan"}],
+    )
     assert chart.layers[0].ink == "#c0ffee"
     assert chart.layers[1].ink == PALETTE[1]
 

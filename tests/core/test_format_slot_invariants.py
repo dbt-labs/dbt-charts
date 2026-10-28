@@ -372,6 +372,25 @@ def _support_table_per_series_entry(shape: str, value: float) -> dict[str, Any]:
     return board
 
 
+def _tooltip_entry(shape: str, value: float) -> dict[str, Any]:
+    fmt, formats = _shape_value(shape)
+    entry: dict[str, Any] = {"column": "v"}
+    if fmt is not None:
+        entry["format"] = fmt
+    chart: dict[str, Any] = {
+        "type": "bar",
+        "query": "q",
+        "x": "channel",
+        "y": "n",
+        "tooltip": [entry],
+    }
+    board = _board({"c": chart}, style_formats=formats)
+    board["queries"] = {
+        "q": {"columns": ["channel", "n", "v"], "values": [["A", 5, value]]}
+    }
+    return board
+
+
 def _table_column_defaults(shape: str, value: float) -> dict[str, Any]:
     """``style.column_defaults.format``, the table-level column fallback."""
     fmt, formats = _shape_value(shape)
@@ -580,6 +599,16 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             bands=_ALL_BANDS,
             build=_support_table_per_series_entry,
             exact_value=True,
+        ),
+        SlotFixture(
+            "tooltip.N.format",
+            covers=(("TooltipField", "format"),),
+            bands=_ALL_BANDS,
+            build=_tooltip_entry,
+            exact_value=True,
+            # The row paints inside the mark's aria-label, not a text node, so
+            # the text-node sign check has nothing to read.
+            checks_sign=False,
         ),
         SlotFixture(
             "style.column_defaults.format",

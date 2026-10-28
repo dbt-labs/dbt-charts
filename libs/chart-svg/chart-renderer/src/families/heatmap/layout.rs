@@ -325,11 +325,11 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     // A time-scale legend's labels follow its drawn length: two ticks below
     // a 200px bar, four at 200.
     let date_label_widths = match &bound.coloring {
-        Coloring::DateGradient { min, max } => {
+        Coloring::DateGradient { min, max, aware } => {
             let widest = |length: f64| -> Result<Option<f64>, String> {
-                let labels = date_legend_values(*min, *max, length, r.legend.values.as_deref())?
+                let labels = date_legend_values(*min, *max, length, r.legend.values.as_deref(), *aware)?
                     .into_iter()
-                    .map(legend_date_label)
+                    .map(|day| legend_date_label(day, *aware))
                     .collect::<Result<Vec<_>, _>>()?;
                 measure.widest_shaped(&labels, leg_label_family, leg_label_size)
             };
@@ -372,7 +372,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             )?)
         }
         // A horizontal date bar's box holds no labels; its ladder is drawn at paint, by length.
-        Coloring::DateGradient { min, max } if gradient && !vertical_gradient => Some(
+        Coloring::DateGradient { min, max, .. } if gradient && !vertical_gradient => Some(
             GradientLegend::over(&r.legend, GradientPaint::Stops(&[]), grad_id, (*min, *max, &[]), &[], fonts)?
                 .with_title(&r.legend, leg_title_text.clone(), fonts)?,
         ),
@@ -557,8 +557,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     // ── Nodes ─────────────────────────────────────────────────────────────
     let mut body = title.nodes(m.title_pos, (plot_left, plot_top));
 
-    if let (true, Coloring::DateGradient { min, max }) = (vertical_gradient, &bound.coloring) {
-        body.push(date_gradient_def(grad_id, *min, *max)?);
+    if let (true, Coloring::DateGradient { min, max, aware }) = (vertical_gradient, &bound.coloring) {
+        body.push(date_gradient_def(grad_id, *min, *max, *aware)?);
     }
 
     // ── Cells ─────────────────────────────────────────────────────────────
@@ -705,8 +705,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     };
     let (leg_x, leg_y) = (plot_left + legend_xy.get().0 + grad_dx, plot_top + legend_xy.get().1 + grad_dy);
     if let Some(legend) = gradient_legend.as_ref().filter(|_| !vertical_gradient) {
-        if let Coloring::DateGradient { min, max } = &bound.coloring {
-            let dates = date_scale(*min, *max);
+        if let Coloring::DateGradient { min, max, aware } = &bound.coloring {
+            let dates = date_scale(*min, *max, *aware);
             body.extend(GradientAt::nodes(&r.legend, None, &dates, (grad_id, leg_title_text), fonts, (plot_w, plot_h), (leg_x, leg_y))?);
         } else {
             body.extend(legend.nodes(leg_x, leg_y, horizontal_gradient_length(legend_edge, legend_floats, plot_w)));
@@ -722,9 +722,9 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 body.extend(legend.nodes(leg_x, leg_y, legend.bar_len(plot_w, plot_h)));
             }
         }
-        (None, Coloring::DateGradient { min, max }) if vertical_gradient => {
-            let ticks = date_legend_values(*min, *max, plot_h, r.legend.values.as_deref())?;
-            let labels = ticks.iter().map(|d| legend_date_label(*d)).collect::<Result<Vec<_>, _>>()?;
+        (None, Coloring::DateGradient { min, max, aware }) if vertical_gradient => {
+            let ticks = date_legend_values(*min, *max, plot_h, r.legend.values.as_deref(), *aware)?;
+            let labels = ticks.iter().map(|d| legend_date_label(*d, *aware)).collect::<Result<Vec<_>, _>>()?;
             let bar = VerticalGradient {
                 gradient_id: grad_id,
                 title: leg_title_text,

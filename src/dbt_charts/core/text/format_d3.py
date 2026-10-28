@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, Literal, TypedDict, cast, get_args
+from zoneinfo import ZoneInfo
 
 import vl_convert
 from importlib_resources import files
@@ -266,6 +267,10 @@ _TIME_LOCALE: ContextVar[TimeLocaleDefinition] = ContextVar(
     "dct_time_locale", default=EN_US_TIME
 )
 _WEEK_START: ContextVar[int] = ContextVar("dct_week_start", default=0)
+# UTC outside a board scope: a value formatted with no board behind it (a
+# direct format_value call) prints as on a board with the default zone.
+_UTC_ZONE = ZoneInfo("UTC")
+_TIME_ZONE: ContextVar[ZoneInfo] = ContextVar("dct_time_zone", default=_UTC_ZONE)
 _LANGUAGE: ContextVar[str] = ContextVar("dct_language", default="en")
 
 
@@ -274,16 +279,19 @@ def regional_scope(
     number: HouseLocale,
     time: TimeLocaleDefinition,
     week_start: int,
+    zone: ZoneInfo,
     language: str = "en",
 ) -> Generator[None]:
     number_token = _NUMBER_LOCALE.set(number)
     time_token = _TIME_LOCALE.set(time)
     week_token = _WEEK_START.set(week_start)
+    zone_token = _TIME_ZONE.set(zone)
     language_token = _LANGUAGE.set(language)
     try:
         yield
     finally:
         _LANGUAGE.reset(language_token)
+        _TIME_ZONE.reset(zone_token)
         _WEEK_START.reset(week_token)
         _TIME_LOCALE.reset(time_token)
         _NUMBER_LOCALE.reset(number_token)
@@ -311,6 +319,18 @@ def active_time_locale() -> TimeLocaleDefinition:
 
 def active_week_start() -> int:
     return _WEEK_START.get()
+
+
+def active_time_zone() -> ZoneInfo:
+    return _TIME_ZONE.get()
+
+
+def in_board_zone(value: datetime) -> datetime:
+    """An aware value is an instant, read on the board zone's wall clock; a
+    naive one is a wall-clock time, as written."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(active_time_zone())
 
 
 def active_language() -> str:

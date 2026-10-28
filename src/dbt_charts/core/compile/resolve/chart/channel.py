@@ -475,6 +475,14 @@ def _project_conditional_formatting_inputs(
 
     outputs: dict[str, Callable[[ConditionalRule], str | None]]
     if chart_type == "kpi":
+        for column, entry in cf.items():
+            if any(r.glyph is not None or r.tone is not None for r in entry.when):
+                raise ValueError(
+                    f"conditional_formatting rules on '{column}' set glyph or tone. "
+                    "The headline takes its arrow and tone from the chart-root "
+                    "`good:`; hand-set glyph or tone rules belong on the column "
+                    "feeding `support.value`."
+                )
         outputs = {
             "background": lambda r: r.background,
             "color": lambda r: r.font.color if r.font is not None else None,

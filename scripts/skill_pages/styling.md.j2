@@ -88,6 +88,8 @@ A palette is named, never spelled as colors.
 - Tones: {{ palettes('tone') }}.
 - Scaffolds {{ palettes('scaffold') }}, addressed by step number from lightest to darkest (`dbt-grays.8`, or `chrome[8]` to follow the theme's scaffold); stops of `dbt-grays`: {{ stops('dbt-grays') }}. `white` and `black` name the endpoints.
 
+A color request ("make Created orange") pins `category.<hue>` under `style.charts.category_colors`, never a raw hex. If the palette lacks the hue, say so and name the nearest alias it does have.
+
 ## KPI
 
 {{ keys('s_kpi') }}

@@ -3,18 +3,35 @@
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from dbt_charts.core.compile.models.primitives import Regional
 from dbt_charts.core.render.chart.time_unit_detect import (
     detect_time_unit,
     normalize_labeled_temporal,
 )
+from dbt_charts.core.text.format_d3 import regional_scope
 
 from ._svg_render import render_board_to_svg
 
 
 class TestDetectTimeUnit:
+    # ── aware instants read in the board zone ───────────────────────────
+
+    def test_aware_instants_read_on_the_board_zones_wall_clock(self) -> None:
+        pacific_midnights = [
+            "2024-01-01T08:00:00Z",
+            "2024-02-01T08:00:00Z",
+            "2024-03-01T08:00:00Z",
+        ]
+        assert detect_time_unit(pacific_midnights) is None, "08:00 in UTC is sub-daily"
+        utc = Regional()
+        zone = ZoneInfo("America/Los_Angeles")
+        with regional_scope(utc.format_locale, utc.time_locale, utc.week_start, zone):
+            assert detect_time_unit(pacific_midnights) == "yearmonth"
+
     # ── year ────────────────────────────────────────────────────────────
 
     def test_year_iso_dates(self) -> None:

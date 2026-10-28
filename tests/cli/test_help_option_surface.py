@@ -46,13 +46,8 @@ def _squashed(text: str) -> str:
             [
                 "--project-dir",
                 "--force",
-                "--yes",
-                "--skills",
-                "--mcp",
-                "--vscode",
-                "--cursor",
             ],
-            ["--agents-md", "--claude-md"],
+            ["--yes", "--skills", "--mcp", "--vscode", "--cursor"],
             id="init",
         ),
         pytest.param(

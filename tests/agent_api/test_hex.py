@@ -24,6 +24,8 @@ from dbt_charts.agent_api.hex_project import (
 )
 from dbt_charts.agent_api.source_bundle import BundleError
 
+from .._outline import missing_options, tile_block
+
 TOKEN = "tok-abc-123"
 PID = "11111111-2222-3333-4444-555555555555"
 BASE = "https://hex.test/api/v1"
@@ -733,7 +735,135 @@ def test_outline_describes_each_cell_type(
     outline = (tmp_path / "b/outline.md").read_text()
 
     head = outline.index(f"`{cell['cellId']}`")
-    described = outline[head:].splitlines()[1:]
+    described = outline[head:].splitlines()[2:]  # skip heading and config
     assert [
         line.removeprefix("    - ") for line in described[: len(expected)]
     ] == expected
+
+
+def _option_cells() -> list[dict[str, Any]]:
+    return [
+        _cell(
+            "CHARTV2",
+            "ch1",
+            "Chart",
+            chartSpec={
+                "type": "layered",
+                "title": "Revenue by month",
+                "colorMappings": {"Revenue": "#00ff00"},
+                "layers": [
+                    {
+                        "stacking": "stacked",
+                        "xAxis": {"dataFrameColumn": "x", "sort": "desc"},
+                        "series": [
+                            {
+                                "type": "bar",
+                                "dataFrameColumns": ["y"],
+                                "axis": {"aggregate": "sum", "scale": "log"},
+                                "color": "#ff0000",
+                                "label": "Total",
+                            }
+                        ],
+                    }
+                ],
+            },
+            brandNew="on",
+        ),
+        _cell(
+            "EXPLORE",
+            "ex1",
+            "Explore",
+            dataframe="df",
+            spec={"fields": [], "limit": 50},
+            pageSize=25,
+        ),
+        _cell(
+            "METRIC",
+            "m1",
+            None,
+            title="M",
+            showComparison=False,
+            comparisonFormat="percent",
+            **{k: v for k, v in _VALUE.items() if k != "comparisonColumn"},
+            comparisonColumn=None,
+        ),
+        _cell(
+            "PIVOT",
+            "pv1",
+            "Pivot",
+            dataframeName="df",
+            pivotConfig={"values": [], "rows": ["region"], "showTotals": True},
+        ),
+        _cell("TABLE_DISPLAY", "td1", "Table", dataFrameVariableName="df", pageSize=10),
+        _cell(
+            "FILTER",
+            "f1",
+            "Filter",
+            dataframeName="df",
+            filters={"filters": [{"column": "region"}], "operator": "AND"},
+        ),
+        _cell(
+            "INPUT",
+            "in1",
+            None,
+            inputType="DROPDOWN",
+            name="period",
+            defaultValue="Monthly",
+            options={"valueOptions": ["Monthly"], "multiSelect": True},
+            width="half",
+        ),
+        _cell("SQL", "q1", "Q", source="select 1", resultVariableName="df", cache=60),
+    ]
+
+
+def _outline_for(http: Any, tmp_path: Path, cells: list[dict[str, Any]]) -> str:
+    http[("POST", "/projects/export")] = _export_with(
+        cells, [_tab(*({"type": "CELL", "cellId": c["cellId"]} for c in cells))]
+    )
+    import_hex(PID, out=tmp_path / "b", base_url=BASE, force=False)
+    return (tmp_path / "b/outline.md").read_text()
+
+
+def test_every_cell_names_where_its_config_lives(http: Any, tmp_path: Path) -> None:
+    outline = _outline_for(http, tmp_path, _option_cells())
+
+    assert "config: project.hex.yaml#cells[ch1]" in tile_block(outline, "ch1")
+
+
+def test_every_raw_cell_option_is_in_the_outline_or_the_styling_set(
+    http: Any, tmp_path: Path
+) -> None:
+    cells = _option_cells()
+    outline = _outline_for(http, tmp_path, cells)
+    handled = module.CELL_SHOWN_KEYS | module.CELL_STYLING_KEYS
+    for cell in cells:
+        block = tile_block(outline, cell["cellId"])
+        config = cell["config"]
+        assert missing_options(config, block, handled.__contains__) == [], cell
+        for key, shown in module.CELL_PARTLY_SHOWN.items():
+            for sub in config.get(key, {}):
+                if sub not in shown | module.CELL_STYLING_KEYS:
+                    assert f'"{sub}":' in block, (cell["cellId"], key, sub)
+
+
+def test_chart_series_and_axis_options_reach_the_outline_without_colors(
+    http: Any, tmp_path: Path
+) -> None:
+    block = tile_block(_outline_for(http, tmp_path, _option_cells()), "ch1")
+
+    for option in ("stacking: stacked", "sort: desc", "scale: log", "label: Total"):
+        assert option in block
+    assert "#ff0000" not in block and "colorMappings" not in block
+    assert "brandNew: on" in block
+
+
+def test_unlisted_cell_option_still_reaches_the_outline(
+    http: Any, tmp_path: Path
+) -> None:
+    cells = [
+        _cell("TABLE_DISPLAY", "td1", "T", dataFrameVariableName="df", extra=1),
+        *_option_cells()[:1],
+        _cell("SQL", "q", None, source="select 1", resultVariableName="df"),
+    ]
+
+    assert "extra: 1" in tile_block(_outline_for(http, tmp_path, cells), "td1")

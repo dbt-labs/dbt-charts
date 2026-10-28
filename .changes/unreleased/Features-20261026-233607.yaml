@@ -1,0 +1,3 @@
+kind: Features
+body: "Line and bar value labels accept `visible: last` to label only each series' most recent value."
+time: 2026-10-26T23:36:07.82174-07:00

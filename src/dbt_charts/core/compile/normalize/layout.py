@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 )
 from dbt_charts.core.compile.models.cache import INHERIT_CACHE, CachePatch
 from dbt_charts.core.compile.models.chart.authored import (
+    CalloutChart,
     _BaseChartFields,
 )
 from dbt_charts.core.compile.models.chart.normalized import Chart
@@ -567,7 +568,7 @@ def _resolve_single_item(
         )
 
     # Pre-validated chart patch (typed inline chart from rows/cols)
-    if isinstance(item, _BaseChartFields):
+    if isinstance(item, _BaseChartFields | CalloutChart):
         if used_chart_ids is None:
             used_chart_ids = set(charts.keys())
         # exclude_unset: only what the author wrote, so an omitted field stays
@@ -589,7 +590,10 @@ def _resolve_single_item(
             link_open=links.open,
         )
         return LayoutItem(
-            type="chart", chart=chart, source_path=source_path, visible=item.visible
+            type="chart",
+            chart=chart,
+            source_path=source_path,
+            visible=authored_visible(item),
         )
 
     raise CompilationError(f"Invalid layout item type: {type(item)}")

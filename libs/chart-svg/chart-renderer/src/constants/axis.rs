@@ -7,3 +7,4 @@ pub const SPARSE_CEILING_PX: f64 = 90.0;
 pub const MAX_ORDINAL_BUCKETS: usize = 60;
 pub const GRADIENT_NICE_TICK_COUNT: usize = 6;
 pub const AUTO_TICK_TARGET: usize = 6;
+pub const EDGE_LABEL_MIN_GAP_RATIO: f64 = 0.45;

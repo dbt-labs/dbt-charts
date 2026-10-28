@@ -23,6 +23,8 @@ from typing import Any
 from dbt_charts.agent_api.source_bundle import (
     BundleError,
     SourceBundle,
+    compact,
+    option_lines,
     public_url,
     slug,
     staged_bundle,
@@ -178,25 +180,65 @@ def _layout_positions(layout_xml: str) -> dict[str, list[tuple[str, str, str]]]:
     return pages
 
 
-_NOT_SETTINGS = {
-    "id",
-    "kind",
-    "controlId",
-    "controlType",
-    "columnId",
-    "source",
-    "filters",
-    "state",
-    "name",
-    "colorAssignment",
-}
+# Filter-spec keys that are identity or resolved into the line's column name.
+_NOT_SETTINGS = frozenset({"id", "columnId", "source", "state"})
+# Element keys shown in the tile heading or as their own lines, not as options.
+NON_OPTION_KEYS = frozenset({"id", "kind", "name", "controlId", "controlType", "body"})
+# Element keys the dbt Charts theme owns: layout polish, fonts, fills, colors.
+STYLING_KEYS = frozenset(
+    {
+        "align",
+        "appearance",
+        "borderRadius",
+        "colorAssignment",
+        "fillColor",
+        "fontColor",
+        "fontWeight",
+        "labelConfig",
+        "layout",
+        "size",
+        "spacing",
+        "style",
+        "verticalAlign",
+    }
+)
+# Hex colors, theme refs, palettes and widths inside values that carry meaning
+# (axis scales, conditional-format rules, column formats).
+NESTED_STYLING_KEYS = frozenset(
+    {
+        "align",
+        "backgroundColor",
+        "color",
+        "customColors",
+        "fontStyle",
+        "fontWeight",
+        "headerWidths",
+        "scheme",
+        "textWrap",
+        "width",
+    }
+)
+# Handled by dedicated lines in `_describe`.
+_OWN_LINES = frozenset(
+    {"source", "xAxis", "yAxis", "color", "value", "filters", "description", "columns"}
+)
 
 
 def _settings(spec: dict[str, Any]) -> str:
-    """Every filter/control setting that changes results: mode, values, window, preset."""
+    """Every filter setting that changes results: kind, mode, values, window, preset."""
     return " ".join(
         f"{k}={json.dumps(v)}" for k, v in spec.items() if k not in _NOT_SETTINGS
     )
+
+
+def _rest(spec: dict[str, Any], shown: frozenset[str]) -> str:
+    """Compact JSON of a spec's other options, colors and widths removed."""
+    lines = option_lines(
+        {k: v for k, v in spec.items() if k not in shown},
+        dropped=NESTED_STYLING_KEYS.__contains__,
+        nested_dropped=NESTED_STYLING_KEYS,
+    )
+    return " ".join(lines)
 
 
 def _describe(
@@ -215,31 +257,69 @@ def _describe(
         formula = c.get("formula", cid)
         return f"{label} = {formula}" if label else formula
 
-    lines = [f"sql: queries/{el['id']}.sql"] if el["id"] in sql_ids else []
+    def with_rest(head: str, spec: dict[str, Any], shown: set[str]) -> str:
+        rest = _rest(spec, frozenset(shown))
+        return f"{head} [{rest}]" if rest else head
+
+    lines = [f"config: {RAW}#elements[{el['id']}]"]
+    if el["id"] in sql_ids:
+        lines.append(f"sql: queries/{el['id']}.sql")
     src = el.get("source", {})
-    if src.get("elementId"):
+    if el["kind"] == "control":
+        vsrc = src
+        if vsrc.get("kind") == "source":
+            owner = by_id.get(vsrc["source"].get("elementId"), {})
+            owner_cols = {c["id"]: c for c in owner.get("columns", [])}
+            formula = owner_cols.get(vsrc.get("columnId"), {}).get(
+                "formula", vsrc.get("columnId")
+            )
+            lines.append(
+                with_rest(
+                    f"source: values from {_title(owner)}: {formula}",
+                    vsrc,
+                    {"kind", "source", "columnId"},
+                )
+            )
+        elif vsrc:
+            lines.append(f"source: {compact(vsrc)}")
+    elif src.get("elementId"):
         source_title = _title(by_id.get(src["elementId"], {})) or src["elementId"]
-        lines.append(f"source: {source_title} ({src['elementId']})")
+        lines.append(
+            with_rest(
+                f"source: {source_title} ({src['elementId']})",
+                src,
+                {"kind", "elementId"},
+            )
+        )
     elif src.get("kind") == "join":
         lines.append(f"source: join {json.dumps(src.get('joins'))}")
+    elif src:
+        lines.append(f"source: {compact(src)}")
     for axis in ("xAxis", "yAxis"):
         spec = el.get(axis)
         if spec:
             ids = spec.get("columnIds") or [spec.get("columnId")]
-            lines.append(f"{axis}: " + "; ".join(col(i) for i in ids if i))
-    if el.get("color", {}).get("column"):
-        lines.append(f"color: {col(el['color']['column'])}")
-    if el.get("value"):
-        lines.append(f"value: {col(el['value'])}")
+            head = f"{axis}: " + "; ".join(col(i) for i in ids if i)
+            lines.append(with_rest(head, spec, {"columnId", "columnIds"}))
+    if el.get("color"):
+        column = col(el["color"]["column"]) if el["color"].get("column") else ""
+        lines.append(with_rest(f"color: {column}", el["color"], {"column"}))
+    if el["kind"] != "control" and el.get("value"):
+        lines.append(with_rest(f"value: {col(el['value'])}", el["value"], {"columnId"}))
     for f in el.get("filters", []) if el["kind"] != "control" else []:
         state = " (disabled)" if f.get("state") == "disabled" else ""
         lines.append(f"filter{state}: {col(f.get('columnId', ''))} {_settings(f)}")
     desc = el.get("description")
     if isinstance(desc, dict) and desc.get("text"):
         lines.append(f"description: {desc['text'].strip()}")
-    if el["kind"] == "table":
-        shown = [col(c["id"]) for c in el.get("columns", []) if not c.get("hidden")]
-        lines.append(f"columns ({len(shown)} shown): " + "; ".join(shown[:40]))
+    elif isinstance(desc, str) and desc.strip():
+        lines.append(f"description: {desc.strip()}")
+    if el.get("columns"):
+        lines.append("columns:")
+    for c in el.get("columns", []):
+        label = f"{c['name']} = " if c.get("name") else ""
+        head = f"  - {c['id']}: {label}{c['formula']}"
+        lines.append(with_rest(head, c, {"id", "name", "formula"}))
     if el["kind"] == "control":
         targets = sorted(
             {
@@ -247,21 +327,17 @@ def _describe(
                 for f in el.get("filters", [])
             }
         )
-        values_from = ""
-        vsrc = el.get("source", {})
-        if vsrc.get("kind") == "source":
-            owner = by_id.get(vsrc["source"].get("elementId"), {})
-            owner_cols = {c["id"]: c for c in owner.get("columns", [])}
-            formula = owner_cols.get(vsrc.get("columnId"), {}).get(
-                "formula", vsrc.get("columnId")
-            )
-            values_from = f" values from {_title(owner)}: {formula}"
-        lines.append(
-            f"control {el.get('controlId')}: {el.get('controlType')} "
-            f"{_settings(el)}{values_from} targets={targets}"
-        )
+        lines.append(f"control {el.get('controlId')}: {el.get('controlType')}")
+        lines.append(f"filters: targets={targets}")
     if el["kind"] == "text":
         lines.append("text: " + re.sub(r"\s+", " ", el.get("body", "")))
+    # A control's `value` is a setting, not a column reference.
+    own = _OWN_LINES - {"value"} if el["kind"] == "control" else _OWN_LINES
+    lines += option_lines(
+        {k: v for k, v in el.items() if k not in NON_OPTION_KEYS | own},
+        dropped=STYLING_KEYS.__contains__,
+        nested_dropped=NESTED_STYLING_KEYS,
+    )
     if el["id"] in controls:
         lines.append(f"filtered by controls: {', '.join(controls[el['id']])}")
     return lines

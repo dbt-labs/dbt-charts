@@ -13,5 +13,11 @@ window.dbtControlsEnglish = {
     "previous_month": "Previous month",
     "next_month": "Next month",
     "calendar_header": "{month} {year}",
-    "calendar_day": "{weekday}, {day} {month} {year}"
+    "calendar_day": "{weekday}, {day} {month} {year}",
+    "sort_ascending": "Sort ascending",
+    "sort_descending": "Sort descending",
+    "clear_sort": "Clear sort",
+    "search": "Search",
+    "search_values": "Search values",
+    "page_range": "{first}–{last} / {total}"
 };

@@ -57,6 +57,7 @@ from dbt_charts.core.compile.resolve.chart._table import (
     _EMPTY_TABLE_COLUMN_LINKS,
     _resolve_table,
 )
+from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart.label_data import (
     default_slice_label_template,
     pie_presentation_fingerprint,
@@ -458,6 +459,7 @@ def _resolve_pie(
             ),
         ),
         **_shared_kwargs(normalized, display_text, chart_local_style_context),
+        tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         chart_type="pie",
         theta=normalized.theta,
         field_labels=normalized.field_labels,

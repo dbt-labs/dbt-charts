@@ -1,7 +1,7 @@
 """Tests for the chart.support_table primitive (authoring + validation).
 
 These tests describe the v1 authoring surface behavior — entry shape,
-grammar rules G1..G5, validation rules from the chart.support_table spec §3.
+grammar rules G1..G5, and the chart.support_table validation rules.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def test_support_table_source_entry_requires_source():
 
 
 def test_support_table_source_entry_rejects_unknown_keys():
-    # `extra=forbid` — no `column:`, `field:`, no inline styling per spec §2.3
+    # `extra=forbid` — no `column:`, `field:`, no inline styling
     with pytest.raises(ValidationError):
         ChartSupportTableSource.model_validate({"source": "revenue", "column": "x"})
     with pytest.raises(ValidationError):
@@ -175,7 +175,7 @@ def test_chart_patch_support_table_optional():
 
 
 # =============================================================================
-# CHART-TYPE VALIDATION (spec §1, §3.1 — unsupported chart types)
+# CHART-TYPE VALIDATION (unsupported chart types)
 # =============================================================================
 
 
@@ -222,7 +222,7 @@ def test_chart_patch_support_table_rejects_unsupported_chart_types(chart_type, p
 # =============================================================================
 # ROW COUNT — NOT capped at 40 (CRITICAL 1 regression)
 # =============================================================================
-# Spec §3.1 caps x-axis TICK count (dataset cardinality) at 40, not entry
+# The x-axis TICK count (dataset cardinality) is capped at 40, not the entry
 # count. The authoring surface places no ceiling on entries. 40 rows of
 # support_table on a 5-tick chart is valid.
 
@@ -241,7 +241,7 @@ def test_chart_patch_support_table_allows_many_rows_at_authoring_time():
 
 
 # =============================================================================
-# DUPLICATE ENTRIES — CRITICAL 4 (spec §3.2)
+# DUPLICATE ENTRIES — CRITICAL 4
 # =============================================================================
 
 
@@ -367,7 +367,7 @@ def test_chart_support_table_container_accepts_plain_list():
 
 
 # =============================================================================
-# PER_SERIES ENTRY SHAPE — new §2.x (third shape)
+# PER_SERIES ENTRY SHAPE (third shape)
 # =============================================================================
 
 

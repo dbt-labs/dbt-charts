@@ -1,12 +1,11 @@
-"""Render-time capture of series labels the endpoint-label rail had to cut.
+"""Render-time capture of series labels the endpoint-label rail had to cut or strip.
 
-``measure_label_pane_width`` (in ``emitters/_endpoint_rail.py``) caps the rail
-at a fraction of the chart's slot
-(``constants.marks.ENDPOINT_LABEL_MAX_WIDTH_FRACTION``); Vega then ellipsizes
-any name wider than that at the pane's mark limit. The cut itself is silent —
-the rail just reads ``Enterprise Cloud Data Pl…`` — so this module is the seam
-that lets the warning detector see it. The measure site records at the exact
-point it decides to cap, mirroring ``axis_title_truncation``.
+The rail caps its labels at a fraction of the chart's width
+(``constants.marks.ENDPOINT_LABEL_MAX_WIDTH_FRACTION``) and ellipsizes any name
+wider than that; a label carrying a value that fits neither one line nor two
+loses the value instead. Both are silent in the SVG, so this module is the seam
+that lets the warning detectors see them. The engine records each label with the
+fate the rail gave it, mirroring ``axis_title_truncation``.
 
 The sink is a ``ContextVar`` set around the spec-generation pass inside
 ``_collect_render_warnings``. When no sink is open, recording is a no-op.
@@ -26,18 +25,24 @@ from pydantic import BaseModel, ConfigDict
 # and has no color key at all.
 SeriesLabelSource = Literal["color", "y"]
 
+# What the rail did to the label: cut the name with an ellipsis, or drop the value
+# because neither one line nor two held "value name".
+SeriesLabelFate = Literal["truncated", "value_dropped"]
+
 
 class SeriesLabelTruncation(BaseModel):
-    """A series label the rail cap will ellipsize.
+    """A series label the rail cut or stripped of its value.
 
     ``authored_field`` is the YAML key the author wrote, so the squiggle lands
-    on a line that exists. ``series_name`` is the full value before Vega cuts it.
+    on a line that exists. ``series_name`` is the full name before any cut.
+    ``fate`` says what happened to it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     authored_field: SeriesLabelSource
     series_name: str
+    fate: SeriesLabelFate
 
 
 # Stack of active collection sinks (innermost last); empty when no render pass
@@ -72,9 +77,12 @@ def reset_series_label_truncations(chart_id: str) -> None:
 
 
 def record_series_label_truncations(
-    chart_id: str, authored_field: SeriesLabelSource, series_names: list[str]
+    chart_id: str,
+    authored_field: SeriesLabelSource,
+    series_names: list[str],
+    fate: SeriesLabelFate,
 ) -> None:
-    """Record the cut series labels into the innermost open sink, if any.
+    """Record the series labels the rail cut or stripped into the innermost open sink, if any.
 
     No-op when no sink is open (e.g. during the main SVG render, where the
     vega-spec pass has not opened a sink yet).
@@ -84,6 +92,8 @@ def record_series_label_truncations(
         return
     sink = sinks[-1]
     sink.setdefault(chart_id, []).extend(
-        SeriesLabelTruncation(authored_field=authored_field, series_name=name)
+        SeriesLabelTruncation(
+            authored_field=authored_field, series_name=name, fate=fate
+        )
         for name in series_names
     )

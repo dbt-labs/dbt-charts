@@ -93,4 +93,10 @@ audience:
 2. Import it in `diagnostics/__init__.py` if any other module needs the constant
    (side-effect registration happens on import either way).
 3. The docs site's Error/Warning Reference pages render from `REGISTRY`, so
-   there is nothing to regenerate.
+   they need nothing regenerated.
+4. For a `compile`- or `render`-domain code, regenerate the Rust code tables:
+   `uv run python libs/chart-svg/src/chart_svg_dev/gen_diagnostic_codes.py`.
+   `test_generated_codes_are_up_to_date` in
+   `libs/chart-svg/tests/test_diagnostic_codes.py` fails while
+   `libs/chart-svg/chart-renderer/src/codes.rs` and
+   `libs/chart-svg/compile/src/codes.rs` are stale.

@@ -128,6 +128,42 @@ class TestTextFormat:
         assert "x: month" in result
         assert "y: revenue" in result
 
+    def test_wide_y_names_authored_measures_not_synthetic_field(self) -> None:
+        """A wide ``y: [a, b]`` line lists the authored measures, never the
+        synthetic fold column an agent cannot map back to anything.
+        """
+        from dbt_charts.core.compile import compile as compile_board
+
+        board_yaml = """\
+title: Probe
+charts:
+  c:
+    query: q
+    type: line
+    x: month
+    y:
+      - created
+      - completed
+queries:
+  q:
+    sql: SELECT * FROM t
+    source: test_source
+rows:
+  - c
+"""
+        result = compile_board(board_yaml)
+        assert result.success and result.board is not None, result.errors
+        data = [
+            {"month": "Jan", "created": 5, "completed": 3},
+            {"month": "Feb", "created": 8, "completed": 6},
+        ]
+        executor = _make_compiled_executor(result, data)
+
+        output = render(result.board, executor, format="text").output
+
+        assert "y: created, completed" in output
+        assert "__dbt_charts_wide_value__" not in output
+
     def test_row_count(self, make_chart):
         """Data summary includes row count."""
         data = [{"x": i, "y": i * 10} for i in range(5)]

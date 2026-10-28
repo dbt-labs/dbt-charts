@@ -26,7 +26,7 @@ _BOARD_STYLE = resolve_style(get_theme_style())
 
 
 class TestTableColumnsStyleCellPadding:
-    """cell_padding stays as scalar per ADR-010 (no padding_x/padding_y pairs)."""
+    """cell_padding stays as scalar (no padding_x/padding_y pairs)."""
 
     def test_cell_padding_scalar_present(self):
         """cell_padding is a float on TableColumnsStyle (no padding_x/y split)."""

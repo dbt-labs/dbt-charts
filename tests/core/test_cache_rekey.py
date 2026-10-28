@@ -123,6 +123,86 @@ class TestCrossRaceCacheDedup:
         assert registry_b.execute.call_count == 0
 
 
+BOARD_YAML_REFS = """
+title: Refs
+queries:
+  upstream:
+    sql: SELECT 1 AS n
+    source: test_profile
+  downstream:
+    sql: SELECT n FROM ({{ queries.upstream }}) AS u
+    source: test_profile
+charts:
+  c:
+    query: downstream
+    type: kpi
+    value: n
+rows:
+  - c
+"""
+
+
+class TestReferenceExpansionKeysCache:
+    """Editing an upstream query must bust the downstream query's cache entry."""
+
+    def test_upstream_edit_misses_downstream_cache(
+        self, in_memory_cache: TrivialDuckDBCache, monkeypatch: pytest.MonkeyPatch
+    ):
+        from dbt_charts.core.execute import Executor
+
+        # The file-source path writes the cache under the authored query, which
+        # is where a stale downstream entry used to survive.
+        monkeypatch.setattr(Executor, "_has_file_support", True)
+        monkeypatch.setattr(
+            Executor, "_resolve_file_source", lambda self, q: Mock(files={})
+        )
+
+        def run(yaml_text: str, rows: list[dict[str, int]]) -> tuple[list, Mock]:
+            compiled = compile(yaml_text)
+            materializer = Mock()
+            materializer.materialize_and_run.return_value = (rows, {})
+            executor = Executor(
+                compiled.board,
+                adapter_registry=Mock(),
+                query_registry=compiled.query_registry,
+                result_cache=in_memory_cache,
+            )
+            monkeypatch.setattr(
+                Executor, "_get_file_materializer", lambda self: materializer
+            )
+            return executor.execute_query("downstream"), materializer
+
+        old_rows, _ = run(BOARD_YAML_REFS, [{"n": 1}])
+        edited = BOARD_YAML_REFS.replace("SELECT 1 AS n", "SELECT 2 AS n")
+        new_rows, materializer = run(edited, [{"n": 2}])
+
+        assert old_rows == [{"n": 1}]
+        assert new_rows == [{"n": 2}]
+        assert materializer.materialize_and_run.call_count == 1
+
+    def test_upstream_dbt_ref_manifest_change_changes_downstream_key(self) -> None:
+        from dbt_charts.core.execute import Executor
+
+        compiled = compile(
+            BOARD_YAML_REFS.replace("SELECT 1 AS n", "SELECT n FROM {{ ref('x') }}")
+        )
+
+        def key_for(manifest_version: str) -> tuple[str, str, str]:
+            registry = Mock()
+            registry.resolve_query_source.return_value = {}
+            registry.dbt_manifest_version.return_value = manifest_version
+            executor = Executor(
+                compiled.board,
+                adapter_registry=registry,
+                query_registry=compiled.query_registry,
+            )
+            return executor._cache_key(
+                "downstream", executor._get_query("downstream"), {}
+            )
+
+        assert key_for("v1") != key_for("v2")
+
+
 class TestSourceHashInvalidation:
     """Different source → different source_hash → cache miss."""
 

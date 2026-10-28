@@ -13,6 +13,7 @@ import csv
 import io
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -23,6 +24,8 @@ from typing import Any
 from dbt_charts.agent_api.source_bundle import (
     BundleError,
     SourceBundle,
+    compact,
+    option_lines,
     public_url,
     slug,
     staged_bundle,
@@ -162,30 +165,204 @@ DYNAMIC_FIELD_KINDS = {
     "measure": "custom measure",
     "dimension": "custom dimension",
 }
+DYNAMIC_FIELD_SHOWN = frozenset(
+    {*DYNAMIC_FIELD_KINDS, "expression", "based_on", "_kind_hint", "_type_hint"}
+)
+# Query keys that are identity, or already shown as their own outline lines.
+NON_OPTION_KEYS = frozenset(
+    {
+        "id",
+        "client_id",
+        "slug",
+        "url",
+        "share_url",
+        "expanded_share_url",
+        "can",
+        "has_table_calculations",
+        "result_maker_id",
+        "model",
+        "view",
+        "fields",
+        "pivots",
+        "filters",
+        "filter_config",
+        "dynamic_fields",
+        "source_queries",
+        "vis_config",
+        "query_timezone",
+    }
+)
+# Dashboard-element keys that are identity, internal, or shown as the tile heading.
+ELEMENT_NON_OPTION_KEYS = frozenset(
+    {
+        "alert_count",
+        "body_text_as_html",
+        "can",
+        "dashboard_id",
+        "dashboard_layout_id",
+        "edit_uri",
+        "id",
+        "look",
+        "look_id",
+        "lookml_link_id",
+        "merge_result_id",
+        "note_display",
+        "note_state",
+        "note_text_as_html",
+        "query",
+        "query_id",
+        "result_maker",
+        "result_maker_id",
+        "rich_content_json",
+        "subtitle_text_as_html",
+        "title",
+        "title_text_as_html",
+        "type",
+    }
+)
+# vis_config keys the dbt Charts theme owns: fonts, color, widths, borders,
+# padding, wrapping, and Looker's own bookkeeping. Meaning-bearing keys stay.
+STYLING_KEYS = frozenset(
+    {
+        "axis_label_color",
+        "cell_color",
+        "cell_font_size",
+        "cell_font_style",
+        "cell_font_weight",
+        "cell_text_alignment",
+        "color_application",
+        "color_picker",
+        "colors",
+        "column_group_spacing_ratio",
+        "custom_color",
+        "custom_color_enabled",
+        "defaults_version",
+        "down_color",
+        "focus_tooltip",
+        "font_size",
+        "header_font_bold",
+        "header_font_italic",
+        "header_font_size",
+        "header_text_alignment",
+        "label_color",
+        "labelColor",
+        "labelColorEnabled",
+        "label_density",
+        "label_rotation",
+        "minimum_column_width",
+        "modern2026",
+        "outline_color",
+        "outline_weight",
+        "point_style",
+        "query_fields",
+        "rows_font_size",
+        "series_colors",
+        "series_column_widths",
+        "series_point_styles",
+        "series_text_format",
+        "show_sql_query_menu_options",
+        "size_to_fit",
+        "table_column_hover_highlight_enable",
+        "table_custom_border_color",
+        "table_custom_border_enable",
+        "table_custom_border_style",
+        "table_custom_border_width",
+        "table_theme",
+        "total_color",
+        "totals_color",
+        "truncate_column_names",
+        "truncate_header",
+        "truncate_text",
+        "up_color",
+        "x_axis_gridlines",
+        "x_axis_zoom",
+        "y_axis_gridlines",
+        "y_axis_tick_density",
+        "y_axis_tick_density_custom",
+        "y_axis_zoom",
+    }
+)
+STYLING_PREFIXES = ("style_", "title_placement_")
+# Hex values and palette references inside values that otherwise carry meaning
+# (conditional-format rules, data bars, axes).
+NESTED_STYLING_KEYS = frozenset(
+    {
+        "background_color",
+        "font_color",
+        "color_application",
+        "palette",
+        "custom_colors",
+        "color",
+    }
+)
+TOTALS_MARKER = re.compile(r"^-- sql for creating ", re.MULTILINE)
+
+
+def is_styling_key(key: str) -> bool:
+    return key in STYLING_KEYS or key.startswith(STYLING_PREFIXES)
 
 
 def _dynamic_field_line(field: dict[str, Any], tile: str) -> str:
     for key, label in DYNAMIC_FIELD_KINDS.items():
         if key in field:
             detail = field.get("expression") or field.get("based_on")
-            return f"{label}: {field[key]}" + (f" = {detail}" if detail else "")
+            extras = "".join(
+                f" {k}={compact(v)}"
+                for k, v in field.items()
+                if k not in DYNAMIC_FIELD_SHOWN and v not in (None, "", [], {})
+            )
+            return (
+                f"{label}: {field[key]}" + (f" = {detail}" if detail else "") + extras
+            )
     raise BundleError(f"tile {tile}: unrecognized dynamic field {sorted(field)}")
 
 
+def _query_option_lines(query: dict[str, Any], tile: str) -> list[str]:
+    """Dynamic fields, then every other option a reader of the tile would see."""
+    # Looker sends dynamic_fields as a JSON-encoded string.
+    lines = [
+        _dynamic_field_line(field, tile)
+        for field in json.loads(query.get("dynamic_fields") or "[]")
+    ]
+    lines += option_lines(
+        {k: v for k, v in query.items() if k not in NON_OPTION_KEYS},
+        dropped=lambda _: False,
+        nested_dropped=NESTED_STYLING_KEYS,
+    )
+    lines += option_lines(
+        query["vis_config"] or {},
+        dropped=is_styling_key,
+        nested_dropped=NESTED_STYLING_KEYS,
+    )
+    return lines
+
+
 def _tile_lines(
-    element: dict[str, Any], query: dict[str, Any] | None, tile: str
+    element: dict[str, Any],
+    query: dict[str, Any] | None,
+    tile: str,
+    *,
+    totals: bool,
 ) -> list[str]:
-    lines: list[str] = []
+    lines = option_lines(
+        {k: v for k, v in element.items() if k not in ELEMENT_NON_OPTION_KEYS},
+        dropped=lambda _: False,
+        nested_dropped=NESTED_STYLING_KEYS,
+    )
     if query is not None:
         lines.append(f"queries/{query['id']}.sql ({query['model']}/{query['view']})")
+        if totals:
+            lines.append(
+                f"queries/{query['id']}.totals.sql (total and pivot-column "
+                "statements, run separately)"
+            )
+        lines.append(f"config: queries/{query['id']}.json")
         lines.append("fields: " + ", ".join(query["fields"]))
         if query["pivots"]:
             lines.append("pivots: " + ", ".join(query["pivots"]))
-        # Looker sends dynamic_fields as a JSON-encoded string.
-        for field in json.loads(query["dynamic_fields"] or "[]"):
-            lines.append(_dynamic_field_line(field, tile))
         for field, value in (query["filters"] or {}).items():
             lines.append(f"filter: {field} = {value}")
+        lines += _query_option_lines(query, tile)
     # result_maker is null on text tiles; listen is null on unlinked filterables.
     for filterable in (element.get("result_maker") or {}).get("filterables") or []:
         for listen in filterable.get("listen") or []:
@@ -241,6 +418,7 @@ def _fill_bundle(
     url: str,
 ) -> None:
     queries: dict[str, dict[str, Any]] = {}
+    with_totals: set[str] = set()
 
     def fetch_query(query_id: str) -> dict[str, Any]:
         if query_id not in queries:
@@ -248,9 +426,15 @@ def _fill_bundle(
             bundle.write(
                 f"queries/{query_id}.json", json.dumps(queries[query_id], indent=2)
             )
-            bundle.write(
-                f"queries/{query_id}.sql", looker.get(f"/queries/{query_id}/run/sql")
-            )
+            sql = looker.get(f"/queries/{query_id}/run/sql").decode()
+            if marker := TOTALS_MARKER.search(sql):
+                bundle.write(
+                    f"queries/{query_id}.sql", sql[: marker.start()].rstrip() + "\n"
+                )
+                bundle.write(f"queries/{query_id}.totals.sql", sql[marker.start() :])
+                with_totals.add(query_id)
+            else:
+                bundle.write(f"queries/{query_id}.sql", sql)
         return queries[query_id]
 
     placed = _active_components(dashboard)
@@ -279,7 +463,9 @@ def _fill_bundle(
                 "saved-Look tiles are not supported"
             )
         query = fetch_query(element["query_id"]) if element["query_id"] else None
-        lines = _tile_lines(element, query, tile)
+        lines = _tile_lines(
+            element, query, tile, totals=element["query_id"] in with_totals
+        )
         if element.get("merge_result_id"):
             merge_id = element["merge_result_id"]
             merge = looker.get_json(f"/merge_queries/{merge_id}")
@@ -292,12 +478,19 @@ def _fill_bundle(
                     "cannot be fetched through the Looker API"
                 )
             bundle.write(f"queries/merge-{merge_id}.json", json.dumps(merge, indent=2))
-            lines.append(f"merged results {merge_id}:")
+            lines.append(f"merged results {merge_id}: queries/merge-{merge_id}.json")
             for source in merge["source_queries"]:
                 fetch_query(source["query_id"])
-                lines.append(
-                    f"  - source query {source['query_id']} {source['name']!r}: queries/{source['query_id']}.sql"
+                joined = (
+                    f" merge_fields={compact(source['merge_fields'])}"
+                    if source.get("merge_fields")
+                    else ""
                 )
+                lines.append(
+                    f"  - source query {source['query_id']} {source['name']!r}: "
+                    f"queries/{source['query_id']}.sql{joined}"
+                )
+            lines += _query_option_lines(merge, tile)
         if query is not None and "single_value" in (
             element["type"],
             (query["vis_config"] or {}).get("type"),

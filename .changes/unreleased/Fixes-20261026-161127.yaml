@@ -1,0 +1,3 @@
+kind: Fixes
+body: A callout written inline in rows or cols now compiles instead of failing with ERR-INTERNAL.
+time: 2026-10-26T16:11:27.728066-07:00

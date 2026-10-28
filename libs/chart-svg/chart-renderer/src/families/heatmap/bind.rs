@@ -64,7 +64,7 @@ pub(crate) struct Dimension {
 pub(crate) enum Coloring {
     Gradient { min: f64, max: f64, ticks: Vec<f64>, scale: Option<ContinuousColor> },
     /// A date-like color: Vega's time scale over its `heatmap` range.
-    DateGradient { min: f64, max: f64 },
+    DateGradient { min: f64, max: f64, aware: bool },
     Categories(CategoryScale),
 }
 
@@ -133,8 +133,8 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let y_domain = dimension_domain(&r.y)?;
 
     let coloring = if kind == ColorKind::Dates {
-        let (min, max) = date_color_extent(&rows, &r.color)?;
-        Coloring::DateGradient { min, max }
+        let (min, max, aware) = date_color_extent(&rows, &r.color)?;
+        Coloring::DateGradient { min, max, aware }
     } else if kind == ColorKind::Categories {
         Coloring::Categories(color_categories(&r, &rows)?)
     } else {
@@ -194,7 +194,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
                 max: *max,
             },
             Coloring::Categories(scale) => CellFill::Categories(scale),
-            Coloring::DateGradient { min, max } => CellFill::Dates { min: *min, max: *max },
+            Coloring::DateGradient { min, max, .. } => CellFill::Dates { min: *min, max: *max },
         },
         tooltip: tooltip_value_title(&r)?.zip(r.style.tooltip_format.as_ref()).filter(|_| !r.wide_native_aria),
         native_aria: r.wide_native_aria,
@@ -236,10 +236,10 @@ fn symbol_ladder(r: &HeatmapResolved, coloring: &Coloring, labels: &[String]) ->
                 Ok((label.clone(), GradientColors::new(&r.style.color_gradient, scale.as_ref()).at(*min, *max, tick)?))
             })
             .collect(),
-        Coloring::DateGradient { min, max } => {
-            date_legend_ticks(*min, *max, SYMBOL_LEGEND_TICK_COUNT, r.legend.values.as_deref())?
+        Coloring::DateGradient { min, max, aware } => {
+            date_legend_ticks(*min, *max, SYMBOL_LEGEND_TICK_COUNT, r.legend.values.as_deref(), *aware)?
                 .into_iter()
-                .map(|day| Ok((legend_date_label(day)?, date_color(*min, *max, day))))
+                .map(|day| Ok((legend_date_label(day, *aware)?, date_color(*min, *max, day))))
                 .collect()
         }
         Coloring::Categories(_) => Ok(Vec::new()),

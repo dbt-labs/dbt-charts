@@ -1,0 +1,3 @@
+kind: Features
+body: Temporal x-axis labels center on the period they name; first and last data points get labels on on-tick axes
+time: 2026-10-23T14:10:07.663396-07:00

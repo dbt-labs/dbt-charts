@@ -79,7 +79,10 @@ def _rail_rows(ends: tuple[int, int, int]) -> list[dict[str, Any]]:
 
 
 def test_rail_label_truncation_lands_in_the_series_label_sink() -> None:
-    name = "Accessories - Average order value across every region"
+    name = (
+        "Accessories - Average order value across every region, channel "
+        "and fiscal quarter reported"
+    )
     rows = [
         {"month": m, "region": r, "revenue": v}
         for m in ("Jan", "Feb")
@@ -87,8 +90,14 @@ def test_rail_label_truncation_lands_in_the_series_label_sink() -> None:
     ]
     with _sinks() as sinks:
         _native(_RAIL_LINE, rows, width=600.0, height=320.0)
+    # Too long for two lines at the rail's cap even without its value: the end of line
+    # two is cut and the values stay.
     assert sinks.series_labels == {
-        "c1": [SeriesLabelTruncation(authored_field="color", series_name=name)]
+        "c1": [
+            SeriesLabelTruncation(
+                authored_field="color", series_name=name, fate="truncated"
+            ),
+        ]
     }
 
 

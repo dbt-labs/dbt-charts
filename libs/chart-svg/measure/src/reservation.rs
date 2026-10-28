@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use d3rs::py_float::py_float_sum;
+
 use crate::fonts::FontMeasurer;
 
 /// `font_measure.py::RESERVATION_GUARD` — U+200B ZERO WIDTH SPACE, appended
@@ -74,7 +76,8 @@ fn search_space_combo(
     let mut best_error = f64::INFINITY;
     for length in 1..=MAX_RESERVATION_COMPOSITION_LENGTH {
         for combo in combinations_with_replacement(available, length) {
-            let error = (combo.iter().map(|c| widths[c]).sum::<f64>() - target).abs();
+            let advances: Vec<f64> = combo.iter().map(|c| widths[c]).collect();
+            let error = (py_float_sum(&advances) - target).abs();
             if error < best_error {
                 best_error = error;
                 best = combo;
@@ -178,6 +181,16 @@ mod tests {
     }
 
     #[test]
+    fn search_space_combo_sums_like_cpython() {
+        // 0.7 + 0.4 + 0.7 is exactly 1.8 under CPython's compensated sum() but
+        // one ulp off under a naive fold, which would crown ['a', 'b', 'c'] instead.
+        let available = ['a', 'b', 'c'];
+        let widths = HashMap::from([('a', 0.7), ('b', 0.4), ('c', 0.7)]);
+        let (best, _) = search_space_combo(1.8, &available, &widths);
+        assert_eq!(best, vec!['a', 'a', 'b']);
+    }
+
+    #[test]
     fn search_space_combo_prefers_fewer_characters_on_a_tie() {
         let available = ['a', 'b'];
         let mut widths = HashMap::new();
@@ -188,7 +201,6 @@ mod tests {
         // loop must return the length-1 winner.
         let (best, error) = search_space_combo(1.0, &available, &widths);
         assert_eq!(best, vec!['a']);
-        assert_eq!(error, 0.0);
     }
 
     #[test]

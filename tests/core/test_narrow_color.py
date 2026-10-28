@@ -1,4 +1,4 @@
-"""TDD tests for narrow-color task (ADR-007).
+"""TDD tests for narrow-color task.
 
 Covers:
 - Chart color narrowed to str | None (bare column ref only)

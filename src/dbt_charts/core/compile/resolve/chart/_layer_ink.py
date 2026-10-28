@@ -1,8 +1,10 @@
 """The ink each layer of a layered chart paints, decided once at resolve.
 
-A layered chart draws its base and layers on one shared color scale. An
-unauthored layer takes the first palette color the board, the base and the
-layers before it have not taken. Annotations, the VL overlay emitter and the
+A layered chart draws its base and layers on one shared color scale, keyed
+by legend entry name. An unauthored layer whose name is already on the scale
+wears that entry's color, since the legend draws one swatch per name; any
+other unauthored layer takes the first palette color the board, the base and
+the layers before it have not taken. Annotations, the VL overlay emitter and the
 engine all read the result off `ResolvedLayer`; none picks a slot itself.
 """
 
@@ -16,6 +18,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
     CategoryColorScale,
     color_at,
 )
+from dbt_charts.core.compile.resolve.chart._axes import _series_display_name
 from dbt_charts.core.compile.resolve.chart._chart_rows import ChartRows
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import ERR_LAYERED_NO_PALETTE
@@ -36,8 +39,9 @@ class LayerInk:
 class LayerBase:
     """What the base chart puts on the shared scale ahead of its layers.
 
-    ``series`` maps each color the base paints to its series value (a colorless
-    base's one fill is keyed by its y column). ``shared`` is False when the base
+    ``series`` maps each legend entry the base draws to its color: one per
+    value of its categorical ``color``, or a colorless base's display name to
+    its one fill. ``shared`` is False when the base
     has a color channel the layers cannot join (a gradient or conditional
     scale): its layers then paint the base's single-series fill.
     """
@@ -56,6 +60,7 @@ def layer_inks(
     board_scales: Sequence[CategoryColorScale],
     single_series_fill: str,
     rows_of: Callable[[CartesianLayer], ChartRows],
+    field_labels: Mapping[str, str],
 ) -> tuple[LayerInk, ...]:
     """Each layer's ink, in authored order; ``authored[i]`` is layer i's own color.
 
@@ -96,8 +101,14 @@ def layer_inks(
             inks.append(LayerInk(own or single_series_fill, {}, True))
             continue
         if layer.color is None:
+            name = _series_display_name(layer.y, layer.label, field_labels)
+            if own is None and name in claimed:
+                inks.append(LayerInk(claimed[name], {}, False))
+                continue
             ink = own or (free() if base.shared and palette else single_series_fill)
             painted.append(ink)
+            if name is not None:
+                claimed.setdefault(name, ink)
             inks.append(LayerInk(ink, {}, False))
             continue
         if not palette:

@@ -84,6 +84,15 @@ class TestControlsRuntimeSource:
         ) in script
         assert "if (!params.toString()) {" in script
 
+    def test_runtime_bundles_the_table_runtime_ahead_of_the_controls(self):
+        """mount() hands every table to window.dbtTableRuntime, so it must exist first."""
+        script = controls_runtime_source()
+
+        assert script.index("window.dbtTableRuntime = ") < script.index(
+            "window.dbtTableRuntime.mount(scope)"
+        )
+        assert "/*{#" not in script
+
 
 class _MockExecutor:
     """Minimal executor duck-type for disabled-state tests."""

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Point and bubble maps no longer draw empty placeholder shapes for basemap regions the projection drops.
+time: 2026-10-26T16:57:55.749254-07:00

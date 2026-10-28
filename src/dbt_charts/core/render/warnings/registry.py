@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
+import dbt_charts.core.render.warnings.annotation_note_moved as annotation_note_moved
 import dbt_charts.core.render.warnings.annotation_nothing_drawn as annotation_nothing_drawn
 import dbt_charts.core.render.warnings.area_unstacked_reads_as_stacked as area_unstacked_reads_as_stacked
 import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collision
@@ -95,6 +96,7 @@ logger = logging.getLogger(__name__)
 # Reads ctx.geometry_warnings or another render-at-a-real-width WarningContext
 # field; silent for a chart that never laid out (see module docstring).
 _GEOMETRY_DETECTORS: list[ModuleType] = [
+    annotation_note_moved,
     axis_label_collision,
     axis_title_truncated,
     bar_band_width_too_narrow,

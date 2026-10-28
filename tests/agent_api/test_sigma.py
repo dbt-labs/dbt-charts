@@ -24,6 +24,8 @@ from dbt_charts.agent_api.sigma import (
 )
 from dbt_charts.agent_api.source_bundle import BundleError
 
+from .._outline import missing_options, tile_block
+
 SECRET = "sekrit-client-secret"
 TOKEN = "tok-abc-123"
 BASE = "https://aws-api.sigma.test"
@@ -35,10 +37,16 @@ LAYOUT = """<?xml version="1.0" encoding="utf-8"?>
   <Element elementId="k1" gridColumn="1 / 13" gridRow="5 / 9"/>
   <Element elementId="ctl" gridColumn="1 / 5" gridRow="1 / 3"/>
   <Element elementId="t1" gridColumn="1 / 25" gridRow="9 / 10"/>
+  <Element elementId="bar" gridColumn="1 / 13" gridRow="10 / 14"/>
+  <Element elementId="tbl" gridColumn="13 / 25" gridRow="10 / 14"/>
+  <Element elementId="piv" gridColumn="1 / 13" gridRow="14 / 18"/>
+  <Element elementId="ctl2" gridColumn="1 / 5" gridRow="18 / 20"/>
+  <Element elementId="btn" gridColumn="13 / 25" gridRow="14 / 16"/>
 </Page>
 <Page type="grid" id="p2">
   <Element elementId="h1" gridColumn="1 / 25" gridRow="1 / 5"/>
   <Element elementId="hk" gridColumn="1 / 5" gridRow="5 / 7"/>
+  <Element elementId="kp2" gridColumn="5 / 9" gridRow="5 / 7"/>
 </Page>
 """
 ELEMENTS: list[dict[str, Any]] = [
@@ -57,6 +65,10 @@ ELEMENTS: list[dict[str, Any]] = [
         "controlId": "Region",
         "controlType": "list",
         "values": ["EMEA"],
+        "value": 12,
+        "unit": "month",
+        "mode": "last",
+        "colorAssignment": {"palette": {"scheme": "category20b"}},
         "filters": [{"source": {"kind": "table", "elementId": "c1"}, "columnId": "m"}],
         "source": {
             "kind": "source",
@@ -67,6 +79,160 @@ ELEMENTS: list[dict[str, Any]] = [
     {"id": "t1", "kind": "text", "body": "Notes\n  here"},
     {"id": "h1", "kind": "table", "name": "Prep", "columns": []},
     {"id": "hk", "kind": "kpi-chart", "name": "Hidden kpi"},
+    {
+        "id": "bar",
+        "kind": "bar-chart",
+        "name": {"text": "Cost by vendor", "align": "center", "fontWeight": "bold"},
+        "source": {"kind": "table", "elementId": "h1", "groupingId": "g1"},
+        "columns": [
+            {"id": "d", "formula": "[Day]", "name": "Date"},
+            {
+                "id": "cost",
+                "formula": "Sum([Cost])",
+                "name": "Cost",
+                "format": {"kind": "number", "formatString": "$.2~S"},
+            },
+            {"id": "sec", "formula": "[Secret]", "hidden": True},
+        ],
+        "xAxis": {
+            "columnId": "d",
+            "format": {"title": {"text": "Usage Date"}},
+            "sort": {"by": "cost", "direction": "ascending", "aggregation": "max"},
+        },
+        "yAxis": {
+            "columnIds": ["cost"],
+            "format": {
+                "labels": "hidden",
+                "scale": {"type": "linear", "zero": True, "domain": {"max": 1}},
+                "title": {"text": "Cost (USD)"},
+            },
+        },
+        "color": {
+            "by": "category",
+            "column": "d",
+            "scheme": ["#1976D2"],
+            "customColors": [{"value": "openai", "color": "#1976d2"}],
+        },
+        "orientation": "horizontal",
+        "legend": {"position": "top"},
+        "dataLabel": {
+            "labels": "shown",
+            "anchor": "end",
+            "totals": {"display": "shown"},
+        },
+        "tooltip": {"columns": [{"id": "d"}]},
+        "description": {"text": "Not all keys are mapped", "position": "tooltip"},
+    },
+    {
+        "id": "tbl",
+        "kind": "table",
+        "name": "Cost by email",
+        "source": {"kind": "table", "elementId": "h1"},
+        "columns": [
+            {
+                "id": "c1",
+                "formula": "[overview/Email]",
+                "name": "Email",
+                "style": {"width": 206, "textWrap": "wrap"},
+            },
+            {
+                "id": "c2",
+                "formula": "Sum([Cost USD])",
+                "name": "Cost USD",
+                "format": {"kind": "number", "formatString": "$,.0f"},
+            },
+        ],
+        "order": ["c1", "c2"],
+        "sort": [{"columnId": "c2", "direction": "descending", "nulls": "last"}],
+        "groupings": [
+            {
+                "id": "g1",
+                "groupBy": ["c1"],
+                "calculations": ["c2"],
+                "sort": [{"columnId": "c2", "direction": "descending"}],
+            }
+        ],
+        "summary": ["c2"],
+        "conditionalFormats": [
+            {
+                "type": "single",
+                "columnIds": ["c2"],
+                "condition": ">",
+                "value": 0.5,
+                "style": {
+                    "backgroundColor": "#FF9D99",
+                    "color": "#FFFFFF",
+                    "bold": True,
+                },
+            },
+            {
+                "type": "scale",
+                "columnIds": ["c2"],
+                "scheme": ["#e15658", "#ffffff"],
+                "domain": {"max": 1, "mid": 0.5},
+                "order": "descending",
+            },
+        ],
+    },
+    {
+        "id": "piv",
+        "kind": "pivot-table",
+        "name": "Monthly cost",
+        "source": {"kind": "table", "elementId": "h1"},
+        "columns": [{"id": "dept", "formula": "[Department]", "name": "Dept"}],
+        "rowsBy": [{"columnId": "dept"}],
+        "columnsBy": [{"columnId": "dept", "sort": {"direction": "descending"}}],
+        "values": ["dept"],
+        "totals": {"totalPosition": "first"},
+        "axisTotals": [
+            {
+                "axisId": "grand-column-total",
+                "cellFormats": [{"columnId": "dept", "align": "center"}],
+            }
+        ],
+        "display": {
+            "rowLayout": "separate-columns",
+            "headerWidths": {"columns": [{"columnId": "dept", "width": 185}]},
+        },
+    },
+    {
+        "id": "ctl2",
+        "kind": "control",
+        "controlId": "Granularity",
+        "controlType": "segmented",
+        "source": {"kind": "manual", "valueType": "text", "values": ["Monthly"]},
+    },
+    {
+        "id": "btn",
+        "kind": "button",
+        "text": "Reset filters",
+        "appearance": "filled",
+        "fillColor": "#ffffff",
+        "fontColor": {"kind": "theme", "ref": "colors-fillPrimary"},
+        "borderRadius": "pill",
+        "size": "small",
+        "actions": [
+            {
+                "id": "a1",
+                "trigger": "on-click",
+                "effects": [
+                    {
+                        "effect": "clear-control",
+                        "target": {"type": "page", "page": "p1", "element": "ctl"},
+                    }
+                ],
+            }
+        ],
+    },
+    {
+        "id": "kp2",
+        "kind": "kpi-chart",
+        "name": "Spend",
+        "periodComparison": "month",
+        "layout": {"anchor": "center", "titleOrient": "bottom"},
+        "columns": [{"id": "v", "formula": "Sum([Cost])", "name": "Cost"}],
+        "value": {"columnId": "v"},
+    },
 ]
 CONTENTS = {
     "workbookId": WID,
@@ -407,3 +573,75 @@ def test_list_entry_missing_a_field_names_it(http: Any) -> None:
 
     with pytest.raises(BundleError, match="'name'"):
         list_sigma_workbooks(None, base_url=BASE)
+
+
+def test_source_json_marks_the_outline_version(http: Any, tmp_path: Path) -> None:
+    out = _run(tmp_path)
+
+    assert json.loads((out / "source.json").read_text())["outline_version"] == 2
+
+
+def test_every_tile_names_where_its_full_config_lives(
+    http: Any, tmp_path: Path
+) -> None:
+    outline = (_run(tmp_path) / "outline.md").read_text()
+
+    assert "config: contents.json#elements[bar]" in tile_block(outline, "bar")
+    assert "config: contents.json#elements[ctl]" in tile_block(outline, "ctl")
+
+
+def test_outline_carries_formulas_formats_sorts_and_rules_without_colors(
+    http: Any, tmp_path: Path
+) -> None:
+    outline = (_run(tmp_path) / "outline.md").read_text()
+    bar = tile_block(outline, "bar")
+    table = tile_block(outline, "tbl")
+
+    assert "Cost = Sum([Cost])" in bar and "$.2~S" in bar
+    assert "[Secret]" in bar and "hidden" in bar
+    assert "Cost (USD)" in bar and "Usage Date" in bar
+    assert "orientation: horizontal" in bar
+    assert "dataLabel: " in bar and "legend: " in bar
+    assert '"direction":"ascending"' in bar
+    assert "Email = [overview/Email]" in table and "$,.0f" in table
+    assert '"condition":">","value":0.5' in table and '"bold":true' in table
+    assert "groupings: " in table and "sort: " in table and "order: " in table
+    assert "periodComparison: month" in tile_block(outline, "kp2")
+    assert "clear-control" in tile_block(outline, "btn")
+    control = tile_block(outline, "ctl")
+    assert (
+        "value: 12" in control and "unit: month" in control and "mode: last" in control
+    )
+    assert "category20b" not in outline
+    assert '"values":["Monthly"]' in tile_block(outline, "ctl2")
+    for hex_color in ("#FF9D99", "#e15658", "#1976D2", "#1976d2", "#FFFFFF"):
+        assert hex_color not in outline
+    assert "textWrap" not in outline and "headerWidths" not in outline
+
+
+def test_every_raw_element_option_is_in_the_outline_or_the_styling_set(
+    http: Any, tmp_path: Path
+) -> None:
+    outline = (_run(tmp_path) / "outline.md").read_text()
+
+    for element in ELEMENTS:
+        assert (
+            missing_options(
+                element,
+                tile_block(outline, element["id"]),
+                lambda k: k in module.STYLING_KEYS | module.NON_OPTION_KEYS,
+            )
+            == []
+        ), element["id"]
+
+
+def test_unlisted_element_option_still_reaches_the_outline(
+    http: Any, tmp_path: Path
+) -> None:
+    ELEMENTS[0]["brandNewOption"] = "on"
+    try:
+        outline = (_run(tmp_path) / "outline.md").read_text()
+    finally:
+        del ELEMENTS[0]["brandNewOption"]
+
+    assert "brandNewOption: on" in tile_block(outline, "c1")

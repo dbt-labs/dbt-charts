@@ -511,7 +511,7 @@ fn bind_marks(
         match &coloring {
             Some(Coloring::Gradient { scale, .. }) if scale.is_dated() => {
                 let day = row.get(field).and_then(date_cell_day).expect("filtered above");
-                if affixed { affixed_date_label(day) } else { crate::families::heatmap::legend_date_label(day) }
+                if affixed { affixed_date_label(day, scale.is_aware()) } else { crate::families::heatmap::legend_date_label(day, scale.is_aware()) }
             }
             Some(Coloring::Gradient { .. }) => crate::number_locale::d3_format("", number(row, field, "color")?),
             _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
@@ -590,6 +590,8 @@ fn bind_marks(
         }
     }
     let other_types: Vec<VegaType> = others.iter().map(|f| infer_vega_type(all_rows, f)).collect();
+    let aware_others: std::collections::HashMap<&str, bool> =
+        others.iter().map(|f| (f.as_ref(), crate::families::heatmap::date_column_aware(rows, f))).collect();
     let size_title = match r.size.as_deref() {
         Some(f) => Some(color_channel_title(f, &r.legend, &r.field_labels)?),
         None => None,
@@ -602,8 +604,8 @@ fn bind_marks(
                 // A date that does not exist formats as d3 formats an invalid one: an empty month, then `NaN`.
                 Some(cell) => match date_cell_day(cell) {
                     None => Ok(" NaN, 0NaN".to_string()),
-                    Some(day) if affixed => affixed_date_label(day),
-                    Some(day) => crate::families::heatmap::legend_date_label(day),
+                    Some(day) if affixed => affixed_date_label(day, aware_others[field]),
+                    Some(day) => crate::families::heatmap::legend_date_label(day, aware_others[field]),
                 },
             },
             _ => row.get(field).map(|cell| list_text(cell, affixed)).ok_or_else(|| format!("point_map: a row lacks the field {field:?}")),
@@ -682,8 +684,8 @@ fn list_text(cell: &Value, affixed: bool) -> String {
 
 /// A date in the card an affixed size format writes (`NativeTooltipAffixFeature`): `%b %-d, %Y`, where
 /// the Vega-Lite description writes `%b %d, %Y`.
-fn affixed_date_label(day: f64) -> Result<String, String> {
-    let padded = crate::families::heatmap::legend_date_label(day)?;
+fn affixed_date_label(day: f64, aware: bool) -> Result<String, String> {
+    let padded = crate::families::heatmap::legend_date_label(day, aware)?;
     let (head, year) = padded.rsplit_once(", ").ok_or_else(|| format!("point_map: date label {padded:?} has no year"))?;
     let (month, date) = head.rsplit_once(' ').ok_or_else(|| format!("point_map: date label {padded:?} has no day"))?;
     Ok(format!("{month} {}, {year}", date.trim_start_matches('0')))
@@ -747,7 +749,8 @@ fn bind_color(
         VegaType::Temporal => {
             let days: Vec<f64> = rows.iter().map(|row| row.get(field).and_then(date_cell_day).expect("filtered in bind_marks")).collect();
             let (lo, hi) = extent(&days);
-            Ok((Coloring::Gradient { scale: ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi), title }, Vec::new()))
+            let aware = crate::families::heatmap::date_column_aware(rows, field);
+            Ok((Coloring::Gradient { scale: ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi, aware), title }, Vec::new()))
         }
         VegaType::Nominal | VegaType::Ordinal => {
             // Vega's domain holds the first cell of each distinct `String(cell)`, sorted; a scale finds a cell by
@@ -959,11 +962,9 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     if layered {
         let shapes = basemap_paths
             .iter()
+            .flatten()
             .map(|d| {
-                let mut attrs = Attrs::new().set("transform", "translate(0,0)");
-                if let Some(d) = d {
-                    attrs = attrs.set("d", d.as_str());
-                }
+                let mut attrs = Attrs::new().set("transform", "translate(0,0)").set("d", d.as_str());
                 attrs = attrs.set("fill", r.basemap_fill.as_deref().expect("checked in bind"));
                 if let Some(stroke) = &r.basemap_stroke {
                     attrs = attrs.set("stroke", stroke.as_str());

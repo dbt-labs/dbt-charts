@@ -18,6 +18,7 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 
 from ..._engine_render import render_table_svg
+from ..._pooled_table import visible_svg
 
 
 def _board_style() -> Any:
@@ -127,7 +128,7 @@ def test_v2_table_svg_pagination_override() -> None:
     data = [{"v": v} for v in ("AAA", "BBB", "CCC", "DDD", "EEE")]
     style = {"pagination": {"enabled": True, "page_rows": 1}}
     with interactive_controls(True):
-        svg = _render(style=style, data=data, width=200)
+        svg = visible_svg(_render(style=style, data=data, width=200))
     assert "AAA" in svg
     assert "BBB" not in svg and "CCC" not in svg
 

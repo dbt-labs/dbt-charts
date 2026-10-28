@@ -243,21 +243,6 @@ class SparkColumnsStyle(BaseModel):
     border: CornerStyle = Field(description="Column bar corner rounding.")
 
 
-class SparkBarLabelStyle(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    inset_x: float = Field(
-        description="Horizontal inset for the spark bar label in pixels."
-    )
-    fill: Annotated[str, Color()] = Field(description="Label text fill color.")
-    fill_opacity: float = Field(description="Label text fill opacity (0–1).")
-    min_size: float = Field(
-        description="Minimum bar fill width required to show the label in pixels."
-    )
-    height_offset: float = Field(
-        description="Vertical offset of the label from its bar top in pixels."
-    )
-
-
 class SparkBarCellStyle(BaseModel):
     """Inline `spark.type: bar` and `bar-normalize` (single horizontal bar) defaults.
 
@@ -283,7 +268,6 @@ class SparkBarCellStyle(BaseModel):
         default_factory=FontStyle,
         description="Spark bar cell font style overrides.",
     )
-    label: SparkBarLabelStyle = Field(description="Spark bar inline label style.")
 
 
 class SparkAreaStyle(BaseModel):

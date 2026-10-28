@@ -73,8 +73,8 @@ pub(crate) fn measure_block(fonts: &FontBook, text: &str, style: &TextStyle, lim
     Ok(Block { lines, line_h, w, h, ascent: first.ascent })
 }
 
-/// The text's box, halo and glyphs as nodes.
-pub(crate) fn nodes(b: &TextBox, style: &TextStyle, canvas: &str) -> Vec<Node> {
+/// The text's box, halo and glyphs as nodes; `halo` is its color, `None` to draw none.
+pub(crate) fn nodes(b: &TextBox, style: &TextStyle, halo: Option<&str>) -> Vec<Node> {
     let mut out = Vec::new();
     let frame = &style.frame;
     if frame.visible {
@@ -99,7 +99,7 @@ pub(crate) fn nodes(b: &TextBox, style: &TextStyle, canvas: &str) -> Vec<Node> {
     };
     // The halo is one canvas-colored, outlined copy of the text faded as a
     // group, so overlapping glyph outlines never darken.
-    if style.halo > 0.0 && style.halo_opacity > 0.0 {
+    if let Some(canvas) = halo.filter(|_| style.halo > 0.0 && style.halo_opacity > 0.0) {
         let paint = Attrs::new()
             .set("fill", canvas)
             .set("stroke", canvas)

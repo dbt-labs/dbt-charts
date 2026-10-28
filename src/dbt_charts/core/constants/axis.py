@@ -24,3 +24,7 @@ MAX_ORDINAL_BUCKETS: Final[int] = 60
 GRADIENT_NICE_TICK_COUNT: Final[int] = 6
 # Target length of the ladder behind `ticks.count: auto`: sparse enough to read, dense enough to scan.
 AUTO_TICK_TARGET: Final = 6
+# The empty space an end label needs beside its neighbor, as a share of the tick spacing, to earn its place.
+# Measured on the glyphs, not the dates: a label crammed against its neighbor reads as a collision whatever the
+# date gap, while 0.45 keeps the roomy labels the sweep's reviewer liked.
+EDGE_LABEL_MIN_GAP_RATIO: Final[float] = 0.45

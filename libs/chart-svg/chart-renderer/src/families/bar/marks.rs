@@ -374,6 +374,7 @@ pub(crate) fn layer_bar_labels(
     aria: impl Fn(&BarLayerMark) -> Option<String>,
     link: Option<&crate::href::DatumLink>,
     (board_style, canvas): (Option<&crate::BoardStyle>, &str),
+    (crowd, bar_widths): (crate::families::layers::LabelCrowd, &[f64]),
 ) -> Result<Vec<Node>, String> {
     let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(Vec::new()) };
     let spec = LabelSpec::new(ml, false, bl.label_is_house, rows, &bl.y);
@@ -383,20 +384,27 @@ pub(crate) fn layer_bar_labels(
         .zip(centers)
         .map(|(mark, &center)| {
             let (extent, side) = layer_label_place(&spec, mark.value, position, plot_h, font.size);
+            let (text, blank) = spec.text(Some(mark.row), mark.value, None)?;
             Ok(LabelPoint {
                 center,
                 extent,
                 aria: aria(mark),
                 series_fill: None,
-                blank: false,
+                blank,
                 side,
                 span: None,
-                text: spec.text(Some(mark.row), mark.value, None)?.0,
+                text,
                 href: link.map(|link| link.href(mark.row)).transpose()?,
                 recede: None,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let boxes = layer_bar_label_boxes(bl, rows, marks, centers, position, plot_h, crowd.fonts, board_style)?;
+    crate::common::warn_value_labels_crowd(
+        crowd.chart_id,
+        Some(crowd.layer),
+        boxes.into_iter().zip(bar_widths).map(|((ink, over_bar), &bar_width)| (ink, over_bar.then_some(bar_width))),
+    );
     mark_labels(ml, false, false, true, &points, 0, board_style, 0.0, 0.0, canvas, link.map(|link| link.open).unwrap_or_default())
 }
 
@@ -413,8 +421,37 @@ pub(super) fn layer_label_place(
     plain_label_place(&spec.position, value, at, position, (plot_h, 0.0), label_need(false, 0.0, font_size))
 }
 
-/// The fit ink of a bar layer's value labels, where `layer_bar_labels` puts
-/// them: one text box per rect at `centers`, unioned into `bounds`.
+/// Each bar-layer value label's text box, where `layer_bar_labels` puts it (one per rect at
+/// `centers`), and whether it is drawn over its own bar. The fit and the crowding check both
+/// read these boxes.
+#[allow(clippy::too_many_arguments)]
+fn layer_bar_label_boxes(
+    bl: &OverlayBarLayer,
+    rows: &[serde_json::Map<String, Value>],
+    marks: &[BarLayerMark],
+    centers: &[f64],
+    position: &dyn Fn(f64) -> f64,
+    plot_h: f64,
+    fonts: &FontBook,
+    board_style: Option<&crate::BoardStyle>,
+) -> Result<Vec<(vega_fit::Bounds, bool)>, String> {
+    let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(Vec::new()) };
+    let spec = LabelSpec::new(ml, false, bl.label_is_house, rows, &bl.y);
+    let style = LabelStyle::new(ml, false, false, board_style)?;
+    marks
+        .iter()
+        .zip(centers)
+        .map(|(mark, &center)| {
+            let (extent, side) = layer_label_place(&spec, mark.value, position, plot_h, style.font.size);
+            let spot = label_spot(ml, &style.position, None, center, extent, None, side);
+            let width = fonts.measure(&spec.text(Some(mark.row), mark.value, None)?.0, &style.font.family, style.font.size)?;
+            let over_bar = style.inside_bar && !matches!(side, Some(LabelSide::Out(_)));
+            Ok((vega_fit::text_ink(spot.x, spot.y, width, style.font.size, spot.align(), spot.baseline), over_bar))
+        })
+        .collect()
+}
+
+/// The fit ink of a bar layer's value labels, unioned into `bounds`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn layer_bar_label_ink(
     bl: &OverlayBarLayer,
@@ -427,14 +464,8 @@ pub(crate) fn layer_bar_label_ink(
     board_style: Option<&crate::BoardStyle>,
     bounds: &mut vega_fit::Bounds,
 ) -> Result<(), String> {
-    let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(()) };
-    let spec = LabelSpec::new(ml, false, bl.label_is_house, rows, &bl.y);
-    let style = LabelStyle::new(ml, false, false, board_style)?;
-    for (mark, &center) in marks.iter().zip(centers) {
-        let (extent, side) = layer_label_place(&spec, mark.value, position, plot_h, style.font.size);
-        let spot = label_spot(ml, &style.position, None, center, extent, None, side);
-        let width = fonts.measure(&spec.text(Some(mark.row), mark.value, None)?.0, &style.font.family, style.font.size)?;
-        bounds.union(&vega_fit::text_ink(spot.x, spot.y, width, style.font.size, spot.align(), spot.baseline));
+    for (ink, _) in layer_bar_label_boxes(bl, rows, marks, centers, position, plot_h, fonts, board_style)? {
+        bounds.union(&ink);
     }
     Ok(())
 }
@@ -662,7 +693,11 @@ pub(super) fn bar_passes(
 ) -> Result<Vec<Node>, String> {
     let (fill, stroke) = (crate::href::Anchor::paint(href, fill), crate::href::Anchor::paint(href, stroke));
     let (fill, stroke) = (fill.as_str(), stroke.as_str());
-    let r = r.min(h / 2.0).min(w / 2.0);
+    let r = if horizontal {
+        crate::common::bar_corner_radius(r, h, w)
+    } else {
+        crate::common::bar_corner_radius(r, w, h)
+    };
     let stroked = stroke_w > 0.0 && stroke != "none" && !stroke.is_empty();
     let stroke_attrs = |attrs: Attrs| {
         if stroked { attrs.set("stroke", stroke).set("stroke-width", stroke_w.to_string()) } else { attrs }

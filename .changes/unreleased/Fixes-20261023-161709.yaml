@@ -1,0 +1,3 @@
+kind: Fixes
+body: A stacked chart's hover card no longer shows a null row for a series with no value at that x.
+time: 2026-10-23T16:17:09.969443-07:00

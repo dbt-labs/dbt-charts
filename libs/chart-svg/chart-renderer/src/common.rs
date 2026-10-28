@@ -66,6 +66,16 @@ pub fn symbol_radius(size: f64) -> f64 {
     size.sqrt() / 2.0
 }
 
+/// The largest share of a bar's thickness one corner may take.
+const BAR_CORNER_THICKNESS_SHARE: f64 = 0.25;
+
+/// A bar's effective corner radius: never more than a quarter of its
+/// `thickness` (cross-axis size), so a thin bar never reads as a dome, nor
+/// half its `length` (extent along the value axis), so the corners never overlap.
+pub(crate) fn bar_corner_radius(authored: f64, thickness: f64, length: f64) -> f64 {
+    authored.min(BAR_CORNER_THICKNESS_SHARE * thickness).min(length / 2.0)
+}
+
 /// How far an unfilled symbol's ring grows its ink: `boundStroke` adds the
 /// full stroke width, a filled symbol nothing. Shared by scatter.rs's data
 /// marks and bar.rs's right-pinned scatter layer.
@@ -2029,6 +2039,14 @@ impl AxisStyle {
         if self.ticks.visible.unwrap_or(true) { self.ticks.length.unwrap_or(6.0) } else { 0.0 }
     }
 
+    /// Half the stroke of the rule under an x label at a plot edge: the label reaches to the rule's outer edge,
+    /// so its advance box ends where the rule does. `ticks_drawn` says whether the axis draws its tick marks.
+    pub fn edge_rule_half_width(&self, ticks_drawn: bool) -> f64 {
+        let grid = if self.grid.visible.unwrap_or(false) { self.grid.width.unwrap_or(1.0) } else { 0.0 };
+        let tick = if ticks_drawn { self.ticks.width.unwrap_or(1.0) } else { 0.0 };
+        grid.max(tick) / 2.0
+    }
+
     /// Whether the axis' domain line is authored visible (hidden by the theme).
     pub fn line_visible(&self) -> bool {
         self.line.as_ref().and_then(|l| l.visible) == Some(true)
@@ -2287,7 +2305,9 @@ pub fn zero_anchor_pinned_floor(axis: &AxisStyle) -> Option<f64> {
 /// the one function `unity_rule_fires` and `x_threshold_fires` both call,
 /// so the two gates cannot drift on where an axis starts and ends:
 ///
-/// 1. **Authored domain** wins outright, regardless of `data_extent`.
+/// 1. **Authored domain** wins outright, regardless of `data_extent`. Strict
+///    numeric: the line and bar y scales read this same pair. `x_threshold_fires`
+///    coerces string ends itself, as the scatter x scale does.
 /// 2. **Baked `domain_min`/`domain_max`** — the headroom-expanded edges,
 ///    read per-edge (resolve bakes only the top on a zero-anchored axis).
 /// 3. **The zero-anchor floor**, for a low edge resolve left unbaked: an
@@ -2303,7 +2323,7 @@ pub fn zero_anchor_pinned_floor(axis: &AxisStyle) -> Option<f64> {
 /// On an unauthored x-axis branch 2 never engages (resolve bakes no
 /// `domain_min`/`domain_max` for x). Branch 3 engages when resolve baked
 /// `scale.continuous.zero: true`: scatter's percent-formatted quantitative x
-/// does (`_bake_percent_x_zero`). Any other x reduces to "authored domain,
+/// does (`_bake_x_zero`). Any other x reduces to "authored domain,
 /// else the data extent".
 ///
 /// `data_extent` is `None` when the measure column carried no numeric
@@ -2317,7 +2337,9 @@ pub fn effective_measure_domain(
         return Some((a.min(b), a.max(b)));
     }
     let (data_lo, data_hi) = data_extent?;
-    let hi = axis.domain_max.unwrap_or(data_hi);
+    // `zero: true` joins 0 to BOTH ends of the fitted extent (Vega-Lite's
+    // `zero`), so an all-negative axis tops out at 0.
+    let hi = axis.domain_max.unwrap_or(if axis.is_zero_anchored() { data_hi.max(0.0) } else { data_hi });
     let lo = if let Some(domain_min) = axis.domain_min {
         domain_min
     } else if axis.is_zero_anchored() {
@@ -2381,7 +2403,12 @@ pub fn x_threshold_fires(
         return false;
     }
     let data_extent = data_min.is_finite().then_some((data_min, data_max));
-    match effective_measure_domain(ax_x, data_extent) {
+    // The scatter x scale renders the coerced pair, so the gate reads it too.
+    let domain = match ax_x.coerced_continuous_domain() {
+        Some((a, b)) => Some((a.min(b), a.max(b))),
+        None => effective_measure_domain(ax_x, data_extent),
+    };
+    match domain {
         Some((lo, hi)) => lo <= datum && datum <= hi,
         None => false,
     }
@@ -2659,11 +2686,10 @@ pub fn label_case(case: Option<&str>, text: &str) -> Result<String, String> {
 /// B6 — Vega's `labelLimit` truncation (vega-scenegraph's `truncate`): the
 /// longest character prefix that FITS is picked by measuring
 /// `prefix.trim_end() + "…"` (Vega ignores a candidate's trailing
-/// whitespace when testing the cutoff) at or under `limit` — but the
-/// EMITTED string keeps the prefix untrimmed, so a word-boundary limit
-/// still draws the space before the ellipsis (`"Emerging …"`, never
-/// `"Emerging…"`). The reserved gutter/ink a caller measures off the
-/// returned string therefore agrees with what's drawn by construction.
+/// whitespace when testing the cutoff) at or under `limit`. Unlike Vega,
+/// which draws the prefix untrimmed (`"Emerging …"`), the emitted string is
+/// the measured candidate, so a word-boundary limit draws `"Emerging…"` and
+/// the width a caller measures off it is the width drawn.
 /// Returns `text` unchanged when it already fits; the bare ellipsis when
 /// nothing else does.
 ///
@@ -2693,13 +2719,9 @@ pub fn truncate_label(
     while lo <= hi {
         let mid = (lo + hi) / 2;
         let prefix: String = chars[..mid].iter().collect();
-        // Vega's own `truncate` selects the cutoff by measuring the prefix
-        // with its trailing whitespace ignored, then draws the prefix
-        // UNTRIMMED — at a word-boundary limit the emitted string still
-        // carries the space before the ellipsis.
         let measure_cand = format!("{}\u{2026}", prefix.trim_end());
         if measure(&measure_cand)? <= limit {
-            best = Some(format!("{prefix}\u{2026}"));
+            best = Some(measure_cand);
             lo = mid + 1;
         } else {
             if mid == 0 {
@@ -2851,28 +2873,93 @@ where
 /// per family (`BAR_POS_MAP_VERTICAL` vs `_LINE_POS_MAP`), and stays with
 /// the family that draws it.
 #[derive(Deserialize, Clone)]
+#[serde(from = "MarkLabelsWire")]
 pub struct MarkLabels {
+    /// On for `true` and for `"last"`.
     pub visible: bool,
+    /// `labels.visible: "last"`: only each series' most recent non-null point is
+    /// labeled. Only point and line labels author it; every other reader of
+    /// these labels calls `refuse_last`.
+    pub last_only: bool,
     /// Label a different column than the measure.
-    #[serde(default)]
     pub field: Option<String>,
-    #[serde(default)]
     pub format: Option<FormatSlot>,
-    #[serde(default)]
     pub dx: Option<f64>,
-    #[serde(default)]
     pub dy: Option<f64>,
-    #[serde(default)]
     pub font: Option<Font>,
-    #[serde(default)]
     pub position: Option<String>,
-    /// `false` unlabels the segments of a stacked bar; not ported, so a bar
-    /// refuses it by name (`families/bar.rs::refuse_unmodeled_bar_marks`).
-    #[serde(default)]
+    /// `false` leaves the segments of a stacked bar unlabeled (the total
+    /// label is its own layer); see `families/bar/bind.rs`.
     pub stacked: Option<bool>,
 }
 
+#[derive(Deserialize)]
+struct MarkLabelsWire {
+    visible: LabelsVisible,
+    /// Label a different column than the measure.
+    #[serde(default)]
+    field: Option<String>,
+    #[serde(default)]
+    format: Option<FormatSlot>,
+    #[serde(default)]
+    dx: Option<f64>,
+    #[serde(default)]
+    dy: Option<f64>,
+    #[serde(default)]
+    font: Option<Font>,
+    #[serde(default)]
+    position: Option<String>,
+    #[serde(default)]
+    stacked: Option<bool>,
+}
+
+/// `labels.visible` on the wire: `true`, `false`, or `"last"`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum LabelsVisible {
+    Flag(bool),
+    Last(LastTag),
+}
+
+#[derive(Deserialize)]
+enum LastTag {
+    #[serde(rename = "last")]
+    Last,
+}
+
+impl LabelsVisible {
+    /// Any labels at all: `true` and `"last"` both draw some.
+    pub(crate) fn on(&self) -> bool {
+        !matches!(self, Self::Flag(false))
+    }
+}
+
+impl From<MarkLabelsWire> for MarkLabels {
+    fn from(w: MarkLabelsWire) -> Self {
+        MarkLabels {
+            visible: w.visible.on(),
+            last_only: matches!(w.visible, LabelsVisible::Last(_)),
+            field: w.field,
+            format: w.format,
+            dx: w.dx,
+            dy: w.dy,
+            font: w.font,
+            position: w.position,
+            stacked: w.stacked,
+        }
+    }
+}
+
 impl MarkLabels {
+    /// Backstop for `ERR-LABELS-LAST-UNSUPPORTED` (compile): a reader with no notion of
+    /// a series' last point refuses `"last"` by name.
+    pub fn refuse_last(&self, family: &str) -> Result<(), String> {
+        if self.last_only {
+            return Err(format!("{family}: labels.visible \"last\" needs a line chart; use true to label every mark"));
+        }
+        Ok(())
+    }
+
     /// `labels_draw_text`: whether `labels.field` names a column holding a
     /// non-number, so every value prints verbatim. An unset field labels the
     /// numeric measure; a column with no value anywhere stays on the number path.
@@ -3166,10 +3253,10 @@ pub fn count_horizontal_bar_categories(rows: &[serde_json::Map<String, Value>], 
         .len()
 }
 
-/// The face a value label measures in for the crowd check: its own font, else
-/// the theme's text-mark font, per field. Errors when the payload carries
-/// neither, rather than measuring in a guessed face.
-pub fn crowd_label_font(
+/// The face a value label paints in: its own font, else the theme's text-mark
+/// font, per field. Errors when the payload carries neither, rather than
+/// painting in a guessed face.
+pub fn value_label_face(
     own: Option<&Font>,
     board: Option<&crate::BoardStyle>,
 ) -> Result<(String, f64), String> {
@@ -3181,23 +3268,53 @@ pub fn crowd_label_font(
     })
 }
 
-/// `WARN-VALUE-LABELS-CROWD-WIDTH` (`value_labels_crowd_width.py`): each of
-/// `distinct` marks gets `render_width / distinct` px, and the widest value
-/// label (`widest`, measured at the font it paints in) is wider than that.
-pub fn warn_value_labels_crowd(chart_id: &str, render_width: f64, distinct: usize, widest: f64) {
-    if render_width <= 0.0 || distinct == 0 {
-        return;
+/// `WARN-VALUE-LABELS-CROWD-WIDTH`: one painted label set's placed inks, each
+/// with the painted width of the bar it is drawn over (`None` for a label that
+/// is not over a vertical bar). Raises once, for the worst offender, when two
+/// labels' inks overlap or a label is wider than its own bar. `layer` names the
+/// authored layer whose labels these are, `None` for the chart's own.
+pub fn warn_value_labels_crowd(
+    chart_id: &str,
+    layer: Option<usize>,
+    labels: impl IntoIterator<Item = (crate::vega_fit::Bounds, Option<f64>)>,
+) {
+    let mut labels: Vec<_> = labels.into_iter().filter(|(ink, _)| ink.x2 > ink.x1).collect();
+    let mut worst: Option<(f64, f64)> = None;
+    let mut offend = |width: f64, room: f64| {
+        if width > room && worst.is_none_or(|(w, r)| width - room > w - r) {
+            worst = Some((width, room));
+        }
+    };
+    for (ink, bar_width) in &labels {
+        if let Some(bar_width) = bar_width {
+            offend(ink.x2 - ink.x1, *bar_width);
+        }
     }
-    let slot_width = render_width / distinct as f64;
-    if widest > slot_width {
-        crate::diagnostic::warn(Diagnostic::new(
-            &codes::WARN_VALUE_LABELS_CROWD_WIDTH,
-            [
-                ("chart_id", json!(chart_id)),
-                ("label_width", json!(widest)),
-                ("slot_width", json!(slot_width)),
-            ],
-        ));
+    labels.sort_by(|a, b| a.0.x1.total_cmp(&b.0.x1));
+    let (mut widest, mut tightest) = (0.0_f64, f64::INFINITY);
+    for (i, (a, _)) in labels.iter().enumerate() {
+        for (b, _) in labels[i + 1..].iter().take_while(|(b, _)| b.x1 < a.x2) {
+            if a.y1.max(b.y1) < a.y2.min(b.y2) {
+                widest = widest.max(a.x2 - a.x1).max(b.x2 - b.x1);
+                tightest = tightest.min(((a.x1 + a.x2) - (b.x1 + b.x2)).abs() / 2.0);
+            }
+        }
+    }
+    if tightest.is_finite() {
+        offend(widest, tightest);
+    }
+    if let Some((label_width, slot_width)) = worst {
+        crate::diagnostic::warn(
+            Diagnostic::new(
+                &codes::WARN_VALUE_LABELS_CROWD_WIDTH,
+                [
+                    ("chart_id", json!(chart_id)),
+                    ("label_width", json!(label_width)),
+                    ("slot_width", json!(slot_width)),
+                ],
+            )
+            .with_sink_param("layer", json!(layer)),
+        );
     }
 }
 
@@ -3388,14 +3505,10 @@ mod truncate_label_tests {
     }
 
     #[test]
-    fn word_boundary_limit_keeps_the_space_before_the_ellipsis() {
-        // Vega's `truncate` picks the cutoff by measuring the candidate
-        // prefix with its trailing whitespace ignored, then draws the
-        // prefix UNTRIMMED — so at a limit landing right after a word
-        // boundary, the emitted string still carries that trailing space
-        // ("Emerging …", not "Emerging…"). Probed against vl_convert over
-        // "Emerging Product and Innovation Bets" at 11px Inter: limit 59.0
-        // is the first word-boundary transition in the sweep.
+    fn word_boundary_limit_draws_no_space_before_the_ellipsis() {
+        // Probed against vl_convert over "Emerging Product and Innovation
+        // Bets" at 11px Inter: limit 59.0 is the first word-boundary
+        // transition in the sweep, where Vega draws "Emerging …".
         let fonts = fonts();
         let got = truncate_label(
             "Emerging Product and Innovation Bets",
@@ -3406,7 +3519,7 @@ mod truncate_label_tests {
             false,
         )
         .unwrap();
-        assert_eq!(got, "Emerging \u{2026}");
+        assert_eq!(got, "Emerging\u{2026}");
     }
 }
 
@@ -3577,6 +3690,30 @@ pub fn raw_x_order(a: &Value, b: &Value) -> Result<std::cmp::Ordering, String> {
         _ => number(a).zip(number(b)).and_then(|(a, b)| a.partial_cmp(&b)),
     };
     order.ok_or_else(|| format!("x values {a} and {b} have no order"))
+}
+
+/// `rows` with each non-null `x_field` replaced by its position on the drawn x axis, so a
+/// "last x" read follows the axis (the latest instant on a time axis, the last category on a
+/// band one) instead of comparing text ("Before" outranks "After"). A null or absent x stays
+/// as it is (the walk-backs skip it); an x the axis does not draw is an error, never a
+/// dropped row.
+pub fn x_ranked_rows(
+    rows: &[serde_json::Map<String, Value>],
+    x_field: &str,
+    domain: &[String],
+) -> Result<Vec<serde_json::Map<String, Value>>, String> {
+    let rank: std::collections::HashMap<&str, usize> = domain.iter().enumerate().map(|(at, x)| (x.as_str(), at)).collect();
+    rows.iter()
+        .map(|row| {
+            let mut ranked = row.clone();
+            if row.get(x_field).is_some_and(|x| !x.is_null()) {
+                let x = row_str(row, x_field);
+                let at = rank.get(x.as_str()).ok_or_else(|| format!("x value {x:?} is not on the drawn x axis"))?;
+                ranked.insert(x_field.to_string(), Value::from(*at));
+            }
+            Ok(ranked)
+        })
+        .collect()
 }
 
 /// Production's `last_nonnull_value_per_series` (`_cartesian.py`): each
@@ -3950,26 +4087,10 @@ pub fn x_title_extra(title: &AxisTitle, text: &str) -> f64 {
     title.padding.unwrap_or(10.0) + fs + (0.79 * fs).round() - (0.8 * fs).round() + extra_title_lines(text, fs)
 }
 
-/// Emit a bottom-anchored (horizontal) axis title's `<text>` at an
-/// already-negotiated `title_y` — the shared emission (font resolution,
-/// the `+0.5` crisp x every axis-group title inherits) both
-/// `emit_axis_title_bottom`'s flat-label law below and a rotated
-/// category axis's own Vega `axisTitleLayout` law (`scatter.rs`'s
-/// nominal-x arm, `bar.rs`'s `BandXAxis::paint`) call into, so the `<text>`
-/// is emitted once. No-op when `axis_title_band` would return `0.0` for
-/// this `text`/`style` pair.
-pub fn emit_axis_title_at(
-    out: &mut String,
-    text: &str,
-    style: &AxisTitle,
-    center_x: f64,
-    title_y: f64,
-    key: Option<crate::contract::LabelKey>,
-) {
-    out.extend(axis_title_at(text, style, center_x, title_y, key).map(|node| print::print(&[node])));
-}
-
-/// [`emit_axis_title_at`] as a node.
+/// A horizontal axis title's `<text>` at an already-negotiated `title_y`: the font resolution and
+/// the `+0.5` crisp x every axis-group title inherits, shared by the flat-label law and the
+/// rotated category axis's own Vega `axisTitleLayout` law. `None` when `axis_title_band` would
+/// return `0.0` for this `text`/`style` pair.
 pub fn axis_title_at(
     text: &str,
     style: &AxisTitle,
@@ -4459,8 +4580,7 @@ mod axis_title_text_tests {
             "font": {"family": "sans-serif", "size": 11.0, "weight": "600"}, "padding": 10.0, "visible": true
         }))
         .unwrap();
-        let mut out = String::new();
-        emit_axis_title_at(&mut out, "first\nsecond", &style, 50.0, 30.0, None);
+        let out = print::print(&axis_title_at("first\nsecond", &style, 50.0, 30.0, None).into_iter().collect::<Vec<_>>());
         assert!(out.contains("dy=\"13\""), "{out}");
         assert_eq!(extra_title_lines("first\nsecond", 11.0), 13.0);
     }
@@ -4476,6 +4596,21 @@ mod axis_title_text_tests {
 mod row_str_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn rows_rank_by_their_position_on_the_drawn_axis_and_an_off_axis_x_raises() {
+        let rows = |xs: &[Value]| -> Vec<serde_json::Map<String, Value>> {
+            xs.iter().enumerate().map(|(i, x)| json!({"x": x, "s": "a", "y": 10 * (i + 1)}).as_object().unwrap().clone()).collect()
+        };
+        let domain = ["Before".to_string(), "After".to_string()];
+        let ranked = x_ranked_rows(&rows(&[json!("After"), json!("Before"), Value::Null]), "x", &domain).unwrap();
+        assert_eq!(ranked.iter().map(|r| r["x"].clone()).collect::<Vec<_>>(), vec![json!(1), json!(0), Value::Null]);
+        // "Before" > "After" as strings, but "After" is last on the axis.
+        let last = last_nonnull_value_per_series(&ranked, "x", "y", "s").unwrap();
+        assert_eq!(last["a"], 10.0, "the row on \"After\"");
+        let err = x_ranked_rows(&rows(&[json!("During")]), "x", &domain).unwrap_err();
+        assert!(err.contains("\"During\"") && err.contains("not on the drawn x axis"), "{err}");
+    }
 
     #[test]
     fn row_str_renders_a_bool_json_native_not_pythons_str() {

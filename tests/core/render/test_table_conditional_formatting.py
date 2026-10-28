@@ -491,7 +491,7 @@ class TestRowRuleZOrderAndFillAlignment:
 
         # Every rule rect must appear after every fill rect it separates.
         # Sufficient check: the last fill position < the last rule position.
-        # Rules are deferred and flushed after the full row loop, so they follow all fills.
+        # Each row's rule is emitted after that row's own fills.
         assert max(fill_positions) < max(rule_positions), (
             "Row rules must appear after scale fills in SVG document order, "
             "but a rule rect was found before the last fill rect. "
@@ -814,11 +814,22 @@ class TestRowRuleZOrderAndFillAlignment:
         rule_positions = [i for i, t in enumerate(rect_tags) if t in rule_rects]
 
         assert fill_positions, "expected scale-fill rects"
-        # Contract 2: every rule rect appears after the last fill rect.
-        assert max(fill_positions) < max(rule_positions), (
-            "Summary rule must appear after all fill rects in SVG document order. "
-            f"fill_positions={fill_positions}, rule_positions={rule_positions}"
-        )
+        # Contract 2: a rule that sits on a fill's own band paints after that fill.
+
+        def _num(tag: str, attr: str) -> float:
+            m = re.search(rf'\b{attr}="([^"]+)"', tag)
+            assert m, f"no {attr} in rect: {tag}"
+            return float(m.group(1))
+
+        for fill_at in fill_positions:
+            top = _num(rect_tags[fill_at], "y")
+            bottom = top + _num(rect_tags[fill_at], "height")
+            for rule_at in rule_positions:
+                if top <= _num(rect_tags[rule_at], "y") <= bottom + 1:
+                    assert fill_at < rule_at, (
+                        "A rule must paint after the fill it sits on. "
+                        f"fill_positions={fill_positions}, rule_positions={rule_positions}"
+                    )
 
         # Contract 3: the last value row (row_idx=2, next=summary) has full row_height fill.
         # Since _will_draw_row_rule=False for that row, fill_height = per_row_height.

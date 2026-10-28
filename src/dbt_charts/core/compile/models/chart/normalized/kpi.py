@@ -32,6 +32,10 @@ class KpiChart(_BaseChartFields):
     glyph: str | None = Field(
         default=None, description="Text shown before the headline value."
     )
+    good: Literal["up", "down"] | None = Field(
+        default=None,
+        description="Which direction of the headline value is good; drives its glyph and tone.",
+    )
     background: str | dict[str, Any] | None = Field(
         default=None,
         description=(

@@ -15,6 +15,7 @@ from dbt_charts.agent_api._paths import (
     resolve_board_path,
 )
 from dbt_charts.core.board import partition_compile_warnings
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import missing_format_columns
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
@@ -198,7 +199,6 @@ def _validate_resolved(
         errors = patch_file_diagnostics(resolved)
         return ValidateResult(success=not errors, path=resolved.relpath, errors=errors)
 
-    from dbt_charts.core.compile.errors import CompilationError
     from dbt_charts.core.compile.migrations.locked_schema import locked_schema_errors
 
     try:
@@ -281,7 +281,17 @@ def annotate_with_data_lint(
     """
     from dbt_charts.agent_api.data_paths import data_alias_errors_for_file
 
-    source_names = frozenset(project.sources.sources.keys())
+    try:
+        source_names = frozenset(project.sources.sources.keys())
+    except CompilationError as exc:
+        # The registry is project-level: report it once against the config
+        # file instead of letting the lazy load crash the verb.
+        config_result = ValidateResult(
+            success=False,
+            path=PROJECT_CONFIG_NAME,
+            errors=[exc.to_diagnostic(file=PROJECT_CONFIG_NAME)],
+        )
+        return [*results, config_result]
 
     annotated: list[ValidateResult] = []
     for result in results:

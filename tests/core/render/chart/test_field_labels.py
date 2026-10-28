@@ -72,7 +72,7 @@ _CAPITAL = {**_WIDE, "y": ["All", "fix-linked"]}
 def test_wide_measure_entry_paints_field_label_in_svg(family: str) -> None:
     labeled = {**_WIDE, "type": family, "field_labels": {"fix-linked": "fix-linked"}}
     svg = _render(labeled, _WIDE_ROWS).output
-    assert ">fix-linked<" in svg
+    assert "fix-linked<" in svg
     assert "Fix linked" not in svg
     assert "Fix linked" in _render({**_WIDE, "type": family}, _WIDE_ROWS).output
 

@@ -155,14 +155,15 @@ def _remove_install_dir(path: Path) -> None:
 
 def _sweep_stale_install_dirs(target_dir: Path, *, check: bool = False) -> list[str]:
     """Report, and unless ``check``, remove what earlier releases installed:
-    one ``dct-*`` copy per wheel skill, found by globbing that namespace, and
-    the bare pre-namespace dirs before those, found by walking the fixed
-    ``PRE_NAMESPACE_SKILL_NAMES`` list. Both only ever touch a directory
-    carrying our own wheel-authored SKILL.md.
+    every ``dct-*`` directory, and the bare pre-namespace dirs before those,
+    found by walking the fixed ``PRE_NAMESPACE_SKILL_NAMES`` list. ``dct-`` is
+    our install namespace, and releases before the author line wrote copies
+    without it, so that sweep is unguarded; a bare name is common enough that
+    it is removed only when it carries our wheel-authored SKILL.md.
     """
     removed: list[str] = []
     for candidate in sorted(target_dir.glob(f"{RETIRED_INSTALL_PREFIX}*")):
-        if _is_wheel_authored(candidate / "SKILL.md"):
+        if candidate.is_dir() or candidate.is_symlink():
             if not check:
                 _remove_install_dir(candidate)
             removed.append(candidate.name)

@@ -1,6 +1,6 @@
 """Regression: StylePatch rejects unknown keys (extra="forbid").
 
-ADR-005: every model class must declare or inherit ConfigDict(extra="forbid").
+Every model class must declare or inherit ConfigDict(extra="forbid").
 StylePatch inherits extra="forbid" from _PatchBase via build_patch_model.
 """
 

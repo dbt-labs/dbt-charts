@@ -84,6 +84,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     plan_cartesian,
     quantitative_channel_values,
 )
+from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     bake_wide_measures_kwargs,
     resolve_wide_measure_channels,
@@ -104,7 +105,10 @@ from dbt_charts.core.compile.resolve.style.chart_context import (
 from dbt_charts.core.compile.resolve.style.legend_position import merge_legend
 from dbt_charts.core.compile.resolve.style.typography import resolve_title_font
 from dbt_charts.core.compile.template.display_text import ChartDisplayText
-from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
+from dbt_charts.core.constants.marks import (
+    POINT_DIAMETER_RATIO,
+    STROKE_FALLBACK_WIDTH,
+)
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LINE_Y_NOT_NUMERIC,
 )
@@ -446,8 +450,27 @@ def _resolve_line(
         chart_style_context.formats,
         tooltip_format_values,
     )
+    line_stroke = resolved_line_mark.stroke.width
+    # `visible: last` labels one point per series. Dots the engine added (or an
+    # authored size of 0) give way to the labeled endpoint's own dot; an
+    # authored size keeps every dot. Decided here, before bake_point_companions,
+    # which leaves a set size alone.
+    effective_labels = (
+        resolved_line_labels if resolved_line_labels.visible else resolved_point_labels
+    )
+    endpoint_only = (
+        effective_labels.visible == "last"
+        and line_stroke > 0
+        and not line.marks.point.size
+    )
     line_point_mark = resolved_as(
-        ResolvedPointMarkStyle, line.marks.point, labels=resolved_point_labels
+        ResolvedPointMarkStyle,
+        line.marks.point,
+        labels=resolved_point_labels,
+        endpoint_only=endpoint_only,
+        **(
+            {"size": (POINT_DIAMETER_RATIO * line_stroke) ** 2} if endpoint_only else {}
+        ),
     )
     # Point companions track the effective line stroke — the derivation lives
     # in bake_point_companions. Gated only on there being a real stroke to track (the zero-sentinel path leaves
@@ -455,11 +478,9 @@ def _resolve_line(
     # already-visible points); independent of whether that stroke came from
     # the adaptive bake or an author pin. The density trigger gates the size
     # half only, inside the helper.
-    if resolved_line_mark.stroke.width > 0:
+    if line_stroke > 0:
         line_point_mark = bake_point_companions(
-            line_point_mark,
-            resolved_line_mark.stroke.width,
-            _px_per_point,
+            line_point_mark, line_stroke, _px_per_point
         )
     _tf = resolve_title_font(chart_local_style_context, title_width)
     bkw = _base_kwargs(
@@ -515,6 +536,7 @@ def _resolve_line(
     return ResolvedLineChart(
         **bkw,
         **_ck,
+        tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="line",

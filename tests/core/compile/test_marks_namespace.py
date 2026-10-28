@@ -1,4 +1,4 @@
-"""Tests for the marks: namespace (ADR-015).
+"""Tests for the marks: namespace.
 
 All tests in this file fail before the model layer is rewritten;
 they serve as the TDD contract for the implementation.

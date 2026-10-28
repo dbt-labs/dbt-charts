@@ -368,6 +368,18 @@ def render_warnings_section(warnings: list[Diagnostic]) -> str:
     return "\n".join(lines)
 
 
+def _field_display(
+    node: dict[str, Any],  # type-state: explicit_any — wire dict
+    key: str,
+) -> str | None:
+    """A wire channel's value; a wide ``y`` names its authored measures, not
+    the synthetic fold column the resolver baked into ``y``."""
+    if key == "y" and node.get("wide_measures"):
+        return ", ".join(node["wide_measures"])
+    value = node.get(key)
+    return None if value is None else str(value)
+
+
 def _field_mappings(chart: dict[str, Any]) -> list[str]:
     """Extract field mapping strings like 'x: month, y: revenue'.
 
@@ -378,14 +390,14 @@ def _field_mappings(chart: dict[str, Any]) -> list[str]:
     """
     mappings = []
     for key in ("x", "y", "color", "size", "theta", "value"):
-        val = chart.get(key)
+        val = _field_display(chart, key)
         if val:
             mappings.append(f"{key}: {val}")
     # A non-layered chart carries no "layers" key at all; [] is the genuine
     # "no overlays" case, not a shape guard.
     for layer in chart.get("layers") or []:  # type-state: silent_fallback — see above
         for key in ("x", "y", "color"):
-            val = layer.get(key)
+            val = _field_display(layer, key)
             if val:
                 mappings.append(f"{key}: {val}")
     return mappings
@@ -423,7 +435,7 @@ def _data_summary(
     # "no overlays" case, not a shape guard.
     for layer in chart.get("layers") or []:  # type-state: silent_fallback — see above
         for key in ("x", "y", "color"):
-            val = layer.get(key)
+            val = _field_display(layer, key)
             if val:
                 field_roles.setdefault(val, key)
 

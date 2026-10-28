@@ -31,6 +31,8 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.render.controls import interactive_controls
 
+from .._pooled_table import visible_svg
+
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
 # ---------------------------------------------------------------------------
@@ -317,7 +319,7 @@ class TestPaginationContinuity:
             variables=self._page_variables(chart.id, page=2),
             board_style=resolve_style(get_theme_style()),
         )
-        rendered = _row_number_text_values(svg)
+        rendered = _row_number_text_values(visible_svg(svg))
         # Page 2 indices: 11..20
         for idx in range(11, 21):
             assert str(idx) in rendered, (
@@ -348,7 +350,7 @@ class TestPaginationContinuity:
             variables=self._page_variables(chart.id, page=5),
             board_style=resolve_style(get_theme_style()),
         )
-        rendered = _row_number_text_values(svg)
+        rendered = _row_number_text_values(visible_svg(svg))
         for idx in range(41, 51):
             assert str(idx) in rendered, (
                 f"expected index {idx} on page 5; got {rendered}"

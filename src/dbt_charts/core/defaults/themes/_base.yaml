@@ -128,7 +128,7 @@ style:
       color: muted
     caption:
       size: 11
-      color: "#999999"
+      color: chrome[7]
     numeral:
       family: '''dbt Sans Tabular'', Inter, system-ui, sans-serif'
     # No size: mdsvg's code_font_scale keeps code proportional to the text it sits in.
@@ -184,7 +184,8 @@ style:
           font:
             size: 11
             color: muted
-          halo: 0
+          # auto: 3px, only on text over a bar, point or area fill
+          halo: auto
           halo_opacity: 0.75
           box:
             visible: false
@@ -194,8 +195,8 @@ style:
             radius: 3
             stroke: null
           position:
-            edge: top
-            align: end
+            edge: auto
+            align: auto
             overlay: false
           dx: 0
           dy: 0
@@ -208,7 +209,8 @@ style:
           font:
             size: 11
             color: muted
-          halo: 0
+          # auto: 3px, only on text over a bar, point or area fill
+          halo: auto
           halo_opacity: 0.75
           box:
             visible: false
@@ -231,7 +233,8 @@ style:
             size: 11
             style: italic
             color: muted
-          halo: 0
+          # auto: 3px, only on text over a bar, point or area fill
+          halo: auto
           halo_opacity: 0.75
           box:
             visible: false
@@ -242,7 +245,7 @@ style:
             stroke: null
           position:
             edge: auto
-            align: center
+            align: auto
             overlay: false
           dx: 0
           dy: 0
@@ -294,7 +297,8 @@ style:
           font:
             size: 11
             color: theme.series
-          halo: 0
+          # auto: 3px, only on text over a bar, point or area fill
+          halo: auto
           halo_opacity: 0.75
           box:
             visible: false
@@ -631,14 +635,6 @@ style:
           background: chrome[3]
           border:
             radius: 0.0
-          label:
-            inset_x: 4.0
-            # Halo knockout: tracks theme canvas so the label backdrop reads
-            # against any theme background.
-            fill: theme.background
-            fill_opacity: 0.9
-            min_size: 9.0
-            height_offset: 5.0
         area:
           fill_opacity: 0.3
       # Universal default: header rule only. No header fill, no row
@@ -948,6 +944,17 @@ style:
           # second headlines — drawn at body/narrow tier so a triangle's
           # visual mass doesn't compete with the digits.
           font: label
+          # The glyphs `good` draws are sized to about the numerals' x-height
+          # at the default 24 headline: between the 11 label size (a speck
+          # beside the number) and cap height (competes with the digits).
+          # Slot sizes are absolute, so a theme that changes `value.font.size`
+          # retunes this too.
+          arrow:
+            font:
+              extends: label
+              size: 16
+          up: ▲
+          down: ▼
       label:
         font:
           extends: label
@@ -957,6 +964,8 @@ style:
         glyph:
           font:
             color: auto
+          up: ▲
+          down: ▼
       min_card_width: 100.0
       preferred_width: 300.0
       default_height: 48.0
@@ -1382,7 +1391,7 @@ style:
     brand_weight: 600
     divider:
       visible: true
-      color: "#e5e5e5"
+      color: chrome[4]
       width: 0.5
       gap: 2
 

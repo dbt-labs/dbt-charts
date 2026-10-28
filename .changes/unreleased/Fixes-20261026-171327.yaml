@@ -1,0 +1,3 @@
+kind: Fixes
+body: A custom chart template that prints a null into an attribute now fails with a named error instead of rendering None.
+time: 2026-10-26T17:13:27.264464-07:00

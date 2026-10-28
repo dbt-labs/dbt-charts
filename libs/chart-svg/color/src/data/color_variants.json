@@ -1,0 +1,13 @@
+{
+  "dark_k": 0.3,
+  "dark_pole": 0.2,
+  "deep_k": 0.85,
+  "deep_pole": 0.28,
+  "label_ink_min_contrast": 4.5,
+  "light_chroma": 0.6,
+  "light_k": 0.3,
+  "light_min_gap": 0.03,
+  "light_pale_gap": 0.03,
+  "pale_chroma": 0.32,
+  "pale_l": 0.86
+}

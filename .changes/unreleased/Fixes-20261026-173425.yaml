@@ -1,0 +1,3 @@
+kind: Fixes
+body: Footer captions and dividers now follow each theme's palette, so paper's are cream and neon's footer rule is faint; paper's inline code and donut totals also use the cream scaffold.
+time: 2026-10-26T17:34:25.059335-07:00

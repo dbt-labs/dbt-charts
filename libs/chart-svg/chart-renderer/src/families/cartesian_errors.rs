@@ -31,7 +31,7 @@ struct Sort {
 #[derive(Deserialize, Default)]
 struct LabelSlot {
     field: Option<String>,
-    visible: Option<bool>,
+    visible: Option<crate::common::LabelsVisible>,
     position: Option<String>,
 }
 
@@ -686,7 +686,7 @@ fn value_labels(facts: &Facts, payload: &Payload) -> Result<(), Diagnostic> {
     if facts.chart_type != "bar" || !facts.wide_measures.is_empty() || !facts.y.as_ref().is_some_and(Value::is_string) {
         return Ok(());
     }
-    let Some(labels) = style.mark.as_ref().and_then(|m| m.labels.as_ref()).filter(|l| l.visible == Some(true)) else {
+    let Some(labels) = style.mark.as_ref().and_then(|m| m.labels.as_ref()).filter(|l| l.visible.as_ref().is_some_and(crate::common::LabelsVisible::on)) else {
         return Ok(());
     };
     let position = labels.position.as_deref().unwrap_or("above");

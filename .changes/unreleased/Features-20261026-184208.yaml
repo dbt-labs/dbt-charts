@@ -1,0 +1,3 @@
+kind: Features
+body: Table spark bars no longer draw value labels; `value_visible` and `value_suffix` are dropped from existing boards with a notice to add a value column.
+time: 2026-10-26T18:42:08.153415-07:00

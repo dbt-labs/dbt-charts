@@ -258,29 +258,44 @@ class TestSkillsIndexPromptReferencesRealTools:
             assert referenced in index
 
 
-class TestDashboardReplicateSkill:
-    """The replication workflow keeps fake-data work visibly provisional."""
+class TestBoardMigrateSkill:
+    """The migration workflow keeps fake-data work visibly provisional."""
 
     def test_fake_data_banner_uses_native_warning_callout(self) -> None:
-        prompt = load_shared_prompt("board-replicate", surface="tool")
+        prompt = load_shared_prompt("board-migrate", surface="tool")
 
         assert "type: callout" in prompt
         assert "tone: warning" in prompt
         assert prompt.count("- fake_data_warning") == 2
 
+    def test_body_has_modes_rules_sources_and_bundle_layout(self) -> None:
+        prompt = load_shared_prompt("board-migrate", surface="cli")
+
+        for heading in (
+            "## Modes",
+            "## Rules",
+            "## Bundle layout",
+            "## Prove it",
+            "### Looker",
+            "### Sigma",
+            "### Screenshots",
+        ):
+            assert heading in prompt, heading
+
     def test_description_does_not_claim_in_project_duplication(self) -> None:
-        """This skill rebuilds a *foreign* dashboard from a screenshot — two
+        """This skill rebuilds a *foreign* dashboard from another tool — two
         phases, inline fake data, a warning banner. Its trigger list used to
         include 'copy this dashboard' and 'move my dashboard here', which are
         how users ask to duplicate a board that already exists in the project.
         Matching those routes an in-project copy into a fake-data rebuild.
         """
-        description = get_skill("board-replicate").description.lower()
+        description = get_skill("board-migrate").description.lower()
 
         assert "copy this dashboard" not in description
         assert "move my dashboard here" not in description
         # The screenshot/export replication triggers are its real job — keep them.
         assert "replicate" in description
+        assert "migrate" in description
         # Every skill description carries a negative boundary.
         assert "do not use" in description
 

@@ -15,7 +15,7 @@ dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML ma
 
 Write only what differs from the defaults. Themes, frame and card sizes, number formats, column headers (a column's name, prettified), control types and option lists are chosen for you, often by the user's own theme; a key that restates one adds lines and changes nothing. Leave the look alone unless the user asks for a change: their defaults beat your taste.
 
-Data files (`.csv`, `.json`, `.parquet`) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is `postgres`, `snowflake`, `bigquery`, `databricks`. {{#if_surface cli}}No `dbt_charts.yml` yet: run `dct init --yes --no-mcp --no-vscode --no-cursor` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. {{/if_surface}}To see a source's tables and columns: {{ s_columns_query_example }}.
+Data files (`.csv`, `.json`, `.parquet`) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is `postgres`, `snowflake`, `bigquery`, `databricks`. {{#if_surface cli}}No `dbt_charts.yml` yet: run `dct init` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. {{/if_surface}}To see a source's tables and columns: {{ s_columns_query_example }}.
 
 ## {{ s_page_commands_heading }}
 
@@ -90,7 +90,7 @@ Jinja helpers in query SQL:
 - `width` (int|number): Chart width in pixels
 - `height` (int|number): Explicit chart height in pixels
 - `style` (mapping): Appearance overrides for this chart alone
-Also exist: `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `y_start`, `annotations`.
+Also exist: `tooltip`, `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `y_start`, `annotations`.
 
 Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more than the column name can.
 
@@ -111,7 +111,7 @@ Every chart needs `type:`, one of the types below.
   - `value`: Column reference (string column name) for the headline number/text
   - `label`: Caption naming what the headline value measures; `style.variant` places it
   - `glyph`: Text shown before the headline value (e.g. '▲', '●')
-  - `support` ({value, label, glyph}): Secondary block, a delta, comparison, or note; `style.variant` places it
+  - `support` ({value, label, glyph, good}): Secondary block, a delta, comparison, or note; `style.variant` places it
   - `background` (text|map of any): Gradient background channel, {column, scale} shape
   - `conditional_formatting` (map of mapping): Discrete rule-driven style overrides indexed by column name
 - `table`: rejects `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`

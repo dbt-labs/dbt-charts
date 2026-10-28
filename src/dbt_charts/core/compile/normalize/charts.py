@@ -24,6 +24,7 @@ from dbt_charts.core.compile.models.cache import INHERIT_CACHE, CachePatch
 from dbt_charts.core.compile.models.chart.authored import (
     SUPPORTED_AUTHORED_CHART_TYPES,
     AuthoredChart,
+    CalloutChart as AuthoredCalloutChart,
     CartesianLayer,
     CustomChart as AuthoredCustomChart,
     _BaseChartFields,
@@ -84,7 +85,9 @@ from dbt_charts.core.diagnostics.codes_compile import (
 _AUTHORED_CHART_ADAPTER: TypeAdapter[AuthoredChart] = TypeAdapter(AuthoredChart)
 
 
-def authored_visible(chart: AuthoredChart) -> bool | str | SingleRowBoolProbe | None:
+def authored_visible(
+    chart: _BaseChartFields | AuthoredCalloutChart,
+) -> bool | str | SingleRowBoolProbe | None:
     """The layout `visible:` a chart authored; a callout has none."""
     return chart.visible if isinstance(chart, _BaseChartFields) else None
 
@@ -376,6 +379,7 @@ def normalize_chart(
                 chart_id=chart_id,
                 stack=authored_style.stack if authored_style is not None else None,
                 y_start=authored.y_start,
+                tooltip=authored.tooltip if authored.tooltip is not None else [],
                 layers=authored.layers if authored.layers is not None else [],
                 annotations=authored.annotations
                 if authored.annotations is not None
@@ -395,6 +399,7 @@ def normalize_chart(
                 authored_style,
                 type="line",
                 chart_id=chart_id,
+                tooltip=authored.tooltip if authored.tooltip is not None else [],
                 layers=authored.layers if authored.layers is not None else [],
                 annotations=authored.annotations
                 if authored.annotations is not None
@@ -414,6 +419,7 @@ def normalize_chart(
                 authored_style,
                 type="area",
                 chart_id=chart_id,
+                tooltip=authored.tooltip if authored.tooltip is not None else [],
                 stack=authored_style.stack if authored_style is not None else None,
                 layers=authored.layers if authored.layers is not None else [],
                 annotations=authored.annotations
@@ -434,6 +440,7 @@ def normalize_chart(
                 authored_style,
                 type="scatter",
                 chart_id=chart_id,
+                tooltip=authored.tooltip if authored.tooltip is not None else [],
                 size=authored.size,
                 shape=authored.shape,
                 layers=authored.layers if authored.layers is not None else [],
@@ -472,6 +479,7 @@ def normalize_chart(
                 type="pie",
                 theta=theta,
                 field_labels=authored.field_labels,
+                tooltip=authored.tooltip if authored.tooltip is not None else [],
                 color=authored.color,
                 total=authored.total,
                 height=authored.height,
@@ -492,6 +500,7 @@ def normalize_chart(
                 label=authored.label or "",
                 support=authored.support,
                 glyph=authored.glyph,
+                good=authored.good,
                 background=authored.background,
                 style=authored_style,
             )

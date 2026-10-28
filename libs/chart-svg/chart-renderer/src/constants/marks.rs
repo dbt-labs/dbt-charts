@@ -2,6 +2,7 @@
 // Source: dbt-charts/src/dbt_charts/core/constants/marks.py
 
 pub const ENDPOINT_LABEL_MAX_WIDTH_FRACTION: f64 = 0.33;
+pub const ENDPOINT_LABEL_VALUE_MAX_WIDTH_FRACTION: f64 = 0.2;
 pub const ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER: f64 = 1.3;
 pub const STROKE_MIN_WIDTH: f64 = 1.5;
 pub const STROKE_MAX_WIDTH: f64 = 4.0;

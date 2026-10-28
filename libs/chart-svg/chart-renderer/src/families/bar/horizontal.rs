@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 use super::axes::{HorizontalValueAxis, flush_edge, flush_threshold, format_tick_labels};
 use super::BarResolved;
 use super::bind::zero_label;
-use super::domain::{BarChartState, CatOrder, CenterStack, SegmentSpans, TopRail, bar_value_extent, base_series, build_chart_domains, build_data_map, cat_order, category_totals, collapsed_authored_domain, grouped_spans, horizontal_min_height, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_spans, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
+use super::domain::{BarChartState, CatOrder, CenterStack, SegmentSpans, TopRail, bar_value_extent, base_series, build_chart_domains, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_spans, horizontal_min_height, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_spans, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, mark_labels, plain_sites, value_label_layers};
 use super::layout::{Drawn, warn_band_too_narrow};
@@ -99,6 +99,17 @@ pub(crate) struct HorizontalFacetPanel {
     pub(crate) geometry: PanelGeometry,
     /// `None` when the left edge carries no copy of the category axis.
     pub(crate) row_axis: Option<RowAxisPlacement>,
+}
+
+/// Inter's cap height, in ems.
+const CAP_HEIGHT_EM: f64 = 0.73;
+
+/// One category label as painted: the first line's baseline, its lines, and the full name when
+/// the lines cut it.
+struct CatLabel {
+    y: f64,
+    lines: Vec<String>,
+    full: Option<String>,
 }
 
 /// One edge's copy of the category axis: where its labels anchor from the plot
@@ -471,24 +482,24 @@ pub(super) fn render_horizontal_panel(
         };
         ax_x.labels.cased(&text)
     };
+    // An authored expr drops the flip gutter production measured in
+    // Python, so Vega's own (shaped) text measure sizes the labels.
+    let cat_text_w = |text: &str| {
+        if h_labels_expr.is_some() {
+            fonts.measure_shaped(text, cat_family, cat_font_size)
+        } else {
+            fonts.measure(text, cat_family, cat_font_size)
+        }
+    };
     let max_cat_w = base_cat_domain
         .iter()
-        .try_fold(0.0_f64, |acc, s| {
-            let shown = shown_cat(s)?;
-            // An authored expr drops the flip gutter production measured in
-            // Python, so Vega's own (shaped) text measure sizes the labels.
-            let w = if h_labels_expr.is_some() {
-                fonts.measure_shaped(&shown, cat_family, cat_font_size)
-            } else {
-                fonts.measure(&shown, cat_family, cat_font_size)
-            }?;
-            Ok::<f64, String>(acc.max(w))
-        })?;
+        .try_fold(0.0_f64, |acc, s| Ok::<f64, String>(acc.max(cat_text_w(&shown_cat(s)?)?)))?;
     // Hoisted ahead of the plot-rect negotiation: the fit closure below
     // needs each single-series bar's own value (and its label's measured
     // text) to reserve the value-label overhang before the plot width is
     // known.
     let data_map = build_data_map(rows, cat_field, val_field, color_field, r.y_start.is_none())?;
+    let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip)?;
     // A horizontal band category is a nominal field, so a date prints verbatim.
     let link = r.datum_link(cat_field, crate::href::LinkText::Raw);
     // Under a layer, a date x that is not authored `temporal` leaves the base's own marks unlinked.
@@ -577,7 +588,7 @@ pub(super) fn render_horizontal_panel(
     // arm whenever the last visible tick sits short of a headroom-driven
     // domainMax. Grouped/stacked shapes never reach here (`mark_labels`
     // draws single-series labels only).
-    let zero_text = zero_label(&r, rows)?;
+    let zero_text = zero_label(&r, rows, &LinearScale::new(linear_domain_min, linear_domain_max, 0.0, w))?;
     // Axis titles: category (VL y, chart.x) on the left, measure (VL x,
     // chart.y) on the bottom — see common.rs's axis_title_band for the
     // measured constant. Horizontal-bar channel flip: category title uses
@@ -717,6 +728,7 @@ pub(super) fn render_horizontal_panel(
             rows,
             plain_rows: &plain_rows,
             cat_field,
+            cat_domain: &cat_domain,
             val_field,
             color_field,
             is_grouped,
@@ -950,7 +962,42 @@ pub(super) fn render_horizontal_panel(
 
     let ax_off = ax_x.ticks.offset.unwrap_or(0.0);
     let cat_limit = ax_x.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
-    let cat_w = max_cat_w.min(cat_limit);
+    let cat_line_height = crate::families::cartesian::rail_line_height(cat_font_size);
+    let cat_fits = |text: &str| Ok(fonts.measure(text, cat_family, cat_font_size)? <= cat_limit);
+    let cat_cut = |text: &str| crate::common::truncate_label(text, cat_limit, cat_family, cat_font_size, fonts, false);
+    // The lines a name paints: wrapped onto a second line when the row holds two (only that line
+    // is cut), else the one-line cut.
+    let cat_lines = |shown: &str, two_lines: bool| -> Result<Vec<String>, String> {
+        if two_lines {
+            Ok(crate::families::cartesian::two_line_label(shown, &cat_fits, &cat_cut, true)?
+                .expect("a label that may be cut always has a layout"))
+        } else {
+            Ok(vec![cat_cut(shown)?])
+        }
+    };
+    // Two lines overprint the next row's label unless the row step holds both; the step is the
+    // plot height's, so each fit pass decides it afresh.
+    let row_holds_two = |plot_h: f64| {
+        cat_domain.len() < 2 || {
+            let band = BandScale::new(cat_domain.clone(), 0.0, plot_h, band_pi, band_po);
+            (band.position_at(1) - band.position_at(0)).abs() >= 2.0 * cat_line_height
+        }
+    };
+    // The widest line the labels paint, as the gutter reserves: a wrapped label is narrower than
+    // its one-line width.
+    let widest_painted = |texts: &[String], two_lines: bool| -> Result<f64, String> {
+        let mut widest = 0.0_f64;
+        for text in texts {
+            for line in cat_lines(text, two_lines)? {
+                widest = widest.max(cat_text_w(&line)?);
+            }
+        }
+        Ok(widest.min(cat_limit))
+    };
+    let shown_cats: Vec<String> = base_cat_domain.iter().map(|c| shown_cat(c)).collect::<Result<_, _>>()?;
+    let cat_w_one_line = max_cat_w.min(cat_limit);
+    let cat_w_wrapped = widest_painted(&shown_cats, true)?;
+    let cat_w_at = |plot_h: f64| if row_holds_two(plot_h) { cat_w_wrapped } else { cat_w_one_line };
     let val_limit = ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT);
     // A label aligned to the axis's own side is the flip model; production maps
     // every other align, and an absent one, to the default.
@@ -973,18 +1020,23 @@ pub(super) fn render_horizontal_panel(
         }
         _ => cat_domain.iter().map(|cat| ax_x.labels.cased(cat)).collect::<Result<_, _>>()?,
     };
-    let ghost_w = ghost_cats
+    let ghost_w_one_line = ghost_cats
         .iter()
         .try_fold(0.0_f64, |acc, c| fonts.measure_shaped(c, cat_family, cat_font_size).map(|w| acc.max(w)))?
         .min(cat_limit);
+    let ghost_w_wrapped = widest_painted(&ghost_cats, true)?;
+    let ghost_w_at = |plot_h: f64| if row_holds_two(plot_h) { ghost_w_wrapped } else { ghost_w_one_line };
     // The label anchor's distance from the axis, and the anchor side.
     let cat_anchor = anchor_at(own_side, cat_flip);
-    let cat_label_pad = if cat_flip { cat_w + VALUE_AXIS_BREATHING_ROOM } else { cat_pad };
     // A block on the label side widens the axis's own `labelPadding` by its
     // footprint, opening the room between the labels and the plot edge.
-    let cat_label_pad = cat_label_pad
-        + block.as_ref().filter(|b| b.side == label_side).map_or(0.0, ColumnBlock::footprint);
-    let cat_gutter = if cat_flip { cat_label_pad } else { cat_label_pad + cat_w };
+    let block_footprint = block.as_ref().filter(|b| b.side == label_side).map_or(0.0, ColumnBlock::footprint);
+    // `(label padding, gutter)` at a plot height: the labels' own width decides both.
+    let cat_gutters = |plot_h: f64| {
+        let cat_w = cat_w_at(plot_h);
+        let label_pad = if cat_flip { cat_w + VALUE_AXIS_BREATHING_ROOM } else { cat_pad } + block_footprint;
+        (label_pad, if cat_flip { label_pad } else { label_pad + cat_w })
+    };
     // How far the category labels move off the plot so an outside value
     // label overhanging the plot's category edge keeps `VALUE_AXIS_BREATHING_ROOM`
     // from its own row's label; set by the ink closure on every pass, read
@@ -1023,7 +1075,8 @@ pub(super) fn render_horizontal_panel(
             widest.min(val_limit) + VALUE_AXIS_BREATHING_ROOM
         }
     } else {
-        cat_gutter
+        // Start-anchored on the far edge, so the labels begin a label gap past the plot.
+        VALUE_AXIS_BREATHING_ROOM
     };
 
 
@@ -1078,11 +1131,31 @@ pub(super) fn render_horizontal_panel(
             fonts,
             canvas: r.canvas.as_str(),
             clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
+            occupied: Vec::new(),
         }
     };
     let cat_title_extra = crate::common::y_title_extra(&ax_x.title, &cat_title_paint);
     let cat_axis_in_panel = facet.map_or(true, |f| f.cell_cat_axis);
     let val_axis_in_panel = facet.map_or(true, |f| f.independent_scale);
+    // The resolver pins the value domain past the data (headroom), so the plot reaches past its
+    // last tick. A mirror's ghost labels hang off the plot's right edge; where nothing paints
+    // into the headroom (no value labels, layers or stack), they start a label gap past the
+    // last tick or the longest bar instead, not past the empty headroom.
+    let headroom_unpainted = mirror_active
+        && facet.is_none()
+        && !cat_on_right
+        && layers.is_empty()
+        && !is_stacked
+        && label_layers.is_empty()
+        && date_axis.is_none();
+    let longest_bar = rows.iter().filter_map(|row| row_num(row, val_field)).fold(0.0_f64, f64::max);
+    let headroom_pull = |plot_w: f64, ticks: &[f64]| -> f64 {
+        if !headroom_unpainted {
+            return 0.0;
+        }
+        let painted_end = ticks.last().copied().unwrap_or(0.0).max(longest_bar);
+        plot_w * ((linear_domain_max - painted_end) / (linear_domain_max - linear_domain_min)).max(0.0)
+    };
     let (plot_left, plot_top, plot_w, plot_h, vega_title_pos, vega_legend, canvas_w, canvas_h, cell_ink) = {
         // The lines each value label paints on, kept beside the widths the last call returned.
         let val_label_rows = std::cell::RefCell::new(Vec::<usize>::new());
@@ -1111,7 +1184,7 @@ pub(super) fn render_horizontal_panel(
                 // end-anchored, see `cat_gutter`) and title, shifted out by the
                 // axis offset past the plot edge the axis sits on. A facet's
                 // shared one is the composer's `row_header`.
-                let cat_reach = ax_off + cat_gutter + cat_title_extra;
+                let cat_reach = ax_off + cat_gutters(ph).1 + cat_title_extra;
                 let (band_x1, band_x2) = if cat_on_right { (pw, pw + cat_reach) } else { (-cat_reach, 0.0) };
                 if cat_axis_in_panel {
                     b.union(&vega_fit::Bounds::new(band_x1, 0.0, band_x2, ph));
@@ -1125,8 +1198,8 @@ pub(super) fn render_horizontal_panel(
                 let (mut axes_x1, mut axes_x2) = (band_x1.min(0.0), band_x2.max(pw));
                 if mirror_active && facet.is_none() {
                     let align = if ghost_anchor == "start" { "left" } else { "right" };
-                    let ghost_x = if cat_on_right { -(ax_off + ghost_gutter) } else { pw + ax_off + ghost_gutter };
-                    let ghost = vega_fit::text_ink(ghost_x, ph / 2.0, ghost_w, cat_font_size, align, "middle");
+                    let ghost_x = if cat_on_right { -(ax_off + ghost_gutter) } else { pw - headroom_pull(pw, tick_values) + ax_off + ghost_gutter };
+                    let ghost = vega_fit::text_ink(ghost_x, ph / 2.0, ghost_w_at(ph), cat_font_size, align, "middle");
                     axes_x1 = axes_x1.min(ghost.x1);
                     axes_x2 = axes_x2.max(ghost.x2);
                     b.union(&ghost);
@@ -1271,11 +1344,11 @@ pub(super) fn render_horizontal_panel(
                             .filter(|(_, ink)| ink.x1 < 0.0)
                             .map(|(site, ink)| {
                                 let row_w = if cat_flip { cat_ws[&site.cat] } else { 0.0 };
-                                category_clearance(-ink.x1, cat_label_pad + ax_off - row_w)
+                                category_clearance(-ink.x1, cat_gutters(ph).0 + ax_off - row_w)
                             })
                             .fold(0.0_f64, f64::max);
                         side_clear.set(clear);
-                        b.union(&vega_fit::Bounds::new(-(ax_off + cat_gutter + clear + cat_title_extra), ph / 2.0, 0.0, ph / 2.0));
+                        b.union(&vega_fit::Bounds::new(-(ax_off + cat_gutters(ph).1 + clear + cat_title_extra), ph / 2.0, 0.0, ph / 2.0));
                     }
                 }
                 // Concat layout stacks the rail pane `spacing` above the
@@ -1415,7 +1488,7 @@ pub(super) fn render_horizontal_panel(
                 "end" => "right",
                 other => return Err(format!("bar: category axis anchor {other:?} has no label align").into()),
             })?;
-            let spec = AxisSpec { orient, offset: cat_label_pad, shift: -0.5, align: Some(align), baseline: None, angle: 0.0, flush: None, style: ax_x.labels.item_style()? };
+            let spec = AxisSpec { orient, offset: cat_gutters(plot_h).0, shift: -0.5, align: Some(align), baseline: None, angle: 0.0, flush: None, style: ax_x.labels.item_style()? };
             register_axis("y", spec);
         }
     }
@@ -1626,6 +1699,8 @@ pub(super) fn render_horizontal_panel(
         String::new()
     };
 
+    // The base bars, which annotation text tests for its halo.
+    let mut under = Vec::new();
     // Bars
     if is_stacked {
         let bw = band.bandwidth();
@@ -1654,7 +1729,7 @@ pub(super) fn render_horizontal_panel(
                         tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()),
                         order_domain.as_deref().map(|d| crate::contract::tooltip_order_rank(d, base_series(series))),
                         value_title, tooltip_fmt, raw_val,
-                        (normalize && !has_negative).then_some(raw_val / total), total_row, None,
+                        (normalize && !has_negative).then_some(raw_val / total), total_row, extras.of(&key)?, None,
                     )?
                 };
                 // A zero row still draws its (zero-width) bar and keeps its
@@ -1677,7 +1752,8 @@ pub(super) fn render_horizontal_panel(
                 // arm's mirrored `Rounded::Negative`): a positive segment rounds
                 // its right (far) end, a negative one its left.
                 let outer = if raw_val < 0.0 { outers.1 } else { outers.0 } == Some(series);
-                plot.extend(bar_passes(true, seg_start, bar_y, seg_w, mark_h, &fill, None, stroke_color, stroke_w, if outer { corner_r } else { 0.0 },
+                under.push(crate::annotation::DataMark::rect(seg_start, bar_y, seg_w, mark_h));
+                plot.extend(bar_passes(true, seg_start, bar_y, seg_w, mark_h, &fill, r.style.mark.opacity, stroke_color, stroke_w, if outer { corner_r } else { 0.0 },
                     Rounded::by_sign(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
             }
         }
@@ -1725,7 +1801,7 @@ pub(super) fn render_horizontal_panel(
             let plain = || {
                 bar_datum_aria(
                     tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
-                    value_title, tooltip_fmt, val, None, None, None,
+                    value_title, tooltip_fmt, val, None, None, extras.of(&key)?, None,
                 )
             };
             let aria = match (&ranged, start) {
@@ -1742,7 +1818,8 @@ pub(super) fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), linear.position(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
             }
-            plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, &fill, None, stroke_color, stroke_w, corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
+            under.push(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h));
+            plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, &fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     } else {
         let bw = band.bandwidth();
@@ -1796,7 +1873,7 @@ pub(super) fn render_horizontal_panel(
             let fill = r.style.single_series_fill.as_str();
             let plain = || {
                 bar_datum_aria(
-                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, (!layers.is_empty()).then_some(value_title), None, value_title, tooltip_fmt, val, None, None, None,
+                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, (!layers.is_empty()).then_some(value_title), None, value_title, tooltip_fmt, val, None, None, extras.of(&key)?, None,
                 )
             };
             let aria = match (&ranged, start, &span_block) {
@@ -1823,7 +1900,8 @@ pub(super) fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), val_x, bar_y + mark_h / 2.0, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
-            plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, fill, None, stroke_color, stroke_w, corner_r,
+            under.push(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h));
+            plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r,
                 ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     }
@@ -1870,7 +1948,7 @@ pub(super) fn render_horizontal_panel(
                     bar_datum_aria(
                         tooltip_labels, &row_str(row, bl.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format,
                         Some(series.as_str()), None, layer_name.as_str(), bl.axis_y.tooltip_format_or(tooltip_fmt), val, None,
-                        None, None,
+                        None, &[], None,
                     )
                 };
                 let bw = band.bandwidth();
@@ -1907,6 +1985,7 @@ pub(super) fn render_horizontal_panel(
                 if let (Some(ml), Some(label_layer)) = (bl.bar_mark.labels.as_ref(), labels) {
                     let center = horizontal_center(band.bandwidth());
                     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
+                    label_layer.warn_if_crowded(&r.id, Some(position), &geom, None, None);
                     let points = label_layer.points(&geom, None, &LabelDecors::new(), &crate::selected::Selection::default(), |site| {
                         Ok(tooltip_labels.then(|| {
                             crate::contract::native_label(&[
@@ -1942,7 +2021,7 @@ pub(super) fn render_horizontal_panel(
                             let series = layer_series_text(&layer_name, color_value.as_deref());
                             return bar_datum_aria(
                                 tooltip_labels, &row_str(row, sl.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
-                                layer_name.as_str(), sl.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, None,
+                                layer_name.as_str(), sl.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, &[], None,
                             );
                         };
                         let cat = row_str(row, sl.x.as_deref().unwrap_or(cat_field));
@@ -1956,7 +2035,8 @@ pub(super) fn render_horizontal_panel(
                     r.canvas.as_str(),
                     board_style,
                     |_, _| Ok(None),
-crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clips[position].then_some((plot_w, plot_h)))
+crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clips[position].then_some((plot_w, plot_h)),
+crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },)
                 .map_err(|e| format!("bar: {e}"))?);
             }
             OverlayLayer::Line(l) => {
@@ -1982,7 +2062,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
                         |row, val| {
                             bar_datum_aria(
                                 tooltip_labels, &row_str(row, l.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
-                                layer_name, l.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, None,
+                                layer_name, l.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, &[], None,
                             )
                         },
                         board_style,
@@ -1991,6 +2071,7 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
                         0.0,
                         stack,
                         layer_link,
+                        crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
                     )
                     .map_err(|e| format!("bar: {e}"))
                 };
@@ -2063,10 +2144,12 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     let center = horizontal_center(band.bandwidth());
     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
     for layer in &label_layers {
+        under.extend(layer.site_inks(&geom, None).map(|(_, b)| crate::annotation::DataMark::Box(b)));
+        layer.warn_if_crowded(&r.id, None, &geom, None, None);
         let points = layer.points(&geom, None, &label_decors, &r.selection, |site| {
             bar_datum_aria(
                 tooltip_labels, &site.cat, tooltip_tu, x_is_standard_date, grain_header_format, None, None, value_title,
-                tooltip_fmt, site.value, None, None, None,
+                tooltip_fmt, site.value, None, None, &[], None,
             )
         })?;
         tail.extend(mark_labels(&layer.spec.ml, true, layer.stacked, !layer.total, &points, painted_layers, board_style,
@@ -2081,7 +2164,8 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     }
 
     // Over the value labels; the plot origin is offset into the page frame.
-    tail.extend(crate::annotation::nodes(&annotation_ctx((plot_left, plot_top), plot_w, plot_h), crate::annotation::Plane::Foreground)?);
+    let annotations = crate::annotation::AnnotationCtx { occupied: under, ..annotation_ctx((plot_left, plot_top), plot_w, plot_h) };
+    tail.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?);
 
     // Category labels (left axis). Vega-fit path draws them the way the
     // compiled axis does: flip-aligned (anchor start at −labelPadding, the
@@ -2091,21 +2175,41 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     // reports (or paints) the labels instead.
     let cat_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let cat_weight = ax_x.labels.font.weight_str();
-    let cat_label = |x: f64, y: f64, anchor: &str, label: &str| {
-        Node::text(
-            Attrs::new()
-                .set("x", format!("{x:.2}"))
-                .set("y", format!("{y:.2}"))
-                .set("text-anchor", anchor)
-                .vega("font-family", cat_family)
-                .set("font-size", cat_font_size.to_string())
-                .set("font-weight", cat_weight.as_str())
-                .set("fill", cat_color),
-            label,
+    let cat_attrs = |x: f64, y: f64, anchor: &str| {
+        Attrs::new()
+            .set("x", format!("{x:.2}"))
+            .set("y", format!("{y:.2}"))
+            .set("text-anchor", anchor)
+            .vega("font-family", cat_family)
+            .set("font-size", cat_font_size.to_string())
+            .set("font-weight", cat_weight.as_str())
+            .set("fill", cat_color)
+    };
+    let two_lines_fit = row_holds_two(plot_h);
+    // A name wider than the gutter wraps onto a second line when the row holds two, and only that
+    // line is cut; a cut name keeps its full text on hover. A wrapped block centers its ink (line
+    // one's cap top to the last baseline) on the band; a single line keeps Vega's `middle` shift.
+    let cat_paint = |shown: &str, center_y: f64| -> Result<CatLabel, String> {
+        let lines = cat_lines(shown, two_lines_fit)?;
+        let y = if lines.len() == 1 {
+            center_y + measure::baseline_shift("middle", cat_font_size)
+        } else {
+            center_y + CAP_HEIGHT_EM * cat_font_size / 2.0 - cat_line_height * (lines.len() - 1) as f64 / 2.0
+        };
+        let full = Some(shown).filter(|full| lines.join(" ") != *full).map(str::to_string);
+        Ok(CatLabel { y, lines, full })
+    };
+    let cat_node = |x: f64, anchor: &str, label: &CatLabel| {
+        crate::families::cartesian::lines_label_node(
+            cat_attrs(x, label.y, anchor),
+            &label.lines,
+            label.full.as_deref(),
+            &format!("{x:.2}"),
+            cat_line_height,
         )
     };
-    let cat_label_pad = cat_label_pad + side_clear.get();
-    let cat_gutter = cat_gutter + side_clear.get();
+    let (cat_label_pad, cat_gutter) = (cat_gutters(plot_h).0 + side_clear.get(), cat_gutters(plot_h).1 + side_clear.get());
+    let ghost_w = ghost_w_at(plot_h);
     let cat_edge_x = if cat_on_right { plot_right + ax_off } else { plot_left - ax_off };
     let cat_side = if cat_on_right { 1.0 } else { -1.0 };
     // Vega lists the x axis before the y axis.
@@ -2113,8 +2217,8 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         tail.extend(value_axis.nodes(ax_y, plot_left, plot_w, plot_bottom)?);
     }
     let mut cat_items: Vec<Node> = Vec::new();
-    let mut cat_labels: Vec<(f64, f64, String)> = Vec::new();
-    let mut ghost_labels: Vec<String> = Vec::new();
+    let mut cat_labels: Vec<CatLabel> = Vec::new();
+    let mut ghost_labels: Vec<CatLabel> = Vec::new();
     for (cat_i, cat) in cat_domain.iter().enumerate() {
         let Some(band_y) = band.position(cat) else { continue };
         let center_y = plot_top + band_y + band.bandwidth() / 2.0;
@@ -2122,22 +2226,16 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         // axis label's encoded y bakes the −0.5 back out, so only x
         // shifts (bc0 scenegraph, flip model: label abs x = plot_left
         // − 52.974, baseline y = band center + 3 exactly).
-        let label_y = center_y + measure::baseline_shift("middle", cat_font_size);
-        let (label_x, anchor) = (cat_edge_x + cat_side * cat_label_pad + 0.5, cat_anchor);
-        // B6 — Vega's labelLimit: draw the SAME truncated measure the
-        // gutter above (`cat_w = max_cat_w.min(cat_limit)`) reserved, so
-        // the drawn string never overhangs its own gutter.
-        let drawn =
-            crate::common::truncate_label(&shown_cat(cat)?, cat_limit, cat_family, cat_font_size, fonts, false)
-                .map_err(|e| format!("bar: {e}"))?;
+        let label_x = cat_edge_x + cat_side * cat_label_pad + 0.5;
+        // B6 — Vega's labelLimit: draw lines the gutter above
+        // (`cat_w = max_cat_w.min(cat_limit)`) reserved, so a drawn
+        // line never overhangs its own gutter.
+        let label = cat_paint(&shown_cat(cat)?, center_y).map_err(|e| format!("bar: {e}"))?;
         if cat_axis_in_panel {
-            cat_items.push(cat_label(label_x, label_y, anchor, &drawn));
+            cat_items.push(cat_node(label_x, cat_anchor, &label));
         }
-        cat_labels.push((label_y, center_y, drawn));
-        ghost_labels.push(
-            crate::common::truncate_label(&ghost_cats[cat_i], cat_limit, cat_family, cat_font_size, fonts, false)
-                .map_err(|e| format!("bar: {e}"))?,
-        );
+        cat_labels.push(label);
+        ghost_labels.push(cat_paint(&ghost_cats[cat_i], center_y).map_err(|e| format!("bar: {e}"))?);
     }
 
     // Axis titles.
@@ -2158,13 +2256,9 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
         )?);
     }
     if mirror_active && cat_axis_in_panel {
-        let ghost_edge_x = if cat_on_right { plot_left - ax_off } else { plot_right + ax_off };
+        let ghost_edge_x = if cat_on_right { plot_left - ax_off } else { plot_right - headroom_pull(plot_w, &tick_values) + ax_off };
         let ghost_x = ghost_edge_x - cat_side * ghost_gutter + 0.5;
-        let ghost_items: Vec<Node> = cat_labels
-            .iter()
-            .zip(&ghost_labels)
-            .map(|((label_y, _, _), drawn)| cat_label(ghost_x, *label_y, ghost_anchor, drawn))
-            .collect();
+        let ghost_items: Vec<Node> = ghost_labels.iter().map(|label| cat_node(ghost_x, ghost_anchor, label)).collect();
         tail.extend(crate::contract::axis_group(
             crate::contract::AxisChannel::Y,
             &cat_caption.untitled(),
@@ -2187,12 +2281,8 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     let right_edge = facet.map(|f| &f.right_edge);
     if let (Some(copy), Some(edge)) = (&right_copy, right_edge.filter(|e| e.paint && !cat_axis_in_panel)) {
         let edge_x = plot_left + plot_w + edge.overhang + ax_off;
-        let right_labels = if cat_on_right { cat_labels.iter().map(|(_, _, l)| l).collect::<Vec<_>>() } else { ghost_labels.iter().collect() };
-        let mut edge_items: Vec<Node> = cat_labels
-            .iter()
-            .zip(right_labels)
-            .map(|((label_y, _, _), drawn)| cat_label(edge_x + copy.dx, *label_y, copy.anchor, drawn))
-            .collect();
+        let right_labels = if cat_on_right { &cat_labels } else { &ghost_labels };
+        let mut edge_items: Vec<Node> = right_labels.iter().map(|label| cat_node(edge_x + copy.dx, copy.anchor, label)).collect();
         if cat_on_right {
             edge_items.extend(crate::common::axis_title_rotated(&cat_title_paint, &ax_x.title, edge_x + cat_gutter, plot_top + plot_h / 2.0, 1.0, None));
         }
@@ -2201,8 +2291,8 @@ crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.
     let row_header_labels = if cat_axis_in_panel {
         Vec::new()
     } else {
-        let left_labels = if cat_on_right { &ghost_labels } else { &cat_labels.iter().map(|(_, _, l)| l.clone()).collect::<Vec<_>>() };
-        cat_labels.iter().zip(left_labels).map(|((y, _, _), label)| (*y, label.clone())).collect()
+        let left_labels = if cat_on_right { &ghost_labels } else { &cat_labels };
+        left_labels.iter().map(|label| (label.y, label.lines.join(&measure::LINE_SEP.to_string()))).collect()
     };
 
 

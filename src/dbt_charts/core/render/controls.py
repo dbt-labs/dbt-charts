@@ -55,9 +55,10 @@ def controls_are_interactive() -> bool:
     return _INTERACTIVE.get()
 
 
-# The words the controls runtime (variables.js) prints itself, keyed by the last
-# segment of their catalog id: the page cannot fetch the catalog, so the strip
-# carries this slice.
+# The words the controls and table runtimes (variables.js, table_runtime.js)
+# print themselves, keyed by the last segment of their catalog id: the page
+# cannot fetch the catalog, so the strip carries this slice and the engine
+# publishes the table words on a pooled table's root.
 _CONTROLS_RUNTIME_WORDS = (
     "today",
     "last_7_days",
@@ -73,14 +74,21 @@ _CONTROLS_RUNTIME_WORDS = (
     "next_month",
     "calendar_header",
     "calendar_day",
+    "sort_ascending",
+    "sort_descending",
+    "clear_sort",
+    "search",
+    "search_values",
+    "page_range",
 )
 
 
-# The calendar patterns reach the page unfilled: the runtime puts the date's
-# parts into them.
+# The calendar and page-range patterns reach the page unfilled: the runtime puts
+# a date's parts or a page's row numbers into them.
 _PATTERN_PLACEHOLDERS = {
     "calendar_header": ("month", "year"),
     "calendar_day": ("weekday", "day", "month", "year"),
+    "page_range": ("first", "last", "total"),
 }
 
 
@@ -102,21 +110,21 @@ def controls_language() -> dict[str, str]:
 
 @cache
 def controls_runtime_source() -> str:
-    """The board runtimes (chart hover, the link modal, the English controls words, then variable controls) as JS for a host to ship in its page.
+    """The board runtimes (chart hover, table sort/filter, the link modal, the English controls words, then variable controls) as JS for a host to ship in its page.
 
     Strips the ``/*{# ... #}*/``-fenced comments — engineering notes with no
     audience once the runtime is shipped. Cached: hosts rebuild this per page
     render, and a packaged asset can't change under a running process.
     """
-    source = _read_script("variables.js")
-    # Hover first: the controls runtime's mount() hands each board to it.
-    return (
-        hover_runtime_source()
-        + "\n"
-        + link_modal_source()
-        + "\n"
-        + _read_script("controls_english.js")
-        + strip_js_comments(source)
+    # Hover and table first: the controls runtime's mount() hands each board to them.
+    return "\n".join(
+        [
+            _read_script("controls_english.js"),
+            hover_runtime_source(),
+            strip_js_comments(_read_script("table_runtime.js")),
+            link_modal_source(),
+            strip_js_comments(_read_script("variables.js")),
+        ]
     )
 
 
@@ -134,7 +142,7 @@ def controls_english_source() -> str:
     """The English controls words as JS, generated from the catalog.
 
     Stored renders without ``data-dbt-language`` are English; every host that
-    ships ``variables.js`` loads this module before it. Committed as
+    ships the controls or table runtime loads this module before them. Committed as
     ``templates/scripts/controls_english.js`` (``just gen-controls-english``).
     """
     with language_scope("en"):

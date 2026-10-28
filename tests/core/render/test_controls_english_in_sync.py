@@ -23,4 +23,6 @@ def test_controls_english_js_matches_the_catalog() -> None:
 
 def test_the_shipped_runtime_defines_the_words_before_the_controls_use_them() -> None:
     source = controls_runtime_source()
-    assert source.index("window.dbtControlsEnglish") < source.index("function _words")
+    english = source.index("window.dbtControlsEnglish")
+    assert english < source.index("function _word(")
+    assert english < source.index("function _words(")

@@ -789,6 +789,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `style.inner_radius` | float 0–1 | Donut hole ratio (hole/outer disk; pie/donut only); `type: donut` sets it to `0.6` automatically |
 | `total` | object | `{label}` — center total for donut; format lives at `style.total.value.format` |
 | `style.marks.slice.labels` | object | `{template, where}` — per-row Jinja annotations near slice callouts |
+| `tooltip` | list[string \| object] | bar/line/area/scatter/pie: query columns added to the hover card after the chart's own rows. Entry: a column name or `{column, label?, format?}`; label defaults to `field_labels`, then the derived label; format to the query's `formats:`. Not with `layers:` or `y_start:` |
 | `x_label` | string | X-axis title override |
 | `y_label` | string | Y-axis title override |
 | `message` | string | Static text for `type: callout` |
@@ -1221,7 +1222,8 @@ or an alias dict for tone roles such as `info`), `math` (`sin`, `cos`, `tan`,
 snake_case), filter
 `format` (a d3-format spec, or `format(column=channels.y)` for the format the board resolved for that column, numbers only), and the helpers `text_width(text, size, weight)`, `color_for(value, column=None)` (board
 pin for that column's value, else the categorical palette in first-call order),
-`href(row)` (the chart's `link:` with its `{{ channel }}` placeholders filled from
+`label_ink(color)` (text ink for a hex color on the chart's background), `variant(color, kind)`
+(`light`, `dark`, `pale` or `deep` tier of a hex color), `href(row)` (the chart's `link:` with its `{{ channel }}` placeholders filled from
 the row; a `link:` with no placeholder wraps the whole drawing instead),
 `raise_error(message)`. Names are strict: a misspelling fails the chart. The
 engine renders the minijinja dialect: filters, not Python methods (`text | split(",")`,
@@ -1311,10 +1313,10 @@ Common fields: `text` (one line; `{{ value | format }}` prints the anchor, `{{ s
 - **`fit`:** `linear()`, `polynomial(<order >= 2>)`, `exponential()`, `log()`, `power()`. **`interval`:** `confidence(<pct>)`, `prediction(<pct>)`. A categorical x cannot be fitted.
 - **`series`:** required on a computed annotation (aggregate or trend) when the chart has `color`: `each`, a list of names, or `total` (pooled; the per-x sum when stacked). Error on a literal-only annotation. Only `total` on a stacked chart.
 - **`y_column`:** names the y column (picks its axis and rows). Required for a computed y anchor, trend, or derived note on a chart with several y columns or `layers:`.
-- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes and trends).
+- **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text moves off the chart's marks, value labels and other text: it slides along its edge, and an `auto` edge or align (rules, bands, notes; the default) may also change. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes and trends).
 - **Theme:** `style.annotations.<rule|band|note|trend>.marks.*` on the board or a chart; an annotation's own `style:` wins.
 - **Not accepted** on pie, donut, map, table, or KPI charts.
-- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warning `WARN-ANNOTATION-NOTHING-DRAWN`.
+- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warnings `WARN-ANNOTATION-NOTHING-DRAWN`, `WARN-ANNOTATION-NOTE-MOVED`.
 
 ### Conditional formatting
 
@@ -1408,6 +1410,15 @@ measure on bar charts — *regardless of orientation*. On a horizontal bar,
 zero-baseline and range pins still belong on `axis_y` (the measure), never
 `axis_x`; `style.axis_quantitative` also targets the measure axis whichever
 side it renders on.
+
+**Axis slots by type:** `style.axis_band` targets whichever axis is the category
+(band) axis, and `style.axis_quantitative` whichever carries the measure,
+whatever the orientation. Both exist per family
+(`style.charts.<family>.axis_band`), at the charts tier
+(`style.charts.axis_band`), and on a single chart (`style.axis_band`). Axis
+settings follow one rule: the more specific path wins. A type slot
+(`axis_quantitative`, `axis_band`) beats the channel slot (`axis_x`, `axis_y`),
+which beats the shared `axis`; this holds in a chart's own `style` too.
 
 Why: `x` and `y` name roles, not screen directions. They are algebra's
 unknowns. In `y = f(x)`, `x` is the input (the independent variable: the

@@ -85,6 +85,7 @@ from ._support_table import (
     ChartSupportTableSource,
     validate_support_table_shape,
 )
+from ._tooltip import ChartTooltip, TooltipField
 from ._type import (
     _INTERNAL_CHART_TYPES,
     CHART_TYPE_DISPLAY,
@@ -145,8 +146,9 @@ AuthoredChart = Annotated[
 """Discriminated union of per-family authored chart patches.
 
 AuthoredChart is a type alias, not a BaseModel. Use TypeAdapter(AuthoredChart) for
-validation. Use isinstance(item, _BaseChartFields) to check if an object
-is any kind of chart patch. type: is mandatory; missing or unknown type raises
+validation. Use isinstance(item, _BaseChartFields | CalloutChart) to check if
+an object is any kind of chart patch; CalloutChart does not inherit
+_BaseChartFields. type: is mandatory; missing or unknown type raises
 a union_tag_not_found ValidationError.
 """
 
@@ -221,6 +223,9 @@ __all__ = [
     "ChartSupportTablePerSeries",
     "ChartSupportTableSource",
     "validate_support_table_shape",
+    # tooltip
+    "ChartTooltip",
+    "TooltipField",
     # annotations
     "ChartSort",
     "ChartTotal",

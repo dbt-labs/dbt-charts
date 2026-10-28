@@ -23,6 +23,7 @@ from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
     FieldConditionalFormatting,
     MultiplesConfig,
+    TooltipField,
 )
 from dbt_charts.core.compile.models.markers import Url
 from dbt_charts.core.compile.models.primitives import LinkOpen, VariableDependencies
@@ -133,6 +134,15 @@ class _FieldLabelsField(BaseModel):
     field_labels: dict[str, str] = Field(
         default_factory=dict,
         description="Authored display text per query column, painted verbatim.",
+    )
+
+
+class _TooltipFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tooltip: list[TooltipField] = Field(
+        default_factory=list,
+        description="Query columns the hover card adds after the chart's own rows.",
     )
 
 

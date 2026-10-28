@@ -669,3 +669,25 @@ def test_a_model_column_rename_fails_validate_before_dbt_run(tmp_path: Path) -> 
     assert result.exit_code == 1, result.output
     assert "ERR-DBT-MODEL-COLUMN-MISSING" in result.output
     assert "customer_id" in result.output
+
+
+class TestDftValidateBadSourceRegistry:
+    """A source config the registry rejects is a diagnostic, not a traceback."""
+
+    def test_absolute_parquet_path_is_a_formatted_diagnostic(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  p:\n    type: parquet\n    files:\n      x: /abs/x.parquet\n"
+        )
+        board = tmp_path / "board.yml"
+        board.write_text(_VALID_BOARD)
+
+        result = runner.invoke(
+            app, ["validate", str(board), "--project-dir", str(tmp_path)]
+        )
+
+        assert result.exit_code == 1, result.output
+        assert "Traceback" not in result.output
+        assert "ERR-SOURCE-CONFIG-INVALID" in result.output
+        assert "must be relative" in result.output

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Endpoint labels read the final value then the series name, wrapping or dropping the value when the name is long.
+time: 2026-10-25T23:07:28.779412-07:00

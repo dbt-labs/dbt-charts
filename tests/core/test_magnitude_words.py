@@ -37,6 +37,7 @@ def _formatted(regional: Regional, value: float, notation: Notation) -> str:
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         return format_d3(value, ".2~s", notation=notation)
 

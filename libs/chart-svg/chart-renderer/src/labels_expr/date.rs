@@ -1,4 +1,4 @@
-//! JavaScript `Date` arithmetic (the render runs under `TZ=UTC`, so local time is UTC), d3-time-format's
+//! JavaScript `Date` arithmetic (local time is the board zone over aware instants, else UTC), d3-time-format's
 //! en-US `timeFormat`/`timeParse`, and the d3-time interval helpers vega-time builds on.
 
 pub const MS_PER_DAY: f64 = 86_400_000.0;
@@ -8,7 +8,7 @@ const MAX_TIME: f64 = 8.64e15;
 const JS_SHORT_DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const JS_SHORT_MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-use super::val::{Bounded, Res, Text};
+use super::val::{Bounded, EvalError, Res, Text};
 use crate::time_locale::TimeLocale;
 
 /// A valid instant broken into calendar fields.
@@ -100,11 +100,27 @@ pub fn to_date_string(ms: f64) -> String {
     )
 }
 
-/// `Date.parse` / `new Date(string)`: V8's parser, `js_date`'s, which also reads a column's dates.
+/// `Date.parse` / `new Date(string)`: V8's parser, `js_date`'s, which also reads a column's dates. A
+/// string naming no zone reads on the local clock.
 pub fn parse_date(s: &str) -> Res<f64> {
     // The parser tokenizes the whole string first: a token and its word take about 130 bytes.
     super::val::charge(s.len().saturating_mul(130))?;
-    Ok(crate::js_date::parse_ms(s).unwrap_or(f64::NAN))
+    match crate::js_date::parse_ms_zoned(s) {
+        Some((ms, true)) => Ok(ms),
+        Some((wall, false)) => from_local_wall(wall),
+        None => Ok(f64::NAN),
+    }
+}
+
+/// `ms` as the UTC-reckoned wall clock of JavaScript's local time: what d3's
+/// local intervals step on.
+pub fn to_local_wall(ms: f64) -> Res<f64> {
+    Ok(ms + local_offset_ms(ms)?)
+}
+
+/// The instant a local wall clock names: the inverse of [`to_local_wall`].
+pub fn from_local_wall(wall: f64) -> Res<f64> {
+    crate::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)
 }
 
 fn pad(value: f64, fill: &str, width: usize) -> String {
@@ -151,7 +167,9 @@ fn iso_thursday(d: &Dt) -> (i64, i64) {
 pub fn multi_format(raw: f64, utc: bool, overrides: &[(String, String)], locale: &TimeLocale) -> Res<Text> {
     let ms = time_clip(raw);
     let spec = |key: &str, default: &str| overrides.iter().find(|(k, _)| k == key).map_or(default, |(_, v)| v.as_str()).to_string();
-    let below = |unit: Unit| unit.floor(ms) < raw;
+    let shift = if utc { 0.0 } else { local_offset_ms(ms)? };
+    let (wall, raw_wall) = (ms + shift, raw + shift);
+    let below = |unit: Unit| unit.floor(wall) < raw_wall;
     let chosen = if below(Unit::Seconds) {
         spec("milliseconds", ".%L")
     } else if below(Unit::Minutes) {
@@ -174,11 +192,18 @@ pub fn multi_format(raw: f64, utc: bool, overrides: &[(String, String)], locale:
     time_format(&chosen, ms, utc, locale)
 }
 
-/// `timeFormat(spec)(date)` / `utcFormat(spec)(date)`: UTC and local coincide under the pinned time zone.
+/// JavaScript's local offset at `ms` (`crate::time_zone::expression_local_offset_ms`).
+pub fn local_offset_ms(ms: f64) -> Res<f64> {
+    crate::time_zone::expression_local_offset_ms(ms).map_err(EvalError::Unmodeled)
+}
+
+/// `timeFormat(spec)(date)` / `utcFormat(spec)(date)`: local time reads the
+/// expression's local zone, UTC reads UTC.
 pub fn time_format(spec: &str, ms: f64, utc: bool, locale: &TimeLocale) -> Res<Text> {
     super::val::charge(spec.len().saturating_mul(4))?;
     let chars: Vec<char> = spec.chars().collect();
-    let dt = breakdown(ms);
+    let shift = if utc { 0.0 } else { local_offset_ms(ms)? };
+    let dt = breakdown(ms + shift);
     let mut out = Bounded::default();
     let mut i = 0;
     while i < chars.len() {
@@ -198,7 +223,7 @@ pub fn time_format(spec: &str, ms: f64, utc: bool, locale: &TimeLocale) -> Res<T
         i += if pad_fill.is_some() { 2 } else { 1 };
         let Some(c) = c else { break };
         let fill = pad_fill.unwrap_or(if c == 'e' { " " } else { "0" });
-        match directive(c, &dt, ms, fill, utc, locale)? {
+        match directive(c, &dt, ms, shift, fill, utc, locale)? {
             Some(text) => out.push_str(&text)?,
             None => out.push(c)?,
         }
@@ -206,7 +231,7 @@ pub fn time_format(spec: &str, ms: f64, utc: bool, locale: &TimeLocale) -> Res<T
     Ok(out.finish())
 }
 
-fn directive(c: char, dt: &Option<Dt>, ms: f64, fill: &str, utc: bool, locale: &TimeLocale) -> Res<Option<String>> {
+fn directive(c: char, dt: &Option<Dt>, ms: f64, shift: f64, fill: &str, utc: bool, locale: &TimeLocale) -> Res<Option<String>> {
     let name = |names: &[String], i: Option<i64>| i.map_or(String::new(), |i| names[i as usize].to_string());
     let d = dt.as_ref();
     Ok(Some(match c {
@@ -239,7 +264,12 @@ fn directive(c: char, dt: &Option<Dt>, ms: f64, fill: &str, utc: bool, locale: &
         'X' => time_format(&locale.time, ms, utc, locale)?.into_string(),
         'y' => js_pad(d.map(|d| d.year % 100), fill, 2),
         'Y' => js_pad(d.map(|d| d.year % 10000), fill, 4),
-        'Z' => if utc || d.is_some() { "+0000".into() } else { "+00NaN".into() },
+        'Z' if d.is_some() => {
+            let minutes = (shift / 60_000.0) as i64;
+            let sign = if minutes < 0 { '-' } else { '+' };
+            format!("{sign}{:02}{:02}", minutes.abs() / 60, minutes.abs() % 60)
+        }
+        'Z' => if utc { "+0000".into() } else { "+00NaN".into() },
         '%' => "%".into(),
         _ => return Ok(None),
     }))
@@ -277,7 +307,17 @@ struct Parsed {
 }
 
 /// `utcParse(spec)(string)` / `timeParse(spec)(string)`: the instant, or `None` when the string does not fit.
-pub fn time_parse(spec: &str, text: &str, locale: &TimeLocale) -> Option<f64> {
+/// `timeParse(spec)(text)` / `utcParse(spec)(text)`: a local parse with no `%Z`
+/// reads its fields on the expression's local clock.
+pub fn time_parse(spec: &str, text: &str, locale: &TimeLocale, utc: bool) -> Res<Option<f64>> {
+    match parse_fields(spec, text, locale) {
+        Some((wall, true)) if !utc => from_local_wall(wall).map(Some),
+        parsed => Ok(parsed.map(|(ms, _)| ms)),
+    }
+}
+
+/// The parsed instant, and whether it is a wall clock (no `%Z`, `%Q` or `%s`).
+fn parse_fields(spec: &str, text: &str, locale: &TimeLocale) -> Option<(f64, bool)> {
     let spec_chars: Vec<char> = spec.chars().collect();
     let string: Vec<char> = text.chars().collect();
     let mut p = Parsed { y: Some(1900), d: Some(1), ..Parsed::default() };
@@ -286,10 +326,10 @@ pub fn time_parse(spec: &str, text: &str, locale: &TimeLocale) -> Option<f64> {
         return None;
     }
     if let Some(q) = p.unix_ms {
-        return Some(q as f64);
+        return Some((q as f64, false));
     }
     if let Some(s) = p.unix_s {
-        return Some((s * 1000 + p.l) as f64);
+        return Some(((s * 1000 + p.l) as f64, false));
     }
     if let Some(pm) = p.p {
         p.h = p.h % 12 + pm * 12;
@@ -310,7 +350,7 @@ pub fn time_parse(spec: &str, text: &str, locale: &TimeLocale) -> Option<f64> {
         let monday_on_or_before = jan1 - (wd + 6).rem_euclid(7);
         let week = if wd > 4 || wd == 0 { monday_on_or_before + 7 } else { monday_on_or_before } + (v - 1) * 7;
         let (y2, m2, d2) = civil_from_days(week);
-        return Some(make_time(y2 as f64, (m2 - 1) as f64, (d2 + (w + 6) % 7) as f64, (p.h) as f64, p.mi as f64, p.s as f64, p.l as f64) - zone_ms(&p));
+        return Some((make_time(y2 as f64, (m2 - 1) as f64, (d2 + (w + 6) % 7) as f64, (p.h) as f64, p.mi as f64, p.s as f64, p.l as f64) - zone_ms(&p), p.z.is_none()));
     } else if p.ww.is_some() || p.uu.is_some() {
         let w = *p.w.get_or_insert(if let Some(u) = p.uu_or_u() { u % 7 } else if p.ww.is_some() { 1 } else { 0 });
         let jan1 = days_from_civil(year, 1, 1);
@@ -318,7 +358,7 @@ pub fn time_parse(spec: &str, text: &str, locale: &TimeLocale) -> Option<f64> {
         month = 0;
         day = if let Some(ww) = p.ww { (w + 6) % 7 + ww * 7 - (wd + 5) % 7 } else { w + p.uu.unwrap_or(0) * 7 - (wd + 6) % 7 };
     }
-    Some(make_time(year as f64, month as f64, day as f64, p.h as f64, p.mi as f64, p.s as f64, p.l as f64) - zone_ms(&p))
+    Some((make_time(year as f64, month as f64, day as f64, p.h as f64, p.mi as f64, p.s as f64, p.l as f64) - zone_ms(&p), p.z.is_none()))
 }
 
 fn zone_ms(p: &Parsed) -> f64 {
@@ -565,6 +605,11 @@ pub enum Unit {
 }
 
 impl Unit {
+    /// An hour or finer steps the instant by a fixed duration, in local time as in UTC (d3-time).
+    pub fn is_fixed(self) -> bool {
+        matches!(self, Unit::Hours | Unit::Minutes | Unit::Seconds | Unit::Milliseconds)
+    }
+
     pub fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "year" => Unit::Year,
@@ -776,11 +821,11 @@ mod tests {
     #[test]
     fn time_parse_reads_what_time_format_wrote() {
         let t = make_time(2020.0, 0.0, 2.0, 15.0, 4.0, 5.0, 0.0);
-        assert_eq!(time_parse("%Y-%m-%d %H:%M:%S", "2020-01-02 15:04:05", &crate::time_locale::en_us()), Some(t));
-        assert_eq!(time_parse("%b %d, %Y", "Jan 02, 2020", &crate::time_locale::en_us()), Some(make_time(2020.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0)));
-        assert_eq!(time_parse("%Y-%m-%d", "2020-01-02x", &crate::time_locale::en_us()), None);
-        assert_eq!(time_parse("%Y-%m-%d", "nope", &crate::time_locale::en_us()), None);
-        assert_eq!(time_parse("%I:%M %p", "3:04 PM", &crate::time_locale::en_us()).map(|v| v.rem_euclid(MS_PER_DAY)), Some(15.0 * 3_600_000.0 + 4.0 * 60_000.0));
+        assert_eq!(time_parse("%Y-%m-%d %H:%M:%S", "2020-01-02 15:04:05", &crate::time_locale::en_us(), false).unwrap(), Some(t));
+        assert_eq!(time_parse("%b %d, %Y", "Jan 02, 2020", &crate::time_locale::en_us(), false).unwrap(), Some(make_time(2020.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0)));
+        assert_eq!(time_parse("%Y-%m-%d", "2020-01-02x", &crate::time_locale::en_us(), false).unwrap(), None);
+        assert_eq!(time_parse("%Y-%m-%d", "nope", &crate::time_locale::en_us(), false).unwrap(), None);
+        assert_eq!(time_parse("%I:%M %p", "3:04 PM", &crate::time_locale::en_us(), false).unwrap().map(|v| v.rem_euclid(MS_PER_DAY)), Some(15.0 * 3_600_000.0 + 4.0 * 60_000.0));
     }
 
     #[test]

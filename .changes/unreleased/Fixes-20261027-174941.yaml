@@ -1,0 +1,3 @@
+kind: Fixes
+body: A pie or donut whose query returns no rows no longer crashes when its `link` names a channel and its center total is visible; the total draws without a link.
+time: 2026-10-27T17:49:41.083791489Z

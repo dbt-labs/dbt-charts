@@ -429,7 +429,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         // One rounded clip over the whole stack: it rounds the stack's top
         // corners, and a segment inside the curve follows it.
         let stack_h = plot_h - y_pos(bin.count as f64);
-        let corner = corner_r.min((right - left) / 2.0).min(stack_h / 2.0);
+        let corner = crate::common::bar_corner_radius(corner_r, right - left, stack_h);
         let stack_top = y_pos(bin.count as f64);
         let mut below = 0;
         for segment in &bin.segments {

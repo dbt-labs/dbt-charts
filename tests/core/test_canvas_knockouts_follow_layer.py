@@ -26,7 +26,6 @@ _KNOCKOUT_LEAVES = [
     "marks.area.stacked.stroke.color",
     "marks.point.fill",
     "marks.geoshape.stroke.color",
-    "table.spark.bar.label.fill",
 ]
 
 

@@ -16,6 +16,7 @@ from dbt_charts.core.compile.models.chart.normalized.area import AreaChart
 from dbt_charts.core.compile.models.chart.normalized.bar import BarChart
 from dbt_charts.core.compile.models.chart.normalized.kpi import KpiChart
 from dbt_charts.core.compile.models.chart.normalized.line import LineChart
+from dbt_charts.core.compile.models.chart.normalized.pie import PieChart
 from dbt_charts.core.compile.models.chart.normalized.scatter import ScatterChart
 from dbt_charts.core.compile.models.chart.normalized.table import TableChart
 from dbt_charts.core.compile.normalize.charts import _FIELD_CHANNEL_KEYS
@@ -35,10 +36,11 @@ ColumnRef = tuple[str, str, str]
 def chart_column_refs(chart: Chart) -> list[ColumnRef]:
     """Return (query_name, channel_label, column_name) for every column channel.
 
-    Walks the chart's own channels plus each cartesian ``layer``, which carries
-    its own ``x``/``y``/``color`` and is where a mistyped column hides most
-    easily. A layer's ``query:`` overrides the chart's, so each ref carries the
-    query whose result actually has to contain it.
+    Walks the chart's own channels and ``tooltip`` columns, plus each cartesian
+    ``layer``, which carries its own ``x``/``y``/``color`` and is where a
+    mistyped column hides most easily. A layer's ``query:`` overrides the
+    chart's, so each ref carries the query whose result actually has to contain
+    it.
     """
     refs: list[ColumnRef] = []
 
@@ -62,6 +64,12 @@ def chart_column_refs(chart: Chart) -> list[ColumnRef]:
             )
 
     collect(chart, "", chart.query_name)
+    if isinstance(chart, (BarChart, LineChart, AreaChart, ScatterChart, PieChart)):
+        if chart.query_name is not None:
+            refs.extend(
+                (chart.query_name, f"tooltip[{i}]", entry.column)
+                for i, entry in enumerate(chart.tooltip)
+            )
     if isinstance(chart, (BarChart, LineChart, AreaChart, ScatterChart)):
         for i, layer in enumerate(chart.layers):
             collect(layer, f"layers[{i}].", layer.query or chart.query_name)

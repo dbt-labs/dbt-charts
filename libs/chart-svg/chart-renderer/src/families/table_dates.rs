@@ -297,7 +297,7 @@ pub(super) fn parse_temporal(value: &str) -> Result<Option<Moment>, TemporalErro
             day: d,
             hour: of_day / 60,
             minute: of_day % 60,
-            utc: true,
+            utc: crate::time_zone::is_aware(value),
             ..moment
         };
     }
@@ -483,10 +483,30 @@ fn locale_word(m: Moment, letter: char) -> Result<String, String> {
 /// modifiers on `_PADDED_NUMERIC_DIRECTIVES` (`lstrip("0") or "0"`, then
 /// `rjust`), the CRT-unsupported directives computed in Python, the rest by
 /// glibc `strftime` in the C locale; the name directives and `%c %x %X` read
-/// the active time locale. Refused by name: a modifier on any other
-/// directive, `%s` (host time zone), a directive
-/// `PYTHON_STRFTIME_DIRECTIVES` rejects, and a trailing `%`.
+/// the active time locale. An aware moment prints its wall clock in the board
+/// zone, with `%z`/`%Z` naming that zone; a naive one prints as written.
+/// Refused by name: a modifier on any other directive, `%s` (host time zone),
+/// a directive `PYTHON_STRFTIME_DIRECTIVES` rejects, and a trailing `%`.
 pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
+    if !m.utc {
+        return wall_strftime(m, None, spec);
+    }
+    let instant = m.epoch_millis();
+    let wall = crate::time_zone::wall_ms(instant)?;
+    let (offset, name) = crate::time_zone::zone_names(instant)?;
+    let zone = Zone { offset, name, instant };
+    wall_strftime(Moment { micro: m.micro, ..Moment::from_epoch_millis(wall)? }, Some(&zone), spec)
+}
+
+/// The board zone an aware moment's wall clock reads in, and the instant it
+/// was read from.
+struct Zone {
+    offset: String,
+    name: String,
+    instant: i64,
+}
+
+fn wall_strftime(m: Moment, zone: Option<&Zone>, spec: &str) -> Result<String, String> {
     let spec = expand_composites(spec)?;
     let mut out = String::new();
     let mut chars = spec.chars();
@@ -510,6 +530,11 @@ pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
             modifier.map(String::from).unwrap_or_default()
         );
         let unsupported = || format!("directive {name} is not supported");
+        if let (Some(z), 'Q') = (zone, letter) {
+            // Milliseconds since the epoch count the instant, never its wall clock.
+            out.push_str(&z.instant.to_string());
+            continue;
+        }
         if matches!(letter, 'a' | 'A' | 'b' | 'B' | 'p' | 'P') {
             out.push_str(&locale_word(m, letter)?);
             continue;
@@ -529,20 +554,20 @@ pub(super) fn strftime(m: Moment, spec: &str) -> Result<String, String> {
         }
         let text = match letter {
             'h' => C_LOCALE_SHORT_MONTHS[m.month as usize - 1].to_string(),
-            'D' => strftime(m, "%m/%d/%y")?,
+            'D' => wall_strftime(m, zone, "%m/%d/%y")?,
             'f' => format!("{:06}", m.micro),
-            'F' => strftime(m, "%Y-%m-%d")?,
+            'F' => wall_strftime(m, zone, "%Y-%m-%d")?,
             'g' => format!("{:02}", m.iso_week().0 % 100),
             'n' => "\n".to_string(),
             'r' => format!(
                 "{} {}",
-                strftime(m, "%I:%M:%S")?,
+                wall_strftime(m, zone, "%I:%M:%S")?,
                 if m.hour < 12 { "AM" } else { "PM" }
             ),
-            'R' => strftime(m, "%H:%M")?,
-            'T' => strftime(m, "%H:%M:%S")?,
-            'z' => (if m.utc { "+0000" } else { "" }).to_string(),
-            'Z' => (if m.utc { "UTC" } else { "" }).to_string(),
+            'R' => wall_strftime(m, zone, "%H:%M")?,
+            'T' => wall_strftime(m, zone, "%H:%M:%S")?,
+            'z' => zone.map_or(String::new(), |z| z.offset.clone()),
+            'Z' => zone.map_or(String::new(), |z| z.name.clone()),
             _ => padded_numeric(m, letter).ok_or_else(unsupported)?,
         };
         out.push_str(&text);
@@ -685,6 +710,18 @@ mod tests {
         for spec in ["%t", "%E", "%Oe"] {
             assert!(en_strftime(moment("2024-03-05"), spec).is_err(), "{spec}");
         }
+    }
+
+    #[test]
+    fn an_aware_cell_prints_in_the_board_zone_and_a_naive_one_as_written() {
+        let _zone = crate::time_zone::zone_scope("America/New_York");
+        let at = |s: &str| en_strftime(parse_temporal(s).unwrap().unwrap(), "%Y-%m-%d %H:%M %Z %z").unwrap();
+        // 2024-03-10 is New York's spring-forward day: 07:00Z is 03:00 EDT.
+        assert_eq!(at("2024-03-10T06:30:00Z"), "2024-03-10 01:30 EST -0500");
+        assert_eq!(at("2024-03-10T07:30:00+00:00"), "2024-03-10 03:30 EDT -0400");
+        assert_eq!(at("2024-03-10T06:30:00"), "2024-03-10 06:30  ");
+        let instant = parse_temporal("2024-03-10T07:30:00Z").unwrap().unwrap();
+        assert_eq!(en_strftime(instant, "%Q %-Q").unwrap(), "1710055800000 1710055800000");
     }
 
     #[test]

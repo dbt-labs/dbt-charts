@@ -1199,6 +1199,7 @@ pub(crate) fn line_layer_marks(
     step_lead: f64,
     stacked: Option<&LayerStack>,
     link: Option<&crate::href::DatumLink>,
+    crowd: LabelCrowd,
 ) -> Result<Vec<Node>, String> {
     // A band step's marks are drawn from data Vega-Lite rewrites, so they carry no link; its labels still do.
     let mark_link = link.filter(|_| !(l.curve_name() == Some("step") && step_band.is_some()));
@@ -1575,6 +1576,7 @@ pub(crate) fn line_layer_marks(
     let mut out = if frame.clip && l.area_mark.is_none() { clip_marks(marks, frame.plot) } else { marks };
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), step_band, horizontal);
+        style.warn_if_crowded(&crowd, &marks)?;
         out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
     }
     Ok(out)
@@ -1639,6 +1641,13 @@ pub(crate) struct LayerLabelStyle<'a> {
     pub color: &'a str,
 }
 
+/// What `WARN-VALUE-LABELS-CROWD-WIDTH` needs of a layer's painted labels.
+pub(crate) struct LabelCrowd<'a> {
+    pub chart_id: &'a str,
+    pub layer: usize,
+    pub fonts: &'a FontBook,
+}
+
 /// One caption fixed ahead of layout: its text and where it sits.
 pub(crate) struct LayerCaption {
     pub text: String,
@@ -1654,6 +1663,7 @@ impl<'a> LayerLabelStyle<'a> {
         rows: &[serde_json::Map<String, Value>],
         board_style: Option<&crate::BoardStyle>,
     ) -> Result<Self, String> {
+        ml.refuse_last("layered chart")?;
         let font = crate::families::bar::labels::label_font(ml, board_style)?;
         let color = ml.font.as_ref().and_then(|f| f.color.as_deref()).unwrap_or("#313233");
         Ok(LayerLabelStyle {
@@ -1681,6 +1691,15 @@ impl<'a> LayerLabelStyle<'a> {
     /// The shaped width of one label's text.
     pub(crate) fn width(&self, fonts: &FontBook, text: &str) -> Result<f64, String> {
         fonts.measure_shaped(text, &self.font.family, self.font.size)
+    }
+
+    fn warn_if_crowded(&self, crowd: &LabelCrowd, marks: &[LayerLabelMark]) -> Result<(), String> {
+        let inks = marks
+            .iter()
+            .map(|m| Ok((self.ink(m.x, m.y, self.width(crowd.fonts, &m.caption.text)?, &m.caption.spot), None)))
+            .collect::<Result<Vec<_>, String>>()?;
+        crate::common::warn_value_labels_crowd(crowd.chart_id, Some(crowd.layer), inks);
+        Ok(())
     }
 
     /// The ink of a caption placed at `(x, y)` (the datum, or its band edge
@@ -1870,6 +1889,7 @@ pub(crate) fn scatter_layer_marks(
     mut describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
     link: Option<&crate::href::DatumLink>,
     clip: Option<(f64, f64)>,
+    crowd: LabelCrowd,
 ) -> Result<Vec<Node>, String> {
     let r_pt = crate::common::symbol_radius(size);
     let mut points = Vec::new();
@@ -1907,6 +1927,7 @@ pub(crate) fn scatter_layer_marks(
     };
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), None, horizontal);
+        style.warn_if_crowded(&crowd, &marks)?;
         out.extend(layer_value_labels(style, &marks, link.map(|link| link.open).unwrap_or_default())?);
     }
     Ok(out)

@@ -36,6 +36,7 @@ from mdsvg.types import SpanType
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.markdown_blocks import SpanRun
+    from dbt_charts.core.compile.models.style.theme import TextStyle
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
     from dbt_charts.core.text.case import CaseValue
     from mdsvg import Style
@@ -457,9 +458,7 @@ def prose_content_widths(
             resolved_style.chart_defaults.formats,
         )
     )
-    blocks = rewrite_board_markdown_images(
-        list(parse_markdown(resolved)), text, resolved, base_dir, None
-    )
+    blocks = prose_blocks(resolved, text, base_dir, None, resolved_style.text)
     style = get_compact_style(resolved_style)
     renderer = SVGRenderer(
         style=style,
@@ -589,14 +588,34 @@ def title_blocks(
         resolved_title, level=level, resolved_style=resolved_style
     )
     blocks = list(parse_markdown(markdown_title))
-    title_case = resolved_style.title.font.case
-    if title_case is not None:
-        blocks = map_span_runs(
-            blocks, lambda run: _case_words(run, title_case), lambda image: image
-        )
+    blocks = case_blocks(blocks, resolved_style.title.font.case)
     return rewrite_board_markdown_images(
         blocks, title, resolved_title, base_dir, error_collector
     )
+
+
+def prose_blocks(
+    markdown: str,
+    authored: str,
+    base_dir: str | None,
+    error_collector: list[Diagnostic] | None,
+    text_style: TextStyle,
+) -> list[AnyBlock]:
+    """The blocks a prose run is measured and drawn as: images resolved (a bad
+    one degrades to its error), then ``style.text.font.case`` applied. Sizing,
+    planning and painting all read prose through here."""
+    blocks = rewrite_board_markdown_images(
+        list(parse_markdown(markdown)), authored, markdown, base_dir, error_collector
+    )
+    return case_blocks(blocks, text_style.font.case)
+
+
+def case_blocks(blocks: list[AnyBlock], case: CaseValue | None) -> list[AnyBlock]:
+    """*blocks* with *case* applied to the words of every run, at any depth;
+    unchanged when no case is set."""
+    if case is None:
+        return blocks
+    return map_span_runs(blocks, lambda run: _case_words(run, case), lambda i: i)
 
 
 def _case_words(spans: SpanRun, case: CaseValue) -> SpanRun:

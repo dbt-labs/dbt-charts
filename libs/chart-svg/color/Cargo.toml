@@ -1,0 +1,10 @@
+[package]
+name = "dbt-charts-color"
+version = "0.0.1"
+edition = "2021"
+description = "Color parsing, OKLCH variants, and contrast-safe label ink, shared by the compile stage and the renderer."
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }

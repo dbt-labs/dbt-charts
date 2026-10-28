@@ -416,8 +416,9 @@ fn stack_color(
                 })
                 .collect::<Vec<Option<f64>>>();
             let (lo, hi) = extent(&values);
-            let (dated, row_series) =
-                continuous(values, ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi), &crate::families::heatmap::legend_date_label)?;
+            let aware = crate::families::heatmap::date_column_aware(rows, cf);
+            let label = |day: f64| crate::families::heatmap::legend_date_label(day, aware);
+            let (dated, row_series) = continuous(values, ContinuousColor::dates(&d3rs::vega_schemes::BLUES, lo, hi, aware), &label)?;
             (StackColor { dated: true, ..dated }, row_series)
         }
         VegaType::Ordinal => ordinal_color(cf, title, &r.legend, binned_rows),

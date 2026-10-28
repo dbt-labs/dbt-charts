@@ -167,7 +167,7 @@ def test_bar_resolve_returns_resolved_bar_chart() -> None:
 
 
 def test_bar_resolve_has_baked_palette() -> None:
-    """palette is populated from the baked cascade (shared envelope, ADR-012)."""
+    """palette is populated from the baked cascade (shared envelope)."""
     from dbt_charts.core.compile.resolve import resolve
 
     resolved = resolve(_bar_compiled(), _BAR_DATA, _default_board_style())

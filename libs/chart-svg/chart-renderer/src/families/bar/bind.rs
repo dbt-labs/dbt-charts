@@ -6,6 +6,7 @@
 use crate::common::{MarkLabels, row_num, row_str};
 use crate::diagnostic::Diagnostic;
 use crate::families::layers::{OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer, resolve_layer_rows};
+use crate::families::cartesian::LinearScale;
 use crate::families::span;
 use crate::families::support_table_strip::{self, SupportTableConfig};
 use crate::Payload;
@@ -13,6 +14,7 @@ use crate::Payload;
 use serde_json::Value;
 use std::borrow::Cow;
 
+use super::labels::{INVISIBLE_BAR_PX, MIN_PLOT_SHARE, painted_extent};
 use super::{BarResolved, x_resolution};
 
 /// A bar chart bound to its rows.
@@ -51,9 +53,6 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
             labels.visible = false;
         }
     }
-    // Ahead of every arm: a payload with no label slot errors here.
-    zero_label(&r, &prepared.rows)?;
-
     let layers = validate_layers(&r, &prepared)?;
     // A wide (`y: [a, b]`) chart unfolds into long rows once, here, before any other law runs.
     // The resolver already bakes `y` as `WIDE_VALUE_FIELD`; the only substitution left is the rows
@@ -305,7 +304,8 @@ pub(super) fn rekey_to_enclosing_buckets(
 }
 
 /// Production's genuine-zero label (`features/zero_value_label.py`): the text
-/// layer a plain single-series bar gets when a row's measure is exactly `0`.
+/// layer a plain single-series bar gets when a row's bar draws no visible mark
+/// (a genuine zero, or one painted under `INVISIBLE_BAR_PX`).
 /// The layer carries every row and blanks all but the zero ones through a
 /// `condition` on `text` (`:129-133`), so it paints through the value-label
 /// machinery with `blank` marks — the marks stay, empty, and their ink counts.
@@ -320,9 +320,15 @@ pub(super) fn rekey_to_enclosing_buckets(
 /// the label slot's format (`:143`, plain d3 — no house register) and font
 /// (`:127`, `:145-147`).
 ///
+/// `scale` is the value scale across the whole canvas. A row that would paint
+/// under `INVISIBLE_BAR_PX` on a plot `MIN_PLOT_SHARE` of the canvas is the
+/// cheap pre-test, which runs before the plot is fitted and keeps the layer
+/// off every chart whose bars all draw; `zero_label_blank` then blanks the
+/// rest at the real plot size.
 pub(super) fn zero_label(
     r: &BarResolved,
     rows: &[serde_json::Map<String, Value>],
+    scale: &LinearScale,
 ) -> Result<Option<MarkLabels>, String> {
     let authored = r.style.mark.labels.as_ref();
     let in_scope = r.stack == "none"
@@ -330,12 +336,18 @@ pub(super) fn zero_label(
         && r.wide_measures.is_empty()
         && !authored.is_some_and(|l| l.visible)
         && !r.resolved_channels.contains_key("color");
-    if !in_scope || !rows.iter().any(|row| row_num(row, &r.y) == Some(0.0)) {
+    let px = |v: f64| scale.position(v);
+    let range = (scale.range_start, scale.range_end);
+    let invisible = |row: &serde_json::Map<String, Value>| {
+        row_num(row, &r.y).is_some_and(|v| painted_extent(&px, range, v) * MIN_PLOT_SHARE < INVISIBLE_BAR_PX)
+    };
+    if !in_scope || !rows.iter().any(invisible) {
         return Ok(None);
     }
     let slot = authored.ok_or("bar: style.mark.labels absent (resolved payload required)")?;
     Ok(Some(MarkLabels {
         visible: true,
+        last_only: false,
         field: None,
         format: slot.format.clone(),
         dx: None,

@@ -252,6 +252,10 @@ pub struct Position {
     pub edge: Edge,
     pub align: Align,
     pub overlay: bool,
+    /// The edge came from `auto`: placement may move the text to another side.
+    pub auto_edge: bool,
+    /// The align came from `auto`: placement may move the text along an edge's spots.
+    pub auto_align: bool,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -262,6 +266,8 @@ pub struct TextStyle {
     pub halo: f64,
     /// Opacity of the halo as a whole, 0 to 1.
     pub halo_opacity: f64,
+    /// Draw the halo only on text that overlaps a bar, point or area fill.
+    pub halo_over_marks: bool,
     #[serde(rename = "box")]
     pub frame: BoxStyle,
     pub position: Position,

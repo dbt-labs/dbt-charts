@@ -10,12 +10,13 @@ The canonical same-query cases, adapted to the current
 ``chart.layers`` overlay model (no separate ``type: layered`` chart — the
 base chart is a real bar/line/area/scatter chart and contributes its own y
 column to the comparison alongside its layers'):
-  1. Base + one layer, base median ≈ 5M, layer median ≈ 0.5, no axis_y → fires.
+  1. Base + one layer, base values ≈ 5M, layer values ≈ 0.5, no axis_y → fires.
   2. Same as 1 but the layer has axis_y set → no warning (user opted out).
-  3. Base + one layer, both medians ≈ 1M → no warning (reach well over 6%).
+  3. Base + one layer, both series ≈ 1M → no warning (reach well over 6%).
   4. Chart with no layers → no warning (nothing to compare against).
   5. Base + two layers, columns 1M/10/1M → fires, message names the 10-scale column.
-  6. Symmetric signed data → median-of-abs still detects the scale gap.
+  6. Symmetric signed data → the base band fills the axis, so the layer's
+     sliver of reach still fires.
 
 Per-layer-query cases (a layer carrying its own ``query:``) follow at the end
 of the file.
@@ -79,7 +80,7 @@ def _make_ctx(
 
 
 # ---------------------------------------------------------------------------
-# Test 1: base + one layer, base median ≈ 5M, layer median ≈ 0.5 → fires
+# Test 1: base + one layer, base values ≈ 5M, layer values ≈ 0.5 → fires
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +128,7 @@ def test_no_fire_when_axis_y_set_on_extreme_layer() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: base + one layer, both medians ≈ 1M → no warning (reach over threshold)
+# Test 3: base + one layer, both series ≈ 1M → no warning (reach over threshold)
 # ---------------------------------------------------------------------------
 
 
@@ -190,14 +191,14 @@ def test_fires_base_plus_two_layers_one_outlier_named_in_message() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Signed / symmetric data: median of abs preserves scale magnitude
+# Signed / symmetric data: reach is the drawn band, not a signed center
 # ---------------------------------------------------------------------------
 
 
 def test_fires_for_symmetric_signed_data() -> None:
-    """P&L deltas symmetric around zero still fire — median of abs sees ~100k scale."""
+    """P&L deltas symmetric around zero still fire — the pnl band fills the axis."""
     chart = _make_chart(y="pnl", layers=[LineLayer(type="line", y="rate")])
-    # pnl symmetric around 0 with magnitude ~100k; naive abs(median) would be 0
+    # pnl spans -100k..100k, so it fills the shared axis while rate's band is a sliver
     rows = [
         {"month": "Jan", "pnl": -100_000.0, "rate": 0.5},
         {"month": "Feb", "pnl": -50_000.0, "rate": 0.4},
@@ -213,7 +214,7 @@ def test_fires_for_symmetric_signed_data() -> None:
 def test_marks_both_y_series_not_the_whole_chart_block() -> None:
     """The reported case: a 30-line chart got 30 lines of squiggle.
 
-    The complaint is the ratio between two series, so the mark belongs on the
+    The complaint is the gap in reach between two series, so the mark belongs on the
     two `y:` lines that disagree — the base chart's own and the layer's — not
     on the chart block that contains them.
     """
@@ -251,9 +252,8 @@ def test_marks_both_y_series_not_the_whole_chart_block() -> None:
 def test_fires_with_decimal_and_float_columns_no_type_error() -> None:
     """Decimal revenue column alongside float rate column must not raise TypeError.
 
-    Before the fix, abs_values collected Decimal values; statistics.median
-    returned Decimal for the first column and float for the second.  The
-    cross-column ratio (max_median / min_median) then raised
+    Mixing Decimal and float columns in the cross-column reach comparison must
+    not raise
     ``TypeError: unsupported operand type(s) for /: 'decimal.Decimal' and 'float'``.
     """
     chart = _make_chart(y="revenue", layers=[LineLayer(type="line", y="rate")])
@@ -279,9 +279,9 @@ def test_fires_with_decimal_and_float_columns_no_type_error() -> None:
 def test_fires_when_layer_carries_its_own_query() -> None:
     """Base and layer at wildly different scales, split across two queries.
 
-    Base 'revenue' (median 5.0M) and layer 'rate' (median 0.50) come from
-    different named queries and share one y-axis at a 10,000,000x ratio — the
-    rate line is drawn as a flat zero. The detector used to skip the whole
+    Base 'revenue' (≈5.0M) and layer 'rate' (≈0.50) come from
+    different named queries and share one y-axis at a 10,000,000x scale gap —
+    the rate line is drawn as a flat zero. The detector used to skip the whole
     chart the moment any layer overrode the base query, which is exactly the
     migrated multi-metric tile this diagnostic exists to protect.
     """

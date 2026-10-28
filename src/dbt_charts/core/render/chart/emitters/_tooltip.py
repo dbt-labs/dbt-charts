@@ -31,12 +31,23 @@ ROLE_ORDER = "‌"  # ZERO WIDTH NON-JOINER
 # row it follows. Composes with a role marker (a muted total is MUTED +
 # ROLE_TOTAL). chart_interactivity.js mirrors it.
 MUTED = "⁠"  # WORD JOINER
+# Prefixes a row the author added with the chart's ``tooltip:`` -- a
+# ``label: value`` row after the mark's own value rows (the engine writes it;
+# chart_interactivity.js mirrors it).
+ROLE_EXTRA = "\u200d"  # ZERO WIDTH JOINER
+# Names a (category, series) slot a sparse stack imputes: identity only, no datum.
+ROLE_IMPUTED = "\u034f"  # COMBINING GRAPHEME JOINER
+# Stands for a ``;`` inside an authored value; rows are split on ``;``.
+SEMICOLON_ESCAPE = "\ue000"  # PRIVATE USE AREA
 
 __all__ = [
     "MUTED",
+    "ROLE_EXTRA",
     "ROLE_HEADER",
     "ROLE_HEADER_SWATCHED",
+    "ROLE_IMPUTED",
     "ROLE_ORDER",
     "ROLE_SERIES",
     "ROLE_TOTAL",
+    "SEMICOLON_ESCAPE",
 ]

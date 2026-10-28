@@ -86,6 +86,7 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     plan_cartesian,
     quantitative_channel_values,
 )
+from dbt_charts.core.compile.resolve.chart._tooltip import resolve_tooltip
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     bake_wide_measures_kwargs,
     resolve_wide_measure_channels,
@@ -771,6 +772,7 @@ def _resolve_area(
     return ResolvedAreaChart(
         **bkw,
         **_ck,
+        tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="area",

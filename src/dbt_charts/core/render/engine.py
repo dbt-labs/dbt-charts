@@ -129,6 +129,8 @@ from dbt_charts.core.text.format_d3 import (
     active_format_locale,
     active_language,
     active_time_locale,
+    active_time_zone,
+    active_week_start,
     locale_definition,
 )
 from dbt_charts.core.text.predefined_formats import (
@@ -280,6 +282,8 @@ def board_style_envelope(
     board_width: float | None,
     format_locale: HouseLocale,
     time_locale: TimeLocaleDefinition,
+    time_zone: str,
+    week_start: int,
     language: str = "en",
 ) -> JsonDict:
     """The board-level style tokens every chart payload carries beyond its own
@@ -342,6 +346,8 @@ def board_style_envelope(
         "formats": board_formats(board_style),
         "format_locale": format_locale_wire(format_locale),
         "time_locale": time_locale,
+        "time_zone": time_zone,
+        "week_start": week_start,
         "language": language,
     }
 
@@ -476,6 +482,8 @@ def build_chart_payload(
             board_width,
             active_format_locale(),
             active_time_locale(),
+            active_time_zone().key,
+            active_week_start(),
             active_language(),
         ),
         "is_placeholder": is_placeholder,
@@ -513,6 +521,7 @@ def measure_table_natural_width(
         "fonts_dir": str(get_fonts_dir()),
         "format_locale": format_locale_wire(active_format_locale()),
         "time_locale": active_time_locale(),
+        "time_zone": active_time_zone().key,
         "language": active_language(),
         "sub_unit_specs": board_sub_unit_specs(board_style),
         "formats": board_formats(board_style),
@@ -576,6 +585,7 @@ _RAIL_WARNINGS = frozenset(
 )
 
 _GEOMETRY_WARNINGS = (
+    "WARN-ANNOTATION-NOTE-MOVED",
     "WARN-BAR-BAND-WIDTH-TOO-NARROW",
     "WARN-BAR-GROUPED-SERIES-COINCIDE",
     "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
@@ -586,7 +596,12 @@ _GEOMETRY_WARNINGS = (
 )
 
 _PLACEMENT_WARNINGS = frozenset(
-    {*_GEOMETRY_WARNINGS, "WARN-AXIS-LABEL-COLLISION", "WARN-SERIES-LABEL-TRUNCATED"}
+    {
+        *_GEOMETRY_WARNINGS,
+        "WARN-AXIS-LABEL-COLLISION",
+        "WARN-SERIES-LABEL-TRUNCATED",
+        "WARN-RAIL-VALUE-DROPPED",
+    }
 )
 
 _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
@@ -631,7 +646,10 @@ _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
         card_width_px=p["card_width"],
     ),
     "WARN-SERIES-LABEL-TRUNCATED": lambda p: record_series_label_truncations(
-        p["chart_id"], p["authored_field"], p["series_names"]
+        p["chart_id"], p["authored_field"], p["series_names"], "truncated"
+    ),
+    "WARN-RAIL-VALUE-DROPPED": lambda p: record_series_label_truncations(
+        p["chart_id"], p["authored_field"], p["series_names"], "value_dropped"
     ),
     "WARN-KPI-ALIGN-OVERFLOW": lambda p: record_text_truncation(
         p["chart_id"], "kpi_align_overflow", "", "style.align"

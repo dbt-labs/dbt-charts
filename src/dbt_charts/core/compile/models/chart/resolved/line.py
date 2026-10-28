@@ -13,10 +13,10 @@ from dbt_charts.core.compile.models.chart.resolved._annotation import (
 from dbt_charts.core.compile.models.chart.resolved._layer import ResolvedLayer
 from dbt_charts.core.compile.models.style.resolved import ResolvedLineStyle
 
-from ._base import _DateAxisResolvedChartFields
+from ._base import _DateAxisResolvedChartFields, _TooltipResolvedField
 
 
-class ResolvedLineChart(_DateAxisResolvedChartFields):
+class ResolvedLineChart(_DateAxisResolvedChartFields, _TooltipResolvedField):
     """Render-ready line chart."""
 
     # Narrows base y from str | list[str] | None to str | None — line never

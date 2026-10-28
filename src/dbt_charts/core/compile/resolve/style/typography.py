@@ -31,7 +31,8 @@ Font family rules (theme-driven; values below are per-theme):
 - Tiny + narrow object titles resolve to ``style.font.family`` (the body
   family). On every shipped theme that's a sans family.
 - Medium + wide object titles resolve to ``style.title.font.family`` (the
-  title-slot family) - sans on ``stark``, serif on ``default``/``cream``.
+  title-slot family) - sans on ``stark``, ``vivid`` and ``neon``, serif on
+  ``clarity`` and ``paper``.
 - ``use_title_family=True`` forces the theme's title stack at any width
   (used for prose-tagged titles, whatever width tier they land in).
 
@@ -194,7 +195,8 @@ def chart_title_spec(
     - tiny + narrow -> ``resolved_chart_style.font_family`` (body family - sans
       on every shipped theme)
     - medium + wide -> ``resolved_chart_style.title.font.family`` (title-slot
-      family - sans on ``stark``, serif on ``default``/``cream``), falling back
+      family - sans on ``stark``, ``vivid`` and ``neon``, serif on ``clarity``
+      and ``paper``), falling back
       to the body family when the title slot is unset.
 
     Font weight comes from ``resolved_chart_style.title.compact_weight`` at

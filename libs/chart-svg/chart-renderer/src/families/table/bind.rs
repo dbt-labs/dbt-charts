@@ -10,6 +10,7 @@ use super::text_format;
 use super::Blank;
 use super::BoardFormats;
 use super::Bound;
+use super::anchor_variant;
 use super::Cell;
 use super::Chart;
 use super::ColConfig;
@@ -35,6 +36,7 @@ use super::PIVOT_LEAF_SEP;
 use super::VALID_FONT_WEIGHTS;
 use crate::codes;
 use crate::common::format_kpi_parts;
+use crate::common::KpiParts;
 use crate::common::format_numeric_auto;
 use crate::common::py_rstrip;
 use crate::common::tag_at;
@@ -122,8 +124,9 @@ pub(crate) fn font_weight_as_css(w: &Value) -> String {
 /// into `result`, last-match-wins per key. A rule that sets `glyph` clears
 /// any `glyph_color` an earlier rule left behind — a later rule swapping
 /// the glyph without naming its own color must not inherit the previous
-/// rule's ink. `tone` only ever supplies `glyph_color`, and only when the
-/// rule didn't set `glyph_color` itself, resolved when `tones` is present;
+/// rule's ink; it leaves `tone_color` alone, so a derived tone survives a
+/// later glyph-only rule. `tone` supplies `tone_color`, and `glyph_color`
+/// only when the rule didn't set `glyph_color` itself, resolved when `tones` is present;
 /// `tones` absent is a by-design SKIP here (
 /// comment: "a reachable, by-design skip"), never an error — a caller that
 /// actually needs the resolved color reads
@@ -164,6 +167,7 @@ pub(super) fn apply_rule_outputs(
                     .resolve(tone)
                     .ok_or_else(|| format!("conditional rule tone '{tone}' not recognized"))?;
                 result.glyph_color = Some(hex.to_string());
+                result.tone_color = Some(hex.to_string());
             }
             None => result.tone_needs_board_tones = true,
         }
@@ -677,6 +681,7 @@ pub(super) fn resolve_cell_style(
         decoration: overrides.decoration,
         glyph,
         glyph_color,
+        tone_color: None,
         tone_needs_board_tones: false,
     })
 }
@@ -1045,12 +1050,13 @@ pub(super) fn format_magnitudes(
     let sub_unit_specs = board_sub_unit_specs();
 
     // symbol_mode == "anchors" limits a numeric cell's currency prefix and
-    // unit suffix to the first row plus any summary/total row — mirrors
-    // table.py's `is_anchor_row`/`symbol_mode == "anchors"` gate. A magnitude
-    // suffix carries the number's value, so it stays on every row. Under
-    // "all" (the default) every row is its own anchor.
-    let is_symbol_anchor =
-        |i: usize| -> bool { symbol_mode != "anchors" || i == 0 || is_summary_role(row_roles[i]) };
+    // unit suffix to the first non-null detail row plus any summary/total
+    // row. A magnitude suffix carries the number's value, so it stays on
+    // every row. Under "all" (the default) every row is its own anchor.
+    let symbol_anchor_row = (0..n).find(|&i| raw[i].is_some() && !is_summary_role(row_roles[i]));
+    let is_symbol_anchor = |i: usize| -> bool {
+        symbol_mode != "anchors" || Some(i) == symbol_anchor_row || is_summary_role(row_roles[i])
+    };
 
     // A shared scale's anchor row is the first one that can carry the
     // magnitude word (table.py:1981-1988): a zero never does.
@@ -1090,32 +1096,51 @@ pub(super) fn format_magnitudes(
                     "table: format {spec:?}: `$` with a `%` or `p` type is not supported"
                 )));
             }
-            let lanes = format_kpi_parts(
-                v,
-                &parts,
-                &PartsOptions {
-                    keep_affix_gaps: true,
-                    anchored: symbol_mode == "anchors",
-                    shared_scale: scaled(
-                        symbol_mode != "anchors"
-                            || is_summary_role(row_roles[i])
-                            || i == magnitude_anchor_row,
-                    ),
-                    sub_unit_specs: sub_unit_specs.as_ref(),
-                    cell,
-                    ..PartsOptions::default()
-                },
-            )
-            .map_err(in_table)?;
+            let lanes_with = |is_scale_anchor: bool| {
+                format_kpi_parts(
+                    v,
+                    &parts,
+                    &PartsOptions {
+                        keep_affix_gaps: true,
+                        anchored: symbol_mode == "anchors",
+                        shared_scale: scaled(is_scale_anchor),
+                        sub_unit_specs: sub_unit_specs.as_ref(),
+                        cell,
+                        ..PartsOptions::default()
+                    },
+                )
+                .map_err(in_table)
+            };
+            let lanes = lanes_with(
+                symbol_mode != "anchors"
+                    || is_summary_role(row_roles[i])
+                    || i == magnitude_anchor_row,
+            )?;
             // The decimal pad aligns the number lane on the locale's mark.
             let pad = decimal_pad_for(pad_table, &lanes.number)?;
-            let (prefix, suffix) = if is_symbol_anchor(i) {
-                (
-                    (!lanes.prefix.is_empty()).then_some(lanes.prefix),
-                    (!lanes.suffix.is_empty()).then_some(lanes.suffix),
-                )
+            let painted = |lanes: &KpiParts, symbol_anchor: bool| {
+                if symbol_anchor {
+                    (
+                        (!lanes.prefix.is_empty()).then(|| lanes.prefix.clone()),
+                        (!lanes.suffix.is_empty()).then(|| lanes.suffix.clone()),
+                    )
+                } else {
+                    (None, non_anchor_suffix(lanes.suffix.clone(), explicit_suffix))
+                }
+            };
+            let (prefix, suffix) = painted(&lanes, is_symbol_anchor(i));
+            let by_anchor = if symbol_mode == "anchors" {
+                let mut variants: [(Option<String>, Option<String>); 4] = Default::default();
+                for scale_anchor in [false, true] {
+                    let lanes = lanes_with(scale_anchor)?;
+                    for symbol_anchor in [false, true] {
+                        variants[anchor_variant(symbol_anchor, scale_anchor)] =
+                            painted(&lanes, symbol_anchor);
+                    }
+                }
+                Some(variants)
             } else {
-                (None, non_anchor_suffix(lanes.suffix, explicit_suffix))
+                None
             };
             // Width measurement reads the cell as every row's own anchor, in
             // the locale's own currency placement: a shared-scale cell as its
@@ -1161,6 +1186,7 @@ pub(super) fn format_magnitudes(
                 pad: pad.to_string(),
                 prefix,
                 suffix,
+                by_anchor,
                 full_prefix: (!full_prefix.is_empty()).then_some(full_prefix),
                 full_suffix: (!full_suffix.is_empty()).then_some(full_suffix),
                 fit_affixes,
@@ -2392,8 +2418,9 @@ pub(super) fn visible_columns<'a>(
             // Production cases the AUTHORED label too: `display_name =
             // (label or slug_to_text(col))` then `apply_case(display_name,
             // header_case)` — an authored lowercase
-            // label is not exempt from the header font case.
-            let raw_label = match cfg.label.clone().filter(|s| !s.is_empty()) {
+            // label is not exempt from the header font case. An authored
+            // `""` is an intentional blank header, as on a support table.
+            let raw_label = match cfg.label.clone() {
                 Some(l) => l,
                 None => display_text::slug_to_text(config_key)?,
             };

@@ -172,11 +172,10 @@ charts:
         format: "$,.0f"
       support:
         format: +.1%
-        tone: negative
     support:
       value: bookings_growth_pct
       label: vs prior 90 days
-      glyph: "▼"
+      good: up
 
   kpi_win_rate:
     type: kpi
@@ -203,11 +202,10 @@ charts:
         format: ",.0f"
       support:
         format: +.1%
-        tone: positive
     support:
       value: active_subs_growth_pct
       label: vs 90 days ago
-      glyph: "▲"
+      good: up
 
   kpi_pipeline:
     type: kpi

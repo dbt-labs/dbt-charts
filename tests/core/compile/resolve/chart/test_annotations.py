@@ -1096,7 +1096,9 @@ def test_an_authored_plane_wins_over_the_default() -> None:
 
 
 @pytest.mark.parametrize("theme", user_facing_theme_names())
-def test_annotation_text_has_no_halo_by_default(theme: str) -> None:
+def test_annotation_text_halo_is_three_pixels_over_marks_only_by_default(
+    theme: str,
+) -> None:
     ctx = resolve_chart_style_context(get_theme_style(theme))
     normalized = LineChart.model_validate(
         {
@@ -1110,10 +1112,13 @@ def test_annotation_text_has_no_halo_by_default(theme: str) -> None:
     )
     resolved = resolve(normalized, ROWS, ctx, rendered_at=NOW)
     assert isinstance(resolved, ResolvedLineChart)
-    assert [a.style.text.halo for a in resolved.annotations] == [0] * 4
+    halos = [
+        (a.style.text.halo, a.style.text.halo_over_marks) for a in resolved.annotations
+    ]
+    assert halos == [(3.0, True)] * 4
 
 
-def test_an_authored_halo_width_is_kept() -> None:
+def test_an_authored_halo_width_is_kept_and_drawn_everywhere() -> None:
     rule = _one(
         {
             "type": "rule",
@@ -1123,6 +1128,7 @@ def test_an_authored_halo_width_is_kept() -> None:
         }
     )
     assert rule.style.text.halo == 3
+    assert not rule.style.text.halo_over_marks
 
 
 def _label_at(band: ResolvedAnnotation) -> tuple[str, str, bool]:
@@ -1161,6 +1167,34 @@ def test_an_authored_band_label_position_wins() -> None:
         }
     )
     assert _label_at(band) == ("bottom", "start", False)
+
+
+def _free(a: ResolvedAnnotation) -> tuple[str, str, bool, bool]:
+    p = a.style.text.position
+    return p.edge, p.align, p.auto_edge, p.auto_align
+
+
+def test_auto_keys_take_their_preferred_spot_and_stay_free() -> None:
+    note = _one({"type": "note", "x": "2024-03-01", "y": 12, "text": "Peak"})
+    band = _one({"type": "band", "y": {"from": 11, "to": 14}})
+    rule = _one({"type": "rule", "y": 16, "text": "Goal"})
+    assert [_free(a) for a in (note, band, rule)] == [
+        ("top", "center", True, True),
+        ("right", "center", True, True),
+        ("top", "end", True, True),
+    ]
+
+
+def test_an_authored_key_stays_fixed_and_the_other_stays_free() -> None:
+    rule = _one(
+        {
+            "type": "rule",
+            "y": 16,
+            "text": "Goal",
+            "style": {"marks": {"text": {"position": {"edge": "bottom"}}}},
+        }
+    )
+    assert _free(rule) == ("bottom", "end", False, True)
 
 
 def _at(note: ResolvedAnnotation) -> tuple[object, object]:

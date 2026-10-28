@@ -1764,9 +1764,10 @@
             }
         });
         _reopenMenus();
-        /*{# The hover runtime ships ahead of this one in the same bundle; a #}*/
-        /*{# swapped-in board needs binding there too, and a host calls one mount. #}*/
+        /*{# The hover and table runtimes ship ahead of this one in the same #}*/
+        /*{# bundle; a swapped-in board needs binding there too, and a host calls one mount. #}*/
         window.dbtChartHover.mount(scope);
+        window.dbtTableRuntime.mount(scope);
         return bound;
     }
 

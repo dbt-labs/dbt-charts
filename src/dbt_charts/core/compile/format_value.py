@@ -57,6 +57,7 @@ from dbt_charts.core.text.format_d3 import (
     d3_format,
     find_unsupported_directive,
     format_d3,
+    in_board_zone,
     is_time_format,
     portable_strftime,
     split_leading_sign,
@@ -539,15 +540,12 @@ def format_temporal_value(
             dt = datetime.datetime.fromisoformat(stripped)
             # A timestamp carries a time component -- keep it (portable_strftime
             # accepts date or datetime) so a time directive in format_spec sees
-            # the real time, not midnight. Aware values still normalize to UTC.
-            d: datetime.date | datetime.datetime = (
-                dt.astimezone(datetime.UTC) if dt.tzinfo is not None else dt
-            )
+            # the real time, not midnight.
+            d: datetime.date | datetime.datetime = in_board_zone(dt)
         else:
             d = datetime.date.fromisoformat(stripped[:10])
     elif isinstance(value, datetime.datetime):
-        # Aware datetime: convert to UTC first to match ISO string behavior.
-        d = value.astimezone(datetime.UTC) if value.tzinfo is not None else value
+        d = in_board_zone(value)
     else:
         d = value
 

@@ -33,7 +33,7 @@ def _render(board_style: str = "") -> str:
 
 
 def _footer_lines(svg: str) -> list[str]:
-    return re.findall(r'<line[^>]*stroke="#e5e5e5"[^>]*/>', svg)
+    return re.findall(r'<line[^>]*stroke-width="0.5"[^>]*/>', svg)
 
 
 def test_footer_divider_draws_by_default() -> None:

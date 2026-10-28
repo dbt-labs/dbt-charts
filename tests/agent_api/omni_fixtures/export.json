@@ -103,8 +103,124 @@
             "name": "Revenue by month",
             "miniUuid": "mini-p2",
             "visConfig": {
-              "chartType": "lineColor"
-            }
+              "chartType": "lineColor",
+              "id": "vc2",
+              "createdAt": "2025-12-21T20:17:23.969Z",
+              "jsonHash": "abc=",
+              "version": 1,
+              "visType": "basic",
+              "fields": [
+                "orders.created_at[month]",
+                "orders.total_revenue"
+              ],
+              "spec": {
+                "configType": "cartesian",
+                "mark": {
+                  "type": "line"
+                },
+                "color": {
+                  "_scheme": "export-palette-1",
+                  "_stack": "stack",
+                  "field": {
+                    "name": "orders.region"
+                  }
+                },
+                "series": [
+                  {
+                    "field": {
+                      "name": "orders.total_revenue"
+                    },
+                    "yAxis": "y",
+                    "manual": true
+                  }
+                ],
+                "y": {
+                  "field": {
+                    "name": "orders.total_revenue"
+                  },
+                  "color": {
+                    "_stack": "stack"
+                  }
+                },
+                "tooltip": [
+                  {
+                    "field": {
+                      "name": "orders.region"
+                    }
+                  }
+                ],
+                "showDescriptions": true,
+                "conditionalFormatters": [
+                  {
+                    "id": "cf1",
+                    "type": "single",
+                    "applyToTotal": true,
+                    "rule": {
+                      "type": "greater-than",
+                      "value": 0.5,
+                      "valueType": "number"
+                    },
+                    "selection": {
+                      "type": "field",
+                      "field": "calc_1",
+                      "target": "calc_1"
+                    },
+                    "format": {
+                      "backgroundColor": "#1DB9B9"
+                    }
+                  }
+                ],
+                "columnFormats": {
+                  "orders.region": {
+                    "align": "left",
+                    "width": 121
+                  }
+                },
+                "columnDisplay": {
+                  "orders.region": {
+                    "type": "image"
+                  }
+                },
+                "styles": {
+                  "header": {
+                    "text": {
+                      "fontWeight": "bold"
+                    }
+                  }
+                },
+                "alignment": "center",
+                "verticalAlignment": "center",
+                "rowBanding": {
+                  "enabled": true,
+                  "bandSize": 1
+                },
+                "tableType": "stretch",
+                "truncateHeaders": true,
+                "frozenColumn": "orders.region",
+                "hideIndexColumn": true
+              }
+            },
+            "resultConfig": {
+              "tableType": "spreadsheet",
+              "rowBanding": {
+                "enabled": false
+              }
+            },
+            "aiConfig": {
+              "subTitle": {
+                "enabled": true
+              }
+            },
+            "filterOrder": [
+              "f1"
+            ],
+            "topicName": "orders",
+            "queryId": "q2",
+            "visConfigId": "vc2",
+            "automaticVis": true,
+            "prefersChart": true,
+            "isSql": false,
+            "type": "query"
           }
         },
         {

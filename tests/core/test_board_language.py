@@ -116,6 +116,7 @@ tabs:
         board.regional.format_locale,
         board.regional.time_locale,
         board.regional.week_start,
+        board.regional.zone,
         language=board.regional.resolved_language,
     ):
         svg, _ = render_tabs_layout(

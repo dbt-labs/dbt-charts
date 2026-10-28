@@ -107,12 +107,14 @@ CHART_FIELDS = (
     "x_label",
     "y_label",
     "field_labels",
+    "tooltip",
     "geo",
     "geo_source",
     "lookup",
     "value",
     # KPI quantitative-text-object fields (siblings of `value`).
     "support",
+    "good",
     "glyph",
     # Pivot-table channels (authored as field-name lists).
     "rows",
@@ -209,7 +211,7 @@ def chart_to_dict(item: dict[str, Any], query_name: str | None) -> dict[str, Any
             continue
         if field == "collapse" and val is False:
             continue
-        if field == "field_labels" and not val:
+        if field in ("field_labels", "tooltip") and not val:
             continue
         d[field] = clean_value(val)
 

@@ -454,9 +454,35 @@ fn lowercase_extra_small_words(small: &Small, text: &str) -> String {
     words.join(" ")
 }
 
+/// `("2 · ", "the language")` for `"2 · the language"`: a leading run of
+/// non-word tokens that ends in a separator: a token with no letters or digits
+/// (`·`, `-`, `—`, `|`) or a numeral closed by `.`, `:` or `)`. Such a label
+/// is not part of the title, so the title's first word is the one after it. A
+/// bare numeral ("2024 vs 2025") is part of
+/// the phrase and splits nothing.
+fn split_numbered_label(text: &str) -> Option<(&str, &str)> {
+    let mut end = 0;
+    for token in text.split(' ') {
+        if token.chars().any(char::is_alphabetic) {
+            return None;
+        }
+        end += token.len() + 1;
+        let is_separator = !token.chars().any(char::is_alphanumeric)
+            || (token.ends_with(['.', ':', ')']) && token.chars().any(char::is_numeric));
+        if is_separator {
+            let (label, rest) = text.split_at(end.min(text.len()));
+            return (!rest.is_empty()).then_some((label, rest));
+        }
+    }
+    None
+}
+
 /// Apply the standalone-all-caps guard, then title-case, then the
 /// small-words post-process — mirrors `apply_case(text, "title")` exactly.
 fn title_case(small: &Small, text: &str) -> String {
+    if let Some((label, title)) = split_numbered_label(text) {
+        return format!("{label}{}", title_case(small, title));
+    }
     let is_alpha = !text.is_empty() && text.chars().all(char::is_alphabetic);
     let is_upper =
         is_alpha && text.chars().all(|c| !c.is_lowercase()) && text.chars().any(char::is_uppercase);
@@ -618,6 +644,24 @@ mod inline_period_tests {
             apply_case("both slots named, no shared style.font.color", "title").unwrap(),
             "Both Slots Named, No Shared style.font.color"
         );
+    }
+
+    /// A numbered title ("2 · The Language") opens at its first real word:
+    /// the numeral and separator are not words, so "The" is the title's first.
+    #[test]
+    fn a_numeral_and_separator_do_not_demote_the_first_word() {
+        for (text, titled) in [
+            ("2 · the language", "2 · The Language"),
+            ("2 · The Language", "2 · The Language"),
+            ("2: the language", "2: The Language"),
+            ("2. the language", "2. The Language"),
+            ("5 - the state of the business", "5 - The State of the Business"),
+            // No separator: the numeral is part of the phrase, not a label.
+            ("2024 vs 2025", "2024 vs 2025"),
+            ("2024 and the plan", "2024 and the Plan"),
+        ] {
+            assert_eq!(apply_case(text, "title").unwrap(), titled, "{text}");
+        }
     }
 
     #[test]

@@ -294,49 +294,16 @@ def init_default(
         bool,
         typer.Option("--force", "-f", help="Overwrite existing scaffold files"),
     ] = False,
-    yes: Annotated[
-        bool,
-        typer.Option("--yes", "-y", help="Accept all defaults without prompting"),
-    ] = False,
-    skills: Annotated[
-        bool | None,
-        typer.Option(
-            "--skills/--no-skills",
-            help=(
-                "Write dbt Charts skills into this project (.agents/skills, "
-                ".claude/skills); recommended in a git repository"
-            ),
-        ),
-    ] = None,
-    mcp: Annotated[
-        bool | None,
-        typer.Option("--mcp/--no-mcp", help="Set up MCP server for AI assistants"),
-    ] = None,
-    vscode: Annotated[
-        bool | None,
-        typer.Option(
-            "--vscode/--no-vscode",
-            help="Install dbt charts extension into VS Code (default: prompt on a TTY, skip under --yes or without a TTY)",
-        ),
-    ] = None,
-    cursor: Annotated[
-        bool | None,
-        typer.Option(
-            "--cursor/--no-cursor",
-            help="Install dbt charts extension into Cursor (default: prompt on a TTY, skip under --yes or without a TTY)",
-        ),
-    ] = None,
 ) -> None:
     """Bootstrap a dbt charts project in an existing repo.
 
-    Detects dbt projects, creates charts/ and charts/partials/, ejects inspect
-    templates, and writes charts/meta.yml. Optionally wires up MCP for AI
-    assistants and installs IDE extensions.
+    Detects dbt projects, creates charts/ and charts/partials/, writes
+    charts/meta.yml, and installs the `dct` agent skill. Never prompts.
 
     Safe to re-run — existing files are never overwritten unless --force is used.
 
     Subcommands:
-      dct init skills [target]  # Install workflow skills for AI assistants
+      dct init skills [target]  # Install the dct agent skill elsewhere
       dct init mcp [client]     # Wire up MCP server
       dct init ci               # Scaffold a board-validation GitHub Action
       dct init code             # Install dbt charts extension into VS Code
@@ -344,12 +311,9 @@ def init_default(
 
     \b
     Examples:
-      dct init                        # Init with interactive wizard
-      dct init --yes                  # Accept all defaults non-interactively
-      dct init --yes --vscode         # …and install the VS Code extension
+      dct init                        # Init the enclosing project or git repo
       dct init --project-dir ./myrepo # Init in a specific directory
       dct init --force                # Re-scaffold, overwriting files
-      dct init --no-mcp --no-vscode --no-cursor  # Skip MCP and IDE extensions
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -357,11 +321,6 @@ def init_default(
         project_dir=project_dir,
         project_dir_explicit=project_dir_was_typed(ctx),
         force=force,
-        yes=yes,
-        skills=skills,
-        mcp=mcp,
-        vscode=vscode,
-        cursor=cursor,
     )
 
 

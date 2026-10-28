@@ -1,0 +1,3 @@
+kind: Fixes
+body: Title case keeps the first word after a leading numeral and separator capitalized, so "2 · The Language" no longer becomes "2 · the Language".
+time: 2026-10-26T18:35:19.645802-07:00

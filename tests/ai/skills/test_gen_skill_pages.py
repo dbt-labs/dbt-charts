@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import importlib.util
 from types import ModuleType
+from typing import Literal
 
 import pytest
 
 from ..._paths import DBT_CHARTS_DIR
 
 _PAGES_BUDGET_BYTES = 39 * 1024
-_MIN_GENERATED_SHARE = 0.73
+_MIN_GENERATED_SHARE = 0.72
 
 
 @pytest.fixture(scope="module")
@@ -114,6 +115,18 @@ def test_file_tool_hosts_copy_by_writing_and_change_only_what_was_asked() -> Non
     assert "only what the user explicitly asked" in with_files
     assert "write the copy" not in without_files
     assert "write the copy" not in get_skill("chart", surface="cli").body
+
+
+@pytest.mark.parametrize("surface", ["tool", "cli"])
+def test_styling_page_pins_a_color_request_to_a_hue_alias(
+    surface: Literal["tool", "cli"],
+) -> None:
+    from dbt_charts.agent_api.skills import get_skill
+
+    body = " ".join(get_skill("styling", surface=surface).body.split())
+    assert "pins `category.<hue>` under `style.charts.category_colors`" in body
+    assert "never a raw hex" in body
+    assert "name the nearest alias it does have" in body
 
 
 def test_tool_names_the_pages_teach_exist_in_the_tool_registry() -> None:

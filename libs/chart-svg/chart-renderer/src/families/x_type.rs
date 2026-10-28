@@ -148,8 +148,9 @@ pub fn resolve_filled_x(
 
 /// `_parse_date`: a real ISO date or datetime (`fromisoformat` rejects an
 /// impossible calendar day or clock), or a labeled bucket's first day. A bare
-/// year is neither. A datetime keeps its wall clock whatever its offset, and
-/// the flag says that clock's hour, minute or second is nonzero.
+/// year is neither. A naive datetime keeps its wall clock; one carrying `Z` or an
+/// offset is an instant, read on the board zone's wall clock. The flag says that
+/// clock's hour, minute or second is nonzero.
 pub(crate) fn parse_date(s: &str) -> Option<((i32, u8, u8), bool)> {
     let b = s.as_bytes();
     let digits = |r: std::ops::Range<usize>| b.get(r).is_some_and(|d| d.iter().all(u8::is_ascii_digit));
@@ -160,6 +161,12 @@ pub(crate) fn parse_date(s: &str) -> Option<((i32, u8, u8), bool)> {
             return None;
         }
         let sub_daily = if b.len() == 10 { false } else { iso_clock(&s[11..])? };
+        if crate::time_zone::is_aware(s) {
+            const DAY_MS: i64 = 86_400_000;
+            let wall = crate::time_zone::wall_day(crate::time_axis::date_text_day(s)?).ok()?;
+            let ms = (wall * DAY_MS as f64).round() as i64;
+            return Some((super::temporal::civil_from_days(ms.div_euclid(DAY_MS)), ms.rem_euclid(DAY_MS) >= 1000));
+        }
         return Some(((year, month, day), sub_daily));
     }
     parse_bucket_string(s).map(|(y, m, d)| ((y, m as u8, d as u8), false))

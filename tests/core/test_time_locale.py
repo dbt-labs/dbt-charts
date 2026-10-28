@@ -149,6 +149,7 @@ def test_portable_strftime_names_match_vega(
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         actual = portable_strftime(instant, f"%{directive}")
     assert actual == _vega_utc_format(instant, f"%{directive}", locale)
@@ -175,6 +176,7 @@ def test_a_percent_in_a_locale_word_prints_literally() -> None:
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         assert portable_strftime(datetime(2023, 1, 5), "%b") == "100%"
 
@@ -185,6 +187,7 @@ def test_a_padding_modifier_on_a_name_directive_still_names_it() -> None:
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         assert portable_strftime(datetime(2023, 3, 5), "%-b") == "Mrz"
 
@@ -276,6 +279,7 @@ def test_a_nested_composite_expands_through_the_locale() -> None:
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
     ):
         assert (
             portable_strftime(datetime(2023, 3, 5, 14, 7), "%c") == "05.03.2023 14:07"
@@ -326,6 +330,7 @@ def test_date_variable_labels_use_the_time_locale() -> None:
         regional.format_locale,
         regional.time_locale,
         regional.week_start,
+        regional.zone,
         language=regional.resolved_language,
     ):
         assert format_date_label("2023-03-05") == "5. Mrz 2023"

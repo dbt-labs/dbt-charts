@@ -42,6 +42,9 @@ style:
     negative: negative.border
   border:
     color: &faint chrome[10]
+  footer:
+    divider:
+      color: *faint
   title:
     font:
       weight: 600

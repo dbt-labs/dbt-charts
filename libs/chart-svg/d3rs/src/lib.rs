@@ -23,5 +23,6 @@ pub mod sankey_circular;
 pub mod scale;
 pub mod shape;
 pub mod ticks;
+pub mod time;
 pub mod topojson;
 pub mod vega_schemes;

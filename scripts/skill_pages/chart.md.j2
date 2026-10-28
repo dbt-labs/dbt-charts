@@ -15,7 +15,7 @@ dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML ma
 
 Write only what differs from the defaults. Themes, frame and card sizes, number formats, column headers (a column's name, prettified), control types and option lists are chosen for you, often by the user's own theme; a key that restates one adds lines and changes nothing. Leave the look alone unless the user asks for a change: their defaults beat your taste.
 
-Data files ({{ data_extensions() }}) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is {{ source_types() }}. {{ cli('No `dbt_charts.yml` yet: run `' ~ init_command() ~ '` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. ') }}To see a source's tables and columns: {{ s('columns_query_example') }}.
+Data files ({{ data_extensions() }}) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is {{ source_types() }}. {{ cli('No `dbt_charts.yml` yet: run `dct init` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. ') }}To see a source's tables and columns: {{ s('columns_query_example') }}.
 
 ## {{ s('page_commands_heading') }}
 

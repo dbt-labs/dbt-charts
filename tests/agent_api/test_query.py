@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -508,13 +509,20 @@ class TestQueryBoardUnboundVariables:
     def test_a_preset_binds_as_todays_window(
         self,
         preset: str,
+        monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
         registry: AdapterRegistry,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
         from dbt_charts.agent_api.query import query_board
 
-        board = _DATE_RANGE_BOARD.replace("date '2024-01-05'", "current_date").replace(
+        # One pinned instant feeds the preset; the row's date is that same day,
+        # so the run cannot straddle midnight or differ between UTC and local.
+        monkeypatch.setattr(
+            "dbt_charts.core.execute.executor.utc_now",
+            lambda: datetime(2024, 6, 15, 12, 0, tzinfo=UTC),
+        )
+        board = _DATE_RANGE_BOARD.replace("2024-01-05", "2024-06-15").replace(
             "    input: daterange\n", "    input: daterange\n    default: today\n"
         )
         path = _write_board(tmp_path, board)

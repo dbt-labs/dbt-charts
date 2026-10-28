@@ -57,7 +57,7 @@ class TestSkillsList:
         assert result.exit_code == 0, result.output
         names = {s["name"] for s in json.loads(result.output)["skills"]}
         assert names == {
-            "board-replicate",
+            "board-migrate",
             "chart",
             "cloud-setup",
             "custom-chart-build",
@@ -88,7 +88,7 @@ class TestSkillsList:
         assert result.exit_code == 0, result.output
         output = _plain(result.output)
         start_here_pos = output.find("dct skills chart")
-        first_skill_pos = output.find("board-replicate")
+        first_skill_pos = output.find("board-migrate")
         assert start_here_pos != -1, output
         assert first_skill_pos != -1, output
         assert start_here_pos < first_skill_pos

@@ -325,11 +325,10 @@ charts:
         format: "$,.0f"
       support:
         format: +.1%
-        tone: negative
     support:
       value: bookings_growth_pct
       label: vs prior 90 days
-      glyph: "▼"
+      good: up
 
   kpi_active_subs:
     type: kpi
@@ -341,11 +340,10 @@ charts:
         format: ",.0f"
       support:
         format: +.1%
-        tone: positive
     support:
       value: active_subs_growth_pct
       label: vs 90 days ago
-      glyph: "▲"
+      good: up
 
   # ── Hero: stacked column ───────────────────────────────────────────────
   # Endpoint labels (segment names on the rightmost column) ink live via
@@ -399,7 +397,6 @@ charts:
       axis_x:
         labels:
           time_unit: yearquarter
-          align: left
 
   # ── Area: cumulative bookings ──────────────────────────────────────────
   cumulative_area:
@@ -418,7 +415,6 @@ charts:
       axis_x:
         labels:
           time_unit: yearquarter
-          align: left
 
   # ── Bottom table: top accounts ─────────────────────────────────────────
   accounts_table:

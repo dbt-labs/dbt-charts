@@ -1098,6 +1098,17 @@ mod tests {
 
     // --- SI prefix type 's' ---
 
+    /// A lone compact value that rounds up to the next power of 1000 steps to the
+    /// next prefix: `$1M`, never `$1,000K`.
+    #[test]
+    fn si_lone_value_rolls_over_to_the_next_prefix() {
+        assert_eq!(fmt("$.2~s", 999_960.0), "$1M");
+        assert_eq!(fmt("$.2~s", 999_999.5), "$1M");
+        assert_eq!(fmt("$.2~s", -999_960.0), "\u{2212}$1M");
+        assert_eq!(fmt(".2~s", 999_960_000.0), "1G");
+        assert_eq!(fmt("$.2~s", 999_499.0), "$1M");
+    }
+
     #[test]
     fn test_si_precision_trim() {
         assert_eq!(fmt(".3~s", 4_820_000.0), "4.82M");

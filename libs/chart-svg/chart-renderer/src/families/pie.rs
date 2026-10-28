@@ -17,31 +17,20 @@
 //!   hand-written or stale resolved-JSON fixture instead — covers both
 //!   paint sites the deleted implementation had, slice fill and label ink)
 
-use std::fmt::Write as _;
-
-use serde::Deserialize;
-use serde_json::Value;
-
-use d3rs::arc::Arc;
-use crate::number_locale::d3_format;
-use d3rs::pie::pie;
+pub mod bind;
+pub mod layout;
 
 use std::collections::HashMap;
 
-use crate::label_template::{Scope, Template};
-use crate::common::{
-    category_color, category_ink, category_scale_for, row_str, FormatSlot, Font, Stroke, StyleChannel, TitleStyle,
-};
-use crate::families::legend::{
-    VEGA_LEGEND_SYMBOL_LIMIT,
-    emit_vega_legend, legend_from_widths, legend_slide, legend_title_text, resolve_legend_values,
-    fold_symbol_limit, legend_fit_bounds, legend_origin, limit_legend_text, LegendConfig, LegendEntry, LegendSymbol, VegaLegend,
-};
-use crate::families::table::bind::is_date_like_cell;
-use crate::frame::{ChartFrame, FrameTitle};
-use crate::svg::{num_full, py_float_str};
-use print::{vega_escape_attr, xml_escape, xml_escape_attr};
-use measure::FontBook;
+use measure::{FontBook, Measure};
+use print::print;
+use serde::Deserialize;
+use serde_json::Value;
+
+use crate::common::{Font, FormatSlot, Stroke, StyleChannel, TitleStyle};
+use crate::diagnostic::{warn, Diagnostic};
+use crate::families::legend::LegendConfig;
+use crate::layout::Rect;
 use crate::Payload;
 
 #[derive(Deserialize)]
@@ -49,6 +38,8 @@ struct Resolved {
     id: String,
     theta: String,
     field_labels: crate::common::FieldLabels,
+    #[serde(default)]
+    tooltip: Vec<crate::families::tooltip_extra::TooltipField>,
     identity_field: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     title: Option<String>,
@@ -81,7 +72,7 @@ struct Resolved {
     total: Option<TotalConfig>,
     /// The resolved legend (`ResolvedLegendStyle`), always carried. Production
     /// hides it outside "direct" label mode (`suppress_legend`), so a visible
-    /// one is drawn by `draw_pie_fit`'s legend arm.
+    /// one is drawn by `pie/layout.rs`'s wheel.
     legend: LegendConfig,
     #[serde(default)]
     attached_table: Option<Value>,
@@ -119,121 +110,10 @@ impl Resolved {
     fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self =
             Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
-        let keys: Vec<(&str, &str)> = color_field_of(&r).map(|field| ("color", field)).into_iter().collect();
+        let keys: Vec<(&str, &str)> = bind::color_field_of(&r).map(|field| ("color", field)).into_iter().collect();
         r.selection = crate::selected::Selection::of(payload, r.link.as_deref(), &keys)?;
         Ok(r)
     }
-}
-
-// ── Attached table ────────────────────────────────────────────────────────────
-// The legend-table beside/below the pie is an ordinary table over the rows
-// production's `project_pie_table_rows` synthesizes (swatch, share, name,
-// value); `table::render` paints it.
-
-/// The attached table's rows: swatch, share, name, value per frozen row index —
-/// production's `project_pie_table_rows`. The share is the slice label's own
-/// `.0%` spec.
-#[allow(clippy::too_many_arguments)]
-fn project_pie_table_rows(
-    payload: &Payload,
-    row_indices: &[usize],
-    palette: &[String],
-    identity_field: Option<&String>,
-    theta_field: &str,
-    thetas: &[f64],
-    total: f64,
-    category_scale: Option<&crate::common::CategoryColorScale>,
-) -> Result<Vec<serde_json::Map<String, Value>>, String> {
-    let rows = &payload.rows;
-    let scalar = |row: &serde_json::Map<String, Value>, field: &str| match row.get(field) {
-        None | Some(Value::Null) => Value::String(String::new()),
-        Some(v) => v.clone(),
-    };
-    let mut table_rows = Vec::with_capacity(row_indices.len());
-    for &i in row_indices {
-        let swatch = match (category_scale, identity_field) {
-            (Some(scale), Some(field)) if !matches!(rows[i].get(field.as_str()), None | Some(Value::Null)) => {
-                category_color(scale, &row_str(&rows[i], field), palette)?
-            }
-            _ => palette[i % palette.len()].clone(),
-        };
-        let mut row = serde_json::Map::new();
-        row.insert("swatch".into(), Value::String(swatch));
-        let share = d3_format(".0%", thetas[i] / total)
-            .map_err(|e| format!("pie: attached_table share format: {e}"))?;
-        row.insert("share".into(), Value::String(share));
-        row.insert(
-            "name".into(),
-            identity_field.map_or(Value::String(String::new()), |f| scalar(&rows[i], f)),
-        );
-        row.insert("value".into(), scalar(&rows[i], theta_field));
-        table_rows.push(row);
-    }
-    Ok(table_rows)
-}
-
-/// Render the pie's attached table at `table_width`, unbounded in height.
-/// Returns the SVG and its height.
-#[allow(clippy::too_many_arguments)]
-fn render_attached_table_svg(
-    payload: &Payload,
-    attached: &Value,
-    row_indices: &[usize],
-    palette: &[String],
-    identity_field: Option<&String>,
-    theta_field: &str,
-    thetas: &[f64],
-    total: f64,
-    table_width: f64,
-    fonts: &FontBook,
-    category_scale: Option<&crate::common::CategoryColorScale>,
-) -> Result<(String, f64), String> {
-    let rows = &payload.rows;
-    if row_indices.is_empty() {
-        return Err("pie: attached_table requires at least one row in attached_row_indices".into());
-    }
-    if let Some(&bad) = row_indices.iter().find(|&&i| i >= rows.len()) {
-        return Err(format!(
-            "pie: attached_table row index {bad} out of range — {} data rows",
-            rows.len()
-        ));
-    }
-    let table_rows = project_pie_table_rows(
-        payload,
-        row_indices,
-        palette,
-        identity_field,
-        theta_field,
-        thetas,
-        total,
-        category_scale,
-    )?;
-    let table_payload = Payload {
-        cell_text: Vec::new(),
-        max_template_output_bytes: None,
-        resolved: attached.clone(),
-        rows: table_rows,
-        width: table_width,
-        height: 0.0,
-        background: payload.background.clone(),
-        fonts_dir: payload.fonts_dir.clone(),
-        padding: None,
-        board_style: payload.board_style.clone(),
-        language: None,
-        variables: payload.variables.clone(),
-        filter_variables: payload.filter_variables.clone(),
-        interactive_controls: payload.interactive_controls,
-        link_context: payload.link_context.clone(),
-        datasets: None,
-        geometries: None,
-        measuring: false,
-        title_shift: crate::TitleShift::default(),
-        is_placeholder: false,
-        authored_height: None,
-    };
-    let svg = crate::families::table::render(&table_payload, fonts).map_err(|e| e.to_string())?;
-    let height = crate::board::extract_svg_height(&svg)?;
-    Ok((svg, height))
 }
 
 #[derive(Deserialize)]
@@ -299,1043 +179,26 @@ struct Labels {
     template: String,
 }
 
-/// `legend.title.font.case`. The theme cascade guarantees every resolved
-/// chart's `legend.title.font` is populated (`core/AGENTS.md`'s "Theme YAML
-/// completeness"), so a caller reaching this with `tooltip_labels` true and
-/// no case is a genuine resolved-payload defect, not a shape to default
-/// around.
-fn pie_legend_title_case(legend: &LegendConfig) -> Result<&str, String> {
-    legend
-        .title
-        .font
-        .case
-        .as_deref()
-        .ok_or_else(|| "pie: tooltip value title requires legend.title.font.case".to_string())
+/// Bind, lay out the payload's own card, forward the diagnostics, print.
+pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+    draw(&bind::bind(payload)?, fonts)
 }
 
-/// One row's structured-tooltip aria-label -- shared by the arc loop, the
-/// center-total texts (always row 0, see `draw_pie_fit`'s doc comment at
-/// its call site), and the wedge slice-label texts (each its own row).
-fn pie_row_aria(
-    r: &Resolved,
-    payload_rows: &[serde_json::Map<String, Value>],
-    thetas: &[f64],
-    total: f64,
-    value_title: &str,
-    idx: usize,
-) -> Result<String, String> {
-    let header = r.identity_field.as_ref().map(|f| identity_string(&payload_rows[idx], Some(f)));
-    let value = thetas[idx];
-    let tt = crate::contract::PieTooltip {
-        header: header.as_deref(),
-        share: value / total,
-        value_title,
-        value_format: &r.style.tooltip_format,
-        value,
-        total,
-    };
-    crate::contract::pie_aria_label(&tt)
+/// A pie over no rows: the empty arc and label layers inside the negotiated frame.
+pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
+    draw(&bind::bind_empty(payload)?, fonts)
 }
 
-/// The href of row `idx`'s datum: `r.link` with its channel placeholders
-/// substituted from that row, `None` on a chart with no `link`.
-fn row_href(
-    r: &Resolved,
-    rows: &[serde_json::Map<String, Value>],
-    idx: usize,
-) -> Result<Option<String>, String> {
-    r.link
-        .as_deref()
-        .map(|template| {
-            crate::href::resolve_channel_href(template, |channel| {
-                pie_link_value(r, &rows[idx], channel)
-            })
-        })
-        .transpose()
-}
-
-/// `_channel_field` for a pie (`click_interactivity.py:20-58`): `color` is the
-/// color channel's `data_field`, `theta` the measure. A pie has no `x`/`y`
-/// encoding, where production raises the same error at spec build.
-fn pie_link_value(
-    r: &Resolved,
-    row: &serde_json::Map<String, Value>,
-    channel: &str,
-) -> Result<String, String> {
-    let field = match channel {
-        "color" => r.resolved_channels.get("color").and_then(|c| c.data_field.as_deref()),
-        "theta" => Some(r.theta.as_str()),
-        _ => None,
-    };
-    let field = field.ok_or_else(|| {
-        format!(
-            "link template references channel '{{{{ {channel} }}}}' but chart has no \
-             '{channel}' encoding assigned"
-        )
-    })?;
-    crate::href::js_string(row.get(field))
-}
-
-fn identity_string(row: &serde_json::Map<String, Value>, field: Option<&String>) -> String {
-    field
-        .and_then(|f| row.get(f))
-        .map(|v| match v {
-            Value::String(s) => s.clone(),
-            other => other.to_string(),
-        })
-        .unwrap_or_default()
-}
-
-/// The color channel's data field, `None` when the chart authors no
-/// `color:`. Without it there is neither a color scale nor a legend.
-fn color_field_of(r: &Resolved) -> Option<&str> {
-    r.resolved_channels
-        .get("color")
-        .and_then(|ch| ch.data_field.as_deref())
-        .filter(|f| !f.is_empty())
-}
-
-/// Whether a legend is drawn at all: visible and a color field to key it.
-fn legend_is_drawn(r: &Resolved) -> bool {
-    r.legend.visible && color_field_of(r).is_some()
-}
-
-/// A pie's color legend as Vega lays it out: `(label, fill)` per entry plus
-/// the shared grid layout, and the slice stroke color the symbols carry.
-struct PieLegend {
-    entries: Vec<(String, String)>,
-    /// Per entry, the raw color value its slice links by; `None` for the "…N entries" fold row.
-    keys: Vec<Option<String>>,
-    layout: VegaLegend,
-    symbol_stroke: Option<String>,
-}
-
-impl PieLegend {
-    fn entries(&self) -> Vec<LegendEntry<'_>> {
-        self.entries.iter().map(|(label, fill)| LegendEntry {
-            label,
-            fill,
-            symbol: None,
-            series_key: None,
-            recede: None,
-        }).collect()
-    }
-
-    /// A filled `arc` mark's legend symbol: Vega's default `circle` in the
-    /// scale's fill, stroked in the mark's own constant `stroke`
-    /// (`legend/encode.ts` `symbols`: the mark `stroke` flows, its width and
-    /// join do not), unstroked when the mark has none.
-    fn symbol(&self) -> LegendSymbol<'_> {
-        match &self.symbol_stroke {
-            Some(stroke) => LegendSymbol::StrokedCircle(stroke),
-            None => LegendSymbol::FilledCircle,
-        }
-    }
-}
-
-/// Lays the pie's color legend out through the shared Vega layout, over the
-/// color scale's domain. `None` when no legend is drawn.
-/// Every legend shape this port does not draw refuses by name.
-fn plan_legend(
-    r: &Resolved,
-    rows: &[serde_json::Map<String, Value>],
-    category_scale: Option<&crate::common::CategoryColorScale>,
-    fonts: &FontBook,
-) -> Result<Option<PieLegend>, String> {
-    let Some(color_field) = color_field_of(r).filter(|_| r.legend.visible) else {
-        return Ok(None);
-    };
-    let cfg = &r.legend;
-    let channel = &r.resolved_channels["color"];
-    // A non-series channel is a gradient legend; a series over numeric data
-    // is a quantitative scale, which draws a gradient bar, not symbols.
-    if channel.mode != "series" {
-        return Err(format!("pie: a legend over a {:?} color channel (gradient legend) is not ported", channel.mode));
-    }
-    match channel.quantitative_data {
-        Some(false) => {}
-        Some(true) => return Err("pie: a legend over a quantitative color field (gradient legend) is not ported".into()),
-        None => return Err("pie: a visible legend needs the color channel's quantitative_data flag (resolver required)".into()),
-    }
-    if cfg.symbol_shape.is_some() {
-        return Err("pie: legend.symbol_shape (VL symbolType) is not ported".into());
-    }
-    if cfg.symbol_fill.is_some() {
-        return Err("pie: legend.symbol_fill (VL symbolFillColor) is not ported".into());
-    }
-    if cfg.values.as_ref().is_some_and(Vec::is_empty) {
-        return Err("pie: legend.values: [] (an empty legend) is not ported".into());
-    }
-    if r.style.slice_mark.opacity.is_some() {
-        return Err("pie: slice opacity under a visible legend (the symbols carry it) is not ported".into());
-    }
-    if !matches!(cfg.direction.as_str(), "vertical" | "horizontal") {
-        return Err(format!("pie: legend.direction {:?} is not vertical or horizontal", cfg.direction));
-    }
-    if !matches!(cfg.position.edge.as_str(), "right" | "left" | "top" | "bottom") {
-        return Err(format!("pie: legend.position edge {:?} is not a side of the plot", cfg.position.edge));
-    }
-
-    // The scale's domain: the color values in row order, each once; a null
-    // draws no entry.
-    let mut domain: Vec<&str> = Vec::new();
-    for row in rows {
-        match row.get(color_field) {
-            None | Some(Value::Null) => {}
-            Some(value @ Value::String(text)) => {
-                if is_date_like_cell(Some(value)) {
-                    return Err("pie: a legend over a date-like color field (temporal scale) is not ported".into());
-                }
-                if !domain.contains(&text.as_str()) {
-                    domain.push(text);
-                }
-            }
-            Some(other) => {
-                return Err(format!("pie: a legend over the non-string color value {other} is not ported"));
-            }
-        }
-    }
-    let fills: Vec<String> = domain
-        .iter()
-        .enumerate()
-        .map(|(idx, value)| match category_scale {
-            Some(scale) => category_color(scale, value, &r.palette),
-            None => Ok(r.palette[idx % r.palette.len()].clone()),
-        })
-        .collect::<Result<_, _>>()?;
-
-    if domain.is_empty() {
-        return Err("pie: a legend over a color field with no values is not ported".into());
-    }
-    // The scale's domain stays in row order; an authored `legend.values`
-    // (`apply_legend_entry_order`) picks and orders the entries drawn, each
-    // keeping its own swatch.
-    let order: Vec<usize> = match &cfg.values {
-        None => (0..domain.len()).collect(),
-        Some(authored) => resolve_legend_values(authored, &domain, None),
-    };
-
-    let limit = cfg.symbol_limit.unwrap_or(VEGA_LEGEND_SYMBOL_LIMIT) as usize;
-    let mut entries: Vec<(String, String)> =
-        order.iter().map(|&idx| (domain[idx].to_string(), fills[idx].clone())).collect();
-    let mut keys: Vec<Option<String>> = order.iter().map(|&idx| Some(domain[idx].to_string())).collect();
-    if let Some((kept, label)) = fold_symbol_limit(entries.len(), limit) {
-        let folded = (label, entries[kept].1.clone());
-        entries.truncate(kept);
-        entries.push(folded);
-        keys.truncate(kept);
-        keys.push(None);
-    }
-
-    let title = legend_title_text(color_field, cfg, &r.field_labels)?;
-    let limited = limit_legend_text(entries.iter().map(|(label, _)| label.as_str()), &title, cfg, fonts)?;
-    for ((label, _), drawn) in entries.iter_mut().zip(limited.labels) {
-        *label = drawn;
-    }
-    let (label_ws, title, title_w) = (limited.label_ws, limited.title, limited.title_w);
-    // An unstroked symbol bounds the bare 10px glyph (no stroke ring), which
-    // tightens the row pitch; a stroked one is the grid's default entry.
-    let symbol_stroke = r.style.slice_mark.stroke.as_ref().and_then(|s| s.color.clone());
-    let entry_symbol = symbol_stroke.is_none().then_some(LegendSymbol::FilledCircle);
-    let layout =
-        legend_from_widths(&label_ws, &vec![entry_symbol; entries.len()], false, &title, title_w, cfg)?;
-    Ok(Some(PieLegend { entries, keys, layout, symbol_stroke }))
-}
-
-/// Standalone pie through Vega's own fit-margin algebra: production compiles
-/// the wheel as a layer spec under `autosize: fit` where the slice-label
-/// text ink pushes the PLOT MARGINS (asymmetric left/right — donut_example's
-/// origin is (33, 44)) while the radius stays `min(pw, ph)/2 ×
-/// outer_fraction` of the fitted box, re-evaluated per resize pass.
-/// `fit_plot`'s passes model that directly: each candidate (pw, ph)
-/// re-derives the radius and label anchors and unions their ink. A wheel's
-/// label ink moves WITH the plot, so the sequence generally has no fixed
-/// point — which is why `fit_plot` runs Vega's own bounded pass count rather
-/// than iterating to one (`AUTOSIZE_PADDING_PASSES`). The attached-table
-/// composition renders its wheel through this same fit path at
-/// `width=wheel_width` and the theme's unsized view height; only the outer
-/// wheel+table placement is its own arithmetic.
-#[allow(clippy::too_many_arguments)]
-fn draw_pie_fit(
-    frame: &ChartFrame,
-    r: &Resolved,
-    payload_rows: &[serde_json::Map<String, Value>],
-    thetas: &[f64],
-    total: f64,
-    fonts: &FontBook,
-    title_dx: f64,
-) -> Result<(String, f64), String> {
-    use crate::vega_fit;
-
-    let (w, h) = (frame.w, frame.h);
-    let (pad_l, pad_r, pad_t, pad_b) = frame.pad;
-
-    // Per-visible-slice label geometry, fixed ahead of the fit (only the
-    // anchor positions vary with the candidate plot box).
-    struct SliceLabel {
-        mid: f64,
-        lines: Vec<String>,
-        max_w: f64,
-        fill: String,
-        /// The row this label was built from — its own structured-tooltip
-        /// aria-label reads `payload_rows`/`thetas` at this index (a real,
-        /// per-row data-bound layer, unlike the center-total texts below).
-        idx: usize,
-    }
-    let mut slice_labels: Vec<SliceLabel> = Vec::new();
-    // The color channel's `data_field`, empty when the chart authors no
-    // `color:`. Without it every wedge paints one constant `palette[0]` —
-    // palette-by-index is the color scale's range, so it needs the scale to
-    // exist.
-    let color_field = color_field_of(r);
-    let color_key = color_field.is_some();
-    // The board's plan for this field, if it binds one (#7167) — the arc
-    // fill defers to it over the local `slice.index % palette.len()`.
-    let category_scale = color_field.and_then(|cf| category_scale_for(&r.category_colors, cf));
-    let legend = plan_legend(r, payload_rows, category_scale, fonts)?;
-    let labels_cfg = r.style.slice_mark.labels.as_ref();
-    if let Some(labels) = labels_cfg {
-        let template = Template::parse(&labels.template)?;
-        let font_size = labels.font.size_or(14.0);
-        let family = labels.font.family_or("sans-serif");
-        let mut running = 0.0;
-        for (idx, theta) in thetas.iter().enumerate() {
-            let mid = std::f64::consts::TAU * (running + theta / 2.0) / total;
-            running += theta;
-            if !r.slice_label_indices.contains(&idx) {
-                continue;
-            }
-            let lines = template.render(&Scope {
-                row: &payload_rows[idx],
-                theta_field: &r.theta,
-                color_field: r.identity_field.as_deref(),
-                percent: theta / total,
-                total,
-            })?;
-            // The label's right (or left) edge joins the autosize fit, so it is
-            // a width Vega measures: kerning included.
-            let mut max_w = 0.0_f64;
-            for line in &lines {
-                max_w = max_w.max(fonts.measure_shaped(line, family, font_size)?);
-            }
-            // The board slot when bound — `ink_at`'s pure function of the
-            // row's own value, same as the wedge's `color_at`. Production
-            // reads `labels.font.color` only when there is no color key: a
-            // color channel always inks with the dark companions, by board
-            // slot or, unbound, by row position.
-            let via_scale = match (category_scale, color_field) {
-                (Some(scale), Some(cf))
-                    if !matches!(payload_rows[idx].get(cf), None | Some(Value::Null)) =>
-                {
-                    Some(category_ink(scale, &row_str(&payload_rows[idx], cf), &r.dark_companion_stops, &r.pin_companions)?)
-                }
-                _ => None,
-            };
-            let authored = if color_field.is_some() { None } else { labels.font.color.clone() };
-            let fill = via_scale.unwrap_or_else(|| {
-                authored.unwrap_or_else(|| {
-                    r.dark_companion_stops
-                        .get(idx % r.dark_companion_stops.len().max(1))
-                        .cloned()
-                        .unwrap_or_else(|| "#333".into())
-                })
-            });
-            slice_labels.push(SliceLabel { mid, lines, max_w, fill, idx });
-        }
-    }
-    let label_fs = labels_cfg.map(|l| l.font.size_or(14.0)).unwrap_or(14.0);
-    let label_lh = labels_cfg.map(|l| l.line_height).unwrap_or(14.0);
-    let label_offset = labels_cfg.map(|l| l.offset).unwrap_or(6.0);
-
-    // Title ink (width-resolved font slot). Overflowing text is processed
-    // exactly as production's `apply_title_overflow_to_spec` processes it
-    // BEFORE the wheel render — the shared `wrap_title_block` law.
-    let title = FrameTitle::new(
-        r.title.as_deref(),
-        r.subtitle.as_deref(),
-        r.style.title_font.as_ref(),
-        r.title_style.as_ref(),
-        frame.avail_w(),
-        fonts,
-    )?;
-    title.warn_truncated(&r.id);
-
-    let arc_stroke_w = r
-        .style
-        .slice_mark
-        .stroke
-        .as_ref()
-        .and_then(|s| s.width)
-        .unwrap_or(0.0);
-
-    if r.total.as_ref().is_some_and(|t| t.format.is_some()) {
-        return Err("pie: total.format moved to style.total_style.value.format".to_string());
-    }
-
-    // Center-total text marks are real VL marks — their ink joins the fit
-    // union (a long total can outgrow the wheel). Formatted once, reused at
-    // emission.
-    let total_texts: Option<(String, f64, f64, Option<(f64, f64)>)> = match &r.total {
-        Some(total_cfg) if total_cfg.visible => {
-            let value_font = &r.style.total_style.value.font;
-            let value_size = value_font.size_or(14.0);
-            let formatted = match &r.style.total_style.value.format {
-                Some(fmt) => {
-                    fmt.paint(total).map_err(|e| format!("pie: total value format: {e}"))?
-                }
-                None if total.fract() == 0.0 => format!("{}", total as i64),
-                None => format!("{total}"),
-            };
-            let value_w =
-                fonts.measure(&formatted, value_font.family_or("sans-serif"), value_size)?;
-            let label_dims = match &total_cfg.label {
-                Some(label_text) => {
-                    let label_font = &r.style.total_style.label.font;
-                    let label_size = label_font.size_or(11.0);
-                    let lw = fonts.measure(
-                        label_text,
-                        label_font.family_or("sans-serif"),
-                        label_size,
-                    )?;
-                    Some((lw, label_size))
-                }
-                None => None,
-            };
-            Some((formatted, value_w, value_size, label_dims))
-        }
-        _ => None,
-    };
-
-    // The legend's (x, y) in plot coordinates, recorded by the fit's last
-    // (drawn) layout pass.
-    let mut legend_xy = (0.0, 0.0);
-    let m = vega_fit::fit_plot(
-        w,
-        h,
-        (pad_l, pad_r, pad_t, pad_b),
-        |pw, ph, b| {
-            let radius = pw.min(ph) / 2.0 * r.outer_fraction;
-            let (cx, cy) = (pw / 2.0, ph / 2.0);
-            // Wheel ink: arc marks expand by their stroke (boundStroke).
-            b.union(
-                &vega_fit::Bounds::new(cx - radius, cy - radius, cx + radius, cy + radius)
-                    .expand(arc_stroke_w),
-            );
-            if let Some((_, value_w, value_fs, label_dims)) = &total_texts {
-                b.union(&vega_fit::text_ink(cx, cy, *value_w, *value_fs, "center", "bottom"));
-                if let Some((label_w, label_fs)) = label_dims {
-                    b.union(&vega_fit::text_ink(cx, cy, *label_w, *label_fs, "center", "top"));
-                }
-            }
-            for sl in &slice_labels {
-                let top = sl.mid.cos() >= 0.0;
-                let right = sl.mid.sin() >= 0.0;
-                let x = cx + sl.mid.sin() * (radius + label_offset);
-                let y = cy - sl.mid.cos() * (radius + label_offset)
-                    + if top { -(sl.lines.len() as f64 * label_lh) } else { 0.0 };
-                let mut ti = vega_fit::text_ink(
-                    x,
-                    y,
-                    sl.max_w,
-                    label_fs,
-                    if right { "left" } else { "right" },
-                    "top",
-                );
-                if sl.lines.len() > 1 {
-                    ti.y2 += (sl.lines.len() as f64 - 1.0) * label_lh;
-                }
-                b.union(&ti);
-            }
-            // The legend group's own bounds join the view ink on its own
-            // axis only: `ViewLayout.js` unions a left/right legend as
-            // `F.add(o.x1, 0).add(o.x2, 0)` and a top/bottom one as
-            // `F.add(0, o.y1).add(0, o.y2)` under autosize fit. A pie has no
-            // axes, so the legend anchors on the plot rect alone: `ceil(x2)`
-            // or `ceil(y2)` plus the layout offset past the near edge,
-            // `floor(x1)`/`floor(y1)` (0) minus offset minus its own extent
-            // before the far one.
-            if let Some(lg) = &legend {
-                let (box_w, box_h) = (lg.layout.box_w, lg.layout.box_h());
-                // A wheel has no axes and its arcs are bare marks: the
-                // bounds are the plot rect's own.
-                legend_xy = legend_origin(&r.legend.position, (0.0, pw), (0.0, ph), (pw, ph), (box_w, box_h));
-                if let Some(reach) = legend_fit_bounds(&r.legend.position, legend_xy, (box_w, box_h)) {
-                    b.union(&reach);
-                }
-            }
-        },
-        title.ink(),
-    );
-    if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
-        return Err(format!("pie: plot box too small ({}×{})", m.plot_w, m.plot_h));
-    }
-    let (pw, ph) = (m.plot_w, m.plot_h);
-    let radius = pw.min(ph) / 2.0 * r.outer_fraction;
-    let inner = radius * r.style.inner_radius;
-    let (cx, cy) = (pad_l + m.left + pw / 2.0, pad_t + m.top + ph / 2.0);
-    if let Some((formatted, value_w, _, _)) = &total_texts {
-        if inner > 0.0 && *value_w > 2.0 * inner {
-            crate::diagnostic::warn(crate::diagnostic::Diagnostic::new(
-                &crate::codes::WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS,
-                [
-                    ("chart_id", serde_json::json!(r.id)),
-                    ("formatted_value", serde_json::json!(formatted)),
-                    ("hole_diameter", serde_json::json!(2.0 * inner)),
-                    ("slot_height", serde_json::json!(ph)),
-                    ("slot_width", serde_json::json!(pw)),
-                    ("text_width", serde_json::json!(value_w)),
-                ],
-            ));
-        }
-    }
-
-    // ── Emission ─────────────────────────────────────────────────────────
-    let mut svg = String::with_capacity(4096);
-    frame.background(&mut svg);
-    if let (Some(_), false) = (m.title_pos, title.block().title_lines.is_empty()) {
-        // A left-placed table pushes the wheel right, and the title group
-        // slides back by that much so it stays on the card's own left edge.
-        // Printed `{dx:g}`.
-        if title_dx != 0.0 {
-            let _ = write!(svg, "<g transform=\"translate({},0)\">", d3rs::py_float::format_g(title_dx));
-        }
-        title.paint(&mut svg, m.title_pos, frame.origin(&m));
-        if title_dx != 0.0 {
-            svg.push_str("</g>");
-        }
-    }
-
-    let gap = r.style.slice_mark.gap.unwrap_or(0.0);
-    let corner = r.style.slice_mark.corner_radius.unwrap_or(0.0);
-    let slices = pie(thetas, 0.0, std::f64::consts::TAU, gap);
-    let stroke_attrs = |anchor: Option<crate::href::Anchor>| {
-        let stroke_attrs = match &r.style.slice_mark.stroke {
-            Some(s) => format!(
-                " stroke=\"{}\" stroke-width=\"{}\" stroke-linejoin=\"{}\"",
-                xml_escape_attr(&crate::href::Anchor::paint(anchor, s.color.as_deref().unwrap_or("none"))),
-                s.width.unwrap_or(1.0),
-                xml_escape_attr(s.join.as_deref().unwrap_or("miter")),
-            ),
-            None => String::new(),
-        };
-        match r.style.slice_mark.opacity {
-            Some(opacity) => format!("{stroke_attrs} opacity=\"{opacity}\""),
-            None => stroke_attrs,
-        }
-    };
-    // Structured-tooltip content, computed once: `value_title` doesn't vary
-    // per slice (`features/structured_tooltip.py::_pie_roles`'s
-    // `format_display_text(chart.theta, ..., font=chart.legend.title.font)`
-    // -- `slug_to_display` is this port's own two-step mirror of that
-    // pipeline). `None` (no `tooltip_format`) matches bar's own
-    // `tooltip_labels` gate: an older fixture with no format authored keeps
-    // today's unlabeled, unwrapped arc output.
-    let tooltip_labels = !r.style.tooltip_format.spec.is_empty();
-    let value_title = if tooltip_labels {
-        let case = pie_legend_title_case(&r.legend)?;
-        Some(crate::common::field_display_text(&r.theta, &r.field_labels, case)?)
-    } else {
-        None
-    };
-    let _ = write!(svg, "<g transform=\"translate({cx},{cy})\">");
-    for slice in &slices {
-        let path = Arc {
-            inner_radius: inner,
-            outer_radius: radius,
-            corner_radius: corner,
-            pad_radius: None,
-            start_angle: slice.start_angle,
-            end_angle: slice.end_angle,
-            pad_angle: slice.pad_angle,
-        }
-        .path();
-        let fill: String = if color_key {
-            let positional = || r.palette[slice.index % r.palette.len()].clone();
-            match (category_scale, color_field) {
-                (Some(scale), Some(cf))
-                    if !matches!(payload_rows[slice.index].get(cf), None | Some(Value::Null)) =>
-                {
-                    category_color(scale, &row_str(&payload_rows[slice.index], cf), &r.palette)?
-                }
-                _ => positional(),
-            }
-        } else {
-            r.palette[0].clone()
-        };
-        let aria = match &value_title {
-            Some(value_title) => Some(pie_row_aria(
-                r,
-                payload_rows,
-                thetas,
-                total,
-                value_title,
-                slice.index,
-            )?),
-            None => None,
-        };
-        let label_attr = crate::contract::aria_attr(aria.as_deref(), crate::contract::ItemRole::ArcMark)?;
-        let href = row_href(r, payload_rows, slice.index)?;
-        if aria.is_some() {
-            crate::contract::mark_group_open(&mut svg, "arc", "layer_0_marks")?;
-        }
-        let anchor = r.selection.mark(r.link_open.anchor(href.as_deref()));
-        let fill = crate::href::Anchor::paint(anchor, &fill);
-        let stroke_attrs = stroke_attrs(anchor);
-        svg.push_str(&crate::href::anchor_open(anchor));
-        let _ = write!(
-            svg,
-            "<path d=\"{path}\" fill=\"{fill}\"{stroke_attrs}{label_attr}/>",
-            fill = xml_escape_attr(&fill)
-        );
-        svg.push_str(crate::href::anchor_close(anchor));
-        if aria.is_some() {
-            crate::contract::mark_group_close(&mut svg);
-        }
-    }
-    let _ = write!(svg, "</g>");
-
-    // Center total — Vega text baselines: value "bottom", caption "top".
-    // Both text layers carry one row, so a description inherited from the
-    // arc layer would name the FIRST slice whichever slice is meant: each is
-    // a hidden mark set.
-    if let (Some(total_cfg), Some((formatted, _, _, _))) = (&r.total, &total_texts) {
-        let total_href = row_href(r, payload_rows, 0)?;
-        {
-            let value_font = &r.style.total_style.value.font;
-            let value_size = value_font.size_or(14.0);
-            let value_family = value_font.family_or("sans-serif");
-            let value_weight = value_font.weight_str();
-            let value_color = value_font.color.as_deref().unwrap_or("#000");
-            let value_y = cy + measure::baseline_shift("bottom", value_size);
-            crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_1_marks");
-            svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
-            let _ = write!(
-                svg,
-                "<text x=\"{cx:.2}\" y=\"{value_y:.2}\" text-anchor=\"middle\" \
-                 font-family=\"{value_family}\" font-size=\"{value_size}\"{} \
-                 font-weight=\"{value_weight}\" fill=\"{value_color}\">{}</text>",
-                value_font.style_attr(),
-                xml_escape(formatted), value_family = vega_escape_attr(value_family), value_weight = xml_escape_attr(&value_weight), value_color = xml_escape_attr(value_color)
-            );
-            svg.push_str(crate::href::anchor_close(r.link_open.anchor(total_href.as_deref())));
-            crate::contract::mark_group_close(&mut svg);
-            if let Some(label_text) = &total_cfg.label {
-                let label_font = &r.style.total_style.label.font;
-                let label_size = label_font.size_or(11.0);
-                let label_family = label_font.family_or("sans-serif");
-                let label_weight = label_font.weight_str();
-                let label_color = label_font.color.as_deref().unwrap_or("#000");
-                let label_y = cy + measure::baseline_shift("top", label_size);
-                crate::contract::hidden_mark_group_open(&mut svg, "text", "layer_2_marks");
-                svg.push_str(&crate::href::anchor_open(r.link_open.anchor(total_href.as_deref())));
-                let _ = write!(
-                    svg,
-                    "<text x=\"{cx:.2}\" y=\"{label_y:.2}\" text-anchor=\"middle\" \
-                     font-family=\"{label_family}\" font-size=\"{label_size}\"{} \
-                     font-weight=\"{label_weight}\" fill=\"{label_color}\">{}</text>",
-                    label_font.style_attr(),
-                    xml_escape(label_text), label_family = vega_escape_attr(label_family), label_weight = xml_escape_attr(&label_weight), label_color = xml_escape_attr(label_color)
-                );
-                svg.push_str(crate::href::anchor_close(r.link_open.anchor(total_href.as_deref())));
-                crate::contract::mark_group_close(&mut svg);
-            }
-        }
-    }
-
-    // Slice labels at the fitted geometry — a real per-row data-bound
-    // layer (unlike the center-total texts above), so each label's own
-    // aria-label is its OWN row's, never row 0's.
-    if let Some(labels) = labels_cfg {
-        let family = labels.font.family_or("sans-serif");
-        let weight = labels.font.weight_str();
-        for sl in &slice_labels {
-            let top = sl.mid.cos() >= 0.0;
-            let right = sl.mid.sin() >= 0.0;
-            let x = num_full(cx + sl.mid.sin() * (radius + label_offset));
-            let y_anchored = cy - sl.mid.cos() * (radius + label_offset)
-                + if top { -(sl.lines.len() as f64 * label_lh) } else { 0.0 };
-            let anchor = if right { "start" } else { "end" };
-            let first_dy = measure::baseline_shift("top", label_fs);
-            let label_aria: Option<String> = match &value_title {
-                Some(value_title) => {
-                    Some(pie_row_aria(r, payload_rows, thetas, total, value_title, sl.idx)?)
-                }
-                None => None,
-            };
-            let label_attr = crate::contract::aria_attr(label_aria.as_deref(), crate::contract::ItemRole::TextMark)?;
-            let label_href = row_href(r, payload_rows, sl.idx)?;
-            if label_aria.is_some() {
-                crate::contract::mark_group_open(&mut svg, "text", "layer_3_marks")?;
-            }
-            let label_anchor = r.selection.mark(r.link_open.anchor(label_href.as_deref()));
-            svg.push_str(&crate::href::anchor_open(label_anchor));
-            let _ = write!(
-                svg,
-                "<text x=\"{x}\" y=\"{}\" text-anchor=\"{anchor}\" \
-                 font-family=\"{family}\" font-size=\"{label_fs}\"{} \
-                 font-weight=\"{weight}\" fill=\"{}\"{label_attr}>",
-                num_full(y_anchored + first_dy),
-                labels.font.style_attr(),
-                xml_escape_attr(&crate::href::Anchor::paint(label_anchor, &sl.fill)), anchor = xml_escape_attr(anchor), family = vega_escape_attr(family), weight = xml_escape_attr(&weight)
-            );
-            for (i, line) in sl.lines.iter().enumerate() {
-                let _ = write!(
-                    svg,
-                    "<tspan x=\"{x}\" dy=\"{}\">{}</tspan>",
-                    if i == 0 { 0.0 } else { label_lh },
-                    xml_escape(line)
-                );
-            }
-            let _ = write!(svg, "</text>");
-            svg.push_str(crate::href::anchor_close(label_anchor));
-            if label_aria.is_some() {
-                crate::contract::mark_group_close(&mut svg);
-            }
-        }
-    }
-
-    // The legend group paints after every mark layer, slid along its strip
-    // for `align` center/end (`legend_align.py`), against the plot rect the
-    // scenegraph reports rather than the drawn one.
-    if let Some(lg) = &legend {
-        let (dx, dy) = legend_slide(&r.id, &r.legend.position, &lg.layout, m.scenegraph_plot).map_err(|d| d.to_string())?;
-        emit_vega_legend(
-            &mut svg,
-            &r.selection.legend(lg.entries(), &lg.keys.iter().map(Option::as_deref).collect::<Vec<_>>()),
-            &lg.layout,
-            &r.legend,
-            lg.symbol(),
-            pad_l + m.left + legend_xy.0 + dx,
-            pad_t + m.top + legend_xy.1 + dy,
-            false,
-        );
-    }
-
-    Ok((svg, radius))
-}
-
-
-
-/// A pie over no rows: production compiles the arc and label layers over an
-/// empty dataset, so Vega draws the two empty mark groups inside the
-/// negotiated frame (`draw_pie_fit` with no slices). Its zero total is the
-/// empty dataset's, not a chart of zero-valued slices — that stays refused in
-/// [`render`].
-pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r: Resolved = Deserialize::deserialize(&payload.resolved)
-        .map_err(|e| format!("pie payload: {e}"))?;
-    if r.attached_table.as_ref().is_some_and(|v| !v.is_null()) {
-        return Err("pie: empty result set not supported with an attached table".into());
-    }
-    if legend_is_drawn(&r) {
-        return Err("pie: a visible legend over an empty result set is not ported".into());
-    }
-    let frame = ChartFrame::of(payload, r.background.as_str());
-    let (content, _radius) = draw_pie_fit(
-        &frame,
-        &r,
-        &payload.rows,
-        &[],
-        0.0,
-        fonts,
-        0.0,
-    )?;
-    let mut svg = String::new();
-    frame.root(&mut svg);
-    Ok(format!("{svg}{content}</svg>"))
-}
-
-/// `title_band.py::vega_title_block_height`: a titled chart's title block down
-/// to the plot, padding excluded — the title font size, one subtitle line (its
-/// font size plus Vega's default 3px subtitle padding) and `title.offset`
-/// (Vega's own 4 when unset).
-fn vega_title_block_height(r: &Resolved) -> Result<f64, String> {
-    let title_size = r
-        .style
-        .title_font
-        .as_ref()
-        .and_then(|f| f.size)
-        .ok_or("pie: a titled attached_table at the top requires style.title_font.size")?;
-    let subtitle = if r.subtitle.as_deref().is_some_and(|s| !s.is_empty()) {
-        let size = r
-            .title_style
-            .as_ref()
-            .and_then(|ts| ts.subtitle.as_ref())
-            .and_then(|sub| sub.font.size)
-            .ok_or("pie: a subtitled attached_table at the top requires title_style.subtitle.font.size")?;
-        size + crate::constants::layout::VEGA_SUBTITLE_PADDING
-    } else {
-        0.0
-    };
-    // The shared shift law (`title_shift::shift_vega_payload`) has already
-    // refused an unset offset before this runs; this read never falls back.
-    let offset = r
-        .title_style
-        .as_ref()
-        .and_then(|ts| ts.position.as_ref())
-        .and_then(|pos| pos.offset)
-        .ok_or("pie: a titled attached_table at the top requires title_style.position.offset")?;
-    Ok(title_size + subtitle + offset)
-}
-
-pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
-    let r = Resolved::from_payload(payload)?;
-
-    // Fired here, in the shared entry gate ahead of the attached-table /
-    // fit-path dispatch below — pie's authored surface can no longer
-    // produce this from a real board (conditional_formatting is retired
-    // from pie/donut), but a hand-written or stale resolved-JSON fixture
-    // can still hand it a conditional-mode color channel. Covers both the
-    // slice fill and the label ink (draw_pie_fit's two paint sites, both
-    // keyed off this same channel) with one check.
-    if r.resolved_channels.get("color").is_some_and(|ch| ch.mode == "conditional") {
-        return Err("pie: conditional color channel not supported".into());
-    }
-
-    // The chart's OWN effective background — see `Resolved::background`.
-    let frame = ChartFrame::of(payload, r.background.as_str());
-    let (w, (pad_l, pad_r, pad_t, pad_b)) = (frame.w, frame.pad);
-
-    let thetas: Vec<f64> = payload
-        .rows
-        .iter()
-        .map(|row| row.get(&r.theta).and_then(Value::as_f64).unwrap_or(0.0))
-        .collect();
-    let total: f64 = thetas.iter().sum();
-    if total <= 0.0 {
-        return Err("pie total is zero — nothing to draw".into());
-    }
-
-    let mut svg = String::with_capacity(4096);
-
-    match r.attached_table.as_ref().filter(|v| !v.is_null()) {
-        None => {
-            frame.root(&mut svg);
-            let (content, _radius) = draw_pie_fit(
-                &frame,
-                &r,
-                &payload.rows,
-                &thetas,
-                total,
-                fonts,
-                0.0,
-            )?;
-            if payload.is_placeholder {
-                // `render_vega_spec`'s placeholder arm: the whole drawing faded
-                // under the overlay, in the board's font.
-                let style = payload
-                    .board_style
-                    .as_ref()
-                    .and_then(|b| b.placeholder.as_ref())
-                    .ok_or("pie: a placeholder chart needs board_style.placeholder")?;
-                let family = style
-                    .overlay
-                    .font
-                    .family
-                    .as_deref()
-                    .ok_or("pie: a placeholder chart needs board_style.placeholder.overlay.font.family")?;
-                let _ = write!(svg, "<g opacity=\"{}\">{content}</g>", py_float_str(style.opacity));
-                svg.push_str(&style.overlay(w, frame.h, family, None).map_err(|e| e.to_string())?);
-            } else {
-                svg.push_str(&content);
-            }
-        }
-        // Production composes the attached-table wheel and table without the
-        // placeholder flag, so neither fades.
-        Some(attached) => {
-            // Production suppresses the legend whenever the key is a table
-            // (`suppress_legend=mode != "direct"`); a payload carrying both
-            // is not production's.
-            if legend_is_drawn(&r) {
-                return Err("pie: a visible legend beside an attached table is not ported".into());
-            }
-            // The wheel and table are two independently-backgrounded children
-            // placed side by side or stacked — the outer canvas itself carries
-            // no background fill, same as production leaves the gap between
-            // them unpainted.
-            let placement = r
-                .attached_table_placement
-                .as_deref()
-                .ok_or("pie: attached_table requires attached_table_placement")?;
-            let align = r
-                .attached_table_align
-                .as_deref()
-                .ok_or("pie: attached_table requires attached_table_align")?;
-            // `LegendEdge` and `LegendAlign` (compile/models/style/theme.py) are the
-            // only values `compose_attached_table_svg` indexes; anything else is
-            // not a production payload.
-            if !matches!(placement, "top" | "bottom" | "left" | "right")
-                || !matches!(align, "start" | "center" | "end")
-            {
-                return Err(format!(
-                    "pie: attached_table placement '{placement}' align '{align}' is not supported"
-                ));
-            }
-            let table_width = r
-                .attached_table_width
-                .ok_or("pie: attached_table requires attached_table_width")?;
-            let gap = r.attached_table_gap.ok_or("pie: attached_table requires attached_table_gap")?;
-            let wheel_width = r.wheel_width.ok_or("pie: attached_table requires wheel_width")?;
-            let heading = r.attached_heading.as_deref().unwrap_or("");
-
-            let table_category_scale = r
-                .identity_field
-                .as_deref()
-                .and_then(|cf| category_scale_for(&r.category_colors, cf));
-            let (mut table_content, mut table_h) = render_attached_table_svg(
-                payload,
-                attached,
-                &r.attached_row_indices,
-                &r.palette,
-                r.identity_field.as_ref(),
-                &r.theta,
-                &thetas,
-                total,
-                table_width,
-                fonts,
-                table_category_scale,
-            )?;
-
-            if !heading.is_empty() {
-                let heading_font = r
-                    .attached_heading_font
-                    .as_ref()
-                    .ok_or("pie: attached_table heading requires attached_heading_font")?;
-                let heading_gap = r
-                    .hybrid_heading_gap
-                    .ok_or("pie: attached_table heading requires hybrid_heading_gap")?;
-                let heading_size = heading_font.size_or(11.0);
-                // The heading block: size + 2 + gap.
-                let heading_block_h = heading_size + 2.0 + heading_gap;
-                let heading_family = heading_font.family_or("sans-serif");
-                let heading_weight = heading_font.weight_str();
-                let heading_color = heading_font.color.as_deref().unwrap_or("#000");
-                let wrapped_w = crate::svg::num(table_width);
-                let wrapped_h = crate::svg::num(table_h + heading_block_h);
-                let mut wrapped = format!(
-                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{wrapped_w}\" height=\"{wrapped_h}\">"
-                );
-                let _ = write!(
-                    wrapped,
-                    "<text x=\"0\" y=\"{:.2}\" font-family=\"{heading_family}\" font-size=\"{heading_size}\" \
-                     font-weight=\"{heading_weight}\" fill=\"{heading_color}\">{}</text>",
-                    heading_size * 0.8,
-                    xml_escape(heading), heading_family = xml_escape_attr(heading_family), heading_weight = xml_escape_attr(&heading_weight), heading_color = xml_escape_attr(heading_color)
-                );
-                let _ = write!(wrapped, "<g transform=\"translate(0, {heading_block_h:.2})\">{table_content}</g>");
-                wrapped.push_str("</svg>");
-                table_content = wrapped;
-                table_h += heading_block_h;
-            }
-
-            // The wheel is a full standalone VL render at `width=wheel_width,
-            // height=None` — its effective height is the theme's
-            // `chart_defaults.view.continuous_height` (VL's
-            // `config.view.continuousHeight`), NOT the slot height — and the
-            // composed canvas takes its own outer size from the children:
-            // `donut_h + gap + table_h` below, `max(donut_h, table_y +
-            // table_h)` at a side, the wheel's own height at the top. The slot
-            // height plays no part; the canvas legitimately grows past it or
-            // shrinks under it (a documented carve-out in the geometry
-            // contract).
-            let base_h = payload
-                .board_style
-                .as_ref()
-                .and_then(|bs| bs.continuous_height)
-                .ok_or("pie: attached_table requires board_style.continuous_height (the wheel renders at the theme's view height)")?;
-
-            // `placement == "top"` (vega_lite.py:605-628): the table sits
-            // between the title and the plot, so the wheel's spec gains the
-            // table's height (heading included) plus the gap — added to the
-            // view height because `autosize: fit` holds the whole view to it,
-            // and to the plot's top through `shift_artifact_title` under a
-            // title (the same `shift_chart_title` law a row shift runs) or
-            // `bump_padding_top` without one. The table lands where the plot
-            // would have started: below the card padding and the title block.
-            let titled = r.title.as_deref().is_some_and(|t| !t.is_empty());
-            let (wheel_h, wheel_pad_t, pushed, top_table_y) = if placement == "top" {
-                let room = table_h + gap;
-                if titled {
-                    let shift = crate::TitleShift { title_dy: 0.0, body_dy: room };
-                    let shifted = crate::title_shift::shift_vega_payload(payload, shift)?;
-                    let pushed = Resolved::from_payload(&shifted)?;
-                    let pushed_pad_t = shifted
-                        .padding
-                        .expect("shift_vega_payload refuses a payload without padding")
-                        .top;
-                    (base_h + room, pushed_pad_t, Some(pushed), pad_t + vega_title_block_height(&r)?)
-                } else {
-                    (base_h + room, pad_t + room, None, pad_t)
-                }
-            } else {
-                (base_h, pad_t, None, 0.0)
-            };
-            // A left table pushes the wheel right by its own width and gap.
-            let title_dx = if placement == "left" { -(table_width + gap) } else { 0.0 };
-
-            let wheel_frame = ChartFrame::new(
-                wheel_width,
-                wheel_h,
-                (pad_l, pad_r, wheel_pad_t, pad_b),
-                r.background.as_str(),
-                num_full,
-            );
-            let (donut_content, radius) = draw_pie_fit(
-                &wheel_frame,
-                pushed.as_ref().unwrap_or(&r),
-                &payload.rows,
-                &thetas,
-                total,
-                fonts,
-                title_dx,
-            )?;
-
-            let (outer_h, donut_x, table_x, table_y) = match placement {
-                "left" | "right" => {
-                    // The table aligns down the wheel's disk, not the card,
-                    // and never above the disk's top.
-                    let diameter = 2.0 * radius;
-                    let disk_top = ((wheel_h - diameter) / 2.0).max(0.0);
-                    let table_y = disk_top.max(match align {
-                        "start" => disk_top,
-                        "center" => disk_top + (diameter - table_h) / 2.0,
-                        _ => disk_top + diameter - table_h,
-                    });
-                    let (donut_x, table_x) = if placement == "right" {
-                        (0.0, wheel_width + gap)
-                    } else {
-                        (table_width + gap, pad_l)
-                    };
-                    (wheel_h.max(table_y + table_h), donut_x, table_x, table_y)
-                }
-                _ => {
-                    // Across the card inside its padding.
-                    let across_x = match align {
-                        "start" => pad_l,
-                        "center" => (w - table_width) / 2.0,
-                        _ => w - table_width - pad_r,
-                    };
-                    let donut_x = (w - wheel_width) / 2.0;
-                    if placement == "top" {
-                        (wheel_h, donut_x, across_x, top_table_y)
-                    } else {
-                        (wheel_h + gap + table_h, donut_x, across_x, wheel_h + gap)
-                    }
-                }
-            };
-
-            ChartFrame { h: outer_h, ..frame }.root(&mut svg);
-            let _ = write!(svg, "<g transform=\"translate({donut_x:.2}, 0)\">{donut_content}</g>");
-            let _ = write!(svg, "<g transform=\"translate({table_x:.2}, {table_y:.2})\">{table_content}</g>");
-        }
-    }
-
-    svg.push_str("</svg>");
-    Ok(svg)
+fn draw(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnostic> {
+    let cell = Rect { x: 0.0, y: 0.0, width: bound.payload.width, height: bound.payload.height };
+    let laid_out = layout::layout(bound, cell, &Measure { fonts })?;
+    laid_out.diagnostics.into_iter().for_each(warn);
+    Ok(print(&laid_out.nodes))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::bind::project_pie_table_rows;
     use super::*;
     use serde_json::json;
 
@@ -2043,7 +906,7 @@ mod tests {
         payload_json
     }
 
-    /// The attached-table wheel child's own `draw_pie_fit` call (see
+    /// The attached-table wheel child's own `wheel` layout (see
     /// `Resolved::background`) reads `r.background`, independently of the
     /// standalone-wheel call site — the composed rect is `wheel_width ×
     /// continuous_height` (300×300 for this fixture), not the card size.
@@ -2058,6 +921,19 @@ mod tests {
             svg.contains("<rect width=\"300\" height=\"300\" fill=\"#d9a45b\"/>"),
             "wheel child paints the chart's own background: {svg}"
         );
+    }
+
+    /// The attached table is a legend with a hidden header and no paging:
+    /// there is nothing for the in-page table runtime to sort or filter.
+    #[test]
+    fn an_attached_table_is_never_a_row_pool() {
+        let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
+        payload_json["resolved"]["attached_table"]["id"] = json!("pie1__attached_table");
+        let mut payload = make_payload(payload_json);
+        payload.interactive_controls = true;
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("Electronics"), "{svg}");
+        assert!(!svg.contains("data-dbt-table=") && !svg.contains("data-dbt-sort"), "{svg}");
     }
 
     #[test]
@@ -3062,7 +1938,7 @@ mod tests {
             row[field] = value;
         }
         let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        assert!(svg.contains("Customer \u{2026}</text>"), "{svg}");
+        assert!(svg.contains("Customer\u{2026}</text>"), "{svg}");
         let (cx, _) = wheel_center(&svg);
         assert_eq!(cx, 16.0 + (568.0 - 18.0 - 180.0) / 2.0, "{svg}");
     }
@@ -3144,7 +2020,7 @@ mod tests {
             let mut p = legend_pie_payload("right", "start", "vertical");
             edit(&mut p);
             let err = match serde_json::from_value::<Payload>(p) {
-                Ok(payload) => render(&payload, &test_fonts()).unwrap_err(),
+                Ok(payload) => render(&payload, &test_fonts()).unwrap_err().to_string(),
                 Err(e) => e.to_string(),
             };
             assert!(err.contains(expected), "{name}: {err}");
@@ -3266,5 +2142,173 @@ mod tests {
             svg.contains("aria-label=\"⁤Electronics; %: 45%; \u{2060}Revenue: US$197,199; \u{2060}⁣Σ: US$443,023\""),
             "{svg}"
         );
+    }
+
+    // ── The family contract: bind, intrinsic, height_for_width, layout, render ──
+
+    use crate::layout::Rect;
+    use measure::Measure;
+
+    fn cell(width: f64, height: f64) -> Rect {
+        Rect { x: 0.0, y: 0.0, width, height }
+    }
+
+    fn contract_payload() -> Payload {
+        let mut json = make_pie_payload(json!({"visible": true, "label": "Total", "format": null}));
+        json["resolved"]["link"] = json!("/b/{{ color }}");
+        json["resolved"]["resolved_channels"] =
+            json!({"color": {"channel": "color", "mode": "series", "data_field": "category", "quantitative_data": false}});
+        json["resolved"]["slice_label_indices"] = json!([1]);
+        json["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+        json["resolved"]["style"]["slice_mark"]["labels"] = json!({
+            "offset": 6.0, "line_height": 14.0,
+            "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
+            "template": "{{ category }}"
+        });
+        json["resolved"]["legend"]["visible"] = json!(true);
+        json["resolved"]["legend"]["label"]["padding"] = json!(8.0);
+        make_payload(json)
+    }
+
+    #[test]
+    fn bind_derives_the_slices_labels_total_and_legend_without_a_font() {
+        let payload = contract_payload();
+        let bound = bind::bind(&payload).expect("binds");
+        let labels = &bound.wheel.labels;
+        assert_eq!(bound.thetas, vec![197199.0, 152504.0, 93320.0]);
+        assert_eq!(bound.total, 443023.0);
+        let fills: Vec<&str> = bound.wheel.slices.iter().map(|s| s.fill.as_str()).collect();
+        assert_eq!(fills, ["#3164a3", "#779bc9", "#ad9c7f"]);
+        assert_eq!(bound.wheel.slices[2].href.as_deref(), Some("/b/Tools"));
+        assert!(bound.wheel.slices[0].aria.is_some());
+        assert_eq!(labels.len(), 1);
+        assert_eq!((labels[0].idx, labels[0].lines.clone()), (1, vec!["Accessories".to_string()]));
+        assert_eq!(bound.wheel.center.as_deref(), Some("443023"));
+        assert_eq!(bound.wheel.legend.as_ref().expect("a drawn legend").entries.len(), 3);
+        assert!(bound.attached.is_none());
+    }
+
+    #[test]
+    fn a_pie_hugs_nothing_and_its_height_is_the_slot() {
+        let payload = contract_payload();
+        let bound = bind::bind(&payload).expect("binds");
+        let measure = Measure { fonts: &test_fonts() };
+        assert_eq!(layout::intrinsic(&bound, &measure).expect("intrinsic"), None);
+        assert_eq!(layout::height_for_width(&bound, 123.0, &measure).expect("height"), 432.0);
+    }
+
+    #[test]
+    fn an_attached_table_pie_reads_its_height_back_from_the_layout_it_draws() {
+        for placement in ["bottom", "top", "right"] {
+            let payload = make_payload(make_pie_payload_with_attached_table(placement, "Heading"));
+            let bound = bind::bind(&payload).expect("binds");
+            let fonts = test_fonts();
+            let measure = Measure { fonts: &fonts };
+            let natural = layout::height_for_width(&bound, payload.width, &measure).expect("height");
+            let svg = render(&payload, &fonts).expect("renders");
+            assert_eq!(natural, canvas_height(&svg), "{placement}");
+        }
+    }
+
+    #[test]
+    fn layout_draws_the_cell_it_is_given_and_returns_the_warnings_it_raised() {
+        let mut json = make_pie_payload(Value::Null);
+        json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
+        json["resolved"]["title_style"] = json!({
+            "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
+            "overflow": "truncate",
+            "position": {"offset": 10.0}
+        });
+        let payload = make_payload(json);
+        let bound = bind::bind(&payload).expect("binds");
+        let fonts = test_fonts();
+        let laid_out = layout::layout(&bound, cell(220.0, 180.0), &Measure { fonts: &fonts }).expect("lays out");
+        let [scene::Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else { panic!("one root card") };
+        assert_eq!((extent.width, extent.height), (220.0, 180.0));
+        assert_eq!(laid_out.diagnostics.len(), 1, "{:?}", laid_out.diagnostics);
+        assert_eq!(laid_out.diagnostics[0].code, crate::codes::WARN_CHART_TITLE_TRUNCATED.id);
+        assert!(laid_out.data_box.width > 0.0 && laid_out.insets.left >= 0.0);
+    }
+
+    #[test]
+    fn render_prints_the_layout_of_the_payloads_own_cell() {
+        let payload = contract_payload();
+        let bound = bind::bind(&payload).expect("binds");
+        let fonts = test_fonts();
+        let laid_out = layout::layout(&bound, cell(payload.width, payload.height), &Measure { fonts: &fonts }).expect("lays out");
+        assert_eq!(print::print(&laid_out.nodes), render(&payload, &fonts).expect("renders"));
+    }
+
+    #[test]
+    fn a_layout_that_fails_hands_the_warnings_it_raised_to_the_sink() {
+        let mut json = make_pie_payload(Value::Null);
+        json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
+        json["resolved"]["title_style"] = json!({
+            "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
+            "overflow": "truncate",
+            "position": {"offset": 10.0}
+        });
+        let payload = make_payload(json);
+        let bound = bind::bind(&payload).expect("binds");
+        let fonts = test_fonts();
+        let (laid_out, warnings) =
+            crate::diagnostic::collect(|| layout::layout(&bound, cell(220.0, 14.0), &Measure { fonts: &fonts }));
+        assert!(laid_out.is_err());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    #[test]
+    fn an_empty_result_binds_no_slices_and_is_never_faded() {
+        let mut json = make_pie_payload(Value::Null);
+        json["rows"] = json!([]);
+        json["is_placeholder"] = json!(true);
+        let payload = make_payload(json);
+        let bound = bind::bind_empty(&payload).expect("binds");
+        assert!(bound.wheel.slices.is_empty() && bound.thetas.is_empty());
+        assert!(!bound.faded);
+    }
+
+    #[test]
+    fn a_payload_with_two_defects_names_the_first_one_bind_meets() {
+        let mut json = make_pie_payload(json!({"visible": true, "label": null, "format": ",.0f"}));
+        json["width"] = json!(220.0);
+        json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
+        json["resolved"]["title_style"] = json!({
+            "font": {"family": TEST_FONT, "size": 14.0, "weight": "500"},
+            "overflow": "truncate",
+            "position": {"offset": 10.0}
+        });
+        json["resolved"]["style"]["tooltip_format"] = json!(",.0f");
+        json["resolved"]["legend"]["title"]["font"]["case"] = Value::Null;
+        let payload = make_payload(json);
+        // The retired total key is met before the tooltip title's missing case, and both before
+        // any layout work: the title is never cut, so no WARN is raised.
+        assert_eq!(
+            bind::bind(&payload).err().expect("bind refuses"),
+            "pie: total.format moved to style.total_style.value.format"
+        );
+        let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
+        assert_eq!(rendered.unwrap_err(), "pie: total.format moved to style.total_style.value.format");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn an_attached_table_error_keeps_the_tables_own_code() {
+        let mut json = make_pie_payload_with_attached_table("bottom", "");
+        json["resolved"]["palette"] = json!(["not-a-color", "#779bc9", "#ad9c7f"]);
+        let payload = make_payload(json);
+        let err = render(&payload, &test_fonts()).expect_err("a swatch that is no color refuses");
+        assert_eq!(err.code, crate::codes::ERR_TABLE_SWATCH_NOT_COLOR.id, "{err}");
+    }
+
+    #[test]
+    fn a_legend_slide_refusal_keeps_its_code() {
+        let mut json = legend_pie_payload("right", "center", "vertical");
+        json["height"] = json!(120.0);
+        json["rows"] = json!((0..14)
+            .map(|i| json!({"category": format!("Category number {i}"), "revenue": 100.0 + f64::from(i)}))
+            .collect::<Vec<_>>());
+        let err = render(&make_payload(json), &test_fonts()).expect_err("a legend taller than its plot cannot center");
+        assert_eq!(err.code, crate::codes::ERR_LEGEND_ALIGN_UNSUPPORTED.id, "{err}");
     }
 }

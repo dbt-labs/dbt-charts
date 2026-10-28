@@ -46,6 +46,9 @@ pub struct MeasurePayload {
     pub format_locale: crate::number_locale::NumberLocale,
     /// The board's time locale: a date cell's month and day names.
     pub time_locale: crate::time_locale::TimeLocale,
+    /// The board's time zone: an aware date cell prints its wall clock there.
+    #[serde(default = "crate::time_zone::utc", deserialize_with = "crate::time_zone::deserialize")]
+    pub time_zone: jiff::tz::TimeZone,
     /// The board's language: a column header derived from its name speaks it.
     #[serde(default)]
     pub language: display_text::language::Language,
@@ -276,8 +279,10 @@ fn measure_in_scope(
 ) -> Result<Option<IntrinsicWidth>, String> {
     crate::number_locale::with_number_locale(&payload.format_locale, || {
         crate::time_locale::with_time_locale(&payload.time_locale, || {
-            display_text::language::with_language(payload.language, || {
-                natural_width_in_scope(payload, fonts)
+            crate::time_zone::with_time_zone(&payload.time_zone, || {
+                display_text::language::with_language(payload.language, || {
+                    natural_width_in_scope(payload, fonts)
+                })
             })
         })
     })

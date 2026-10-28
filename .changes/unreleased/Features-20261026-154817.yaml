@@ -1,0 +1,3 @@
+kind: Features
+body: Tables, KPIs, sub-day axis labels and tooltips print time-zone-aware timestamps in the board's regional.time_zone.
+time: 2026-10-26T15:48:17.407534-07:00

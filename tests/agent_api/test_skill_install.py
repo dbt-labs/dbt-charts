@@ -144,18 +144,23 @@ def test_install_check_reports_retired_removed_without_deleting(
     assert not (target / INSTALL_SKILL_NAME).exists()
 
 
-def test_install_keeps_a_non_wheel_authored_dct_dir(install_root: Path) -> None:
-    """A `dct-*` dir without our author line is never ours to sweep."""
+def test_install_sweeps_every_dct_dir_with_or_without_author_line(
+    install_root: Path,
+) -> None:
+    """`dct-` is our install namespace: copies from releases that predate the
+    author line are swept too."""
     target = install_root / ".agents/skills"
-    (target / "dct-someone-elses-thing").mkdir(parents=True)
-    (target / "dct-someone-elses-thing" / "SKILL.md").write_text(
-        "---\nname: dct-someone-elses-thing\n---\nmine\n"
+    (target / "dct-board-build").mkdir(parents=True)
+    (target / "dct-board-build" / "SKILL.md").write_text(
+        "---\nname: dct-board-build\n---\nstale\n"
     )
+    (target / "dct-empty").mkdir()
 
     result = install_skills(target_dir=target, project_root=install_root)
 
-    assert result.retired_removed == []
-    assert (target / "dct-someone-elses-thing").exists()
+    assert result.retired_removed == ["dct-board-build", "dct-empty"]
+    assert not (target / "dct-board-build").exists()
+    assert not (target / "dct-empty").exists()
 
 
 def test_install_preserves_user_authored_skill(install_root: Path) -> None:

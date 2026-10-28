@@ -13,6 +13,8 @@ Proves:
 
 from __future__ import annotations
 
+import html
+import json
 import re
 from collections.abc import Generator
 
@@ -26,9 +28,10 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
-from dbt_charts.core.render.controls import interactive_controls
+from dbt_charts.core.render.controls import controls_language, interactive_controls
 
 from ._engine_render import render_table_svg
+from ._pooled_table import visible_svg
 
 _BOARD_STYLE = resolve_chart_style_context(get_theme_style())
 
@@ -263,12 +266,14 @@ class TestPaginationControlsInSvg:
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=600,
-            variables={"paged_page": "2"},
-            board_style=resolve_style(get_theme_style()),
+        svg = visible_svg(
+            render_table_svg(
+                chart,
+                data,
+                width=600,
+                variables={"paged_page": "2"},
+                board_style=resolve_style(get_theme_style()),
+            )
         )
 
         assert "row_6" in svg
@@ -278,7 +283,9 @@ class TestPaginationControlsInSvg:
         assert not re.search(r"\brow_1\b", svg)
         assert "row_5" not in svg
 
-    def test_clickable_items_call_update_variable(self, make_chart) -> None:
+    def test_clickable_items_name_a_page_target_and_no_variable(
+        self, make_chart
+    ) -> None:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
@@ -301,10 +308,12 @@ class TestPaginationControlsInSvg:
         inner = _find_paginator_group(svg, "nav_test_page")
 
         rects = re.findall(r"<rect[^>]*/>", inner)
-        # The button names the variable it drives; the runtime commits it. No
+        # A pooled table pages in the page: its buttons name a target for the
+        # table runtime and never a variable for the controls runtime. No
         # onclick — code never ships inside a board.
-        clickable = [r for r in rects if 'data-dbt-page-var="nav_test_page"' in r]
-        assert clickable, "no hit-rects naming the page variable in paginator"
+        clickable = [r for r in rects if "data-dbt-page-target" in r]
+        assert clickable, "no hit-rects naming a page target in paginator"
+        assert not any("data-dbt-page-var" in r for r in rects)
         assert not any("updateVariable" in r for r in rects)
         for rect in clickable:
             assert 'fill="transparent"' in rect
@@ -391,12 +400,14 @@ class TestPaginationControlsInSvg:
         )
         data = _make_data(20)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=600,
-            variables={"stale_page": "9"},
-            board_style=resolve_style(get_theme_style()),
+        svg = visible_svg(
+            render_table_svg(
+                chart,
+                data,
+                width=600,
+                variables={"stale_page": "9"},
+                board_style=resolve_style(get_theme_style()),
+            )
         )
 
         inner = _find_paginator_group(svg, "stale_page")
@@ -423,12 +434,14 @@ class TestPaginationControlsInSvg:
         )
         data = _make_data(30)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=600,
-            variables={"indicator_page": "2"},
-            board_style=resolve_style(get_theme_style()),
+        svg = visible_svg(
+            render_table_svg(
+                chart,
+                data,
+                width=600,
+                variables={"indicator_page": "2"},
+                board_style=resolve_style(get_theme_style()),
+            )
         )
 
         active = _find_active_page_text(svg, "indicator_page")
@@ -1076,12 +1089,14 @@ class TestPaginatorRowRangeLabel:
         )
         data = _make_data(50)
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-        svg = render_table_svg(
-            chart,
-            data,
-            width=160,
-            variables={"labeled_page": "3"},
-            board_style=resolve_style(get_theme_style()),
+        svg = visible_svg(
+            render_table_svg(
+                chart,
+                data,
+                width=160,
+                variables={"labeled_page": "3"},
+                board_style=resolve_style(get_theme_style()),
+            )
         )
 
         assert re.search(r"\d+\u2013\d+ / \d+", svg) is None
@@ -1118,23 +1133,19 @@ class TestPaginatorRowRangeLabel:
         assert "21–30 / 50" in svg
 
 
-class TestPaginatorFollowsCurrentPage:
-    """indicator_y sits off the CURRENT page's own rows height, not the
-    tallest page in the whole dataset (_max_page_sum) -- a short page must
-    not carry a taller page's whitespace above its pager. Table sizing
-    still reserves _max_page_sum so the card doesn't resize between pages.
+class TestPooledPagerSitsAtOneY:
+    """A pooled table's pager sits below the tallest page a sort could build,
+    at one y on every page, so a re-sorted page never meets it and the card
+    never resizes between pages.
     """
 
     @pytest.fixture(autouse=True)
     def _interactive_host(self) -> Generator[None]:
-        # Without this the table takes the static_multi_page path (every
-        # page pre-rendered into one document), which would make the
-        # regexes below match page 1's own <g> regardless of which
-        # ``variables=`` page was requested.
+        # Without this the table takes the static_multi_page path.
         with interactive_controls(True):
             yield
 
-    def test_short_page_pager_sits_above_tall_page_pager(self, make_chart) -> None:
+    def test_pager_sits_at_the_same_y_on_every_page(self, make_chart) -> None:
         from dbt_charts.core.compile.models.style.authored import (
             TableChartStylePatch,
         )
@@ -1160,12 +1171,14 @@ class TestPaginatorFollowsCurrentPage:
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
 
         def _render(page: int) -> str:
-            return render_table_svg(
-                chart,
-                data,
-                width=600,
-                variables={"wobble_page": str(page)},
-                board_style=resolve_style(get_theme_style()),
+            return visible_svg(
+                render_table_svg(
+                    chart,
+                    data,
+                    width=600,
+                    variables={"wobble_page": str(page)},
+                    board_style=resolve_style(get_theme_style()),
+                )
             )
 
         def _prev_text_y(svg: str) -> float:
@@ -1190,28 +1203,18 @@ class TestPaginatorFollowsCurrentPage:
         svg_page1 = _render(1)
         svg_page2 = _render(2)
 
-        y1 = _prev_text_y(svg_page1)
-        y2 = _prev_text_y(svg_page2)
-        assert y1 < y2, (
-            f"page 1 (short, uniform rows) should sit its pager above page "
-            f"2's (which holds the wrapped row); got y1={y1} y2={y2}. Equal "
-            f"values mean the pager is still sizing off the tallest page in "
-            f"the whole dataset instead of the page actually painted."
-        )
-
+        assert _prev_text_y(svg_page1) == _prev_text_y(svg_page2)
         assert _table_height(svg_page1) == _table_height(svg_page2), (
-            "table height must stay constant across pages -- _max_page_sum "
-            "still sizes the card even though the pager now follows the "
-            "current page"
+            "table height must stay constant across pages"
         )
 
 
-def test_a_live_paginator_publishes_its_variable_and_writes_no_script(
+def test_a_live_paginator_over_the_row_pool_cap_publishes_its_variable(
     make_chart,
 ) -> None:
-    """Code never ships inside a board. On a live host the button names the
-    variable it drives and the runtime commits it; the server used to write an
-    onclick="updateVariable(...)" into the SVG instead."""
+    """Code never ships inside a board. A table too large to pool still pages
+    through its variable: the button names the variable it drives and the
+    runtime commits it."""
     from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
     from dbt_charts.core.render.controls import interactive_controls
 
@@ -1222,7 +1225,7 @@ def test_a_live_paginator_publishes_its_variable_and_writes_no_script(
         id="live1",
         style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
     )
-    data = _make_data(20)
+    data = _make_data(1001)
     chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
     with interactive_controls(True):
         svg = render_table_svg(
@@ -1230,5 +1233,34 @@ def test_a_live_paginator_publishes_its_variable_and_writes_no_script(
         )
 
     assert "onclick=" not in svg
+    assert "data-dbt-table=" not in svg
     assert 'data-dbt-page-var="live1_page"' in svg
     assert 'data-dbt-page-target="2"' in svg
+
+
+def test_a_pooled_table_carries_the_board_languages_menu_words(make_chart) -> None:
+    """The engine's slice is the shipped controls slice: the words a live page
+    reads off the table root are the ones a stored render gets in English."""
+    from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
+    from dbt_charts.core.text.format_d3 import language_scope
+
+    chart = make_chart(
+        "table",
+        x=None,
+        y=None,
+        id="t1",
+        style=TableChartStylePatch(pagination={"enabled": True, "page_rows": 5}),
+    )
+    data = _make_data(12)
+    chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
+    with language_scope("de"), interactive_controls(True):
+        svg = render_table_svg(
+            chart, data, width=600, board_style=resolve_style(get_theme_style())
+        )
+        slice_ = controls_language()
+    raw = re.search(r'data-dbt-table="t1"[^>]*data-dbt-language="([^"]*)"', svg)
+    assert raw is not None, svg
+    words = json.loads(html.unescape(raw.group(1)))
+    assert words == {word: slice_[word] for word in words}
+    assert words["clear_sort"] == "Sortierung aufheben"
+    assert words["page_range"] == "{first}–{last} / {total}"

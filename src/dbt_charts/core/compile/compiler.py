@@ -135,8 +135,10 @@ from dbt_charts.core.compile.validate.authoring_warnings import (
 from dbt_charts.core.compile.validate.board_warnings import detect_board_warnings
 from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
+from dbt_charts.core.compile.validate.last_labels import validate_board_last_labels
 from dbt_charts.core.compile.validate.links import validate_board_links
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
+from dbt_charts.core.compile.validate.roles import validate_board_roles
 from dbt_charts.core.compile.validate.values import validate_values_queries
 from dbt_charts.core.compile.validate.zero_baseline import (
     validate_board_zero_baselines,
@@ -533,10 +535,22 @@ def compile_authored_board(
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
+    # Role shortcuts: every `style.roles` address must resolve to a color (see
+    # validate/roles.py).
+    try:
+        validate_board_roles(compiled)
+    except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
     # A cropped zero baseline: an error on a bar, a warning on an area (see
     # validate/zero_baseline.py).
     try:
         warnings.extend(validate_board_zero_baselines(compiled, chart_styles))
+    except CompilationError as e:
+        return CompileResult(errors=[e.to_diagnostic(file=file)])
+
+    try:
+        validate_board_last_labels(compiled)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 

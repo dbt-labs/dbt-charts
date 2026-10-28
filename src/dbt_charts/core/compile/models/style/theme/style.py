@@ -237,7 +237,7 @@ class Style(BaseModel):
     def heading_ramp(self) -> list[float]:
         """The H1–H6 sizes from ``style.fonts.heading.sizes``."""
         heading = self.fonts.get("heading") if self.fonts is not None else None
-        if heading is None or heading.sizes is None:
+        if heading is None or not heading.sizes:
             raise ValueError(
                 "style.fonts.heading.sizes is required: board titles, markdown "
                 "headings and chart titles read the H1–H6 ramp from it."
@@ -247,7 +247,7 @@ class Style(BaseModel):
     def section_ramp(self) -> list[float]:
         """The H2–H6 section-title sizes from ``style.fonts.section.sizes``."""
         section = self.fonts.get("section") if self.fonts is not None else None
-        if section is None or section.sizes is None:
+        if section is None or not section.sizes:
             raise ValueError(
                 "style.fonts.section.sizes is required: section titles read "
                 "their H2–H6 sizes from it."

@@ -143,7 +143,7 @@ def test_default_background_self_token_propagates_to_knockout_strokes():
     default = resolve_chart_style_context(get_theme_style("clarity")).pre_style
     # Self-token cascade: pie.marks.slice stroke is the donut-slice knockout
     # separator; marks.geoshape stroke is the region halo. Both track
-    # theme.background once the style is resolved (ADR-015 marks namespace).
+    # theme.background once the style is resolved (marks namespace).
     assert default.charts.marks.slice.stroke.color == default.background
     assert default.charts.marks.geoshape.stroke.color == default.background
 

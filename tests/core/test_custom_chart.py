@@ -309,6 +309,44 @@ class TestRender:
         ids = re.findall(r'id="([^"]*-g)"', svg)
         assert len(ids) == 2 and len(set(ids)) == 2
 
+    def test_text_width_measures_digits_as_tabular_numerals(
+        self, tmp_path: Path
+    ) -> None:
+        template = (
+            "{#---\ndescription: probe\n---#}"
+            '<text id="a">{{ text_width("111", 12) == text_width("000", 12) }}</text>'
+        )
+        yaml_text = re.sub(
+            r"    x: from_stage\n    y: visitors\nrows:",
+            "rows:",
+            _board_yaml(),
+            flags=re.S,
+        )
+        svg = _render(_project(tmp_path, template), yaml_text).output
+        assert re.search(r'<text id="a"[^>]*>True</text>', svg)
+
+    def test_template_paints_with_the_engines_color_helpers(
+        self, tmp_path: Path
+    ) -> None:
+        template = (
+            "{#---\ndescription: probe\n---#}"
+            '<text id="a">{{ label_ink("#e6b800") }}</text>'
+            '<text id="b">{{ variant("#3366cc", "pale") }}</text>'
+            '<text id="c">{{ style.palettes.chrome | length }}</text>'
+        )
+        yaml_text = re.sub(
+            r"    x: from_stage\n    y: visitors\nrows:",
+            "rows:",
+            _board_yaml(),
+            flags=re.S,
+        )
+        svg = _render(_project(tmp_path, template), yaml_text).output
+        texts = dict(re.findall(r'<text id="(\w)"[^>]*>([^<]*)</text>', svg))
+        assert re.fullmatch(r"#[0-9a-f]{6}", texts["a"], re.I)
+        assert texts["a"].lower() != "#e6b800"
+        assert re.fullmatch(r"#[0-9a-f]{6}", texts["b"], re.I)
+        assert int(texts["c"]) > 0
+
     def test_template_sees_style_and_helpers(self, tmp_path: Path) -> None:
         template = (
             "{#---\ndescription: probe\n---#}"
@@ -371,6 +409,21 @@ class TestRender:
         out = _render(_project(tmp_path, template), _board_yaml())
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-SVG"]
         assert "onclick" in out.chart_errors[0].message
+
+    def test_null_interpolated_into_an_attribute_is_err_custom_svg(
+        self, tmp_path: Path
+    ) -> None:
+        template = HEADER + '<rect width="{{ options.note }}" height="2"/>'
+        out = _render(_project(tmp_path, template), _board_yaml())
+        assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-SVG"]
+        assert "null" in out.chart_errors[0].message
+        assert 'width="None"' not in out.output
+
+    def test_null_in_text_content_still_prints(self, tmp_path: Path) -> None:
+        template = HEADER + "<text>{{ options.note }}</text>"
+        out = _render(_project(tmp_path, template), _board_yaml())
+        assert not out.chart_errors
+        assert ">None</text>" in out.output
 
     @pytest.mark.parametrize(
         "payload",

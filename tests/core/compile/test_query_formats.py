@@ -103,9 +103,9 @@ def test_axis_labels_format_beats_the_column_format() -> None:
 def test_a_numeric_x_axis_takes_its_columns_format() -> None:
     chart = "    type: scatter\n    x: orders\n    y: revenue\n"
     formats = "    formats:\n      orders: integer\n"
-    assert "1.5k" in _tick_labels(_board(chart, formats=""))
+    assert "1.6k" in _tick_labels(_board(chart, formats=""))
     ticks = _tick_labels(_board(chart, formats=formats))
-    assert "1,500" in ticks and "1.5k" not in ticks
+    assert "1,600" in ticks and "1.6k" not in ticks
 
 
 def _tick_labels(board: str) -> list[str]:

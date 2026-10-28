@@ -137,12 +137,10 @@ def _build_extras_panel(
     )
 
 
-def install_extras(extra: str, *, interactive: bool) -> None:
-    """Install missing packages for <extra>.
+def install_extras(extra: str) -> None:
+    """Show the info panel, prompt, and install missing packages for <extra>.
 
-    interactive=False: silently install without prompting (caller already confirmed).
-    interactive=True: show info panel and prompt before installing.
-    Raises typer.Exit(1) on install failure or (when interactive) user decline.
+    Raises typer.Exit(1) on install failure or user decline.
     """
     missing = _missing_packages(extra)
     if not missing:
@@ -153,11 +151,10 @@ def install_extras(extra: str, *, interactive: bool) -> None:
         _console.print(_build_extras_panel(extra, missing, installer=None))
         raise typer.Exit(1)
 
-    if interactive:
-        _console.print(_build_extras_panel(extra, missing, installer=installer))
-        answer = _console.input("Install now? [Y/n] ").strip().lower()
-        if answer not in ("", "y", "yes"):
-            raise typer.Exit(1)
+    _console.print(_build_extras_panel(extra, missing, installer=installer))
+    answer = _console.input("Install now? [Y/n] ").strip().lower()
+    if answer not in ("", "y", "yes"):
+        raise typer.Exit(1)
 
     display_cmd = _installer_display_command(installer, missing)
     _console.print(f"Installing the {escape(extra)} extra…")
@@ -195,7 +192,7 @@ def require_extras(extra: str) -> None:
     interactive = sys.stdin.isatty() and os.environ.get("DCT_NO_AUTO_INSTALL") != "1"
 
     if interactive:
-        install_extras(extra, interactive=True)
+        install_extras(extra)
     else:
         installer = _resolve_installer()
         _console.print(_build_extras_panel(extra, missing, installer=installer))

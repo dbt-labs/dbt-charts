@@ -15,29 +15,25 @@ rendered as HTML and SVG and versioned in git next to your dbt models.
   permissions.
 - **The board authoring skills.** The chart and styling references, plus
   the workflows for building custom charts, designing a report, and
-  replicating an existing board, so Claude follows them without being asked.
-  They are the same skills the connector serves on request, generated from
-  the dbt Charts package at every release.
+  migrating a dashboard from another BI tool, so Claude follows them without
+  being asked. They are the same skills the connector serves on request,
+  generated from the dbt Charts package at every release.
 
 The plugin runs no local commands, hooks, or scripts, and sends data only to
 the connector above.
 
 ## Install
 
-In Claude Code:
-
-```text
-/plugin marketplace add dbt-labs/dbt-charts
-/plugin install dbt-charts@dbt-charts-plugins
-```
-
-On claude.ai or Cowork, an organization owner distributes it from
-**Organization settings → Plugins & skills**, and adds the connector under
-**Organization settings → Connectors**. Details:
+This plugin is for claude.ai and Cowork, where Claude has no shell. An
+organization owner distributes it from **Organization settings → Plugins &
+skills**, and adds the connector under **Organization settings → Connectors**.
+Details:
 [Claude and ChatGPT connector](https://docs.dbtcharts.com/cloud/claude-chatgpt-connector/).
 
-## Working locally instead
+## Claude Code and other coding agents
 
-A repository that already has the `dct` command line installed needs no
-plugin: `dct init skills` writes a small `dct` skill into its agent directories
-that points Claude Code, Codex, and Cursor at `dct skills chart`.
+Do not install this plugin there. A repository with the `dct` command line
+installed gets its agent skill from `dct init skills`, which writes one `dct`
+skill into the repository's agent directories that points Claude Code, Codex,
+and Cursor at `dct skills chart`. The agent then works through the CLI, with
+no connector or sign-in.

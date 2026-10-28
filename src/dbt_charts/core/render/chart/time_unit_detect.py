@@ -33,7 +33,7 @@ from typing import Any, Literal
 from dbt_charts.core.constants.axis import MAX_ORDINAL_BUCKETS
 from dbt_charts.core.font_measure import FontMeasurer
 from dbt_charts.core.render.chart.artifacts import ChartRenderData
-from dbt_charts.core.text.format_d3 import board_word, portable_strftime
+from dbt_charts.core.text.format_d3 import board_word, in_board_zone, portable_strftime
 from dbt_charts.core.utils import is_year_shaped
 
 # ISO date: "2024-01-15"
@@ -551,15 +551,16 @@ def _ordinal_bucket_key(value: Any) -> str:
 
 
 def _parse_date(value: Any) -> dt.date | dt.datetime | None:
-    """Parse value to date/datetime. Returns None if unparseable."""
+    """Parse value to date/datetime, an aware datetime on the board zone's wall
+    clock (``in_board_zone``). Returns None if unparseable."""
     if isinstance(value, dt.datetime):
-        return value
+        return in_board_zone(value)
     if isinstance(value, dt.date):
         return value
     if isinstance(value, str):
         if _ISO_DATETIME_RE.match(value):
             try:
-                return dt.datetime.fromisoformat(value)
+                return in_board_zone(dt.datetime.fromisoformat(value))
             except ValueError:
                 return None
         if _ISO_DATE_RE.match(value):

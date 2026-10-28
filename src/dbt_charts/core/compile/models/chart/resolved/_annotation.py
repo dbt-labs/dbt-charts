@@ -141,12 +141,27 @@ class ResolvedAnnotationPosition(_Frozen):
     edge: LegendEdge = Field(description="Side of the geometry the text sits on.")
     align: LegendAlign = Field(description="Where along that side.")
     overlay: bool = Field(description="On or inside the geometry, rather than outside.")
+    auto_edge: bool = Field(
+        description=(
+            "The edge came from `auto`: the text may leave it for another side "
+            "to clear marks and other text."
+        )
+    )
+    auto_align: bool = Field(
+        description=(
+            "The align came from `auto`: the text may take another spot along "
+            "an edge to clear marks and other text."
+        )
+    )
 
 
 class ResolvedAnnotationText(_Frozen):
     font: ResolvedAnnotationFont = Field(description="Text font.")
     halo: float = Field(description="Canvas-colored outline width in pixels.")
     halo_opacity: float = Field(description="Opacity of the halo as a whole, 0 to 1.")
+    halo_over_marks: bool = Field(
+        description="Draw the halo only on text that overlaps a data mark."
+    )
     box: ResolvedAnnotationBox = Field(description="Box behind the text.")
     position: ResolvedAnnotationPosition = Field(
         description="Where the text is placed."

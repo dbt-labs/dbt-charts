@@ -36,8 +36,8 @@ _BOARD_STYLE, _BOARD_CTX = resolve_style_and_context(get_theme_style())
 
 # ── Horizontal bar: measure guards read axis_y (the cascade slot), never
 #    axis_x -- the VL channel (x) and the cascade slot (axis_y) are different
-#    things for a horizontal bar. See BaselineFeature._insert_zero_rule /
-#    _apply_unity docstrings. ──────────────────────────────────────────────
+#    things for a horizontal bar. See `unity_rule_fires` in
+#    libs/chart-svg/chart-renderer/src/common.rs.
 
 
 # ── the domain and the baseline must agree ────────────────────────────────────

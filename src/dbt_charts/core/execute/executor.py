@@ -399,9 +399,8 @@ def resolve_query_references(
     )
     merged_setup = "\n".join(setup_stmts) if setup_stmts else None
 
-    # Cache-ref queries ({{ queries.X.cache }}) are routed to
-    # _execute_cache_ref_query before this runs, so anything here has
-    # only inline {{ queries.X }} refs (if any) to resolve.
+    # Only inline {{ queries.X }} refs expand here; {{ queries.X.cache }}
+    # refs stay in place because the composer runs them over X's cached rows.
     if "{{ queries." not in query.sql:
         # No inline {{ queries.X }} refs to resolve, but may still need
         # propagated setup_sql.
@@ -586,10 +585,6 @@ class Executor:
             for src_name, cfg in adapter_registry.project_file_sources().items():
                 if src_name not in self._file_source_configs:
                     self._file_source_configs[src_name] = cfg
-        # Defense-in-depth: tracks which cache-ref upstreams are currently being
-        # demand-executed, so a cycle that slips past compile-time detection raises
-        # a clear ExecutionError instead of a Python RecursionError.
-        self._cache_ref_inflight: set[str] = set()
 
     def text_listings(
         self, base_dir: str, calls: frozenset[ListingCall]
@@ -692,12 +687,7 @@ class Executor:
         should_use_cache = (
             use_cache if use_cache is not None else self._use_cache
         ) and query.cache.enabled
-        cache_key = compute_cache_key(
-            query,
-            variables,
-            self.board.sources,
-            source_version=self._source_version(query) + self._manifest_version(query),
-        )
+        cache_key = self._cache_key(query_name, query, variables)
         memo_key = _memo_key(query, cache_key)
 
         # Saved in step 3c when a persistent cache hit is eligible for
@@ -799,9 +789,8 @@ class Executor:
         # ────────────────────────────────────────────────────────────────
         # Step 4: Resolve query references in SQL
         # ────────────────────────────────────────────────────────────────
-        # Keep a reference to the pre-resolution query so the persistent
-        # cache write-through (step 4b) uses the same key as _prepare_call
-        # (and therefore is_cached).
+        # The pre-resolution query: its cache policy governs the write-through,
+        # and the file-source and cache-ref paths detect on its authored SQL.
         original_query = query
 
         # ────────────────────────────────────────────────────────────────
@@ -838,9 +827,7 @@ class Executor:
             data_as_of = self._clock()
             self._cache[memo_key] = result_data
             if should_use_cache:
-                # Write through to the persistent backend using the original
-                # (authored) query so the cache key matches what _prepare_call /
-                # is_cached compute.
+                # Write through to the persistent backend.
                 truncation = self._truncations.get(query_name)
                 self._cache_outcome(
                     query_name,
@@ -1140,6 +1127,43 @@ class Executor:
         )
         return query_name, self._get_query(query_name), merged
 
+    def _cache_key(
+        self, query_name: str, query: AnyQuery, variables: VariableValues | None
+    ) -> tuple[str, str, str]:
+        """Cache key over the SQL as it executes, ``{{ queries.* }}`` expanded.
+
+        Keying the authored text would let an edit to an upstream query leave
+        every downstream entry serving old rows. A ``{{ queries.X.cache }}``
+        reference is not inlined — the composing query runs over X's cached rows —
+        so X's own key is folded in instead, recursively. Reference expansion
+        rejects cycles first, which is what keeps that recursion finite.
+        """
+        all_queries = {**self.board.queries, **self.query_registry}
+        expanded = resolve_query_references(
+            query, all_queries=all_queries, query_name=query_name
+        )
+        ref_names = (
+            dict.fromkeys(CACHE_REF_JINJA_RE.findall(expanded.sql))
+            if is_sql_query(expanded)
+            else ()
+        )
+        upstream_keys = [
+            self._cache_key(
+                ref_name,
+                self._cache_ref_upstream(query_name, ref_name, all_queries),
+                variables,
+            )
+            for ref_name in ref_names
+        ]
+        return compute_cache_key(
+            expanded,
+            variables,
+            self.board.sources,
+            source_version=self._source_version(query)
+            + self._manifest_version(expanded)
+            + "".join(f"|{ref_key}" for ref_key in upstream_keys),
+        )
+
     def _lookup_cached(
         self,
         query: AnyQuery,
@@ -1162,12 +1186,7 @@ class Executor:
         Returns:
             True if cached rows exist; False on any miss or cached error.
         """
-        cache_key = compute_cache_key(
-            query,
-            variables,
-            self.board.sources,
-            source_version=self._source_version(query) + self._manifest_version(query),
-        )
+        cache_key = self._cache_key(query_name, query, variables)
         if _memo_key(query, cache_key) in self._cache:
             return True
         if not self._use_cache or not query.cache.enabled:
@@ -1346,8 +1365,7 @@ class Executor:
         """Fetch only new rows (>= watermark) and merge with the prior cached set.
 
         On success the merged set overwrites the memo entry and is written back
-        to the persistent store under original_query's cache key (the pre-
-        resolution authored key, so the entry survives reference inlining).
+        to the persistent store under original_query's cache key.
         """
         key_col = query.incremental
         assert key_col is not None  # caller checks query.incremental before calling
@@ -1596,6 +1614,29 @@ class Executor:
     # Cache-ref composition ({{ queries.X.cache }})
     # ─────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _cache_ref_upstream(
+        query_name: str, ref_name: str, all_queries: dict[str, AnyQuery]
+    ) -> AnyQuery:
+        """The query a ``{{ queries.X.cache }}`` reference names, if usable as one.
+
+        Raises:
+            ExecutionError: If it does not exist or has ``cache: false``.
+        """
+        upstream = all_queries.get(ref_name)
+        if upstream is None:
+            raise ExecutionError(
+                f"Query '{query_name}' references {{{{ queries.{ref_name}.cache }}}} "
+                f"but query '{ref_name}' does not exist in this board or registry."
+            )
+        if not upstream.cache.enabled:
+            raise ExecutionError(
+                f"Query '{query_name}' references {{{{ queries.{ref_name}.cache }}}} "
+                f"but query '{ref_name}' has cache: false and cannot be "
+                "used as a cache-ref upstream."
+            )
+        return upstream
+
     def _execute_cache_ref_query(
         self,
         query: "AnyQuery",
@@ -1658,36 +1699,10 @@ class Executor:
         named_rows: dict[str, CacheRows] = {}
 
         for ref_name in ref_names:
-            # Runtime re-entrancy guard — defense-in-depth against cycles that
-            # slip past compile-time detection (e.g. cycle via query_registry).
-            if ref_name in self._cache_ref_inflight:
-                raise ExecutionError(
-                    f"Cache-ref cycle detected at runtime: query '{query_name}' "
-                    f"triggered demand-execution of '{ref_name}', which is already "
-                    "being demand-executed. Check for circular {{ queries.X.cache }} "
-                    "references."
-                )
-
-            upstream = all_queries.get(ref_name)
-            if upstream is None:
-                raise ExecutionError(
-                    f"Query '{query_name}' references {{{{ queries.{ref_name}.cache }}}} "
-                    f"but query '{ref_name}' does not exist in this board or registry."
-                )
-            if not upstream.cache.enabled:
-                raise ExecutionError(
-                    f"Query '{query_name}' references {{{{ queries.{ref_name}.cache }}}} "
-                    f"but query '{ref_name}' has cache: false and cannot be "
-                    "used as a cache-ref upstream."
-                )
-
+            self._cache_ref_upstream(query_name, ref_name, all_queries)
             # Demand-execute and capture the upstream rows directly (execute_query
             # returns the rows and also writes them through to the cache).
-            self._cache_ref_inflight.add(ref_name)
-            try:
-                named_rows[ref_name] = self.execute_query(ref_name, variables)
-            finally:
-                self._cache_ref_inflight.discard(ref_name)
+            named_rows[ref_name] = self.execute_query(ref_name, variables)
 
         # Render inline {{ queries.X }} refs and parameterize {{ variable }}
         # values ($1/$2/…). {{ queries.X.cache }} renders to its sentinel via
@@ -1751,11 +1766,8 @@ class Executor:
         if not self._result_cache:
             return
 
-        source_hash, query_hash, variables_hash = compute_cache_key(
-            query,
-            variables,
-            self.board.sources,
-            source_version=self._source_version(query) + self._manifest_version(query),
+        source_hash, query_hash, variables_hash = self._cache_key(
+            query_name, query, variables
         )
         self._result_cache.put(
             source_hash,

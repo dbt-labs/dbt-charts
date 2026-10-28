@@ -23,7 +23,10 @@ from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.board.normalized import ProsePlan, VariableValues
-from dbt_charts.core.compile.resolve.style.markdown_style import readable_measure
+from dbt_charts.core.compile.resolve.style.markdown_style import (
+    prose_blocks,
+    readable_measure,
+)
 from dbt_charts.core.compile.sizing import card_row_gap, prose_slot_widths
 from dbt_charts.core.render.column_packer import (
     choose_grid,
@@ -39,7 +42,7 @@ from dbt_charts.core.render.svg_utils import (
     px,
     translate_group,
 )
-from mdsvg import OrderedList, Table, UnorderedList, parse as parse_markdown
+from mdsvg import OrderedList, Table, UnorderedList
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
@@ -246,7 +249,6 @@ def render_prose_svg(
     assert plan is not None, (
         "board text must be planned (plan_board_prose) before it is sized or drawn"
     )
-    from dbt_charts.core.compile.image_assets import rewrite_board_markdown_images
     from dbt_charts.core.render.column_packer import PackUnit, pack_columns
     from dbt_charts.core.render.font_selection import record_painted_faces
     from mdsvg.renderer import SVGRenderer
@@ -263,12 +265,8 @@ def render_prose_svg(
         allow_raw_html=allow_raw_html,
     )
 
-    blocks = rewrite_board_markdown_images(
-        list(parse_markdown(markdown_text)),
-        authored,
-        markdown_text,
-        base_dir,
-        error_collector,
+    blocks = prose_blocks(
+        markdown_text, authored, base_dir, error_collector, text_style
     )
 
     pad = float(resolved_style.frame.card_padding)
@@ -428,11 +426,11 @@ def _column_divider_line(x: float, height: float, divider: DividerStyle) -> str:
     )
 
 
-def _list_items(markdown: str) -> list[ListItem]:
-    """Top-level list items of a markdown passage."""
+def _list_items(blocks: list[AnyBlock]) -> list[ListItem]:
+    """Top-level list items of a passage's blocks."""
     return [
         item
-        for block in parse_markdown(markdown)
+        for block in blocks
         if isinstance(block, (UnorderedList, OrderedList))
         for item in block.items
     ]
@@ -477,7 +475,9 @@ def _run_grid(
         text = resolve_display_text_from_provider(
             block.text, variable_values, resolved_style=rs, base_dir=block.base_dir
         )
-        list_items = _list_items(text)
+        list_items = _list_items(
+            prose_blocks(text, block.text, block.base_dir, None, rs.text)
+        )
         if not list_items:
             continue
         renderer = SVGRenderer(style=style, fonts=fonts)
@@ -585,7 +585,6 @@ def _goes_multi_column(
     variable_values: VariableValues,
 ) -> bool:
     """Whether ``block``, at its real ``slot`` width, lays out in two or more columns."""
-    from dbt_charts.core.compile.image_assets import rewrite_board_markdown_images
     from dbt_charts.core.render.boards import resolve_display_text_from_provider
     from mdsvg.renderer import SVGRenderer
 
@@ -600,9 +599,7 @@ def _goes_multi_column(
         block.text, variable_values, resolved_style=rs, base_dir=block.base_dir
     )
     # The same degradation the sizing pass applies: a bad image becomes its error.
-    blocks = rewrite_board_markdown_images(
-        list(parse_markdown(text)), block.text, text, block.base_dir, None
-    )
+    blocks = prose_blocks(text, block.text, block.base_dir, None, rs.text)
     pad = float(rs.frame.card_padding)
     *_, n_cols = _columns_of(
         blocks, renderer, slot, pad, rs.text.column, char_px, grid, board_width, gap

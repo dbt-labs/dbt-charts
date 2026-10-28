@@ -13,9 +13,181 @@
   "filters": {
     "orders.status": "complete"
   },
-  "dynamic_fields": "[{\"table_calculation\": \"growth\", \"label\": \"Growth\", \"expression\": \"${orders.revenue} / offset(${orders.revenue}, -1)\"}]",
+  "dynamic_fields": "[{\"table_calculation\": \"growth\", \"label\": \"Growth\", \"expression\": \"${orders.revenue} / offset(${orders.revenue}, -1)\", \"value_format\": \"0.0%\", \"value_format_name\": \"percent_1\", \"_kind_hint\": \"measure\", \"_type_hint\": \"number\"}, {\"measure\": \"avg_order\", \"based_on\": \"orders.revenue\", \"label\": \"Average order\", \"type\": \"average\", \"_kind_hint\": \"measure\", \"_type_hint\": \"number\"}]",
   "vis_config": {
-    "type": "looker_column"
+    "type": "looker_column",
+    "stacking": "normal",
+    "ordering": "none",
+    "orientation": "auto",
+    "show_value_labels": true,
+    "label_value_format": "#,##0",
+    "legend_position": "center",
+    "hide_legend": false,
+    "show_totals_labels": true,
+    "show_silhouette": false,
+    "hide_totals": false,
+    "hide_row_totals": false,
+    "show_totals": true,
+    "show_row_totals": true,
+    "show_row_numbers": true,
+    "transpose": false,
+    "x_axis_label": "Month",
+    "x_axis_scale": "ordinal",
+    "x_axis_reversed": false,
+    "show_x_axis_label": true,
+    "y_axis_scale_mode": "linear",
+    "y_axis_combined": true,
+    "show_y_axis_labels": true,
+    "y_axes": [
+      {
+        "label": "Revenue",
+        "orientation": "left",
+        "series": [
+          {
+            "axisId": "orders.revenue",
+            "id": "orders.revenue",
+            "name": "Revenue"
+          }
+        ],
+        "valueFormat": "$#,##0",
+        "type": "linear"
+      }
+    ],
+    "series_types": {
+      "orders.revenue": "column",
+      "growth": "line"
+    },
+    "series_labels": {
+      "orders.revenue": "Revenue"
+    },
+    "series_value_format": {
+      "orders.revenue": "$#,##0.00"
+    },
+    "series_cell_visualizations": {
+      "orders.revenue": {
+        "is_active": true,
+        "palette": {
+          "palette_id": "p1",
+          "collection_id": "c1",
+          "custom_colors": [
+            "#bfdfff",
+            "#072079"
+          ]
+        }
+      }
+    },
+    "enable_conditional_formatting": true,
+    "conditional_formatting": [
+      {
+        "type": "greater than",
+        "value": 1000,
+        "background_color": "#FF9D99",
+        "font_color": null,
+        "color_application": {
+          "collection_id": "c1",
+          "palette_id": "p2"
+        },
+        "bold": true,
+        "italic": false,
+        "strikethrough": false,
+        "fields": [
+          "orders.revenue"
+        ]
+      }
+    ],
+    "conditional_formatting_include_totals": false,
+    "conditional_formatting_include_nulls": false,
+    "hidden_fields": [
+      "orders.internal_id"
+    ],
+    "hidden_pivots": {},
+    "column_order": [
+      "orders.created_month",
+      "orders.revenue"
+    ],
+    "limit_displayed_rows": true,
+    "limit_displayed_rows_values": {
+      "show_hide": "show",
+      "first_last": "first",
+      "num_rows": "10"
+    },
+    "pinned_columns": {
+      "orders.created_month": "left"
+    },
+    "show_null_labels": false,
+    "series_colors": {
+      "orders.revenue": "#ABD6FF"
+    },
+    "colors": [
+      "#62bad4",
+      "#a9c574"
+    ],
+    "color_application": {
+      "collection_id": "legacy",
+      "palette_id": "mixed_dark"
+    },
+    "custom_color_enabled": true,
+    "custom_color": "#33a02c",
+    "totals_color": "#808080",
+    "axis_label_color": "#282828",
+    "header_font_size": "12",
+    "rows_font_size": "12",
+    "header_text_alignment": "left",
+    "table_theme": "white",
+    "series_column_widths": {
+      "orders.revenue": 126
+    },
+    "minimum_column_width": 75,
+    "size_to_fit": true,
+    "truncate_text": true,
+    "truncate_header": false,
+    "defaults_version": 1,
+    "show_sql_query_menu_options": false,
+    "series_text_format": {
+      "orders.revenue": {
+        "align": "left"
+      }
+    },
+    "style_orders.revenue": "#3A4245",
+    "title_placement_orders.revenue": "above",
+    "show_title_orders.revenue": true,
+    "query_fields": {
+      "measures": [
+        {
+          "name": "orders.revenue"
+        }
+      ],
+      "dimensions": [],
+      "table_calculations": []
+    },
+    "label_density": 25,
+    "y_axis_gridlines": true,
+    "x_axis_gridlines": false,
+    "point_style": "none",
+    "interpolation": "linear",
+    "show_x_axis_ticks": true,
+    "show_y_axis_ticks": true,
+    "y_axis_tick_density": "default",
+    "y_axis_tick_density_custom": 5,
+    "show_null_points": false,
+    "plot_size_by_field": false,
+    "x_axis_zoom": true,
+    "y_axis_zoom": true
   },
-  "query_timezone": "America/Los_Angeles"
+  "query_timezone": "America/Los_Angeles",
+  "sorts": [
+    "orders.created_month desc",
+    "orders.revenue desc 0"
+  ],
+  "limit": "500",
+  "column_limit": "50",
+  "total": true,
+  "row_total": "right",
+  "subtotals": [
+    "orders.region"
+  ],
+  "fill_fields": [
+    "orders.created_month"
+  ],
+  "filter_expression": "${orders.revenue} > 0"
 }

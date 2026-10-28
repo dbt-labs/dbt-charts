@@ -38,6 +38,16 @@
     /*{# beside a percent lead (pie's raw slice count + grand total). Composes with #}*/
     /*{# a role marker, so it's peeled ahead of the role marker below. #}*/
     const MUTED = '⁠';
+    /*{# Prefixes a row the author added with the chart's `tooltip:` (emitters/ #}*/
+    /*{# _tooltip.py's ROLE_EXTRA): a `label: value` row after the mark's own #}*/
+    /*{# value rows. The label is resolved text, painted as written. #}*/
+    const ROLE_EXTRA = '\u200D';
+    /*{# Marks a (category, series) slot a sparse stack imputes: identity only, #}*/
+    /*{# no datum (contract.rs's ROLE_IMPUTED). #}*/
+    const ROLE_IMPUTED = '\u034F';
+    /*{# Stands for a `;` inside an authored value (contract.rs's #}*/
+    /*{# SEMICOLON_ESCAPE), since rows are split on `;`. #}*/
+    const SEMICOLON_ESCAPE = '\uE000';
     /*{# Brackets a value row's own swatch color (emitters/_tooltip.py's SWATCH): #}*/
     /*{# one block listing several marks' values keys each row to its mark. #}*/
     const SWATCH = '\u200b';
@@ -104,6 +114,11 @@
             let muted = false;
             if (pair.charAt(0) === MUTED) { muted = true; pair = pair.slice(1); }
 
+            if (pair === ROLE_IMPUTED) {
+                entries.push({ role: 'imputed' });
+                continue;
+            }
+
             const marker = pair.charAt(0);
             if (marker === ROLE_HEADER || marker === ROLE_HEADER_SWATCHED) {
                 entries.push({
@@ -120,6 +135,17 @@
             }
             if (marker === ROLE_ORDER) {
                 entries.push({ role: 'order', value: pair.slice(1) });
+                continue;
+            }
+            if (marker === ROLE_EXTRA) {
+                const body = pair.slice(1);
+                const split = body.indexOf(':');
+                if (split === -1) continue;
+                entries.push({
+                    role: 'extra',
+                    label: body.substring(0, split).trim(),
+                    value: body.substring(split + 1).trim().split(SEMICOLON_ESCAPE).join(';'),
+                });
                 continue;
             }
 
@@ -172,6 +198,12 @@
     /*{# not a behavior change for the single-header case. #}*/
     function headerKey(entries) {
         return headerEntries(entries).map(function (e) { return e.value; }).join('|');
+    }
+
+    /*{# The hover band of a (category, series) a sparse stack imputes: it is #}*/
+    /*{# no row of any card. #}*/
+    function isImputed(entries) {
+        return entries.some(function (e) { return e.role === 'imputed'; });
     }
 
     function markSeriesEntry(entries) {
@@ -313,6 +345,7 @@
             if (!isDataMark(candidate)) return;
             const entries = parseAriaLabel(candidate.getAttribute('aria-label'));
             if (!markHeaderEntry(entries) || headerKey(entries) !== identity) return;
+            if (isImputed(entries)) return;
 
             const series = markSeriesEntry(entries);
             const key = identity + '|' + (series ? series.value : '');
@@ -340,6 +373,19 @@
             });
         }
         return matches;
+    }
+
+    /*{# The match standing for the hovered mark: the mark itself, else the one #}*/
+    /*{# naming the same datum (a hover band carries its bar's label). #}*/
+    function hoveredMatch(matches, hoveredMark, hoveredEntries) {
+        const byMark = matches.find(function (m) { return m.mark === hoveredMark; });
+        if (byMark) return byMark;
+        const series = markSeriesEntry(hoveredEntries);
+        return matches.find(function (m) {
+            const other = markSeriesEntry(m.entries);
+            return headerKey(m.entries) === headerKey(hoveredEntries) &&
+                (other ? other.value : '') === (series ? series.value : '');
+        }) || null;
     }
 
     /*{# Splits matches into the rows to render individually and the rows to #}*/
@@ -1187,8 +1233,9 @@
             escapeHtml(parts.tail) + '</span>';
     }
 
-    function valueRow(entry, ts, isTotal, tailWidth) {
-        const rowStyle = isTotal
+    function valueRow(entry, ts, isTotal, tailWidth, dividerAbove) {
+        const ruled = isTotal || dividerAbove;
+        const rowStyle = ruled
             ? 'display:flex;justify-content:space-between;gap:' + ts.gap + 'px;margin-top:4px;padding-top:4px;border-top:' + DIVIDER_WIDTH + 'px solid ' + ts.border.color + ';'
             : 'display:flex;justify-content:space-between;gap:' + ts.gap + 'px;padding:2px 0;';
         const labelWeight = isTotal ? ts.value.font.weight : ts.label.font.weight;
@@ -1198,7 +1245,7 @@
         const valueColor = entry.muted ? ts.label.font.color : ts.value.font.color;
         return (
             '<div style="' + rowStyle + '">' +
-                '<span style="display:flex;align-items:center;color:' + ts.label.font.color + ';font-weight:' + labelWeight + ';">' + (entry.swatch ? seriesSwatch(entry.swatch) : '') + formatFieldName(entry.label) + '</span>' +
+                '<span style="display:flex;align-items:center;color:' + ts.label.font.color + ';font-weight:' + labelWeight + ';">' + (entry.swatch ? seriesSwatch(entry.swatch) : '') + (entry.role === 'extra' ? escapeHtml(entry.label) : formatFieldName(entry.label)) + '</span>' +
                 '<span style="color:' + valueColor + ';font-weight:' + ts.value.font.weight + ';text-align:right;font-variant-numeric:tabular-nums lining-nums;">' + alignedValue(entry.value, tailWidth) + '</span>' +
             '</div>'
         );
@@ -1216,12 +1263,18 @@
     /*{# duration's other unit when it matches the first) is left out. #}*/
     function singleMarkHtml(entries, seriesColor, ts) {
         const tailWidth = decimalTailWidth(entries);
+        let dividerDrawn = false;
         return entries.map(function (entry) {
             if (entry.role === 'header') return headerRow(entry, seriesColor, ts);
             if (entry.role === 'series') return seriesRow(entry, seriesColor, ts);
             if (entry.role === 'order') return '';
             if (entry.role === 'value' && entry.value === '') return '';
-            return valueRow(entry, ts, entry.role === 'total', tailWidth);
+            if (entry.role === 'extra') {
+                const ruled = !dividerDrawn;
+                dividerDrawn = true;
+                return valueRow(entry, ts, false, 0, ruled);
+            }
+            return valueRow(entry, ts, entry.role === 'total', tailWidth, false);
         }).join('');
     }
 
@@ -1293,6 +1346,19 @@
             activeBg, false, true
         );
 
+        return swatchCell + nameCell + pctCell + valueCell;
+    }
+
+    function xUnifiedExtraRow(entry, ts, hasPercent) {
+        const muted = 'color:' + ts.label.font.color + ';';
+        const swatchCell = xUnifiedCell('', '', '', true, false);
+        const nameCell = xUnifiedCell('<span style="padding-left:12px;">' + escapeHtml(entry.label) + '</span>', muted, '', false, false);
+        const pctCell = hasPercent ? xUnifiedCell('', '', '', false, false) : '';
+        const valueCell = xUnifiedCell(
+            escapeHtml(entry.value),
+            'text-align:right;' + muted + 'font-weight:' + ts.value.font.weight + ';font-variant-numeric:tabular-nums lining-nums;',
+            '', false, true
+        );
         return swatchCell + nameCell + pctCell + valueCell;
     }
 
@@ -1378,7 +1444,8 @@
     /*{# whether any matched row carries 2 values ([%, raw], vs. 1 for a plain #}*/
     /*{# single value) and collapses to 3 columns when absent. #}*/
     function xUnifiedHtml(hoveredMark, hoveredEntries, matches, ts) {
-        const plan = buildRowPlan(matches, hoveredMark);
+        const hovered = hoveredMatch(matches, hoveredMark, hoveredEntries);
+        const plan = buildRowPlan(matches, hovered ? hovered.mark : hoveredMark);
         const hasPercent = matches.some(function (m) {
             return m.entries.filter(function (e) { return e.role === 'value'; }).length > 1;
         });
@@ -1391,10 +1458,14 @@
             plan.shown.some(carriesGroupTotal);
         const totalEntry = overlayLeads ? null : findTotalEntry(matches);
         function renderRow(m, i) {
-            return xUnifiedRow(
-                m.entries, markSeriesColor(m.mark), m.mark === hoveredMark, ts, hasPercent,
+            const row = xUnifiedRow(
+                m.entries, markSeriesColor(m.mark), m === hovered, ts, hasPercent,
                 isStrokedMark(m.mark), overlayLeads && i > 0
             );
+            if (m !== hovered) return row;
+            return row + m.entries.filter(function (e) { return e.role === 'extra'; }).map(function (e) {
+                return xUnifiedExtraRow(e, ts, hasPercent);
+            }).join('');
         }
 
         let html = '<div style="display:grid;grid-template-columns:' + columns + ';column-gap:0;align-items:center;">';
@@ -1437,10 +1508,17 @@
         state.activeMark = mark;
         const matches = svg ? collectMatchingMarks(svg, mark, entries) : [{ mark: mark, entries: entries }];
         const useXUnified = matches.length > 1 && matches.length <= XUNIFIED_ABANDON_THRESHOLD;
+        /*{# The card of one mark: the hovered one, or -- when it is an imputed #}*/
+        /*{# slot with no value to report -- the only real mark at its x. #}*/
+        const lone = !isImputed(entries) ? { mark: mark, entries: entries } : (matches.length === 1 ? matches[0] : null);
+        if (!useXUnified && !lone) {
+            hideTooltip(state);
+            return;
+        }
 
         state.tooltip.innerHTML = useXUnified
             ? xUnifiedHtml(mark, entries, matches, ts)
-            : singleMarkHtml(entries, markSeriesColor(mark), ts);
+            : singleMarkHtml(lone.entries, markSeriesColor(lone.mark), ts);
         state.tooltip.style.display = 'block';
         positionTooltip(state, event.clientX, event.clientY);
 
@@ -1456,10 +1534,10 @@
             /*{# The node under the cursor is often an invisible hover band #}*/
             /*{# painted above its own bar, but it carries that bar's label #}*/
             /*{# verbatim -- so keying on the label needs no unwrapping. #}*/
-            kept[mark.getAttribute('aria-label')] = true;
+            kept[lone.mark.getAttribute('aria-label')] = true;
         }
         applyHoverEmphasis(state, mark, kept);
-        applyHoverMarkers(state, mark, useXUnified ? matches : [{ mark: mark }]);
+        applyHoverMarkers(state, mark, useXUnified ? matches : [{ mark: lone.mark }]);
     }
 
     /*{# Bound once, at the board root: each chart is a nested standalone <svg> #}*/

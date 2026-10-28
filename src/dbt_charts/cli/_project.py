@@ -85,23 +85,16 @@ def has_charts_marker(start: Path) -> bool:
 
 @dataclass(frozen=True)
 class InitRootResolution:
-    """Result of ``resolve_init_root``.
-
-    ``git_root`` is set only for the ambiguous case (no dct project found, but a git
-    root diverges from cwd); ``None`` means unambiguous, use ``root`` as-is.
-    """
+    """Result of ``resolve_init_root``; ``via_git_root`` marks the case where no
+    project was found and the enclosing git root, not cwd, was chosen."""
 
     root: Path
-    git_root: Path | None = None
+    via_git_root: bool = False
 
 
 def resolve_init_root(explicit: Path | None, cwd: Path) -> InitRootResolution:
-    """Determine the init scaffold root without prompting the user.
-
-    Explicit dir wins (resolved, no git_root). Else walks up for a dct project —
-    if found, that's unambiguous. Else checks for a git repo: git root == cwd is
-    unambiguous; git root above cwd is ambiguous and the caller must prompt.
-    """
+    """Determine the init scaffold root: explicit dir, else the dct project
+    found walking up from cwd, else the git root, else cwd."""
     if explicit is not None:
         return InitRootResolution(root=explicit.resolve())
 
@@ -113,7 +106,7 @@ def resolve_init_root(explicit: Path | None, cwd: Path) -> InitRootResolution:
     if git_root is None or git_root == cwd.resolve():
         return InitRootResolution(root=cwd.resolve())
 
-    return InitRootResolution(root=cwd.resolve(), git_root=git_root)
+    return InitRootResolution(root=git_root, via_git_root=True)
 
 
 @dataclass(frozen=True)

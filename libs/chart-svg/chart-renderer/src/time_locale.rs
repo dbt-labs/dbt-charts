@@ -5,7 +5,7 @@
 //! [`with_time_locale`] opens the scope for one render; [`active_time_locale`]
 //! refuses when none is open.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use serde::Deserialize;
@@ -26,6 +26,7 @@ pub struct TimeLocale {
 
 thread_local! {
     static ACTIVE: RefCell<Option<Rc<TimeLocale>>> = const { RefCell::new(None) };
+    static WEEK_START: Cell<u8> = const { Cell::new(0) };
 }
 
 struct Restore(Option<Rc<TimeLocale>>);
@@ -41,6 +42,25 @@ pub fn with_time_locale<T>(locale: &TimeLocale, render: impl FnOnce() -> T) -> T
     let previous = ACTIVE.with(|active| active.replace(Some(Rc::new(locale.clone()))));
     let _restore = Restore(previous);
     render()
+}
+
+/// Run `render` with `week_start` (0 = Sunday) as the board's first day of the
+/// week.
+pub fn with_week_start<T>(week_start: u8, render: impl FnOnce() -> T) -> T {
+    let previous = WEEK_START.with(|active| active.replace(week_start));
+    struct Reset(u8);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WEEK_START.with(|active| active.set(self.0));
+        }
+    }
+    let _reset = Reset(previous);
+    render()
+}
+
+/// The board's first day of the week, 0 = Sunday; Sunday outside a scope.
+pub fn active_week_start() -> u8 {
+    WEEK_START.with(Cell::get)
 }
 
 /// The active time locale.

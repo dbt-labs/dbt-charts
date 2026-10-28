@@ -25,9 +25,10 @@ from ._layer import (
     CartesianLayer,
     YStartColumn,
 )
+from ._tooltip import _TooltipFields
 
 
-class BarChart(_CartesianChartFields):
+class BarChart(_CartesianChartFields, _TooltipFields):
     """Authored patch for bar and histogram charts; histogram adds automatic x binning."""
 
     model_config = ConfigDict(extra="forbid")
@@ -55,6 +56,23 @@ class BarChart(_CartesianChartFields):
             "bins x, so an anchor has no category or date slot to name.",
             when=(ValueIn("type", ("histogram",)),),
             nonempty=("annotations",),
+        ),
+        Forbids(
+            ("tooltip",),
+            "tooltip is not supported with layers: an overlay mark's card describes the layer, not a column of the base query.",
+            when=(IsSet("layers"),),
+        ),
+        Forbids(
+            ("tooltip",),
+            "tooltip is not supported on type: histogram: a bar there is a "
+            "bin of rows, not one row, so a column has no single value to show.",
+            when=(ValueIn("type", ("histogram",)),),
+        ),
+        Forbids(
+            ("tooltip",),
+            "tooltip is not supported with y_start: a ranged bar's card shows "
+            "its start, end and difference.",
+            when=(IsSet("y_start"),),
         ),
         Forbids(
             ("y_start",),

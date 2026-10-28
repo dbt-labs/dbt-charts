@@ -28,6 +28,7 @@ pub mod svg;
 pub mod text;
 pub mod time_axis;
 pub mod time_locale;
+pub mod time_zone;
 pub mod torn;
 pub mod title;
 pub mod title_shift;
@@ -200,6 +201,14 @@ pub struct BoardStyle {
     /// names (and the `%c %x %X` patterns) a date prints in. Required, like
     /// `format_locale`.
     pub time_locale: time_locale::TimeLocale,
+    /// The board's `regional.time_zone`: the zone an instant prints its wall
+    /// clock in. Absent is UTC, the authored default.
+    #[serde(default = "time_zone::utc", deserialize_with = "time_zone::deserialize")]
+    pub time_zone: jiff::tz::TimeZone,
+    /// The board's `regional.week_start`, 0 = Sunday: the day a week tick in
+    /// the board zone falls on. Absent is Sunday, d3's `timeWeek`.
+    #[serde(default)]
+    pub week_start: u8,
     /// The board's resolved `regional.language`: the catalog every generated
     /// word prints from. Absent is `en`.
     #[serde(default)]
@@ -207,11 +216,16 @@ pub struct BoardStyle {
 }
 
 impl BoardStyle {
-    /// Run `render` in this board's number and time locales and language.
+    /// Run `render` in this board's number and time locales, time zone and
+    /// language.
     pub fn scoped<T>(&self, render: impl FnOnce() -> T) -> T {
         number_locale::with_number_locale(&self.format_locale, || {
             time_locale::with_time_locale(&self.time_locale, || {
-                display_text::language::with_language(self.language, render)
+                time_zone::with_time_zone(&self.time_zone, || {
+                    time_locale::with_week_start(self.week_start, || {
+                        display_text::language::with_language(self.language, render)
+                    })
+                })
             })
         })
     }
@@ -298,18 +312,6 @@ impl PlaceholderStyle {
             text: Chars::new(text, Escape::Quick),
         });
         Node::group(Attrs::new().quick("class", "placeholder-overlay"), vec![wash, label])
-    }
-
-    /// The overlay printed as markup, for the families that still build strings.
-    pub fn overlay(
-        &self,
-        width: f64,
-        height: f64,
-        family: &str,
-        case: Option<&str>,
-    ) -> Result<String, Diagnostic> {
-        let (text, weight) = self.overlay_label(case)?;
-        Ok(print::print(&[self.overlay_node(width, height, family, text, weight)]))
     }
 }
 
@@ -701,7 +703,7 @@ fn draw_family(
         return Ok((svg, Some(natural_height)));
     }
     let svg = match chart_type {
-        "pie" => families::pie::render(payload, fonts).and_then(contract::stamp_view_root)?,
+        "pie" => families::pie::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?,
         "bar" => {
             families::bar::production_errors(payload)?;
             families::bar::render(payload, fonts).and_then(|svg| Ok(contract::stamp_view_root(svg)?))?
@@ -880,12 +882,12 @@ pub fn render_fitted_natural(
     fonts: &measure::FontBook,
 ) -> Result<RenderOutput, Diagnostic> {
     if !is_support_table_arm(slot)? {
-        // The cached sizing render stays while the box holds its height. A
-        // small-multiples composite is a step function of its height, so its
-        // estimate-height render stands; any other chart keeps it only once the
-        // canvas overshot the estimate, which a re-render at the overshot box
-        // would not reproduce. A box moved away from it re-renders at the box.
-        if natural.measuring && natural.height != slot.height {
+        // A chart keeps the sizing render only once its canvas overshot the estimate, which a
+        // re-render at the overshot box would not reproduce, and only while the box holds that
+        // height. A small-multiples composite solves its canvas onto its box
+        // (`compose_facet_full`), so it always renders at the box, as production's
+        // slot-height pass does.
+        if natural.measuring && natural.height != slot.height && slot.resolved["multiples"].is_null() {
             let chart_type = natural
                 .resolved
                 .get("chart_type")
@@ -899,8 +901,7 @@ pub fn render_fitted_natural(
                     board::extract_svg_height(&cached.svg)?,
                     natural.height,
                 );
-                let multiples = !slot.resolved["multiples"].is_null();
-                if (multiples || natural_box != natural.height) && !sizing::height_moved(natural_box, slot.height) {
+                if natural_box != natural.height && !sizing::height_moved(natural_box, slot.height) {
                     return Ok(cached);
                 }
             }

@@ -135,8 +135,10 @@ Helpers:
 |---|---|
 | `value \| format('.1%')` | The value through a d3-format spec, the same specs `format:` takes elsewhere. |
 | `value \| format(column=channels.y)` | The value through the format the board resolved for that column: the query's `formats:`, `style.formats`, the number locale and currency, the way a KPI prints it. Prefer it to a `value_format` option that only restates the column's format; keep an option only when the template should print something different. A spec and `column=` together is an error, as is a column the query did not return. Numbers only: a date or text value under `column=` is an error. With no rows there are no columns: wrap a derived total in `{% if rows %}`. |
-| `text_width(text, size, weight)` | Pixel width of `text` in the board's font at `size`; `weight` optional (`600`, `"bold"`, or any weight `style` carries). Measure labels instead of guessing. |
+| `text_width(text, size, weight)` | Pixel width of `text` in the board's font at `size`; `weight` optional (`600`, `"bold"`, or any weight `style` carries). Digits measure as tabular numerals, like the axis labels the engine draws. Measure labels instead of guessing. |
 | `color_for(value, column)` | The board's pinned color for that column's value (`style.charts.category_colors`), else the next categorical palette color; stable within a chart. |
+| `label_ink(color)` | `color` as text ink on the chart's background: the engine's dark step with a 4.5:1 floor, right on light and dark themes. |
+| `variant(color, kind)` | `light`, `dark`, `pale` or `deep` tier of a hex `color`; the engine's palette-variant math. |
 | `href(row)` | The chart's `link:` for that row, every `{{ channel }}` placeholder filled from the row. |
 | `raise_error(message)` | Stops the render and shows `message` in the chart's place. Use it for data the template cannot draw. |
 
@@ -200,7 +202,8 @@ stay unsupported: vector-only, sandboxed output), animation elements, `on*` attr
 board's own hooks (`role`, `aria-*`, `data-*`, classes starting with `role-`
 or `dbt-`), a paint attribute that is not a color or `url(#id)`, an `href` or
 `url()` that is not `#local` outside `<a>`, `javascript:`, CSS escapes and
-loading functions, nesting past 64 levels, comments, processing instructions,
+loading functions, a null interpolated into an attribute, nesting past 64
+levels, comments, processing instructions,
 CDATA, DOCTYPE.
 
 ## 9. The template dialect

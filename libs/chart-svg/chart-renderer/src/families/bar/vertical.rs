@@ -24,9 +24,9 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
-use super::axes::{BandXAxis, bar_temporal_labels, cadence_ratio, format_tick_labels, rotated_rows_reach};
+use super::axes::{BandInterval, BandXAxis, band_tick_snap, bar_temporal_labels, bucket_x, cadence_ratio, format_tick_labels, rotated_rows_reach};
 use super::bind::zero_label;
-use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
+use super::domain::{CenterStack, RawX, SegmentSpan, SegmentSpans, bar_value_extent, base_series, build_cat_domain, build_data_map, Extras, cat_order, category_totals, collapsed_authored_domain, grouped_rail_anchors, grouped_spans, is_tier, layered_by_sign, nice_shared_scale, niced_rail_domain, outer_segments, stack_label_spans, stack_reach, stack_spans, stacked_rail_anchors, tallest_total, tier_depths, tier_name, unbaked_rungs, value_domain_and_ticks, with_tiers};
 use super::facet::color_1to1_with_cat;
 use super::labels::{FitHide, LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, label_fit_span, label_hang, mark_labels, plain_sites, step_band_of, value_label_layers};
 use super::layout::{Drawn, XScale, clipped_if, warn_vertical_density};
@@ -194,6 +194,13 @@ pub(super) enum Shape {
     /// chart (production's `autosize: pad`: the plot IS the payload view, the
     /// strip floats around it, the canvas grows around the ink): no rail.
     Fit,
+}
+
+/// Length of the band axis's tick marks: drawn when the theme or author made
+/// them visible, or when thinned labels restore them, and only beside labels.
+fn band_tick_len(ax_x: &crate::common::AxisStyle, restored: bool) -> f64 {
+    let drawn = restored || ax_x.ticks.visible == Some(true);
+    if drawn && ax_x.labels.visible != Some(false) { ax_x.ticks.length.unwrap_or(6.0) } else { 0.0 }
 }
 
 /// `ERR-ANNOTATION-UNSUPPORTED` for a bar shape whose slots the annotation maps cannot follow.
@@ -897,7 +904,6 @@ pub(crate) fn render_vertical_panel(
     // negative floor they would scale the axis one way and draw the marks
     // another. The stacked loops read the floor themselves (Vega's
     // stackZero law).
-    let zero_text = zero_label(r, rows)?;
     // A shared-scale overlay layer merges the base's y encoding into a
     // second `layer[]` entry sharing ONE Vega-Lite scale — compiling that
     // union flips the scale's `nice` default from unset (an un-nested
@@ -939,6 +945,7 @@ pub(crate) fn render_vertical_panel(
         }
         linear_domain_max = niced_max;
     }
+    let zero_text = zero_label(r, rows, &LinearScale::new(v_domain_min, linear_domain_max, h, 0.0))?;
     // A zoomed (`zero: false`) floor above 0 leaves the columns' zero baseline
     // below the plot. A chart of nothing but such bars paints no mark at all and
     // production raises it (`rendering.py`: every mark degenerate while some
@@ -1135,27 +1142,29 @@ pub(crate) fn render_vertical_panel(
     let show_rail_v = r.style.endpoint_labels.visible && color_field.is_some();
     let sl = &r.style.series_label;
     let el = &r.style.endpoint_labels;
-    let rail_pane_w = if show_rail_v {
-        crate::families::cartesian::warn_rail_labels_cut(
-            &r.id,
-            if r.series_from_measures { "y" } else { "color" },
-            &color_domain,
-            &sl.font_family,
-            sl.font_size,
-            &sl.font_weight,
-            fonts,
-            w,
-        )?;
-        crate::families::cartesian::rail_pane_width(
-            &color_domain,
-            &sl.font_family,
-            sl.font_size,
-            &sl.font_weight,
-            fonts,
-            w,
-        )?
+    // A grouped bar's rail anchors each series at its own last bar, so its label reads
+    // "{value} {name}" in the value axis's resolved format; a stacked anchor is a
+    // cumulative midpoint and stays name-only.
+    let grouped_rail = match color_field.filter(|_| show_rail_v && !is_stacked) {
+        Some(color) => Some(grouped_rail_anchors(rows, &cat_domain, cat_field, val_field, color, ax_y.authored_continuous_domain())?),
+        None => None,
+    };
+    let rail_value = |series: &str| -> Result<Option<String>, String> {
+        let anchor = grouped_rail.iter().flat_map(|(anchors, _)| anchors).find(|(s, _)| s == series);
+        anchor.map(|(_, value)| crate::families::cartesian::rail_value_text(*value, ax_y)).transpose()
+    };
+    let rail_field = if r.series_from_measures { "y" } else { "color" };
+    let rail_font = (sl.font_family.as_str(), sl.font_size, sl.font_weight.as_str());
+    let (rail_pane_w, rail_plans) = if show_rail_v {
+        let entries = color_domain.iter().map(|series| Ok((series.clone(), rail_value(series)?, series.clone()))).collect::<Result<Vec<_>, String>>()?;
+        let plans = crate::families::cartesian::plan_rail_labels(&entries, w, rail_font, fonts)?;
+        let width_of = |texts: &[String]| {
+            crate::families::cartesian::rail_pane_width(texts, &sl.font_family, sl.font_size, &sl.font_weight, fonts, w)
+        };
+        let reserved = crate::families::cartesian::rail_reserved_lines(&plans);
+        (width_of(&reserved)?, plans)
     } else {
-        0.0
+        (0.0, HashMap::new())
     };
     // Production crowds the rail concat's pane, so the time axis resolves at its width.
     let rail_span = if show_rail_v { rail_pane_w + el.label_offset } else { 0.0 };
@@ -1180,6 +1189,8 @@ pub(crate) fn render_vertical_panel(
     // Once a bar's calendar labels grow sparser than its buckets, ticks show
     // under the painted labels, overriding the theme's hidden default.
     let mut x_ticks_restored = false;
+    // The label vocabulary and the period the ladder settled on, which a band axis centers its labels over.
+    let mut label_periods: Option<crate::families::temporal::LabelPeriods> = None;
     let mut temporal_tilt = 0.0_f64;
     // `AxisLabelLayout.label_block_height` of a date axis the tilt resolver
     // laid out; a bottom strip's axis gap grows by what it exceeds the
@@ -1207,6 +1218,13 @@ pub(crate) fn render_vertical_panel(
                 cat_font_size,
             )?;
             x_ticks_restored = resolved.ticks_restored;
+            if let LabelUnit::Calendar(format_tu) = unit {
+                label_periods = Some(crate::families::temporal::LabelPeriods {
+                    format_tu,
+                    visibility_tu: resolved.visibility_tu,
+                    thinned: resolved.year_step > 1,
+                });
+            }
             temporal_tilt = resolved.angle.unwrap_or(0.0);
             x_parity_separation = resolved.parity.then(|| ax_x.labels.min_gap.unwrap_or(0.0));
             // A bucketed cadence that still does not clear flat is tilted (or
@@ -1225,16 +1243,7 @@ pub(crate) fn render_vertical_panel(
                 // Production lays the labels out at the card width less the endpoint
                 // rail's span (`reserved_width`).
                 let layout_w = if show_rail_v {
-                    let sl = &r.style.series_label;
-                    let pane_w = crate::families::cartesian::rail_pane_width(
-                        &color_domain,
-                        &sl.font_family,
-                        sl.font_size,
-                        &sl.font_weight,
-                        fonts,
-                        w,
-                    )?;
-                    w - (pane_w + r.style.endpoint_labels.label_offset)
+                    w - (rail_pane_w + r.style.endpoint_labels.label_offset)
                 } else {
                     w
                 };
@@ -1281,10 +1290,6 @@ pub(crate) fn render_vertical_panel(
         }
         _ => None,
     };
-    let label_rows = match &temporal_labels {
-        Some(ls) => ls.iter().map(|l| l.rows()).max().unwrap_or(1),
-        None => cat_labels.iter().map(|c| crate::text::line_count(c)).max().unwrap_or(1),
-    };
     // An authored angle wins before any type routing
     // (`resolve_axis_x_overlap`); then a date-valued axis (every value parses
     // as a date, the temporal verdict) takes production's `_temporal_layout`,
@@ -1301,6 +1306,40 @@ pub(crate) fn render_vertical_panel(
         }
     };
     let mut cat_angle = vega_fit::normalize_angle(cat_angle_raw);
+    // The plot the edge slices are judged against: the card less the value axis, before the fit settles it.
+    let plot_w_estimate = (avail_w - val_tick_size - base_label_pad - max_val_w.min(ax_y.labels.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT))).max(1.0);
+    // Labels named over a calendar period coarser than the buckets center on that period.
+    let band_intervals = match (detected_data_tu, label_periods) {
+        (Some(data_tu), Some(periods))
+            if temporal_labels.is_some()
+                && x_ticks_restored
+                && crate::families::temporal::interval_labels_allowed(&ax_x.labels, ax_x.ticks.time_unit.is_some() || ax_x.ticks.count.is_some(), authored_time_format.is_some()) =>
+        {
+            let mut measure = |s: &str| ax_x.labels.font.measure_weighted(fonts, s, cat_font_size);
+            crate::families::temporal::band_interval_axis(
+                &cat_domain,
+                data_tu,
+                periods,
+                plot_w_estimate,
+                ax_x.fiscal_year_start_month,
+                &mut measure,
+            )
+            .map_err(|e| format!("bar: {e}"))?
+        }
+        _ => None,
+    };
+    // Interval labels step up the cadence instead of thinning.
+    if band_intervals.is_some() {
+        x_parity_separation = None;
+        // Interval labels sit flat; a tilt picked for the on-tick layout no longer applies.
+        cat_angle = 0.0;
+        temporal_block = cat_font_size;
+    }
+    let label_rows = match (&band_intervals, &temporal_labels) {
+        (Some(iv), _) => iv.labels.iter().map(|l| l.rows()).max().unwrap_or(1),
+        (None, Some(ls)) => ls.iter().map(|l| l.rows()).max().unwrap_or(1),
+        (None, None) => cat_labels.iter().map(|c| crate::text::line_count(c)).max().unwrap_or(1),
+    };
     // A bottom strip's axis gap grows to clear the label block
     // (`AxisLabelLayout.label_block_height`): the formatted vocabulary at an
     // authored angle, the resolver's padded widths at a picked tilt.
@@ -1355,12 +1394,7 @@ pub(crate) fn render_vertical_panel(
     // Restored x ticks below the plot: their length pushes the label band
     // down and joins the bottom chrome on every arm (the tick is emitted
     // unconditionally when restored, so every arm must reserve it).
-    // Deliberately narrower than a general tick model: a theme-visible
-    // (`ticks.visible: true`) band axis stays unmodeled as before — only
-    // the restoration this port adds is charged, so no non-restored case
-    // moves.
-    let x_tick_len =
-        if x_ticks_restored { ax_x.ticks.length.unwrap_or(6.0) } else { 0.0 };
+    let x_tick_len = band_tick_len(ax_x, x_ticks_restored);
 
     // See render_horizontal's matching comment: stacked bars never get the
     // grouped-bar outer band padding.
@@ -1573,6 +1607,7 @@ pub(crate) fn render_vertical_panel(
     let stroke_w = r.style.mark.border.width.unwrap_or(0.0);
     let drawn_stroke_w = if stroke_color == "none" { 0.0 } else { stroke_w };
     let data_map = build_data_map(rows, cat_field, val_field, color_field, r.y_start.is_none())?;
+    let extras = Extras::build(rows, cat_field, color_field, r.y_start.is_none(), &r.tooltip)?;
     let link = r.datum_link(
         cat_field,
         match (&time, x_standard_dates) {
@@ -1705,7 +1740,7 @@ pub(crate) fn render_vertical_panel(
     if let Some(f) = facet {
         f.series.set(series);
     } else if !show_rail_v {
-        warn_vertical_density(payload.chart_id()?, r, rows, fonts, payload.board_style.as_ref(), decision_w, series, x_scale)?;
+        warn_vertical_density(payload.chart_id()?, r, rows, decision_w, series, x_scale)?;
     }
     if val_away && shape != Shape::Fit {
         return Err("bar: a default-aligned right value axis is modeled on the fit arm only".into());
@@ -1823,6 +1858,7 @@ pub(crate) fn render_vertical_panel(
         rows,
         plain_rows: &plain_rows,
         cat_field,
+        cat_domain: &cat_domain,
         val_field,
         color_field,
         is_grouped,
@@ -1935,14 +1971,23 @@ pub(crate) fn render_vertical_panel(
     // (domain index, max row width, rows) per drawn bottom label. Shaped:
     // Vega bounds the drawn label (laws-shared.md, shaped vs raw).
     let x_clear = Cell::new(0.0_f64);
-    let cat_label_ink: Vec<(usize, f64, usize)> = match &temporal_labels {
-        Some(tls) => tls
+    let cat_label_ink: Vec<(f64, f64, usize)> = match (&band_intervals, &temporal_labels) {
+        (Some(iv), _) => iv
+            .labels
+            .iter()
+            .zip(&iv.label_spans)
+            .map(|(tl, &(from, to))| {
+                let w1 = fonts.measure_shaped(&tl.row1, cat_family, cat_font_size)?;
+                let w2 = if tl.row2.is_empty() { 0.0 } else { fonts.measure_shaped(&tl.row2, cat_family, cat_font_size)? };
+                Ok(((from + to) / 2.0, w1.max(w2).min(cat_limit), tl.rows()))
+            })
+            .collect::<Result<_, String>>()?,
+        (None, Some(tls)) => tls
             .iter()
             .map(|tl| {
                 let w1 = fonts.measure_shaped(&tl.row1, cat_family, cat_font_size)?;
                 let w2 = if tl.row2.is_empty() { 0.0 } else { fonts.measure_shaped(&tl.row2, cat_family, cat_font_size)? };
-                let rows = tl.rows();
-                Ok((tl.domain_idx, w1.max(w2).min(cat_limit), rows))
+                Ok((tl.domain_idx as f64 + 0.5, w1.max(w2).min(cat_limit), tl.rows()))
             })
             .collect::<Result<_, String>>()?,
         // `cat_labels` (the `labels.expr`-rewritten parallel to raw
@@ -1950,11 +1995,11 @@ pub(crate) fn render_vertical_panel(
         // is what both draw loops below actually emit; measuring the raw
         // domain here would reserve overhang for a label under an
         // authored `labels.expr` never draws.
-        None => cat_labels
+        (None, None) => cat_labels
             .iter()
             .enumerate()
             .map(|(i, c)| {
-                fonts.measure_shaped(c, cat_family, cat_font_size).map(|lw| (i, lw.min(cat_limit), crate::text::line_count(c)))
+                fonts.measure_shaped(c, cat_family, cat_font_size).map(|lw| (i as f64 + 0.5, lw.min(cat_limit), crate::text::line_count(c)))
             })
             .collect::<Result<_, String>>()?,
     };
@@ -2091,6 +2136,7 @@ pub(crate) fn render_vertical_panel(
             fonts,
             canvas: r.canvas.as_str(),
             clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
+            occupied: Vec::new(),
         }
     };
     let plot = if shape == Shape::RailConcat {
@@ -2124,7 +2170,7 @@ pub(crate) fn render_vertical_panel(
                 )?;
                 // Production crowds the rail's pane, not the card: the tilt and
                 // parity the narrower width asks for are the ones drawn.
-                if let (None, Some(angle)) = (ax_x.labels.angle, resolved.angle) {
+                if let (None, Some(angle), true) = (ax_x.labels.angle, resolved.angle, band_intervals.is_none()) {
                     cat_angle = vega_fit::normalize_angle(angle);
                     (cat_align, cat_baseline) = if cat_angle == 0.0 {
                         ("center", x_edge.baseline())
@@ -2132,12 +2178,12 @@ pub(crate) fn render_vertical_panel(
                         vega_fit::vl_x_label_anchor(cat_angle, x_edge == crate::common::XEdge::Bottom)
                     };
                 }
-                x_parity_separation = resolved.parity.then(|| ax_x.labels.min_gap.unwrap_or(0.0));
+                x_parity_separation = (resolved.parity && band_intervals.is_none()).then(|| ax_x.labels.min_gap.unwrap_or(0.0));
                 (Some(resolved.labels), resolved.ticks_restored)
             }
             _ => (None, x_ticks_restored),
         };
-        let x_tick_len = if x_ticks_restored { ax_x.ticks.length.unwrap_or(6.0) } else { 0.0 };
+        let x_tick_len = band_tick_len(ax_x, x_ticks_restored);
         let label_rows = match &temporal_labels {
             Some(ls) => ls.iter().map(|l| l.rows()).max().unwrap_or(1),
             None => cat_labels.iter().map(|c| crate::text::line_count(c)).max().unwrap_or(1),
@@ -2954,9 +3000,8 @@ pub(crate) fn render_vertical_panel(
                         x_clear.set(clear);
                         let row_y = x_edge.at(ph, ax_off_x + x_tick_len + cat_pad + clear);
                         let mut label_inks: Vec<vega_fit::Bounds> = Vec::with_capacity(cat_label_ink.len());
-                        for &(idx, lw, rows) in &cat_label_ink {
-                            let Some(band_x) = band.position(&cat_domain[idx]) else { continue };
-                            let cx = band_x + band.bandwidth() / 2.0;
+                        for &(at, lw, rows) in &cat_label_ink {
+                            let Some(cx) = bucket_x(&band, &cat_domain, at) else { continue };
                             // Rotated ink — `common::rotated_category_label_ink`
                             // is the shared rotation law (vega-scenegraph's
                             // `text.js bound()` → `Bounds.rotate`, no expand)
@@ -3417,10 +3462,8 @@ pub(crate) fn render_vertical_panel(
             &cat_domain, &stack_order, &data_map, normalize, (r.stack == "center").then_some(tallest),
         )?;
         rail_cascade_max = if normalize { 1.0 } else { tallest };
-    } else if show_rail_v {
-        let color = color_field.expect("a rail names its series by a color field");
-        (rail_anchors, (rail_cascade_min, rail_cascade_max)) =
-            grouped_rail_anchors(rows, &cat_domain, cat_field, val_field, color, ax_y.authored_continuous_domain())?;
+    } else if let Some(grouped) = grouped_rail.clone() {
+        (rail_anchors, (rail_cascade_min, rail_cascade_max)) = grouped;
     }
 
     let band = make_band(plot_w);
@@ -3752,6 +3795,8 @@ pub(crate) fn render_vertical_panel(
     let continuous_time = time.as_ref().is_some_and(|t| !t.is_discrete());
     let double_stroke = time.as_ref().map_or(true, TimeX::double_stroke);
     let clip_ns = time.as_ref().filter(|t| t.double_stroke()).map(|_| crate::contract::safe_svg_id(&r.id));
+    // The base bars, which annotation text tests for its halo.
+    let mut under = Vec::new();
     if is_stacked {
         for cat in &cat_domain {
             let Some(band_x) = band.position(cat) else { continue };
@@ -3780,7 +3825,7 @@ pub(crate) fn render_vertical_panel(
                         tooltip_labels, &tip(cat, series), tooltip_tu, x_is_standard_date, grain_header_format, series_promoted.then(|| series_text(base_series(series))).as_deref(),
                         order_domain.as_deref().filter(|_| series_promoted).map(|d| crate::contract::tooltip_order_rank(d, base_series(series))),
                         value_title, tooltip_fmt, raw_val,
-                        (normalize && !has_negative).then_some(raw_val / total), total_row, native.as_ref(),
+                        (normalize && !has_negative).then_some(raw_val / total), total_row, extras.of(&(cat.clone(), series.clone()))?, native.as_ref(),
                     )?
                 } else {
                     None
@@ -3800,7 +3845,6 @@ pub(crate) fn render_vertical_panel(
                         let imputed = imputed_datum_aria(
                             tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, &series_text(series),
                             order_domain.as_deref().map(|d| crate::contract::tooltip_order_rank(d, series)),
-                            value_title, tooltip_fmt,
                         )?;
                         band.push(cat, series, imputed.as_deref(), None, col_x, columns.width, None);
                     }
@@ -3830,12 +3874,13 @@ pub(crate) fn render_vertical_panel(
                 // A time axis's stack is one clipped group: only its top segment keeps the rounded end.
                 let segment_r = if (if raw_val < 0.0 { outers.1 } else { outers.0 }) == Some(series) { corner_r } else { 0.0 };
                 stack_ends = Some(stack_ends.map_or((top_y, bottom_y), |(top, bottom)| (top.min(top_y), bottom.max(bottom_y))));
-                plot.extend(bar_passes(false, col_x, top_y, columns.width, seg_h, &fill, None, stroke_color, stroke_w,
+                under.push(crate::annotation::DataMark::rect(col_x, top_y, columns.width, seg_h));
+                plot.extend(bar_passes(false, col_x, top_y, columns.width, seg_h, &fill, r.style.mark.opacity, stroke_color, stroke_w,
                     segment_r,
                     Rounded::by_sign(raw_val), false, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key))?);
             }
             if let (Some((top, bottom)), true) = (stack_ends, continuous_time && stroke_color != "none" && stroke_w > 0.0) {
-                let (r, x2) = (corner_r.min(columns.width / 2.0).min((bottom - top) / 2.0), col_x + columns.width);
+                let (r, x2) = (crate::common::bar_corner_radius(corner_r, columns.width, bottom - top), col_x + columns.width);
                 plot.push(Node::Path(
                     Attrs::new()
                         .set(
@@ -3881,7 +3926,7 @@ pub(crate) fn render_vertical_panel(
             let plain = || {
                 bar_datum_aria(
                     tooltip_labels, &tip(cat, series), tooltip_tu, x_is_standard_date, grain_header_format, series_promoted.then(|| series_text(base_series(series))).as_deref(), order,
-                    value_title, tooltip_fmt, val, None, None, native.as_ref(),
+                    value_title, tooltip_fmt, val, None, None, extras.of(&key)?, native.as_ref(),
                 )
             };
             let aria = match (&ranged, start) {
@@ -3905,7 +3950,8 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, fill.clone(), hrefs.get(&key).cloned()));
             }
-            plot.extend(bar_passes(false, col_x, bar_top, columns.width, bar_h, &fill, None, stroke_color, stroke_w,
+            under.push(crate::annotation::DataMark::rect(col_x, bar_top, columns.width, bar_h));
+            plot.extend(bar_passes(false, col_x, bar_top, columns.width, bar_h, &fill, r.style.mark.opacity, stroke_color, stroke_w,
                 corner_r,
                 ends, double_stroke, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
@@ -3945,7 +3991,7 @@ pub(crate) fn render_vertical_panel(
             };
             let plain = || {
                 bar_datum_aria(
-                    tooltip_labels, &tip(cat, &key.1), tooltip_tu, x_is_standard_date, grain_header_format, combo_series, None, value_title, tooltip_fmt, val, None, None, native.as_ref(),
+                    tooltip_labels, &tip(cat, &key.1), tooltip_tu, x_is_standard_date, grain_header_format, combo_series, None, value_title, tooltip_fmt, val, None, None, extras.of(&key)?, native.as_ref(),
                 )
             };
             let aria = match (&ranged, start) {
@@ -3968,7 +4014,8 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
-            plot.extend(bar_passes(false, col_x, bar_top, columns.width, bar_h, fill, None, stroke_color, stroke_w, corner_r,
+            under.push(crate::annotation::DataMark::rect(col_x, bar_top, columns.width, bar_h));
+            plot.extend(bar_passes(false, col_x, bar_top, columns.width, bar_h, fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r,
                 ends, double_stroke, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
     }
@@ -4003,7 +4050,7 @@ pub(crate) fn render_vertical_panel(
         bar_datum_aria(
             tooltip_labels, &header_date(super::time_x::tooltip_date(row, x_field)), tooltip_tu, x_is_standard_date,
             grain_header_format, Some(series.as_str()), None, name, axis.tooltip_format_or(tooltip_fmt),
-            val, None, None, None,
+            val, None, None, &[], None,
         )
     };
     let line_layer_promoted: Vec<bool> = line_layers
@@ -4064,6 +4111,7 @@ pub(crate) fn render_vertical_panel(
             if step_over_grouped { color_domain.len() as f64 / (color_domain.len() as f64 + 1.0) } else { 0.0 },
             stacked,
 crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
+crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line], fonts },
 )
         .map_err(|e| format!("bar: {e}"))
     };
@@ -4135,10 +4183,11 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
     // per-row value position, never a stack's cumulative midpoint. A value
     // label is a text mark under Vega-Lite's own description: its x, then the
     // layer's measure at its raw value.
-    let paint_layer_labels = |bl: &OverlayBarLayer,
+    let paint_layer_labels = |(layer, bl): (usize, &OverlayBarLayer),
                               bl_x: &str,
                               bar_layer_rows: &[serde_json::Map<String, Value>],
-                              linear: &LinearScale|
+                              linear: &LinearScale,
+                              bar_width: &dyn Fn(&str) -> f64|
      -> Result<Vec<Node>, Diagnostic> {
         let Some(ml) = bl.bar_mark.labels.as_ref().filter(|ml| ml.visible) else { return Ok(Vec::new()) };
         let layer_value_title = crate::common::axis_title_text(&bl.y, bl.label.as_deref(), &r.field_labels)?;
@@ -4148,6 +4197,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         let label_layer = LabelLayer::new(spec, sites, false, false, false, false, false, fonts, payload.board_style.as_ref())?;
         let center = |cat: &str, _: f64, _: Option<usize>| band.center(cat).expect("a labeled category is on the band scale");
         let geom = LabelGeometry { band: &band, center: &center, linear };
+        label_layer.warn_if_crowded(&r.id, Some(layer), &geom, None, Some(&|site| bar_width(&site.cat)));
         let points = label_layer.points(&geom, None, &LabelDecors::new(), &crate::selected::Selection::default(), |site| {
             Ok(tooltip_labels.then(|| {
                 crate::contract::native_label(&[(x_title, site.cat.to_string()), (layer_value_title.as_str(), site.value.to_string())])
@@ -4229,7 +4279,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 bars.extend(bar_passes(false, col_x, top, mark_w, h, &fill, bl.bar_mark.opacity, bl_stroke_color, bl_stroke_w, bl_corner_r, ends, true, None, aria.as_deref(), crate::href::anchor_for(bl_link, &href))?);
             }
             out.extend(clipped_if(layer_clip, &defined_clips, (plot_w, plot_h), &r.id, bars));
-            out.extend(paint_layer_labels(bl, bl_x, bar_layer_rows, linear)?);
+            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
             return Ok(());
         }
         if bl.color.is_some() {
@@ -4303,7 +4353,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 }
             }
             out.extend(clipped_if(layer_clip, &defined_clips, (plot_w, plot_h), &r.id, bars));
-            out.extend(paint_layer_labels(bl, bl_x, bar_layer_rows, linear)?);
+            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
         } else {
             let bl_corner_r = layer_radius(bl);
             let bl_stroke_color = bl.bar_mark.border.color.as_deref().unwrap_or("none");
@@ -4330,7 +4380,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
             // The layer's OWN value labels (`_build_layer_label_specs` →
             // `_build_bar_text_layer`) paint right after its own bars, before
             // the zero rule — the base's own labels paint last (see below).
-            out.extend(paint_layer_labels(bl, bl_x, bar_layer_rows, linear)?);
+            out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
         }
         Ok(())
     };
@@ -4374,7 +4424,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 let cat = header_date(super::time_x::tooltip_date(row, sl.x.as_deref().unwrap_or(cat_field)));
                 bar_datum_aria(
                     tooltip_labels, &cat, tooltip_tu, x_is_standard_date, grain_header_format, combo_series, None,
-                    value_title, tooltip_fmt, val, None, None, native.as_ref(),
+                    value_title, tooltip_fmt, val, None, None, &[], native.as_ref(),
                 )
             },
             match &claim.fill {
@@ -4393,6 +4443,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 }))
             },
             crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), scatter_clip(sl, sl_rows).then_some((plot_w, plot_h)),
+            crate::families::layers::LabelCrowd { chart_id: &r.id, layer: scatter_layer_at[scatter], fonts },
         )
         .map_err(|e| format!("bar: {e}"))
     };
@@ -4446,12 +4497,29 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
     // "one law, one function"), which is ALSO how `independent_scale`
     // suppresses the rule entirely — see `rules`'s own assignment above.
     // Layers painted so far: the bars, then the zero rule when one is.
-    let tick_xs: Vec<f64> = match &time_axis {
+    // The rules reach under the outermost tick strokes, interval boundaries included.
+    let interval: Option<BandInterval> = match band_intervals {
+        Some(iv) => {
+            let at = |coord: f64| bucket_x(&band, &cat_domain, coord).ok_or("bar: an interval label sits off the band");
+            Some(BandInterval {
+                ticks: iv.ticks.iter().map(|&coord| at(coord)).collect::<Result<_, _>>()?,
+                labels: iv
+                    .labels
+                    .into_iter()
+                    .zip(iv.label_spans)
+                    .map(|(tl, (from, to))| Ok((tl, at((from + to) / 2.0)?)))
+                    .collect::<Result<_, &str>>()?,
+            })
+        }
+        None => None,
+    };
+    let boundary_xs = interval.iter().flat_map(|iv| &iv.ticks).map(|&x| band_tick_snap(x));
+    let date_tick_xs: Vec<f64> = match &time_axis {
         Some(axis) => axis.tick_fracs(plot_w, fonts)?.into_iter().map(|frac| (plot_w * frac).round() + 0.5).collect(),
-        None => cat_domain.iter().filter_map(|cat| band.position(cat)).map(|x| (x + band.bandwidth() / 2.0 - 0.5).round() + 0.5).collect(),
+        None => cat_domain.iter().filter_map(|cat| band.position(cat)).map(|x| band_tick_snap(x + band.bandwidth() / 2.0)).collect(),
     };
     let ticks_drawn = x_tick_len > 0.0 || time_axis.as_ref().is_some_and(TemporalXAxis::draws_ticks);
-    let floor_span = crate::common::floor_rule_span(plot_w, ax_x, ticks_drawn, tick_xs);
+    let floor_span = crate::common::floor_rule_span(plot_w, ax_x, ticks_drawn, boundary_xs.chain(date_tick_xs));
     // The value axis edges the ticks start from, in plot coordinates: a baseline rule reaches them so its continued tick meets it.
     let val_edge_x = if val_on_right { facet_axis_right_base + value_axis_right_overhang + ax_off_y + 0.5 } else { plot_left - ax_off_y + 0.5 };
     let val_edges: Vec<f64> = if val_tick_size > 0.0 && paint_value_axis {
@@ -4548,8 +4616,11 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         // A scatter layer paints its own, unmodeled number of layers between
         // the bars and the base labels, so the group's ordinal is unknown
         // there: those labels stay bare.
+        under.extend(layer.site_inks(&label_geom, if layer.total { None } else { label_hide }).map(|(_, b)| crate::annotation::DataMark::Box(b)));
         let ordinal_known = layer.total || scatter_layers.is_empty();
-        let points = layer.points(&label_geom, if layer.total { None } else { label_hide }, &label_decors, &r.selection, |site| {
+        let hide = if layer.total { None } else { label_hide };
+        layer.warn_if_crowded(&r.id, None, &label_geom, hide, Some(&|site| cols.of(&site.cat).width));
+        let points = layer.points(&label_geom, hide, &label_decors, &r.selection, |site| {
             if !ordinal_known {
                 return Ok(None);
             }
@@ -4561,7 +4632,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
             let plain = || {
                 bar_datum_aria(
                     tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, combo_series, None,
-                    value_title, tooltip_fmt, site.raw, None, None, native.as_ref(),
+                    value_title, tooltip_fmt, site.raw, None, None, &[], native.as_ref(),
                 )
             };
             match ranged.as_ref().and_then(|rb| Some((rb, *rb.starts.get(&(cat.to_string(), String::new()))?))) {
@@ -4580,10 +4651,8 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
     }
 
     // Over the value labels; the plot origin is offset into the page frame.
-    tail.extend(crate::annotation::nodes(
-        &annotation_ctx((plot_left, plot_top), plot_w, plot_h),
-        crate::annotation::Plane::Foreground,
-    )?);
+    let annotations = crate::annotation::AnnotationCtx { occupied: under, ..annotation_ctx((plot_left, plot_top), plot_w, plot_h) };
+    tail.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?);
 
     // Shaped widths, the fit arm's `cat_label_ink` measurer (Vega bounds the
     // drawn label); the title reads the same ink the margin reserves.
@@ -4613,6 +4682,7 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         cat_domain: cat_domain.clone(),
         cat_shown: cat_labels.iter().map(|l| ax_x.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
         temporal_labels: temporal_labels.clone(),
+        interval,
         cat_angle,
         cat_baseline: cat_baseline.to_string(),
         cat_align: cat_align.to_string(),
@@ -4865,14 +4935,16 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
         // every nudged label inside the raw data extent, so none escapes
         // into the headroom and the branch midpoint is the data's own.
         let px_per_unit = (linear_domain_max > v_domain_min).then(|| (plot_h / (linear_domain_max - v_domain_min)).abs());
-        let cascaded = crate::families::cartesian::recascade_rail_anchors(
+        let (cascaded, painted_plans, forcing) = crate::families::cartesian::place_rail_labels(
             &r.id,
             &rail_anchors,
+            &rail_plans,
             gap_px,
+            crate::families::cartesian::rail_line_height(sl.font_size),
             px_per_unit,
-            rail_cascade_min,
-            rail_cascade_max,
-        );
+            (rail_cascade_min, rail_cascade_max),
+        )?;
+        crate::families::cartesian::warn_rail_plan(&r.id, rail_field, &color_domain, str::to_string, &painted_plans, &forcing);
         let rail_x = plot_left + rail_x_rel.expect("the rail arm places its labels");
         let mut rail_labels: Vec<Node> = Vec::new();
         // A grouped bar has no stack order: its series take the palette in color-domain order.
@@ -4891,12 +4963,14 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                 Some(field) => crate::contract::series_label_attrs(field, series)?,
                 None => Attrs::new(),
             };
-            // The text mark's `limit` is the pane's own (capped) width.
-            let label = crate::common::truncate_label(series, rail_pane_w, &sl.font_family, sl.font_size, fonts, false)?;
-            rail_labels.push(Node::text(
+            // A wrapped label's lines straddle the anchor.
+            let plan = &painted_plans[series];
+            let line_h = crate::families::cartesian::rail_line_height(sl.font_size);
+            let first_y = ry - plan.extra_px(line_h) / 2.0;
+            rail_labels.push(crate::families::cartesian::rail_label_node(
                 Attrs::new()
                     .set("x", "0")
-                    .set("y", format!("{ry:.3}"))
+                    .set("y", format!("{first_y:.3}"))
                     .set("text-anchor", "start")
                     .vega("font-family", sl.font_family.as_str())
                     .set("font-size", sl.font_size.to_string())
@@ -4904,7 +4978,8 @@ crate::families::layers::layer_link(link.as_ref(), (l.query_name.as_deref(), r.q
                     .set("font-style", sl.font_style.as_str())
                     .set("fill", rcolor.as_str())
                     .extend(rail_label_attrs),
-                label,
+                plan,
+                line_h,
             ));
         }
         let rail = if tooltip_labels {

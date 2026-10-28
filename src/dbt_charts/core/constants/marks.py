@@ -4,6 +4,9 @@ from typing import Final
 
 # Largest share of the chart width the series-label rail may claim; must stay below 1.
 ENDPOINT_LABEL_MAX_WIDTH_FRACTION: Final[float] = 0.33
+# Largest share a rail label carrying a value may take (a fifth); past it the label wraps, then drops
+# the value, so a narrow card keeps its plot.
+ENDPOINT_LABEL_VALUE_MAX_WIDTH_FRACTION: Final[float] = 0.2
 # Separation between adjacent endpoint labels, as a multiple of the font size.
 ENDPOINT_LABEL_LINE_HEIGHT_MULTIPLIER: Final[float] = 1.3
 

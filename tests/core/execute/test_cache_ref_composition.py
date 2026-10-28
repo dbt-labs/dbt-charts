@@ -488,9 +488,31 @@ class TestCacheRefErrors:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class TestCacheRefUpstreamEditBustsDownstream:
+    """Editing an upstream query must miss the downstream's persistent entry."""
+
+    def test_editing_upstream_busts_cache_composing_downstream(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        cache = TrivialDuckDBCache()
+        downstream = "SELECT x FROM {{ queries.upstream.cache }}"
+
+        def render(upstream_sql: str) -> list[dict[str, Any]]:
+            board = _build_board(
+                {"upstream": upstream_sql, "downstream": downstream},
+                chart_query="downstream",
+            )
+            return _executor_with_cache(board, cache, local_project).execute_query(
+                "downstream"
+            )
+
+        assert render("SELECT 1 AS x") == [{"x": 1}]
+        assert render("SELECT 2 AS x") == [{"x": 2}]
+
+
 class TestCacheRefCycleDetection:
-    """Cycles via .cache must be caught — compile-time for authored YAML,
-    runtime (re-entrancy guard) as defense-in-depth."""
+    """Cycles via .cache must be caught: at compile time for authored YAML, and
+    by query expansion before any upstream executes."""
 
     def test_self_cycle_rejected_at_compile(self) -> None:
         """A query referencing itself via .cache is rejected at compile."""
@@ -538,15 +560,15 @@ class TestCacheRefCycleDetection:
             "query_a" in errors or "query_b" in errors or "circular" in errors.lower()
         )
 
-    def test_runtime_reentrancy_guard_triggers_on_registry_cycle(
+    def test_registry_cycle_rejected_at_execute(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """The runtime re-entrancy guard catches a cache-ref cycle that spans the
-        cross-board query_registry — which the per-board compile-time check cannot
-        see (the compiler only validates cycles within a single board).
+        """A cache-ref cycle that spans the cross-board query_registry — which the
+        per-board compile-time check cannot see — is rejected when the cache key
+        is computed, before any upstream executes.
         """
+        from dbt_charts.core.compile.errors import JinjaError
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.diagnostics.execution import ExecutionError
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
@@ -573,7 +595,7 @@ class TestCacheRefCycleDetection:
             query_registry={"partner": partner},
         )
 
-        with pytest.raises(ExecutionError, match="[Cc]ycle detected at runtime"):
+        with pytest.raises(JinjaError, match="Circular query dependency"):
             executor.execute_query("looper")
 
 
@@ -622,8 +644,6 @@ class TestCacheRefMaxRowsEnforcement:
         local_project: Callable[..., FilesystemProject],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-
         monkeypatch.setenv("DCT_MAX_ROWS_CEILING", "3")
         cache = TrivialDuckDBCache()
         board = _build_board(
@@ -641,7 +661,7 @@ class TestCacheRefMaxRowsEnforcement:
         assert len(rows) == 3
 
         query = board.queries["composed"]
-        key = compute_cache_key(query, {}, board.sources)
+        key = executor._cache_key("composed", query, {})
         cached = cache.get(*key, ttl=None)
         assert cached is not None
         assert len(cached.rows) == 3, (

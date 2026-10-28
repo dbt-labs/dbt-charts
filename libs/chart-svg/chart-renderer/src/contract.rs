@@ -20,12 +20,26 @@ pub const ROLE_HEADER_SWATCHED: char = '\u{2064}'; // INVISIBLE PLUS -- header I
 pub const ROLE_SERIES: char = '\u{2062}'; // INVISIBLE TIMES
 pub const ROLE_TOTAL: char = '\u{2063}'; // INVISIBLE SEPARATOR
 pub const ROLE_ORDER: char = '\u{200C}'; // ZERO WIDTH NON-JOINER
+/// Prefixes a row the author added with the chart's `tooltip:` -- a
+/// `label: value` row that follows the mark's own value rows.
+pub const ROLE_EXTRA: char = '\u{200D}'; // ZERO WIDTH JOINER
+/// The one part of an imputed stack slot's label that is not identity: the slot
+/// names its x and series but has no datum to report.
+pub const ROLE_IMPUTED: char = '\u{034F}'; // COMBINING GRAPHEME JOINER
+/// Stands for a `;` inside an authored value, which the runtime splits rows on;
+/// `parseAriaLabel` turns it back.
+pub const SEMICOLON_ESCAPE: char = '\u{E000}'; // PRIVATE USE AREA
 /// Emphasis modifier, orthogonal to the role markers above -- prefixes a
 /// value/total row that renders at the low-contrast label color rather
 /// than the loud value color (`_tooltip.py`'s `MUTED`). Pie's own `%`
 /// row leads (loud, unprefixed); its raw value and grand-total rows are
 /// context, so both carry this prefix.
 pub const MUTED: char = '\u{2060}'; // WORD JOINER
+/// One authored `tooltip:` row.
+pub fn extra_row(label: &str, value: &str) -> String {
+    format!("{ROLE_EXTRA}{label}: {value}")
+}
+
 /// Brackets a value row's swatch color: `SWATCH #hex SWATCH` leads its title.
 pub const SWATCH: char = '\u{200B}'; // ZERO WIDTH SPACE
 
@@ -432,6 +446,9 @@ pub struct BarTooltip<'a> {
     /// Stacked group-total footer (`("Σ", sum)`), `zero` and
     /// `normalize` stacks alike.
     pub total: Option<(&'a str, f64)>,
+    /// The authored `tooltip:` rows ([`extra_row`]), after the value row and
+    /// before the Σ footer.
+    pub extra: &'a [String],
 }
 
 /// Build one datum's aria-label. `d3rs::format` mirrors Vega's own
@@ -443,26 +460,35 @@ pub fn bar_aria_label(t: &BarTooltip, value: f64) -> Result<String, String> {
     bar_aria_label_text(t, &value_s)
 }
 
-/// The description of a datum Vega imputes into a sparse stack: every row of
-/// the card reads as usual, the value as the literal `null`.
-pub fn imputed_aria_label(t: &BarTooltip) -> Result<String, String> {
-    bar_aria_label_text(t, "null")
+/// The description of a datum Vega imputes into a sparse stack: it names the
+/// slot (so the hover band covers it and the runtime finds its x) and marks it
+/// imputed, which the runtime leaves out of the card.
+pub fn imputed_aria_label(header: &str, series: &str, order: Option<i64>) -> String {
+    let mut parts = identity_parts(header, Some(series), order);
+    parts.push(ROLE_IMPUTED.to_string());
+    parts.join("; ")
+}
+
+fn identity_parts(header: &str, series: Option<&str>, order: Option<i64>) -> Vec<String> {
+    let mut parts = vec![format!("{ROLE_HEADER}{header}")];
+    if let Some(series) = series {
+        parts.push(format!("{ROLE_SERIES}{series}"));
+    }
+    if let Some(rank) = order {
+        parts.push(format!("{ROLE_ORDER}{rank}"));
+    }
+    parts
 }
 
 fn bar_aria_label_text(t: &BarTooltip, value_s: &str) -> Result<String, String> {
-    let mut parts = vec![format!("{ROLE_HEADER}{}", t.header)];
-    if let Some(series) = t.series {
-        parts.push(format!("{ROLE_SERIES}{series}"));
-    }
-    if let Some(rank) = t.order {
-        parts.push(format!("{ROLE_ORDER}{rank}"));
-    }
+    let mut parts = identity_parts(t.header, t.series, t.order);
     if let Some(pct) = t.percent {
         let pct_s = crate::number_locale::d3_format(".0%", pct)
             .map_err(|e| format!("bar: tooltip percent format: {e}"))?;
         parts.push(format!("%: {pct_s}"));
     }
     parts.push(format!("{}: {value_s}", t.value_title));
+    parts.extend(t.extra.iter().cloned());
     if let Some((total_title, total_value)) = t.total {
         let total_s = t.value_format.paint(total_value).map_err(|e| format!("bar: tooltip total {e}"))?;
         parts.push(format!("{ROLE_TOTAL}{total_title}: {total_s}"));
@@ -576,6 +602,8 @@ pub struct PieTooltip<'a> {
     pub value_format: &'a FormatSlot,
     pub value: f64,
     pub total: f64,
+    /// The authored `tooltip:` rows, after the value row and before the Σ footer.
+    pub extra: &'a [String],
 }
 
 /// Build one slice's aria-label. The `%` row always renders at the fixed
@@ -592,6 +620,7 @@ pub fn pie_aria_label(t: &PieTooltip) -> Result<String, String> {
     parts.push(format!("%: {share_s}"));
     let value_s = t.value_format.paint(t.value).map_err(|e| format!("pie: tooltip value {e}"))?;
     parts.push(format!("{MUTED}{}: {value_s}", t.value_title));
+    parts.extend(t.extra.iter().cloned());
     let total_s = t.value_format.paint(t.total).map_err(|e| format!("pie: tooltip total {e}"))?;
     parts.push(format!("{MUTED}{ROLE_TOTAL}Σ: {total_s}"));
     Ok(parts.join("; "))
@@ -618,6 +647,8 @@ pub struct ScatterTooltip<'a> {
     pub y_value: ScatterValue<'a>,
     pub x_title: &'a str,
     pub x_value: ScatterValue<'a>,
+    /// The authored `tooltip:` rows, after the x row.
+    pub extra: &'a [String],
 }
 
 fn scatter_value_row(title: &str, value: &ScatterValue) -> Result<String, String> {
@@ -643,12 +674,15 @@ pub struct DotPlotTooltip<'a> {
     pub value_title: &'a str,
     pub value: f64,
     pub value_format: &'a FormatSlot,
+    /// The authored `tooltip:` rows, after the value row.
+    pub extra: &'a [String],
 }
 
 pub fn dot_plot_aria_label(t: &DotPlotTooltip) -> Result<String, String> {
     let value = scatter_value_row(t.value_title, &ScatterValue::Quantitative(t.value, t.value_format))?;
     let order = t.order.map_or_else(String::new, |rank| format!("{ROLE_ORDER}{rank}; "));
-    Ok(format!("{ROLE_HEADER}{}; {ROLE_SERIES}{}; {order}{value}", t.category, t.series))
+    let extra: String = t.extra.iter().map(|row| format!("; {row}")).collect();
+    Ok(format!("{ROLE_HEADER}{}; {ROLE_SERIES}{}; {order}{value}{extra}", t.category, t.series))
 }
 
 pub fn scatter_aria_label(t: &ScatterTooltip) -> Result<String, String> {
@@ -658,6 +692,7 @@ pub fn scatter_aria_label(t: &ScatterTooltip) -> Result<String, String> {
     }
     parts.push(scatter_value_row(t.y_title, &t.y_value)?);
     parts.push(scatter_value_row(t.x_title, &t.x_value)?);
+    parts.extend(t.extra.iter().cloned());
     Ok(parts.join("; "))
 }
 
@@ -914,6 +949,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             percent: None,
             total: None,
+            extra: &[],
         };
         assert_eq!(bar_aria_label(&t, 75404.0).unwrap(), "⁡Widget B; revenue: 75,404");
     }
@@ -930,6 +966,7 @@ mod tests {
             value_format: &FormatSlot::from("$,.0f"),
             percent: None,
             total: None,
+            extra: &[],
         };
         assert_eq!(bar_aria_label(&t, 75404.0).unwrap(), "⁡Widget B; Revenue: $75,404");
     }
@@ -947,6 +984,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             percent: None,
             total: None,
+            extra: &[],
         };
         assert_eq!(
             bar_aria_label(&t, 42000.0).unwrap(),
@@ -972,6 +1010,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             percent: None,
             total: Some(("Σ", 120588.0)),
+            extra: &[],
         };
         assert_eq!(
             bar_aria_label(&accessories, 47368.0).unwrap(),
@@ -1004,6 +1043,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             percent: None,
             total: Some(("Σ", 120588.0)),
+            extra: &[],
         };
         assert_eq!(
             bar_aria_label(&electronics, 58396.0).unwrap(),
@@ -1029,6 +1069,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             percent: Some(47.0 / 69.0),
             total: Some(("Σ", 69.0)),
+            extra: &[],
         };
         assert_eq!(
             bar_aria_label(&t, 47.0).unwrap(),
@@ -1050,6 +1091,7 @@ mod tests {
             value_format: &FormatSlot::from("not-a-real-spec"),
             percent: None,
             total: None,
+            extra: &[],
         };
         assert!(bar_aria_label(&t, 100.0).is_err());
     }
@@ -1073,6 +1115,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             percent: None,
             total: None,
+            extra: &[],
         };
         assert_eq!(bar_aria_label(&t, 60.0).unwrap(), "⁡Feb 2024; value: 60");
     }
@@ -1117,6 +1160,11 @@ mod tests {
     fn tooltip_header_text_formats_a_standard_date_with_no_detected_bucket() {
         let _en = crate::time_locale::en_us_scope();
         assert_eq!(tooltip_header_text("2025-04-27", None, true, None).unwrap(), "27 Apr 2025");
+        // An offset timestamp names its instant's day in the board zone: on a UTC board, March 11.
+        assert_eq!(tooltip_header_text("2024-03-10T23:00:00-05:00", None, true, None).unwrap(), "11 Mar 2024");
+        let _zone = crate::time_zone::zone_scope("America/New_York");
+        assert_eq!(tooltip_header_text("2024-03-02T03:00:00Z", None, true, None).unwrap(), "1 Mar 2024");
+        assert_eq!(tooltip_header_text("2024-03-02T03:00:00", None, true, None).unwrap(), "2 Mar 2024");
     }
 
     /// Neither a detected bucket nor a standard-date shape (a plain
@@ -1142,6 +1190,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             value: 197_199.0,
             total: 443_023.0,
+            extra: &[],
         };
         assert_eq!(
             pie_aria_label(&t).unwrap(),
@@ -1161,6 +1210,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             value: 93_320.0,
             total: 443_023.0,
+            extra: &[],
         };
         assert_eq!(
             pie_aria_label(&t).unwrap(),
@@ -1180,6 +1230,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             value: 1_786.0,
             total: 14_849.0,
+            extra: &[],
         };
         assert_eq!(
             pie_aria_label(&t).unwrap(),
@@ -1200,6 +1251,7 @@ mod tests {
             value_format: &FormatSlot::from(",.2~f"),
             value: 50.0,
             total: 100.0,
+            extra: &[],
         };
         assert_eq!(
             pie_aria_label(&t).unwrap(),
@@ -1219,6 +1271,7 @@ mod tests {
             value_format: &FormatSlot::from("not-a-real-spec"),
             value: 197_199.0,
             total: 443_023.0,
+            extra: &[],
         };
         assert!(pie_aria_label(&t).is_err());
     }
@@ -1235,6 +1288,7 @@ mod tests {
             y_value: ScatterValue::Quantitative(140.0, &FormatSlot::from(",.2~f")),
             x_title: "ad spend",
             x_value: ScatterValue::Quantitative(18.0, &FormatSlot::from(",.2~f")),
+            extra: &[],
         };
         assert_eq!(scatter_aria_label(&t).unwrap(), "pipeline value: 140; ad spend: 18");
     }
@@ -1251,6 +1305,7 @@ mod tests {
             y_value: ScatterValue::Nominal("Escalations"),
             x_title: "Hours",
             x_value: ScatterValue::Quantitative(5.3, &FormatSlot::from(",.2~f")),
+            extra: &[],
         };
         assert_eq!(scatter_aria_label(&t).unwrap(), "Team: Escalations; Hours: 5.3");
     }
@@ -1266,6 +1321,7 @@ mod tests {
             y_value: ScatterValue::Quantitative(0.10, &FormatSlot::from(".0%")),
             x_title: "confidence",
             x_value: ScatterValue::Quantitative(0.68, &FormatSlot::from(".0%")),
+            extra: &[],
         };
         assert_eq!(scatter_aria_label(&t).unwrap(), "⁤Baseline; lift: 10%; confidence: 68%");
     }
@@ -1280,6 +1336,7 @@ mod tests {
             y_value: ScatterValue::Quantitative(140.0, &FormatSlot::from("not-a-real-spec")),
             x_title: "ad spend",
             x_value: ScatterValue::Quantitative(18.0, &FormatSlot::from(",.2~f")),
+            extra: &[],
         };
         assert!(scatter_aria_label(&t).is_err());
     }
@@ -1296,6 +1353,7 @@ mod tests {
             value_title: "value",
             value: 59.1,
             value_format: &FormatSlot::from(",.2~f"),
+            extra: &[],
         };
         assert_eq!(dot_plot_aria_label(&t).unwrap(), "\u{2061}Region E; \u{2062}2019; value: 59.1");
         let ranked = DotPlotTooltip { order: Some(1), ..t };
@@ -1337,6 +1395,92 @@ mod tests {
             value: HeatmapValue::Number(47_368.0),
         };
         assert!(heatmap_aria_label(&t).is_err());
+    }
+
+    // ── authored `tooltip:` rows ────────────────────────────────────────
+
+    fn extras() -> Vec<String> {
+        vec![extra_row("Approved", "yes"), extra_row("% of budget", "25.0%")]
+    }
+
+    /// The authored rows follow the mark's own value rows and precede the Σ footer.
+    #[test]
+    fn bar_extras_follow_the_value_row_and_precede_the_total() {
+        let extra = extras();
+        let t = BarTooltip {
+            header: "East",
+            series: Some("Tools"),
+            order: Some(0),
+            value_title: "revenue",
+            value_format: &FormatSlot::from(",.2~f"),
+            percent: None,
+            total: Some(("Σ", 120588.0)),
+            extra: &extra,
+        };
+        assert_eq!(
+            bar_aria_label(&t, 14824.0).unwrap(),
+            "⁡East; ⁢Tools; ‌0; revenue: 14,824; \u{200D}Approved: yes; \u{200D}% of budget: 25.0%; ⁣Σ: 120,588"
+        );
+    }
+
+    #[test]
+    fn pie_extras_follow_the_value_row_and_precede_the_total() {
+        let extra = extras();
+        let t = PieTooltip {
+            header: Some("Tools"),
+            share: 0.5,
+            value_title: "Revenue",
+            value_format: &FormatSlot::from(",.2~f"),
+            value: 50.0,
+            total: 100.0,
+            extra: &extra,
+        };
+        assert_eq!(
+            pie_aria_label(&t).unwrap(),
+            "⁤Tools; %: 50%; \u{2060}Revenue: 50; \u{200D}Approved: yes; \u{200D}% of budget: 25.0%; \u{2060}⁣Σ: 100"
+        );
+    }
+
+    #[test]
+    fn scatter_extras_follow_the_x_row() {
+        let extra = extras();
+        let t = ScatterTooltip {
+            header: None,
+            y_title: "pipeline value",
+            y_value: ScatterValue::Quantitative(140.0, &FormatSlot::from(",.2~f")),
+            x_title: "ad spend",
+            x_value: ScatterValue::Quantitative(18.0, &FormatSlot::from(",.2~f")),
+            extra: &extra,
+        };
+        assert_eq!(
+            scatter_aria_label(&t).unwrap(),
+            "pipeline value: 140; ad spend: 18; \u{200D}Approved: yes; \u{200D}% of budget: 25.0%"
+        );
+    }
+
+    #[test]
+    fn dot_plot_extras_follow_the_value_row() {
+        let extra = extras();
+        let t = DotPlotTooltip {
+            category: "Region E",
+            series: "2019",
+            order: None,
+            value_title: "value",
+            value: 59.1,
+            value_format: &FormatSlot::from(",.2~f"),
+            extra: &extra,
+        };
+        assert_eq!(
+            dot_plot_aria_label(&t).unwrap(),
+            "\u{2061}Region E; \u{2062}2019; value: 59.1; \u{200D}Approved: yes; \u{200D}% of budget: 25.0%"
+        );
+    }
+
+    /// A (category, series) slot a sparse stack lacks a row for is not a value:
+    /// it keeps its identity so the hover band covers the slot, and reports nothing.
+    #[test]
+    fn an_imputed_stack_datum_reports_no_value() {
+        assert_eq!(imputed_aria_label("Feb 2024", "APAC", Some(2)), "⁡Feb 2024; ⁢APAC; ‌2; \u{34F}");
     }
 
     // ── data-dct-role machine keys ──────────────────────────────────────

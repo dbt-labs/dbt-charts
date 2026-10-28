@@ -39,11 +39,7 @@ class SparkBarBarStyle(BaseModel):
 
 
 class SparkBarChartLabelStyle(BaseModel):
-    """Category-label sub-block for SparkBarChartStyle.
-
-    Not to be confused with SparkBarLabelStyle, which is the in-cell bar
-    sparkline label inside table cells.
-    """
+    """Category-label sub-block for SparkBarChartStyle."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -5,16 +5,22 @@ from __future__ import annotations
 
 import pytest
 
+from dbt_charts.core.diagnostics import Diagnostic
+
 from .._svg_render import render_board_svg_result
 
 
-def _warning_codes(chart: str, rows: list[str]) -> list[str]:
+def _warnings(chart: str, rows: list[str]) -> list[Diagnostic]:
     board = "title: T\nqueries:\n  q:\n    type: values\n    rows:\n"
     board += "".join(f"      - {row}\n" for row in rows)
     board += f"charts:\n  c:\n    query: q\n{chart}\nrows:\n  - c\n"
     result = render_board_svg_result(board)
     assert not result.chart_errors
-    return [w.code for w in result.warnings]
+    return list(result.warnings)
+
+
+def _warning_codes(chart: str, rows: list[str]) -> list[str]:
+    return [w.code for w in _warnings(chart, rows)]
 
 
 def test_grouped_bars_on_a_continuous_time_axis_warn_that_the_series_coincide() -> None:
@@ -65,6 +71,22 @@ def test_crowded_value_labels_warn_on_line_and_area(family: str) -> None:
         "    style:\n      marks:\n        line:\n          labels:\n            visible: true"
     )
     assert "WARN-VALUE-LABELS-CROWD-WIDTH" in _warning_codes(chart, rows)
+
+
+def test_a_line_layers_colliding_labels_warn_at_the_layer() -> None:
+    rows = [f"{{m: c{m:02d}, v: 3, w: 165000}}" for m in range(30)]
+    chart = (
+        "    type: bar\n    x: m\n    y: v\n    layers:\n"
+        "      - type: line\n        y: w\n        style:\n          marks:\n"
+        "            line:\n              labels:\n                visible: true\n"
+        "                format: ',.0f'"
+    )
+    crowded = [
+        w for w in _warnings(chart, rows) if w.code == "WARN-VALUE-LABELS-CROWD-WIDTH"
+    ]
+    assert [(w.path, w.field) for w in crowded] == [
+        ("charts.c.layers.0.style.marks.line.labels", "w")
+    ]
 
 
 @pytest.mark.parametrize(

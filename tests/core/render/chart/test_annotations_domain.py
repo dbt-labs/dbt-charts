@@ -60,8 +60,11 @@ def test_a_date_past_the_data_gets_ticks_across_the_widened_domain(
 ) -> None:
     labels, _ = _labels(family, _MONTHS, "month", {"x": "2030-01-01"})
     assert _NOTE in labels
-    for year in ("2024", "2026", "2028", "2030"):
+    # 2030-01-01 ends the domain: its slice is empty (or, on bars, one bucket too
+    # thin for its label), so the last labeled year is 2029.
+    for year in ("2024", "2026", "2028", "2029"):
         assert year in labels, f"{year} missing: {labels}"
+    assert "2030" not in labels
 
 
 @pytest.mark.parametrize("family", ["line", "area", "bar", "scatter"])
@@ -89,7 +92,10 @@ def test_a_clock_anchor_past_the_data_widens_the_domain(family: str) -> None:
         rendered_at=datetime.datetime(2030, 1, 5, tzinfo=datetime.UTC),
     )
     assert _NOTE in labels
-    assert "2030" in labels
+    # The domain reaches 2030-01-05; that four-day slice cannot hold "2030", and
+    # only the widening yields a 2029 label (the data ends in 2025).
+    assert "2029" in labels
+    assert "2030" not in labels
 
 
 def test_a_numeric_line_x_past_the_data_widens_the_domain() -> None:
@@ -142,8 +148,8 @@ def test_an_in_range_anchor_inserts_no_bar_slot(anchor: dict[str, object]) -> No
 
 def test_a_y_rule_keeps_the_date_bar_label_cadence() -> None:
     labels, _ = _labels("bar", _MONTHS, "month", {"y": 25})
-    months = [t for t in labels if t in ("Jan", "Feb", "Mar", "Apr", "Jul", "Oct")]
-    assert months == ["Jan", "Apr", "Jul", "Oct"] * 2
+    quarters = [t for t in labels if re.fullmatch(r"Q[1-4]", t)]
+    assert quarters == ["Q1", "Q2", "Q3", "Q4"] * 2
 
 
 def test_a_widened_numeric_line_ticks_at_round_steps() -> None:

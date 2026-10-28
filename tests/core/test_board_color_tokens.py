@@ -1,6 +1,6 @@
 """Tests for accent/secondary-font board-to-board cascade on Style/ResolvedStyle.
 
-ADR-003/ADR-009: accent is a semantic color token defined on Style, and the
+Accent is a semantic color token defined on Style, and the
 secondary text ink is the named font ``fonts.secondary``.
 They live at root level (1d) and cascade to sub-fields within a board
 (_apply_token_cascade). Board-to-board cascade via compile_board_resolved_style()

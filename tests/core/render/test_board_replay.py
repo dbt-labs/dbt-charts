@@ -42,6 +42,7 @@ from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.controls import interactive_controls
 
 from ..._svg_normalize import normalize_same_run_svg
+from .._pooled_table import visible_svg
 from .._svg_render import PINNED_RENDER_TIME
 
 _YAML = """
@@ -459,7 +460,10 @@ def test_render_board_from_artifact_reproduces_a_paginated_table_page(
     forces the interactive (not static_multi_page) path, so only the
     requested page's rows actually appear in the SVG.
     """
-    artifact_bytes, recording, live_svg = _paginated_table_live(tmp_path, {"t_page": 2})
+    artifact_bytes, recording, live_pool = _paginated_table_live(
+        tmp_path, {"t_page": 2}
+    )
+    live_svg = visible_svg(live_pool)
 
     # Guard against a false pass: both live and replay landing on the WRONG
     # page (1) would still satisfy string equality below.
@@ -468,13 +472,14 @@ def test_render_board_from_artifact_reproduces_a_paginated_table_page(
 
     reloaded = load_board_artifact(artifact_bytes)
     with interactive_controls(True):
-        replay_svg = render_board_from_artifact(
+        replay_pool = render_board_from_artifact(
             reloaded, recording, recording.variables
         )
+    replay_svg = visible_svg(replay_pool)
 
     assert "row_6" in replay_svg
     assert not re.search(r"\brow_1\b", replay_svg)
-    assert normalize_same_run_svg(replay_svg) == normalize_same_run_svg(live_svg)
+    assert normalize_same_run_svg(replay_pool) == normalize_same_run_svg(live_pool)
 
 
 def test_render_board_from_artifact_dedupes_repeated_callout_css() -> None:

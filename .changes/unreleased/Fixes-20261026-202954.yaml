@@ -1,0 +1,3 @@
+kind: Fixes
+body: A scatter x axis far from zero now fits its data instead of stretching to zero.
+time: 2026-10-26T20:29:54.741301-07:00

@@ -835,69 +835,77 @@ pub(crate) fn date_cell_day(cell: &Value) -> Option<f64> {
 }
 
 /// A time scale's domain is the raw date extent (it is never niced); a column
-/// that is all one date has a zero-width domain.
-pub(crate) fn date_color_extent(rows: &[serde_json::Map<String, Value>], field: &str) -> Result<(f64, f64), String> {
+/// that is all one date has a zero-width domain. The flag is [`date_column_aware`].
+pub(crate) fn date_color_extent(rows: &[serde_json::Map<String, Value>], field: &str) -> Result<(f64, f64, bool), String> {
     let days = rows.iter().filter_map(|r| date_cell_day(r.get(field)?));
     let (min, max) = days.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), d| (lo.min(d), hi.max(d)));
     if min > max {
         return Err(format!("heatmap: the date color {field:?} holds no date"));
     }
-    Ok((min, max))
+    Ok((min, max, date_column_aware(rows, field)))
+}
+
+/// [`all_aware`](crate::time_zone::all_aware) over a date column's text cells.
+pub(crate) fn date_column_aware(rows: &[serde_json::Map<String, Value>], field: &str) -> bool {
+    crate::time_zone::all_aware(rows.iter().filter_map(|r| r.get(field)?.as_str()))
 }
 
 /// Vega's `heatmap` color range (`yellowgreenblue`) on a two-value domain: the
 /// scheme sampled at `1/3` and `2/3` (`quantize(scheme, 2)`), then mixed in HCL.
 /// A zero-width domain maps every date to the middle.
-pub(crate) fn date_scale(min: f64, max: f64) -> ContinuousColor {
-    ContinuousColor::dates(&d3rs::vega_schemes::YELLOWGREENBLUE, min, max)
+pub(crate) fn date_scale(min: f64, max: f64, aware: bool) -> ContinuousColor {
+    ContinuousColor::dates(&d3rs::vega_schemes::YELLOWGREENBLUE, min, max, aware)
 }
 
 /// A date cell's fill on [`date_scale`].
 pub(crate) fn date_color(min: f64, max: f64, day: f64) -> String {
-    date_scale(min, max).fill(day)
+    date_scale(min, max, false).fill(day)
 }
 
-/// The scale's ticks over `[min, max]` for `count` target ticks, in days. A
+/// The scale's ticks over `[min, max]` for `count` target ticks, in days, in the
+/// `aware` column's [`ladder_zone`](crate::families::temporal::ladder_zone). A
 /// zero-width domain has its one date as the only tick.
-fn date_ticks(min: f64, max: f64, count: usize) -> Result<Vec<f64>, String> {
+fn date_ticks(min: f64, max: f64, count: usize, aware: bool) -> Result<Vec<f64>, String> {
     if min == max {
         return Ok(vec![min]);
     }
-    Ok(crate::families::temporal::utc_instants(min, max, count))
+    let zone = crate::families::temporal::ladder_zone(aware);
+    crate::families::temporal::zone_instants(min, max, count, zone.as_ref())
 }
 
 /// The labeled dates of a time-scale legend over a gradient `length` px long:
 /// an authored `legend.values` (a date JS cannot parse is `NaN`, drawn as
 /// `Date.parse` leaves it), else `max(2, 2 * floor(length / 100))` target
 /// ticks, or the two ends when fewer than three (`LegendEntries`).
-pub(crate) fn date_legend_values(min: f64, max: f64, plot_h: f64, authored: Option<&[String]>) -> Result<Vec<f64>, String> {
-    date_legend_ticks(min, max, gradient_tick_count(gradient_length(plot_h)), authored)
+pub(crate) fn date_legend_values(min: f64, max: f64, plot_h: f64, authored: Option<&[String]>, aware: bool) -> Result<Vec<f64>, String> {
+    date_legend_ticks(min, max, gradient_tick_count(gradient_length(plot_h)), authored, aware)
 }
 
 /// A date legend's labeled days for `count` target ticks.
-pub(crate) fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Option<&[String]>) -> Result<Vec<f64>, String> {
+pub(crate) fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Option<&[String]>, aware: bool) -> Result<Vec<f64>, String> {
     match authored {
         Some(values) => Ok(values.iter().map(|v| crate::js_date::parse_days(v).unwrap_or(f64::NAN)).collect()),
         None if min == max => Ok(vec![min]),
-        None => Ok(gradient_labeled_values(date_ticks(min, max, count)?, min, max)),
+        None => Ok(gradient_labeled_values(date_ticks(min, max, count, aware)?, min, max)),
     }
 }
 
-/// Vega's date legend label, `%b %d, %Y`; a `NaN` date prints as d3 formats
-/// an invalid one.
-pub(crate) fn legend_date_label(day: f64) -> Result<String, String> {
+/// Vega's date legend label, `%b %d, %Y`: the date on the board zone's wall
+/// clock for an `aware` scale; a `NaN` date prints as d3 formats an invalid one.
+pub(crate) fn legend_date_label(day: f64, aware: bool) -> Result<String, String> {
     use crate::families::temporal::{civil_from_days, vl_default_format, TimeUnit};
     if day.is_nan() {
         return Ok("NaN, 0NaN".to_string());
     }
+    let day = if aware { crate::time_zone::wall_day(day)? } else { day };
     let (y, m, d) = civil_from_days(day.floor() as i64);
     vl_default_format(y, m, d, TimeUnit::YearMonthDate)
 }
 
 /// The gradient of a time-scale legend over `[min, max]` days.
-pub(crate) fn date_gradient_def(id: &str, min: f64, max: f64) -> Result<Node, String> {
-    let ticks = date_ticks(min, max, GRADIENT_STOP_TICKS)?;
-    Ok(continuous_gradient_def(id, &date_scale(min, max), &ticks, true))
+pub(crate) fn date_gradient_def(id: &str, min: f64, max: f64, aware: bool) -> Result<Node, String> {
+    let ticks = date_ticks(min, max, GRADIENT_STOP_TICKS, aware)?;
+    Ok(continuous_gradient_def(id, &date_scale(min, max, aware), &ticks, true))
 }
 
 /// The resolved stops interpolated piecewise in sRGB (`d3.interpolateRgb`),
@@ -1923,13 +1931,25 @@ mod tests {
     }
 
     #[test]
+    fn an_aware_date_legend_ticks_and_names_the_board_zones_days() {
+        let _locale = crate::time_locale::en_us_scope();
+        let _tokyo = crate::time_zone::zone_scope("Asia/Tokyo");
+        let (lo, hi) = (19_723.0, 19_783.0);
+        let ticks = super::date_ticks(lo, hi, 4, true).unwrap();
+        assert_eq!(ticks.len(), 2, "{ticks:?}");
+        assert!(ticks.iter().all(|t| (t.fract() * 24.0).round() == 15.0), "Tokyo midnights are 15:00 UTC: {ticks:?}");
+        assert_eq!(super::legend_date_label(ticks[0], true).unwrap(), "Feb 01, 2024");
+        assert_eq!(super::legend_date_label(ticks[0], false).unwrap(), "Jan 31, 2024");
+    }
+
+    #[test]
     fn a_date_legend_with_fewer_than_three_ticks_labels_its_two_ends() {
         // 30 days at two ticks is monthly: one tick inside, so the ends label it.
-        assert_eq!(super::date_legend_values(19723.0, 19753.0, 100.0, None).unwrap(), vec![19723.0, 19753.0]);
+        assert_eq!(super::date_legend_values(19723.0, 19753.0, 100.0, None, false).unwrap(), vec![19723.0, 19753.0]);
         // At a 200px bar the four ticks are weekly.
-        assert_eq!(super::date_legend_values(19723.0, 19753.0, 200.0, None).unwrap().len(), 4);
+        assert_eq!(super::date_legend_values(19723.0, 19753.0, 200.0, None, false).unwrap().len(), 4);
         // 60 days at two ticks is monthly: Jan 1, Feb 1, Mar 1.
-        assert_eq!(super::date_legend_values(19723.0, 19783.0, 100.0, None).unwrap(), vec![19723.0, 19754.0, 19783.0]);
+        assert_eq!(super::date_legend_values(19723.0, 19783.0, 100.0, None, false).unwrap(), vec![19723.0, 19754.0, 19783.0]);
     }
 
     #[test]
@@ -1943,12 +1963,12 @@ mod tests {
     /// `legend.values` is the labeled set whatever the domain.
     #[test]
     fn a_zero_width_date_legend_labels_its_one_date_and_authored_values_replace_the_ticks() {
-        assert_eq!(super::date_legend_values(19723.0, 19723.0, 200.0, None).unwrap(), vec![19723.0]);
+        assert_eq!(super::date_legend_values(19723.0, 19723.0, 200.0, None, false).unwrap(), vec![19723.0]);
         let authored = ["2024-01-01".to_string(), "soon".to_string()];
-        let values = super::date_legend_values(19723.0, 19783.0, 200.0, Some(&authored)).unwrap();
+        let values = super::date_legend_values(19723.0, 19783.0, 200.0, Some(&authored), false).unwrap();
         assert_eq!(values[0], 19723.0);
         assert!(values[1].is_nan());
-        assert_eq!(super::legend_date_label(values[1]).unwrap(), "NaN, 0NaN");
+        assert_eq!(super::legend_date_label(values[1], false).unwrap(), "NaN, 0NaN");
     }
 
     /// A zero-width time domain maps every date to the middle of the range.

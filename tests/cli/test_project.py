@@ -112,41 +112,37 @@ def test_has_charts_marker_false_no_project(tmp_path: Path) -> None:
 
 
 def test_resolve_init_root_explicit_wins(tmp_path: Path) -> None:
-    """Explicit dir is returned resolved, git_root is None (unambiguous)."""
+    """Explicit dir is returned resolved."""
     explicit = tmp_path / "mydir"
     explicit.mkdir()
     result = resolve_init_root(explicit, tmp_path)
     assert result == InitRootResolution(root=explicit.resolve())
-    assert result.git_root is None
 
 
 def test_resolve_init_root_dct_root_found(tmp_path: Path) -> None:
-    """Existing dct project found from cwd → returns project root, no git_root."""
+    """Existing dct project found from cwd → returns project root."""
     (tmp_path / "dbt_charts.yml").write_text("")
     result = resolve_init_root(None, tmp_path)
     assert result == InitRootResolution(root=tmp_path.resolve())
-    assert result.git_root is None
 
 
 def test_resolve_init_root_no_project_no_git(tmp_path: Path) -> None:
-    """No project, no git repo → returns cwd, git_root is None (unambiguous)."""
+    """No project, no git repo → returns cwd."""
     cwd = tmp_path / "workdir"
     cwd.mkdir()
     result = resolve_init_root(None, cwd)
     assert result == InitRootResolution(root=cwd.resolve())
-    assert result.git_root is None
 
 
 def test_resolve_init_root_git_equals_cwd_unambiguous(tmp_path: Path) -> None:
-    """git root == cwd → cwd returned, git_root is None (no prompt needed)."""
+    """git root == cwd → cwd returned."""
     (tmp_path / ".git").mkdir()
     result = resolve_init_root(None, tmp_path)
     assert result == InitRootResolution(root=tmp_path.resolve())
-    assert result.git_root is None
 
 
-def test_resolve_init_root_git_above_cwd_ambiguous(tmp_path: Path) -> None:
-    """git root above cwd and no project → ambiguous, git_root is set for caller prompt."""
+def test_resolve_init_root_git_above_cwd_uses_git_root(tmp_path: Path) -> None:
+    """git root above cwd and no project → the git root is chosen."""
     git_root = tmp_path / "repo"
     git_root.mkdir()
     (git_root / ".git").mkdir()
@@ -154,8 +150,7 @@ def test_resolve_init_root_git_above_cwd_ambiguous(tmp_path: Path) -> None:
     cwd.mkdir()
 
     result = resolve_init_root(None, cwd)
-    assert result.root == cwd.resolve()
-    assert result.git_root == git_root.resolve()
+    assert result == InitRootResolution(root=git_root.resolve(), via_git_root=True)
 
 
 # ---------------------------------------------------------------------------

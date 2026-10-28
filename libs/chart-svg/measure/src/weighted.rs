@@ -23,7 +23,7 @@ pub fn registry_family(family: &str) -> &str {
 /// italic when one is registered (Inter Variable, Source Serif 4), else
 /// `get_font_path` (fonts.py:406-420) — Source Serif keeps its own file, a
 /// numeric run measures as dbt Sans Tabular, every other family as Inter.
-fn font_file(family: &str, italic: bool, numeric: bool) -> &'static str {
+pub fn font_file(family: &str, italic: bool, numeric: bool) -> &'static str {
     match (registry_family(family), italic, numeric) {
         ("Source Serif 4", true, _) => "Source Serif 4 Italic",
         ("Inter Variable", true, _) => "Inter Variable Italic",

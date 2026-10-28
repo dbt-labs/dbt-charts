@@ -21,7 +21,6 @@
 use crate::diagnostic::Diagnostic;
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::fmt::Write as _;
 
 use serde_json::{Map, Value};
 
@@ -47,7 +46,7 @@ use measure::baseline_shift;
 use print::print;
 use scene::{Attrs, Node};
 use crate::families::legend::{
-    LegendEntry, emit_vega_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendSymbol,
+    drawn_symbol_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendEntry, LegendSymbol,
     VEGA_GRADIENT_THICKNESS,
 };
 use crate::families::multiples::{self, Panel};
@@ -56,7 +55,6 @@ use crate::families::temporal::{
     ExprBands, LabelUnit, TemporalLabel, TimeUnit, VegaType,
 };
 use crate::families::x_type::{parse_date, resolve_cartesian_x_type, Grain, XAxis};
-use print::{vega_escape_attr, xml_escape, xml_escape_attr};
 use measure::FontBook;
 use crate::vega_fit;
 use crate::Payload;
@@ -644,6 +642,18 @@ impl PanelStyle<'_> {
     fn right_reach(&self) -> f64 {
         if self.y_right { self.y_label_reach } else { self.y_label_pad }
     }
+
+    fn row_face(&self) -> RowFace<'_> {
+        RowFace {
+            family: self.y_family,
+            size: self.y_font_size,
+            weight: &self.y_weight,
+            color: self.y_color,
+            ticks: self.y_ticks,
+            tick_len: self.y_tick_len,
+            shift: measure::baseline_shift("middle", self.y_font_size),
+        }
+    }
 }
 
 /// Where a panel sits in a facet row, for the right-side shared axis.
@@ -654,6 +664,38 @@ struct RightAxis {
     fold: bool,
     /// `ceil(cell x2) - plot_w`: where `row_footer` anchors past the plot.
     overhang: f64,
+}
+
+/// How a row axis's ticks and labels are drawn.
+struct RowFace<'a> {
+    family: &'a str,
+    size: f64,
+    weight: &'a str,
+    color: &'a str,
+    ticks: &'a crate::common::AxisTicks,
+    tick_len: f64,
+    /// Where a label's baseline sits below its row's center.
+    shift: f64,
+}
+
+/// A y axis group: ticks out from `tick_edge` (`outward` is `-1.0` leftward, `1.0` rightward), one
+/// label per `(center, text)` row anchored at `label_x`, and the rotated title
+/// `(text, style, label edge, center, sign)` when it is drawn.
+fn row_axis(
+    face: &RowFace,
+    caption: &crate::families::axis_caption::AxisCaption,
+    origin: (f64, f64),
+    (tick_edge, outward): (f64, f64),
+    (label_x, anchor, labels): (f64, &str, &[(f64, String)]),
+    title: Option<(&str, &crate::common::AxisTitle, f64, f64, f64)>,
+) -> Result<Vec<Node>, String> {
+    let mut ink = crate::common::value_ticks(face.ticks, labels.iter().map(|&(cy, _)| cy), tick_edge, outward, face.tick_len, &[])?;
+    let label_face = LabelFace { places: 2, anchor, family: face.family, size: face.size, weight: face.weight, fill: face.color };
+    ink.extend(labels.iter().map(|(cy, text)| flat_label((label_x, cy + face.shift), &label_face, false, text)));
+    if let Some((text, style, edge, center, sign)) = title {
+        ink.extend(crate::common::axis_title_rotated(text, style, edge, center, sign, None));
+    }
+    crate::contract::axis_group(crate::contract::AxisChannel::Y, caption, origin, ink)
 }
 
 fn render_panel(
@@ -712,113 +754,66 @@ fn render_panel(
     }, None);
     let left = margins.left;
 
-    let mut svg = String::with_capacity(4096);
     let (canvas_w, canvas_h) = (left + plot_w + margins.right, plot_h + margins.bottom);
-    let _ = write!(
-        svg,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{canvas_w}\" height=\"{canvas_h}\" \
-         viewBox=\"0 0 {canvas_w} {canvas_h}\">"
-    );
-    let content_start = svg.len();
-    let _ = write!(svg, "<g transform=\"translate({left:.2},0)\">");
     let cells = bind_cells(rows, x_scale.domain(), y_scale.domain(), &style.cells)?;
-    svg.push_str(&print(&cell_nodes(&cells, &x_scale, &y_scale, &style.marks)?));
-    svg.push_str("</g>");
-    let label_shift = measure::baseline_shift("middle", style.y_font_size);
+    let mut head = vec![Node::group(
+        Attrs::new().set("transform", format!("translate({left:.2},0)")),
+        cell_nodes(&cells, &x_scale, &y_scale, &style.marks)?,
+    )];
     let y_caption = category_axis_caption(style.y_title, style.ax_y, y_domain)?;
+    let face = style.row_face();
+    let label_shift = face.shift;
     if style.own_axis && !own_right {
-        crate::contract::axis_group_open(&mut svg, crate::contract::AxisChannel::Y, &y_caption, (left + label_x, 0.0))?;
-        crate::common::emit_value_ticks(
-            &mut svg,
-            &style.y_ticks,
-            centers.iter().map(|&(_, cy)| cy),
-            left + AXIS_TRANSLATE,
-            -1.0,
-            style.y_tick_len,
-            &[],
-        )?;
-        for &(band, cy) in &centers {
-            let text = shown(band)?;
-            let _ = write!(
-                svg,
-                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{}\" font-family=\"{}\" font-size=\"{}\" \
-                 font-weight=\"{}\" fill=\"{}\">{}</text>",
-                left + label_x,
-                cy + label_shift,
-                if style.y_labels_end { "end" } else { "start" },
-                vega_escape_attr(style.y_family),
-                style.y_font_size,
-                xml_escape_attr(&style.y_weight),
-                xml_escape_attr(style.y_color),
-                xml_escape(&text)
-            );
-        }
-        crate::common::emit_axis_title_rotated(
-            &mut svg,
-            style.y_title,
-            style.y_title_style,
-            left + AXIS_TRANSLATE - style.y_label_reach,
-            plot_h / 2.0,
-            -1.0,
-            None,
-        );
-        crate::contract::axis_group_close(&mut svg);
+        let labels = centers.iter().map(|&(band, cy)| Ok((cy, shown(band)?))).collect::<Result<Vec<_>, String>>()?;
+        head.extend(row_axis(
+            &face,
+            &y_caption,
+            (left + label_x, 0.0),
+            (left + AXIS_TRANSLATE, -1.0),
+            (left + label_x, if style.y_labels_end { "end" } else { "start" }, &labels),
+            Some((style.y_title, style.y_title_style, left + AXIS_TRANSLATE - style.y_label_reach, plot_h / 2.0, -1.0)),
+        )?);
     }
     if style.cell_x_axis {
-        svg.push_str(&print(&x_axis.nodes(style.ax_x, left, plot_w, (plot_h, plot_h))?));
+        head.extend(x_axis.nodes(style.ax_x, left, plot_w, (plot_h, plot_h))?);
     }
     let right_axis = (style.y_right || style.mirror) && !style.own_axis;
     let right_title_extra = if style.y_right { style.y_title_extra } else { 0.0 };
-    let value_axis_start = svg.len();
+    let mut value_axis_nodes = Vec::new();
     if own_right || (right_axis && right.paint) {
         let edge_x = left + plot_w + if own_right { 0.0 } else { right.overhang } + AXIS_TRANSLATE;
-        crate::contract::axis_group_open(
-            &mut svg,
-            crate::contract::AxisChannel::Y,
+        let labels = centers
+            .iter()
+            .map(|&(band, cy)| Ok((cy, if style.y_right { shown(band)? } else { ghost_text(band)? })))
+            .collect::<Result<Vec<_>, String>>()?;
+        value_axis_nodes = row_axis(
+            &face,
             &if style.y_right { y_caption.clone() } else { y_caption.untitled() },
             (edge_x, 0.0),
+            (edge_x, 1.0),
+            (edge_x + style.y_label_pad, if style.y_right && style.y_own_side { "end" } else { "start" }, &labels),
+            style.y_right.then_some((style.y_title, style.y_title_style, edge_x + style.y_label_reach, plot_h / 2.0, 1.0)),
         )?;
-        crate::common::emit_value_ticks(
-            &mut svg,
-            &style.y_ticks,
-            centers.iter().map(|&(_, cy)| cy),
-            edge_x,
-            1.0,
-            style.y_tick_len,
-            &[],
-        )?;
-        for &(band, cy) in &centers {
-            let _ = write!(
-                svg,
-                "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{}\" font-family=\"{}\" font-size=\"{}\" \
-                 font-weight=\"{}\" fill=\"{}\">{}</text>",
-                edge_x + style.y_label_pad,
-                cy + label_shift,
-                if style.y_right && style.y_own_side { "end" } else { "start" },
-                vega_escape_attr(style.y_family),
-                style.y_font_size,
-                xml_escape_attr(&style.y_weight),
-                xml_escape_attr(style.y_color),
-                xml_escape(&if style.y_right { shown(band)? } else { ghost_text(band)? })
-            );
-        }
-        if style.y_right {
-            crate::common::emit_axis_title_rotated(
-                &mut svg,
-                style.y_title,
-                style.y_title_style,
-                edge_x + style.y_label_reach,
-                plot_h / 2.0,
-                1.0,
-                None,
-            );
-        }
-        crate::contract::axis_group_close(&mut svg);
     }
+    let root = |children: Vec<Node>| {
+        let attrs = Attrs::new()
+            .set("xmlns", "http://www.w3.org/2000/svg")
+            .set("width", canvas_w.to_string())
+            .set("height", canvas_h.to_string())
+            .set("viewBox", format!("0 0 {canvas_w} {canvas_h}"));
+        print(&[Node::Svg { extent: scene::Extent { width: canvas_w, height: canvas_h }, attrs, children }])
+    };
+    // Printing is concatenative, and the composer cuts the panel by byte offset: print the pieces apart and
+    // take the opener from a childless root, which always prints its end tag (hence the `expect`).
+    let opened = root(Vec::new());
+    let opener = opened.strip_suffix("</svg>").expect("a childless root prints its end tag");
+    let (printed_head, printed_value_axis) = (print(&head), print(&value_axis_nodes));
+    let content_start = opener.len();
+    let value_axis_start = content_start + printed_head.len();
+    let svg_end = value_axis_start + printed_value_axis.len();
+    let svg = format!("{opener}{printed_head}{printed_value_axis}</svg>");
     let value_axis = (right_axis && right.paint)
-        .then(|| crate::families::facet_compose::ValueAxisInk { range: value_axis_start..svg.len(), origin: (0.0, 0.0) });
-    let svg_end = svg.len();
-    svg.push_str("</svg>");
+        .then(|| crate::families::facet_compose::ValueAxisInk { range: value_axis_start..svg_end, origin: (0.0, 0.0) });
 
     let mut ink = vega_fit::Bounds::new(left, 0.0, left + plot_w, plot_h).expand(style.marks.reach);
     if right_axis && right.fold {
@@ -1141,7 +1136,7 @@ impl<'a> GradientLegend<'a> {
 /// What the facet's color channel paints.
 enum FacetColor {
     /// A date-like color on a time scale, in day numbers.
-    Dates { min: f64, max: f64 },
+    Dates { min: f64, max: f64, aware: bool },
     Gradient { min: f64, max: f64, ticks: Vec<f64>, scale: Option<ContinuousColor> },
     Categories(CategoryScale),
 }
@@ -1254,8 +1249,8 @@ fn render_facet(
     let color = match kind {
         ColorKind::Categories => FacetColor::Categories(color_categories(r, &rows)?),
         ColorKind::Dates => {
-            let (min, max) = date_color_extent(&rows, &r.color)?;
-            FacetColor::Dates { min, max }
+            let (min, max, aware) = date_color_extent(&rows, &r.color)?;
+            FacetColor::Dates { min, max, aware }
         }
         ColorKind::Gradient => {
             let (min, max, ticks, scale) = r.style.color_gradient.ladder(&rows, &r.color, r.legend.visible)?;
@@ -1274,7 +1269,7 @@ fn render_facet(
                 max: *max,
             },
             FacetColor::Categories(scale) => CellFill::Categories(scale),
-            FacetColor::Dates { min, max } => CellFill::Dates { min: *min, max: *max },
+            FacetColor::Dates { min, max, .. } => CellFill::Dates { min: *min, max: *max },
         },
         tooltip: tooltip_value_title(r)?.zip(r.style.tooltip_format.as_ref()),
         native_aria: false,
@@ -1396,10 +1391,10 @@ fn render_facet(
             .zip(ticks)
             .map(|(label, &tick)| Ok((label.clone(), GradientColors::new(&r.style.color_gradient, scale.as_ref()).at(*min, *max, tick)?)))
             .collect::<Result<_, String>>()?,
-        FacetColor::Dates { min, max } if ladder_symbols => {
-            date_legend_ticks(*min, *max, SYMBOL_LEGEND_TICK_COUNT, r.legend.values.as_deref())?
+        FacetColor::Dates { min, max, aware } if ladder_symbols => {
+            date_legend_ticks(*min, *max, SYMBOL_LEGEND_TICK_COUNT, r.legend.values.as_deref(), *aware)?
                 .into_iter()
-                .map(|day| Ok((legend_date_label(day)?, date_color(*min, *max, day))))
+                .map(|day| Ok((legend_date_label(day, *aware)?, date_color(*min, *max, day))))
                 .collect::<Result<_, String>>()?
         }
         _ => Vec::new(),
@@ -1414,7 +1409,7 @@ fn render_facet(
     // A time-scale bar's ladder follows its drawn length, so it is measured and
     // painted per unit; probing both length extremes here raises its errors once.
     let dates = match &color {
-        FacetColor::Dates { min, max } if r.legend.visible && !ladder_symbols => Some(crate::families::heatmap::date_scale(*min, *max)),
+        FacetColor::Dates { min, max, aware } if r.legend.visible && !ladder_symbols => Some(crate::families::heatmap::date_scale(*min, *max, *aware)),
         _ => None,
     };
     if let Some(scale) = &dates {
@@ -1445,7 +1440,7 @@ fn render_facet(
     let chrome = FacetChrome {
         title: title_plan.as_ref().map(|plan| TitleChrome {
             ink: plan.ink.clone(),
-            paint: Box::new(|svg, x, y| plan.paint(&title_src, svg, x, y)),
+            paint: Box::new(|svg, x, y| svg.push_str(&print(&plan.nodes(&title_src, x, y)))),
         }),
         legends: legend
             .as_ref()
@@ -1469,8 +1464,9 @@ fn render_facet(
                         .1
                 }),
                 paint: Box::new(|svg, x, y, panel_w, panel_h| {
-                    GradientAt::paint(&r.legend, None, scale, (&grad_id, &legend_title), fonts, (panel_w, panel_h), (svg, x, y))
+                    let nodes = GradientAt::nodes(&r.legend, None, scale, (&grad_id, &legend_title), fonts, (panel_w, panel_h), (x, y))
                         .expect("probed at both length extremes");
+                    svg.push_str(&print(&nodes));
                 }),
             }))
             .chain(symbol_legend.as_ref().map(|symbols| LegendChrome {
@@ -1478,7 +1474,8 @@ fn render_facet(
                 width: Box::new(|_, _| symbols.box_w),
                 height: Box::new(|_| symbols.box_h()),
                 paint: Box::new(|svg, x, y, _, _| {
-                    emit_vega_legend(svg, &symbol_entries, symbols, &r.legend, entry_symbol, x, y, false)
+                    let legend = drawn_symbol_legend(&symbol_entries, symbols, &r.legend, entry_symbol, x, y, false);
+                    svg.extend(legend.map(|node| print(&[node])));
                 }),
             }))
             .collect(),
@@ -1577,5 +1574,79 @@ mod tests {
             facet_extra_axis_px(&labels, &bands, &fonts).unwrap()
         };
         assert!(at("upper") > at("none") && at("none") > at("lower"), "{} {} {}", at("upper"), at("none"), at("lower"));
+    }
+}
+
+#[cfg(test)]
+mod composite {
+    use super::*;
+    use serde_json::json;
+
+    fn set(p: &mut Payload, path: &str, value: Value) {
+        let mut at = &mut p.resolved;
+        let keys: Vec<&str> = path.split('.').collect();
+        for key in &keys[..keys.len() - 1] {
+            at = at.as_object_mut().unwrap().entry(*key).or_insert_with(|| json!({}));
+        }
+        at[keys[keys.len() - 1]] = value;
+    }
+
+    fn fonts() -> FontBook {
+        FontBook::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../src/dbt_charts/core/render/fonts"))
+            .expect("shipped fonts load")
+    }
+
+    fn fixture(name: &str) -> Payload {
+        let text = match name {
+            "rows" => include_str!("../../../fixtures/scatter-heatmap/heatmap-rows-color-title.json"),
+            "columns" => include_str!("../../../fixtures/scatter-heatmap/heatmap-columns-color-title.json"),
+            "grid" => include_str!("../../../fixtures/scatter-heatmap/heatmap-grid-color-title.json"),
+            other => panic!("no fixture {other}"),
+        };
+        serde_json::from_str(text).expect("fixture deserializes")
+    }
+
+    /// The composite prints its panels, axes and legends from nodes; the bytes are the ones the
+    /// string-building composite wrote.
+    #[test]
+    fn the_composite_prints_the_pinned_bytes() {
+        let mut cases: Vec<(&str, Payload, &str)> = vec![("rows", fixture("rows"), include_str!("heatmap_facet_golden/rows.svg"))];
+        let mut mirror = fixture("grid");
+        set(&mut mirror, "style.axis_y.mirror", json!(true));
+        set(&mut mirror, "style.axis_y.ticks.visible", json!(true));
+        cases.push(("grid_mirror", mirror, include_str!("heatmap_facet_golden/grid_mirror.svg")));
+        let mut independent = fixture("columns");
+        set(&mut independent, "multiples.scale", json!("independent"));
+        set(&mut independent, "style.axis_y.title.visible", json!(true));
+        set(&mut independent, "y_label", json!("Series <&>"));
+        set(&mut independent, "style.axis_y.ticks.visible", json!(true));
+        cases.push(("columns_independent", independent, include_str!("heatmap_facet_golden/columns_independent.svg")));
+        let mut right = fixture("grid");
+        set(&mut right, "style.axis_y.position", json!("right"));
+        set(&mut right, "style.axis_y.labels.align", json!("right"));
+        set(&mut right, "style.axis_y.title.visible", json!(true));
+        set(&mut right, "legend.position.edge", json!("bottom"));
+        cases.push(("grid_right", right, include_str!("heatmap_facet_golden/grid_right.svg")));
+        for (name, payload, golden) in cases {
+            let svg = crate::in_payload_scope(&payload, || render(&payload, &fonts())).expect("renders");
+            assert!(svg == golden, "{name}: printed bytes differ from heatmap_facet_golden/{name}.svg");
+        }
+    }
+
+    /// A row axis is a node group whose ticks, labels and rotated title print as the string helpers wrote them.
+    #[test]
+    fn a_row_axis_prints_its_ticks_labels_and_title() {
+        let fixture = fixture("rows");
+        let axis_y: AxisStyle = serde_json::from_value(fixture.resolved["style"]["axis_y"].clone()).unwrap();
+        let mut title_style = axis_y.title.clone();
+        title_style.visible = Some(true);
+        let ticks: crate::common::AxisTicks =
+            serde_json::from_value(json!({"visible": true, "color": "#D0D3D9", "width": 1.5, "length": 6.0})).unwrap();
+        let face = RowFace { family: "'Inter Variable', Inter", size: 11.0, weight: "400", color: "#626366", ticks: &ticks, tick_len: 6.0, shift: 3.0 };
+        let caption = category_axis_caption("Series", &axis_y, &["A<b".to_string(), "B".to_string()]).unwrap();
+        let labels = [(10.0, "A<b".to_string()), (30.0, "B".to_string())];
+        let nodes: Vec<Node> = row_axis(&face, &caption, (20.5, 0.0), (25.0, -1.0), (14.0, "end", &labels), Some(("Series", &title_style, 2.0, 20.0, -1.0)))
+            .expect("draws");
+        assert_eq!(print(&nodes), include_str!("heatmap_facet_golden/row_axis.svg"));
     }
 }

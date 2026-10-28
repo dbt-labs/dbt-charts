@@ -312,7 +312,10 @@ impl Scale {
             }
             Kind::Time | Kind::Utc => {
                 let (lo, hi) = (u.min(v) / 864e5, u.max(v) / 864e5);
-                let mut days = crate::families::temporal::utc_instants(lo, hi, count_n.max(1.0) as usize);
+                // A `time` scale ticks JavaScript-local time; a `utc` one never leaves UTC.
+                let zone = crate::families::temporal::ladder_zone(self.kind == Kind::Time && crate::time_zone::expression_local());
+                let mut days = crate::families::temporal::zone_instants(lo, hi, count_n.max(1.0) as usize, zone.as_ref())
+                    .map_err(EvalError::Throws)?;
                 if v < u {
                     days.reverse();
                 }

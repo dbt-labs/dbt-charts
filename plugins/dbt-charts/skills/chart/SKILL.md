@@ -79,7 +79,7 @@ Jinja helpers in query SQL:
 - `width` (int|number): Chart width in pixels
 - `height` (int|number): Explicit chart height in pixels
 - `style` (mapping): Appearance overrides for this chart alone
-Also exist: `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `y_start`, `annotations`.
+Also exist: `tooltip`, `id`, `notes`, `link`, `visible`, `type`, `warnings_ignore`, `support_table`, `y_start`, `annotations`.
 
 Name the SQL column as the axis should read (`AS weight_lbs` titles "Weight (lb)"); set `x_label`, `y_label` or `field_labels` only when the title must say more than the column name can.
 
@@ -100,7 +100,7 @@ Every chart needs `type:`, one of the types below.
   - `value`: Column reference (string column name) for the headline number/text
   - `label`: Caption naming what the headline value measures; `style.variant` places it
   - `glyph`: Text shown before the headline value (e.g. '▲', '●')
-  - `support` ({value, label, glyph}): Secondary block, a delta, comparison, or note; `style.variant` places it
+  - `support` ({value, label, glyph, good}): Secondary block, a delta, comparison, or note; `style.variant` places it
   - `background` (text|map of any): Gradient background channel, {column, scale} shape
   - `conditional_formatting` (map of mapping): Discrete rule-driven style overrides indexed by column name
 - `table`: rejects `x`, `y`, `color`, `sort`, `x_label`, `y_label`, `field_labels`, `layers`, `multiples`, `width`, `height`

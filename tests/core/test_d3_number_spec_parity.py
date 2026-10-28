@@ -19,6 +19,8 @@ _TABLE: list[tuple[str, bool]] = [
     ("x", True),
     ("h", True),
     ("#,.0f", True),
+    ("#.2s", True),
+    ("#.2f", True),
     ("*>10", True),
     (",5f", False),
     (",0", False),

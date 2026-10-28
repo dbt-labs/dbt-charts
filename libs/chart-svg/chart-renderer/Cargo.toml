@@ -9,6 +9,7 @@ base64 = "0.22"
 d3rs = { path = "../d3rs" }
 mdsvg = { path = "../mdsvg" }
 display-text = { path = "../display-text" }
+dbt-charts-color = { path = "../color" }
 measure = { path = "../measure" }
 print = { path = "../print" }
 scene = { path = "../scene" }
@@ -30,4 +31,7 @@ serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 svg2pdf = "0.13"
 usvg = { version = "0.45", default-features = false, features = ["text"] }
 fancy-regex = "0.19.2"
+# The board's `regional.time_zone`. The tz database is compiled in, never read
+# from the host, so every host prints the same wall clock.
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
 libm = "0.2.16"

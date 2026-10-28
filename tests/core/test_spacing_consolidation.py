@@ -1,6 +1,6 @@
 """Tests for task 1e: Consolidate spacing property group.
 
-Policy (ADR-003 + this task):
+Policy:
 - Multi-value padding (intentional x≠y) → SpacingValues
 - Single-value padding → scalar float
 - No `_x`/`_y` suffix pairs anywhere
@@ -117,7 +117,7 @@ class TestKpiStyleContentPadding:
 
 
 # ==========================================================================
-# TableColumnsStyle — cell_padding scalar (ADR-010: no _x/_y pairs)
+# TableColumnsStyle — cell_padding scalar (no _x/_y pairs)
 # ==========================================================================
 
 

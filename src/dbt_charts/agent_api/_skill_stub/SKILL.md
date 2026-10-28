@@ -18,7 +18,8 @@ this file is a pointer and never goes stale. Before authoring, every time:
 2. `dct skills chart` prints the board and chart grammar and the
    build-render-fix loop. Read it first.
 3. `dct skills` lists the other skills (styling, custom charts, report design,
-   replicating an existing board, Cloud setup). Read the one that matches the task.
+   migrating a dashboard from another BI tool or a screenshot, Cloud setup). Read
+   the one that matches the task.
 
 With the dbt Charts MCP server configured, `get_skill("chart")` returns the same
 text as `dct skills chart`.

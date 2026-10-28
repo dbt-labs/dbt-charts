@@ -1,0 +1,3 @@
+kind: Fixes
+body: A horizontal or vertical bar too small to see now gets its value label, with or without a zero row.
+time: 2026-10-26T21:30:37.230981-07:00

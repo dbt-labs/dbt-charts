@@ -59,23 +59,26 @@ pub(crate) struct ContinuousColor {
     pub(crate) lo: f64,
     pub(crate) hi: f64,
     dates: bool,
+    /// A date scale over instants the board zone reads ([`ladder_zone`](super::temporal::ladder_zone)).
+    aware: bool,
     /// The diverging scale's pivot; Vega labels it on the legend beside the ticks.
     pub(crate) pivot: Option<f64>,
 }
 
 impl ContinuousColor {
     pub(crate) fn blues(lo: f64, hi: f64) -> Self {
-        Self { ramp: Ramp::Rgb(&BLUES), lo, hi, dates: false, pivot: None }
+        Self { ramp: Ramp::Rgb(&BLUES), lo, hi, dates: false, aware: false, pivot: None }
     }
 
-    /// A time scale over `[lo, hi]` days, colored from `scheme`.
-    pub(crate) fn dates(scheme: &'static [Rgb], lo: f64, hi: f64) -> Self {
-        Self { ramp: Ramp::DatePair(scheme), lo, hi, dates: true, pivot: None }
+    /// A time scale over `[lo, hi]` days, colored from `scheme`; `aware` when its dates are instants the board
+    /// zone reads.
+    pub(crate) fn dates(scheme: &'static [Rgb], lo: f64, hi: f64, aware: bool) -> Self {
+        Self { ramp: Ramp::DatePair(scheme), lo, hi, dates: true, aware, pivot: None }
     }
 
     #[cfg(test)]
     pub(crate) fn stops(colors: Vec<Rgb>, lo: f64, hi: f64) -> Self {
-        Self { ramp: Ramp::Stops(colors.into_iter().map(Color::opaque).collect()), lo, hi, dates: false, pivot: None }
+        Self { ramp: Ramp::Stops(colors.into_iter().map(Color::opaque).collect()), lo, hi, dates: false, aware: false, pivot: None }
     }
 
     /// A gradient-mode channel's scale over `kept`, the extent of the values
@@ -109,7 +112,7 @@ impl ContinuousColor {
                         Palette::Array(stops) if asymmetric => Ramp::Stops(stops.iter().copied().map(Color::opaque).collect()),
                         Palette::Array(colors) => Ramp::Halved { ramp: colors, pivot, hcl: true },
                     };
-                    return Ok(Self { ramp, lo, hi, dates: false, pivot: Some(pivot) });
+                    return Ok(Self { ramp, lo, hi, dates: false, aware: false, pivot: Some(pivot) });
                 }
             }
         }
@@ -120,10 +123,14 @@ impl ContinuousColor {
             Palette::Ramp(ramp) => Ramp::Rgb(ramp),
             Palette::Array(colors) => Ramp::Stops(colors.iter().copied().map(Color::opaque).collect()),
         };
-        Ok(Self { ramp, lo, hi, dates: false, pivot: None })
+        Ok(Self { ramp, lo, hi, dates: false, aware: false, pivot: None })
     }
 
     /// Whether the scale runs over dates, in day numbers.
+    pub(crate) fn is_aware(&self) -> bool {
+        self.aware
+    }
+
     pub(crate) fn is_dated(&self) -> bool {
         self.dates
     }
@@ -201,8 +208,8 @@ impl ContinuousColor {
     ) -> Result<(Vec<f64>, Vec<String>), String> {
         let count = gradient_tick_count(length);
         if self.dates {
-            let values = crate::families::heatmap::date_legend_ticks(self.lo, self.hi, count, authored)?;
-            let labels = values.iter().map(|&d| crate::families::heatmap::legend_date_label(d)).collect::<Result<_, _>>()?;
+            let values = crate::families::heatmap::date_legend_ticks(self.lo, self.hi, count, authored, self.aware)?;
+            let labels = values.iter().map(|&d| crate::families::heatmap::legend_date_label(d, self.aware)).collect::<Result<_, _>>()?;
             return Ok((values, labels));
         }
         let values = match authored {
@@ -237,7 +244,8 @@ impl ContinuousColor {
     /// ends: the scale's own ticks at `GRADIENT_STOP_TICKS`.
     pub(crate) fn stop_ticks(&self) -> Result<Vec<f64>, String> {
         if self.dates {
-            return Ok(crate::families::temporal::utc_instants(self.lo, self.hi, GRADIENT_STOP_TICKS));
+            let zone = crate::families::temporal::ladder_zone(self.aware);
+            return crate::families::temporal::zone_instants(self.lo, self.hi, GRADIENT_STOP_TICKS, zone.as_ref());
         }
         Ok(d3rs::ticks::d3_ticks(self.lo, self.hi, GRADIENT_STOP_TICKS))
     }
@@ -1018,14 +1026,14 @@ mod tests {
     #[test]
     fn a_one_value_domain_takes_the_middle_color() {
         assert_eq!(ContinuousColor::blues(5.0, 5.0).fill(5.0), "rgb(91, 163, 207)");
-        assert_eq!(ContinuousColor::dates(&BLUES, 19000.0, 19000.0).fill(19000.0), "rgb(96, 161, 206)");
+        assert_eq!(ContinuousColor::dates(&BLUES, 19000.0, 19000.0, false).fill(19000.0), "rgb(96, 161, 206)");
     }
 
     /// Oracle: a production histogram dated 2024-01-01 .. 2024-06-01 (a time
     /// scale over `blues`, ends 134/188/220 and 56/135/192).
     #[test]
     fn a_date_scale_mixes_two_samples_of_blues_in_hcl() {
-        let scale = ContinuousColor::dates(&BLUES, 0.0, 152.0);
+        let scale = ContinuousColor::dates(&BLUES, 0.0, 152.0, false);
         assert_eq!(scale.fill(0.0), "rgb(134, 188, 220)");
         assert_eq!(scale.fill(152.0), "rgb(56, 135, 192)");
         assert_eq!(scale.fill(31.0), "rgb(119, 177, 214)");
@@ -1296,7 +1304,7 @@ mod tests {
         }
         let flat = ContinuousColor::blues(5.0, 5.0);
         GradientAt::paint(&cfg("right", "vertical"), None, &flat, ("flat", "T"), &fonts, (300.0, 200.0), (&mut svg, 1.0, 2.0)).unwrap();
-        let dates = ContinuousColor::dates(&BLUES, 0.0, 152.0);
+        let dates = ContinuousColor::dates(&BLUES, 0.0, 152.0, false);
         GradientAt::paint(&cfg("right", "vertical"), None, &dates, ("dates", "D"), &fonts, (300.0, 200.0), (&mut svg, 1.0, 2.0)).unwrap();
         let stops: Vec<String> = ["#ffffcc", "#41b6c4", "#0c2c84"].map(String::from).to_vec();
         let labels = ["0".to_string(), "5".to_string()];
@@ -1316,7 +1324,7 @@ mod tests {
         };
         svg.push_str(&print(&bar.nodes(&vertical, 6.0, 8.0).unwrap()));
         for (min, max) in [(0.0, 152.0), (5.0, 5.0)] {
-            svg.push_str(&print(&[crate::families::heatmap::date_gradient_def("dg", min, max).unwrap()]));
+            svg.push_str(&print(&[crate::families::heatmap::date_gradient_def("dg", min, max, false).unwrap()]));
         }
         // Labels too close to all be drawn hide every other one.
         let crowded = VerticalGradient {

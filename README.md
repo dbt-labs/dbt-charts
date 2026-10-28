@@ -308,13 +308,12 @@ uv tool install "dbt-charts[mcp]"   # or: pip install "dbt-charts[mcp]"
 dct init mcp      # wire the MCP server into Cursor, VS Code, Claude Desktop, Codex, and others
 ```
 
-This repository is also a Claude plugin marketplace. The `dbt-charts` plugin bundles the
-hosted [dbtcharts.com](https://dbtcharts.com) connector with the board authoring skills:
-
-```text
-/plugin marketplace add dbt-labs/dbt-charts
-/plugin install dbt-charts@dbt-charts-plugins
-```
+This repository is also a Claude plugin marketplace for claude.ai and Cowork, where Claude
+has no shell: the `dbt-charts` plugin bundles the hosted [dbtcharts.com](https://dbtcharts.com)
+connector with the board authoring skills, and an organization owner distributes it from
+**Organization settings → Plugins & skills**. Claude Code and other coding agents do not need
+it: `dct init skills` writes one `dct` skill into the repository that sends them to
+`dct skills chart`, and they work through the CLI.
 
 ---
 

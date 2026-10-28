@@ -1,4 +1,4 @@
-//! `Placed` items to nodes: one plane's marks (clipped); all text (unclipped) in the foreground, above the data.
+//! `Placed` items to nodes: one plane's marks (clipped); all text, connectors and enclosures (unclipped) in the foreground, above the data.
 
 use d3rs::shape::{line_path, Curve as D3Curve};
 use scene::{Attrs, Node};
@@ -9,6 +9,7 @@ use super::{text, AnnotationCtx, Plane};
 use crate::contract::{aria_attrs, ItemRole};
 use crate::diagnostic::Diagnostic;
 use crate::svg::num;
+use crate::vega_fit::Bounds;
 
 fn d3_curve(curve: Curve) -> D3Curve {
     match curve {
@@ -127,6 +128,15 @@ fn item(p: &Placed, accessible: bool, children: Vec<Node>) -> Result<Node, Diagn
     Ok(Node::group(attrs, children))
 }
 
+/// Records `WARN-ANNOTATION-NOTE-MOVED` for a note whose text left its side
+/// with no connector back to its anchor.
+fn warn_strayed(ctx: &AnnotationCtx, p: &Placed) {
+    crate::diagnostic::warn(Diagnostic::new(
+        &crate::codes::WARN_ANNOTATION_NOTE_MOVED,
+        [("chart_id", serde_json::Value::String(ctx.chart_id.to_string())), ("index", serde_json::Value::from(p.index))],
+    ));
+}
+
 pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Result<Vec<Node>, Diagnostic> {
     let mut out = Vec::new();
     if plane == Plane::Background && !items.is_empty() {
@@ -138,8 +148,11 @@ pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Resu
         });
     }
     let mine: Vec<&Placed> = items.iter().filter(|p| p.plane == plane).collect();
-    let texts: Vec<&Placed> = if plane == Plane::Foreground { items.iter().filter(|p| p.text.is_some()).collect() } else { Vec::new() };
-    if mine.is_empty() && texts.is_empty() {
+    // Text, connectors and enclosures follow where the text lands, which the
+    // data drawn by the foreground call decides, so they all draw there.
+    let fore: Vec<&Placed> = if plane == Plane::Foreground { items.iter().collect() } else { Vec::new() };
+    let texts: Vec<&Placed> = fore.iter().copied().filter(|p| p.text.is_some()).collect();
+    if mine.is_empty() && fore.is_empty() {
         return Ok(out);
     }
     let mut marks = Vec::new();
@@ -160,7 +173,7 @@ pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Resu
     }
     // Connectors and enclosures overhang the plot like text, so they are never clipped.
     let mut links = Vec::new();
-    for p in &mine {
+    for p in &fore {
         if p.enclosure.is_none() && p.connector.is_none() {
             continue;
         }
@@ -176,9 +189,14 @@ pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Resu
     }
     let mut labels = Vec::new();
     for p in &texts {
+        if p.strayed {
+            warn_strayed(ctx, p);
+        }
         if let Some(b) = &p.text {
             let halo = if matches!(p.enclosure, Some(Mark::Rect { .. })) { &p.style.rect().fill } else { ctx.canvas };
-            labels.push(item(p, true, text::nodes(b, &p.style.text, halo))?);
+            let bounds = Bounds::new(b.x, b.y, b.x + b.w, b.y + b.h);
+            let haloed = !p.style.text.halo_over_marks || ctx.occupied.iter().any(|m| m.overlaps(&bounds));
+            labels.push(item(p, true, text::nodes(b, &p.style.text, haloed.then_some(halo)))?);
         }
     }
     let layer = |name: &'static str, children| Node::group(Attrs::new().set("class", name), children);

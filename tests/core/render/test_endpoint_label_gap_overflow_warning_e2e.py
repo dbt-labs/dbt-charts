@@ -264,7 +264,10 @@ def test_local_overflow_warns_and_drops_only_what_does_not_fit() -> None:
     )
     assert match is not None
     label_block = match.group(1)
-    drawn_names = set(re.findall(r">([^<]+)</text>", label_block))
+    # A rail label reads "{value} {name}".
+    drawn_names = {
+        text.split(" ", 1)[1] for text in re.findall(r">([^<]+)</text>", label_block)
+    }
 
     # A regression here (e.g. the warning's dropped count going stale while
     # the pane still drew everyone, or the wrong series getting dropped)

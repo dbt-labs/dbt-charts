@@ -16,6 +16,8 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_style_and_context,
 )
 
+from ._pooled_table import visible_svg
+
 _BOARD_STYLE = resolve_style(get_theme_style())
 _BOARD_CONTEXT = resolve_chart_style_context(get_theme_style())
 
@@ -412,6 +414,7 @@ class TestTableProportionalSizing:
                 width=400,
                 board_style=resolve_style(get_theme_style()),
             )
+        svg = visible_svg(svg)
 
         assert "row19" in svg
         assert "row20" not in svg
@@ -462,6 +465,7 @@ class TestTableProportionalSizing:
                 width=400,
                 board_style=resolve_style(get_theme_style()),
             )
+        svg = visible_svg(svg)
 
         assert "row4" in svg
         assert "row5" not in svg
@@ -491,6 +495,7 @@ class TestTableProportionalSizing:
                 width=400,
                 board_style=resolve_style(get_theme_style()),
             )
+        svg = visible_svg(svg)
 
         assert "row19" in svg
         assert "row20" not in svg
@@ -550,6 +555,7 @@ class TestTableProportionalSizing:
                 height=explicit_height,
                 board_style=resolve_style(get_theme_style()),
             )
+        svg = visible_svg(svg)
 
         assert "row_01" in svg
         assert "row_02" not in svg

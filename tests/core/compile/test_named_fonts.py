@@ -258,11 +258,12 @@ def test_ramp_font_rejects_size(name: str, levels: str) -> None:
 
 
 @pytest.mark.parametrize("name", ["heading", "section"])
-def test_ramp_sizes_are_required(name: str) -> None:
+@pytest.mark.parametrize("sizes", [None, []])
+def test_ramp_sizes_are_required(name: str, sizes: list[float] | None) -> None:
     with pytest.raises(ValidationError, match=f"style.fonts.{name}.sizes is required"):
         merge_onto_base(
             get_theme_style(),
-            StylePatch.model_validate({"fonts": {name: {"sizes": None}}}),
+            StylePatch.model_validate({"fonts": {name: {"sizes": sizes}}}),
         )
 
 

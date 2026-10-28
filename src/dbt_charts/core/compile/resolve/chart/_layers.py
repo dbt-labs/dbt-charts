@@ -48,6 +48,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 )
 from dbt_charts.core.compile.models.style.theme.line import LineChartStyle
 from dbt_charts.core.compile.models.style.theme.scatter import ScatterChartStyle
+from dbt_charts.core.compile.resolve.chart._axes import _series_display_name
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     CartesianChart,
@@ -181,9 +182,14 @@ def _resolve_layer_inks(
     board_scales = _bound_scales(normalized, chart_style_context, palette)
     color = channels["color"] if normalized.color is not None else None
     if color is None:
+        name = _series_display_name(
+            normalized.y if isinstance(normalized.y, str) else None,
+            normalized.y_label,
+            normalized.field_labels,
+        )
         base = LayerBase(
             measure_quantitative,
-            {str(normalized.y): single_series_fill} if measure_quantitative else {},
+            {name: single_series_fill} if measure_quantitative and name else {},
         )
     elif color.mode == "series" and not color.quantitative_data:
         values = sorted(
@@ -213,6 +219,7 @@ def _resolve_layer_inks(
         board_scales=board_scales,
         single_series_fill=single_series_fill,
         rows_of=lambda layer: _layer_rows(layer, data, normalized.query_name, datasets),
+        field_labels=normalized.field_labels,
     )
 
 

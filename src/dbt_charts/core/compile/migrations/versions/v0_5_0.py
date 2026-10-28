@@ -3,9 +3,8 @@
 Declares the frozen ``0.4.0 → 0.5.0`` boundary's renames, key removals, and
 conditional relocations. ``moves()``, ``deletions()``, and
 ``conditional_moves()`` all source from the frozen ``0.4.0`` schema and
-target the frozen ``0.5.0`` schema. This file was authored as
-``versions/current.py`` while these changes were unreleased (declaring the
-``catalog.latest.version → current`` boundary) and renamed here with no
+target the frozen ``0.5.0`` schema. This file was authored under a
+placeholder name while these changes were unreleased and renamed here with no
 content edit at release time — every function already accepts
 ``source_schema`` and ``target_schema`` as runtime parameters, so no
 hardcoded version strings needed to change.

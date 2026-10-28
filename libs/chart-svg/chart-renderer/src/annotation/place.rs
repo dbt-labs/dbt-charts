@@ -7,9 +7,12 @@ use super::model::{Align, Anchor, Annotation, Connector as ConnectorKind, Curve,
 use super::text::{self, Block};
 use super::{AnnotationCtx, Orientation, Plane};
 use crate::diagnostic::Diagnostic;
+use crate::vega_fit::Bounds;
 
 /// Text-to-geometry gap, px.
 pub(crate) const GAP: f64 = 4.0;
+/// How far text that moves keeps off what it moved off, px.
+pub(crate) const CLEAR: f64 = 2.0 * GAP;
 /// How far text keeps off tick labels beside the plot.
 const AXIS_GAP: f64 = 8.0;
 
@@ -34,6 +37,20 @@ pub(crate) struct Placed<'a> {
     pub inset: Option<f64>,
     /// The note anchor its connector runs from.
     pub tether: Option<Tether>,
+    /// What the text was placed against, to place it again elsewhere.
+    pub spot: Option<Spot>,
+    /// A note's text left its edge for another side and has no connector.
+    pub strayed: bool,
+}
+
+/// A text's placement inputs: its geometry, the position it took there, its
+/// size and its authored nudge.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Spot {
+    pub geom: Geom,
+    pub pos: Position,
+    pub size: (f64, f64),
+    pub nudge: (f64, f64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -490,6 +507,168 @@ pub(crate) fn separate(items: &mut [Placed], ctx: &AnnotationCtx) {
     }
 }
 
+/// The box origin and text-anchor for `spot`'s text at `pos`, `extra` further
+/// off its edge (into the geometry when overlaid), nudged, then clear of the
+/// chart's ink past the plot.
+fn put(spot: &Spot, pos: Position, extra: f64, ctx: &AnnotationCtx) -> (f64, f64, TextAnchor) {
+    let (x, y, anchor) = place_box(spot.geom, spot.size, pos);
+    let out = if pos.overlay { -extra } else { extra };
+    let (ox, oy) = match pos.edge {
+        Edge::Top => (0.0, -out),
+        Edge::Bottom => (0.0, out),
+        Edge::Left => (-out, 0.0),
+        Edge::Right => (out, 0.0),
+    };
+    let (x, y) = settle(x + ox + spot.nudge.0, y + oy + spot.nudge.1, spot.size, ctx);
+    (x, y, anchor)
+}
+
+/// A `(w, h)` box at `(x, y)` moved clear of the chart's ink past the plot.
+fn settle(x: f64, y: f64, (w, h): (f64, f64), ctx: &AnnotationCtx) -> (f64, f64) {
+    let r = ctx.reach;
+    let y = clear(y, h, ctx.plot.h, r.top, r.bottom, GAP);
+    // Past a side edge, the axis ink there spans the plot's rows; a box
+    // above or below them keeps its x.
+    let beside = y + h > -r.top && y < ctx.plot.h + r.bottom;
+    let x = if beside { clear(x, w, ctx.plot.w, r.left, r.right, AXIS_GAP) } else { x };
+    (x, y)
+}
+
+/// The eight compass spots around a geometry, clockwise from north. A side
+/// edge takes only its center, so an explicit left or right edge leaves an
+/// `auto` align nowhere else to go.
+const COMPASS: [(Edge, Align); 8] = [
+    (Edge::Top, Align::Center),
+    (Edge::Top, Align::End),
+    (Edge::Right, Align::Center),
+    (Edge::Bottom, Align::End),
+    (Edge::Bottom, Align::Center),
+    (Edge::Bottom, Align::Start),
+    (Edge::Left, Align::Center),
+    (Edge::Top, Align::Start),
+];
+
+fn intersection(a: &Bounds, b: &Bounds) -> f64 {
+    (a.x2.min(b.x2) - a.x1.max(b.x1)).max(0.0) * (a.y2.min(b.y2) - a.y1.max(b.y1)).max(0.0)
+}
+
+/// Moves each text, in list order, off `occupied` (the chart's ink as boxes)
+/// and every other text. Candidates: where it is; the compass spots at `GAP`
+/// and `2 * GAP` off its geometry that its `auto` edge and align allow; then
+/// the nearest slides along its edge that clear everything by `CLEAR`. The
+/// least overlap wins, then the earlier group, then the least move. A text
+/// stays within the plot (inside text within its rect) or no further outside
+/// than it was, so the fit's reserve still holds. A mark under a note's
+/// anchor is what it annotates and never pushes it.
+pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bounds]) {
+    const EPS: f64 = 1e-6;
+    for i in 0..items.len() {
+        let Some((x0, y0, x1, y1)) = text_box(&items[i]) else { continue };
+        let start = Bounds::new(x0, y0, x1, y1);
+        let mine = text_gap(&items[i]);
+        let point = match items[i].spot.map(|s| s.geom) {
+            Some(Geom::Point { x, y, .. }) => Some((x, y)),
+            _ => None,
+        };
+        let marks = occupied
+            .iter()
+            .filter(|m| !point.is_some_and(|(x, y)| m.x1 <= x && x <= m.x2 && m.y1 <= y && y <= m.y2));
+        let grow = |b: &Bounds, g: f64| Bounds::new(b.x1 - g, b.y1 - g, b.x2 + g, b.y2 + g);
+        let texts: Vec<(Bounds, f64)> = items
+            .iter()
+            .enumerate()
+            .filter(|&(j, _)| j != i)
+            .filter_map(|(_, o)| {
+                let (a0, b0, a1, b1) = text_box(o)?;
+                Some((Bounds::new(a0, b0, a1, b1), mine.max(text_gap(o))))
+            })
+            .collect();
+        let marks: Vec<Bounds> = marks.copied().collect();
+        let obstacles: Vec<Bounds> = marks.iter().copied().chain(texts.iter().map(|(b, g)| grow(b, *g))).collect();
+        let clearances: Vec<Bounds> =
+            marks.iter().map(|m| grow(m, CLEAR)).chain(texts.iter().map(|(b, g)| grow(b, g.max(CLEAR)))).collect();
+        let overlap = |b: &Bounds| obstacles.iter().map(|o| intersection(b, o)).sum::<f64>();
+        if overlap(&start) < EPS {
+            continue;
+        }
+        let (w, h) = (start.x2 - start.x1, start.y2 - start.y1);
+        // Text inside a rect stays in it; other text stays in the plot.
+        let (r0, r1) = match items[i].spot.map(|s| (s.geom, s.pos.overlay)) {
+            Some((Geom::Rect { x0, y0, x1, y1 }, true)) => ((x0.max(0.0), y0.max(0.0)), (x1.min(ctx.plot.w), y1.min(ctx.plot.h))),
+            _ => ((0.0, 0.0), (ctx.plot.w, ctx.plot.h)),
+        };
+        let room = Bounds::new(start.x1.min(r0.0), start.y1.min(r0.1), start.x2.max(r1.0), start.y2.max(r1.1));
+        let inside = |b: &Bounds| b.x1 >= room.x1 - EPS && b.y1 >= room.y1 - EPS && b.x2 <= room.x2 + EPS && b.y2 <= room.y2 + EPS;
+        let at = |x: f64, y: f64| Bounds::new(x, y, x + w, y + h);
+        // (group, box, anchor and edge) per candidate; `None` keeps the text's own.
+        let mut candidates: Vec<(u8, Bounds, Option<(TextAnchor, Edge)>)> = vec![(0, start, None)];
+        if let Some(spot) = items[i].spot.filter(|s| s.pos.auto_edge || s.pos.auto_align) {
+            for (group, extra) in [(1, 0.0), (2, GAP)] {
+                for (edge, align) in COMPASS {
+                    if (!spot.pos.auto_edge && edge != spot.pos.edge) || (!spot.pos.auto_align && align != spot.pos.align) {
+                        continue;
+                    }
+                    let (x, y, anchor) = put(&spot, Position { edge, align, ..spot.pos }, extra, ctx);
+                    candidates.push((group, at(x, y), Some((anchor, edge))));
+                }
+            }
+        }
+        // Along the edge the text sits on, so it never crosses what it labels.
+        let slide = items[i].spot.map_or(items[i].slide, |s| along_edge(s.pos.edge));
+        let (lo, size, c0, c1) = match slide {
+            Slide::X => (start.x1, w, start.y1, start.y2),
+            Slide::Y => (start.y1, h, start.x1, start.x2),
+        };
+        let blocked: Vec<(f64, f64)> = clearances
+            .iter()
+            .map(|o| match slide {
+                Slide::X => ((o.x1, o.x2), (o.y1, o.y2)),
+                Slide::Y => ((o.y1, o.y2), (o.x1, o.x2)),
+            })
+            .filter(|&(_, (o0, o1))| o0 < c1 && c0 < o1)
+            .map(|((o0, o1), _)| (o0 - size, o1))
+            .collect();
+        for up in [true, false] {
+            let mut to = lo;
+            while let Some(&(a, b)) = blocked.iter().find(|&&(a, b)| a < to && to < b) {
+                to = if up { b } else { a };
+            }
+            let b = match slide {
+                Slide::X => at(to, start.y1),
+                Slide::Y => at(start.x1, to),
+            };
+            candidates.push((3, b, None));
+        }
+        let center = |b: &Bounds| ((b.x1 + b.x2) / 2.0, (b.y1 + b.y2) / 2.0);
+        let (sx, sy) = center(&start);
+        let mut best: Option<(f64, u8, f64, usize)> = None;
+        for (k, (group, b, _)) in candidates.iter().enumerate() {
+            if !inside(b) {
+                continue;
+            }
+            let (cx, cy) = center(b);
+            let (o, d) = (overlap(b), (cx - sx).hypot(cy - sy));
+            let better = |(bo, bg, bd, _): (f64, u8, f64, usize)| {
+                o < bo - EPS || (o < bo + EPS && (*group < bg || (*group == bg && d < bd - EPS)))
+            };
+            if best.is_none_or(better) {
+                best = Some((o, *group, d, k));
+            }
+        }
+        let Some((_, _, _, k)) = best.filter(|&(_, _, _, k)| k != 0) else { continue };
+        let (_, b, side) = candidates[k];
+        let p = &mut items[i];
+        let t = p.text.as_mut().expect("text_box found a text");
+        (t.x, t.y) = (b.x1, b.y1);
+        if let Some((anchor, edge)) = side {
+            t.anchor = anchor;
+            let own = p.spot.expect("a compass candidate has a spot").pos.edge;
+            p.strayed = edge != own && point.is_some() && p.tether.is_none();
+        }
+        relink(p);
+    }
+}
+
 /// One annotation's placed geometry; `None` when it draws nothing on this
 /// panel or names nothing on the axis (the warning is recorded).
 pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Option<Placed<'a>>, Diagnostic> {
@@ -519,6 +698,8 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
         slide: Slide::Y,
         inset: None,
         tether: None,
+        spot: None,
+        strayed: false,
     };
     let mut anchor_point = None;
     let connected = ann.connector != ConnectorKind::None;
@@ -583,25 +764,21 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
         let limit = style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap));
         let Block { lines, line_h, w, h, ascent } = text::measure_block(ctx.fonts, text, &style.text, limit)?;
         let size = (w + 2.0 * pad, h + 2.0 * pad);
+        // A connected note sits its line length off the anchor on its edge side;
+        // `overlay` there only lets the text draw over the plot.
+        let pos = if connected && anchor_point.is_some() { Position { overlay: false, ..style.text.position } } else { style.text.position };
+        let spot = Spot { geom, pos, size, nudge: (style.text.dx, style.text.dy) };
         let (x, y, anchor) = match (ann.enclose, anchor_point) {
             (Some(Enclose::Rect), Some(p)) if !connected => {
-                (p.0 - size.0 / 2.0, p.1 - size.1 / 2.0, TextAnchor::Middle)
+                let (x, y) = settle(p.0 - size.0 / 2.0 + style.text.dx, p.1 - size.1 / 2.0 + style.text.dy, size, ctx);
+                (x, y, TextAnchor::Middle)
             }
-            // A connected note sits its line length off the anchor on its edge side;
-            // `overlay` there only lets the text draw over the plot.
-            (_, Some(_)) if connected => {
-                place_box(geom, size, Position { overlay: false, ..style.text.position })
+            _ => {
+                placed.spot = Some(spot);
+                put(&spot, pos, 0.0, ctx)
             }
-            _ => place_box(geom, size, style.text.position),
         };
-        let (x, y) = (x + style.text.dx, y + style.text.dy);
         let (w, h) = size;
-        let r = ctx.reach;
-        let y = clear(y, h, ctx.plot.h, r.top, r.bottom, GAP);
-        // Past a side edge, the axis ink there spans the plot's rows; a box
-        // above or below them keeps its x.
-        let beside = y + h > -r.top && y < ctx.plot.h + r.bottom;
-        let x = if beside { clear(x, w, ctx.plot.w, r.left, r.right, AXIS_GAP) } else { x };
         placed.text = Some(TextBox {
             x,
             y,
@@ -634,8 +811,9 @@ mod tests {
     use super::*;
     use crate::annotation::model::tests::contract;
     use crate::annotation::text::tests::fonts;
-    use crate::annotation::{PlotRect, Reach};
+    use crate::annotation::{DataMark, PlotRect, Reach};
     use crate::diagnostic::collect;
+    use crate::vega_fit::Bounds;
     use crate::time_axis::date_text_day;
     use measure::FontBook;
 
@@ -643,7 +821,7 @@ mod tests {
     const H: f64 = 12.0;
 
     fn pos(edge: Edge, align: Align, overlay: bool) -> Position {
-        Position { edge, align, overlay }
+        Position { edge, align, overlay, auto_edge: false, auto_align: false }
     }
 
     fn close(a: f64, b: f64) -> bool {
@@ -801,6 +979,7 @@ mod tests {
             fonts,
             canvas: "#fff",
             clip_id: "c-ann0".into(),
+            occupied: Vec::new(),
         }
     }
 
@@ -1167,7 +1346,7 @@ mod tests {
         let mut anns = contract();
         let fonts = fonts();
         let text = &mut anns[11].style.text;
-        text.position = Position { edge: Edge::Top, align: Align::Start, overlay: true };
+        text.position = Position { edge: Edge::Top, align: Align::Start, overlay: true, auto_edge: false, auto_align: false };
         let c = ctx(&anns, &fonts, Orientation::Vertical);
         let p = place(&anns[11], &c).unwrap().unwrap();
         let Some(Mark::Polyline(line)) = &p.mark else { panic!() };
@@ -1179,7 +1358,7 @@ mod tests {
     fn right_edge_overlay_trend_text_ends_inside_the_plot_at_the_curve_end() {
         let mut anns = contract();
         let fonts = fonts();
-        anns[11].style.text.position = Position { edge: Edge::Right, align: Align::Center, overlay: true };
+        anns[11].style.text.position = Position { edge: Edge::Right, align: Align::Center, overlay: true, auto_edge: false, auto_align: false };
         let c = ctx(&anns, &fonts, Orientation::Vertical);
         let p = place(&anns[11], &c).unwrap().unwrap();
         let Some(Mark::Polyline(line)) = &p.mark else { panic!() };
@@ -1320,7 +1499,7 @@ mod tests {
         anns.extend(copies(4, &[&|a| {
             a.index = 1;
             a.text = Some("y above".into());
-            a.style.text.position = Position { edge: Edge::Top, align: Align::Center, overlay: true };
+            a.style.text.position = Position { edge: Edge::Top, align: Align::Center, overlay: true, auto_edge: false, auto_align: false };
         }]));
         let items = resolved(anns, Reach::default());
         let (a, b) = (text_of(&items[0]), text_of(&items[1]));
@@ -1397,7 +1576,7 @@ mod tests {
     #[test]
     fn edge_text_outside_the_plot_clears_the_axis_ink_there() {
         let reach = Reach { left: 30.0, top: 6.0, right: 40.0, bottom: 25.0 };
-        let bottom = |a: &mut Annotation| a.style.text.position = Position { edge: Edge::Bottom, align: Align::Start, overlay: false };
+        let bottom = |a: &mut Annotation| a.style.text.position = Position { edge: Edge::Bottom, align: Align::Start, overlay: false, auto_edge: false, auto_align: false };
         let rule = resolved(copies(1, &[&bottom]), reach);
         assert!(close(text_of(&rule[0]).y, 100.0 + 25.0 + GAP));
         let frame = resolved(copies(10, &[&|a| {
@@ -1434,6 +1613,104 @@ mod tests {
         let corner = resolved(copies(1, &[&|a| a.x = date("2024-12-20")]), reach);
         let t = text_of(&corner[0]);
         assert!(close(t.x, x) && close(t.y + t.h, -6.0 - GAP), "{t:?}");
+    }
+
+    fn resolved_over(anns: Vec<Annotation>, occupied: Vec<DataMark>) -> Vec<Placed<'static>> {
+        let anns: &'static [Annotation] = Box::leak(anns.into_boxed_slice());
+        let fonts: &'static FontBook = Box::leak(Box::new(fonts()));
+        let mut c = ctx(anns, fonts, Orientation::Vertical);
+        c.occupied = occupied;
+        let c: &'static AnnotationCtx = Box::leak(Box::new(c));
+        super::super::resolve(c).unwrap()
+    }
+
+    fn hits(p: &Placed, m: &DataMark) -> bool {
+        let t = text_of(p);
+        m.overlaps(&Bounds::new(t.x, t.y, t.x + t.w, t.y + t.h))
+    }
+
+    /// Contract note 7 at `x`, 18.4M, bare text on an `auto` top edge.
+    fn auto_note(x: &'static str) -> impl Fn(&mut Annotation) {
+        move |a: &mut Annotation| {
+            a.x = date(x);
+            a.connector = ConnectorKind::None;
+            a.text = Some("Peak".into());
+            a.style.text.dx = 0.0;
+            a.style.text.dy = 0.0;
+            a.style.text.position.auto_edge = true;
+        }
+    }
+
+    #[test]
+    fn neighboring_notes_clear_each_other_and_the_marks() {
+        let (a, b) = (auto_note("2024-03-01"), auto_note("2024-03-08"));
+        let alone = resolved(copies(7, &[&a]), Reach::default());
+        // A taller bar right of each anchor, over where its text would sit.
+        let t = text_of(&alone[0]);
+        let bars: Vec<DataMark> =
+            [t.x + t.w / 2.0 + 2.0, t.x + t.w / 2.0 + 14.0].map(|x| DataMark::rect(x, 10.0, 8.0, 90.0)).into();
+        let items = resolved_over(copies(7, &[&a, &b]), bars.clone());
+        assert!(!overlap(&items[0], &items[1]), "{:?} {:?}", text_of(&items[0]), text_of(&items[1]));
+        for p in &items {
+            assert!(bars.iter().all(|m| !hits(p, m)), "{:?}", text_of(p));
+        }
+    }
+
+    #[test]
+    fn a_rule_label_on_a_tick_label_slides_along_its_edge() {
+        let alone = resolved(copies(0, &[&|_| {}]), Reach::default());
+        let own = text_of(&alone[0]).clone();
+        let tick = DataMark::rect(own.x + own.w - 12.0, own.y, 12.0, own.h);
+        let items = resolved_over(copies(0, &[&|_| {}]), vec![tick.clone()]);
+        let moved = text_of(&items[0]);
+        assert!(!hits(&items[0], &tick), "{moved:?}");
+        assert!(close(moved.y, own.y) && close(moved.x + moved.w, own.x + own.w - 12.0 - CLEAR), "{moved:?} {own:?}");
+        assert_eq!(items[0].mark, alone[0].mark);
+    }
+
+    #[test]
+    fn an_auto_rule_label_takes_another_spot_on_its_rule_before_it_slides() {
+        let auto = |a: &mut Annotation| {
+            a.style.text.position.auto_edge = true;
+            a.style.text.position.auto_align = true;
+        };
+        let alone = resolved(copies(0, &[&auto]), Reach::default());
+        let own = text_of(&alone[0]).clone();
+        let tick = DataMark::rect(own.x + own.w - 12.0, own.y, 12.0, own.h);
+        let items = resolved_over(copies(0, &[&auto]), vec![tick.clone()]);
+        let moved = text_of(&items[0]);
+        // The nearest free spot: under the rule's right end, not a slide along the top.
+        assert!(!hits(&items[0], &tick), "{moved:?}");
+        assert!(close(moved.y, 37.5 + GAP) && close(moved.x, own.x), "{moved:?}");
+    }
+
+    #[test]
+    fn auto_moves_a_band_s_text_never_its_rect() {
+        let auto = |a: &mut Annotation| a.style.text.position.auto_edge = true;
+        let alone = resolved(copies(3, &[&auto]), Reach::default());
+        let own = text_of(&alone[0]).clone();
+        let mark = DataMark::rect(own.x - 20.0, own.y - 4.0, own.w + 40.0, own.h + 8.0);
+        let items = resolved_over(copies(3, &[&auto]), vec![mark.clone()]);
+        assert!(!hits(&items[0], &mark), "{:?}", text_of(&items[0]));
+        assert_eq!(items[0].mark, alone[0].mark);
+    }
+
+    #[test]
+    fn a_note_leaving_its_side_draws_its_connector_or_warns() {
+        let note = auto_note("2024-07-01");
+        let alone = resolved(copies(7, &[&note]), Reach::default());
+        let own = text_of(&alone[0]).clone();
+        // Everything above the anchor is taken.
+        let above = || vec![DataMark::rect(0.0, 0.0, 200.0, own.y + own.h + GAP / 2.0)];
+        let bare = resolved_over(copies(7, &[&note]), above());
+        assert!(text_of(&bare[0]).y > own.y + own.h, "{:?}", text_of(&bare[0]));
+        assert!(bare[0].connector.is_none() && bare[0].strayed);
+        let linked = |a: &mut Annotation| {
+            note(a);
+            a.connector = ConnectorKind::Line;
+        };
+        let items = resolved_over(copies(7, &[&linked]), above());
+        assert!(items[0].connector.is_some() && !items[0].strayed);
     }
 
     #[test]

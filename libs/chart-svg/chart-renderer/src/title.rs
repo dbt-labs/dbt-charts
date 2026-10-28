@@ -292,7 +292,7 @@ fn resolved_title_blocks(
 /// table cell, at any depth) is cased as one string (`apply_case_to_runs`).
 /// Code spans and images keep their text: code is literal, and an image's
 /// alt is not a word.
-fn case_blocks(blocks: &mut [AnyBlock], case: &str) -> Result<(), String> {
+pub(crate) fn case_blocks(blocks: &mut [AnyBlock], case: &str) -> Result<(), String> {
     for block in blocks {
         match block {
             AnyBlock::Paragraph(Paragraph { spans }) | AnyBlock::Heading(Heading { spans, .. }) => {

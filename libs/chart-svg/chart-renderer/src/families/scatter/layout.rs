@@ -1158,6 +1158,7 @@ pub(super) fn fit(
     // per kept point at the board font; its ink joins the fit like any mark's,
     // so text and measured advance are fixed ahead of the plot rect.
     let value_labels = r.style.point_mark.labels.as_ref().filter(|l| l.visible);
+    value_labels.map(|ml| ml.refuse_last("scatter")).transpose()?;
     let value_label_font = value_labels.and_then(|ml| ml.font.as_ref());
     let value_label_family = match (value_labels, value_label_font.and_then(|f| f.family.as_deref())) {
         (None, _) => "",
@@ -1437,6 +1438,7 @@ pub(super) fn fit(
             fonts,
             canvas: bg,
             clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), panel.map_or(0, |o| o.panel_ordinal)),
+            occupied: Vec::new(),
         })
     };
     if !r.annotations.is_empty() {
@@ -2011,8 +2013,11 @@ pub(super) fn fit(
     let mut ghost_symbols: Vec<(String, f64, f64, String, String, Option<String>)> = Vec::new();
     let value_label_ink = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
     let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>)> = Vec::new();
+    // The points, which annotation text tests for its halo.
+    let mut under = Vec::new();
     for (x_frac, y_frac, series, mark_r, row) in &points_data {
         let (cx, cy) = (x_pos(*x_frac), y_pos(*y_frac));
+        under.push(crate::annotation::DataMark::rect(cx - mark_r, cy - mark_r, 2.0 * mark_r, 2.0 * mark_r));
         let channel_ink = match &color_scale {
             Some(scale) => {
                 let field = r.color.as_deref().expect("a color scale implies a color channel");
@@ -2031,6 +2036,7 @@ pub(super) fn fit(
         } else {
             (channel_ink.clone(), None)
         };
+        let extra = crate::families::tooltip_extra::rows_for(&r.tooltip, row)?;
         let aria = if tooltip_labels && dot_plot {
             let (category_field, measure_field, value_title) =
                 if y_nominal { (&r.y, &r.x, &x_axis_title) } else { (&r.x, &r.y, &y_axis_title) };
@@ -2047,6 +2053,7 @@ pub(super) fn fit(
                 value_title,
                 value,
                 value_format: &r.style.tooltip_format,
+                extra: &extra,
             })?)
         } else if tooltip_labels && panel.is_some() {
             // A facet panel's marks carry Vega-Lite's own description (the
@@ -2067,7 +2074,12 @@ pub(super) fn fit(
             if let Some(cf) = r.color.as_deref() {
                 rows.push((color_title.as_str(), row_str(row, cf)));
             }
-            Some(crate::contract::native_label(&rows))
+            let mut label = crate::contract::native_label(&rows);
+            for row in &extra {
+                label.push_str("; ");
+                label.push_str(row);
+            }
+            Some(label)
         } else if tooltip_labels {
             let header = r.color.as_deref().map(|cf| row_str(row, cf));
             let y_nominal_str;
@@ -2097,6 +2109,7 @@ pub(super) fn fit(
                 y_value,
                 x_title: &x_axis_title,
                 x_value,
+                extra: &extra,
             };
             Some(crate::contract::scatter_aria_label(&tt)?)
         } else if !r.wide_measures.is_empty() && !r.style.tooltip_format.spec.is_empty() {
@@ -2163,7 +2176,15 @@ pub(super) fn fit(
         let font_style = value_label_font.and_then(|f| f.style.as_deref());
         let baseline = value_label_dy + measure::baseline_shift(value_label_baseline, value_label_size);
         let mut labels = Vec::new();
-        for ((cx, cy, aria, color, href), (text, _)) in value_label_marks.iter().zip(&value_label_texts) {
+        for ((cx, cy, aria, color, href), (text, w)) in value_label_marks.iter().zip(&value_label_texts) {
+            under.push(crate::annotation::DataMark::Box(vega_fit::text_ink(
+                cx + value_label_dx,
+                cy + value_label_dy,
+                *w,
+                value_label_size,
+                value_label_align,
+                value_label_baseline,
+            )));
             let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
             let anchor = r.link_open.anchor(href.as_deref());
             let label = crate::common::value_label(
@@ -2260,6 +2281,7 @@ pub(super) fn fit(
                         0.0,
                         stack.as_ref(),
                         crate::families::layers::layer_link(datum_link.as_ref(), (l.query_name.as_deref(), r.query_name.as_deref())),
+                        crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                     )
                     .map_err(|e| format!("scatter: {e}"))
                 };
@@ -2297,6 +2319,7 @@ pub(super) fn fit(
                         label_caption,
                         crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())),
                         crate::families::layers::layer_clip(overlay.layer_type(), overlay.y(), rows, ax_y, false, independent).then_some((plot_w, plot_h)),
+                        crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                     )
                     .map_err(|e| format!("scatter: {e}"))?,
                 );
@@ -2305,9 +2328,11 @@ pub(super) fn fit(
                 let marks = layer_bar_marks[index].as_ref().expect("a bar layer has its marks");
                 let clip = crate::families::layers::layer_clip(overlay.layer_type(), overlay.y(), rows, ax_y, false, independent);
                 let mut bars = Vec::new();
+                let mut bar_widths = Vec::with_capacity(marks.len());
                 for mark in marks {
                     let cx = x_of(mark.row).expect("marks keep rows with an x");
                     let (left, width, _) = bar_x.slot(bl, (rows, x_field), (mark.row, cx), plot_w, bl.x.is_none())?;
+                    bar_widths.push(width);
                     let fill = match bl.color.as_deref() {
                         Some(cf) => claim.row_color(&layered_legend.scale, cf, mark.row),
                         None => claimed_fill.clone(),
@@ -2337,6 +2362,10 @@ pub(super) fn fit(
                     |mark| label_caption(mark.row, mark.value).expect("a plotted date parsed at resolve"),
                     crate::families::layers::layer_link(datum_link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())),
                     (payload.board_style.as_ref(), bg),
+                    (
+                        crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
+                        &sited.iter().map(|&i| bar_widths[i]).collect::<Vec<_>>(),
+                    ),
                 )?);
                 if clip {
                     plot.extend(crate::families::layers::clipped_layer(&mut defined_clips, (plot_w, plot_h), &r.id, bars));
@@ -2373,6 +2402,7 @@ pub(super) fn fit(
             )?);
         }
     }
+    let annotations = annotations.map(|ctx| crate::annotation::AnnotationCtx { occupied: under, ..ctx });
     if let Some(ctx) = &annotations {
         plot.extend(crate::annotation::nodes(ctx, crate::annotation::Plane::Foreground)?);
     }

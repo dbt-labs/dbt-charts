@@ -87,6 +87,87 @@ pub struct AnnotationCtx<'a> {
     pub canvas: &'a str,
     /// `format!("{}-ann{}", contract::safe_svg_id(chart_id), panel_ordinal)`.
     pub clip_id: String,
+    /// The chart's own ink inside and around the plot, plot-relative: what
+    /// text moves off. Set at paint before the `Foreground` call; empty in the fit.
+    pub occupied: Vec<DataMark>,
+}
+
+/// Chart ink annotation text may sit on, plot-relative: a bar's, point's or
+/// label's box, an area fill between its top and bottom outlines, or a
+/// stroked line; outlines and lines sorted by x.
+#[derive(Debug, Clone)]
+pub enum DataMark {
+    Box(Bounds),
+    Area { hi: Vec<(f64, f64)>, lo: Vec<(f64, f64)> },
+    Line { points: Vec<(f64, f64)>, width: f64 },
+}
+
+/// Column width, px, a fill or line is cut into for placement.
+const COLUMN: f64 = 4.0;
+
+impl DataMark {
+    pub fn rect(x: f64, y: f64, w: f64, h: f64) -> Self {
+        DataMark::Box(Bounds::new(x, y, x + w, y + h))
+    }
+
+    /// Whether a halo `auto` draws on text over `b`: a line is no mark to it.
+    fn overlaps(&self, b: &Bounds) -> bool {
+        match self {
+            DataMark::Box(m) => m.x1 < b.x2 && m.x2 > b.x1 && m.y1 < b.y2 && m.y2 > b.y1,
+            DataMark::Line { .. } => false,
+            // Sampled every pixel across the text: the fill's column there
+            // must reach into the text's rows.
+            DataMark::Area { hi, lo } => {
+                let (Some(a), Some(z)) = (hi.first(), hi.last()) else { return false };
+                let (x1, x2) = (b.x1.max(a.0.min(z.0)), b.x2.min(a.0.max(z.0)));
+                let steps = (x2 - x1).ceil().max(0.0) as usize;
+                (0..=steps).map(|i| (x1 + i as f64).min(x2)).filter(|_| x1 <= x2).any(|x| {
+                    let (top, bottom) = (y_at(hi, x), y_at(lo, x));
+                    top.min(bottom) < b.y2 && top.max(bottom) > b.y1
+                })
+            }
+        }
+    }
+
+    /// The mark as boxes text placement scores against: a fill or line in
+    /// `COLUMN`-wide slices, each spanning what the mark covers there.
+    fn boxes(&self) -> Vec<Bounds> {
+        let columns = |points: &[(f64, f64)], span: &dyn Fn(f64, f64) -> (f64, f64)| -> Vec<Bounds> {
+            let (Some(a), Some(z)) = (points.first(), points.last()) else { return Vec::new() };
+            let (x0, x1) = (a.0.min(z.0), a.0.max(z.0));
+            let steps = ((x1 - x0) / COLUMN).ceil().max(1.0) as usize;
+            (0..steps)
+                .map(|i| {
+                    let (c0, c1) = (x0 + i as f64 * COLUMN, (x0 + (i + 1) as f64 * COLUMN).min(x1));
+                    let (y0, y1) = span(c0, c1);
+                    Bounds::new(c0, y0, c1, y1)
+                })
+                .collect()
+        };
+        match self {
+            DataMark::Box(b) => vec![*b],
+            DataMark::Area { hi, lo } => columns(hi, &|c0, c1| {
+                let ys = [y_at(hi, c0), y_at(hi, c1), y_at(lo, c0), y_at(lo, c1)];
+                (ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max))
+            }),
+            DataMark::Line { points, width } => columns(points, &|c0, c1| {
+                let inner = points.iter().filter(|p| p.0 > c0 && p.0 < c1).map(|p| p.1);
+                let ys: Vec<f64> = [y_at(points, c0), y_at(points, c1)].into_iter().chain(inner).collect();
+                let (y0, y1) = (ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+                (y0 - width / 2.0, y1 + width / 2.0)
+            }),
+        }
+    }
+}
+
+/// The outline's y at x, straight between its points; flat past its ends.
+fn y_at(points: &[(f64, f64)], x: f64) -> f64 {
+    let after = points.partition_point(|p| p.0 < x).clamp(1, points.len().max(1));
+    let (a, z) = (points[after - 1], points[after.min(points.len() - 1)]);
+    if z.0 == a.0 {
+        return if x < a.0 { a.1 } else { z.1 };
+    }
+    a.1 + (z.1 - a.1) * ((x - a.0) / (z.0 - a.0)).clamp(0.0, 1.0)
 }
 
 /// Every annotation placed at this plot size, in list order.
@@ -99,6 +180,10 @@ pub(crate) fn resolve<'a>(ctx: &'a AnnotationCtx) -> Result<Vec<Placed<'a>>, Dia
     }
     items.sort_by_key(|p| p.index);
     place::separate(&mut items, ctx);
+    if !ctx.occupied.is_empty() {
+        let occupied: Vec<Bounds> = ctx.occupied.iter().flat_map(DataMark::boxes).collect();
+        place::arrange(&mut items, ctx, &occupied);
+    }
     Ok(items)
 }
 
@@ -158,6 +243,8 @@ pub fn text_x2(ctx: &AnnotationCtx) -> f64 {
 /// One plane as nodes. Call with `Background` after the grid and before any
 /// data mark; with `Foreground` after the value labels and before the axes.
 /// `Background` must come before `Foreground` (it emits the clipPath).
+/// Set `ctx.occupied` before the `Foreground` call: halo `auto` tests it and
+/// text moves off it.
 pub fn nodes(ctx: &AnnotationCtx, plane: Plane) -> Result<Vec<scene::Node>, Diagnostic> {
     emit::nodes(ctx, &resolve(ctx)?, plane)
 }
@@ -309,6 +396,7 @@ mod tests {
             fonts,
             canvas: "#fafafa",
             clip_id: "rev-ann0".into(),
+            occupied: Vec::new(),
         }
     }
 
@@ -334,8 +422,12 @@ mod tests {
     }
 
     fn painted(anns: &[Annotation], plane: Plane) -> String {
+        painted_over(anns, plane, &[])
+    }
+
+    fn painted_over(anns: &[Annotation], plane: Plane, under: &[DataMark]) -> String {
         let fonts = fonts();
-        let c = ctx(anns, &fonts);
+        let c = AnnotationCtx { occupied: under.to_vec(), ..ctx(anns, &fonts) };
         print::print(&nodes(&c, plane).unwrap())
     }
 
@@ -484,6 +576,60 @@ mod tests {
             }
             assert!(!painted(&anns, Plane::Foreground).contains("stroke-linejoin"));
         }
+    }
+
+    const HALOED: &str = "stroke-width=\"6\" stroke-linejoin=\"round\">FY24 goal</text>";
+
+    /// The dated annotations with halo `auto`, and the box of the one whose text reads `label`.
+    fn over_marks(label: &str) -> (Vec<Annotation>, Bounds) {
+        let mut anns = dated();
+        for a in &mut anns {
+            a.style.text.halo_over_marks = true;
+        }
+        let fonts = fonts();
+        let c = ctx(&anns, &fonts);
+        let placed = resolve(&c).unwrap();
+        let b = placed.iter().find(|p| p.label == label).and_then(|p| p.text.as_ref()).unwrap();
+        let bounds = Bounds::new(b.x, b.y, b.x + b.w, b.y + b.h);
+        (anns, bounds)
+    }
+
+    #[test]
+    fn halo_auto_draws_only_on_text_over_a_data_mark() {
+        let (anns, b) = over_marks("FY24 goal");
+        assert!(!painted_over(&anns, Plane::Foreground, &[]).contains("stroke-linejoin"), "open ground");
+        // As wide as the plot, so the text cannot slide off it.
+        let bar = DataMark::Box(Bounds::new(0.0, b.y1 + 2.0, 200.0, b.y2 + 40.0));
+        let svg = painted_over(&anns, Plane::Foreground, &[bar]);
+        assert_eq!(svg.matches("stroke-linejoin").count(), 1, "{svg}");
+        assert!(svg.contains(HALOED), "{svg}");
+        let beside = DataMark::Box(Bounds::new(b.x2 + 1.0, b.y1, b.x2 + 9.0, b.y2));
+        assert!(!painted_over(&anns, Plane::Foreground, &[beside]).contains(HALOED));
+    }
+
+    #[test]
+    fn paint_warns_for_a_note_that_left_its_side_without_a_connector() {
+        let mut anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 7).collect();
+        anns[0].connector = model::Connector::None;
+        anns[0].style.text.position.auto_edge = true;
+        anns[0].style.text.dy = 0.0;
+        let fonts = fonts();
+        // Everything above the anchor (18.4M at y 54) is taken.
+        let c = AnnotationCtx { occupied: vec![DataMark::rect(0.0, 0.0, 200.0, 50.0)], ..ctx(&anns, &fonts) };
+        let (_, warnings) = collect(|| nodes(&c, Plane::Foreground).unwrap());
+        assert_eq!(warnings.iter().map(|w| w.code).collect::<Vec<_>>(), ["WARN-ANNOTATION-NOTE-MOVED"]);
+    }
+
+    #[test]
+    fn halo_auto_tests_an_area_fill_by_its_outline_not_its_box() {
+        let (anns, b) = over_marks("FY24 goal");
+        let base = b.y2 + 60.0;
+        let area = |hi: Vec<(f64, f64)>| DataMark::Area { lo: hi.iter().map(|p| (p.0, base)).collect(), hi };
+        let under = area(vec![(0.0, b.y1 - 10.0), (200.0, b.y1 - 10.0)]);
+        assert!(painted_over(&anns, Plane::Foreground, &[under]).contains(HALOED));
+        // Its box covers the text, but the fill only climbs past it far to the right.
+        let ramp = area(vec![(b.x1 - 10.0, b.y2 + 10.0), (b.x2 + 600.0, b.y1 - 40.0)]);
+        assert!(!painted_over(&anns, Plane::Foreground, &[ramp]).contains(HALOED));
     }
 
     #[test]

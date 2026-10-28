@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'A table column with `label: ""` now prints a blank header instead of the humanized column name.'
+time: 2026-10-26T17:58:15.271297-07:00

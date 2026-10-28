@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -12,6 +13,8 @@ from dbt_charts.agent_api.source_bundle import (
     BundleError,
     SourceBundle,
     check_layout,
+    compact,
+    option_lines,
     staged_bundle,
 )
 
@@ -38,6 +41,7 @@ def test_finish_writes_source_json_with_hash_of_raw_definition(
     assert source["url"] == "https://x/1"
     assert source["raw_sha256"] == hashlib.sha256(b'{"id": 1}').hexdigest()
     assert source["query_timezones"] == ["UTC"]
+    assert source["outline_version"] == 2
     assert source["fetched_at"]
 
 
@@ -106,3 +110,27 @@ def test_staged_bundle_leaves_existing_directory_and_no_temp_on_failure(
 
     assert (out / "keep.txt").read_text() == "previous"
     assert [p.name for p in tmp_path.iterdir()] == ["bundle"]
+
+
+def test_option_lines_keep_meaning_and_drop_styling_and_hex_colors() -> None:
+    options = {
+        "stacking": "normal",
+        "show_totals": False,
+        "empty": [],
+        "font_size": "12",
+        "rules": [{"type": "gt", "value": 5, "background_color": "#fff"}],
+    }
+
+    assert option_lines(
+        options,
+        dropped=lambda key: key == "font_size",
+        nested_dropped=frozenset({"background_color"}),
+    ) == [
+        "stacking: normal",
+        "show_totals: false",
+        'rules: [{"type":"gt","value":5}]',
+    ]
+
+
+def test_compact_prints_a_yaml_date_as_written() -> None:
+    assert compact({"start": datetime.date(2026, 1, 1)}) == '{"start":"2026-01-01"}'

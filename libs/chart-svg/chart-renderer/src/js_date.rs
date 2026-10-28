@@ -452,6 +452,12 @@ fn parse_es5(scanner: &mut Scanner, day: &mut Day, time: &mut Time, zone: &mut Z
 
 /// `Date.parse(text)` in epoch milliseconds, `None` where it is `NaN`.
 pub fn parse_ms(text: &str) -> Option<f64> {
+    parse_ms_zoned(text).map(|(ms, _)| ms)
+}
+
+/// [`parse_ms`], and whether the text named its zone; one that names none is
+/// local time, which reads as UTC here.
+pub fn parse_ms_zoned(text: &str) -> Option<(f64, bool)> {
     let mut scanner = Scanner { tokens: tokenize(text), at: 0 };
     let mut day = Day::default();
     let mut time = Time { parts: Vec::new(), hour_offset: None };
@@ -542,13 +548,14 @@ pub fn parse_ms(text: &str) -> Option<f64> {
     }
     let (year, month, d) = day.write()?;
     let [hour, minute, second, ms] = time.write()?;
-    let offset = zone.write().unwrap_or(0);
+    let zoned = zone.write();
+    let offset = zoned.unwrap_or(0);
     let days = days_from_civil(i32::try_from(year).ok()?, month as u8, 1) + d - 1;
     let value = days as f64 * MS_PER_DAY
         + ((hour * 60 + minute) * 60 + second) as f64 * 1000.0
         + ms as f64
         - offset as f64 * 1000.0;
-    (value.abs() <= MAX_TIME_MS).then_some(value)
+    (value.abs() <= MAX_TIME_MS).then_some((value, zoned.is_some()))
 }
 
 /// A date cell as epoch days, fractional past midnight.

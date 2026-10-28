@@ -68,7 +68,7 @@ __all__ = [
     "_axis_headroom",
     "_bake_normalize_domain",
     "_bake_y_zero",
-    "_bake_percent_x_zero",
+    "_bake_x_zero",
     "_bake_zero_flag",
     "_check_bar_layer_spans",
     "_check_bar_span",
@@ -146,22 +146,39 @@ def _bake_zero_flag(ay: _AxisStyleT, zero: bool) -> _AxisStyleT:
     return ay.model_copy(update={"scale": baked_scale})
 
 
-def _bake_percent_x_zero(
-    ax: AxisXStyle, format: ResolvedFormat | None, is_quantitative: bool
+def _bake_x_zero(
+    ax: AxisXStyle,
+    format: ResolvedFormat | None,
+    is_quantitative: bool,
+    x_values: list[float],
 ) -> AxisXStyle:
-    """Anchor a percent-formatted quantitative x at 0, as a percent y is.
+    """Bake a quantitative scatter x's zero verdict, by the y law.
 
-    A ratio axis has a meaningful 0 by definition, which a year or a temperature
-    does not. An authored ``zero``, a domain in any spelling (a string end included, which
-    only the scale coerces), or a log scale is left alone.
+    A percent-formatted x anchors at 0: a ratio axis has a meaningful 0 by
+    definition, which a year or a temperature does not. Any other x asks
+    ``_pick_scale`` for the line chart's verdict, so a column far from zero stays
+    data-fitted instead of stretching to 0 (``None``, zero is close, leaves the
+    engine's default join). An authored ``zero``, a domain in any spelling (a
+    string end included, which only the scale coerces), or a log scale is left
+    alone.
     """
     cont = ax.scale.continuous if ax.scale is not None else None
     authored = cont is not None and (
         cont.zero is not None or cont.domain is not None or cont.type == "log"
     )
-    if not is_quantitative or format is None or "%" not in format.spec or authored:
+    if not is_quantitative or authored:
         return ax
-    return _bake_zero_flag(ax, True)
+    if format is not None and "%" in format.spec:
+        return _bake_zero_flag(ax, True)
+    if not x_values:
+        return ax
+    from dbt_charts.core.compile.resolve.chart.enrich import ColumnProfile, _pick_scale
+
+    picked = _pick_scale(
+        ColumnProfile(min_val=min(x_values), max_val=max(x_values)),
+        chart_type="scatter",
+    )
+    return _bake_zero_flag(ax, False) if picked and picked["zero"] is False else ax
 
 
 def _bake_y_zero(

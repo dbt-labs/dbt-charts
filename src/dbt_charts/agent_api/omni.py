@@ -25,6 +25,8 @@ from typing import Any
 from dbt_charts.agent_api.source_bundle import (
     BundleError,
     SourceBundle,
+    compact,
+    option_lines,
     public_url,
     staged_bundle,
 )
@@ -38,6 +40,83 @@ RATE_LIMIT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 12
 # Container children that are controls, not tiles; filters are read from filterConfig.
 NON_TILE_TYPES = ("filter", "control", "inline-page-switcher")
+# Saved-query keys that are identity, Omni internals, or shown as their own lines.
+QUERY_NON_OPTION_KEYS = frozenset(
+    {
+        "calculations",
+        "dbtMode",
+        "default_group_by",
+        "dimensionIndex",
+        "fields",
+        "filters",
+        "join_paths_from_topic_name",
+        "manualSort",
+        "model_extension_id",
+        "modelId",
+        "parsed",
+        "pivots",
+        "rewriteSql",
+        "sorts",
+        "table",
+        "version",
+    }
+)
+# Query-presentation keys that are identity or internals; `visConfig` and the
+# query are expanded separately, `resultConfig` is table styling.
+PRESENTATION_NON_OPTION_KEYS = frozenset(
+    {
+        "automaticVis",
+        "createdAt",
+        "editingModelObjectName",
+        "filterOrder",
+        "id",
+        "isSql",
+        "miniUuid",
+        "modelId",
+        "name",
+        "organizationId",
+        "prefersChart",
+        "query",
+        "queryId",
+        "resultConfig",
+        "topicName",
+        "type",
+        "updatedAt",
+        "visConfig",
+        "visConfigId",
+    }
+)
+# visConfig keys that are identity or internals; `spec` is expanded and
+# `fields` is the tile's field list.
+VIS_NON_OPTION_KEYS = frozenset(
+    {"createdAt", "fields", "id", "jsonHash", "spec", "version"}
+)
+# visConfig.spec keys the dbt Charts theme owns: fonts, banding, alignment and
+# per-column width (`columnFormats` holds only align and width).
+SPEC_STYLING_KEYS = frozenset(
+    {
+        "alignment",
+        "columnFormats",
+        "rowBanding",
+        "styles",
+        "tableType",
+        "truncateHeaders",
+        "verticalAlignment",
+    }
+)
+# Hex colors, palette names, widths and alignment inside values that carry
+# meaning (conditional-format rules, column formats, series).
+NESTED_STYLING_KEYS = frozenset(
+    {
+        "_scheme",
+        "align",
+        "backgroundColor",
+        "color",
+        "fontSize",
+        "fontWeight",
+        "width",
+    }
+)
 FILTER_KEYS = ("ui_type", "isFiscal", "left_side", "right_side", "values")
 
 
@@ -249,8 +328,8 @@ def _fill_bundle(
         q["queryIdentifierMapKey"]: q
         for q in omni.get_json(f"/v1/documents/{dashboard_id}/queries")["queries"]
     }
-    chart_types = {
-        m["queryPresentation"]["id"]: m["queryPresentation"]["visConfig"]["chartType"]
+    presentations = {
+        m["queryPresentation"]["id"]: m["queryPresentation"]
         for m in collection["queryPresentationCollectionMemberships"]
     }
     texts = {t["miniUuid"]: t["content"] for t in metadata["textTiles"]}
@@ -297,13 +376,17 @@ def _fill_bundle(
                 continue
             fetched.add(tile_id)
             query = saved[tile_id]
-            chart = chart_types[query["id"]]
+            presentation = presentations[query["id"]]
+            chart = presentation["visConfig"]["chartType"]
             tiles.append(f"- **{chart}** `{tile_id}` {query['name']!r} — {where}")
             sql, timezone = omni.plan(query["query"])
             timezones.add(timezone)
             bundle.write(f"queries/{tile_id}.json", json.dumps(query, indent=2))
             bundle.write(f"queries/{tile_id}.sql", sql)
-            tiles += [f"    - {line}" for line in _tile_lines(tile_id, query, metadata)]
+            tiles += [
+                f"    - {line}"
+                for line in _tile_lines(tile_id, query, presentation, metadata)
+            ]
             if chart == "kpi":
                 kpi_file = f"kpi/{_slug(query['name'])}-{tile_id}.csv"
                 bundle.write(
@@ -357,11 +440,17 @@ def _fill_bundle(
 
 
 def _tile_lines(
-    tile_id: str, query: dict[str, Any], metadata: dict[str, Any]
+    tile_id: str,
+    query: dict[str, Any],
+    presentation: dict[str, Any],
+    metadata: dict[str, Any],
 ) -> list[str]:
     spec = query["query"]
+    vis = presentation["visConfig"]
     lines = [
         f"queries/{tile_id}.sql ({spec['table']})",
+        f"config: queries/{tile_id}.json, "
+        f"dashboard.json#queryPresentation[{presentation['id']}]",
         "fields: " + ", ".join(spec["fields"]),
     ]
     if spec["pivots"]:
@@ -371,10 +460,27 @@ def _tile_lines(
         for s in spec["sorts"]
     ]
     lines += [
-        f"table calc: {c['calc_name']} {c['label']!r}" for c in spec["calculations"]
+        f"table calc: {c['calc_name']} {c['label']!r}" + _calc_rest(c)
+        for c in spec["calculations"]
     ]
     lines += [f"filter: {field} {_describe(f)}" for field, f in spec["filters"].items()]
     for filter_id, field in metadata["tileFilterMap"].get(tile_id, {}).items():
         if field:
             lines.append(f"listens: {filter_id} -> {field}")
+    for options, dropped in (
+        (spec, QUERY_NON_OPTION_KEYS),
+        (presentation, PRESENTATION_NON_OPTION_KEYS),
+        (vis, VIS_NON_OPTION_KEYS),
+        (vis.get("spec", {}), SPEC_STYLING_KEYS),
+    ):
+        lines += option_lines(
+            options,
+            dropped=dropped.__contains__,
+            nested_dropped=NESTED_STYLING_KEYS,
+        )
     return lines
+
+
+def _calc_rest(calc: dict[str, Any]) -> str:
+    rest = {k: v for k, v in calc.items() if k not in ("calc_name", "label")}
+    return f" = {compact(rest)}" if rest else ""

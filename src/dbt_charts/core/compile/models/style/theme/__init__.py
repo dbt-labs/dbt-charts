@@ -148,6 +148,7 @@ from dbt_charts.core.compile.models.style.theme.kpi import (
     KpiSupportStyle,
     KpiTextSlotStyle,
     KpiTonesStyle,
+    KpiValueGlyphStyle,
     KpiValueStyle,
 )
 from dbt_charts.core.compile.models.style.theme.layout import (
@@ -237,7 +238,6 @@ from dbt_charts.core.compile.models.style.theme.table import (
     PaginatorStyle,
     SparkAreaStyle,
     SparkBarCellStyle,
-    SparkBarLabelStyle,
     SparkColumnsStyle,
     SparkColumnStyle,
     SparkEmptyStyle,
@@ -345,6 +345,7 @@ __all__ = [
     "KpiSupportGlyphStyle",
     "KpiSupportStyle",
     "KpiTextSlotStyle",
+    "KpiValueGlyphStyle",
     "KpiTonesStyle",
     "KpiValueStyle",
     "LabelsDefaultTemplate",
@@ -394,7 +395,6 @@ __all__ = [
     "SparkBarChartLabelStyle",
     "SparkBarChartStyle",
     "SparkBarCountStyle",
-    "SparkBarLabelStyle",
     "SparkColumnStyle",
     "SparkColumnsStyle",
     "SparkEmptyStyle",

@@ -203,13 +203,6 @@ class SparkConfig(BaseModel):
             "and for the bar-normalize track."
         ),
     )
-    value_visible: bool | None = Field(
-        default=None, description="Show numeric value label alongside the bar."
-    )
-    value_suffix: str | None = Field(
-        default=None,
-        description="Text placed after the displayed value (e.g., '%').",
-    )
     negative_color: bool = Field(
         default=False,
         description=(

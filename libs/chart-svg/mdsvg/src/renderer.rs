@@ -12,9 +12,9 @@
 //! `SVGRenderer`'s constructor/measurement/text-block machinery and every
 //! `_render_*` block arm above (including `_render_table`/`_render_
 //! horizontal_rule` and their own `_table_cell_runs`/`_table_cell_lines_
-//! to_inner_svg`/`_measure_table_row_layout`/`_run_sequence_width`/
-//! `_render_table_row` helpers), and `TextRun`. `used_faces` is renamed
-//! `used_fonts` (guarded token).
+//! to_inner_svg`/`_measure_table_row_layout`/
+//! `_render_table_row` helpers; `run_sequence_width` is Rust-only), and
+//! `TextRun`. `used_faces` is renamed `used_fonts` (guarded token).
 //!
 //! `measure_blocks`/`render_block_window` are also ported — the public
 //! contract a column packer needs (mdsvg owns line breaking; a caller
@@ -1781,8 +1781,9 @@ impl SVGRenderer {
         Ok(TableRowLayout { cell_lines, row_height })
     }
 
-    /// `renderer.py::_run_sequence_width`: sums measured widths of a run
-    /// sequence, for content-width tracking.
+    /// Sums measured widths of a run sequence, for content-width tracking.
+    /// Rust-only: Python's `_emit_line` sums the same per-run measurements
+    /// inline.
     fn run_sequence_width(&self, runs: &[TextRun], font_size: f64) -> Result<f64, String> {
         let mut total = 0.0;
         for run in runs {
@@ -1850,10 +1851,10 @@ impl SVGRenderer {
                     ],
                     inner,
                 ));
-                // `_run_sequence_width` has no exception guard in Python
-                // either — an unmeasurable glyph aborts the whole render
-                // there too, so this propagates rather than substituting a
-                // 0-width fallback.
+                // Python's `_emit_line` has no exception guard around its run
+                // measurements either — an unmeasurable glyph aborts the whole
+                // render there too, so this propagates rather than
+                // substituting a 0-width fallback.
                 let line_width = self.run_sequence_width(runs, font_size)?;
                 let right_edge = match anchor {
                     "middle" => text_x + line_width / 2.0,

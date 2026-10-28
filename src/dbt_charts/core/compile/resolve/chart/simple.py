@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.file_refs import check_images_written_out
@@ -17,6 +17,7 @@ from dbt_charts.core.compile.format_value import (
     text_format_link,
 )
 from dbt_charts.core.compile.merge import to_padding_style
+from dbt_charts.core.compile.models.chart.authored import ConditionalRule
 from dbt_charts.core.compile.models.chart.normalized import (
     CalloutChart,
     KpiChart,
@@ -37,6 +38,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedKpiStyle,
     ResolvedSparkBarStyle,
 )
+from dbt_charts.core.compile.models.style.theme.kpi import KpiGlyphSet
 from dbt_charts.core.compile.resolve.chart._channels import _channels_for
 from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
@@ -107,7 +109,39 @@ def _resolve_kpi(
     )
     support_column = kpi_support_rule_column(normalized)
     cf = base["conditional_formatting"]
-    support_rules = cf[support_column] if cf and support_column in cf else None
+    authored_rules = (
+        tuple(cf[support_column].when) if cf and support_column in cf else ()
+    )
+    support = normalized.support
+    support_rules = (
+        _good_rules(
+            normalized.id,
+            "support.good",
+            "style.support.glyph",
+            support.value,
+            support.good,
+            data,
+            kpi.support.glyph,
+        )
+        # The authored validator rejects `good` without `value`.
+        if support is not None
+        and support.good is not None
+        and support.value is not None
+        else ()
+    ) + authored_rules
+    value_rules = (
+        _good_rules(
+            normalized.id,
+            "good",
+            "style.value.glyph",
+            normalized.value,
+            normalized.good,
+            data,
+            kpi.value.glyph,
+        )
+        if normalized.good is not None
+        else None
+    )
     value_format = finalize_kpi_value_format(
         chart_value,
         headline,
@@ -152,10 +186,12 @@ def _resolve_kpi(
                     if support_format is None
                     else resolve_format_parts(support_format, formats)
                 ),
-                rules=None if support_rules is None else tuple(support_rules.when),
+                rules=support_rules or None,
             )
         ),
         glyph=normalized.glyph,
+        good=normalized.good,
+        value_rules=value_rules,
         variant=kpi.variant,
         format=value_format,
         format_native=kpi_format_native(
@@ -167,6 +203,40 @@ def _resolve_kpi(
         ),
         style=ResolvedKpiStyle(kpi=kpi),
     )
+
+
+def _good_rules(
+    chart_id: str,
+    key: str,
+    glyph_slot: str,
+    column: str,
+    good: Literal["up", "down"],
+    data: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
+    glyphs: KpiGlyphSet,
+) -> tuple[ConditionalRule, ...]:
+    """The sign rules ``good`` stands for on ``column``, ahead of the authored
+    ones so an authored rule overrides them output by output."""
+    cell = data[0].get(column) if len(data) == 1 else None
+    if cell is not None and coerce_numeric_cell(cell) is None:
+        raise ValueError(
+            f"KPI {chart_id!r}: `{key}` needs a numeric `{column}` "
+            f"column to read a sign from, got {cell!r}."
+        )
+    if glyphs.up is None or glyphs.down is None:
+        raise ValueError(
+            f"KPI {chart_id!r}: `{key}` draws `{glyph_slot}.up` and "
+            "`.down`; the style cascade left one of them unset."
+        )
+    up_tone, down_tone = (
+        ("positive", "negative") if good == "up" else ("negative", "positive")
+    )
+    rules = [
+        ConditionalRule(gt=0, glyph=glyphs.up, tone=up_tone),
+        ConditionalRule(lt=0, glyph=glyphs.down, tone=down_tone),
+    ]
+    if glyphs.neutral is not None:
+        rules.append(ConditionalRule(eq=0, glyph=glyphs.neutral))
+    return tuple(rules)
 
 
 def _kpi_text_link(

@@ -684,3 +684,45 @@ class TestSchemaPathExistsBareArrayBranch:
             "properties": {"fixed": {"type": "object", "properties": {"a": {}}}},
         }
         assert not _schema_path_exists(schema, ("fixed", "*"))
+
+
+class TestCategoryColorPins:
+    """`style.charts.category_colors.<field>.values.<label>` holds color tokens
+    under author-named data-value keys; a retired 0.9-era spelling there is
+    respelled like any other color field."""
+
+    def test_in_memory_respell(self) -> None:
+        mapping: dict[str, Any] = {
+            "title": "t",
+            "style": {
+                "charts": {
+                    "category_colors": {
+                        "region": {"values": {"Coal": "category_ink.charcoal"}}
+                    }
+                }
+            },
+            "charts": {"c": {"type": "bar", "query": "q", "x": "a", "y": "b"}},
+            "queries": {"q": {"columns": ["a", "b"], "values": [[1, 2]]}},
+            "rows": ["c"],
+        }
+
+        pins = prepare_board_mapping(mapping)["style"]["charts"]["category_colors"]
+
+        assert (
+            pins["region"]["values"]["Coal"]
+            == RETIRED_TOKEN_VALUE_MAP["category_ink.charcoal"]
+        )
+
+    def test_dct_migrate_rewrites_the_file(self) -> None:
+        catalog, registry = _board_migration_context()
+        text = _board(
+            "style:\n  charts:\n    category_colors:\n      region:\n"
+            "        values:\n          Coal: category_ink.charcoal"
+        )
+
+        migrated = migrate_yaml_text(
+            text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
+        )
+
+        assert "category_ink" not in migrated
+        assert RETIRED_TOKEN_VALUE_MAP["category_ink.charcoal"] in migrated

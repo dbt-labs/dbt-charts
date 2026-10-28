@@ -44,7 +44,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
-    _bake_percent_x_zero,
+    _bake_x_zero,
     _bake_y_zero,
     _CartesianTickResolution,
     _check_bar_layer_spans,
@@ -81,6 +81,10 @@ from dbt_charts.core.compile.resolve.chart._plan import (
     plan_cartesian,
     quantitative_channel_values,
 )
+from dbt_charts.core.compile.resolve.chart._tooltip import (
+    reject_tooltip_beside_date_y,
+    resolve_tooltip,
+)
 from dbt_charts.core.compile.resolve.chart._wide_fields import (
     bake_wide_measures_kwargs,
     resolve_wide_measure_channels,
@@ -113,6 +117,7 @@ def _resolve_scatter(
     display_text: ChartDisplayText = None,
 ) -> ResolvedScatterChart:
     data = dataset.all_rows()
+    reject_tooltip_beside_date_y(normalized, data)
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
     )
@@ -357,8 +362,11 @@ def _resolve_scatter(
         chart_style_context,
         replace(
             plan.axes.x,
-            style=_bake_percent_x_zero(
-                plan.axes.x.style, plan.axes.x.format, x_ch_type == "quantitative"
+            style=_bake_x_zero(
+                plan.axes.x.style,
+                plan.axes.x.format,
+                x_ch_type == "quantitative",
+                quantitative_channel_values(data, normalized.x),
             ),
         ),
         replace(plan.axes.y, style=ay_merged),
@@ -436,6 +444,7 @@ def _resolve_scatter(
             legend_position_overridden_by_width=naming.legend_position_overridden_by_width,
         ),
         **_ck,
+        tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         wide_measures=wide_measures,
         chart_type="scatter",
         x_tooltip_format=(

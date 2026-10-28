@@ -1,10 +1,6 @@
-"""Version-migration module for the unreleased 0.6.0 -> 0.7.0 boundary.
+"""Version-migration module for the 0.6.0 -> 0.7.0 boundary.
 
-Declares the pending structural changes since the 0.6.0 freeze. Named for the
-predicted next minor version -- the manifest's DEV entry -- rather than a
-``current`` placeholder; renamed only if the predicted version itself changes
-before release (a major bump, or a patch release that ships a grammar
-change).
+Declares the frozen structural changes between the 0.6.0 and 0.7.0 releases.
 
 THIS FILE IS SCHEMA CHANGES ONLY. Do not add an entry here for anything that
 is not a key rename, a key removal, or an authored value's meaning changing

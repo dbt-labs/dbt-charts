@@ -2,7 +2,7 @@
 
 Placeholder is a visual/authorable style (overlay text, colors, font, opacity),
 so it lives in the theme under `style.placeholder` — not as a top-level engine
-config block. Color nests inside `overlay.font.color` per ADR-005.
+config block. Color nests inside `overlay.font.color`.
 """
 
 from dbt_charts.core.compile.config import (
@@ -29,7 +29,7 @@ def test_placeholder_lives_under_style():
 
 
 def test_placeholder_color_nests_inside_overlay_font():
-    """overlay.font carries color/size/weight — ADR-005 keeps color inside font."""
+    """overlay.font carries color/size/weight — color stays inside font."""
     font = get_theme_style().placeholder.overlay.font
     assert font.color is not None
     assert font.size is not None and font.size > 0

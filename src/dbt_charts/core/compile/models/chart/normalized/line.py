@@ -10,10 +10,10 @@ from dbt_charts.core.compile.models.chart.authored._annotation import Annotation
 from dbt_charts.core.compile.models.chart.authored._layer import CartesianLayer
 from dbt_charts.core.compile.models.style.authored import LineChartStylePatch
 
-from ._base import _CartesianChartFields
+from ._base import _CartesianChartFields, _TooltipFields
 
 
-class LineChart(_CartesianChartFields):
+class LineChart(_CartesianChartFields, _TooltipFields):
     """Normalized line chart."""
 
     type: Literal["line"]

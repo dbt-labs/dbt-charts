@@ -97,6 +97,12 @@ pub struct Style {
     pub heading_margin_bottom: f64,
     pub heading_margin_top_px: Option<f64>,
     pub heading_margin_bottom_px: Option<f64>,
+    /// Top margin for H3-H6 in place of `heading_margin_top_px`.
+    pub minor_heading_margin_top_px: Option<f64>,
+    /// Bottom margin for H1 alone, in place of `heading_margin_bottom_px`.
+    pub h1_margin_bottom_px: Option<f64>,
+    /// Body line height in px: heading blocks round up to whole multiples of it.
+    pub heading_grid_px: Option<f64>,
 
     // Spacing
     pub paragraph_spacing: f64,
@@ -200,6 +206,9 @@ impl Default for Style {
             heading_margin_bottom: 0.5,
             heading_margin_top_px: None,
             heading_margin_bottom_px: None,
+            minor_heading_margin_top_px: None,
+            h1_margin_bottom_px: None,
+            heading_grid_px: None,
 
             paragraph_spacing: 12.0,
             list_indent: 18.0,

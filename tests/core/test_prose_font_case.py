@@ -54,7 +54,10 @@ def test_upper_case_applies_to_body_text(model_copy_at: Callable[..., Style]) ->
 def test_unset_case_leaves_prose_as_written(
     model_copy_at: Callable[..., Style],
 ) -> None:
-    assert "the quick brown fox" in _painted_text(None, model_copy_at)
+    painted = _painted_text(None, model_copy_at)
+    assert "text here" in painted
+    # The heading follows style.title.font.case (title in clarity), not text.font.case.
+    assert "The Quick Brown Fox" in painted
 
 
 def test_content_width_is_measured_on_the_cased_text(
@@ -70,3 +73,21 @@ def test_content_width_is_measured_on_the_cased_text(
     upper_floor, upper_max = widths("upper")
     assert upper_floor > lower_floor
     assert upper_max > lower_max
+
+
+def test_title_case_keeps_a_heading_path_as_written(
+    model_copy_at: Callable[..., Style],
+) -> None:
+    markdown = "# Directory /sales\n\nbody"
+    resolved = resolve_style(get_theme_style("clarity"))
+    svg, _ = render_prose_svg(
+        markdown,
+        600.0,
+        resolved.text,
+        resolved,
+        authored=markdown,
+        base_dir=None,
+        error_collector=None,
+        plan=full_width_plan(resolved, 600.0),
+    )
+    assert "Directory /sales" in " ".join(re.findall(r">([^<]+)</", svg))

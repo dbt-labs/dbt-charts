@@ -69,6 +69,7 @@ def _make_v2_board(charts: dict[str, Any]) -> Any:
         text="",
         base_dir=None,
         regional=DEFAULT_REGIONAL,
+        fiscal_year_start_month=1,
         html_policy="none",
         level=1,
         style=_board_style(),

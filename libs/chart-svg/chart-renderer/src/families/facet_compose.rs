@@ -206,6 +206,8 @@ pub(crate) struct GhostStyle {
     pub(crate) caption: AxisCaption,
     pub(crate) val_font_size: f64,
     pub(crate) val_weight: String,
+    /// ` font-style="…"`, or empty when the label font carries none.
+    pub(crate) val_style: String,
     pub(crate) val_color: String,
     pub(crate) val_family: String,
 }
@@ -1545,9 +1547,10 @@ fn compose_facet_at(
                 let _ = write!(
                     svg,
                     "<text x=\"{ghost_x:.2}\" y=\"{text_y:.2}\" text-anchor=\"end\" \
-                     font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                     font-family=\"{}\" font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\">{}</text>",
                     vega_escape_attr(&style.val_family),
                     style.val_font_size,
+                    style.val_style,
                     xml_escape_attr(&style.val_weight),
                     xml_escape_attr(&style.val_color),
                     xml_escape(label)
@@ -1606,12 +1609,13 @@ fn compose_facet_at(
                 let _ = write!(
                     svg,
                     "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"{}\" \
-                     font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                     font-family=\"{}\" font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\">{}</text>",
                     canvas_x(dx, geom) + axis.placed(geom).1,
                     canvas_y(dy, geom) + abs_y,
                     xml_escape_attr(axis.label_anchor),
                     vega_escape_attr(&style.val_family),
                     style.val_font_size,
+                    style.val_style,
                     xml_escape_attr(&style.val_weight),
                     xml_escape_attr(&style.val_color),
                     xml_escape(label)
@@ -1750,11 +1754,12 @@ fn compose_facet_at(
                 let _ = write!(
                     svg,
                     "<text x=\"{:.2}\" y=\"{:.2}\" text-anchor=\"start\" \
-                     font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}</text>",
+                     font-family=\"{}\" font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\">{}</text>",
                     anchor_x + 0.5 + primary_reserve,
                     canvas_y(dy, geom) + abs_y,
                     vega_escape_attr(&style.val_family),
                     style.val_font_size,
+                    style.val_style,
                     xml_escape_attr(&style.val_weight),
                     xml_escape_attr(&style.val_color),
                     xml_escape(label)

@@ -36,32 +36,53 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "З початку фінансового кварталу",
+  "controls.fiscal_year_to_date": "З початку фінансового року",
   "controls.from": "З {date}",
-  "controls.last_12_months": "Останні 12 місяців",
-  "controls.last_28_days": "Останні 28 днів",
-  "controls.last_7_days": "Останні 7 днів",
-  "controls.last_90_days": "Останні 90 днів",
   "controls.list_join": ", ",
   "controls.month_to_date": "З початку місяця",
   "controls.next_month": "Наступний місяць",
   "controls.no": "Ні",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Останні {duration}",
+  "controls.preset_previous": "Попередні {duration}",
   "controls.previous_month": "Попередній місяць",
+  "controls.quarter_to_date": "З початку кварталу",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Пошук",
   "controls.search_values": "Пошук значень",
   "controls.sort_ascending": "Сортувати за зростанням",
   "controls.sort_descending": "Сортувати за спаданням",
+  "controls.this_fiscal_quarter": "Цей фінансовий квартал",
+  "controls.this_fiscal_year": "Цей фінансовий рік",
+  "controls.this_month": "Цей місяць",
+  "controls.this_quarter": "Цей квартал",
+  "controls.this_week": "Цей тиждень",
+  "controls.this_year": "Цей рік",
   "controls.today": "Сьогодні",
   "controls.until": "До {date}",
+  "controls.week_to_date": "З початку тижня",
   "controls.year_to_date": "З початку року",
   "controls.yes": "Так",
+  "controls.yesterday": "Вчора",
   "duration.day": {
     "one": "{n} день",
     "few": "{n} дні",
     "many": "{n} днів",
     "other": "{n} дня"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} фінансовий квартал",
+    "few": "{n} фінансові квартали",
+    "many": "{n} фінансових кварталів",
+    "other": "{n} фінансового кварталу"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} фінансовий рік",
+    "few": "{n} фінансові роки",
+    "many": "{n} фінансових років",
+    "other": "{n} фінансового року"
   },
   "duration.month": {
     "one": "{n} місяць",
@@ -69,11 +90,23 @@
     "many": "{n} місяців",
     "other": "{n} місяця"
   },
+  "duration.quarter": {
+    "one": "{n} квартал",
+    "few": "{n} квартали",
+    "many": "{n} кварталів",
+    "other": "{n} кварталу"
+  },
   "duration.week": {
     "one": "{n} тиждень",
     "few": "{n} тижні",
     "many": "{n} тижнів",
     "other": "{n} тижня"
+  },
+  "duration.year": {
+    "one": "{n} рік",
+    "few": "{n} роки",
+    "many": "{n} років",
+    "other": "{n} року"
   },
   "footer.data_as_of": "Дані станом на {date}, {time}",
   "footer.made_with": "створено в {brand}",

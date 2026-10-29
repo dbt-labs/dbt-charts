@@ -221,7 +221,7 @@ def _resolve_layer(layer_axis_y: dict, data: list[dict] = _SUB_UNIT_DATA):  # ty
 def test_layer_spec_less_affix_resolves_the_guarded_tick_label_and_tooltip() -> None:
     """A spec-less affix on a layer axis resolves the per-tick guarded label."""
     from dbt_charts.core.text.numeral_scale import sub_unit_digit_format
-    from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
+    from dbt_charts.core.text.predefined_formats import SUB_UNIT_NUMBER_SPEC
 
     resolved_layer = _resolve_layer(
         {"position": "right", "labels": {"format": {"prefix": "EUR "}}}
@@ -232,10 +232,7 @@ def test_layer_spec_less_affix_resolves_the_guarded_tick_label_and_tooltip() -> 
     assert resolved_layer.axis_y.tick_label.si_format == ".3~s"
     assert resolved_layer.axis_y.labels.format.prefix == "EUR "
     tooltip = resolved_layer.axis_y.tooltip_format
-    assert (tooltip.spec, tooltip.prefix) == (
-        PREDEFINED_SPECS["number_full"].d3,
-        "EUR ",
-    )
+    assert (tooltip.spec, tooltip.prefix) == (SUB_UNIT_NUMBER_SPEC, "EUR ")
 
 
 def test_layer_alias_to_a_preset_resolves_the_guarded_tick_label() -> None:

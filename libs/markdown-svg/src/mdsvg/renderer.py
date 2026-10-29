@@ -810,6 +810,11 @@ class SVGRenderer:
         padding_y = padding_x * (2 / 3)
         return padding_x, padding_y
 
+    def _code_line_height(self, font_size: float) -> float:
+        """Leading of a code line: the glyph's own, rounded up to whole body lines."""
+        body_line = self.style.base_font_size * self.style.line_height
+        return math.ceil(font_size * 1.4 / body_line) * body_line
+
     def _logical_code_lines(self, code: CodeBlock) -> List[List[CodeSegment]]:
         """Split a code block into one (text, color) segment list per source line.
 
@@ -1537,22 +1542,70 @@ class SVGRenderer:
         """
         if not isinstance(block, Heading):
             return 0.0, 0.0
-        return self._heading_margins_at(self.style.get_heading_size(block.level))
+        return self._heading_margins_at(block.level)
 
-    def _heading_margins_at(self, font_size: float) -> Tuple[float, float]:
-        """``(margin_top, margin_bottom)`` for a heading set at ``font_size``.
+    def _heading_lines(
+        self, heading: Heading, width: float
+    ) -> Tuple[List[_Line], float, float]:
+        """A heading's laid-out lines, and where its block puts them.
+
+        Returns ``(lines, shift, box_height)``: ``shift`` moves the lines down
+        inside the block, ``box_height`` is the block's text extent. Without
+        ``heading_grid_px`` that is the lines as laid out. With it, the lines
+        keep their natural leading but the block is a whole number of grid
+        lines, and the last baseline sits where body text's baseline sits in
+        the last of them, so a heading hugs the text below it and the extra
+        space goes above.
+        """
+        style = self.style
+        multiplier = (
+            style.heading_line_height
+            if style.heading_line_height is not None
+            else style.line_height
+        )
+        lines = self._text_lines(
+            heading.spans,
+            width,
+            style.get_heading_size(heading.level),
+            style.heading_font_weight,
+            multiplier,
+            is_heading=True,
+        )
+        text_height = sum(line.height for line in lines)
+        grid = style.heading_grid_px
+        if grid is None or not lines:
+            return lines, 0.0, text_height
+        box_height = max(1, math.ceil(text_height / grid - 0.1 - 1e-9)) * grid
+        last = lines[-1]
+        natural_last_baseline = text_height - last.height + last.ascent
+        body_baseline = self._baseline_offset(style.base_font_size, style.line_height)
+        shift = box_height - grid + body_baseline - natural_last_baseline
+        return lines, shift, box_height
+
+    def _heading_margins_at(self, level: int) -> Tuple[float, float]:
+        """``(margin_top, margin_bottom)`` for a heading of ``level``.
 
         Px overrides (set by callers wanting consistent pixel margins across
-        heading levels) take precedence over the em scaling.
+        heading levels) take precedence over the em scaling. H3-H6 take
+        ``minor_heading_margin_top_px`` for their top margin when it is set.
         """
+        font_size = self.style.get_heading_size(level)
+        top_px = (
+            self.style.minor_heading_margin_top_px
+            if level >= 3 and self.style.minor_heading_margin_top_px is not None
+            else self.style.heading_margin_top_px
+        )
         margin_top = (
-            self.style.heading_margin_top_px
-            if self.style.heading_margin_top_px is not None
-            else font_size * self.style.heading_margin_top
+            top_px if top_px is not None else font_size * self.style.heading_margin_top
+        )
+        bottom_px = (
+            self.style.h1_margin_bottom_px
+            if level == 1 and self.style.h1_margin_bottom_px is not None
+            else self.style.heading_margin_bottom_px
         )
         margin_bottom = (
-            self.style.heading_margin_bottom_px
-            if self.style.heading_margin_bottom_px is not None
+            bottom_px
+            if bottom_px is not None
             else font_size * self.style.heading_margin_bottom
         )
         return margin_top, margin_bottom
@@ -1570,50 +1623,45 @@ class SVGRenderer:
         """
         first = blocks[0]
         if isinstance(first, Heading):
-            font_size = self.style.get_heading_size(first.level)
-            font_weight: str | int = self.style.heading_font_weight
-            # `is not None`, matching _render_heading -- with `or`, a configured
-            # heading_line_height of 0.0 would report a baseline the heading
-            # was not drawn on.
-            multiplier = (
-                self.style.heading_line_height
-                if self.style.heading_line_height is not None
-                else self.style.line_height
-            )
-        elif isinstance(first, Paragraph):
-            font_size = self.style.base_font_size
-            font_weight = "normal"
-            multiplier = self.style.line_height
-        else:
+            lines, shift, _ = self._heading_lines(first, width)
+            # An empty heading paints no text; its line box still has a baseline.
+            if not lines:
+                multiplier = (
+                    self.style.heading_line_height
+                    if self.style.heading_line_height is not None
+                    else self.style.line_height
+                )
+                return self._baseline_offset(
+                    self.style.get_heading_size(first.level), multiplier
+                )
+            return lines[0].ascent + shift
+        if not isinstance(first, Paragraph):
             raise ValueError(
                 f"first_baseline needs a heading or paragraph, got {first.block_type}"
             )
         lines = self._text_lines(
             first.spans,
             width,
-            font_size,
-            font_weight,
-            multiplier,
-            is_heading=isinstance(first, Heading),
+            self.style.base_font_size,
+            "normal",
+            self.style.line_height,
         )
-        # An empty heading paints no text; its line box still has a baseline.
         if not lines:
-            return self._baseline_offset(font_size, multiplier)
+            return self._baseline_offset(
+                self.style.base_font_size, self.style.line_height
+            )
         return lines[0].ascent
 
-    def heading_line_box(self, level: int, block_height: float) -> Tuple[float, float]:
-        """The ``(top, height)`` of the text's line box inside a heading block.
+    def heading_text_box(self, heading: Heading, width: float) -> Tuple[float, float]:
+        """The ``(top, height)`` of a heading's text inside its block, at ``width``.
 
-        A heading opening its document is line boxes + ``margin_bottom``: the top
-        margin collapsed against the top of the box, the bottom one did not, so
-        the block is not centered on the text it holds and anything drawn on the
-        block sits low by that difference. This is the part of it that is text.
-
-        ``block_height`` is the height this renderer reported for the block, so a
-        heading that wrapped needs no line count: every line is above the margin.
+        Measured from the block's top edge with the top margin collapsed, as it is
+        for a heading opening its document. Lines sit at the top of the block
+        unless ``heading_grid_px`` pushes them down to hug the text below, so the
+        box a host traces on the words is not simply the block less its margins.
         """
-        _, margin_bottom = self._heading_margins_at(self.style.get_heading_size(level))
-        return 0.0, block_height - margin_bottom
+        lines, shift, _ = self._heading_lines(heading, width)
+        return shift, sum(line.height for line in lines)
 
     def _inter_block_gap(self, prev: Block, curr: Block) -> float:
         """Compute the inter-block gap between ``prev`` and ``curr``.
@@ -1728,19 +1776,19 @@ class SVGRenderer:
     ) -> Tuple[List[str], float]:
         """Render a heading."""
         font_size = self.style.get_heading_size(heading.level)
-        margin_top, margin_bottom = self._heading_margins_at(font_size)
+        margin_top, margin_bottom = self._heading_margins_at(heading.level)
 
-        elements, text_height = self._render_text_block(
-            heading.spans,
-            ctx.with_offset(dy=margin_top),
-            font_size=font_size,
-            css_class=self._scoped_class("heading"),
-            font_weight=self.style.heading_font_weight,
-            line_height_multiplier=self.style.heading_line_height,
-            is_heading=True,
+        lines, shift, box_height = self._heading_lines(heading, ctx.width)
+        elements, _ = self._paint_text_lines(
+            lines,
+            ctx.with_offset(dy=margin_top + shift),
+            font_size,
+            self._scoped_class("heading"),
+            self.style.heading_font_weight,
+            True,
         )
 
-        return elements, margin_top + text_height + margin_bottom
+        return elements, margin_top + box_height + margin_bottom
 
     def _render_code_block(
         self,
@@ -1789,7 +1837,7 @@ class SVGRenderer:
 
         padding_x, padding_y = self._code_block_padding()
         font_size = self._block_code_size()
-        line_height = font_size * 1.4
+        line_height = self._code_line_height(font_size)
         char_width = font_size * self._ensure_mono_char_width()
         max_chars = int((ctx.width - padding_x * 2) / char_width)
 
@@ -1883,7 +1931,7 @@ class SVGRenderer:
 
         padding_x, padding_y = self._code_block_padding()
         font_size = self._block_code_size()
-        line_height = font_size * 1.4
+        line_height = self._code_line_height(font_size)
         char_width = font_size * self._ensure_mono_char_width()
         max_chars = max(10, int((ctx.width - padding_x * 2) / char_width))
 

@@ -1107,6 +1107,32 @@ def _replaced_layout_warnings(
     return warnings
 
 
+def _heading_margin_warnings(
+    layers: Sequence[tuple[str, BaseModel]],
+) -> list[Diagnostic]:
+    """WARN-HEADING-MARGIN-REDEFINED for each meta.yml or ``extends:`` file that
+    authors a ``style.text.heading`` margin; the board's own file is checked on
+    its text, with a path."""
+    from dbt_charts.core.compile.validate.authoring_warnings import (
+        heading_margin_diagnostic,
+    )
+
+    warnings: list[Diagnostic] = []
+    for source, patch in layers:
+        node = patch.model_dump(exclude_unset=True)
+        for part in ("style", "text", "heading"):
+            if not isinstance(node, dict) or part not in node:
+                break
+            node = node[part]
+        else:
+            warnings.extend(
+                heading_margin_diagnostic(key, f"style.text.heading.{key}", source)
+                for key in ("margin_top", "margin_bottom")
+                if isinstance(node, dict) and key in node
+            )
+    return warnings
+
+
 def _restated_warnings(
     board_node: BaseModel,
     own_patch: BaseModel,
@@ -1185,6 +1211,7 @@ def merged_patch(
     own_patch = _fragment_own_patch(board_node)
     if warning_sink is not None:
         warning_sink.extend(_replaced_layout_warnings([*layers, ("", own_patch)]))
+        warning_sink.extend(_heading_margin_warnings(layers))
         if theme_sink is not None:
             warning_sink.extend(
                 _restated_warnings(

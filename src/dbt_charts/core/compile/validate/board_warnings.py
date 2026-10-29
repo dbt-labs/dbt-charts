@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from pydantic import BaseModel
 
 from dbt_charts.core.compile.format import resolve_format_parts
+from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.board.normalized import Board, LayoutItem
 from dbt_charts.core.compile.models.chart.normalized import (
     AreaChart,
@@ -26,6 +27,7 @@ from dbt_charts.core.compile.normalize.chart_focus import (
     PRE_FOCUS_REFERENCED_QUERIES_META_KEY,
 )
 from dbt_charts.core.compile.normalize.query_references import (
+    boards_in,
     defined_query_names,
     referenced_query_names,
 )
@@ -39,12 +41,14 @@ from dbt_charts.core.diagnostics import (
     WARN_DOUBLE_HEADER,
     WARN_FORMAT_UNUSED_NAME,
     WARN_H1_BODY_NO_TITLE,
+    WARN_RETIRED_IGNORE_CODE,
     WARN_SINGLE_CHART_REDUNDANT_TITLE,
     WARN_UNREFERENCED_CHART,
     WARN_UNREFERENCED_QUERY,
     Diagnostic,
     RelatedLocation,
 )
+from dbt_charts.core.diagnostics.codes_retired import RETIRED_WARNING_CODES
 from dbt_charts.core.fonts import font_is_tabular
 from dbt_charts.core.text.predefined_formats import ALL_PREDEFINED_NAMES
 
@@ -65,6 +69,7 @@ def detect_board_warnings(
     _detect_single_chart_redundant_title(board, warnings)
     _detect_orphan_charts(board, warnings)
     _detect_unreferenced_queries(board, warnings)
+    _detect_retired_ignore_codes(board, warnings)
     _detect_axis_align_discarded(board, chart_styles, warnings)
     _detect_unused_format_names(board, own_format_names, chart_styles, warnings)
     return warnings
@@ -159,8 +164,13 @@ def _body_opening_heading(board: Board) -> tuple[int, str, str] | None:
     authored, whatever its spacing or style — so stamping can narrow a ``text:``
     block range down to it.
     """
-    first = next(iter(board.layout.items), None)
     own_text = board.text
+    # A tab's pane opens under its own tab label, not under the board header.
+    first = (
+        None
+        if board.layout.type == LayoutType.TABS
+        else next(iter(board.layout.items), None)
+    )
     body = own_text or (_bare_text_block_body(first) if first is not None else None)
     if not body:
         return None
@@ -321,6 +331,34 @@ def _detect_unreferenced_queries(board: Board, warnings: list[Diagnostic]) -> No
                 fix=WARN_UNREFERENCED_QUERY.fix_template,
             )
         )
+
+
+def _detect_retired_ignore_codes(board: Board, warnings: list[Diagnostic]) -> None:
+    """Warn for each retired code a chart's `warnings_ignore` or a query's `ignore`
+    names: it can no longer fire, so the entry suppresses nothing."""
+    # Keyed by name: nested groups carry the parent's definitions, so the same
+    # chart or query is visited once per scope.
+    charts = {c.id: c for scope in boards_in(board) for c in scope.charts.values()}
+    queries = {n: q for scope in boards_in(board) for n, q in scope.queries.items()}
+    entries = [
+        (cid, f"charts.{cid}.warnings_ignore", c.warnings_ignore)
+        for cid, c in charts.items()
+    ] + [(None, f"queries.{n}.ignore", q.ignore) for n, q in queries.items()]
+    for chart_id, path, codes in entries:
+        if codes is None:
+            continue
+        for code in sorted(set(codes) & RETIRED_WARNING_CODES):
+            warnings.append(
+                Diagnostic.from_code(
+                    WARN_RETIRED_IGNORE_CODE,
+                    chart=chart_id,
+                    path=path,
+                    message=WARN_RETIRED_IGNORE_CODE.message_template.format(
+                        source=path, code=code
+                    ),
+                    fix=WARN_RETIRED_IGNORE_CODE.fix_template,
+                )
+            )
 
 
 # ──────────────────────────── Axis align discarded ────────────────────────────

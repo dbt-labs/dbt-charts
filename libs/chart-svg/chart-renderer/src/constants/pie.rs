@@ -3,8 +3,6 @@
 
 pub const WEDGE_LABEL_MIN_SHARE: f64 = 0.08;
 pub const INVISIBLE_SLICE_SHARE: f64 = 0.02;
-pub const WHEEL_DOMINANCE_MIN_RATIO: f64 = 0.6;
-pub const LABEL_REACH_COEFFICIENT: f64 = 0.85;
 pub const OUTER_FRACTION: f64 = 0.9;
 pub const ATTACHED_TABLE_GAP_PX: f64 = 12.0;
 pub const HYBRID_HEADING_GAP_PX: f64 = 6.0;

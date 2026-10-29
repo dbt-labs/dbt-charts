@@ -543,7 +543,7 @@ rows:
 
         result = render(board, executor, format="text").output
 
-        assert "revenue: 0.20–0.80" in result
+        assert "revenue: 0.2–0.8" in result
 
     def test_cartesian_numeric_range_negative_currency_sign_before_symbol(
         self, make_chart

@@ -1,9 +1,9 @@
 //! Pie/donut family: ResolvedPieChart payload → SVG.
 //! Evaluates the same math the pie emitter writes as Vega-Lite expressions —
-//! mid-angle labels, dark-companion inks, radius = min(w,h)/2·outer_fraction.
-//! The standalone wheel lays out through `vega_fit` (label ink pushes the
-//! plot margins, as `autosize: fit` does); the attached-table composition
-//! keeps its own direct layout, mirroring production's Python SVG composer.
+//! mid-angle labels and dark-companion inks. The wheel is solved in closed form
+//! (`d3rs::radial_fit`), and how much of it the box lets it draw (labels, a table
+//! of the small slices, a table of all of them) is the size stage's mode
+//! (`pie_layout`), which the render keeps.
 //!
 //! `link` (chart-root `ResolvedChart.link`) paints one `<a href>` around each
 //! wedge, slice label and center-total text inside its `.role-mark` group —
@@ -32,6 +32,36 @@ use crate::diagnostic::{warn, Diagnostic};
 use crate::families::legend::LegendConfig;
 use crate::layout::Rect;
 use crate::Payload;
+
+/// Below this fraction of the bare wheel's radius in the whole card (no table, no labels, no
+/// legend), a labeled mode starves the wheel badly enough to prefer the table. Locked against
+/// the wheel-dominance calibration sweep.
+pub(crate) const WHEEL_DOMINANCE_MIN_RATIO: f64 = 0.6;
+/// The gap the center total keeps from the inner ring: the circle around its ink plus this must
+/// fit the hole, or direct labels give way to the table.
+pub(crate) const HOLE_TOTAL_MARGIN_PX: f64 = 4.0;
+
+/// `PieAttachment`: a pie's companion table and where it sits, resolved for one layout.
+#[derive(Deserialize)]
+struct Attachment {
+    table: Value,
+    row_indices: Vec<usize>,
+    placement: String,
+    align: String,
+    table_width: f64,
+    wheel_width: f64,
+    heading: String,
+    heading_font: Font,
+}
+
+/// The labels the pie's resolve kept: `none` leaves only the full table.
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum LabeledMode {
+    Direct,
+    Hybrid,
+    None,
+}
 
 #[derive(Deserialize)]
 struct Resolved {
@@ -74,26 +104,12 @@ struct Resolved {
     /// hides it outside "direct" label mode (`suppress_legend`), so a visible
     /// one is drawn by `pie/layout.rs`'s wheel.
     legend: LegendConfig,
-    #[serde(default)]
-    attached_table: Option<Value>,
-    #[serde(default)]
-    attached_table_placement: Option<String>,
-    #[serde(default)]
-    attached_table_align: Option<String>,
-    #[serde(default)]
-    attached_table_width: Option<f64>,
-    #[serde(default)]
-    attached_table_gap: Option<f64>,
-    #[serde(default)]
-    hybrid_heading_gap: Option<f64>,
-    #[serde(default)]
-    wheel_width: Option<f64>,
-    #[serde(default)]
-    attached_heading: Option<String>,
-    #[serde(default)]
-    attached_heading_font: Option<Font>,
-    #[serde(default)]
-    attached_row_indices: Vec<usize>,
+    attached_table_gap: f64,
+    hybrid_heading_gap: f64,
+    /// The companion table of the hybrid and full-table modes; `None` where that mode has
+    /// no candidate.
+    hybrid_attachment: Option<Attachment>,
+    full_attachment: Option<Attachment>,
     /// Chart-root `ResolvedChart.link`: a channel-placeholder template painted
     /// once per wedge (`click_interactivity.py`); an empty string is no link,
     /// production's `if not chart.link`.
@@ -107,9 +123,9 @@ struct Resolved {
 }
 
 impl Resolved {
-    fn from_payload(payload: &Payload) -> Result<Self, String> {
-        let mut r: Self =
-            Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
+    /// The pie `payload` resolves, its link selection read from the payload.
+    fn of(payload: &Payload) -> Result<Self, String> {
+        let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
         let keys: Vec<(&str, &str)> = bind::color_field_of(&r).map(|field| ("color", field)).into_iter().collect();
         r.selection = crate::selected::Selection::of(payload, r.link.as_deref(), &keys)?;
         Ok(r)
@@ -179,14 +195,293 @@ struct Labels {
     template: String,
 }
 
-/// Bind, lay out the payload's own card, forward the diagnostics, print.
+/// Bind in the sized mode, lay out the payload's own card, forward the diagnostics, print.
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
-    draw(&bind::bind(payload)?, fonts)
+    let mode = sized_mode(payload, fonts)?;
+    warn_when_sized_mode_starves_wheel(payload, mode, fonts)?;
+    draw(&bind::bind(payload, mode)?, fonts)
 }
 
 /// A pie over no rows: the empty arc and label layers inside the negotiated frame.
 pub fn render_empty(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic> {
     draw(&bind::bind_empty(payload)?, fonts)
+}
+
+/// How much of a pie the box it is sized in lets it draw. The size stage
+/// decides it once per placement (`pie_layout`) and the render keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Slice labels and the legend, no table.
+    Direct,
+    /// Slice labels on the big slices and a table of the small ones.
+    Hybrid,
+    /// A wheel with no labels beside or over a table of every slice.
+    FullTable,
+}
+
+impl Mode {
+    pub fn parse(name: &str) -> Result<Mode, String> {
+        match name {
+            "direct" => Ok(Mode::Direct),
+            "hybrid" => Ok(Mode::Hybrid),
+            "full_table" => Ok(Mode::FullTable),
+            other => Err(format!("pie: mode {other:?} is not direct, hybrid or full_table")),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Mode::Direct => "direct",
+            Mode::Hybrid => "hybrid",
+            Mode::FullTable => "full_table",
+        }
+    }
+
+    /// The ink groups the mode draws: the direct mode all three, the hybrid one no legend
+    /// (the table keys the wheel), the full table no labels either.
+    fn parts(self) -> Parts {
+        Parts { labels: self != Mode::FullTable, legend: self == Mode::Direct, total: true }
+    }
+}
+
+/// Which of a pie's ink groups a wheel draws and makes room for.
+#[derive(Clone, Copy)]
+pub(crate) struct Parts {
+    pub(crate) labels: bool,
+    pub(crate) legend: bool,
+    pub(crate) total: bool,
+}
+
+/// Every ink group the bound wheel holds.
+pub(crate) const ALL_PARTS: Parts = Parts { labels: true, legend: true, total: true };
+
+/// The bare wheel: no labels, no legend, no total.
+pub(crate) const BARE: Parts = Parts { labels: false, legend: false, total: false };
+
+/// Why a wheel could not be laid out. `NoRoom` is the solve's own answer (the ink leaves no
+/// positive radius), which a labeled mode takes as "use the table"; `Refused` is a payload
+/// that cannot be drawn at all.
+#[derive(Debug)]
+pub enum WheelError {
+    NoRoom(String),
+    Refused(Diagnostic),
+}
+
+impl From<Diagnostic> for WheelError {
+    fn from(diagnostic: Diagnostic) -> Self {
+        WheelError::Refused(diagnostic)
+    }
+}
+
+impl From<String> for WheelError {
+    fn from(message: String) -> Self {
+        WheelError::Refused(message.into())
+    }
+}
+
+impl From<&str> for WheelError {
+    fn from(message: &str) -> Self {
+        WheelError::Refused(message.into())
+    }
+}
+
+impl From<WheelError> for Diagnostic {
+    fn from(error: WheelError) -> Self {
+        match error {
+            WheelError::NoRoom(message) => message.into(),
+            WheelError::Refused(diagnostic) => diagnostic,
+        }
+    }
+}
+
+/// `float(value or 0)` as Python's `compute_shares` reads a theta cell: a falsy cell
+/// (missing, null, `false`, `""`, an empty list or mapping) is `0.0`, a number or boolean is
+/// itself, and text goes through the float parse. `None` where Python raises (text that is
+/// not a number, a non-empty list or mapping). Rust's float grammar is narrower than
+/// Python's (`"1_0"` is `10.0` there), so such text reads as unreadable here.
+fn python_float(cell: Option<&Value>) -> Option<f64> {
+    match cell {
+        None | Some(Value::Null) => Some(0.0),
+        Some(Value::Bool(flag)) => Some(f64::from(u8::from(*flag))),
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(text)) if text.is_empty() => Some(0.0),
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(Value::Array(items)) if items.is_empty() => Some(0.0),
+        Some(Value::Object(fields)) if fields.is_empty() => Some(0.0),
+        Some(_) => None,
+    }
+}
+
+/// resolve's `compute_shares(...) != []`: rows, every theta readable as a number, and a
+/// positive total. A non-finite total has no share to draw and is refused by name.
+fn has_slices(theta: &str, rows: &[serde_json::Map<String, Value>]) -> Result<bool, String> {
+    let values: Option<Vec<f64>> = rows.iter().map(|row| python_float(row.get(theta))).collect();
+    let Some(values) = values.filter(|values| !values.is_empty()) else { return Ok(false) };
+    Ok(finite_total(theta, &values)? > 0.0)
+}
+
+/// The sum of a pie's slice values, refused by name when it is NaN or infinite.
+fn finite_total(theta: &str, values: &[f64]) -> Result<f64, String> {
+    let total: f64 = values.iter().sum();
+    if !total.is_finite() {
+        return Err(format!("pie: theta {theta:?} sums to a non-finite total ({total})"));
+    }
+    Ok(total)
+}
+
+/// A pie's slice values and their sum.
+fn pie_totals(theta: &str, rows: &[serde_json::Map<String, Value>]) -> Result<(Vec<f64>, f64), String> {
+    let thetas: Vec<f64> = rows
+        .iter()
+        .map(|row| python_float(row.get(theta)))
+        .collect::<Option<_>>()
+        .ok_or_else(|| format!("pie: theta {theta:?} holds a value that is not a number"))?;
+    let total = finite_total(theta, &thetas)?;
+    if total <= 0.0 {
+        return Err("pie total is zero — nothing to draw".into());
+    }
+    Ok((thetas, total))
+}
+
+/// The mode a pie is sized in: the one the payload carries, else (a standalone chart only)
+/// the one its own box decides.
+fn sized_mode(payload: &Payload, fonts: &FontBook) -> Result<Mode, Diagnostic> {
+    match (&payload.pie_mode, payload.board_composed) {
+        (Some(name), _) => Ok(Mode::parse(name)?),
+        // A standalone chart (`render_chart`) decides from the box it is drawn in.
+        (None, false) => Ok(pie_layout(payload, fonts)?.mode),
+        (None, true) => Err("pie: a board payload carries the pie's sized mode".into()),
+    }
+}
+
+thread_local! {
+    static PIE_LAYOUT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread has solved a pie's layout: a test counts it to hold the
+/// one-solve-per-placement law.
+pub fn pie_layout_calls() -> usize {
+    PIE_LAYOUT_CALLS.with(std::cell::Cell::get)
+}
+
+pub fn reset_pie_layout_calls() {
+    PIE_LAYOUT_CALLS.with(|calls| calls.set(0));
+}
+
+/// What the size stage decides about a pie.
+#[derive(Debug)]
+pub struct PieLayout {
+    pub mode: Mode,
+    /// The drawn wheel's outer radius in the chosen mode.
+    pub radius: f64,
+    /// The radius a wheel with no labels, legend, total or table takes in the whole card.
+    pub free_radius: f64,
+    /// The smallest radius whose hole clears the center total.
+    pub min_radius: Option<f64>,
+}
+
+/// Decides how much of a pie its box lets it draw: its labeled mode (direct, or hybrid when
+/// a slice is too small to draw) stands only when the solved wheel keeps
+/// `WHEEL_DOMINANCE_MIN_RATIO` of the bare wheel's radius in the whole card (hybrid as
+/// direct, however narrow its table leaves the wheel box) and its hole still holds the
+/// center total; otherwise the full table. The full table always stands. A wheel that
+/// cannot fit even bare is the box being too small, an error.
+pub fn pie_layout(payload: &Payload, fonts: &FontBook) -> Result<PieLayout, Diagnostic> {
+    pie_layout_classified(payload, fonts).map_err(Diagnostic::from)
+}
+
+/// [`pie_layout`] with the failure's class kept: `NoRoom` is a verdict on the box,
+/// `Refused` a payload the port will not draw (or cannot read).
+pub fn pie_layout_classified(payload: &Payload, fonts: &FontBook) -> Result<PieLayout, WheelError> {
+    PIE_LAYOUT_CALLS.with(|calls| calls.set(calls.get() + 1));
+
+    // No slices (no rows, a theta Python cannot read as numbers, or no positive total) is
+    // not a layout question: the engine's empty dispatch (or the render's own named
+    // refusal) owns it, so nothing is laid out and no table is asked for. This is
+    // `compute_shares() == []` in resolve, which builds no full-table candidate for it.
+    let theta = payload.resolved.get("theta").and_then(Value::as_str).ok_or("pie payload: theta is absent")?;
+    if !has_slices(theta, &payload.rows)? {
+        return Ok(PieLayout { mode: Mode::Direct, radius: 0.0, free_radius: 0.0, min_radius: None });
+    }
+    let labeled = match LabeledMode::deserialize(payload.resolved.get("labeled_mode").unwrap_or(&Value::Null))
+        .map_err(|e| format!("pie payload: labeled_mode: {e}"))?
+    {
+        LabeledMode::Direct => Some(Mode::Direct),
+        LabeledMode::Hybrid => Some(Mode::Hybrid),
+        LabeledMode::None => None,
+    };
+    if let Some(mode) = labeled {
+        // Labels that cannot fit at any radius are the same answer as labels that fit too
+        // small: the table.
+        match candidate(payload, mode, fonts) {
+            Ok(candidate) => {
+                let r = candidate.radius;
+                if r >= WHEEL_DOMINANCE_MIN_RATIO * candidate.free_radius
+                    && candidate.min_radius.is_none_or(|min| r >= min)
+                {
+                    return Ok(candidate.into_layout(mode));
+                }
+            }
+            Err(WheelError::NoRoom(_)) => {}
+            Err(refused) => return Err(refused),
+        }
+    }
+    let full = candidate(payload, Mode::FullTable, fonts)?;
+    Ok(full.into_layout(Mode::FullTable))
+}
+
+/// One mode's wheel in its box, solved with all its ink and bare.
+#[derive(Debug)]
+pub struct Candidate {
+    pub radius: f64,
+    pub free_radius: f64,
+    pub min_radius: Option<f64>,
+}
+
+impl Candidate {
+    fn into_layout(self, mode: Mode) -> PieLayout {
+        PieLayout { mode, radius: self.radius, free_radius: self.free_radius, min_radius: self.min_radius }
+    }
+}
+
+/// `mode`'s wheel in the box it is drawn in: the radius with every ink group the mode
+/// draws, the radius of the bare wheel in the whole card (no table, no labels, no legend:
+/// the reference the dominance floor reads), and the smallest radius whose hole holds the
+/// center total. Fails when the labels (or, for the bare wheel, the box) leave no positive
+/// radius.
+pub fn candidate(payload: &Payload, mode: Mode, fonts: &FontBook) -> Result<Candidate, WheelError> {
+    let bound = bind::bind(payload, mode)?;
+    let measure = Measure { fonts };
+    let cell = Rect { x: 0.0, y: 0.0, width: payload.width, height: payload.height };
+    let (free, ink) = layout::solve_candidate(&bound, cell, &measure)?;
+    Ok(Candidate { radius: ink.r, free_radius: free.r, min_radius: ink.min_radius })
+}
+
+/// A pie drawn in a box other than the one it was sized in keeps the sized mode (the mode is
+/// a sizing output, never re-decided at draw); when its labeled mode then falls below the
+/// dominance floor there, that is reported, not corrected. In the sized box the guard holds
+/// by construction.
+fn warn_when_sized_mode_starves_wheel(payload: &Payload, mode: Mode, fonts: &FontBook) -> Result<(), Diagnostic> {
+    if payload.pie_mode.is_none() || mode == Mode::FullTable {
+        return Ok(());
+    }
+    // A diagnostic never fails the render it describes: the draw path reports its own
+    // solve failure.
+    let Ok(c) = candidate(payload, mode, fonts) else { return Ok(()) };
+    let ratio = c.radius / c.free_radius;
+    if ratio < WHEEL_DOMINANCE_MIN_RATIO {
+        let chart_id = payload.resolved.get("id").and_then(Value::as_str).ok_or("pie payload: id is absent")?;
+        warn(Diagnostic::new(
+            &crate::codes::WARN_PIE_SIZED_MODE_MISSES_GUARD,
+            [
+                ("chart_id", serde_json::json!(chart_id)),
+                ("floor", serde_json::json!(WHEEL_DOMINANCE_MIN_RATIO)),
+                ("mode", serde_json::json!(mode.name())),
+                ("ratio", serde_json::json!(ratio)),
+            ],
+        ));
+    }
+    Ok(())
 }
 
 fn draw(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnostic> {
@@ -200,6 +495,20 @@ fn draw(bound: &bind::Bound, fonts: &FontBook) -> Result<String, Diagnostic> {
 mod tests {
     use super::bind::project_pie_table_rows;
     use super::*;
+
+    /// A theta whose slices sum past the largest double (or a cell Python reads as
+    /// `nan`/`inf`) has no share to draw: refused by name, never laid out.
+    #[test]
+    fn a_non_finite_slice_total_is_refused_by_name() {
+        let rows = |cells: Vec<Value>| -> Vec<serde_json::Map<String, Value>> {
+            cells.into_iter().map(|v| json!({"v": v}).as_object().unwrap().clone()).collect()
+        };
+        for cells in [vec![json!(1e308), json!(1e308)], vec![json!("nan"), json!(1)], vec![json!("inf")]] {
+            let err = pie_totals("v", &rows(cells.clone())).unwrap_err();
+            assert!(err.contains("non-finite"), "{err}");
+            assert!(has_slices("v", &rows(cells)).unwrap_err().contains("non-finite"));
+        }
+    }
     use serde_json::json;
 
     fn make_pie_payload(total: Value) -> Value {
@@ -218,7 +527,11 @@ mod tests {
                 "outer_fraction": 0.9,
                 "slice_label_indices": [],
                 "total": total,
-                "attached_table": null,
+                "labeled_mode": "direct",
+                "hybrid_attachment": null,
+                "full_attachment": null,
+                "attached_table_gap": 12.0,
+                "hybrid_heading_gap": 6.0,
                 "legend": {
                     "visible": false,
                     "position": {"edge": "right", "align": "start", "overlay": false},
@@ -270,8 +583,16 @@ mod tests {
         })
     }
 
+    /// The payload sized in the mode its resolve chose: the full table when it carries a
+    /// `full_attachment`, else direct.
     fn make_payload(payload_json: Value) -> Payload {
-        crate::test_payload(payload_json)
+        crate::test_payload(sized(payload_json))
+    }
+
+    fn sized(mut payload_json: Value) -> Value {
+        let attached = !payload_json["resolved"]["full_attachment"].is_null();
+        payload_json["pie_mode"] = json!(if attached { "full_table" } else { "direct" });
+        payload_json
     }
 
     /// The `share` cell of each slice value of a pie totaling 100.
@@ -874,9 +1195,9 @@ mod tests {
     fn an_attached_table_placement_or_align_production_does_not_index_refuses_by_name() {
         for (placement, align) in [("middle", "start"), ("bottom", "stretch"), ("none", "center")] {
             let mut p = make_pie_payload_with_attached_table("bottom", "");
-            p["resolved"]["attached_table_placement"] = json!(placement);
-            p["resolved"]["attached_table_align"] = json!(align);
-            let payload: Payload = serde_json::from_value(p).unwrap();
+            p["resolved"]["full_attachment"]["placement"] = json!(placement);
+            p["resolved"]["full_attachment"]["align"] = json!(align);
+            let payload: Payload = serde_json::from_value(sized(p)).unwrap();
             let err = render(&payload, &test_fonts()).unwrap_err();
             assert_eq!(
                 err,
@@ -887,19 +1208,20 @@ mod tests {
 
     fn make_pie_payload_with_attached_table(placement: &str, heading: &str) -> Value {
         let mut payload_json = make_pie_payload(Value::Null);
-        payload_json["resolved"]["attached_table"] = attached_table_json();
-        payload_json["resolved"]["attached_table_placement"] = json!(placement);
-        payload_json["resolved"]["attached_table_align"] =
-            json!(if placement == "bottom" { "center" } else { "start" });
-        payload_json["resolved"]["attached_table_width"] = json!(212.0);
-        payload_json["resolved"]["attached_table_gap"] = json!(12.0);
-        payload_json["resolved"]["hybrid_heading_gap"] = json!(6.0);
-        payload_json["resolved"]["wheel_width"] = json!(300.0);
-        payload_json["resolved"]["attached_heading"] = json!(heading);
-        payload_json["resolved"]["attached_heading_font"] = json!({
-            "family": "Inter", "color": "#222222", "size": 11.0, "weight": "600", "line_height": 1.25
+        payload_json["resolved"]["labeled_mode"] = json!("none");
+        payload_json["resolved"]["full_attachment"] = json!({
+            "table": attached_table_json(),
+            "row_indices": [0, 1, 2],
+            "placement": placement,
+            "align": if placement == "bottom" { "center" } else { "start" },
+            "table_width": 212.0,
+            "wheel_width": 300.0,
+            "heading": heading,
+            "heading_font": {
+                "family": "Inter", "color": "#222222", "size": 11.0, "weight": "600", "line_height": 1.25
+            },
+            "overridden_edge": null,
         });
-        payload_json["resolved"]["attached_row_indices"] = json!([0, 1, 2]);
         // The wheel renders at the theme's view height (the sweep envelope's
         // board_style.continuous_height), never at the slot height.
         payload_json["board_style"] = json!({ "text_mark_font": {"family": "sans-serif", "size": 11.0},"continuous_height": 300.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()});
@@ -928,7 +1250,7 @@ mod tests {
     #[test]
     fn an_attached_table_is_never_a_row_pool() {
         let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
-        payload_json["resolved"]["attached_table"]["id"] = json!("pie1__attached_table");
+        payload_json["resolved"]["full_attachment"]["table"]["id"] = json!("pie1__attached_table");
         let mut payload = make_payload(payload_json);
         payload.interactive_controls = true;
         let svg = render(&payload, &test_fonts()).expect("renders");
@@ -999,7 +1321,7 @@ mod tests {
 
     fn attached_with(placement: &str, align: &str) -> Value {
         let mut p = make_pie_payload_with_attached_table(placement, "");
-        p["resolved"]["attached_table_align"] = json!(align);
+        p["resolved"]["full_attachment"]["align"] = json!(align);
         p
     }
 
@@ -1078,7 +1400,7 @@ mod tests {
     #[test]
     fn attached_table_left_slide_prints_python_g_for_a_fractional_table_width() {
         let mut p = attached_with("left", "start");
-        p["resolved"]["attached_table_width"] = json!(212.123456789);
+        p["resolved"]["full_attachment"]["table_width"] = json!(212.123456789);
         p["resolved"]["title"] = json!("Revenue");
         p["resolved"]["style"]["title_font"] = json!({"size": 18.0, "family": "Source Serif 4"});
         p["resolved"]["title_style"] =
@@ -1203,7 +1525,7 @@ mod tests {
         // lookup key instead of the row_indices value would put Electronics
         // (palette[0]) first instead.
         let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
-        payload_json["resolved"]["attached_row_indices"] = json!([1, 2]);
+        payload_json["resolved"]["full_attachment"]["row_indices"] = json!([1, 2]);
         let payload = make_payload(payload_json);
         let svg = render(&payload, &test_fonts()).expect("renders with a row subset");
 
@@ -1222,16 +1544,16 @@ mod tests {
     #[test]
     fn attached_table_row_indices_empty_errors() {
         let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
-        payload_json["resolved"]["attached_row_indices"] = json!([]);
+        payload_json["resolved"]["full_attachment"]["row_indices"] = json!([]);
         let payload = make_payload(payload_json);
         let err = render(&payload, &test_fonts()).expect_err("empty row_indices is rejected");
-        assert!(err.contains("attached_row_indices"), "{err}");
+        assert!(err.contains("row_indices"), "{err}");
     }
 
     #[test]
     fn attached_table_row_indices_out_of_range_errors() {
         let mut payload_json = make_pie_payload_with_attached_table("bottom", "");
-        payload_json["resolved"]["attached_row_indices"] = json!([0, 1, 99]);
+        payload_json["resolved"]["full_attachment"]["row_indices"] = json!([0, 1, 99]);
         let payload = make_payload(payload_json);
         let err = render(&payload, &test_fonts()).expect_err("out-of-range index is rejected, not a panic");
         assert!(err.contains("out of range"), "{err}");
@@ -1243,7 +1565,7 @@ mod tests {
         // wheel's own height: outer_h = max(donut_h, disk_top + table_h) —
         // compose_attached_table_svg's right arm, the s15_donut shape.
         let mut payload_json = make_pie_payload_with_attached_table("right", "");
-        payload_json["resolved"]["attached_row_indices"] = json!([0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2]);
+        payload_json["resolved"]["full_attachment"]["row_indices"] = json!([0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2]);
         let payload = make_payload(payload_json);
         let svg = render(&payload, &test_fonts()).expect("tall right table renders");
         // 15 rows × 24 = 360 table_h; disk_top > 0 ⇒ outer_h > 360 > 300.
@@ -1938,7 +2260,12 @@ mod tests {
             row[field] = value;
         }
         let svg = render(&make_payload(p), &test_fonts()).unwrap();
-        assert!(svg.contains("Customer\u{2026}</text>"), "{svg}");
+        // The title paints at 600, so the cut is the longest prefix that fits 180px at that
+        // weight.
+        let drawn = "A Remarkably Long Custome\u{2026}";
+        assert!(svg.contains(&format!("{drawn}</text>")), "{svg}");
+        let width = crate::common::measure_at_css_weight(&test_fonts(), drawn, TEST_FONT, 12.0, "600").unwrap();
+        assert!(width <= 180.0 && width > 170.0, "{width}");
         let (cx, _) = wheel_center(&svg);
         assert_eq!(cx, 16.0 + (568.0 - 18.0 - 180.0) / 2.0, "{svg}");
     }
@@ -2019,7 +2346,7 @@ mod tests {
         for (name, edit, expected) in cases {
             let mut p = legend_pie_payload("right", "start", "vertical");
             edit(&mut p);
-            let err = match serde_json::from_value::<Payload>(p) {
+            let err = match serde_json::from_value::<Payload>(sized(p)) {
                 Ok(payload) => render(&payload, &test_fonts()).unwrap_err().to_string(),
                 Err(e) => e.to_string(),
             };
@@ -2027,16 +2354,11 @@ mod tests {
         }
     }
 
-    /// The legend and an attached table are alternative keys
-    /// (`suppress_legend=mode != "direct"`), and an empty result draws no
-    /// legend rows: both combinations refuse by name.
+    /// An empty result draws no legend rows: a visible legend over none refuses by name. (A
+    /// legend and an attached table are alternative keys: only the direct mode draws the
+    /// legend.)
     #[test]
-    fn a_visible_legend_beside_an_attached_table_or_over_no_rows_refuses() {
-        let mut attached = legend_pie_payload("right", "start", "vertical");
-        attached["resolved"]["attached_table"] = json!({"columns": {}});
-        let err = render(&make_payload(attached), &test_fonts()).unwrap_err();
-        assert!(err.contains("beside an attached table"), "{err}");
-
+    fn a_visible_legend_over_no_rows_refuses() {
         let mut empty = legend_pie_payload("right", "start", "vertical");
         empty["rows"] = json!([]);
         let err = render_empty(&make_payload(empty), &test_fonts()).unwrap_err();
@@ -2167,13 +2489,15 @@ mod tests {
         });
         json["resolved"]["legend"]["visible"] = json!(true);
         json["resolved"]["legend"]["label"]["padding"] = json!(8.0);
+        json["resolved"]["legend"]["label"]["font"]["weight"] = json!("400");
+        json["resolved"]["legend"]["title"]["font"]["weight"] = json!("600");
         make_payload(json)
     }
 
     #[test]
     fn bind_derives_the_slices_labels_total_and_legend_without_a_font() {
         let payload = contract_payload();
-        let bound = bind::bind(&payload).expect("binds");
+        let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let labels = &bound.wheel.labels;
         assert_eq!(bound.thetas, vec![197199.0, 152504.0, 93320.0]);
         assert_eq!(bound.total, 443023.0);
@@ -2191,7 +2515,7 @@ mod tests {
     #[test]
     fn a_pie_hugs_nothing_and_its_height_is_the_slot() {
         let payload = contract_payload();
-        let bound = bind::bind(&payload).expect("binds");
+        let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let measure = Measure { fonts: &test_fonts() };
         assert_eq!(layout::intrinsic(&bound, &measure).expect("intrinsic"), None);
         assert_eq!(layout::height_for_width(&bound, 123.0, &measure).expect("height"), 432.0);
@@ -2201,7 +2525,7 @@ mod tests {
     fn an_attached_table_pie_reads_its_height_back_from_the_layout_it_draws() {
         for placement in ["bottom", "top", "right"] {
             let payload = make_payload(make_pie_payload_with_attached_table(placement, "Heading"));
-            let bound = bind::bind(&payload).expect("binds");
+            let bound = bind::bind(&payload, Mode::FullTable).expect("binds");
             let fonts = test_fonts();
             let measure = Measure { fonts: &fonts };
             let natural = layout::height_for_width(&bound, payload.width, &measure).expect("height");
@@ -2220,7 +2544,7 @@ mod tests {
             "position": {"offset": 10.0}
         });
         let payload = make_payload(json);
-        let bound = bind::bind(&payload).expect("binds");
+        let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let fonts = test_fonts();
         let laid_out = layout::layout(&bound, cell(220.0, 180.0), &Measure { fonts: &fonts }).expect("lays out");
         let [scene::Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else { panic!("one root card") };
@@ -2233,7 +2557,7 @@ mod tests {
     #[test]
     fn render_prints_the_layout_of_the_payloads_own_cell() {
         let payload = contract_payload();
-        let bound = bind::bind(&payload).expect("binds");
+        let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let fonts = test_fonts();
         let laid_out = layout::layout(&bound, cell(payload.width, payload.height), &Measure { fonts: &fonts }).expect("lays out");
         assert_eq!(print::print(&laid_out.nodes), render(&payload, &fonts).expect("renders"));
@@ -2249,7 +2573,7 @@ mod tests {
             "position": {"offset": 10.0}
         });
         let payload = make_payload(json);
-        let bound = bind::bind(&payload).expect("binds");
+        let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let fonts = test_fonts();
         let (laid_out, warnings) =
             crate::diagnostic::collect(|| layout::layout(&bound, cell(220.0, 14.0), &Measure { fonts: &fonts }));
@@ -2284,7 +2608,7 @@ mod tests {
         // The retired total key is met before the tooltip title's missing case, and both before
         // any layout work: the title is never cut, so no WARN is raised.
         assert_eq!(
-            bind::bind(&payload).err().expect("bind refuses"),
+            bind::bind(&payload, Mode::Direct).err().expect("bind refuses"),
             "pie: total.format moved to style.total_style.value.format"
         );
         let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));

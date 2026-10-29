@@ -355,3 +355,108 @@ def test_unexpected_exception_uses_starlette_debugger(valid_board: Path) -> None
     assert 'class="traceback-container"' in resp.text
     assert "RuntimeError" in resp.text
     assert "surprise &lt;boom&gt;" in resp.text
+
+
+def _internal_error_page() -> str:
+    from dbt_charts.agent_api.boards import BoardRenderResult
+    from dbt_charts.core.render.errors import RenderError
+    from dbt_charts.core.serve.server import _render_structured_errors_html
+
+    try:
+        raise TypeError("lineage() missing 1 required positional argument")
+    except TypeError as exc:
+        diagnostic = RenderError.from_unexpected(exc).to_diagnostic()
+    result = BoardRenderResult(status="failed", board_error=diagnostic)
+    response = _render_structured_errors_html(result, request_path="/foo/")
+    return response.body.decode()
+
+
+def test_internal_error_page_shows_the_traceback_collapsed() -> None:
+    html = _internal_error_page()
+
+    assert "TypeError: lineage() missing 1 required positional argument" in html
+    assert "<details" in html
+    assert "Traceback (most recent call last):" in html
+
+
+def test_internal_error_page_asks_for_a_bug_report_not_the_docs() -> None:
+    from dbt_charts.core.serve.server import _issues_url
+
+    html = _internal_error_page()
+
+    assert f'href="{_issues_url()}/new"' in html
+    assert "Open docs" not in html
+
+
+def test_internal_error_without_a_traceback_does_not_claim_a_bug() -> None:
+    from dbt_charts.core.serve.server import (
+        _render_structured_errors_html,
+        _synthetic_error,
+    )
+
+    result = _synthetic_error("Inspect template 'nope' not found")
+    html = _render_structured_errors_html(result, request_path="/foo/").body.decode()
+
+    assert "This is a bug" not in html
+    assert "Open docs" in html
+
+
+def test_coded_board_error_titles_with_its_registered_title() -> None:
+    from dbt_charts.agent_api.boards import BoardRenderResult
+    from dbt_charts.core.diagnostics import ERR_NO_LAYOUT, Diagnostic
+    from dbt_charts.core.serve.server import _render_structured_errors_html
+
+    result = BoardRenderResult(
+        status="failed",
+        board_error=Diagnostic.from_code(ERR_NO_LAYOUT, message="no layout here"),
+    )
+    html = _render_structured_errors_html(result, request_path="/foo/").body.decode()
+
+    assert ERR_NO_LAYOUT.title in html
+    assert "no layout here" in html
+    assert f'href="{ERR_NO_LAYOUT.doc_url}"' in html
+    assert "<details" not in html
+
+
+def test_error_card_inverts_the_themes_page_colors() -> None:
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve.style.board import resolve_style
+
+    style = resolve_style(get_theme_style())
+    html = _internal_error_page()
+
+    assert f"--card-bg: {style.font.color};" in html
+    assert f"--card-text: {style.background};" in html
+    assert style.accent not in html
+
+
+def test_chart_errors_page_is_the_board_document_itself(
+    compile_error_board: Path,
+) -> None:
+    """The rendered board already carries its nav; wrapping it nests a second
+    document and draws the nav twice."""
+    from fastapi.testclient import TestClient
+
+    from dbt_charts.agent_api.boards import BoardRenderResult
+    from dbt_charts.cli.filesystem_project import FilesystemProject  # noqa: PLC0415
+    from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
+    from dbt_charts.core.serve.server import create_server
+
+    board_document = "<!doctype html><html><body>board</body></html>"
+    fake_result = BoardRenderResult(
+        status="partial",
+        data=board_document,
+        chart_errors=[Diagnostic.from_code(ERR_INTERNAL, message="chart blew up")],
+    )
+
+    app = create_server(FilesystemProject(compile_error_board.parent.parent))
+    with (
+        TestClient(app, raise_server_exceptions=False) as client,
+        patch(
+            "dbt_charts.core.serve.server.render_dashboard", return_value=fake_result
+        ),
+    ):
+        resp = client.get(f"/{compile_error_board.stem}")
+
+    assert resp.status_code == 500
+    assert resp.text == board_document

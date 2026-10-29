@@ -30,6 +30,7 @@ from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime
+from importlib.metadata import metadata
 from importlib.resources import files
 from pathlib import Path, PurePosixPath  # noqa: TID251 — local dev server file serving
 from typing import TYPE_CHECKING, Any
@@ -294,6 +295,18 @@ def _doc_url_for_code(code: str) -> str:
     return REGISTRY.get(code).doc_url
 
 
+def _title_for_code(code: str) -> str:
+    return REGISTRY.get(code).title
+
+
+@functools.cache
+def _issues_url() -> str:
+    project_urls = metadata("dbt-charts").get_all("Project-URL")
+    if project_urls is None:
+        raise RuntimeError("dbt-charts package metadata has no Project-URL entries")
+    return dict(url.split(", ", 1) for url in project_urls)["Issues"]
+
+
 @functools.cache
 def _serve_template(name: str) -> Template:
     """Load a Jinja2 page template shipped under ``serve/templates`` (cached)."""
@@ -304,22 +317,23 @@ def _serve_template(name: str) -> Template:
     )
     env = Environment(autoescape=select_autoescape(["html", "j2"]))
     env.globals["doc_url"] = _doc_url_for_code
+    env.globals["code_title"] = _title_for_code
     return env.from_string(raw)
 
 
 def _error_palette_for_theme(theme_name: str | None = None) -> dict[str, str]:
-    """Return structured-error page CSS values for a compiled theme."""
+    """Structured-error page CSS values; an error card inverts the theme's page
+    colors."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import resolve_style
 
     rstyle = resolve_style(get_theme_style(theme_name))
     return {
-        "panel_bg": rstyle.background,
-        "text": rstyle.font.color,
-        "secondary": rstyle.secondary_color,
-        "border": rstyle.border.color,
-        "accent": rstyle.accent,
+        "page_bg": rstyle.background,
         "font_family": rstyle.font.family,
+        "card_bg": rstyle.font.color,
+        "card_text": rstyle.background,
+        "card_radius": f"{rstyle.chart_defaults.tooltip.border.radius:g}px",
     }
 
 
@@ -374,17 +388,25 @@ def _render_structured_errors_html(
     else:
         status = 200
 
-    board_html = ""
-    if result.chart_errors and result.data:
+    if (
+        result.board_error is None
+        and not result.validation_errors
+        and result.chart_errors
+        and result.data
+    ):
+        # The board drew, its failed charts as error cards, and it is already
+        # a whole page with its own nav.
         data = result.data
         board_html = data.decode("utf-8") if isinstance(data, bytes) else str(data)
+        return HTMLResponse(content=board_html, status_code=status)
 
     html = _serve_template("error.html.j2").render(
         result=result,
         request_path=request_path,
-        board_html=board_html,
         palette=error_palette or _error_palette_for_theme(),
         error_guide_url=f"{docs_site_url()}/{ERROR_GUIDE_PATH}/",
+        issues_url=_issues_url(),
+        internal_code=ERR_INTERNAL.code,
         chrome=chrome,
     )
     return HTMLResponse(content=html, status_code=status)
@@ -803,9 +825,12 @@ def _render_directory_listing(
     dir_handle = dir_handles[0]
 
     if not url_path and all(pf.is_meta for pf in project.iter_boards()):
+        from dbt_charts.core.compile.config import get_theme_style
+        from dbt_charts.core.compile.resolve.style.board import resolve_style
+
         return HTMLResponse(
             _serve_template("intro.html.j2").render(
-                palette=_error_palette_for_theme(),
+                style=resolve_style(get_theme_style()),
                 docs_url=docs_site_url(),
             )
         )

@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.chart.normalized import (
     TableChart,
 )
 from dbt_charts.core.compile.models.chart.resolved import (
+    PieAttachment,
     ResolvedPieChart,
 )
 from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, resolved_as
@@ -28,7 +29,6 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTotalValueSlot,
 )
 from dbt_charts.core.compile.models.style.theme import (
-    LegendAlign,
     SliceLabelsStyle,
     SliceMarkStyle,
 )
@@ -63,9 +63,7 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
 from dbt_charts.core.compile.resolve.chart.pie_attachment import (
-    ArcRenderMode,
-    AttachmentPlan,
-    classify_arc_render_mode,
+    AttachmentMode,
     compute_shares,
     finalize_pie_label_lines,
     infer_implicit_color_field,
@@ -92,7 +90,9 @@ from dbt_charts.core.compile.template.display_text import ChartDisplayText
 from dbt_charts.core.constants.pie import (
     ATTACHED_TABLE_GAP_PX,
     HYBRID_HEADING_GAP_PX,
+    INVISIBLE_SLICE_SHARE,
     OUTER_FRACTION,
+    WEDGE_LABEL_MIN_SHARE,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import ERR_PIE_TOTAL_WITHOUT_HOLE
@@ -282,8 +282,6 @@ def _resolve_pie(
         value=resolved_as(ResolvedTotalValueSlot, pie.total.value, format=total_format),
     )
 
-    label_font_family = settled(resolved_labels.font.family)
-    label_font_size = settled(resolved_labels.font.size)
     shares = compute_shares(normalized.theta, data)
     slice_label_lines = finalize_pie_label_lines(
         normalized.theta,
@@ -292,19 +290,6 @@ def _resolve_pie(
         resolved_labels,
         shares,
     )
-    measured_label_lines = [
-        line for row_lines in slice_label_lines if row_lines for line in row_lines
-    ]
-
-    def dominance_mode(available_width: float) -> ArcRenderMode:
-        return classify_arc_render_mode(
-            shares,
-            measured_label_lines,
-            label_font_family,
-            label_font_size,
-            resolved_labels.offset,
-            available_width,
-        )
 
     # This chart's own board-wide category-color binding, narrowed the same
     # way `category_colors` on the resolved chart is (`_bound_scales` below,
@@ -338,9 +323,9 @@ def _resolve_pie(
         else None
     )
 
-    def plan_for(arc_mode: ArcRenderMode) -> AttachmentPlan:
-        return plan_attachment(
-            arc_mode,
+    def attachment_for(mode: AttachmentMode) -> PieAttachment:
+        plan = plan_attachment(
+            mode,
             shares,
             data,
             eff_palette,
@@ -353,46 +338,6 @@ def _resolve_pie(
             authored_edge,
             placed_align(authored_position.align),
         )
-
-    mode = dominance_mode(width)
-    plan = plan_for(mode) if mode != "direct" else None
-    if mode == "hybrid":
-        assert plan is not None  # every non-direct mode plans a table
-        # Dominance was first judged against the whole card, before the
-        # companion table had been measured. A right-placed table takes that
-        # width back, and labels that clear the floor on the card can still
-        # starve the narrower wheel left over — collapsing the plotting box to
-        # a sliver. Re-judge at the width the wheel actually gets; the full
-        # table drops the labels and hands the wheel its space back.
-        if dominance_mode(plan.wheel_width) == "full_table":
-            mode = "full_table"
-            plan = plan_for(mode)
-
-    slice_mark = pie.marks.slice
-    effective_slice_mark = SliceMarkStyle(
-        opacity=slice_mark.opacity,
-        gap=slice_mark.gap,
-        corner_radius=slice_mark.corner_radius,
-        stroke=slice_mark.stroke,
-        labels=None if mode == "full_table" else resolved_labels,
-    )
-    if mode == "full_table":
-        slice_label_lines = tuple(() for _ in data)
-
-    attached_table = None
-    attached_row_indices: tuple[int, ...] = ()
-    placement: Literal["none", "left", "right", "top", "bottom"] = "none"
-    table_align: LegendAlign = "start"
-    table_width = 0.0
-    wheel_width = 0.0
-    heading = ""
-    heading_font = None
-    if plan is not None:
-        attached_row_indices = plan.row_indices
-        placement = plan.placement
-        table_align = plan.align
-        table_width = plan.table_width
-        wheel_width = plan.wheel_width
         synthetic_table = TableChart(
             id=f"{normalized.id}__attached_table",
             type="table",
@@ -409,11 +354,11 @@ def _resolve_pie(
                 }
             ),
         )
-        attached_table = _resolve_table(
+        table = _resolve_table(
             synthetic_table,
             plan.rows,
             chart_style_context,
-            table_width,
+            plan.table_width,
             None,
             _EMPTY_TABLE_COLUMN_LINKS,
             (),
@@ -426,8 +371,41 @@ def _resolve_pie(
             filter_variables=frozenset(),
             link_open="page",
         )
-        heading = board_word("pie.too_small_to_label") if mode == "hybrid" else ""
-        heading_font = resolve_hybrid_heading_font(attached_table.style.table)
+        return PieAttachment(
+            table=table,
+            row_indices=plan.row_indices,
+            placement=plan.placement,
+            align=plan.align,
+            table_width=plan.table_width,
+            wheel_width=plan.wheel_width,
+            heading=board_word("pie.too_small_to_label") if mode == "hybrid" else "",
+            heading_font=resolve_hybrid_heading_font(table.style.table),
+            overridden_edge=plan.overridden_edge,
+        )
+
+    # What the data alone allows: whether any slice clears the label floor and
+    # whether a slice is too small to draw. Whether the box lets the labels
+    # stand is the size stage's call (`pie_layout`), never made here.
+    labeled_mode: Literal["direct", "hybrid", "none"]
+    if not shares:
+        labeled_mode = "direct"
+    elif not any(share > WEDGE_LABEL_MIN_SHARE for share in shares):
+        labeled_mode = "none"
+    elif min(shares) < INVISIBLE_SLICE_SHARE:
+        labeled_mode = "hybrid"
+    else:
+        labeled_mode = "direct"
+    hybrid_attachment = attachment_for("hybrid") if labeled_mode == "hybrid" else None
+    full_attachment = attachment_for("full_table") if shares else None
+
+    slice_mark = pie.marks.slice
+    effective_slice_mark = SliceMarkStyle(
+        opacity=slice_mark.opacity,
+        gap=slice_mark.gap,
+        corner_radius=slice_mark.corner_radius,
+        stroke=slice_mark.stroke,
+        labels=resolved_labels,
+    )
 
     _tf = (
         resolve_title_font(chart_local_style_context, width)
@@ -447,15 +425,11 @@ def _resolve_pie(
             automatic_link_candidate=automatic_link_candidate,
             layout_padding=pie.padding,
             suppress_legend=True,
-            drop_legend=mode != "direct",
             radial_legend=True,
             wrap_legend=not legend_row_fits(
                 color_legend_entries(channels, data, resolved_color_field),
                 width,
                 merge_legend(chart_style_context.legend, pie.legend),
-            ),
-            legend_position_overridden_by_width=(
-                plan.overridden_edge if plan is not None else None
             ),
         ),
         **_shared_kwargs(normalized, display_text, chart_local_style_context),
@@ -465,6 +439,8 @@ def _resolve_pie(
         field_labels=normalized.field_labels,
         color=normalized.color,
         identity_field=resolved_color_field,
+        is_donut=normalized.is_donut,
+        height=None if normalized.height is None else float(normalized.height),
         total=total,
         format=slice_format,
         style=ResolvedPieStyle(
@@ -484,12 +460,7 @@ def _resolve_pie(
         slice_label_indices=tuple(
             index for index, lines in enumerate(slice_label_lines) if lines
         ),
-        attached_table=attached_table,
-        attached_row_indices=attached_row_indices,
-        attached_table_placement=placement,
-        attached_table_align=table_align,
-        attached_table_width=table_width,
-        wheel_width=wheel_width,
-        attached_heading=heading,
-        attached_heading_font=heading_font,
+        labeled_mode=labeled_mode,
+        hybrid_attachment=hybrid_attachment,
+        full_attachment=full_attachment,
     )

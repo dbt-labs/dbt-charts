@@ -34,6 +34,7 @@ from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 if TYPE_CHECKING:
     # The adapters package imports this module; a runtime import is a cycle.
     from dbt_charts.core.execute.adapters.dbt_utils import DbtRefResolver
+    from dbt_charts.core.execute.metricflow import SemanticLayer
 
 _SENTINEL_RE = re.compile(r"\x00dct_(?:param|rel)_\d+\x00")
 _PARAM_RE = re.compile(r"\x00dct_param_(\d+)\x00")
@@ -230,6 +231,8 @@ def render_in_dialect(
     resolver: DbtRefResolver,
     target_path: str | None,
     placeholders: SQLDialect,
+    semantic: SemanticLayer
+    | None = None,  # type-state: optional — None is a source with no MetricFlow bundle
 ) -> tuple[str, BoundParams]:
     """Render board SQL written in `read` into `write` SQL plus its parameters.
 
@@ -238,9 +241,14 @@ def render_in_dialect(
     out of the SQL: they come back as `placeholders`' own placeholders, one per
     occurrence in order, with the matching parameter list.
 
+    With `semantic`, the source's MetricFlow bundle, a statement that reads one
+    of its datasets or constellations is compiled by MetricFlow instead of
+    translated; it emits `write` SQL itself.
+
     Raises:
-        ExecutionError: ERR-SQL-DIALECT-UNSUPPORTED, or the resolver's error for
-            a ref() the manifest cannot resolve.
+        ExecutionError: ERR-SQL-DIALECT-UNSUPPORTED, a MetricFlow compile
+            failure, or the resolver's error for a ref() the manifest cannot
+            resolve.
     """
     relations: dict[str, str] = {}
 
@@ -261,7 +269,10 @@ def render_in_dialect(
     # A composed `{{ queries.X }}` body is inlined during the render above, so
     # its refs only appear now.
     composed_sql, _ = resolver.resolve(rendered.sql, target_path, encode)
-    translated = translate_sql(composed_sql, read, write)
+    if semantic is not None and semantic.references(composed_sql, read):
+        translated = semantic.compile(composed_sql, read, write)
+    else:
+        translated = translate_sql(composed_sql, read, write)
     for sentinel, relation in relations.items():
         translated = translated.replace(sentinel, relation)
     if placeholders is INLINE_PLACEHOLDERS:

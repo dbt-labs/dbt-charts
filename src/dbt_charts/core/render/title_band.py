@@ -33,6 +33,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _SharedResolvedChartFields,
 )
+from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.models.style.resolved import effective_padding
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import subtitle_cost_px
 from dbt_charts.core.constants.estimates import (
@@ -97,7 +98,10 @@ def title_ascent(font_size: float) -> float:
 
 
 def chart_title_metrics(
-    chart: ResolvedChart, card_padding: float, slot_width: float
+    chart: ResolvedChart,
+    card_padding: float,
+    slot_width: float,
+    pie_mode: PieMode | None,
 ) -> TitleMetrics | None:
     """Title geometry of a chart's title block, or None when it has no title.
 
@@ -110,14 +114,17 @@ def chart_title_metrics(
     Hand-drawn families (table, spark_bar) read their own layout. A KPI has no
     title slot: its label sits under its value, and a callout's card is drawn
     without one, so both are untitled for the band. A Vega-Lite title is one
-    line: a wrapping overflow mode is not modeled.
+    line: a wrapping overflow mode is not modeled. ``pie_mode`` is a pie's sized
+    mode (None for every other chart).
     """
     if not isinstance(chart, _SharedResolvedChartFields) or not chart.title:
         return None
     # The composite anchors its table from the wheel's own height, which a shift
     # does not change, so it stays out of the band.
-    if isinstance(chart, ResolvedPieChart) and chart.attached_table is not None:
-        return None
+    if isinstance(chart, ResolvedPieChart):
+        assert pie_mode is not None, "a pie's title band needs its sized mode"
+        if pie_mode != "direct":
+            return None
     title_font = chart.style.title_font
     assert title_font is not None, "a titled chart resolves its title font"
     size = float(title_font.size)
@@ -185,13 +192,20 @@ def board_title_metrics(
             inner,
             variable_values,
             level=board.level,
+            root=False,
             resolved_style=style,
             base_dir=board.base_dir,
         ),
         float(style.title.min_height),
     )
     baseline = title_baseline_offset(
-        board.title, inner, variable_values, style, board.level, board.base_dir
+        board.title,
+        inner,
+        variable_values,
+        style,
+        board.level,
+        board.base_dir,
+        root=False,
     )
     # A title flows straight into text below it. Layout items and controls sit one
     # gap down, and an item's ink starts a card padding inside its own box.

@@ -490,6 +490,7 @@ def render_title(
     text_align: Literal["left", "center", "right"] = "left",
     *,
     level: int = 1,
+    root: bool,
     resolved_style: "ResolvedStyle",
     variable_values: "VariableValues",
     base_dir: str | None,
@@ -527,7 +528,9 @@ def render_title(
     # Driven through SVGRenderer rather than mdsvg's one-shot `render()` so the
     # faces this title reached can be read back off the renderer: a title carries
     # markdown, so it can be the only thing on a board that paints italic.
-    renderer, font_path_family = title_renderer(resolved_style, level, text_align)
+    renderer, font_path_family = title_renderer(
+        resolved_style, level, root=root, text_align=text_align
+    )
     resolved_title = resolve_display_text_from_provider(
         title, variable_values, resolved_style=resolved_style
     )

@@ -103,7 +103,7 @@ class HoverEmphasisStyle(BaseModel):
     scaffold rung past its own measure gridline, at twice that gridline's
     width, so the line reads as structure rather than as another data series.
 
-    The browser runtime reads `visible` and `dimmed_opacity`, and the engine
+    The browser runtime reads `visible` and `recede_contrast`, and the engine
     reads the same pair to bake the receded look of a mark a board variable
     does not select, so changing either changes the rendered SVG of a board
     that holds one. The drop line's paint stays runtime-only.
@@ -114,10 +114,9 @@ class HoverEmphasisStyle(BaseModel):
     visible: bool = Field(
         description="Whether hovering a mark visually emphasizes it; theme always provides this."
     )
-    dimmed_opacity: float = Field(
-        gt=0,
-        lt=1,
-        description="Share of its own color a receded bar/arc keeps while another mark is hovered.",
+    recede_contrast: float = Field(
+        gt=1,
+        description="WCAG contrast ratio against the chart's canvas that a receded bar/arc is mixed down to while another mark is hovered. A mark already at or below it stays as it is.",
     )
     drop_line_color: Annotated[str, Color()] = Field(
         description="Color of the vertical drop line from a hovered line/area datum down to its axis."

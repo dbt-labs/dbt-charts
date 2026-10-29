@@ -79,6 +79,9 @@ exclude = [
     # does not read. Imported by `execute/drivers/trino.py`, loaded lazily by
     # `open_driver` like the lake compute driver above.
     "trino",
+    # `metricflow-sql` is optional and undeclared; `execute/metricflow.py`
+    # imports it only for a source with `metricflow:`.
+    "metricflow_sql",
     # `google-cloud-bigquery` is declared in [project.optional-dependencies]
     # bigquery (tach 0.35.0 only reads [project] dependencies, not optional-deps).
     # Imported lazily in _SourcePool._ensure_connected when type==bigquery.

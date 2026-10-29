@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
+from typing import overload
 
 import jinja2
 import jinja2.nodes
@@ -50,6 +51,12 @@ from dbt_charts.core.diagnostics.execution import (
 SKELETON_PLACEHOLDER_PREFIX = "__dct_j"
 
 
+@overload
+def sqlglot_dialect(dialect: str) -> str: ...
+@overload
+def sqlglot_dialect(dialect: None) -> None: ...
+@overload
+def sqlglot_dialect(dialect: str | None) -> str | None: ...
 def sqlglot_dialect(dialect: str | None) -> str | None:
     """Translate a dbt charts dialect name to the sqlglot equivalent.
 

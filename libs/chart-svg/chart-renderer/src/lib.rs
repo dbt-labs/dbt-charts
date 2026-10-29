@@ -95,8 +95,8 @@ pub struct TextMarkFont {
 #[derive(Deserialize, Clone)]
 pub struct HoverEmphasisStyle {
     pub visible: bool,
-    /// The share of a receded mark's own color that stays; the rest is canvas.
-    pub dimmed_opacity: f64,
+    /// The WCAG contrast ratio against its canvas a receded mark is mixed down to.
+    pub recede_contrast: f64,
 }
 
 /// Board-level `ResolvedStyle` tokens shared across families — the secondary
@@ -468,6 +468,16 @@ pub struct Payload {
     /// horizontal bar's category floor is judged against it.
     #[serde(default)]
     pub authored_height: Option<f64>,
+    /// A pie's sized mode (`direct`, `hybrid`, `full_table`): what the size stage
+    /// decided from the pie's box (`families::pie::pie_layout`). Absent, the pie
+    /// decides from the box it is rendered in.
+    #[serde(default)]
+    pub pie_mode: Option<String>,
+    /// Set by the board composer on every payload it builds: a pie it draws or
+    /// measures carries the mode the size stage decided, and a payload without
+    /// one is an internal error, never a reason to solve again in another box.
+    #[serde(skip)]
+    pub board_composed: bool,
     /// `execution.max_template_output_bytes`: the most SVG a custom chart's
     /// template may emit for one render. Only the custom family reads it.
     #[serde(default)]
@@ -486,7 +496,7 @@ impl Payload {
 
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, authored_height, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -506,6 +516,8 @@ impl Payload {
             measuring: *measuring,
             title_shift: title_shift.clone(),
             is_placeholder: *is_placeholder,
+            pie_mode: pie_mode.clone(),
+            board_composed: *board_composed,
             authored_height: *authored_height,
             max_template_output_bytes: *max_template_output_bytes,
             cell_text: cell_text.clone(),
@@ -596,6 +608,24 @@ impl<'de> Deserialize<'de> for Payload {
 
 pub fn render(payload: &Payload, fonts: &measure::FontBook) -> Result<String, Diagnostic> {
     render_sized(payload, fonts).map(|(svg, _)| svg)
+}
+
+/// How much of a pie its box lets it draw (`families::pie::pie_layout`), decided
+/// in the scope `render` opens for the payload.
+/// [`pie_layout`] with the failure's class (`WheelError`) kept, for a caller that
+/// treats a refusal differently from a verdict on the box.
+pub fn pie_layout_classified(
+    payload: &Payload,
+    fonts: &measure::FontBook,
+) -> Result<families::pie::PieLayout, families::pie::WheelError> {
+    in_payload_scope(payload, || families::pie::pie_layout_classified(payload, fonts))
+}
+
+pub fn pie_layout(
+    payload: &Payload,
+    fonts: &measure::FontBook,
+) -> Result<families::pie::PieLayout, Diagnostic> {
+    in_payload_scope(payload, || families::pie::pie_layout(payload, fonts)).map_err(Diagnostic::from)
 }
 
 /// `render`, plus the natural height (see `RenderOutput`).

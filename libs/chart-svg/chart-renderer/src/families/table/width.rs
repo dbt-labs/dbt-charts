@@ -42,6 +42,8 @@ pub struct MeasurePayload {
     pub resolved: Value,
     pub rows: Vec<serde_json::Map<String, Value>>,
     pub fonts_dir: Option<String>,
+    /// `style.fonts.numeral`: the family the digits paint in, so the family they measure in.
+    pub numeral_family: String,
     /// The board's number locale: the formatted cell text is what is measured.
     pub format_locale: crate::number_locale::NumberLocale,
     /// The board's time locale: a date cell's month and day names.
@@ -300,13 +302,14 @@ fn natural_width_in_scope(
         sub_unit_specs: payload.sub_unit_specs.as_ref(),
     })
     .map_err(|d| d.to_string())?;
-    natural_width(&chart, fonts)
+    natural_width(&chart, &payload.numeral_family, fonts)
 }
 
 /// What a board can hug the table to: the narrowest it breaks no word at, and
 /// the width at which every column shows (`None` with nothing to hug).
 pub(super) fn natural_width(
     chart: &Chart,
+    numeral_family: &str,
     fonts: &FontBook,
 ) -> Result<Option<IntrinsicWidth>, String> {
     let _formats =
@@ -344,6 +347,7 @@ pub(super) fn natural_width(
         &MeasureFonts {
             body: measure::stand_in_family(&body_family),
             header: measure::stand_in_family(&header_family),
+            numeral: numeral_family,
         },
         font_size,
         header_size,
@@ -365,7 +369,7 @@ pub(super) fn natural_width(
         Measure { fonts }.row_number_column(
             &th.row_numbers.header,
             rows.len(),
-            measure::stand_in_family(&body_family),
+            numeral_family,
             measure::stand_in_family(&header_family),
             font_size,
             th.column_layout.cell_padding,

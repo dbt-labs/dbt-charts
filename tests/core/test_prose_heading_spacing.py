@@ -14,19 +14,25 @@ the same height, and two mechanisms used to stop them:
   ``card_padding`` inside its own card on all four sides. The band now claims
   the same inset, once, before its first element -- ``BoardContentBox.content_top``.
 
-Still true and not this module's subject: heading margins do not scale with
-heading level (``test_heading_margin_is_the_same_for_every_heading_level``).
 """
 
 from __future__ import annotations
 
 import re
+import tempfile
+from pathlib import Path
 
 import pytest
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
+from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.render.board_resolve import build_resolved_board
+from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.prose import render_prose_svg
 
 from ._prose_plan import full_width_plan
@@ -50,24 +56,40 @@ def _heading_top(svg: str) -> float:
     """Distance from the block's own top to the top of the heading's line box."""
     from dbt_charts.core.font_measure import markdown_font_faces
     from mdsvg.renderer import SVGRenderer
+    from mdsvg.types import Heading, Span
 
     m = _HEADING_RE.search(svg)
     assert m, svg
     wrap = float(m.group(1)) if m.group(1) is not None else 0.0
     baseline, font_size = float(m.group(2)), float(m.group(3))
+    rs = resolve_style(get_theme_style("clarity"))
+    sections = rs.chart_defaults.section_sizes
+    level = {
+        float(rs.chart_defaults.heading_sizes[0]): 1,
+        float(sections[0]): 2,
+        float(sections[1]): 3,
+    }[font_size]
     style = get_compact_style(resolve_style(get_theme_style("clarity")))
     renderer = SVGRenderer(
         style=style, fonts=markdown_font_faces(style.font_family, style)
     )
-    multiplier = (
-        style.heading_line_height
-        if style.heading_line_height is not None
-        else style.line_height
-    )
-    offset = renderer._baseline_offset(font_size, multiplier)
+    offset = renderer.first_baseline([Heading(level=level, spans=(Span("x"),))], 1e6)
     # `y` is emitted at 2dp, so a recovered distance is good to ~0.01px. The old
     # `baseline - font_size` form hid that: both terms were whole pixels.
     return wrap + baseline - offset
+
+
+def _prose_column_svg(svg: str) -> str:
+    """Slice a full board render down to just its prose column's own content.
+
+    A board's own ``title:`` is *also* an ``md-heading`` and renders before any
+    row content, so searching the whole board SVG for the heading class finds
+    the board title, not the prose column's heading. Bound the search to
+    between the prose block's own marker and the next chart's.
+    """
+    start = svg.index('data-authored-kind="text"')
+    end = svg.index('data-authored-kind="chart"', start)
+    return svg[start:end]
 
 
 def _render(markdown: str, width: float, n_cols: int | None) -> str:
@@ -159,18 +181,100 @@ def test_a_mid_blob_heading_keeps_its_full_margin() -> None:
     )
 
 
-def test_heading_margin_is_the_same_for_every_heading_level() -> None:
-    """h1 and h3 get the same leading space -- margins don't scale with level.
-
-    ``compact_style_kwargs`` derives ``heading_margin_top_px`` from the body
-    font's line box, not from ``get_heading_size(level)``, and mdsvg's
-    px-override path always prefers it over the level-scaled em fallback. A
-    24px h1 and a 14px h3 (the same size as body text) should visually earn
-    different leading space; today they don't. Characterization, unchanged by
-    this fix -- an opening heading now collapses whichever margin it was given,
-    so the two are equal at zero as well as mid-blob.
-    """
+def test_major_headings_sit_one_body_line_lower_than_minor_ones() -> None:
+    """H1/H2 sit two body lines below the text above, H3-H6 one."""
     h1_top = _heading_top(_render(f"{ONE_PARAGRAPH}\n\n# H1 heading", _WIDE_SLOT, 1))
     h3_top = _heading_top(_render(f"{ONE_PARAGRAPH}\n\n### H3 heading", _WIDE_SLOT, 1))
+    style = get_compact_style(resolve_style(get_theme_style("clarity")))
 
-    assert h1_top == pytest.approx(h3_top, abs=_ROUNDING)
+    assert h1_top - h3_top == pytest.approx(style.minor_heading_margin_top_px, abs=0.1)
+
+
+def _render_board(yaml_text: str) -> tuple[str, float]:
+    """Returns (svg, card_padding) -- the padding a chart's title band sits inside."""
+    with tempfile.TemporaryDirectory() as tmp:
+        result = compile_board(yaml_text)
+        assert result.success, result.errors
+        assert result.board is not None
+        executor = Executor(
+            result.board,
+            build_adapter_registry(FilesystemProject(Path(tmp))),
+            query_registry=result.query_registry,
+        )
+        variables: dict[str, object] = {}
+        resolved, render_cache = build_resolved_board(result.board, executor, variables)
+        background = resolved.style.background
+        svg = render_board_svg(
+            resolved,
+            executor,
+            variables,
+            background=None if background == "transparent" else background,
+            render_cache=render_cache,
+        )
+        assert resolved.card_padding is not None
+        return svg, resolved.card_padding
+
+
+_CHART_TITLE_RE = re.compile(
+    r'<text[^>]*y="([\-\d.]+)"[^>]*data-authored-kind="title">Revenue'
+)
+
+# The prose band's own inset, on the group that wraps the text block. The block
+# itself renders at its own origin, so its ink's distance from the column top is
+# this translate plus whatever the block puts above its first line.
+_TEXT_BLOCK_RE = re.compile(
+    r'<g transform="translate\(([\d.]+), ([\d.]+)\)">\s*'
+    r'<g transform="translate\(0, 0\)" data-authored-kind="text"'
+)
+
+_BOARD_YAML = """
+title: Chart title alignment probe
+queries:
+  q:
+    columns: [month, revenue]
+    values:
+      - ["2026-01-01", 100]
+      - ["2026-02-01", 150]
+      - ["2026-03-01", 120]
+charts:
+  bar1:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    title: Revenue by month
+rows:
+  - cols:
+      - text: "## Key takeaways\\n\\nNorth region is leading this quarter."
+      - bar1
+"""
+
+
+def test_a_prose_heading_starts_level_with_a_sibling_chart_title() -> None:
+    """The alignment target, through the real board pipeline.
+
+    A chart column shares a row with a prose column, both the same width. The
+    two cells start at the same y, so what has to agree is the distance from
+    each cell's top to its first ink. A chart's is ``card_padding``: Vega's
+    autosize insets the whole plot by that plus the title band's own reserved
+    height, and the title role-group's transform is that reserved height
+    negated, so the two cancel and the band's top is ``card_padding``. The
+    prose column now claims the same inset.
+    """
+    svg, card_padding = _render_board(_BOARD_YAML)
+
+    block = _TEXT_BLOCK_RE.search(svg)
+    assert block, svg
+    prose_ink_top = float(block.group(2)) + _heading_top(_prose_column_svg(svg))
+
+    assert prose_ink_top == pytest.approx(card_padding, abs=_ROUNDING)
+
+    # The chart side of the same statement, read off the render rather than
+    # asserted from the algebra above: the chart title and the heading share a
+    # baseline, which two blocks 25px apart could not.
+    m = _CHART_TITLE_RE.search(svg)
+    assert m, svg
+    heading = _HEADING_RE.search(_prose_column_svg(svg))
+    assert heading, svg
+    heading_baseline = float(block.group(2)) + float(heading.group(2))
+    assert float(m.group(1)) == pytest.approx(heading_baseline, abs=_ROUNDING)

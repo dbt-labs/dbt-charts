@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dbt_charts.core.compile.models.markers import (
     InheritSlot,
@@ -16,6 +16,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.style.theme.page import (
     InputStyle,
 )
+from dbt_charts.core.compile.template.daterange import parse_daterange_preset
 
 
 class VariablesLabelStyle(BaseModel):
@@ -111,3 +112,18 @@ class VariablesStyle(BaseModel):
         description="Gap between label and input within a single control in pixels."
     )
     input: InputStyle = Field(description="Input control style.")
+    presets: tuple[str, ...] = Field(
+        min_length=1,
+        description=(
+            "The preset menu every daterange picker offers, in order; a "
+            "variable's own `presets:` replaces it. Each is a preset name "
+            "(`last_30_days`, `previous_3_quarters`, `this_fiscal_quarter`)."
+        ),
+    )
+
+    @field_validator("presets")
+    @classmethod
+    def _presets_are_in_the_grammar(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for name in value:
+            parse_daterange_preset(name)
+        return value

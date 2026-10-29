@@ -327,6 +327,7 @@ pub(crate) fn render(
     let dual_titles = ysides.is_some() && family != "scatter";
     let frame = ChartFrame::of(payload, &head.background);
     let title = head.title(&frame, fonts)?;
+    title.warn_truncated(&head.id);
 
     let require = |what: &str, value: Option<f64>| value.ok_or_else(|| format!("{family}: axis_y.labels.{what} absent (theme required)"));
     let val_family = ax_y
@@ -926,6 +927,7 @@ fn axes_nodes(
                         .set("text-anchor", svg_text_anchor(align))
                         .vega("font-family", st.family)
                         .set("font-size", st.size.to_string())
+                        .quick_some("font-style", ax_y.labels.font.style.as_deref())
                         .set("font-weight", ax_y.labels.font.weight_str())
                         .set("fill", fill),
                     label.as_str(),
@@ -1071,7 +1073,7 @@ mod tests {
     fn a_zero_row_chart_is_a_node_that_prints_the_pinned_bytes() {
         for (golden, family, payload, axis) in cases() {
             let node: Node = render(family, &payload, &fonts(), axis).expect("renders");
-            assert_eq!(print(&[node]), golden, "{family}");
+            assert_eq!(print(&[node]), golden.trim_end_matches('\n'), "{family}");
         }
     }
 }

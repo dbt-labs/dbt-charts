@@ -81,6 +81,15 @@ fn svg_font_family(family: &str) -> String {
     normalized
 }
 
+/// The family a numeral paints in: a Source Serif one gains the bundled-web alias.
+pub(crate) fn numeral_paint_family(numeral_family: &str) -> String {
+    if numeral_family.contains("Source Serif") {
+        svg_font_family(numeral_family)
+    } else {
+        numeral_family.to_string()
+    }
+}
+
 // ── Deserialization types (only fields we consume) ────────────────────────────
 
 fn columns_or_none<'de, D>(d: D) -> Result<serde_json::Map<String, Value>, D::Error>
@@ -1256,6 +1265,7 @@ struct TitleBand {
     family: String,
     color: String,
     weight: String,
+    style: Option<String>,
     text_y: f64,
     /// The title as drawn: one entry per tspan.
     title_lines: Vec<String>,
@@ -1265,6 +1275,7 @@ struct TitleBand {
     subtitle_truncated: bool,
     subtitle_font_size: f64,
     subtitle_family: String,
+    subtitle_style: Option<String>,
     subtitle_color: String,
     subtitle_text_y: f64,
     /// Height the band pushes the header down by (`title_height`).
@@ -1314,11 +1325,13 @@ struct WrappedHeader {
     truncated: bool,
 }
 
-/// The two families a table's text is measured in: production's
-/// `get_font_measurer` for the body and for the header label.
+/// The families a table's text is measured in: production's
+/// `get_font_measurer` for the body and for the header label, and the numeral
+/// family the digits paint in.
 struct MeasureFonts<'a> {
     body: &'a str,
     header: &'a str,
+    numeral: &'a str,
 }
 
 /// Per-column demands in px, keyed by column name.
@@ -1522,7 +1535,7 @@ pub(crate) mod tests {
     pub(crate) fn en_us_siblings() -> BTreeMap<String, String> {
         BTreeMap::from([
             ("currency".to_string(), "$,.2f".to_string()),
-            ("number".to_string(), ",.2f".to_string()),
+            ("number".to_string(), ",.2~f".to_string()),
         ])
     }
 
@@ -1757,12 +1770,12 @@ pub(crate) mod tests {
         assert!(!svg.contains("\u{2007}"), "no decimal pad on a left-anchored column:\n{svg}");
         assert!(!svg.contains("text-anchor=\"end\""), "no end-anchored lane tspan:\n{svg}");
         assert_eq!(
-            svg.matches("<text x=\"320.3962290553462\" text-anchor=\"start\"").count(),
+            svg.matches("<text x=\"312.13554093898847\" text-anchor=\"start\"").count(),
             2,
             "each body run starts at the cell's left padding:\n{svg}"
         );
         assert!(
-            svg.contains("<text x=\"320.3962290553462\" y=\"66.0\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
+            svg.contains("<text x=\"312.13554093898847\" y=\"66.0\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
             "the header takes the same left x, start-anchored:\n{svg}"
         );
         assert!(
@@ -2182,14 +2195,16 @@ pub(crate) mod tests {
         // and body are both 11px here, so one size serves both.
         let pad = 8.0_f64;
         let m = |s: &str| fonts.measure(s, "Inter", 11.0).expect("measures");
+        // Digits measure in the numeral family they paint in.
+        let mn = |s: &str| fonts.measure(s, crate::common::TAB_FONT, 11.0).expect("measures");
         // Floors tokenize what a cell paints ("2,108"), never the raw value
         // ("2108.0"), so the painted cell and the header label are the widest
         // units.
         let region_w = m("Region").max(m("East")).max(m("West")) + 2.0 * pad;
-        let rev_elec_w = m("Revenue").max(m("$58,396")).max(m("$21,000")) + 2.0 * pad;
-        let rev_tools_w = m("Revenue").max(m("$14,824")).max(m("$9,000")) + 2.0 * pad;
-        let units_elec_w = m("Units").max(m("2,108")).max(m("900")) + 2.0 * pad;
-        let units_tools_w = m("Units").max(m("449")).max(m("300")) + 2.0 * pad;
+        let rev_elec_w = m("Revenue").max(mn("$58,396")).max(mn("$21,000")) + 2.0 * pad;
+        let rev_tools_w = m("Revenue").max(mn("$14,824")).max(mn("$9,000")) + 2.0 * pad;
+        let units_elec_w = m("Units").max(mn("2,108")).max(mn("900")) + 2.0 * pad;
+        let units_tools_w = m("Units").max(mn("449")).max(mn("300")) + 2.0 * pad;
         let total_min = region_w + rev_elec_w + units_elec_w + rev_tools_w + units_tools_w;
         let outer = 12.0_f64;
 
@@ -7223,8 +7238,8 @@ pub(crate) mod tests {
         let marker = "<g transform=\"translate(";
         let g_start = svg.find(marker).expect("spark g emitted");
         assert_eq!(
-            &svg[g_start..g_start + marker.len() + "364, 82.0)".len()],
-            "<g transform=\"translate(364, 82.0)",
+            &svg[g_start..g_start + marker.len() + "362, 82.0)".len()],
+            "<g transform=\"translate(362, 82.0)",
             "exact geometry, not just the int-x/float-y format — a cell_x + 8 \
              or row_h-centering mutant must fail this:\n{svg}"
         );
@@ -8446,9 +8461,9 @@ mod conditional_formatting_tests {
             is_date: false,
             when_rules: Vec::new(),
         };
-        let plain = column_demand(&cells, &rows, &plain_col, &fonts, "Inter", 11.0, 8.0).unwrap();
+        let plain = column_demand(&cells, &rows, &plain_col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let widened =
-            column_demand(&cells, &rows, &glyph_col, &fonts, "Inter", 11.0, 8.0).unwrap();
+            column_demand(&cells, &rows, &glyph_col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         assert!(widened > plain, "glyph must widen the demand: plain {plain}, widened {widened}");
     }
 
@@ -8918,6 +8933,7 @@ mod floor_source_tests {
                 }),
                 rows: rows.iter().map(|r| r.as_object().unwrap().clone()).collect(),
                 fonts_dir: None,
+                numeral_family: "Inter".into(),
                 format_locale: crate::number_locale::NumberLocale::en_us(),
                 time_locale: crate::time_locale::en_us(),
                 time_zone: crate::time_zone::utc(),
@@ -9352,7 +9368,7 @@ mod demand_affix_tests {
         let maps: Vec<serde_json::Map<String, Value>> =
             rows.into_iter().map(|r| r.as_object().unwrap().clone()).collect();
         let cells = format_date_col(&maps, &col).expect("date lane formats");
-        let demand = column_demand(&cells, &maps, &col, &fonts, "Inter", 11.0, 8.0).unwrap();
+        let demand = column_demand(&cells, &maps, &col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let oracle = fonts.measure("1.24K", "Inter", 11.0).unwrap() + 16.0;
         assert!(
             (demand - oracle).abs() < 1e-9,
@@ -9382,7 +9398,7 @@ mod demand_affix_tests {
             .map(|r| r.as_object().unwrap().clone())
             .collect();
         let cells = format_numeric_col(&maps, &col, "all", &[RowRole::Value]).expect("formats");
-        let demand = column_demand(&cells, &maps, &col, &fonts, "Inter", 11.0, 8.0).unwrap();
+        let demand = column_demand(&cells, &maps, &col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let oracle = fonts.measure("45 d", "Inter", 11.0).unwrap() + 16.0;
         assert!(
             (demand - oracle).abs() < 1e-9,
@@ -9411,7 +9427,7 @@ mod demand_affix_tests {
             .map(|r| r.as_object().unwrap().clone())
             .collect();
         let cells = format_numeric_col(&maps, &col, "all", &[RowRole::Value]).expect("formats");
-        let demand = column_demand(&cells, &maps, &col, &fonts, "Inter", 11.0, 8.0).unwrap();
+        let demand = column_demand(&cells, &maps, &col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let oracle = fonts.measure("~ 45", "Inter", 11.0).unwrap() + 16.0;
         assert!(
             (demand - oracle).abs() < 1e-9,
@@ -9556,7 +9572,7 @@ mod demand_affix_tests {
             .map(|r| r.as_object().unwrap().clone())
             .collect();
         let cells = format_numeric_col(&maps, &col, "all", &[RowRole::Value]).expect("formats");
-        let demand = column_demand(&cells, &maps, &col, &fonts, "Inter", 11.0, 8.0).unwrap();
+        let demand = column_demand(&cells, &maps, &col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
         let oracle = fonts.measure("24.73M", "Inter", 11.0).unwrap() + 16.0;
         assert!(
             (demand - oracle).abs() < 1e-9,
@@ -9576,7 +9592,8 @@ mod demand_affix_tests {
         let m = |s: &str| fonts.measure(s, "Inter", 11.0).unwrap();
         // format_numeric_auto: -8.55 -> "−8.55"; 1500 -> "1.5K" (the suffix lane); 2.24 -> "2.24".
         let name_w = m("Name").max(m("China")).max(m("India")) + 16.0;
-        let rate_w = m("Rate").max(m("\u{2212}8.55")).max(m("1.5K")).max(m("2.24")) + 16.0;
+        let mn = |s: &str| fonts.measure(s, crate::common::TAB_FONT, 11.0).unwrap();
+        let rate_w = m("Rate").max(mn("\u{2212}8.55")).max(mn("1.5K")).max(mn("2.24")) + 16.0;
         let outer = 12.0;
         let width = name_w + rate_w + 2.0 * outer;
 
@@ -9707,7 +9724,7 @@ mod demand_affix_tests {
 
     /// Oracle: `format_kpi_parts(v, resolve_format_parts("compact"),
     /// default_number=True, keep_affix_gaps=True)` is `('', '45', 'K')` for
-    /// `45123.0`, `('', '12', '')` for `12.0` and `('', '0.50', '')` for `0.5`
+    /// `45123.0`, `('', '12', '')` for `12.0` and `('', '0.5', '')` for `0.5`
     /// (the `number_full` sibling); `currency_compact` leads `45` with `$`.
     #[test]
     fn an_unscaled_compact_column_splits_two_figures_and_an_analytic_word() {
@@ -9720,7 +9737,7 @@ mod demand_affix_tests {
         let compact = || json!({"spec": ".2~s", "raw": "compact", "notation": "analytic"});
         assert_eq!(lanes(compact(), 45123.0), (None, "45".into(), Some("K".into())));
         assert_eq!(lanes(compact(), 12.0), (None, "12".into(), None));
-        assert_eq!(lanes(compact(), 0.5), (None, "0.50".into(), None));
+        assert_eq!(lanes(compact(), 0.5), (None, "0.5".into(), None));
         let currency_compact = json!({"spec": "$.2~s", "raw": "currency_compact", "notation": "analytic"});
         assert_eq!(lanes(currency_compact, 45123.0), (Some("$".into()), "45".into(), Some("K".into())));
     }
@@ -10800,7 +10817,7 @@ mod header_font_tests {
             &cells,
             &rows,
             &fonts,
-            &MeasureFonts { body: "Inter", header: "Source Serif 4" },
+            &MeasureFonts { body: "Inter", header: "Source Serif 4", numeral: "Inter" },
             11.0,
             11.0,
             true,

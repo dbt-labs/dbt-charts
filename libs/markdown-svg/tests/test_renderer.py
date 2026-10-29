@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -19,6 +20,7 @@ from mdsvg import (
 )
 from mdsvg.fonts import FontFace, FontFaces, FontMeasurer, _cached_measurer
 from mdsvg.renderer import SVGRenderer
+from mdsvg.types import Heading
 from mdsvg.utils import escape_xml
 
 # Class names carry a hash-derived scope (see TestClassPrefixScoping) so two
@@ -176,7 +178,9 @@ class TestCodeBlocks:
         """Fenced code blocks use tighter vertical padding than horizontal padding."""
         import re
 
-        style = Style(code_font_size=10, code_block_padding=12)
+        style = Style(
+            base_font_size=10, line_height=1.4, code_font_size=10, code_block_padding=12
+        )
         svg = render("```\nline_height = 1.25\nparagraph_gap = 0.5\n```", style=style)
         rect = re.search(r"<rect [^>]*height=\"([^\"]+)\"", svg)
 
@@ -2105,22 +2109,47 @@ class TestBaselinePlacement:
                 float(drawn.group(1)), abs=0.01
             ), f"heading_line_height={multiplier}"
 
-    def test_heading_line_box_is_the_block_without_its_margins(self) -> None:
+    def test_heading_text_box_is_the_block_without_its_margins(self) -> None:
         """The bottom margin is rhythm; what is left is the text.
 
         The top margin is not in the block at all — an opening heading collapses
-        it — so the line box starts at the block's own top edge.
+        it — so the text box starts at the block's own top edge.
         """
         style = Style(
             base_font_size=14, heading_margin_top_px=20.0, heading_margin_bottom_px=10.0
         )
         renderer = SVGRenderer(style=style)
-        block = renderer.measure(parse("# Heading"), width=400, padding=0.0).height
+        document = parse("# Heading")
+        block = renderer.measure(document, width=400, padding=0.0).height
 
-        top, height = renderer.heading_line_box(1, block)
+        heading = document[0]
+        assert isinstance(heading, Heading)
+        top, height = renderer.heading_text_box(heading, 400)
         assert top == pytest.approx(0.0)
         assert height == pytest.approx(block - 10.0)
-        assert top <= renderer.first_baseline(parse("# Heading"), 400) < top + height
+        assert top <= renderer.first_baseline(document, 400) < top + height
+
+    def test_heading_text_box_hugs_the_bottom_of_a_grid_block(self) -> None:
+        style = Style(
+            base_font_size=14,
+            line_height=1.4,
+            heading_line_height=1.1,
+            heading_grid_px=19.6,
+            heading_margin_top_px=0.0,
+            heading_margin_bottom_px=0.0,
+            h1_size=24,
+        )
+        renderer = SVGRenderer(style=style)
+        document = parse("# Heading")
+        block = renderer.measure(document, width=400, padding=0.0).height
+
+        heading = document[0]
+        assert isinstance(heading, Heading)
+        top, height = renderer.heading_text_box(heading, 400)
+        assert block == pytest.approx(2 * 19.6)
+        assert height == pytest.approx(24 * 1.1)
+        assert top + height < block
+        assert top > 0
 
     def test_vertical_metrics_come_from_the_face(self) -> None:
         """Both are em fractions of the loaded font, and both refuse to guess."""
@@ -2295,3 +2324,87 @@ class TestDividerStyle:
     def test_hidden_table_gridlines(self) -> None:
         svg = self._svg(self.TABLE, table_border_visible=False)
         assert "stroke=" not in svg
+
+
+class TestHeadingBodyLineGrid:
+    """Heading margins and line boxes that land on the body line grid."""
+
+    GRID = Style(
+        base_font_size=14,
+        line_height=1.4,
+        heading_margin_top_px=39.2,
+        minor_heading_margin_top_px=19.6,
+        heading_margin_bottom_px=0.0,
+        h1_margin_bottom_px=19.6,
+        heading_line_height=1.1,
+        heading_grid_px=19.6,
+        paragraph_spacing=19.6,
+        h1_size=24,
+        h2_size=18,
+        h3_size=14,
+    )
+
+    def _lead_height(self, style: Style) -> float:
+        return measure("Body.", width=400, padding=0, style=style).height
+
+    def test_minor_levels_use_the_minor_top_margin(self) -> None:
+        lead = self._lead_height(self.GRID)
+        h2 = measure("Body.\n\n## H", width=400, padding=0, style=self.GRID).height
+        h3 = measure("Body.\n\n### H", width=400, padding=0, style=self.GRID).height
+        assert h2 - lead == pytest.approx(39.2 + 19.6)
+        assert h3 - lead == pytest.approx(19.6 + 19.6)
+
+    def test_heading_block_rounds_up_to_whole_body_lines(self) -> None:
+        lead = self._lead_height(self.GRID)
+
+        def block(md: str, width: float = 400) -> float:
+            return measure(md, width=width, padding=0, style=self.GRID).height - lead
+
+        # 24px at 1.1 is 26.4px: 2 body lines. 18px at 1.1 is 19.8px: within the
+        # 10% tolerance of one line.
+        assert block("Body.\n\n# H") == pytest.approx(39.2 + 2 * 19.6 + 19.6)
+        assert block("Body.\n\n## H") == pytest.approx(39.2 + 19.6)
+        wrapped = block("Body.\n\n# " + "word " * 40, width=200) - 39.2 - 19.6
+        assert wrapped / 19.6 == pytest.approx(round(wrapped / 19.6))
+        assert wrapped / 19.6 > 2
+
+    @pytest.mark.parametrize(("level", "lines"), [(1, 2), (2, 1), (3, 1)])
+    def test_last_heading_baseline_sits_above_the_next_by_whole_body_lines(
+        self, level: int, lines: int
+    ) -> None:
+        svg = render(
+            f"Body.\n\n{'#' * level} Heading\n\nAfter.",
+            width=400,
+            padding=0,
+            style=self.GRID,
+        )
+        ys = [float(y) for y in re.findall(r"<text[^>]*? y=\"([\d.]+)\"", svg)]
+        assert ys[-1] - ys[-2] == pytest.approx(lines * 19.6, abs=0.01)
+
+    def test_unset_minor_margin_and_line_px_leave_headings_unchanged(self) -> None:
+        legacy = Style(heading_margin_top_px=30.0, heading_margin_bottom_px=10.0)
+        h1 = measure("Body.\n\n# H", width=400, padding=0, style=legacy).height
+        h3 = measure("Body.\n\n### H", width=400, padding=0, style=legacy).height
+        lead = measure("Body.", width=400, padding=0, style=legacy).height
+        assert h1 - lead > 40.0 and h3 - lead > 40.0
+
+    @pytest.mark.parametrize("overflow", ["wrap", "show"])
+    @pytest.mark.parametrize(
+        ("code_size", "leading"), [(10.0, 19.6), (14.0, 19.6), (24.0, 39.2)]
+    )
+    def test_code_block_leading_is_whole_body_lines_that_clear_the_glyph(
+        self, overflow: Literal["wrap", "show"], code_size: float, leading: float
+    ) -> None:
+        def height(lines: int) -> float:
+            style = Style(
+                base_font_size=14,
+                line_height=1.4,
+                code_font_size=code_size,
+                code_block_overflow=overflow,
+            )
+            code = "\n".join("a" for _ in range(lines))
+            return measure(
+                f"```\n{code}\n```", width=400, padding=0, style=style
+            ).height
+
+        assert height(3) - height(1) == pytest.approx(2 * leading)

@@ -41,10 +41,6 @@ Changes in this release:
   in both grammars, so it cannot be migrated or recognized. The detectable
   case, an authored `section` with a `size`, raises `The 'section' font takes
   sizes (H2–H6), not size.`
-- **Retired 0.9.0 color tokens are respelled under category pins.** The 0.9.0
-  respell never reached `style.charts.category_colors.<field>.values.<label>`;
-  an identity `Move` there applies `RETIRED_TOKEN_VALUE_MAP`
-  (`category_ink.charcoal` becomes `category.charcoal.deep`).
 - **The theme `projection` key is removed** from the geo families: `Deletion`s
   of `style.charts.geoshape.projection`, `style.charts.point_map.projection` and
   the chart-local `style.projection` on `map`, `geoshape`, `point_map` and
@@ -62,6 +58,18 @@ Changes in this release:
   and of the theme block `style.charts.table.spark.bar.label` (`inset_x`, `fill`,
   `fill_opacity` and the never-read `min_size` and `height_offset`). Each carries a
   notice telling the author to add a value column.
+- **`style.text.heading.margin_top` and `margin_bottom` size fewer headings.** They
+  set the space around every markdown heading and below every board and section
+  title; `margin_top` now sets the space above H1 and H2 only and `margin_bottom`
+  the space below H2 to H6 only. H3 to H6 take the paragraph gap above them, H1
+  takes it below, and a board or section title takes its gap below from
+  `style.text.paragraph` instead of `margin_bottom`. The keys and their values are
+  unchanged and valid, so a board that authors them cannot be migrated; the
+  authored key is detectable, and warns (`WARN-HEADING-MARGIN-REDEFINED`).
+- **Hover recede is a contrast target, not a blend fraction.** The theme key
+  `style.charts.hover_emphasis.dimmed_opacity` is removed: a `Deletion` with a notice
+  naming its successor `recede_contrast`, the WCAG ratio against the canvas a
+  receded mark lands on. No value maps across (a fraction kept is not a ratio reached).
 """
 
 from __future__ import annotations
@@ -76,9 +84,6 @@ from dbt_charts.core.compile.migrations.migrations import (
     YamlKeyPath,
     board_nesting_prefixes,
     token_respell_moves,
-)
-from dbt_charts.core.compile.migrations.versions.v0_9_0 import (
-    RETIRED_TOKEN_VALUE_MAP,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
     JsonValue,
@@ -167,11 +172,6 @@ def _respell_secondary_ink(value: JsonValue) -> JsonValue | Dropped:
     )  # type-state: silent_fallback — absent from the map means not a retired scaffold spelling; it passes through unchanged
 
 
-# The 0.9.0 respell never reached the category pins (its `category_pins` was
-# off and that module is frozen), so a retired 0.9.0 variant spelling there
-# is respelled at this boundary.
-_CATEGORY_PIN: YamlKeyPath = ("style", "charts", "category_colors", "*", "values", "*")
-
 _ROLES_AND_PALETTES: tuple[YamlKeyPath, ...] = (
     ("style", "palettes", "*"),
     ("style", "roles", "*"),
@@ -191,10 +191,16 @@ _SPARK_LABEL_REASON = (
 )
 
 
+_RECEDE_REASON = (
+    "Hover recede now targets a contrast ratio against the canvas. Set "
+    "`style.charts.hover_emphasis.recede_contrast` instead."
+)
+
+
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
-    """Return the Deletions of the geo theme ``projection`` key and the table spark-bar labels."""
+    """Return the Deletions of the geo theme ``projection`` key, the table spark-bar labels and ``dimmed_opacity``."""
     theme = tuple(
         Deletion(
             source_schema,
@@ -225,7 +231,13 @@ def deletions(
             ("spark", "bar", "label"),
         )
     )
-    return theme + chart_local + spark_labels
+    recede = Deletion(
+        source_schema,
+        target_schema,
+        ("style", "charts", "hover_emphasis", "dimmed_opacity"),
+        reason=_RECEDE_REASON,
+    )
+    return theme + chart_local + spark_labels + (recede,)
 
 
 def moves(
@@ -259,14 +271,4 @@ def moves(
             )
         ),
         secondary_ink,
-        dataclasses.replace(
-            Move(
-                source_schema,
-                target_schema,
-                _CATEGORY_PIN,
-                _CATEGORY_PIN,
-                RETIRED_TOKEN_VALUE_MAP,
-            ),
-            sub_board_prefixes=nesting,
-        ),
     )

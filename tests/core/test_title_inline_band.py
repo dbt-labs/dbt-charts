@@ -65,7 +65,10 @@ rows:
         board = apply_static_layout(result.board)
         content_w = float(board.layout.content_width)
         band = compute_title_variables_inline_band_height(
-            board, content_w, board.variable_defaults
+            board,
+            content_w,
+            board.variable_defaults,
+            root=True,
         )
         vs = board.resolved_style.variables
         card_pad = float(board.resolved_style.frame.card_padding)
@@ -78,11 +81,16 @@ rows:
             board.variable_defaults,
             board.level,
             board.base_dir,
+            root=True,
         )
         assert board.title is not None
         title_h = max(
             get_title_height(
-                board.title, title_w, board.variable_defaults, base_dir=None
+                board.title,
+                title_w,
+                board.variable_defaults,
+                base_dir=None,
+                root=True,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -103,6 +111,7 @@ rows:
                 board.resolved_style,
                 board.level,
                 None,
+                root=True,
             ),
             float(vs.font.size),
             vs.font.family,
@@ -129,7 +138,9 @@ rows:
         title_dy, vars_dy, band_h = compute_title_variables_inline_baseline_layout(
             title_h=38.4,  # mdsvg's natural block height for 24px Inter at line-height 1.3
             vars_h=36.0,  # default variables container_height
-            title_baseline=title_baseline_offset("Board", 400.0, {}, style, 1, None),
+            title_baseline=title_baseline_offset(
+                "Board", 400.0, {}, style, 1, None, root=True
+            ),
             label_font_size=11.0,  # default variables font size
             label_font_family=style.variables.font.family,
             pad=24.0,  # default title_inline_band_bottom_pad from _base.yaml
@@ -243,6 +254,7 @@ rows:
             board.variable_defaults,
             board.level,
             board.base_dir,
+            root=True,
         )
         assert title_w >= 280.0
 
@@ -775,7 +787,12 @@ class TestTitleSingleLineWidth:
         )
 
         return title_max_content_width(
-            title, 1, resolve_style(get_theme_style()), {}, None
+            title,
+            1,
+            resolve_style(get_theme_style()),
+            {},
+            None,
+            root=True,
         )
 
     def test_untitled_board_reserves_the_minimum_column(self) -> None:
@@ -789,6 +806,7 @@ class TestTitleSingleLineWidth:
             {},
             1,
             None,
+            root=True,
         )
         assert title_w == 48.0
 
@@ -939,6 +957,7 @@ rows:
             style,
             board.variable_defaults,
             board.base_dir,
+            root=True,
         )
         widest = max(
             box.x + box.width
@@ -961,6 +980,7 @@ rows:
                 board.variable_defaults,
                 board.level,
                 board.base_dir,
+                root=True,
             )
 
         assert fits(exact_fit + 1.0)
@@ -988,6 +1008,7 @@ rows:
                 variable_values=board.variable_defaults,
                 level=board.level,
                 base_dir=board.base_dir,
+                root=True,
             )
             widths.append(title_w)
 
@@ -1040,7 +1061,7 @@ rows:
         # assumed — that coincidence is exactly what a re-vendored board can introduce.
         title = "Quarterly revenue by segment"
         widths = [
-            title_max_content_width(title, 1, s, {}, None)
+            title_max_content_width(title, 1, s, {}, None, root=True)
             for s in (style, in_a_different_family)
         ]
         assert widths[0] != widths[1], (
@@ -1067,6 +1088,7 @@ rows:
             board.variable_defaults,
             level=board.level,
             base_dir=board.base_dir,
+            root=True,
         )
         fits_with_everything_selected = should_use_title_inline_band(
             board.title,
@@ -1077,6 +1099,7 @@ rows:
             {"categories": ["Analytics", "Collaboration", "Security", "Support"]},
             level=board.level,
             base_dir=board.base_dir,
+            root=True,
         )
 
         assert fits_at_defaults, "the default two-member value fits its column"
@@ -1104,6 +1127,7 @@ rows:
             board.variable_defaults,
             level=board.level,
             base_dir=board.base_dir,
+            root=True,
         )
 
     _JINJA_TITLE_BOARD = """
@@ -1265,6 +1289,7 @@ rows:
             board.variable_defaults,
             board.level,
             board.base_dir,
+            root=True,
         )
 
         assert board.title is not None
@@ -1276,6 +1301,7 @@ rows:
                 level=board.level,
                 resolved_style=board.resolved_style,
                 base_dir=None,
+                root=True,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -1287,6 +1313,7 @@ rows:
                 level=board.level,
                 resolved_style=board.resolved_style,
                 base_dir=None,
+                root=True,
             ),
             float(board.resolved_style.title.min_height),
         )
@@ -1314,6 +1341,7 @@ rows:
                 board.resolved_style,
                 board.level,
                 None,
+                root=True,
             ),
             float(vs.font.size),
             vs.font.family,
@@ -1321,7 +1349,10 @@ rows:
         )
 
         actual_band_h = compute_title_variables_inline_band_height(
-            board, content_w, board.variable_defaults
+            board,
+            content_w,
+            board.variable_defaults,
+            root=True,
         )
 
         assert actual_band_h == expected_band_h, (

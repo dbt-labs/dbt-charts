@@ -36,38 +36,63 @@
   "controls.date": "{day}. {month} {year}",
   "controls.date_no_year": "{day}. {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Geschäftsquartal bis heute",
+  "controls.fiscal_year_to_date": "Geschäftsjahr bis heute",
   "controls.from": "Ab {date}",
-  "controls.last_12_months": "Letzte 12 Monate",
-  "controls.last_28_days": "Letzte 28 Tage",
-  "controls.last_7_days": "Letzte 7 Tage",
-  "controls.last_90_days": "Letzte 90 Tage",
   "controls.list_join": ", ",
   "controls.month_to_date": "Monat bis heute",
   "controls.next_month": "Nächster Monat",
   "controls.no": "Nein",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Letzte {duration}",
+  "controls.preset_previous": "Vorherige {duration}",
   "controls.previous_month": "Vorheriger Monat",
+  "controls.quarter_to_date": "Quartal bis heute",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.search": "Suchen",
   "controls.search_values": "Werte durchsuchen",
   "controls.sort_ascending": "Aufsteigend sortieren",
   "controls.sort_descending": "Absteigend sortieren",
+  "controls.this_fiscal_quarter": "Dieses Geschäftsquartal",
+  "controls.this_fiscal_year": "Dieses Geschäftsjahr",
+  "controls.this_month": "Dieser Monat",
+  "controls.this_quarter": "Dieses Quartal",
+  "controls.this_week": "Diese Woche",
+  "controls.this_year": "Dieses Jahr",
   "controls.today": "Heute",
   "controls.until": "Bis {date}",
+  "controls.week_to_date": "Woche bis heute",
   "controls.year_to_date": "Jahr bis heute",
   "controls.yes": "Ja",
+  "controls.yesterday": "Gestern",
   "duration.day": {
     "one": "{n} Tag",
     "other": "{n} Tage"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} Geschäftsquartal",
+    "other": "{n} Geschäftsquartale"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} Geschäftsjahr",
+    "other": "{n} Geschäftsjahre"
   },
   "duration.month": {
     "one": "{n} Monat",
     "other": "{n} Monate"
   },
+  "duration.quarter": {
+    "one": "{n} Quartal",
+    "other": "{n} Quartale"
+  },
   "duration.week": {
     "one": "{n} Woche",
     "other": "{n} Wochen"
+  },
+  "duration.year": {
+    "one": "{n} Jahr",
+    "other": "{n} Jahre"
   },
   "footer.data_as_of": "Daten vom {date}, {time}",
   "footer.made_with": "erstellt mit {brand}",

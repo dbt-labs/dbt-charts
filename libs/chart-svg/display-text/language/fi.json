@@ -36,38 +36,63 @@
   "controls.date": "{day}. {month} {year}",
   "controls.date_no_year": "{day}. {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Tilikauden neljännes tähän asti",
+  "controls.fiscal_year_to_date": "Tilikausi tähän asti",
   "controls.from": "Alkaen {date}",
-  "controls.last_12_months": "Viimeiset 12 kuukautta",
-  "controls.last_28_days": "Viimeiset 28 päivää",
-  "controls.last_7_days": "Viimeiset 7 päivää",
-  "controls.last_90_days": "Viimeiset 90 päivää",
   "controls.list_join": ", ",
   "controls.month_to_date": "Kuukausi tähän asti",
   "controls.next_month": "Seuraava kuukausi",
   "controls.no": "Ei",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Viimeiset {duration}",
+  "controls.preset_previous": "Edelliset {duration}",
   "controls.previous_month": "Edellinen kuukausi",
+  "controls.quarter_to_date": "Neljännes tähän asti",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.search": "Hae",
   "controls.search_values": "Hae arvoja",
   "controls.sort_ascending": "Lajittele nousevasti",
   "controls.sort_descending": "Lajittele laskevasti",
+  "controls.this_fiscal_quarter": "Tämä tilikauden neljännes",
+  "controls.this_fiscal_year": "Tämä tilikausi",
+  "controls.this_month": "Tämä kuukausi",
+  "controls.this_quarter": "Tämä neljännes",
+  "controls.this_week": "Tämä viikko",
+  "controls.this_year": "Tämä vuosi",
   "controls.today": "Tänään",
   "controls.until": "Asti {date}",
+  "controls.week_to_date": "Viikko tähän asti",
   "controls.year_to_date": "Vuosi tähän asti",
   "controls.yes": "Kyllä",
+  "controls.yesterday": "Eilen",
   "duration.day": {
     "one": "{n} päivä",
     "other": "{n} päivää"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} tilikauden neljännes",
+    "other": "{n} tilikauden neljännestä"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} tilikausi",
+    "other": "{n} tilikautta"
   },
   "duration.month": {
     "one": "{n} kuukausi",
     "other": "{n} kuukautta"
   },
+  "duration.quarter": {
+    "one": "{n} neljännes",
+    "other": "{n} neljännestä"
+  },
   "duration.week": {
     "one": "{n} viikko",
     "other": "{n} viikkoa"
+  },
+  "duration.year": {
+    "one": "{n} vuosi",
+    "other": "{n} vuotta"
   },
   "footer.data_as_of": "Tiedot {date} klo {time}",
   "footer.made_with": "tehty työkalulla {brand}",

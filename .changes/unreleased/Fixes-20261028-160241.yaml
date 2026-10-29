@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart title cut on a legend-rail line or bar chart, an empty-result chart or a custom chart now warns WARN-CHART-TITLE-TRUNCATED like every other chart.
+time: 2026-10-28T16:02:41.460345-07:00

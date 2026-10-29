@@ -540,10 +540,13 @@
     /*{# tooltip is NOT describing; the hovered ones are left alone. #}*/
     /*{#                                                                  #}*/
     /*{# Receding writes a mark's fill and stroke as a SOLID color: its own #}*/
-    /*{# paint mixed toward the chart's background. Arithmetically that is #}*/
-    /*{# the composite the mark would show at partial opacity over the #}*/
-    /*{# background -- `0.7 * mark + 0.3 * background` -- so it is the same #}*/
-    /*{# pixel a background-colored veil over the plot would produce. It is #}*/
+    /*{# paint mixed toward the chart's background, as far as it takes for #}*/
+    /*{# the result to read at the theme's recede contrast against that #}*/
+    /*{# background (recedeShare) -- so a light and a dark canvas get the #}*/
+    /*{# same separation, where a fixed blend fraction does not. Arithmetically #}*/
+    /*{# a mix is the composite the mark would show at partial opacity over #}*/
+    /*{# the background, so it is the same pixel a background-colored veil #}*/
+    /*{# would produce. It is #}*/
     /*{# not an opacity write, deliberately: a faded bar shows the gridlines #}*/
     /*{# straight through it, and every repair for that is heavy -- an opaque #}*/
     /*{# twin painted under each bar at render time, or a veil with every #}*/
@@ -690,11 +693,11 @@
     }
 
     /*{# A mark the board's selected variable value does not name arrives #}*/
-    /*{# already receded: the engine baked the same mix into its paint and #}*/
+    /*{# already receded: the engine baked the same mix into its paint, kept #}*/
+    /*{# the paint it had beside it (data-dbt-rest-fill / -stroke), and #}*/
     /*{# flagged its link. Hover treats the selection as suspended -- the #}*/
-    /*{# mark's own color is recovered by undoing that mix, so the hovered #}*/
-    /*{# datum lights up at full strength and the rest recede from their #}*/
-    /*{# own color, exactly as on a board with nothing selected. #}*/
+    /*{# hovered datum lights up at its own color and the rest recede from #}*/
+    /*{# theirs, exactly as on a board with nothing selected. #}*/
     function isBakedReceded(el) {
         return !!el.closest('a[data-dbt-receded]');
     }
@@ -708,14 +711,60 @@
         return channels;
     }
 
-    function restPaint(paint, background) {
-        if (!isColor(paint)) return paint;
-        const share = DCT_HOVER_EMPHASIS.opacity;
-        const ground = rgbOf(background);
-        const rest = rgbOf(paint).map(function (v, i) {
-            return Math.min(255, Math.max(0, Math.round((v - (1 - share) * ground[i]) / share)));
+    function restPaint(el, prop) {
+        return el.getAttribute('data-dbt-rest-' + prop);
+    }
+
+    function luminanceOf(rgb) {
+        const [r, g, b] = rgb.map(function (v) {
+            const c = v / 255;
+            return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
         });
-        return 'rgb(' + rest.join(', ') + ')';
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    /*{# The share of `paint` that stays when it recedes toward `background`: #}*/
+    /*{# the largest whose straight sRGB mix (what color-mix computes) reads at #}*/
+    /*{# no more than the theme's recede contrast against the background, WCAG #}*/
+    /*{# ratio. A paint already at or below it keeps everything -- receding #}*/
+    /*{# never makes a mark louder. The scan runs from the full color down, so #}*/
+    /*{# a mix whose channels move in opposite directions cannot land on a far #}*/
+    /*{# branch of the curve. Same algorithm as the engine's baked recede. #}*/
+    const recedeShares = {};
+    function recedeShare(paint, background) {
+        const key = paint + '|' + background;
+        if (key in recedeShares) return recedeShares[key];
+        const mark = rgbOf(paint);
+        const ground = rgbOf(background);
+        const groundLuminance = luminanceOf(ground);
+        const target = DCT_HOVER_EMPHASIS.recedeContrast;
+        const contrastAt = function (share) {
+            const lum = luminanceOf(mark.map(function (v, i) { return share * v + (1 - share) * ground[i]; }));
+            return (Math.max(lum, groundLuminance) + 0.05) / (Math.min(lum, groundLuminance) + 0.05);
+        };
+        let share = 1;
+        if (contrastAt(1) > target) {
+            const steps = 64;
+            let hi = 1;
+            let lo = 0;
+            for (let i = 1; i <= steps; i++) {
+                const probe = 1 - i / steps;
+                if (contrastAt(probe) <= target) { lo = probe; break; }
+                hi = probe;
+            }
+            for (let i = 0; i < 30; i++) {
+                const mid = (lo + hi) / 2;
+                if (contrastAt(mid) <= target) lo = mid; else hi = mid;
+            }
+            share = lo;
+        }
+        recedeShares[key] = share;
+        return share;
+    }
+
+    function recededPaint(paint, background) {
+        const share = recedeShare(paint, background);
+        return share === 1 ? paint : 'color-mix(in srgb, ' + paint + ' ' + Number((share * 100).toFixed(2)) + '%, ' + background + ')';
     }
 
     function clearHoverEmphasis(state) {
@@ -742,7 +791,6 @@
         if (!chartEl || isMagnitudeColored(chartEl)) return;
         const background = chartBackground(mark);
         if (!background) return;
-        const share = Math.round(DCT_HOVER_EMPHASIS.opacity * 100) + '%';
 
         /*{# Candidates are scoped to the hovered mark's own facet PANEL, not #}*/
         /*{# the whole chart -- a small-multiples facet packs every panel's #}*/
@@ -757,9 +805,9 @@
             if (kept && !baked) return;
             let touched = false;
             RECEDABLE_PAINT.forEach(function (prop) {
-                const paint = baked ? restPaint(el.getAttribute(prop), background) : el.getAttribute(prop);
+                const paint = baked ? restPaint(el, prop) : el.getAttribute(prop);
                 if (!isColor(paint)) return;
-                el.style.setProperty(prop, kept ? paint : 'color-mix(in srgb, ' + paint + ' ' + share + ', ' + background + ')');
+                el.style.setProperty(prop, kept ? paint : recededPaint(paint, background));
                 touched = true;
             });
             if (touched) dimmed.push(el);
@@ -771,9 +819,9 @@
             if (dimmed.indexOf(el) !== -1) return;
             let touched = false;
             RECEDABLE_PAINT.forEach(function (prop) {
-                const paint = el.getAttribute(prop);
+                const paint = restPaint(el, prop);
                 if (!isColor(paint)) return;
-                el.style.setProperty(prop, restPaint(paint, background));
+                el.style.setProperty(prop, paint);
                 touched = true;
             });
             if (touched) dimmed.push(el);
@@ -1139,11 +1187,12 @@
     /*{# baked mix: the tooltip swatch and hover markers key the SERIES, and #}*/
     /*{# the legend beside them recedes with its series, so it is no source. #}*/
     function markSeriesColor(mark) {
-        const fill = mark.getAttribute('fill');
-        const stroke = mark.getAttribute('stroke');
-        const ink = fill && fill !== 'none' ? fill : stroke && stroke !== 'none' ? stroke : null;
-        const background = chartBackground(mark);
-        return ink && background && isBakedReceded(mark) ? restPaint(ink, background) : ink;
+        const own = function (prop) {
+            return isBakedReceded(mark) ? restPaint(mark, prop) : mark.getAttribute(prop);
+        };
+        const fill = own('fill');
+        const stroke = own('stroke');
+        return fill && fill !== 'none' ? fill : stroke && stroke !== 'none' ? stroke : null;
     }
 
     /*{# A line is keyed with a line, not a filled square that reads as a bar. #}*/

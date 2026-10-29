@@ -623,6 +623,19 @@ pub fn sub_unit_specs(si_spec: &str) -> Result<(String, String), String> {
     ))
 }
 
+/// The engine's spec for a sub-unit sibling name (`number_full` prints
+/// `SUB_UNIT_NUMBER_SPEC` here, not its own six-decimal spec).
+pub fn sub_unit_engine_spec(fallback: &str) -> &'static str {
+    if fallback == "number_full" {
+        return SUB_UNIT_NUMBER_SPEC;
+    }
+    predefined_spec(fallback).expect("a fallback is a spec-bearing member").d3
+}
+
+/// `SUB_UNIT_NUMBER_SPEC` (`predefined_formats.py`): what `number` and `compact`
+/// print below 1 when the board did not redefine `number_full`.
+pub const SUB_UNIT_NUMBER_SPEC: &str = ",.2~f";
+
 /// `PREDEFINED_SUB_UNIT_FALLBACK`: the plain-digit sibling of a predefined SI
 /// member, which never prints an SI prefix below 1 (d3's milli collides
 /// case-only with the house million grammar).
@@ -1068,6 +1081,27 @@ mod tests {
 
     fn fmt(spec: &str, val: f64) -> String {
         format(&Locale::en_us(), spec, val).expect(spec)
+    }
+
+    #[test]
+    fn number_full_prints_only_real_digits() {
+        let spec = crate::predefined_formats::PREDEFINED_SPECS
+            .iter()
+            .find(|p| p.name == "number_full")
+            .unwrap()
+            .d3;
+        assert_eq!(fmt(spec, 35.6), "35.6");
+        assert_eq!(fmt(spec, 12345.0), "12,345");
+        assert_eq!(fmt(spec, 1234.567), "1,234.567");
+    }
+
+    #[test]
+    fn number_and_compact_print_two_unpadded_decimals_below_one() {
+        for raw in ["number", "compact"] {
+            let spec = sub_unit_engine_spec(sub_unit_fallback(raw).unwrap());
+            assert_eq!(fmt(spec, 0.6710941677), "0.67", "{raw}");
+            assert_eq!(fmt(spec, 0.5), "0.5", "{raw}");
+        }
     }
 
     // --- exact-double rounding (regression: the multiply-then-add-half

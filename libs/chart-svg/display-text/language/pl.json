@@ -36,32 +36,53 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Kwartał obrotowy do dziś",
+  "controls.fiscal_year_to_date": "Rok obrotowy do dziś",
   "controls.from": "Od {date}",
-  "controls.last_12_months": "Ostatnie 12 miesięcy",
-  "controls.last_28_days": "Ostatnie 28 dni",
-  "controls.last_7_days": "Ostatnie 7 dni",
-  "controls.last_90_days": "Ostatnie 90 dni",
   "controls.list_join": ", ",
   "controls.month_to_date": "Miesiąc do dziś",
   "controls.next_month": "Następny miesiąc",
   "controls.no": "Nie",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Ostatnie {duration}",
+  "controls.preset_previous": "Poprzednie {duration}",
   "controls.previous_month": "Poprzedni miesiąc",
+  "controls.quarter_to_date": "Kwartał do dziś",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Szukaj",
   "controls.search_values": "Szukaj wartości",
   "controls.sort_ascending": "Sortuj rosnąco",
   "controls.sort_descending": "Sortuj malejąco",
+  "controls.this_fiscal_quarter": "Ten kwartał obrotowy",
+  "controls.this_fiscal_year": "Ten rok obrotowy",
+  "controls.this_month": "Ten miesiąc",
+  "controls.this_quarter": "Ten kwartał",
+  "controls.this_week": "Ten tydzień",
+  "controls.this_year": "Ten rok",
   "controls.today": "Dziś",
   "controls.until": "Do {date}",
+  "controls.week_to_date": "Tydzień do dziś",
   "controls.year_to_date": "Rok do dziś",
   "controls.yes": "Tak",
+  "controls.yesterday": "Wczoraj",
   "duration.day": {
     "one": "{n} dzień",
     "few": "{n} dni",
     "many": "{n} dni",
     "other": "{n} dnia"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} kwartał obrotowy",
+    "few": "{n} kwartały obrotowe",
+    "many": "{n} kwartałów obrotowych",
+    "other": "{n} kwartału obrotowego"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} rok obrotowy",
+    "few": "{n} lata obrotowe",
+    "many": "{n} lat obrotowych",
+    "other": "{n} roku obrotowego"
   },
   "duration.month": {
     "one": "{n} miesiąc",
@@ -69,11 +90,23 @@
     "many": "{n} miesięcy",
     "other": "{n} miesiąca"
   },
+  "duration.quarter": {
+    "one": "{n} kwartał",
+    "few": "{n} kwartały",
+    "many": "{n} kwartałów",
+    "other": "{n} kwartału"
+  },
   "duration.week": {
     "one": "{n} tydzień",
     "few": "{n} tygodnie",
     "many": "{n} tygodni",
     "other": "{n} tygodnia"
+  },
+  "duration.year": {
+    "one": "{n} rok",
+    "few": "{n} lata",
+    "many": "{n} lat",
+    "other": "{n} roku"
   },
   "footer.data_as_of": "Dane na {date}, {time}",
   "footer.made_with": "utworzono w {brand}",

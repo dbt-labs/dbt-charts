@@ -203,6 +203,39 @@ def custom_chart_height(
     )
 
 
+def pie_content_height(
+    *,
+    height: float | None,
+    is_donut: bool,
+    width: float | None,
+    chart_defaults: ResolvedChartDefaults,
+) -> float:
+    """A pie's content height: its authored height, else the board's pie (or
+    donut) aspect ratio at ``width``, clamped to the board's height range.
+
+    The one formula both the sizing pass (through ``get_chart_content_height``)
+    and a pie's layout box (``render/pie_layout.py``) read, so the box the size
+    stage decides a pie's mode in is the box the chart is drawn in.
+    """
+    if height is not None:
+        return float(height)
+    if width is not None and width > 0:
+        type_config = chart_defaults.donut if is_donut else chart_defaults.pie
+        aspect = (
+            float(type_config.aspect_ratio)
+            if type_config.aspect_ratio
+            else float(chart_defaults.aspect_ratio)
+        )
+        if aspect > 0:
+            return aspect_ratio_height(
+                width,
+                aspect,
+                float(chart_defaults.min_height),
+                float(chart_defaults.max_height),
+            )
+    return chart_defaults.default_chart_height
+
+
 def get_chart_content_height(
     chart: Chart | None,
     *,
@@ -272,32 +305,34 @@ def get_chart_content_height(
             resolved_style.chart_defaults,
         )
 
-    # After kpi/table/callout/spark_bar early returns, remaining types are
-    # _CartesianChartFields, _GeoChartFields, and PieChart —
-    # all of which declare height/min_height/max_height.
-    if not isinstance(chart, (_CartesianChartFields, _GeoChartFields, PieChart)):
+    if isinstance(chart, PieChart):
+        return pie_content_height(
+            height=chart.height,
+            is_donut=chart.is_donut,
+            width=width,
+            chart_defaults=resolved_style.chart_defaults,
+        )
+
+    # After the kpi/table/callout/spark_bar/pie early returns, what remains is
+    # _CartesianChartFields and _GeoChartFields: both declare
+    # height/aspect_ratio, and the cartesian ones min/max_height too.
+    if not isinstance(chart, (_CartesianChartFields, _GeoChartFields)):
         return resolved_style.chart_defaults.default_chart_height
 
     # Step 1: explicit chart-root height wins everything (no clamping).
     if chart.height is not None:
         return float(chart.height)
 
-    # Steps 2–4: aspect-ratio-driven sizing for plot-style charts.
+    # Steps 2-4: aspect-ratio-driven sizing for plot-style charts.
     if width is not None and width > 0:
         # Resolve clamps: start from board/theme resolved_style, override with
         # chart-root min_height / max_height when explicitly set by the author.
-        # Cartesian families declare min/max_height; pie and geo size from the
-        # theme's per-family aspect only.
+        # Geo sizes from the theme's per-family clamps only.
         chart_min_height = (
             chart.min_height if isinstance(chart, _CartesianChartFields) else None
         )
         chart_max_height = (
             chart.max_height if isinstance(chart, _CartesianChartFields) else None
-        )
-        chart_aspect_ratio = (
-            chart.aspect_ratio
-            if isinstance(chart, (_CartesianChartFields, _GeoChartFields))
-            else None
         )
         min_h = (
             float(chart_min_height)
@@ -310,16 +345,10 @@ def get_chart_content_height(
             else float(resolved_style.chart_defaults.max_height)
         )
         # Step 2: chart-root aspect_ratio (validated gt=0 at compile time).
-        if chart_aspect_ratio is not None:
-            return aspect_ratio_height(width, chart_aspect_ratio, min_h, max_h)
-        # Steps 3–4: per-family resolved-style aspect_ratio, then global default.
-        # The donut slot is not a chart type, so it cannot go through _FAMILY_SLOT.
-        type_config = getattr(
-            resolved_style.chart_defaults,
-            "donut"
-            if isinstance(chart, PieChart) and chart.is_donut
-            else _FAMILY_SLOT[chart_type],
-        )
+        if chart.aspect_ratio is not None:
+            return aspect_ratio_height(width, chart.aspect_ratio, min_h, max_h)
+        # Steps 3-4: per-family resolved-style aspect_ratio, then global default.
+        type_config = getattr(resolved_style.chart_defaults, _FAMILY_SLOT[chart_type])
         aspect = (
             float(type_config.aspect_ratio)
             if type_config.aspect_ratio
@@ -421,6 +450,7 @@ def get_title_height(
     variable_values: dict[str, Any] | None = None,
     level: int = 1,
     *,
+    root: bool,
     resolved_style: ResolvedStyle | None = None,
     base_dir: str | None,
 ) -> float:
@@ -435,7 +465,7 @@ def get_title_height(
     _rs = resolved_style or resolve_style(get_theme_style())
     from dbt_charts.core.render.boards import resolve_display_text_from_provider
 
-    renderer, _ = title_renderer(_rs, level)
+    renderer, _ = title_renderer(_rs, level, root=root)
     resolved_title = resolve_display_text_from_provider(
         title, variable_values, resolved_style=_rs
     )
@@ -450,6 +480,8 @@ def title_baseline_offset(
     resolved_style: ResolvedStyle,
     level: int,
     base_dir: str | None,
+    *,
+    root: bool,
 ) -> float:
     """How far below a title block's top edge its first baseline sits.
 
@@ -461,7 +493,7 @@ def title_baseline_offset(
     """
     from dbt_charts.core.render.boards import resolve_display_text_from_provider
 
-    renderer, _ = title_renderer(resolved_style, level)
+    renderer, _ = title_renderer(resolved_style, level, root=root)
     resolved_title = resolve_display_text_from_provider(
         title, variable_values, resolved_style=resolved_style
     )
@@ -469,28 +501,69 @@ def title_baseline_offset(
     return renderer.first_baseline(blocks, width)
 
 
+def prose_heading_baseline(
+    board: Board,
+    width: float,
+    variable_values: VariableValues | None,
+) -> float | None:
+    """How far below a text card's top edge its first baseline sits, when its text
+    opens with a heading; None when it opens with anything else.
+
+    Text that reads query data cannot be resolved without a render, so it joins
+    no band.
+    """
+    from dbt_charts.core.compile.template.jinja import text_needs_render_data
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
+    from dbt_charts.core.render.prose import prose_first_baseline
+
+    style = board.resolved_style
+    if text_needs_render_data(board.text):
+        return None
+    resolved = resolve_display_text_from_provider(
+        board.text, variable_values, resolved_style=style, base_dir=board.base_dir
+    )
+    return prose_first_baseline(
+        resolved,
+        width,
+        style.text,
+        style,
+        board.prose_plan,
+        board.text,
+        board.base_dir,
+        board.html_policy == "trusted-raw",
+    )
+
+
 def title_line_box(
-    block_height: float,
+    title: str,
+    width: float,
+    variable_values: VariableValues | None,
     level: int,
     resolved_style: ResolvedStyle,
+    base_dir: str | None,
+    *,
+    root: bool,
 ) -> tuple[float, float]:
-    """The ``(top, height)`` of the text inside a title block of ``block_height``.
+    """The ``(top, height)`` of the text inside a title block, wrapped to ``width``.
 
-    A heading block is a top margin, the line boxes, and a smaller bottom margin.
-    The margins are layout — the rhythm between the heading and what surrounds it
-    — and only the middle is text, which is what a selection mark should trace.
-
-    ``block_height`` must be the *measured* height, before
-    ``max(..., style.title.min_height)``: that clamp only ever pads the bottom, so
-    a clamped height would stretch the span below the text it describes.
-
-    The title text does not enter. ``board_title_spec`` sizes a board title from
-    its semantic level alone, so the span is the same whatever the title says.
+    A heading block is a top margin, the text, and a bottom margin. The margins
+    are layout — the rhythm between the heading and what surrounds it — and only
+    the text is what a selection mark should trace. Asked of the renderer that
+    draws the title, on the blocks it draws, so a wrapped title is traced whole.
     """
-    # Level 1 is what gets asked, whatever the board's level: board_title_markdown
-    # always emits `# {title}`, and title_renderer has already baked the
-    # level-resolved size into the style's h1.
-    return title_renderer(resolved_style, level)[0].heading_line_box(1, block_height)
+    from dbt_charts.core.render.boards import resolve_display_text_from_provider
+    from mdsvg import Heading
+
+    renderer, _ = title_renderer(resolved_style, level, root=root)
+    resolved_title = resolve_display_text_from_provider(
+        title, variable_values, resolved_style=resolved_style
+    )
+    blocks = title_blocks(title, resolved_title, level, resolved_style, base_dir, None)
+    heading = blocks[0]
+    if not isinstance(heading, Heading):
+        # A title whose image failed to resolve is drawn as its error message.
+        return 0.0, renderer.measure(blocks, width=width, padding=0.0).height
+    return renderer.heading_text_box(heading, width)
 
 
 # ============================================================================
@@ -520,6 +593,8 @@ def resolve_title_variables_inline_widths(
     variable_values: dict[str, Any] | None,
     level: int,
     base_dir: str | None,
+    *,
+    root: bool,
 ) -> tuple[float, float]:
     """Split inner title+variables width into (title_w, variables_w).
 
@@ -551,6 +626,7 @@ def resolve_title_variables_inline_widths(
             resolved_style,
             {} if variable_values is None else variable_values,
             base_dir,
+            root=root,
         )
         if title
         else 0.0
@@ -622,6 +698,8 @@ def should_use_title_inline_band(
     variable_values: dict[str, Any] | None,
     level: int,
     base_dir: str | None,
+    *,
+    root: bool,
 ) -> bool:
     """Return whether variables fit the compact title-inline band contract.
 
@@ -643,6 +721,7 @@ def should_use_title_inline_band(
         variable_values,
         level,
         base_dir,
+        root=root,
     )
     layout = _variables_layout(
         visible_variables, vars_w, variable_values, variables_style
@@ -698,6 +777,8 @@ def compute_title_variables_inline_band_height(
     board: Board,
     content_width: float,
     variable_values: dict[str, Any] | None,
+    *,
+    root: bool,
 ) -> float:
     """Band height for ``variables.position: title-inline``.
 
@@ -717,6 +798,7 @@ def compute_title_variables_inline_band_height(
         variable_values,
         board.level,
         base_dir,
+        root=root,
     )
     if not board.title:
         return 0.0
@@ -730,6 +812,7 @@ def compute_title_variables_inline_band_height(
             inner,
             variable_values,
             level=board.level,
+            root=root,
             resolved_style=board.resolved_style,
             base_dir=base_dir,
         ),
@@ -752,6 +835,7 @@ def compute_title_variables_inline_band_height(
             board.resolved_style,
             board.level,
             base_dir,
+            root=root,
         ),
         float(vs.font.size),
         vs.font.family,
@@ -1520,11 +1604,12 @@ def nested_board_sizing_context(
         variable_values,
         nested_board.level,
         base_dir,
+        root=False,
     )
 
     if use_title_inline:
         inline_band_h = compute_title_variables_inline_band_height(
-            nested_board, content_width, variable_values
+            nested_board, content_width, variable_values, root=False
         )
         title_h = 0.0
         variables_h = 0.0
@@ -1537,6 +1622,7 @@ def nested_board_sizing_context(
                     inner,
                     variable_values,
                     level=nested_board.level,
+                    root=False,
                     resolved_style=nrs,
                     base_dir=base_dir,
                 ),

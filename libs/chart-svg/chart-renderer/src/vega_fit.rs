@@ -570,12 +570,6 @@ pub struct FitMargins {
     /// negative. The right-side reach of a shape whose left side carries a value
     /// axis, where [`Self::raw_left`] is the gutter instead.
     pub raw_right: f64,
-    /// The plot rect vl-convert's scenegraph reports: `vegaToScenegraph`
-    /// makes only [`SCENEGRAPH_PADDING_PASSES`] of the SVG's three padding
-    /// passes, so on a sequence that has not converged it is one pass behind
-    /// `plot_w`/`plot_h`. `legend_align.py` slides a legend against this
-    /// rect (it reads the scenegraph), not against the drawn one.
-    pub scenegraph_plot: (f64, f64),
 }
 
 /// Vega's autosize-fit resize loop is BOUNDED — it does not run to a fixed
@@ -599,8 +593,6 @@ pub struct FitMargins {
 /// Shared with the legacy scatter arm's top-margin solve, which runs the same
 /// passes over the one margin it derives from tick-label ink.
 pub(crate) const AUTOSIZE_PADDING_PASSES: usize = 3;
-/// The passes `vegaToScenegraph` runs (see above): `FitMargins::scenegraph_plot`.
-const SCENEGRAPH_PADDING_PASSES: usize = 2;
 
 /// Vega `titleLayout`: the title group lands at
 /// `y = viewBounds.y1 − tempBounds.height() − offset`, anchored
@@ -663,7 +655,6 @@ pub fn fit_passes(
     let (mut left, mut top, mut right, mut bottom) = (0.0, 0.0, 0.0, 0.0);
     let mut raw_left = 0.0;
     let mut raw_right = 0.0;
-    let mut scenegraph_plot = (pw, ph);
     // A chart whose axis expressions read the view settles its layout one padding pass at a time
     // (`labels_expr::view::render_passes`), so the labels each pass measures are the ones its plot size paints.
     let passes_asked = passes;
@@ -680,9 +671,9 @@ pub fn fit_passes(
     };
     if let Some(m) = &pinned {
         (left, top, right, bottom, pw, ph) = (m.left, m.top, m.right, m.bottom, m.plot_w, m.plot_h);
-        (raw_left, scenegraph_plot) = (m.raw_left, m.scenegraph_plot);
+        raw_left = m.raw_left;
     }
-    for pass in 1..=passes {
+    for _ in 0..passes {
         let mut b = Bounds::new(0.0, 0.0, pw, ph);
         ink(pw, ph, &mut b);
         if let Some(t) = title {
@@ -699,9 +690,6 @@ pub fn fit_passes(
             pw = (avail_w - left - right).max(0.0);
         }
         ph = (avail_h - top - bottom).max(0.0);
-        if pass <= SCENEGRAPH_PADDING_PASSES {
-            scenegraph_plot = (pw, ph);
-        }
     }
     // The layout `_resizeView` triggers inside the last padding pass runs
     // with `_autosize = 0`: it re-places every mark at the negotiated size
@@ -723,7 +711,7 @@ pub fn fit_passes(
         let (tx, ty) = title_layout(&drawn, t);
         (if pad_l > 0.0 { tx.max(-left) } else { tx }, ty)
     });
-    let margins = FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, raw_right, scenegraph_plot };
+    let margins = FitMargins { left, top, right, bottom, plot_w: pw, plot_h: ph, title_pos, raw_left, raw_right };
     crate::labels_expr::view::fit_done((view_w, view_h), passes_asked, &margins);
     margins
 }
@@ -765,7 +753,6 @@ pub fn pad_plot(
         title_pos: placed.map(|(_, pos)| pos),
         raw_left,
         raw_right,
-        scenegraph_plot: (pw, ph),
     }
 }
 
@@ -1271,17 +1258,5 @@ mod tests {
         let b = text_ink(100.0, 6.0, 20.0, 11.0, "center", "top");
         assert_eq!((b.y1, b.y2), (6.0, 17.0));
         assert_eq!((b.x1, b.x2), (90.0, 110.0));
-    }
-
-    /// `vegaToScenegraph` makes two of the SVG's three padding passes: with
-    /// an overhang of `ceil(pw / 10)` the passes run 90, 91, 90 (view 100),
-    /// so the scenegraph's plot is the second pass's 91 while the drawn one
-    /// is 90; a size-independent overhang converges and the two agree.
-    #[test]
-    fn the_scenegraph_plot_is_the_second_padding_pass() {
-        let moving = fit_plot(100.0, 50.0, (0.0, 0.0, 0.0, 0.0), |pw, _, b| b.union(&Bounds::new(0.0, 0.0, pw + (pw / 10.0).ceil(), 50.0)), None);
-        assert_eq!((moving.plot_w, moving.scenegraph_plot.0), (90.0, 91.0));
-        let fixed = fit_plot(100.0, 50.0, (0.0, 0.0, 0.0, 0.0), |pw, _, b| b.union(&Bounds::new(0.0, 0.0, pw + 10.0, 50.0)), None);
-        assert_eq!((fixed.plot_w, fixed.scenegraph_plot), (90.0, (90.0, 50.0)));
     }
 }

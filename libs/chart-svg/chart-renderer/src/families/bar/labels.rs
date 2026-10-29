@@ -1111,8 +1111,7 @@ pub(super) fn mark_labels(
         } else {
             series_fill.as_deref().unwrap_or("#313233")
         });
-        let color = crate::href::Anchor::paint(anchor, color);
-        let spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
+                let spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
         let attrs = Attrs::new()
             .set("x", format!("{:.2}", plot_left + spot.x))
             .set("y", format!("{:.2}", plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size)))

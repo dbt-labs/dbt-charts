@@ -59,6 +59,7 @@ def _drawn_baseline(level: int, title: str) -> float:
         variable_values={},
         base_dir=None,
         error_collector=None,
+        root=level == 1,
     )
     match = re.search(r'<text[^>]*\by="([\d.]+)"', svg)
     assert match, svg
@@ -75,7 +76,9 @@ def test_the_reported_baseline_is_the_one_the_title_was_drawn_on(
 ) -> None:
     style = resolve_style(get_theme_style())
 
-    reported = title_baseline_offset(title, _WIDE, {}, style, level, None)
+    reported = title_baseline_offset(
+        title, _WIDE, {}, style, level, None, root=level == 1
+    )
     assert reported == pytest.approx(_drawn_baseline(level, title), abs=0.01), (
         f"level {level}: reported baseline is not where the heading was painted"
     )
@@ -93,10 +96,9 @@ def test_the_line_box_holds_the_baseline_it_was_drawn_with(
     hold the baseline — only both together say it is the text's own line box.
     """
     style = resolve_style(get_theme_style())
-    block = get_title_height(
-        title, _WIDE, None, level, resolved_style=style, base_dir=None
+    top, height = title_line_box(
+        title, _WIDE, None, level, style, None, root=level == 1
     )
-    top, height = title_line_box(block, level, style)
     baseline = _drawn_baseline(level, title)
 
     assert top < baseline < top + height, (
@@ -113,6 +115,7 @@ def _painted(title: str, style: ResolvedStyle) -> str:
         variable_values={},
         base_dir=_CHARTS,
         error_collector=None,
+        root=True,
     )
 
 
@@ -121,7 +124,12 @@ def test_a_title_with_an_image_reserves_the_height_it_paints() -> None:
     title = "![logo](tall.svg) Sales"
 
     reserved = get_title_height(
-        title, _WIDE, {}, resolved_style=style, base_dir=_CHARTS
+        title,
+        _WIDE,
+        {},
+        resolved_style=style,
+        base_dir=_CHARTS,
+        root=True,
     )
     svg = _painted(title, style)
 
@@ -137,7 +145,7 @@ def test_the_reported_baseline_follows_an_inline_image_down() -> None:
     style = resolve_style(get_theme_style())
     title = "![logo](tall.svg) Board Title"
 
-    reported = title_baseline_offset(title, _WIDE, {}, style, 1, _CHARTS)
+    reported = title_baseline_offset(title, _WIDE, {}, style, 1, _CHARTS, root=True)
     drawn = re.search(r'<text[^>]*\by="([\d.]+)"', _painted(title, style))
 
     assert drawn

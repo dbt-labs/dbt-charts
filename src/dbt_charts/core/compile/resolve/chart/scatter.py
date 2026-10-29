@@ -486,4 +486,5 @@ def _resolve_scatter(
             ),
         ),
         annotation_gaps=annotations.gaps,
+        annotation_bar_trends=annotations.bar_trends,
     )

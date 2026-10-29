@@ -88,7 +88,7 @@ def test_control_values_read_in_the_board_language() -> None:
 
 def test_the_controls_strip_carries_its_words_for_the_page() -> None:
     from dbt_charts.core.compile.resolve.style.board import resolve_style
-    from dbt_charts.core.render.board_variables import board_clock
+    from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
     from dbt_charts.core.render.variables_resolve import resolve_controls
     from dbt_charts.core.render.variables_strip import render_variables_strip_svg
 
@@ -99,7 +99,7 @@ def test_the_controls_strip_carries_its_words_for_the_page() -> None:
     with (
         language_scope("de"),
         interactive_controls(True),
-        board_clock(datetime.date(2026, 10, 20)),
+        board_clock(BoardClock(datetime.date(2026, 10, 20), 1, 1)),
     ):
         svg, _ = render_variables_strip_svg(
             controls, 600.0, style, "start", variables_path="variables"
@@ -108,6 +108,7 @@ def test_the_controls_strip_carries_its_words_for_the_page() -> None:
         re.search(r'data-dbt-language="([^"]*)"', svg).group(1).replace("&quot;", '"')
     )
     assert words["today"] == "Heute" and words["apply"] == "Anwenden"
+    assert "Letzte 7 Tage" in svg and "Monat bis heute" in svg
     assert words["calendar_day"] == "{weekday}, {day}. {month} {year}"
     with interactive_controls(False):
         static, _ = render_variables_strip_svg(
@@ -400,7 +401,8 @@ def test_percentage_point_deltas_and_pie_headings_read_in_the_board_language() -
         resolved = resolve(
             chart, data, resolve_chart_style_context(get_theme_style()), width=600.0
         )
-    assert resolved.attached_heading == "Zu klein für eine Beschriftung"
+    assert resolved.hybrid_attachment is not None
+    assert resolved.hybrid_attachment.heading == "Zu klein für eine Beschriftung"
 
 
 def test_a_chart_wrapper_announces_itself_in_the_board_language() -> None:

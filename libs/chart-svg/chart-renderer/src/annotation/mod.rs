@@ -5,6 +5,7 @@
 
 pub mod axis_map;
 mod emit;
+mod rule_gray;
 pub mod model;
 mod place;
 mod text;
@@ -100,6 +101,8 @@ pub enum DataMark {
     Box(Bounds),
     Area { hi: Vec<(f64, f64)>, lo: Vec<(f64, f64)> },
     Line { points: Vec<(f64, f64)>, width: f64 },
+    /// A fill or bar with its color and opacity: what an `auto` rule keeps contrast against.
+    Tinted(Box<DataMark>, String, f64),
 }
 
 /// Column width, px, a fill or line is cut into for placement.
@@ -115,6 +118,7 @@ impl DataMark {
         match self {
             DataMark::Box(m) => m.x1 < b.x2 && m.x2 > b.x1 && m.y1 < b.y2 && m.y2 > b.y1,
             DataMark::Line { .. } => false,
+            DataMark::Tinted(m, ..) => m.overlaps(b),
             // Sampled every pixel across the text: the fill's column there
             // must reach into the text's rows.
             DataMark::Area { hi, lo } => {
@@ -146,6 +150,7 @@ impl DataMark {
         };
         match self {
             DataMark::Box(b) => vec![*b],
+            DataMark::Tinted(m, ..) => m.boxes(),
             DataMark::Area { hi, lo } => columns(hi, &|c0, c1| {
                 let ys = [y_at(hi, c0), y_at(hi, c1), y_at(lo, c0), y_at(lo, c1)];
                 (ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max))
@@ -156,6 +161,25 @@ impl DataMark {
                 let (y0, y1) = (ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max));
                 (y0 - width / 2.0, y1 + width / 2.0)
             }),
+        }
+    }
+}
+
+impl DataMark {
+    /// Whether the mark's fill reaches the point `(x, y)` or the `half`-wide stroke around it.
+    fn covers(&self, x: f64, y: f64, half: f64) -> bool {
+        match self {
+            DataMark::Tinted(m, ..) => m.covers(x, y, half),
+            DataMark::Box(b) => b.x1 - half <= x && x <= b.x2 + half && b.y1 - half <= y && y <= b.y2 + half,
+            DataMark::Area { hi, lo } => {
+                let (Some(a), Some(z)) = (hi.first(), hi.last()) else { return false };
+                if x < a.0.min(z.0) || x > a.0.max(z.0) {
+                    return false;
+                }
+                let (top, bottom) = (y_at(hi, x), y_at(lo, x));
+                top.min(bottom) - half <= y && y <= top.max(bottom) + half
+            }
+            DataMark::Line { .. } => false,
         }
     }
 }

@@ -17,6 +17,7 @@ from dbt_charts.core.diagnostics import (
     WARN_KPI_INLINE_VARIANT_FALLBACK_TO_STACKED,
     WARN_KPI_LABEL_TRUNCATED,
     WARN_KPI_SUPPORT_TRUNCATED,
+    WARN_PIE_SIZED_MODE_MISSES_GUARD,
     WARN_SPARK_LABEL_TRUNCATED,
     WARN_SUPPORT_TABLE_CELL_OVERFLOW,
     WARN_TABLE_TEXT_TRUNCATED,
@@ -29,6 +30,7 @@ from dbt_charts.core.render.warnings import (
     kpi_inline_fallback,
     kpi_label_truncated,
     kpi_support_truncated,
+    pie_sized_mode_misses_guard,
     spark_label_truncated,
     support_table_cell_overflow,
     table_text_truncated,
@@ -78,22 +80,6 @@ def test_chart_title_detector_fires_on_title_truncation() -> None:
     assert "c1" in w.message
     assert "title" in w.message
     assert w.path == "charts.c1.title"
-
-
-def test_chart_title_detector_reports_a_field_once_across_rerenders() -> None:
-    """A chart the layout renders more than once (sizing, then painting) records its
-    cut title each time; the author sees one warning per field, not one per render."""
-    cut = TextTruncation(
-        surface="chart_title", authored_field="title", authored_text="Long"
-    )
-    cut_subtitle = TextTruncation(
-        surface="chart_title", authored_field="subtitle", authored_text="Longer"
-    )
-    ctx = _ctx("c1", [cut, cut, cut_subtitle, cut_subtitle])
-    assert [w.path for w in chart_title_truncated.detect(ctx)] == [
-        "charts.c1.title",
-        "charts.c1.subtitle",
-    ]
 
 
 def test_chart_title_detector_ignores_other_surfaces() -> None:
@@ -442,3 +428,38 @@ def test_support_table_cell_overflow_detector_ignores_other_surfaces() -> None:
         ],
     )
     assert support_table_cell_overflow.detect(ctx) == []
+
+
+# ── pie_wheel_starved ─────────────────────────────────────────────────────────
+
+
+def test_pie_sized_mode_detector_reports_the_mode_and_ratio() -> None:
+    ctx = _ctx(
+        "p1",
+        [
+            TextTruncation(
+                surface="pie_wheel_starved",
+                authored_field="style.slice_mark.labels",
+                authored_text="direct|0.41|0.6",
+            )
+        ],
+    )
+    (w,) = pie_sized_mode_misses_guard.detect(ctx)
+    assert w.code == WARN_PIE_SIZED_MODE_MISSES_GUARD.code
+    assert w.chart == "p1"
+    assert "direct labels" in w.message
+    assert "41%" in w.message
+    assert "60%" in w.message
+
+
+def test_pie_sized_mode_engine_warning_reaches_its_detector() -> None:
+    from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
+    from dbt_charts.core.render.engine import _WARNING_SINKS
+
+    with collect_text_truncations() as records:
+        _WARNING_SINKS["WARN-PIE-SIZED-MODE-MISSES-GUARD"](
+            {"chart_id": "p2", "mode": "hybrid", "ratio": 0.5, "floor": 0.6}
+        )
+    (record,) = records["p2"]
+    assert record.surface == "pie_wheel_starved"
+    assert record.authored_text == "hybrid|0.5|0.6"

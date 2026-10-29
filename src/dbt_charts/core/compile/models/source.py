@@ -292,7 +292,24 @@ class AttributedSourceConfig(BaseModel):
         return value
 
 
-class DatabaseSourceConfig(BaseSourceConfig):
+class SemanticSourceConfig(BaseModel):
+    """A MetricFlow semantic bundle, for the source families that run SQL on a warehouse.
+
+    Queries that read one of the bundle's datasets or constellations compile
+    through MetricFlow before they run. Not on the closed-contract root: file and
+    HTTP sources are materialized, so a bundle on them would validate and never
+    be read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    metricflow: str | None = Field(
+        default=None,
+        description="Directory of MetricFlow semantic fragments, relative to the project root.",
+    )
+
+
+class DatabaseSourceConfig(SemanticSourceConfig, BaseSourceConfig):
     """Closed-contract base for source types backed by dbt credentials."""
 
     model_config = ConfigDict(extra="forbid")
@@ -1688,7 +1705,9 @@ class HttpSourceConfig(BaseSourceConfig):
 # ============================================================================
 
 
-class DbtProfileSourceConfig(AttributedSourceConfig, BaseSourceConfig):
+class DbtProfileSourceConfig(
+    AttributedSourceConfig, SemanticSourceConfig, BaseSourceConfig
+):
     """Reference to a dbt profile.
 
     Instead of defining connection details inline, references an existing
@@ -1854,7 +1873,9 @@ LAKECOMPUTE_ADAPTER: TypeAdapter[
 # ============================================================================
 
 
-class DbtTargetSourceConfig(AttributedSourceConfig, BaseSourceConfig):
+class DbtTargetSourceConfig(
+    AttributedSourceConfig, SemanticSourceConfig, BaseSourceConfig
+):
     """A profiles.yml target, already resolved and validated by dbt.
 
     Not authorable: a user writes `type: dbt_profile`, and the resolver expands it

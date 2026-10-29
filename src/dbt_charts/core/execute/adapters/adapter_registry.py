@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import (
     Path,  # noqa: TID251 — names the dbt project directory and DuckDB/SQLite files on disk
 )
@@ -21,8 +22,9 @@ from dbt_charts.cli.filesystem_project import (
     FilesystemProject,  # tach-ignore(core->cli: host-type guard; needs a non-cli signal on Project — deferred)
 )
 from dbt_charts.core.attribution import attribute
-from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.config import ProjectSourcesConfig, get_theme_style
 from dbt_charts.core.compile.models.board.normalized import VariableValues
+from dbt_charts.core.compile.models.primitives import Regional
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
     SchemaQuery,
@@ -36,10 +38,16 @@ from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
+    SemanticSourceConfig,
     SQLiteSourceConfig,
     is_file_source,
 )
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.daterange import (
+    BoardClock,
+    board_clock,
+    board_clock_in_scope,
+)
 from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.diagnostics.base import DbtChartsError
 
@@ -67,6 +75,7 @@ from dbt_charts.core.execute.adapters.dbt_utils import (
     DbtRefResolver,
     source_target_path,
 )
+from dbt_charts.core.execute.metricflow import SemanticLayer
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
 from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.execute.source_resolver import (
@@ -301,6 +310,17 @@ def build_adapter_registry(
     return registry
 
 
+def ad_hoc_board_clock(instant: datetime) -> BoardClock:
+    """The clock of a query that belongs to no board: UTC, with the default
+    theme's fiscal year and the default locale's week."""
+    regional = Regional()
+    return BoardClock(
+        regional.today(instant),
+        get_theme_style().charts.axis_x.fiscal_year_start_month,
+        regional.week_start,
+    )
+
+
 class AdapterRegistry:
     """Registry for managing and selecting query adapters.
 
@@ -356,6 +376,8 @@ class AdapterRegistry:
         self._type_index: dict[str, list[BaseAdapter]] = {}
         self._project = project
         self._dbt_refs = DbtRefResolver(project)
+        # Loaded MetricFlow bundles by directory, reused while their files match.
+        self._semantic_layers: dict[str, SemanticLayer] = {}
         self._sources = SourceRegistry(project_sources=project_sources)
         self._resolver: SourceResolver = (
             resolver if resolver is not None else DefaultSourceResolver(project)
@@ -521,6 +543,10 @@ class AdapterRegistry:
     ) -> QueryResult:
         """Execute a query using the appropriate adapter.
 
+        A render scopes the board clock a preset literal in the SQL dates on;
+        called outside one, this scopes the board's clock, or for an ad-hoc
+        query the UTC date with the default theme's fiscal year and week.
+
         Args:
             query: AnyQuery object
             variables: Variable values for query resolution
@@ -540,6 +566,25 @@ class AdapterRegistry:
         Returns:
             QueryResult with data or error
         """
+        if board_clock_in_scope():
+            return self._execute(
+                query, variables, params, board, dbt_context, query_name
+            )
+        now = datetime.now(UTC)
+        with board_clock(board.clock(now) if board else ad_hoc_board_clock(now)):
+            return self._execute(
+                query, variables, params, board, dbt_context, query_name
+            )
+
+    def _execute(
+        self,
+        query: AnyQuery,
+        variables: VariableValues | None,
+        params: QueryParams,
+        board: Board | None,
+        dbt_context: DbtContext | None,
+        query_name: str,
+    ) -> QueryResult:
         try:
             source_config = self.resolve_query_source(
                 query, board=board, dbt_context=dbt_context, query_name=query_name
@@ -785,7 +830,27 @@ class AdapterRegistry:
         gets inlined here and reaches the adapter unresolved.
         ``render_dialect`` is the placeholder style the adapter declared via
         ``param_render_dialect``.
+
+        A source with a MetricFlow bundle composes every SQL query the way a
+        translated one is, so a statement that reads the bundle's datasets or
+        constellations can be compiled on the way through.
         """
+        if is_sql_query(query) and source_config is not None and params is None:
+            try:
+                semantic = self.semantic_layer(source_config)
+            except DbtChartsError as exc:
+                return handle_adapter_error("MetricFlow", exc)
+            if semantic is not None:
+                return self._compose_translated(
+                    query,
+                    variables,
+                    params,
+                    board,
+                    source_config,
+                    render_dialect,
+                    semantic,
+                )
+
         if is_sql_query(query) and query.dialect is not None:
             if source_config is None:
                 return handle_adapter_error(
@@ -856,39 +921,72 @@ class AdapterRegistry:
         board: Board | None,
         source_config: ResolvedSourceConfig,
         render_dialect: SQLDialect,
+        semantic: SemanticLayer | None = None,
     ) -> tuple[AnyQuery, QueryParams] | QueryResult:
-        """Compose a query whose `dialect:` differs from its source's.
+        """Compose a query whose `dialect:` differs from its source's, or whose
+        source has a MetricFlow bundle (`semantic`).
 
         Always composes, even for a board with no queries, and hands the adapter
-        SQL in the source's dialect with params in `render_dialect`'s style.
+        SQL in the source's dialect with params in `render_dialect`'s style. A
+        query without `dialect:` is read in the source's own.
         """
-        assert query.dialect is not None  # the caller's dialect_differs check
         if params is not None:
             return handle_adapter_error(
                 "Dialect translation",
                 dialect_unsupported(
-                    query.dialect,
+                    query.dialect if query.dialect is not None else source_config.type,
                     source_config.type,
                     "its SQL arrived already rendered with bound parameters",
                 ),
             )
         try:
+            read = (
+                query.dialect
+                if query.dialect is not None
+                else engine_dialect(source_config.type, source_config)
+            )
             sql, translated_params = render_in_dialect(
                 query.sql,
-                query.dialect,
-                engine_dialect(query.dialect, source_config),
+                read,
+                engine_dialect(read, source_config),
                 variables if variables is not None else {},
                 board.queries if board is not None else None,
                 not query.lenient_variables,
                 self._dbt_refs,
                 source_target_path(source_config),
                 render_dialect,
+                semantic,
             )
         except DbtChartsError as exc:
             return handle_adapter_error("Dialect translation", exc)
         except (ValueError, KeyError, TypeError) as exc:
             return plain_error(str(exc))
         return query.model_copy(update={"sql": sql}), translated_params
+
+    def semantic_layer(
+        self, source_config: ResolvedSourceConfig
+    ) -> (
+        SemanticLayer | None
+    ):  # type-state: optional — None is a source that declares no bundle
+        """The source's MetricFlow bundle, loaded; None when it declares none.
+
+        Reloaded when the bundle's files change, reused otherwise.
+
+        Raises:
+            ExecutionError: the library is not installed, or the bundle is
+                invalid.
+        """
+        if (
+            not isinstance(source_config, SemanticSourceConfig)
+            or source_config.metricflow is None
+        ):
+            return None
+        relpath = source_config.metricflow
+        layer = SemanticLayer.load(
+            self._project, relpath, self._semantic_layers.get(relpath)
+        )
+        self._semantic_layers[relpath] = layer
+        return layer
 
     def prepare_sql(
         self,

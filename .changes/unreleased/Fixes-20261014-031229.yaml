@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Chart titles, subtitles, axis labels, and legends now render an authored `font.style: italic`.'
+time: 2026-10-14T03:12:29.207148-07:00

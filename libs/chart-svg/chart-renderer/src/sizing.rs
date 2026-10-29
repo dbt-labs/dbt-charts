@@ -238,6 +238,7 @@ pub struct ChartDefaultsDoc {
     pub scatter: FamilyDefaultsDoc,
     pub heatmap: FamilyDefaultsDoc,
     pub pie: FamilyDefaultsDoc,
+    pub donut: FamilyDefaultsDoc,
     pub histogram: FamilyDefaultsDoc,
     pub geoshape: FamilyDefaultsDoc,
     pub point_map: FamilyDefaultsDoc,
@@ -260,7 +261,8 @@ fn family_slot_aspect(chart_type: &str, defaults: &ChartDefaultsDoc) -> Result<f
         "area" => &defaults.area,
         "scatter" => &defaults.scatter,
         "heatmap" => &defaults.heatmap,
-        "pie" | "donut" => &defaults.pie,
+        "pie" => &defaults.pie,
+        "donut" => &defaults.donut,
         "histogram" => &defaults.histogram,
         "geoshape" | "map" => &defaults.geoshape,
         "point_map" | "bubble_map" => &defaults.point_map,
@@ -490,6 +492,26 @@ fn rendered_vega_height(
     ctx: &SizingCtx,
 ) -> Result<Option<f64>, String> {
     let padding = additive_padding(chart_json, ctx.card_padding)?;
+    // A pie is measured in the mode the size stage decided (the memo, in the
+    // scope's card box), never solved again here; one it could not decide
+    // paints its card, so it measures nothing.
+    let pie_mode = if chart_json.get("chart_type").and_then(Value::as_str) == Some("pie") {
+        match ctx.pie_modes.decide(
+            chart_json,
+            width,
+            ctx.scope_card_padding,
+            ctx.chart_datasets,
+            ctx.defaults,
+            ctx.board_style,
+            ctx.fonts_dir.clone(),
+            ctx.fonts,
+        )? {
+            PieDecision::Mode(mode) => Some(mode.name().to_string()),
+            PieDecision::Undecidable(_) => return Ok(None),
+        }
+    } else {
+        None
+    };
     let payload = crate::Payload {
         cell_text: Vec::new(),
         max_template_output_bytes: None,
@@ -517,6 +539,8 @@ fn rendered_vega_height(
         measuring: true,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        pie_mode,
+        board_composed: true,
         authored_height: None,
     };
     // `render_width_fitted`, not bare `render` and not the full
@@ -590,6 +614,8 @@ fn spark_bar_natural_height(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        pie_mode: None,
+        board_composed: false,
         authored_height: None,
     };
     // Same reasoning as `render_first_vega_height`'s own fallback above: a
@@ -712,6 +738,8 @@ fn get_table_height_from_data(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        pie_mode: None,
+        board_composed: false,
         authored_height: None,
     };
     Ok(crate::table_natural_height(&payload, ctx.fonts).ok())
@@ -736,8 +764,13 @@ pub fn static_slot_estimate(
     let aspect_ratio = chart_json.get("aspect_ratio").and_then(Value::as_f64);
     let min_height = chart_json.get("min_height").and_then(Value::as_f64);
     let max_height = chart_json.get("max_height").and_then(Value::as_f64);
+    // `pie` is the chart type of both; only `is_donut` picks the theme slot.
+    let slot_type = match chart_type {
+        "pie" if chart_json.get("is_donut").and_then(Value::as_bool).ok_or("pie chart missing is_donut")? => "donut",
+        other => other,
+    };
     let content_estimate = get_chart_content_height(
-        chart_type,
+        slot_type,
         authored_height,
         aspect_ratio,
         min_height,
@@ -747,6 +780,125 @@ pub fn static_slot_estimate(
         defaults,
     )?;
     Ok(content_estimate + inset)
+}
+
+/// What the size stage decided about a placed pie.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PieDecision {
+    Mode(crate::families::pie::Mode),
+    /// The engine cannot lay this pie out (a refusal, or no room in its box): it
+    /// paints its own error card with this message and every reader sizes it
+    /// as a chart that errors. Never "decide again".
+    Undecidable(crate::diagnostic::Diagnostic),
+}
+
+/// Each placed pie's [`PieDecision`], made once and read by every sizing and
+/// drawing site, as production memoizes `LayoutItem.pie_mode`
+/// (`layout_sizing.py::stored_pie_mode`). Keyed by the placement: the chart's
+/// own resolved JSON (its id, and the style its scope resolved it with), its
+/// width and its scope's card padding.
+#[derive(Default)]
+pub struct PieModes(std::cell::RefCell<HashMap<(String, u64, u64, u64), PieDecision>>);
+
+impl PieModes {
+    /// The placements decided so far, as `(chart id, width, scope card padding)`.
+    pub fn placements(&self) -> Vec<(String, f64, f64)> {
+        let mut found: Vec<_> = self
+            .0
+            .borrow()
+            .keys()
+            .map(|(id, width, padding, _)| (id.clone(), f64::from_bits(*width), f64::from_bits(*padding)))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        found
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn decide(
+        &self,
+        chart_json: &Value,
+        width: f64,
+        scope_card_padding: f64,
+        datasets: &ChartDatasets,
+        defaults: &ChartDefaultsDoc,
+        board_style: &crate::BoardStyle,
+        fonts_dir: Option<String>,
+        fonts: &measure::FontBook,
+    ) -> Result<PieDecision, String> {
+        let id = chart_json.get("id").and_then(Value::as_str).ok_or("chart missing id")?;
+        use std::hash::{Hash, Hasher};
+        let mut placement = std::collections::hash_map::DefaultHasher::new();
+        chart_json.to_string().hash(&mut placement);
+        let key = (id.to_string(), width.to_bits(), scope_card_padding.to_bits(), placement.finish());
+        if let Some(decided) = self.0.borrow().get(&key) {
+            return Ok(decided.clone());
+        }
+        let decided =
+            sized_pie_mode(chart_json, width, scope_card_padding, datasets, defaults, board_style, fonts_dir, fonts)?;
+        self.0.borrow_mut().insert(key, decided.clone());
+        Ok(decided)
+    }
+}
+
+/// The mode a pie is sized in (`render/pie_layout.py::sized_pie_mode`): the
+/// static slot estimate at `width` inside the scope's card padding. Reach it
+/// through [`PieModes::decide`], which keeps the answer.
+#[allow(clippy::too_many_arguments)]
+pub fn sized_pie_mode(
+    chart_json: &Value,
+    width: f64,
+    card_padding: f64,
+    datasets: &ChartDatasets,
+    defaults: &ChartDefaultsDoc,
+    board_style: &crate::BoardStyle,
+    fonts_dir: Option<String>,
+    fonts: &measure::FontBook,
+) -> Result<PieDecision, String> {
+    let chart_id = chart_json.get("id").and_then(Value::as_str).ok_or("chart missing id")?;
+    let query_name =
+        chart_json.get("query_name").and_then(Value::as_str).ok_or("chart missing query_name")?;
+    let rows = datasets
+        .get(chart_id)
+        .and_then(|by_query| by_query.get(query_name))
+        .ok_or_else(|| format!("no rows forwarded for chart {chart_id}"))?;
+    let height = static_slot_estimate(
+        chart_json,
+        chart_json.get("height").and_then(Value::as_f64),
+        width,
+        card_padding,
+        defaults,
+    )?;
+    let payload = crate::Payload {
+        cell_text: Vec::new(),
+        max_template_output_bytes: None,
+        resolved: chart_json.clone(),
+        rows: rows.clone(),
+        width,
+        height,
+        background: None,
+        fonts_dir,
+        padding: Some(additive_padding(chart_json, card_padding)?),
+        board_style: Some(board_style.clone()),
+        language: None,
+        datasets: None,
+        variables: Default::default(),
+        filter_variables: Default::default(),
+        interactive_controls: Default::default(),
+        link_context: None,
+        geometries: None,
+        measuring: false,
+        title_shift: crate::TitleShift::default(),
+        is_placeholder: false,
+        pie_mode: None,
+        board_composed: false,
+        authored_height: None,
+    };
+    // A pie the engine cannot draw (a refusal, or no room in the box) is not a
+    // sizing failure: production's per-chart catches paint it an error card.
+    Ok(match crate::pie_layout_classified(&payload, fonts) {
+        Ok(layout) => PieDecision::Mode(layout.mode),
+        Err(error) => PieDecision::Undecidable(error.into()),
+    })
 }
 
 /// layout_sizing.py::_make_data_aware_height_provider's `provider()`
@@ -799,6 +951,8 @@ pub fn resolve_chart_item_height(
             measuring: false,
             title_shift: crate::TitleShift::default(),
             is_placeholder: false,
+            pie_mode: None,
+            board_composed: false,
             authored_height: None,
         };
         let natural_height = crate::families::callout::bind(&payload)
@@ -918,6 +1072,11 @@ pub struct SizingCtx<'a> {
     pub gap: f64,
     pub card_gap: f64,
     pub card_padding: f64,
+    /// The card padding of the board this scope belongs to (a nested board's own),
+    /// which decides a pie's mode; `card_padding` is the root's, for the height inset.
+    pub scope_card_padding: f64,
+    /// The pie decisions shared by every site of this render.
+    pub pie_modes: &'a PieModes,
     pub chart_datasets: &'a ChartDatasets,
     pub defaults: &'a ChartDefaultsDoc,
     /// Render-first inputs — everything `render_first_vega_height` needs to
@@ -1443,7 +1602,7 @@ pub(crate) fn effective_alignment_target_for_chart(
 /// Vega chart that equals `row_height` because the VL spec's own `height`
 /// key is set to it and Vega respects it, which is why overwriting straight
 /// to `row_height` is exact for every family EXCEPT one case: a
-/// `_FIXED_ASPECT_PIE_TYPES` chart carrying an `attached_table`.
+/// `_FIXED_ASPECT_PIE_TYPES` chart sized to an attached table.
 /// An attached-table pie ignores the slot `height`: it composes its own canvas from
 /// `wheel_width x board_style.continuous_height` plus the attached table's
 /// own row count (`pie.rs`'s `Some(attached)` arm), a
@@ -1484,10 +1643,22 @@ fn fix_slot_heights(
         if is_non_aspect_ratio_type(chart_type) {
             continue;
         }
-        if FIXED_ASPECT_PIE_TYPES.contains(&chart_type)
-            && chart.get("attached_table").is_some_and(|v| !v.is_null())
-        {
-            continue;
+        if FIXED_ASPECT_PIE_TYPES.contains(&chart_type) {
+            let decision = ctx.pie_modes.decide(
+                chart,
+                widths[i],
+                ctx.scope_card_padding,
+                ctx.chart_datasets,
+                ctx.defaults,
+                ctx.board_style,
+                ctx.fonts_dir.clone(),
+                ctx.fonts,
+            )?;
+            // A table composite sizes itself, and a pie that cannot be drawn
+            // paints an error card: production's re-render raises and keeps the natural.
+            if decision != PieDecision::Mode(crate::families::pie::Mode::Direct) {
+                continue;
+            }
         }
         let Some(natural) = naturals[i] else { continue };
         if !height_moved(natural, row_height) {
@@ -2161,10 +2332,29 @@ mod tests {
             scatter: FamilyDefaultsDoc { aspect_ratio: None },
             heatmap: FamilyDefaultsDoc { aspect_ratio: None },
             pie: FamilyDefaultsDoc { aspect_ratio: Some(1.0) },
+            donut: FamilyDefaultsDoc { aspect_ratio: Some(2.0) },
             histogram: FamilyDefaultsDoc { aspect_ratio: None },
             geoshape: FamilyDefaultsDoc { aspect_ratio: Some(1.2) },
             point_map: FamilyDefaultsDoc { aspect_ratio: Some(1.2) },
         }
+    }
+
+    /// A donut sizes from the `donut` slot, as `pie_content_height` does, not
+    /// the pie's.
+    #[test]
+    fn a_donut_is_sized_from_its_own_slot() {
+        let d = test_defaults();
+        let chart = |is_donut: bool| {
+            serde_json::json!({"chart_type": "pie", "is_donut": is_donut,
+                   "layout_padding": {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}})
+        };
+        // Width 1000: the pie's 1.0 aspect clamps to the 600 maximum, the donut's
+        // 2.0 lands inside the range at 500, and any other donut aspect would not.
+        let pie = static_slot_estimate(&chart(false), None, 1000.0, 0.0, &d).unwrap();
+        let donut = static_slot_estimate(&chart(true), None, 1000.0, 0.0, &d).unwrap();
+        assert_eq!(pie, d.max_height);
+        assert_eq!(donut, 1000.0 / d.donut.aspect_ratio.unwrap());
+        assert!(donut > d.min_height && donut < d.max_height);
     }
 
     #[test]

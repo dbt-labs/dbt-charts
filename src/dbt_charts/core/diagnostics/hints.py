@@ -96,7 +96,7 @@ CHART_RENDERING_SUCCESSORS: dict[str, str | None] = {
     "legend.dimension_axis_reserve_chrome_px": None,
     "legend.row_height_px": None,
     "legend.chrome_height_px": None,
-    "hover_emphasis.dimmed_opacity": "style.charts.hover_emphasis.dimmed_opacity",
+    "hover_emphasis.dimmed_opacity": None,
     "color_variants.label_ink_min_contrast": None,
     "text_contrast.min_ratio": None,
     "text_contrast.large_text_min_ratio": None,

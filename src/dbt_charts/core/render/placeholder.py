@@ -113,7 +113,7 @@ def _placeholder_rows(
         return _generate_scatter_placeholder(scatter_x, scatter_y)
 
     # Pie charts - proportional data
-    if chart_type in ("pie", "arc"):
+    if chart_type in ("pie", "donut"):
         return _generate_pie_placeholder(x_field, y_field)
 
     # Table - multi-column sample data

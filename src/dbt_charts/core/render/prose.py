@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.board.normalized import ProsePlan, VariableV
 from dbt_charts.core.compile.resolve.style.markdown_style import (
     prose_blocks,
     readable_measure,
+    style_prose_headings,
 )
 from dbt_charts.core.compile.sizing import card_row_gap, prose_slot_widths
 from dbt_charts.core.render.column_packer import (
@@ -42,7 +43,7 @@ from dbt_charts.core.render.svg_utils import (
     px,
     translate_group,
 )
-from mdsvg import OrderedList, Table, UnorderedList
+from mdsvg import Heading, OrderedList, Table, UnorderedList
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
@@ -213,6 +214,132 @@ def _columns_of(
     return boxes, measure, table_width, metrics, tables, n_cols
 
 
+@dataclass(frozen=True)
+class _ProseFlow:
+    """How one text block is measured and flowed: what both its paint and its
+    first baseline are asked of."""
+
+    effective_family: str
+    renderer: SVGRenderer
+    blocks: list[AnyBlock]
+    pad: float
+    boxes: tuple[tuple[float, float], ...]
+    measure: float
+    table_measure: float
+    tables_differ: bool
+    metrics: tuple[BlockMetrics, ...]
+    n_cols: int
+    align: Literal["left", "center", "right"]
+
+
+def _prose_flow(
+    markdown_text: str,
+    width: float,
+    text_style: TextStyle,
+    resolved_style: ResolvedStyle,
+    plan: ProsePlan | None,
+    authored: str,
+    base_dir: str | None,
+    error_collector: list[Diagnostic] | None,
+    allow_raw_html: bool,
+) -> _ProseFlow:
+    assert plan is not None, (
+        "board text must be planned (plan_board_prose) before it is sized or drawn"
+    )
+    from mdsvg.renderer import SVGRenderer
+
+    col = text_style.column
+    effective_family, style, fonts, char_px = _prose_typography(
+        text_style, resolved_style
+    )
+
+    renderer = SVGRenderer(
+        style=style,
+        fonts=fonts,
+        allow_raw_html=allow_raw_html,
+    )
+
+    blocks = style_prose_headings(
+        prose_blocks(markdown_text, authored, base_dir, error_collector, text_style),
+        resolved_style,
+    )
+
+    pad = float(resolved_style.frame.card_padding)
+    boxes, measure, table_measure, metrics, tables, n_cols = _columns_of(
+        blocks,
+        renderer,
+        width,
+        pad,
+        col,
+        char_px,
+        plan.grid,
+        plan.board_width,
+        plan.gap,
+    )
+    tables_differ = table_measure != measure
+    if n_cols == 1 and not tables and not plan.snap:
+        # Columns are for text long enough to earn them. On a board where no
+        # block goes multi-column, a lone column wraps at least as wide as sizing
+        # asked for, so a line that fits stays one line; once it outgrows its
+        # span it sits in the whole card. Where some block does, the lone ones
+        # keep to their span so every edge on the board is a span edge.
+        wanted = min(
+            renderer.max_content_width(blocks),
+            _measure(width, col.max_chars, char_px),
+        )
+        if wanted > measure:
+            measure = wanted
+            boxes = ((0.0, width + 2 * pad),)
+
+    return _ProseFlow(
+        effective_family=effective_family,
+        renderer=renderer,
+        blocks=blocks,
+        pad=pad,
+        boxes=boxes,
+        measure=measure,
+        table_measure=table_measure,
+        tables_differ=tables_differ,
+        metrics=metrics,
+        n_cols=n_cols,
+        align=text_style.align,
+    )
+
+
+def prose_first_baseline(
+    markdown_text: str,
+    width: float,
+    text_style: TextStyle,
+    resolved_style: ResolvedStyle,
+    plan: ProsePlan | None,
+    authored: str,
+    base_dir: str | None,
+    allow_raw_html: bool,
+) -> float | None:
+    """How far below a text block's top edge its first baseline sits, when the
+    text opens with a heading; None when it opens with anything else.
+
+    A heading that opens a text card is that card's title: a cols row puts it on
+    the baseline its neighbors' titles share. Asked of the flow that draws it, at
+    the measure the prose is drawn at, since the first baseline depends on how the
+    heading wraps.
+    """
+    flow = _prose_flow(
+        markdown_text,
+        width,
+        text_style,
+        resolved_style,
+        plan,
+        authored,
+        base_dir,
+        None,
+        allow_raw_html,
+    )
+    if not flow.blocks or not isinstance(flow.blocks[0], Heading):
+        return None
+    return flow.renderer.first_baseline(flow.blocks, flow.measure)
+
+
 def render_prose_svg(
     markdown_text: str,
     width: float,
@@ -251,50 +378,27 @@ def render_prose_svg(
     )
     from dbt_charts.core.render.column_packer import PackUnit, pack_columns
     from dbt_charts.core.render.font_selection import record_painted_faces
-    from mdsvg.renderer import SVGRenderer
 
-    col = text_style.column
-    align: Literal["left", "center", "right"] = text_style.align
-    effective_family, style, fonts, char_px = _prose_typography(
-        text_style, resolved_style
-    )
-
-    renderer = SVGRenderer(
-        style=style,
-        fonts=fonts,
-        allow_raw_html=allow_raw_html,
-    )
-
-    blocks = prose_blocks(
-        markdown_text, authored, base_dir, error_collector, text_style
-    )
-
-    pad = float(resolved_style.frame.card_padding)
-    boxes, measure, table_measure, metrics, tables, n_cols = _columns_of(
-        blocks,
-        renderer,
+    flow = _prose_flow(
+        markdown_text,
         width,
-        pad,
-        col,
-        char_px,
-        plan.grid,
-        plan.board_width,
-        plan.gap,
+        text_style,
+        resolved_style,
+        plan,
+        authored,
+        base_dir,
+        error_collector,
+        allow_raw_html,
     )
-    tables_differ = table_measure != measure
-    if n_cols == 1 and not tables and not plan.snap:
-        # Columns are for text long enough to earn them. On a board where no
-        # block goes multi-column, a lone column wraps at least as wide as sizing
-        # asked for, so a line that fits stays one line; once it outgrows its
-        # span it sits in the whole card. Where some block does, the lone ones
-        # keep to their span so every edge on the board is a span edge.
-        wanted = min(
-            renderer.max_content_width(blocks),
-            _measure(width, col.max_chars, char_px),
-        )
-        if wanted > measure:
-            measure = wanted
-            boxes = ((0.0, width + 2 * pad),)
+    effective_family, renderer, blocks = (
+        flow.effective_family,
+        flow.renderer,
+        flow.blocks,
+    )
+    pad, boxes, measure = flow.pad, flow.boxes, flow.measure
+    metrics, n_cols, align = flow.metrics, flow.n_cols, flow.align
+    table_measure, tables_differ = flow.table_measure, flow.tables_differ
+    col = text_style.column
 
     # Alignment belongs to the span the reader sees, not to a width the renderer chose.
     insets = [
@@ -599,7 +703,9 @@ def _goes_multi_column(
         block.text, variable_values, resolved_style=rs, base_dir=block.base_dir
     )
     # The same degradation the sizing pass applies: a bad image becomes its error.
-    blocks = prose_blocks(text, block.text, block.base_dir, None, rs.text)
+    blocks = style_prose_headings(
+        prose_blocks(text, block.text, block.base_dir, None, rs.text), rs
+    )
     pad = float(rs.frame.card_padding)
     *_, n_cols = _columns_of(
         blocks, renderer, slot, pad, rs.text.column, char_px, grid, board_width, gap

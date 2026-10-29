@@ -29,6 +29,8 @@ See: plans/archive/VEGA_SVG_BATCH_CONVERSION_ANALYSIS.md
 """
 
 import html
+import math
+from collections.abc import Callable
 
 from dbt_charts.core.compile.models.board.normalized import (
     Board,
@@ -39,6 +41,7 @@ from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
+from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.render.board_variables import (
     committed_text,
     current_daterange_presets,
@@ -47,10 +50,12 @@ from dbt_charts.core.render.chart.rendering import render_layout_item
 from dbt_charts.core.render.layout_sizing import RenderCache
 from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import (
+    authored_attrs,
     border_dash_attrs,
     checked_href,
     escape_attr,
     px,
+    selection_boxes,
     translate_group,
 )
 from dbt_charts.core.text.case import apply_case
@@ -322,6 +327,21 @@ def _build_toggle_url(
     return "?" + urlencode(params)
 
 
+_NO_PADDING = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+
+
+def _fit_label(
+    label: str, measure: Callable[[str, float], float], size: float, room: float
+) -> str:
+    """``label``, or its longest prefix that fits ``room`` once "…" is appended."""
+    if measure(label, size) <= room:
+        return label
+    keep = len(label)
+    while keep > 0 and measure(label[:keep].rstrip() + "…", size) > room:
+        keep -= 1
+    return label[:keep].rstrip() + "…"
+
+
 def render_tabs_layout(
     items: tuple[ResolvedLayoutItem, ...],
     executor: ChartDataProvider,
@@ -404,48 +424,84 @@ def render_tabs_layout(
     )
     slugs = tab_slugs or [f"tab_{idx}" for idx in range(len(items))]
 
-    # Render tab bar as clickable SVG links
-    tab_width = available_width / len(titles)
+    # Every label is measured at the active weight so the bar does not shift
+    # when the selection moves.
+    family = tabs_config.font.family
+    if family is None:
+        raise ValueError("layout.tabs.font.family must be resolved")
+    size = tabs_config.font.size
+    if size is None:
+        raise ValueError("layout.tabs.font.size must be resolved")
+    measure = get_weighted_font_measurer(family, tabs_config.active_weight).measure
+    label_room = tabs_config.max_width - 2 * tabs_config.padding_x
     tab_bar_parts: list[str] = []
-    # Active tab fill from table header background; inactive from row stripe.
-    # When the theme omits these, the rects are skipped — no fallback to board
-    # background. The SVG parent canvas provides the visual fill naturally.
-    _active_fill = resolved_style.chart_defaults.table.header.background
-    _inactive_fill = (
-        resolved_style.chart_defaults.table.row.stripe.color
-        if resolved_style.chart_defaults.table.row.stripe
-        else None
-    )
+    tab_x = 0.0
+    active_span = (0.0, 0.0)
     for idx, (title, slug) in enumerate(zip(titles, slugs, strict=True)):
         is_active = idx == active_tab
-        x = idx * tab_width
+        label = apply_case(title, tab_case)
+        shown = _fit_label(label, measure, size, label_room)
+        # Whole pixels absorb the sub-pixel gap between the two engines' text
+        # measurers.
+        tab_width = min(
+            max(
+                float(math.ceil(measure(label, size) + 2 * tabs_config.padding_x)),
+                tabs_config.min_width,
+            ),
+            tabs_config.max_width,
+        )
+        if is_active:
+            active_span = (tab_x, tab_x + tab_width)
         weight = tabs_config.active_weight if is_active else tabs_config.inactive_weight
-
-        _fill = _active_fill if is_active else _inactive_fill
-        # Always emit the rect so the border stroke delineates tabs; use
-        # fill="none" when the theme omits header/stripe background.
-        _tab_rect = (
-            f'<rect x="{escape_attr(x)}" y="0" width="{escape_attr(tab_width)}" height="{escape_attr(tab_bar_height)}" '
-            f'fill="{escape_attr(_fill or "none")}" '  # type-state: silent_fallback — no tab fill authored; fill="none" is the real SVG value the comment above already documents, not a fabricated color
-            f'stroke="{escape_attr(resolved_style.border.color)}" stroke-width="{escape_attr(tabs_config.border.width)}"'
-            f"{border_dash_attrs(tabs_config.border)}/>"
+        ink = (
+            resolved_style.title.font.color
+            if is_active
+            else resolved_style.variables.font.color
         )
+        tooltip = f"<title>{html.escape(label)}</title>" if shown != label else ""
+        # The boxes fill the whole cell, so it is hit-testable and has an outline to mark.
+        boxes = selection_boxes(tab_width, tab_bar_height, _NO_PADDING)
         tab_svg = (
-            _tab_rect
-            + f'<text x="{escape_attr(x + tab_width / 2)}" y="{escape_attr(tab_bar_height / 2 + tabs_config.title_baseline_offset)}" '
-            f'text-anchor="middle" font-size="{escape_attr(tabs_config.font.size)}" fill="{escape_attr(resolved_style.title.font.color if is_active else resolved_style.variables.font.color)}" '
-            f'font-weight="{escape_attr(weight)}">{html.escape(apply_case(title, tab_case))}</text>'
+            f'{tooltip}{boxes}<text x="{escape_attr(tab_width / 2)}" y="{escape_attr(tab_bar_height / 2 + tabs_config.title_baseline_offset)}" '
+            f'text-anchor="middle" font-family="{escape_attr(family)}" font-size="{escape_attr(size)}" fill="{escape_attr(ink)}" '
+            f'font-weight="{escape_attr(weight)}">{html.escape(shown)}</text>'
         )
-
+        attrs = (
+            f'role="tab" aria-selected="{"true" if is_active else "false"}" '
+            f'transform="translate({escape_attr(tab_x)}, 0)"'
+        )
+        # A tab label is its pane's title, so it carries that key's own path.
+        source_path = items[idx].source_path
+        if source_path:
+            attrs += authored_attrs(f"{source_path}.title", "title")
         if tab_variable and not is_active:
             href = _build_toggle_url(variables, tab_variable, slug)
             tab_bar_parts.append(
-                f'<a href="{escape_attr(checked_href(href))}">{tab_svg}</a>'
+                f'<a href="{escape_attr(checked_href(href))}" {attrs}>{tab_svg}</a>'
             )
         else:
-            tab_bar_parts.append(tab_svg)
+            tab_bar_parts.append(f"<g {attrs}>{tab_svg}</g>")
+        tab_x += tab_width
 
-    tab_bar_svg = "\n".join(tab_bar_parts)
+    border = tabs_config.border
+    stroke = border.width
+    baseline_y = tab_bar_height - stroke / 2
+    top_y = stroke / 2
+    left = active_span[0] + stroke / 2
+    right = active_span[1] - stroke / 2
+    radius = min(border.radius, (right - left) / 2, baseline_y - top_y)
+    line_end = max(available_width, tab_x)
+    rule = (
+        f'<path d="M 0 {escape_attr(baseline_y)} H {escape_attr(left)} V {escape_attr(top_y + radius)} '
+        f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(left + radius)} {escape_attr(top_y)} "
+        f"H {escape_attr(right - radius)} "
+        f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(right)} {escape_attr(top_y + radius)} "
+        f'V {escape_attr(baseline_y)} H {escape_attr(line_end)}" '
+        f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}" '
+        f'stroke-linejoin="round"{border_dash_attrs(border)}/>'
+    )
+    tab_bar_parts.insert(0, rule)
+    tab_bar_svg = f'<g role="tablist">{"".join(tab_bar_parts)}</g>'
 
     content_svg = ""
     if item_svg:

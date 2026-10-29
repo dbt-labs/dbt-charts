@@ -104,6 +104,7 @@ CHART_FIELDS = (
     "shape",
     "theta",
     "format",
+    "height",
     "x_label",
     "y_label",
     "field_labels",
@@ -455,8 +456,8 @@ def _render_chart_item(
             "id": chart.id,
             "_error": diagnostic.model_dump(exclude_none=True, exclude={"detail"}),
         }
-    except Exception as e:  # noqa: BLE001
-        wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
+    except Exception as e:  # noqa: BLE001 — any crash is this chart's ERR-INTERNAL, not the board's
+        wrapped = RenderError.from_unexpected(e)
         diagnostic = stamp_chart_diagnostic(wrapped, chart.id, chart.source_path)
         if error_collector is not None:
             error_collector.append(diagnostic)

@@ -62,18 +62,18 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("core/compile/config.py", 651): (
         "resolve_cache_boot(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/execute/adapters/adapter_registry.py", 236): (
+    ("core/execute/adapters/adapter_registry.py", 245): (
         "isinstance(project, FilesystemProject)-guarded data_dir computation"
     ),
-    ("core/execute/adapters/adapter_registry.py", 126): (
+    ("core/execute/adapters/adapter_registry.py", 135): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_root, linked-dbt-project sibling/external rule)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 128): (
+    ("core/execute/adapters/adapter_registry.py", 137): (
         "isinstance(project, FilesystemProject)-guarded linked_dbt_path computation "
         "(project.dbt_project.exists, same narrow as the line above)"
     ),
-    ("core/execute/adapters/adapter_registry.py", 1159): (
+    ("core/execute/adapters/adapter_registry.py", 1257): (
         "isinstance(project, FilesystemProject)-guarded database_file_version: "
         "roots a relative DuckDB/SQLite path where the adapters root it"
     ),
@@ -81,32 +81,32 @@ ALLOWED: dict[tuple[str, int], str] = {
     # and app.state.project are FilesystemProject throughout server.py — no
     # runtime isinstance narrow needed, only the FilesystemProject import
     # (under TYPE_CHECKING) and explicit local annotations below.
-    ("core/serve/server.py", 229): (
+    ("core/serve/server.py", 230): (
         "_all_board_roots_mtime(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 411): (
+    ("core/serve/server.py", 433): (
         "_url_mount_dir(path, project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 482): (
+    ("core/serve/server.py", 504): (
         "_render_board_file(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 607): (
+    ("core/serve/server.py", 629): (
         "_render_board_download(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1039): (
+    ("core/serve/server.py", 1064): (
         "create_server: core_project inferred FilesystemProject from the parameter"
     ),
-    ("core/serve/server.py", 1078): (
+    ("core/serve/server.py", 1103): (
         "create_server: core_project inferred FilesystemProject from the parameter; "
         "the live-reload watch is opened over the project root"
     ),
-    ("core/serve/server.py", 1112): (
+    ("core/serve/server.py", 1137): (
         "_reload_on_change: project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1224): (
+    ("core/serve/server.py", 1249): (
         "profile_table: inspect_project explicitly typed FilesystemProject"
     ),
-    ("core/serve/server.py", 1424): (
+    ("core/serve/server.py", 1449): (
         "get_board: project explicitly typed FilesystemProject just above"
     ),
     (
@@ -125,13 +125,13 @@ ALLOWED: dict[tuple[str, int], str] = {
         "agent_api/pack.py",
         459,
     ): "apply_proposal(project: FilesystemProject) — already FS-typed",
-    ("agent_api/_paths.py", 421): (
+    ("agent_api/_paths.py", 426): (
         "_relpath_for_fs_location: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 481): (
+    ("agent_api/_paths.py", 486): (
         "resolve_board_or_error: isinstance(project, FilesystemProject)-guarded"
     ),
-    ("agent_api/_paths.py", 625): (
+    ("agent_api/_paths.py", 630): (
         "compile_editor_buffer: project = FilesystemProject(root) constructed above"
     ),
     ("agent_api/project_session.py", 325): (
@@ -140,7 +140,7 @@ ALLOWED: dict[tuple[str, int], str] = {
     ("agent_api/serve.py", 86): (
         "prepare_serve(project: FilesystemProject) — already FS-typed"
     ),
-    ("core/serve/server.py", 1158): (
+    ("core/serve/server.py", 1183): (
         "health: create_server's FilesystemProject parameter, closed over"
     ),
     ("agent_api/serve.py", 477): (

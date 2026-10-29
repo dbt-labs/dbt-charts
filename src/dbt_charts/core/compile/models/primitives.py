@@ -121,6 +121,9 @@ Curve = Literal[
 # _conditional_formatting.py needs it too, and importing from the kpi model would
 # create an import cycle (kpi -> _base -> _conditional_formatting).
 ToneLiteral = Literal["positive", "negative", "warning", "info"]
+# How much of a pie its box lets it draw: slice labels and a legend, labels on
+# the big slices beside a table of the small ones, or a wheel over a full table.
+PieMode = Literal["direct", "hybrid", "full_table"]
 
 # HTML rendering tier for board body text (`html_policy` field). Ordered from
 # most to least restrictive — declaration order is the canonical ordering, so

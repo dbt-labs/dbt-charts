@@ -315,6 +315,8 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
         return Err(crate::refuse!("bar: multiples with a dual-axis layer not supported").into());
     }
     let x_layers = XLayers { all: &layers, payload };
+    // The one chart-level legend spans the card, not a panel.
+    let legend_w = payload.view_width(if horizontal { crate::ViewScale::Continuous } else { crate::ViewScale::Discrete })?;
     let render_pass = |pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<Vec<(String, PanelGeometry)>, Diagnostic> {
         panels
             .iter()
@@ -340,6 +342,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                             overhang: value_axis_right_overhang,
                         },
                         title_boxes,
+                        legend_w,
                     };
                     let (svg, facet_panel) = render_horizontal_panel(
                         payload.chart_id()?,
@@ -408,6 +411,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                 }
                 let facet_opts = BarFacetPanelOpts {
                     title_boxes,
+                    legend_w,
                     decision_w: multiples::facet_panel_width(payload.width, panel_cols_n, has_mirror, extra_axis_px),
                     suppress_x_axis: true,
                     cell_x_axis: x_narrowed,
@@ -468,6 +472,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                             caption: geom.val_caption,
                             val_font_size: geom.val_font_size,
                             val_weight: geom.val_weight,
+                            val_style: geom.val_style,
                             val_color: geom.val_color,
                             val_family: geom.val_family,
                         }),

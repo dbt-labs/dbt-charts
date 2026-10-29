@@ -40,6 +40,7 @@ import dbt_charts.core.render.warnings.area_unstacked_reads_as_stacked as area_u
 import dbt_charts.core.render.warnings.axis_label_collision as axis_label_collision
 import dbt_charts.core.render.warnings.axis_title_truncated as axis_title_truncated
 import dbt_charts.core.render.warnings.bar_band_width_too_narrow as bar_band_width_too_narrow
+import dbt_charts.core.render.warnings.bar_category_ticks as bar_category_ticks
 import dbt_charts.core.render.warnings.bar_grouped_series_coincide as bar_grouped_series_coincide
 import dbt_charts.core.render.warnings.callout_text_truncated as callout_text_truncated
 import dbt_charts.core.render.warnings.category_color_pin_unseen as category_color_pin_unseen
@@ -63,6 +64,7 @@ import dbt_charts.core.render.warnings.low_text_contrast as low_text_contrast
 import dbt_charts.core.render.warnings.normalize_percent_format_reads_raw_value as normalize_percent_format_reads_raw_value
 import dbt_charts.core.render.warnings.palette_unsupported as palette_unsupported
 import dbt_charts.core.render.warnings.pie_dominant_segment as pie_dominant_segment
+import dbt_charts.core.render.warnings.pie_sized_mode_misses_guard as pie_sized_mode_misses_guard
 import dbt_charts.core.render.warnings.pie_total_exceeds_inner_radius as pie_total_exceeds_inner_radius
 import dbt_charts.core.render.warnings.plot_height_below_minimum as plot_height_below_minimum
 import dbt_charts.core.render.warnings.plot_width_below_minimum as plot_width_below_minimum
@@ -71,6 +73,7 @@ import dbt_charts.core.render.warnings.point_map_out_of_projection as point_map_
 import dbt_charts.core.render.warnings.query_result_truncated as query_result_truncated
 import dbt_charts.core.render.warnings.query_returned_zero_rows as query_returned_zero_rows
 import dbt_charts.core.render.warnings.redundant_encoding as redundant_encoding
+import dbt_charts.core.render.warnings.scatter_stacked_in_columns as scatter_stacked_in_columns
 import dbt_charts.core.render.warnings.series_label_truncated as series_label_truncated
 import dbt_charts.core.render.warnings.series_labels_repeat_word as series_labels_repeat_word
 import dbt_charts.core.render.warnings.spark_label_truncated as spark_label_truncated
@@ -85,6 +88,7 @@ import dbt_charts.core.render.warnings.table_text_truncated as table_text_trunca
 import dbt_charts.core.render.warnings.temporal_single_point as temporal_single_point
 import dbt_charts.core.render.warnings.too_many_color_categories as too_many_color_categories
 import dbt_charts.core.render.warnings.too_many_x_categories as too_many_x_categories
+import dbt_charts.core.render.warnings.trend_on_bars as trend_on_bars
 import dbt_charts.core.render.warnings.value_labels_crowd_width as value_labels_crowd_width
 import dbt_charts.core.render.warnings.wide_measure_label_collision as wide_measure_label_collision
 import dbt_charts.core.render.warnings.y_encoding_mostly_null as y_encoding_mostly_null
@@ -113,6 +117,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     layout_min_exceeds_height,
     legend_position_width_fallback,
     low_text_contrast,
+    pie_sized_mode_misses_guard,
     pie_total_exceeds_inner_radius,
     plot_height_below_minimum,
     plot_width_below_minimum,
@@ -136,7 +141,9 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
 _DATA_DETECTORS: list[ModuleType] = [
     annotation_nothing_drawn,
     area_unstacked_reads_as_stacked,
+    bar_category_ticks,
     category_color_pin_unseen,
+    trend_on_bars,
     dual_axis_competing_scales,
     gradient_hinge_mismatch,
     layer_data_outside_domain,
@@ -149,6 +156,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     query_result_truncated,
     query_returned_zero_rows,
     redundant_encoding,
+    scatter_stacked_in_columns,
     series_labels_repeat_word,
     temporal_single_point,
     too_many_color_categories,

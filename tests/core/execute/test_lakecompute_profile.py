@@ -348,3 +348,16 @@ def test_a_rendered_value_that_turns_invalid_is_an_execution_error_without_the_c
     ):
         _resolve(tmp_path, {"type": "lakecompute", "token": "t"}, monkeypatch)
     assert secret not in str(excinfo.value)
+
+
+def test_metricflow_rides_the_resolved_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _resolve(
+        tmp_path,
+        {"type": "lakecompute", "token": "t"},
+        monkeypatch,
+        metricflow="semantics",
+    )
+    assert result is not None
+    assert result.metricflow == "semantics"

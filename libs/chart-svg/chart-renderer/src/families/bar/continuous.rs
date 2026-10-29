@@ -1040,7 +1040,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         if ghosts_on {
             ghost_points.push((aria.clone(), p.left + p.width / 2.0, yt, ghost_ink.clone(), hrefs.get(&key).cloned()));
         }
-        under.push(crate::annotation::DataMark::rect(p.left, top, p.width, h));
+        under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(p.left, top, p.width, h)), fill.to_string(), mark.opacity.unwrap_or(1.0)));
         plot.extend(bar_passes(false, p.left,
             top,
             p.width,
@@ -1331,6 +1331,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 .set("text-anchor", y_label_anchor)
                 .vega("font-family", y_family)
                 .set("font-size", y_font_size.to_string())
+                .quick_some("font-style", ax_y.labels.font.style.as_deref())
                 .set("font-weight", y_label_weight.as_str())
                 .set("fill", y_label_color),
             lbl.as_str(),
@@ -1366,6 +1367,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     .set("text-anchor", "end")
                     .vega("font-family", y_family)
                     .set("font-size", y_font_size.to_string())
+                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", y_label_weight.as_str())
                     .set("fill", y_label_color),
                 lbl.as_str(),
@@ -1390,6 +1392,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 font_family: y_family,
                 font_size: y_font_size,
                 font_weight: &y_label_weight,
+                font_style: ax_y.labels.font.style.as_deref(),
                 font_color: y_label_color,
                 tick_size: y_tick_eff,
                 ticks: &ax_y.ticks,
@@ -1494,6 +1497,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                 caption: y_caption.clone(),
                 val_font_size: y_font_size,
                 val_weight: y_label_weight.to_string(),
+                val_style: ax_y.labels.font.style_attr(),
                 val_color: y_label_color.to_string(),
                 val_family: y_family.to_string(),
             }),

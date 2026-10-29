@@ -101,8 +101,10 @@ def test_repeated_pie_is_resolved_independently_for_each_slot_width() -> None:
     assert wide.resolution_width == 1128.0
     assert narrow.resolution_width == 376.0
     assert narrow.style.title_font == wide.style.title_font
-    assert wide.attached_table is None
-    assert narrow.attached_table is not None
+    # Each width resolves its own table: the narrow card puts it below the wheel.
+    assert wide.full_attachment is not None and narrow.full_attachment is not None
+    assert wide.full_attachment.placement == "right"
+    assert narrow.full_attachment.placement == "bottom"
 
 
 def test_repeated_non_pie_reuses_its_canonical_resolved_chart() -> None:

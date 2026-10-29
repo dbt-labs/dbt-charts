@@ -114,12 +114,10 @@ def test_serve_missing_required_variable_error_page_tracks_theme(
 
     assert resp.status_code == 422
     body = resp.text
-    assert f"--panel-bg: {rstyle.background};" in body
-    assert f"--text: {rstyle.font.color};" in body
-    assert f"--secondary: {rstyle.secondary_color};" in body
-    assert f"--border: {rstyle.border.color};" in body
-    assert f"--accent: {rstyle.accent};" in body
+    assert f"--page-bg: {rstyle.background};" in body
     assert f"--font-family: {rstyle.font.family};" in body
+    assert f"--card-bg: {rstyle.font.color};" in body
+    assert f"--card-text: {rstyle.background};" in body
 
 
 def test_serve_required_variable_provided_renders_ok(board_file: Path) -> None:

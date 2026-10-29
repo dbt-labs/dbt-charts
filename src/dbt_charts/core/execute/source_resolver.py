@@ -299,7 +299,9 @@ class DefaultSourceResolver:
                     "ref() resolves against the project's default manifest."
                 )
             try:
-                return LAKECOMPUTE_ADAPTER.validate_python(target_dict)
+                return LAKECOMPUTE_ADAPTER.validate_python(
+                    {**target_dict, "metricflow": cfg.metricflow}
+                )
             except ValueError as exc:
                 # Validation errors hide their input, so no credential is quoted.
                 raise ExecutionError(str(exc)) from exc
@@ -313,15 +315,22 @@ class DefaultSourceResolver:
                     "ref() resolves against the project's default manifest."
                 )
             return TrinoSourceConfig.model_validate(
-                {**target_dict, "attribution": cfg.attribution}
+                {
+                    **target_dict,
+                    "attribution": cfg.attribution,
+                    "metricflow": cfg.metricflow,
+                }
             )
 
-        # Attribution and target_path ride the dbt charts source entry, not the dbt
-        # target — profiles.yml belongs to dbt and rejects keys it doesn't know — so
-        # carry them across the expansion or they are lost for every dbt_profile
-        # source.
+        # Attribution, target_path and metricflow ride the dbt charts source entry,
+        # not the dbt target — profiles.yml belongs to dbt and rejects keys it
+        # doesn't know — so carry them across the expansion or they are lost for
+        # every dbt_profile source.
         return DbtTargetSourceConfig(
-            **target_dict, attribution=cfg.attribution, target_path=cfg.target_path
+            **target_dict,
+            attribution=cfg.attribution,
+            target_path=cfg.target_path,
+            metricflow=cfg.metricflow,
         )
 
 

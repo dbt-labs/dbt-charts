@@ -79,10 +79,10 @@ def _value(anchor: object) -> object:
     return anchor.value
 
 
-def test_a_y_rule_reads_the_measure_and_draws_under_the_bars() -> None:
+def test_a_y_rule_reads_the_measure_and_draws_over_the_bars() -> None:
     rule = _one({"type": "rule", "y": 12, "text": "Quota {{ value | format }}"})
     assert _value(rule.y) == 12.0
-    assert rule.x is None and rule.plane == "background" and rule.y_axis == "base"
+    assert rule.x is None and rule.plane == "foreground" and rule.y_axis == "base"
     assert rule.text is not None and rule.text.startswith("Quota ")
 
 

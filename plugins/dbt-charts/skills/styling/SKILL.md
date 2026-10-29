@@ -18,7 +18,7 @@ For no border, omit `border`; `border: none` is rejected.
 
 `style`:
 - `background`: Working-surface background color (board and card fills)
-- `accent`: Accent color token cascaded to sparklines, bars, and focus rings
+- `accent`: Accent color token cascaded to focus rings
 - `font` (mapping): Root font: literal family, size, weight, color; never a `fonts` name
 - `fonts` (map of mapping): Named fonts as ``<name>: {family, size, weight, color}``, never a bare family string; other font slots reference one as ``font: <name>`` or ``font: {extends: <name>, ...}``. ``heading`` carries the H1–H6 ramp in ``sizes`` and ``section`` the H2–H6 section-title sizes. Any other entry no slot references paints nothing
 - `formats` (map of text|{spec, prefix, suffix, notation, sign_placement, repeat}): Format alias map; None means no aliases at this cascade level
@@ -66,7 +66,7 @@ Also exist: `link`, `font`, `y_offset`, `brand_weight`.
 - `notation` (analytic|narrative): Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1mn)
 Also exist: `sign_placement`, `repeat`.
 
-`style.variables`: `visible`, `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `border`, `control_gap`, `input`.
+`style.variables`: `visible`, `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `border`, `control_gap`, `input`, `presets`.
 
 ## Charts
 
@@ -248,4 +248,4 @@ Layouts with `grid:` (rare; a chart spanning rows):
 - `row_span` (int): Number of rows to span (height in grid units)
 Also exist: `width`, `height`, `notes`.
 
-After any edit, run `render_board(yaml_content=<yaml>)` and fix what it reports until it reports no errors.
+After any edit, run `render_board(yaml_content=<yaml>)` (or `render_board(path=<board>)` once saved) and fix what it reports until it reports no errors.

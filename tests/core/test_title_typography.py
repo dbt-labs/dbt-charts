@@ -338,6 +338,7 @@ class TestFaceTitleSpec:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
         wide_svg = render_title(
             "Apex",
@@ -347,6 +348,7 @@ class TestFaceTitleSpec:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
 
         def _extract_font_size(svg: str) -> int:
@@ -865,13 +867,25 @@ rows:
         assert nested.title is not None
         as_h1 = max(
             get_title_height(
-                nested.title, inner, None, 1, resolved_style=nrs, base_dir=None
+                nested.title,
+                inner,
+                None,
+                1,
+                resolved_style=nrs,
+                base_dir=None,
+                root=True,
             ),
             min_h,
         )
         as_h2 = max(
             get_title_height(
-                nested.title, inner, None, 2, resolved_style=nrs, base_dir=None
+                nested.title,
+                inner,
+                None,
+                2,
+                resolved_style=nrs,
+                base_dir=None,
+                root=False,
             ),
             min_h,
         )

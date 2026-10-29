@@ -71,6 +71,7 @@ from dbt_charts.core.compile.sql_guard import (
     build_skeleton,
     sqlglot_dialect,
 )
+from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_GROUP_BY,
     ERR_BINDER_QUERY_SHAPE,
@@ -202,189 +203,191 @@ def warehouse_check(
     source_config = adapter_registry.resolve_query_source(
         query, board=board, query_name=query_name
     )
-    variables = merge_board_variables(board, {}, board.regional.today(utc_now()))
+    clock = board.clock(utc_now())
+    with board_clock(clock):
+        variables = merge_board_variables(board, {}, clock)
 
-    # EXPLAIN-wrapping and dry runs send the SQL untranslated.
-    if query.dialect is not None and (
-        source_config is None or dialect_differs(query.dialect, source_config)
-    ):
-        return WarehouseCheck(
-            status="unchecked",
-            adapter_type="none",
-            mechanism="dialect",
-            columns_checked=False,
-            reason=(
-                f"its SQL is written in {query.dialect} and translated when it "
-                "runs, so the warehouse check would send the untranslated text"
-            ),
-        )
-
-    # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
-    # the chain, resolved exactly as the executor resolves it. AdapterRegistry's
-    # own composition is a single non-recursive pass, so a two-hop chain would
-    # otherwise reach the warehouse with `{{ queries.X }}` still in the SQL.
-    resolved = resolve_query_references(
-        query,
-        all_queries={**board.queries, **query_registry},
-        query_name=query_name,
-    )
-    # Resolution only ever rewrites `sql`/`setup_sql` on a copy of what it got.
-    assert is_sql_query(resolved)
-    query = resolved
-
-    # None usually means a source-less *non*-SQL query (source-less SQL raises
-    # ERR-SOURCE-NOT-NAMED) — but a SqlQuery can land here too: an authored
-    # `source:` that names no board/project source falls through to
-    # DefaultSourceResolver's dbt fallback whenever a dbt project is in scope,
-    # with no ResolvedSourceConfig to read a type off. Must run against the
-    # *composed* `query` above, never the authored one: Executor.execute_query
-    # composes `{{ queries.X }}` before ever calling AdapterRegistry.execute,
-    # so a ref() reachable only through a composed `{{ queries.X }}` still has
-    # to route to DbtAdapter.
-    if source_config is None:
-        fallback_type, fallback_detail = _resolve_dbt_fallback_type(
-            query, adapter_registry
-        )
-        if fallback_type is None:
+        # EXPLAIN-wrapping and dry runs send the SQL untranslated.
+        if query.dialect is not None and (
+            source_config is None or dialect_differs(query.dialect, source_config)
+        ):
             return WarehouseCheck(
                 status="unchecked",
                 adapter_type="none",
-                mechanism="no-source",
+                mechanism="dialect",
                 columns_checked=False,
                 reason=(
-                    fallback_detail  # type-state: silent_fallback — empty string means no adapter claimed it, not a suppressed error
-                    or (
-                        "its source names no board or project source, and dbt "
-                        "charts could not resolve a warehouse type for it "
-                        "ahead of execution"
-                    )
+                    f"its SQL is written in {query.dialect} and translated when it "
+                    "runs, so the warehouse check would send the untranslated text"
                 ),
             )
-        adapter_type = fallback_type
-    else:
-        adapter_type = source_config.type
 
-    if adapter_type == "bigquery":
+        # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
+        # the chain, resolved exactly as the executor resolves it. AdapterRegistry's
+        # own composition is a single non-recursive pass, so a two-hop chain would
+        # otherwise reach the warehouse with `{{ queries.X }}` still in the SQL.
+        resolved = resolve_query_references(
+            query,
+            all_queries={**board.queries, **query_registry},
+            query_name=query_name,
+        )
+        # Resolution only ever rewrites `sql`/`setup_sql` on a copy of what it got.
+        assert is_sql_query(resolved)
+        query = resolved
+
+        # None usually means a source-less *non*-SQL query (source-less SQL raises
+        # ERR-SOURCE-NOT-NAMED) — but a SqlQuery can land here too: an authored
+        # `source:` that names no board/project source falls through to
+        # DefaultSourceResolver's dbt fallback whenever a dbt project is in scope,
+        # with no ResolvedSourceConfig to read a type off. Must run against the
+        # *composed* `query` above, never the authored one: Executor.execute_query
+        # composes `{{ queries.X }}` before ever calling AdapterRegistry.execute,
+        # so a ref() reachable only through a composed `{{ queries.X }}` still has
+        # to route to DbtAdapter.
         if source_config is None:
-            # The dbt-fallback branch above only learns the target's `type`
-            # from profiles.yml — a BigQuery dry run needs the full resolved
-            # config (project, keyfile, …), which nothing built here.
-            return WarehouseCheck(
-                status="unchecked",
-                adapter_type="bigquery",
-                mechanism=_BIGQUERY_DRY_RUN,
-                columns_checked=False,
-                reason=(
-                    "its source falls through to dbt's own profile "
-                    "resolution, which this tier cannot dry-run without a "
-                    "resolved BigQuery source config"
-                ),
+            fallback_type, fallback_detail = _resolve_dbt_fallback_type(
+                query, adapter_registry
             )
-        # The dry run is sent on a bare client, not the dbt connection that labels
-        # execution, so it establishes the same scope the registry does and
-        # `_check_bigquery` reads it back.
-        scope = {"query": query_name, "board": board.id}
-        if query.target:
-            scope["target"] = query.target
-        with attribute(
-            scope,
-            source_config.attribution
-            if isinstance(source_config, AttributedSourceConfig)
-            else {},
-        ):
-            return _check_bigquery(
+            if fallback_type is None:
+                return WarehouseCheck(
+                    status="unchecked",
+                    adapter_type="none",
+                    mechanism="no-source",
+                    columns_checked=False,
+                    reason=(
+                        fallback_detail  # type-state: silent_fallback — empty string means no adapter claimed it, not a suppressed error
+                        or (
+                            "its source names no board or project source, and dbt "
+                            "charts could not resolve a warehouse type for it "
+                            "ahead of execution"
+                        )
+                    ),
+                )
+            adapter_type = fallback_type
+        else:
+            adapter_type = source_config.type
+
+        if adapter_type == "bigquery":
+            if source_config is None:
+                # The dbt-fallback branch above only learns the target's `type`
+                # from profiles.yml — a BigQuery dry run needs the full resolved
+                # config (project, keyfile, …), which nothing built here.
+                return WarehouseCheck(
+                    status="unchecked",
+                    adapter_type="bigquery",
+                    mechanism=_BIGQUERY_DRY_RUN,
+                    columns_checked=False,
+                    reason=(
+                        "its source falls through to dbt's own profile "
+                        "resolution, which this tier cannot dry-run without a "
+                        "resolved BigQuery source config"
+                    ),
+                )
+            # The dry run is sent on a bare client, not the dbt connection that labels
+            # execution, so it establishes the same scope the registry does and
+            # `_check_bigquery` reads it back.
+            scope = {"query": query_name, "board": board.id}
+            if query.target:
+                scope["target"] = query.target
+            with attribute(
+                scope,
+                source_config.attribution
+                if isinstance(source_config, AttributedSourceConfig)
+                else {},
+            ):
+                return _check_bigquery(
+                    query,
+                    board=board,
+                    adapter_registry=adapter_registry,
+                    variables=variables,
+                    source_config=source_config,
+                )
+        if adapter_type == "sqlserver":
+            if source_config is None:
+                return WarehouseCheck(
+                    status="unchecked",
+                    adapter_type="sqlserver",
+                    mechanism=_SQLSERVER_DESCRIBE,
+                    columns_checked=False,
+                    reason=(
+                        "its source falls through to dbt's own profile "
+                        "resolution, which this tier cannot describe without a "
+                        "resolved SQL Server source config"
+                    ),
+                )
+            return _check_sqlserver(
                 query,
                 board=board,
                 adapter_registry=adapter_registry,
                 variables=variables,
                 source_config=source_config,
             )
-    if adapter_type == "sqlserver":
-        if source_config is None:
-            return WarehouseCheck(
-                status="unchecked",
-                adapter_type="sqlserver",
-                mechanism=_SQLSERVER_DESCRIBE,
-                columns_checked=False,
-                reason=(
-                    "its source falls through to dbt's own profile "
-                    "resolution, which this tier cannot describe without a "
-                    "resolved SQL Server source config"
-                ),
+        prefix_check = _PREFIX_CHECKS.get(adapter_type)
+        parse_dialect = adapter_type
+        if (
+            prefix_check is None
+            and source_config is not None
+            and is_file_source(source_config)
+        ):
+            # A csv/json/parquet source executes by materializing its files onto
+            # an in-process DuckDB (file_source_materializer.py), so DuckDB's own
+            # DESCRIBE mechanism answers it too — reusing the duckdb entry rather
+            # than adding three near-duplicate rows to _PREFIX_CHECKS. Cost of
+            # this path: see the module docstring.
+            prefix_check = _PREFIX_CHECKS["duckdb"]
+            # "csv"/"json"/"parquet" aren't sqlglot dialects — the SQL is parsed
+            # as DuckDB's own, since DuckDB is what actually runs it.
+            parse_dialect = "duckdb"
+        if prefix_check is not None:
+            keyword = prefix_check.keyword
+            # A bare keyword prefix rather than a parenthesized wrapper, so a
+            # pasted trailing `;`, comment, or `;;` rides along harmlessly —
+            # unlike `DESCRIBE (\n{sql}\n)`, which needed a semicolon-strip helper
+            # that broke again on each new trailing shape (see the git history of
+            # this line for the round-2 regressions). What a bare prefix cannot do
+            # is lead every statement, which is what the gate below rules on — and
+            # for EXPLAIN the gate's leading-parenthesized-arm refusal also covers
+            # Postgres parsing `EXPLAIN (SELECT …)` as EXPLAIN's options list.
+            unwrappable = _unwrappable_reason(
+                query.sql, dialect=parse_dialect, keyword=keyword
             )
-        return _check_sqlserver(
-            query,
-            board=board,
-            adapter_registry=adapter_registry,
-            variables=variables,
-            source_config=source_config,
-        )
-    prefix_check = _PREFIX_CHECKS.get(adapter_type)
-    parse_dialect = adapter_type
-    if (
-        prefix_check is None
-        and source_config is not None
-        and is_file_source(source_config)
-    ):
-        # A csv/json/parquet source executes by materializing its files onto
-        # an in-process DuckDB (file_source_materializer.py), so DuckDB's own
-        # DESCRIBE mechanism answers it too — reusing the duckdb entry rather
-        # than adding three near-duplicate rows to _PREFIX_CHECKS. Cost of
-        # this path: see the module docstring.
-        prefix_check = _PREFIX_CHECKS["duckdb"]
-        # "csv"/"json"/"parquet" aren't sqlglot dialects — the SQL is parsed
-        # as DuckDB's own, since DuckDB is what actually runs it.
-        parse_dialect = "duckdb"
-    if prefix_check is not None:
-        keyword = prefix_check.keyword
-        # A bare keyword prefix rather than a parenthesized wrapper, so a
-        # pasted trailing `;`, comment, or `;;` rides along harmlessly —
-        # unlike `DESCRIBE (\n{sql}\n)`, which needed a semicolon-strip helper
-        # that broke again on each new trailing shape (see the git history of
-        # this line for the round-2 regressions). What a bare prefix cannot do
-        # is lead every statement, which is what the gate below rules on — and
-        # for EXPLAIN the gate's leading-parenthesized-arm refusal also covers
-        # Postgres parsing `EXPLAIN (SELECT …)` as EXPLAIN's options list.
-        unwrappable = _unwrappable_reason(
-            query.sql, dialect=parse_dialect, keyword=keyword
-        )
-        if unwrappable is not None:
-            return WarehouseCheck(
-                status="unchecked",
+            if unwrappable is not None:
+                return WarehouseCheck(
+                    status="unchecked",
+                    adapter_type=adapter_type,
+                    mechanism=keyword,
+                    columns_checked=False,
+                    reason=unwrappable,
+                )
+            return _check_via_wrap(
+                query,
+                f"{keyword} {query.sql}",
                 adapter_type=adapter_type,
-                mechanism=keyword,
-                columns_checked=False,
-                reason=unwrappable,
+                check=prefix_check,
+                board=board,
+                adapter_registry=adapter_registry,
+                variables=variables,
             )
-        return _check_via_wrap(
-            query,
-            f"{keyword} {query.sql}",
+        # The remaining adapters are unchecked because dbt charts implements no
+        # non-executing check for them — a claim about us, not the warehouse
+        # (trino has EXPLAIN too, just no branch here yet). Databricks
+        # is the exception with a reason of its own: adding it to the table above
+        # would silently shadow this refusal, and the refusal is the point.
+        if adapter_type == "databricks":
+            reason = (
+                "databricks EXPLAIN returns planner errors as plan text "
+                "instead of failing the statement, so a broken query would "
+                "read as valid — dbt charts implements no check for it"
+            )
+        else:
+            reason = f"dbt charts implements no non-executing check for {adapter_type}"
+        return WarehouseCheck(
+            status="unchecked",
             adapter_type=adapter_type,
-            check=prefix_check,
-            board=board,
-            adapter_registry=adapter_registry,
-            variables=variables,
+            mechanism="no-validity-primitive",
+            columns_checked=False,
+            reason=reason,
         )
-    # The remaining adapters are unchecked because dbt charts implements no
-    # non-executing check for them — a claim about us, not the warehouse
-    # (trino has EXPLAIN too, just no branch here yet). Databricks
-    # is the exception with a reason of its own: adding it to the table above
-    # would silently shadow this refusal, and the refusal is the point.
-    if adapter_type == "databricks":
-        reason = (
-            "databricks EXPLAIN returns planner errors as plan text "
-            "instead of failing the statement, so a broken query would "
-            "read as valid — dbt charts implements no check for it"
-        )
-    else:
-        reason = f"dbt charts implements no non-executing check for {adapter_type}"
-    return WarehouseCheck(
-        status="unchecked",
-        adapter_type=adapter_type,
-        mechanism="no-validity-primitive",
-        columns_checked=False,
-        reason=reason,
-    )
 
 
 def _resolve_dbt_fallback_type(

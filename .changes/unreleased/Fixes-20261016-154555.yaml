@@ -1,0 +1,3 @@
+kind: Fixes
+body: Pie and donut labels, totals, and legends now always fit inside the chart.
+time: 2026-10-16T15:45:55.090753-07:00

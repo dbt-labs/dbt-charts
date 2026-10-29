@@ -289,3 +289,61 @@ rows:
     )
     clean_codes = {w.code for w in clean_result.warnings}
     assert WARN_AXIS_TITLE_TRUNCATED.code not in clean_codes
+
+
+def test_truncated_titles_warn_once_per_chart_and_field(
+    tmp_path, local_project
+) -> None:
+    """A chart renders once to size and once to paint; only the paint speaks."""
+    from unittest.mock import Mock
+
+    from dbt_charts.core.board import render_dashboard
+    from dbt_charts.core.diagnostics import WARN_CHART_TITLE_TRUNCATED
+    from dbt_charts.core.project import InMemoryBoard
+
+    ok = Mock()
+    ok.is_success = True
+    ok.data = [{"month": "Jan", "revenue": 5}]
+    ok.resolved_relations = None
+    ok.truncated_reason = None
+    registry = Mock()
+    registry.execute.return_value = ok
+    registry.project_file_sources.return_value = {}
+
+    project = local_project(tmp_path)
+    long_text = (
+        "Connections Timeline Count Connections Observed Across All Categories "
+        "Over The Past Twelve Months"
+    )
+    board = InMemoryBoard(
+        f"""
+source: examples_db
+queries:
+  q: SELECT month, revenue FROM t
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+    title: "{long_text}"
+    y_label: "{long_text}"
+    width: 200
+rows:
+  - c
+""",
+        path=project.path("charts/_t.yml"),
+    )
+    result = render_dashboard(
+        board=board,
+        adapter_registry=registry,
+        format="json",
+        project=project,
+        result_cache=None,
+    )
+    paths = sorted(
+        str(w.path)
+        for w in result.warnings
+        if w.code in {WARN_AXIS_TITLE_TRUNCATED.code, WARN_CHART_TITLE_TRUNCATED.code}
+    )
+    assert paths == ["charts.c.title", "charts.c.y_label"]

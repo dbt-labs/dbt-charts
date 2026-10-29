@@ -499,10 +499,9 @@ def apply_emoji_to_family(
 def _append_emoji_family(node: Any, emoji_family: str) -> Any:
     """Walk a style subtree and append ``emoji_family`` to every non-None font family.
 
-    Mirrors _resolve_color_tokens in structure: walks BaseModel trees recursively,
-    returning a patched copy only when a field actually changes.
-    FontStyle never appears inside a list/dict field in this schema; if that
-    changes, add a list branch mirroring _resolve_color_tokens.
+    Mirrors _resolve_color_tokens in structure: walks BaseModel trees, lists and
+    dict values recursively (``style.fonts`` and a table's ``columns`` hold fonts
+    in dicts), returning a patched copy only when a field actually changes.
     """
     if isinstance(
         node, (SingleLineFontStyle, ChartTitleFontStyle, AnnotationFontStyle)
@@ -519,6 +518,16 @@ def _append_emoji_family(node: Any, emoji_family: str) -> Any:
             if new is not value:
                 updates[name] = new
         return node.model_copy(update=updates) if updates else node
+    if isinstance(node, list):
+        new_list = [_append_emoji_family(v, emoji_family) for v in node]
+        return (
+            new_list
+            if any(a is not b for a, b in zip(new_list, node, strict=True))
+            else node
+        )
+    if isinstance(node, dict):
+        new_dict = {k: _append_emoji_family(v, emoji_family) for k, v in node.items()}
+        return new_dict if any(new_dict[k] is not v for k, v in node.items()) else node
     return node
 
 

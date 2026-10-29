@@ -36,35 +36,56 @@
   "controls.date": "{year}年{month}{day}日",
   "controls.date_no_year": "{month}{day}日",
   "controls.field_label": "{label}：",
+  "controls.fiscal_quarter_to_date": "会計四半期初から今日まで",
+  "controls.fiscal_year_to_date": "会計年度初から今日まで",
   "controls.from": "{date}以降",
-  "controls.last_12_months": "過去12か月",
-  "controls.last_28_days": "過去28日間",
-  "controls.last_7_days": "過去7日間",
-  "controls.last_90_days": "過去90日間",
   "controls.list_join": "、",
   "controls.month_to_date": "月初から今日まで",
   "controls.next_month": "翌月",
   "controls.no": "いいえ",
   "controls.page_range": "{first}～{last} / {total}",
+  "controls.preset_last": "過去 {duration}",
+  "controls.preset_previous": "前の {duration}",
   "controls.previous_month": "前月",
+  "controls.quarter_to_date": "四半期初から今日まで",
   "controls.range": "{start}～{end}",
   "controls.range_same_month": "{year}年{month}{start_day}～{end_day}日",
   "controls.search": "検索",
   "controls.search_values": "値を検索",
   "controls.sort_ascending": "昇順で並べ替え",
   "controls.sort_descending": "降順で並べ替え",
+  "controls.this_fiscal_quarter": "今会計四半期",
+  "controls.this_fiscal_year": "今会計年度",
+  "controls.this_month": "今月",
+  "controls.this_quarter": "今四半期",
+  "controls.this_week": "今週",
+  "controls.this_year": "今年",
   "controls.today": "今日",
   "controls.until": "{date}まで",
+  "controls.week_to_date": "週初から今日まで",
   "controls.year_to_date": "年初から今日まで",
   "controls.yes": "はい",
+  "controls.yesterday": "昨日",
   "duration.day": {
     "other": "{n} 日"
+  },
+  "duration.fiscal_quarter": {
+    "other": "{n} 会計四半期"
+  },
+  "duration.fiscal_year": {
+    "other": "{n} 会計年度"
   },
   "duration.month": {
     "other": "{n} か月"
   },
+  "duration.quarter": {
+    "other": "{n} 四半期"
+  },
   "duration.week": {
     "other": "{n} 週間"
+  },
+  "duration.year": {
+    "other": "{n} 年"
   },
   "footer.data_as_of": "データ取得日時：{date} {time}",
   "footer.made_with": "{brand}で作成",

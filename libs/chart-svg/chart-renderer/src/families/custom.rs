@@ -1041,6 +1041,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
         frame.avail_w(),
         fonts,
     )?;
+    title.warn_truncated(&r.id);
     // Too small a box is the chart's sizing, not an engine gap.
     let m = frame.fit(&title, |_, _, _| {});
     if m.plot_w <= 0.0 || m.plot_h <= 0.0 {
@@ -1163,6 +1164,17 @@ mod tests {
             "max_template_output_bytes": 1_000_000,
         }))
         .expect("payload parses")
+    }
+
+    #[test]
+    fn a_cut_title_warns_and_a_fitting_one_does_not() {
+        let codes = |title: &str| {
+            let p = payload("<rect/>", |r| r["title"] = json!(title));
+            let (_, warned) = crate::diagnostic::collect(|| render(&p, &test_fonts()).unwrap());
+            warned.iter().map(|d| d.code).collect::<Vec<_>>()
+        };
+        assert_eq!(codes(&"Quarterly Revenue Growth ".repeat(12)), ["WARN-CHART-TITLE-TRUNCATED"]);
+        assert!(codes("Quota").is_empty());
     }
 
     #[test]

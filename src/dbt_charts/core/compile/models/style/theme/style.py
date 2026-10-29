@@ -82,7 +82,7 @@ class Style(BaseModel):
     # single_series_palette[0] in resolved.py — not Inherit, since list indexing
     # can't be expressed as a declarative path.
     accent: Annotated[str, Color()] = Field(
-        description="Accent color token cascaded to sparklines, bars, and focus rings."
+        description="Accent color token cascaded to focus rings."
     )
     font: RootFontStyle = Field(
         description="Root font: literal family, size, weight, color; never a `fonts` name."
@@ -239,8 +239,8 @@ class Style(BaseModel):
         heading = self.fonts.get("heading") if self.fonts is not None else None
         if heading is None or not heading.sizes:
             raise ValueError(
-                "style.fonts.heading.sizes is required: board titles, markdown "
-                "headings and chart titles read the H1–H6 ramp from it."
+                "style.fonts.heading.sizes is required: board titles, chart titles "
+                "and markdown `#` headings read the H1–H6 ramp from it."
             )
         return heading.sizes
 
@@ -249,8 +249,8 @@ class Style(BaseModel):
         section = self.fonts.get("section") if self.fonts is not None else None
         if section is None or not section.sizes:
             raise ValueError(
-                "style.fonts.section.sizes is required: section titles read "
-                "their H2–H6 sizes from it."
+                "style.fonts.section.sizes is required: section titles and "
+                "markdown `##`/`###` headings read their sizes from it."
             )
         return section.sizes
 

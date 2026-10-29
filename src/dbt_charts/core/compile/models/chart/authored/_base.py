@@ -47,7 +47,6 @@ from dbt_charts.core.compile.models.vega_lite.contracts import (
     Projection,
     ProjectionType,
 )
-from dbt_charts.core.diagnostics.suppression import warn_retired_codes
 
 from ._annotations import (
     ChartSort,
@@ -285,15 +284,6 @@ class _BaseChartFields(ConstrainedModel):
             description="Codes of render warnings to suppress for this chart. Query-domain codes such as WARN-REAGGREGATION go in `queries.<name>.ignore` instead.",
         ),
     ]
-
-    @field_validator("warnings_ignore")
-    @classmethod
-    def _warn_retired_ignore_codes(
-        cls, v: list[ChartWarningCode] | None
-    ) -> list[ChartWarningCode] | None:
-        if v is not None:
-            warn_retired_codes(v, source="chart.warnings_ignore")
-        return v
 
 
 class _ConditionalFormattingField(BaseModel):

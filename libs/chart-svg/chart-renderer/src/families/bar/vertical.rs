@@ -127,6 +127,7 @@ pub(crate) struct BarStripGeometry {
     /// never reads these.
     pub(crate) val_font_size: f64,
     pub(crate) val_weight: String,
+    pub(crate) val_style: String,
     pub(crate) val_color: String,
     pub(crate) val_family: String,
     /// The value axis's description, which the ghost copy repeats untitled.
@@ -293,6 +294,8 @@ pub(super) struct PlotRect {
 pub(crate) struct BarFacetPanelOpts<'a> {
     /// What the axis titles wrap against.
     pub(crate) title_boxes: multiples::FacetTitleBoxes,
+    /// The card's width, the room the chart-level legend fits in.
+    pub(crate) legend_w: f64,
     /// The panel width the emitters judge crowding at (`RenderBox.width`): the
     /// width the spec declared, which a panel left at the default view width
     /// does not draw at.
@@ -1087,7 +1090,7 @@ pub(crate) fn render_vertical_panel(
         &layers.iter().collect::<Vec<_>>(),
     )?;
     let legend_entries_typed: Vec<LegendEntry> = layered_legend.entries(r, &layer_scale);
-    let legend_labels = limited_labels(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, legend_room(&r.legend, facet.is_none().then_some(view_w)))?;
+    let legend_labels = limited_labels(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, legend_room(&r.legend, Some(facet.map_or(view_w, |f| f.legend_w))))?;
     let series_keys = crate::selected::series_keys(&legend_entries_typed, &bar_link_keys(r, &color_domain, &wide_labels));
     let legend_entries_typed = r.selection.legend(with_drawn_labels(&legend_entries_typed, &legend_labels), &series_keys);
 
@@ -1611,8 +1614,7 @@ pub(crate) fn render_vertical_panel(
     let link = r.datum_link(
         cat_field,
         match (&time, x_standard_dates) {
-            (Some(_), _) => crate::href::LinkText::Date,
-            (None, true) => crate::href::LinkText::InvalidDate,
+            (Some(_), _) | (None, true) => crate::href::LinkText::Date,
             (None, false) => crate::href::LinkText::Raw,
         },
     );
@@ -1769,10 +1771,7 @@ pub(crate) fn render_vertical_panel(
         title_wrap_w,
         fonts,
     )?;
-    // A rail concat defers its title wrap to the render pass, which records nothing.
-    if !show_rail_v {
-        title.warn_truncated(&r.id);
-    }
+    title.warn_truncated(&r.id);
     let title_fs = title.font_size;
     let mut rail_anchors: Vec<(String, f64)> = Vec::new();
     // The cascade's packing bounds — production's raw stacked extent, not
@@ -3067,6 +3066,20 @@ pub(crate) fn render_vertical_panel(
                 if let Some(ab) = crate::annotation::bounds(&annotation_ctx((0.0, 0.0), pw, ph)) {
                     b.union(&ab);
                 }
+                let strip_ink = composed.as_ref().map(|(strip_rows, _, strip_style)| {
+                    let mut ink = vega_fit::Bounds::empty_new();
+                    support_table_strip::composed_ink(
+                        &mut ink,
+                        strip_rows,
+                        strip_style,
+                        ax_y.labels.padding.unwrap_or(6.0),
+                        pw,
+                        val_on_right,
+                        if strip_style.position == "bottom" { ph } else { 0.0 },
+                        strip_axis_offset,
+                    );
+                    ink
+                });
                 // A facet panel's legend is chart-level: the composer lays it
                 // out against the whole composite (`facet_compose::
                 // FacetLegend`), so it is no panel's ink.
@@ -3137,8 +3150,13 @@ pub(crate) fn render_vertical_panel(
                     let (axes_x1, axes_x2) =
                         layer_axes.iter().fold((y_axis_x1, val_axis_x2), |axes, la| la.widen_axes(axes, pw, ax_off_y));
                     let axes_x2 = axes_x2.max(crate::annotation::text_x2(&annotation_ctx((0.0, 0.0), pw, ph)));
+                    // ... and the strip's rows, ink beside the plot like an axis.
+                    let mut bounds = vega_fit::Bounds::new(axes_x1, bars_top.min(x_axis_y1), axes_x2, x_axis_y2);
+                    if let Some(ink) = &strip_ink {
+                        bounds.union(ink);
+                    }
                     let origin = legend_origin(
-                        &r.legend.position, (axes_x1, axes_x2), (bars_top.min(x_axis_y1), x_axis_y2), (pw, ph), size,
+                        &r.legend.position, (bounds.x1, bounds.x2), (bounds.y1, bounds.y2), (pw, ph), size,
                     );
                     legend_xy.set(origin);
                     if let Some(reach) = legend_fit_bounds(&r.legend.position, origin, size) {
@@ -3250,17 +3268,8 @@ pub(crate) fn render_vertical_panel(
                         layer.ink(&geom, if layer.total { None } else { hide }, b);
                     }
                 }
-                if let Some((strip_rows, _, strip_style)) = &composed {
-                    support_table_strip::composed_ink(
-                        b,
-                        strip_rows,
-                        strip_style,
-                        ax_y.labels.padding.unwrap_or(6.0),
-                        pw,
-                        val_on_right,
-                        if strip_style.position == "bottom" { ph } else { 0.0 },
-                        strip_axis_offset,
-                    );
+                if let Some(ink) = &strip_ink {
+                    b.union(ink);
                 }
             };
             if composed.is_some() {
@@ -3874,7 +3883,7 @@ pub(crate) fn render_vertical_panel(
                 // A time axis's stack is one clipped group: only its top segment keeps the rounded end.
                 let segment_r = if (if raw_val < 0.0 { outers.1 } else { outers.0 }) == Some(series) { corner_r } else { 0.0 };
                 stack_ends = Some(stack_ends.map_or((top_y, bottom_y), |(top, bottom)| (top.min(top_y), bottom.max(bottom_y))));
-                under.push(crate::annotation::DataMark::rect(col_x, top_y, columns.width, seg_h));
+                under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(col_x, top_y, columns.width, seg_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
                 plot.extend(bar_passes(false, col_x, top_y, columns.width, seg_h, &fill, r.style.mark.opacity, stroke_color, stroke_w,
                     segment_r,
                     Rounded::by_sign(raw_val), false, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key))?);
@@ -3950,7 +3959,7 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, fill.clone(), hrefs.get(&key).cloned()));
             }
-            under.push(crate::annotation::DataMark::rect(col_x, bar_top, columns.width, bar_h));
+            under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(col_x, bar_top, columns.width, bar_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
             plot.extend(bar_passes(false, col_x, bar_top, columns.width, bar_h, &fill, r.style.mark.opacity, stroke_color, stroke_w,
                 corner_r,
                 ends, double_stroke, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key))?);
@@ -4014,7 +4023,7 @@ pub(crate) fn render_vertical_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), col_x + columns.width / 2.0, bar_top, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
-            under.push(crate::annotation::DataMark::rect(col_x, bar_top, columns.width, bar_h));
+            under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(col_x, bar_top, columns.width, bar_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
             plot.extend(bar_passes(false, col_x, bar_top, columns.width, bar_h, fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r,
                 ends, double_stroke, clip_ns.as_deref(), aria.as_deref(), anchor_of(&key))?);
         }
@@ -4831,6 +4840,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                     .set("text-anchor", val_anchor)
                     .vega("font-family", val_family)
                     .set("font-size", val_font_size.to_string())
+                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", val_weight.as_str())
                     .set("fill", val_color),
                 ax_y.labels.clip(if left_flip { &ghost_texts[i] } else { label }, fonts)?,
@@ -4882,6 +4892,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                     .set("text-anchor", ghost_anchor)
                     .vega("font-family", val_family)
                     .set("font-size", val_font_size.to_string())
+                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", val_weight.as_str())
                     .set("fill", val_color),
                 ax_y.labels.clip(label, fonts)?,
@@ -4912,6 +4923,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 font_family: val_family,
                 font_size: val_font_size,
                 font_weight: &val_weight,
+                font_style: ax_y.labels.font.style.as_deref(),
                 font_color: val_color,
                 tick_size: val_tick_size,
                 ticks: &ax_y.ticks,
@@ -5049,6 +5061,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
             val_tick_marks,
             val_font_size,
             val_weight,
+            val_style: ax_y.labels.font.style_attr(),
             val_color: val_color.to_string(),
             val_family: val_family.to_string(),
             val_caption,

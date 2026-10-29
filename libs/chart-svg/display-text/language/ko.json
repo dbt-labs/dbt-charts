@@ -36,35 +36,56 @@
   "controls.date": "{year}년 {month} {day}일",
   "controls.date_no_year": "{month} {day}일",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "이번 회계 분기 누계",
+  "controls.fiscal_year_to_date": "이번 회계 연도 누계",
   "controls.from": "{date}부터",
-  "controls.last_12_months": "최근 12개월",
-  "controls.last_28_days": "최근 28일",
-  "controls.last_7_days": "최근 7일",
-  "controls.last_90_days": "최근 90일",
   "controls.list_join": ", ",
   "controls.month_to_date": "이번 달 누계",
   "controls.next_month": "다음 달",
   "controls.no": "아니요",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "최근 {duration}",
+  "controls.preset_previous": "이전 {duration}",
   "controls.previous_month": "이전 달",
+  "controls.quarter_to_date": "이번 분기 누계",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{year}년 {month} {start_day}–{end_day}일",
   "controls.search": "검색",
   "controls.search_values": "값 검색",
   "controls.sort_ascending": "오름차순 정렬",
   "controls.sort_descending": "내림차순 정렬",
+  "controls.this_fiscal_quarter": "이번 회계 분기",
+  "controls.this_fiscal_year": "이번 회계 연도",
+  "controls.this_month": "이번 달",
+  "controls.this_quarter": "이번 분기",
+  "controls.this_week": "이번 주",
+  "controls.this_year": "올해",
   "controls.today": "오늘",
   "controls.until": "{date}까지",
+  "controls.week_to_date": "이번 주 누계",
   "controls.year_to_date": "올해 누계",
   "controls.yes": "예",
+  "controls.yesterday": "어제",
   "duration.day": {
     "other": "{n}일"
+  },
+  "duration.fiscal_quarter": {
+    "other": "{n}회계 분기"
+  },
+  "duration.fiscal_year": {
+    "other": "{n}회계 연도"
   },
   "duration.month": {
     "other": "{n}개월"
   },
+  "duration.quarter": {
+    "other": "{n}분기"
+  },
   "duration.week": {
     "other": "{n}주"
+  },
+  "duration.year": {
+    "other": "{n}년"
   },
   "footer.data_as_of": "{date} {time} 기준 데이터",
   "footer.made_with": "{brand}로 제작",

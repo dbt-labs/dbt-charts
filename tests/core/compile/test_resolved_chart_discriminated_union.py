@@ -183,6 +183,8 @@ def test_pie_constructs(pie_style: ResolvedPieStyle) -> None:
         hybrid_heading_gap=6.0,
         presentation_fingerprint=pie_presentation_fingerprint([]),
         slice_label_indices=(),
+        is_donut=False,
+        labeled_mode="direct",
         theta="share",
         style=pie_style,
         dark_companion_stops=(),
@@ -193,8 +195,10 @@ def test_pie_constructs(pie_style: ResolvedPieStyle) -> None:
     assert c.theta == "share"
 
 
-def test_pie_rejects_partial_attachment(pie_style: ResolvedPieStyle) -> None:
-    with pytest.raises(ValidationError, match="attachment fields must all be absent"):
+def test_pie_rejects_the_hybrid_mode_without_a_hybrid_attachment(
+    pie_style: ResolvedPieStyle,
+) -> None:
+    with pytest.raises(ValidationError, match="goes with labeled_mode 'hybrid'"):
         ResolvedPieChart(
             id="p",
             chart_type="pie",
@@ -204,11 +208,12 @@ def test_pie_rejects_partial_attachment(pie_style: ResolvedPieStyle) -> None:
             hybrid_heading_gap=6.0,
             presentation_fingerprint=pie_presentation_fingerprint([]),
             slice_label_indices=(),
+            is_donut=False,
+            labeled_mode="hybrid",
             theta="share",
             style=pie_style,
             dark_companion_stops=(),
             pin_companions=(),
-            attached_table_width=200.0,
             **_B,
             field_labels={},
         )
@@ -495,6 +500,8 @@ _TABLE_STYLE_D = _default_resolved_table_style().model_dump()
                 "hybrid_heading_gap": 6.0,
                 "presentation_fingerprint": pie_presentation_fingerprint([]),
                 "slice_label_indices": [],
+                "is_donut": False,
+                "labeled_mode": "direct",
                 "theta": "share",
                 "dark_companion_stops": [],
                 "pin_companions": [],
@@ -642,6 +649,8 @@ def test_pie_rejects_x() -> None:
             hybrid_heading_gap=6.0,
             presentation_fingerprint=pie_presentation_fingerprint([]),
             slice_label_indices=(),
+            is_donut=False,
+            labeled_mode="direct",
             theta="share",
             x="month",
             dark_companion_stops=(),

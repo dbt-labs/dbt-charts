@@ -28,10 +28,12 @@ def test_theme_provides_the_switch_board_wide() -> None:
     assert isinstance(resolved.chart_defaults.hover_emphasis.visible, bool)
 
 
-def test_theme_provides_a_bounded_dimmed_opacity() -> None:
-    for theme in _PRODUCTION_THEMES:
-        opacity = get_theme_style(theme).charts.hover_emphasis.dimmed_opacity
-        assert 0 < opacity < 1
+def test_every_theme_recedes_to_the_same_contrast_target() -> None:
+    targets = {
+        get_theme_style(theme).charts.hover_emphasis.recede_contrast
+        for theme in _PRODUCTION_THEMES
+    }
+    assert len(targets) == 1
 
 
 def test_runtime_dict_carries_the_switch_and_the_strength() -> None:
@@ -40,7 +42,7 @@ def test_runtime_dict_carries_the_switch_and_the_strength() -> None:
 
     assert blob == {
         "visible": resolved.chart_defaults.hover_emphasis.visible,
-        "opacity": resolved.chart_defaults.hover_emphasis.dimmed_opacity,
+        "recedeContrast": resolved.chart_defaults.hover_emphasis.recede_contrast,
         "dropLineColor": resolved.chart_defaults.hover_emphasis.drop_line_color,
         "dropLineWidth": resolved.chart_defaults.hover_emphasis.drop_line_width,
     }

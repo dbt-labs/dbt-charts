@@ -36,35 +36,56 @@
   "controls.date": "{year}年{month}{day}日",
   "controls.date_no_year": "{month}{day}日",
   "controls.field_label": "{label}：",
+  "controls.fiscal_quarter_to_date": "本财季至今",
+  "controls.fiscal_year_to_date": "本财年至今",
   "controls.from": "自 {date} 起",
-  "controls.last_12_months": "最近 12 个月",
-  "controls.last_28_days": "最近 28 天",
-  "controls.last_7_days": "最近 7 天",
-  "controls.last_90_days": "最近 90 天",
   "controls.list_join": "、",
   "controls.month_to_date": "本月至今",
   "controls.next_month": "下个月",
   "controls.no": "否",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "最近 {duration}",
+  "controls.preset_previous": "之前 {duration}",
   "controls.previous_month": "上个月",
+  "controls.quarter_to_date": "本季度至今",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{year}年{month}{start_day}–{end_day}日",
   "controls.search": "搜索",
   "controls.search_values": "搜索值",
   "controls.sort_ascending": "升序排序",
   "controls.sort_descending": "降序排序",
+  "controls.this_fiscal_quarter": "本财季",
+  "controls.this_fiscal_year": "本财年",
+  "controls.this_month": "本月",
+  "controls.this_quarter": "本季度",
+  "controls.this_week": "本周",
+  "controls.this_year": "本年",
   "controls.today": "今天",
   "controls.until": "截至 {date}",
+  "controls.week_to_date": "本周至今",
   "controls.year_to_date": "本年至今",
   "controls.yes": "是",
+  "controls.yesterday": "昨天",
   "duration.day": {
     "other": "{n} 天"
+  },
+  "duration.fiscal_quarter": {
+    "other": "{n} 个财季"
+  },
+  "duration.fiscal_year": {
+    "other": "{n} 个财年"
   },
   "duration.month": {
     "other": "{n} 个月"
   },
+  "duration.quarter": {
+    "other": "{n} 个季度"
+  },
   "duration.week": {
     "other": "{n} 周"
+  },
+  "duration.year": {
+    "other": "{n} 年"
   },
   "footer.data_as_of": "数据截至 {date} {time}",
   "footer.made_with": "由 {brand} 制作",

@@ -804,4 +804,5 @@ def _resolve_area(
             point_radius(area_point_mark.size),
         ),
         annotation_gaps=annotations.gaps,
+        annotation_bar_trends=annotations.bar_trends,
     )

@@ -57,7 +57,7 @@ def _build_hover_emphasis_dict(
     """Build the JSON dict consumed by the JS hover-emphasis runtime.
 
     Every value is theme-cascaded: a theme decides whether hover emphasis
-    happens at all, how strongly bars/arcs recede, and its own neutral
+    happens at all, the contrast bars/arcs recede to, and its own neutral
     drop-line paint.
 
     The bar/arc recession color still rides no wire of its own: it is the
@@ -70,7 +70,7 @@ def _build_hover_emphasis_dict(
     hover_emphasis = resolved_style.chart_defaults.hover_emphasis
     return {
         "visible": hover_emphasis.visible,
-        "opacity": hover_emphasis.dimmed_opacity,
+        "recedeContrast": hover_emphasis.recede_contrast,
         "dropLineColor": hover_emphasis.drop_line_color,
         "dropLineWidth": hover_emphasis.drop_line_width,
     }

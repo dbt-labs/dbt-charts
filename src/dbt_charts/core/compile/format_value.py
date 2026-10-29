@@ -66,6 +66,7 @@ from dbt_charts.core.text.numeral_scale import SuffixMode, suffix_at_register
 from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_NATIVE,
     PREDEFINED_TEXT_NAMES,
+    SUB_UNIT_NUMBER_SPEC,
     PredefinedNumberFormat,
 )
 from dbt_charts.core.utils import is_date_like
@@ -366,15 +367,14 @@ def format_kpi_parts(
             number_str = number_str.removesuffix(locale.percent)
     else:
         # No spec and no default supplied (KPI below-threshold contract):
-        # render exact digits — integers plain, floats at 2 decimals. Plain
-        # Python f-strings default to ASCII "-"; _with_minus swaps in the
-        # house glyph, same as PREDEFINED_NATIVE — every other branch above
-        # gets it for free from d3_format.
+        # render exact digits — integers plain, floats at up to 2 decimals,
+        # never padded. d3_format supplies the house minus glyph, same as every
+        # other branch above.
         v = float(value)
         if v == int(v) and abs(v) < 1e15:
             number_str = d3_format(",d")(int(v))
         else:
-            number_str = d3_format(",.2f")(v)
+            number_str = d3_format(SUB_UNIT_NUMBER_SPEC)(v)
 
     number_str = number_str.strip()
     if sign_in_prefix:

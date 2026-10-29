@@ -284,6 +284,25 @@ rows: [t]
 """
 
 
+_ITALIC_AXIS_LABELS_YAML = """\
+title: "Italic Axis"
+queries:
+  q: {type: values, rows: [{month: Jan, n: 1}, {month: Feb, n: 2}]}
+charts:
+  c:
+    query: q
+    type: line
+    x: month
+    y: n
+    style:
+      axis:
+        labels:
+          font:
+            style: italic
+rows: [c]
+"""
+
+
 _NARROW_PROSE_YAML = """\
 title: "Narrow"
 queries:
@@ -367,6 +386,12 @@ class TestItalicOutsideMarkdownEmphasis:
         the browser synthesizes an oblique — on a live board too, not only in an
         export."""
         html = self._export(_CONDITIONAL_ITALIC_YAML, tmp_path, local_project)
+        assert _ITALIC_BOARD.search(html) is not None
+
+    def test_chart_axis_label_font_style(self, tmp_path, local_project) -> None:
+        """An authored ``font.style`` on chart axis labels: the engine writes the
+        family and ``font-style`` onto the same ``<text>``."""
+        html = self._export(_ITALIC_AXIS_LABELS_YAML, tmp_path, local_project)
         assert _ITALIC_BOARD.search(html) is not None
 
     def test_callout_hint_line(self) -> None:

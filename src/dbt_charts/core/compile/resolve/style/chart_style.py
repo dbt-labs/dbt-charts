@@ -15,7 +15,6 @@ from dbt_charts.core.compile.merge import merge_onto_base
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.style.authored import ChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.models.style.theme import ChartsStyle
 from dbt_charts.core.compile.resolve.style.board import _seed_spark_colors
 from dbt_charts.core.compile.resolve.style.inherit_graph import get_inherit_graph
 from dbt_charts.core.compile.resolve.style.inherit_resolver import (
@@ -50,15 +49,6 @@ _ALL_FAMILY_KEYS: tuple[str, ...] = (
     "heatmap",
     "geoshape",
     "point_map",
-)
-
-# Families that exist on the pre-inherit ``ChartsStyle`` route through the
-# pre-inherit merge + intra-family inherit pass. ``spark`` is the lone
-# exception: it is synthesized only on the resolved ``ChartStyleContext``
-# (no pre-inherit counterpart, no intra-family font dependents), so it merges
-# directly onto the resolved base instead.
-_PRE_INHERIT_FAMILY_KEYS: frozenset[str] = frozenset(_ALL_FAMILY_KEYS) & frozenset(
-    ChartsStyle.model_fields
 )
 
 
@@ -154,10 +144,6 @@ def merge_chart_style(
     format falls back to that same baked axis format at chart-resolve time
     (``_marks.py``), not via an inherit-graph edge from ``axis_quantitative``.
 
-    ``spark`` is the lone exception (``_PRE_INHERIT_FAMILY_KEYS``): it is
-    synthesized only on ``ChartStyleContext`` and has no pre-inherit
-    counterpart, so its patch merges directly onto the base context.
-
     All other global overrides (axis, legend, scale, pagination, color,
     palette, background, title) are applied via ``dataclasses.replace`` on the
     already-merged base_charts context. Post-merge patching is legal here because
@@ -242,11 +228,7 @@ def merge_chart_style(
             _fam_patch = getattr(chart_style_patch, _key)
             if _fam_patch is None:
                 continue
-            if _key in _PRE_INHERIT_FAMILY_KEYS:
-                charts_family_patch[_key] = _fam_patch
-            else:
-                # Synthesized resolved-only family (spark): merge onto the base.
-                overrides[_key] = merge_unset(getattr(base_charts, _key), _fam_patch)
+            charts_family_patch[_key] = _fam_patch
         if primary is not None:
             _dt_patch = getattr(
                 primary, "support_table", None
@@ -301,8 +283,6 @@ def merge_chart_style(
         # is None until the global-inherit pass populates the required container
         # (e.g. pie.marks.slice.labels ← charts.marks.slice.labels). Re-merging
         # now applies that authored patch onto the complete inherited base.
-        # All keys in charts_family_patch come from _PRE_INHERIT_FAMILY_KEYS, which is
-        # a subset of ChartsStyle.model_fields, so 2-arg getattr is safe.
         for _key, _fam_patch in charts_family_patch.items():
             _post_inherit_fam = getattr(cascaded_pre.charts, _key)
             _re_merged = merge_onto_base(_post_inherit_fam, _fam_patch)

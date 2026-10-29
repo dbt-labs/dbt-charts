@@ -457,6 +457,10 @@ forbidden_module_paths = [
 # alone. The reasons that do stand alone — core ships an importable-but-
 # unrunnable surface, and the repo has three OpenAI client wrappers — are
 # tracked in a follow-up.
+# `metricflow_sql` is the MetricFlow compiler, imported inside
+# core/execute/metricflow.py only for a source that declares `metricflow:`.
+# It is not on PyPI, so it cannot be an extra yet; a missing install is the
+# coded ERR-METRICFLOW-NOT-INSTALLED, never an import error at startup.
 allowed_external_imports = [
     "dbt_charts_super_schema",
     "google",
@@ -466,6 +470,7 @@ allowed_external_imports = [
     "snowflake",
     "numpy",
     "openai",
+    "metricflow_sql",
 ]
 # Declared deps that the wheel never imports directly but that another
 # declared dep loads at runtime. The audit's AST scan can't see this case.

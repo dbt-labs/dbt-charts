@@ -2165,6 +2165,36 @@ WARN_PIE_TOTAL_EXCEEDS_INNER_RADIUS = REGISTRY.register(
     )
 )
 
+WARN_PIE_SIZED_MODE_MISSES_GUARD = REGISTRY.register(
+    WarningCode(
+        code="WARN-PIE-SIZED-MODE-MISSES-GUARD",
+        domain="render",
+        title="Pie is drawn in a box that its labels crowd",
+        message_template=(
+            "Pie chart {chart_id!r} keeps its {mode} labels, but in this box "
+            "the wheel is only {ratio:.0%} of the size it would have without "
+            "them (the floor is {floor:.0%})."
+        ),
+        fix_template=(
+            "Remove the authored height that pins this chart's box, or widen "
+            "the card, so the pie is laid out in the box its labels were "
+            "sized for."
+        ),
+        doc=(
+            "A pie's mode (labels on the wheel, labels plus a table of the "
+            "small slices, or a table of every slice) is decided once, in the "
+            "box the size stage lays the card out in, and a labeled mode "
+            "stands only while its wheel keeps the wheel-dominance floor of "
+            "the bare wheel in the whole card. A pie drawn in a different "
+            "box (an authored height pins it) keeps the sized mode, so its "
+            "wheel can fall below the floor; this reports that without "
+            "switching modes. A center total wider than the hole is reported "
+            "separately by WARN-PIE-TOTAL-EXCEEDS-INNER-RADIUS."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_PLOT_HEIGHT_BELOW_MINIMUM = REGISTRY.register(
     WarningCode(
         code="WARN-PLOT-HEIGHT-BELOW-MINIMUM",
@@ -3255,6 +3285,56 @@ WARN_AXIS_LABEL_COLLISION = REGISTRY.register(
     )
 )
 
+WARN_SCATTER_STACKED_IN_COLUMNS = REGISTRY.register(
+    WarningCode(
+        code="WARN-SCATTER-STACKED-IN-COLUMNS",
+        domain="render",
+        title="Scatter points stack in columns",
+        message_template=(
+            "{channel} has {distinct} distinct values across {points} points, "
+            "so the dots stack in columns. Treat {channel} as a category and "
+            "use a strip plot or beeswarm to show each group's spread."
+        ),
+        fix_template=(
+            "Chart the grouping channel as a category and spread each group's "
+            "points with a strip plot or beeswarm; use a bar if only the group "
+            "totals matter."
+        ),
+        doc=(
+            "Fires on a scatter whose numeric x or y holds at most 5 distinct "
+            "values with an average of at least 4 points per value. The dots "
+            "pile into vertical or horizontal columns, which reads as a broken "
+            "relationship rather than a distribution within groups. A few "
+            "deliberate points over a few values stay quiet, as does any "
+            "channel with more than 5 distinct values or a non-numeric one."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_BAR_CATEGORY_TICKS = REGISTRY.register(
+    WarningCode(
+        code="WARN-BAR-CATEGORY-TICKS",
+        domain="render",
+        title="Bar category axis draws a tick under every bar",
+        message_template=(
+            "axis_x.ticks.visible is on, so a tick sits under every bar and "
+            "repeats what the bars already mark. Set axis_x.ticks.visible: "
+            "false to turn the ticks off."
+        ),
+        fix_template="Set `axis_x.ticks.visible: false` in the chart's style.",
+        summary="Fired when a vertical bar chart draws a tick under every bar.",
+        doc=(
+            "Fires on a vertical bar chart whose resolved `axis_x.ticks.visible` "
+            "is true, whether authored on the chart, the board, or by the theme. "
+            "The band axis puts one tick under each bar, repeating the position "
+            "the bars already mark. Horizontal bars do not draw category ticks "
+            "and never fire."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_AREA_UNSTACKED_READS_AS_STACKED = REGISTRY.register(
     WarningCode(
         code="WARN-AREA-UNSTACKED-READS-AS-STACKED",
@@ -4054,6 +4134,34 @@ WARN_ANNOTATION_NOTE_MOVED = REGISTRY.register(
             "to say which point it names."
         ),
         summary="Fired when a note's text moves off its point without a connector.",
+        docs_topic="charts",
+    )
+)
+
+WARN_TREND_ON_BARS = REGISTRY.register(
+    WarningCode(
+        code="WARN-TREND-ON-BARS",
+        domain="render",
+        title="Trend fitted over bars",
+        message_template=(
+            "Chart {chart_id!r}: annotation {index} fits a trend to bars. A bar "
+            "encodes length from zero, so a fitted line over it is a weak read "
+            "of the pattern."
+        ),
+        fix_template=(
+            "Draw the column as a line chart (or a line layer) to fit a trend. "
+            "To keep the bars, thin them with style.marks.bar.band_width (e.g. "
+            "0.5) so more of the trend shows between them. If the trend over "
+            "bars is deliberate, add WARN-TREND-ON-BARS to the chart's "
+            "warnings_ignore."
+        ),
+        doc=(
+            "Fired once per `type: trend` annotation that reads a bar mark: an "
+            "unstacked bar, or the `series: total` of a stacked bar. The trend "
+            "still draws. A trend over an area is an error instead, and a "
+            "trend over a line or scatter mark is the intended use."
+        ),
+        summary="Fired when a trend annotation fits a bar mark.",
         docs_topic="charts",
     )
 )

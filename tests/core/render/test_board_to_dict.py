@@ -199,6 +199,7 @@ _OMITTED_FROM_PROJECTION = {
     "layers": "resolved layer carries baked mark styles; no authored counterpart",
     "annotations": "resolved annotations carry baked anchors and styles; no authored counterpart",
     "annotation_gaps": "annotations resolve found no rows for; a warning input, not authored",
+    "annotation_bar_trends": "trends fitting a bar mark; a warning input, not authored",
     # Authored via the style cascade (`style.stack`); chart-root `stack:` is
     # rejected on every authored family, so re-emitting it here would produce
     # something that cannot be authored back.
@@ -253,15 +254,11 @@ _OMITTED_FROM_PROJECTION = {
     "attached_table_gap": "resolved pie attachment geometry",
     "hybrid_heading_gap": "resolved pie heading geometry",
     "slice_label_indices": "resolved pie label row selection",
-    "attached_table": "resolved pie companion table",
-    "attached_row_indices": "resolved pie companion row selection",
+    "labeled_mode": "resolved pie layout the data allows, before the box decides",
+    "hybrid_attachment": "resolved pie hybrid companion table and placement",
+    "full_attachment": "resolved pie full companion table and placement",
+    "is_donut": "resolved from the authored `type: donut`; sizes the pie in the donut slot",
     "presentation_fingerprint": "resolved pie row fingerprint",
-    "attached_table_placement": "resolved pie composition geometry",
-    "attached_table_align": "resolved pie composition geometry",
-    "attached_table_width": "resolved pie composition geometry",
-    "wheel_width": "resolved pie composition geometry",
-    "attached_heading": "resolved pie companion heading",
-    "attached_heading_font": "resolved pie companion heading style",
     "identity_field": "resolved pie wedge identity source (color, else inferred); no authored counterpart",
     # Table internals: the authored surface is `columns`/`rows`/`values`, which
     # are projected; these are the resolved expansions of them.

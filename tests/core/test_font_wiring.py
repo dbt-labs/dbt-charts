@@ -381,6 +381,7 @@ class TestRenderTitleUsesTextStack:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
         assert escape_attr(rs.text.font.family.split(",")[0].strip()) in svg
 
@@ -406,6 +407,7 @@ class TestRenderTitleUsesTitleStack:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
         assert "Poppins" in svg
 
@@ -433,7 +435,7 @@ class TestProseHeadingsUseTitleStack:
         # for this text — not every width does (a small per-word width delta
         # often still fits the same wrap points), so this one is checked, not
         # assumed.
-        width = 320.0
+        width = 250.0
 
         def render_height(title_family: str) -> float:
             patch = StylePatch.model_validate(
@@ -706,6 +708,7 @@ class TestLayoutDimensionStability:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
 
         assert len(re.findall(r'class="md-[0-9a-f]{8}-heading"', svg)) == 1

@@ -145,7 +145,12 @@ pub struct Stroke {
 #[serde(deny_unknown_fields)]
 pub struct RuleStyle {
     pub opacity: f64,
+    /// A stroke color of `auto` is picked from `ladder`.
     pub stroke: Stroke,
+    /// Grays an `auto` stroke and label pick from, canvas end first; empty on a fixed stroke.
+    pub ladder: Vec<String>,
+    /// Gridline colors an `auto` pick keeps clear of.
+    pub avoid: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -386,6 +391,15 @@ impl Annotation {
         let drawn = DRAWN.iter().find(|(kind, _)| *kind == self.kind).map(|(_, marks)| *marks);
         if drawn != Some(self.style.present()) {
             return fail("style marks differ from the marks this type draws");
+        }
+        if let Some(rule) = &self.style.rule {
+            if (rule.stroke.color == "auto") != !rule.ladder.is_empty() {
+                return fail("a rule's gray ladder goes with an `auto` stroke color and no other");
+            }
+        }
+        let auto_rule = self.style.rule.as_ref().is_some_and(|r| r.stroke.color == "auto");
+        if self.style.text.font.color == "auto" && !auto_rule {
+            return fail("an `auto` label color is resolved to its rule's line color");
         }
         if self.kind == Kind::Note && self.style.rect().padding.is_none() {
             return fail("a note's rect style needs a padding");
@@ -660,7 +674,15 @@ pub(crate) mod tests {
             // a mark the type never draws
             (0, Box::new(|v: &mut Value| v["style"]["area"] = serde_json::json!({"opacity": 1, "fill": "red"}))),
             (11, Box::new(|v: &mut Value| v["style"]["rect"] = serde_json::json!({"opacity": 1, "fill": "red", "stroke": null, "padding": null}))),
-            (3, Box::new(|v: &mut Value| v["style"]["rule"] = serde_json::json!({"opacity": 1, "stroke": {"color": "red", "width": 1, "dasharray": null}}))),
+            (3, Box::new(|v: &mut Value| v["style"]["rule"] = serde_json::json!({"opacity": 1, "stroke": {"color": "red", "width": 1, "dasharray": null}, "ladder": [], "avoid": []}))),
+            // an `auto` stroke with no ladder to pick from
+            (0, Box::new(|v: &mut Value| v["style"]["rule"]["ladder"] = serde_json::json!([]))),
+            // a ladder on a fixed stroke
+            (1, Box::new(|v: &mut Value| v["style"]["rule"]["ladder"] = serde_json::json!(["#888888"]))),
+            // an `auto` label that was never resolved to a line color
+            (1, Box::new(|v: &mut Value| v["style"]["text"]["font"]["color"] = "auto".into())),
+            // an `auto` label on a band, which has no rule to take a color from
+            (5, Box::new(|v: &mut Value| v["style"]["text"]["font"]["color"] = "auto".into())),
             (3, Box::new(|v: &mut Value| v["style"]["rect"] = Value::Null)),
             // a note without the rect inset
             (7, Box::new(|v: &mut Value| v["style"]["rect"]["padding"] = Value::Null)),

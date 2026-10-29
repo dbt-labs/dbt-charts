@@ -1,0 +1,3 @@
+kind: Fixes
+body: The theme accent token's schema description now says it colors focus rings only.
+time: 2026-10-27T11:46:52.482266-07:00

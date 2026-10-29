@@ -36,41 +36,70 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label} :",
+  "controls.fiscal_quarter_to_date": "Depuis le début du trimestre fiscal",
+  "controls.fiscal_year_to_date": "Depuis le début de l’exercice fiscal",
   "controls.from": "À partir du {date}",
-  "controls.last_12_months": "12 derniers mois",
-  "controls.last_28_days": "28 derniers jours",
-  "controls.last_7_days": "7 derniers jours",
-  "controls.last_90_days": "90 derniers jours",
   "controls.list_join": ", ",
   "controls.month_to_date": "Depuis le début du mois",
   "controls.next_month": "Mois suivant",
   "controls.no": "Non",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Dernier : {duration}",
+  "controls.preset_previous": "Précédent : {duration}",
   "controls.previous_month": "Mois précédent",
+  "controls.quarter_to_date": "Depuis le début du trimestre",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Rechercher",
   "controls.search_values": "Rechercher des valeurs",
   "controls.sort_ascending": "Tri croissant",
   "controls.sort_descending": "Tri décroissant",
+  "controls.this_fiscal_quarter": "Ce trimestre fiscal",
+  "controls.this_fiscal_year": "Cet exercice fiscal",
+  "controls.this_month": "Ce mois-ci",
+  "controls.this_quarter": "Ce trimestre",
+  "controls.this_week": "Cette semaine",
+  "controls.this_year": "Cette année",
   "controls.today": "Aujourd’hui",
   "controls.until": "Jusqu’au {date}",
+  "controls.week_to_date": "Depuis le début de la semaine",
   "controls.year_to_date": "Depuis le début de l’année",
   "controls.yes": "Oui",
+  "controls.yesterday": "Hier",
   "duration.day": {
     "one": "{n} jour",
     "many": "{n} de jours",
     "other": "{n} jours"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} trimestre fiscal",
+    "many": "{n} de trimestres fiscaux",
+    "other": "{n} trimestres fiscaux"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} exercice fiscal",
+    "many": "{n} d’exercices fiscaux",
+    "other": "{n} exercices fiscaux"
   },
   "duration.month": {
     "one": "{n} mois",
     "many": "{n} de mois",
     "other": "{n} mois"
   },
+  "duration.quarter": {
+    "one": "{n} trimestre",
+    "many": "{n} de trimestres",
+    "other": "{n} trimestres"
+  },
   "duration.week": {
     "one": "{n} semaine",
     "many": "{n} de semaines",
     "other": "{n} semaines"
+  },
+  "duration.year": {
+    "one": "{n} an",
+    "many": "{n} d’ans",
+    "other": "{n} ans"
   },
   "footer.data_as_of": "Données au {date} à {time}",
   "footer.made_with": "réalisé avec {brand}",

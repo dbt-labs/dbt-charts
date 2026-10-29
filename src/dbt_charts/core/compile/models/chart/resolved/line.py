@@ -45,3 +45,7 @@ class ResolvedLineChart(_DateAxisResolvedChartFields, _TooltipResolvedField):
         default=(),
         description="Annotations with a scope that has nothing to draw.",
     )
+    annotation_bar_trends: tuple[int, ...] = Field(
+        default=(),
+        description="Trends that fit a bar mark; a warning input, not authored.",
+    )

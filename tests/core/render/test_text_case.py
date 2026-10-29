@@ -193,6 +193,7 @@ def test_sentence_keeps_leading_dbt_lowercase() -> None:
         ("dbt-labs/dbt-charts", "dbt-labs/dbt-charts"),
         ("pie/donut table", "Pie/Donut Table"),
         ("a/b testing results", "A/B Testing Results"),
+        ("directory /sales now", "Directory /sales Now"),
     ],
 )
 def test_title_slash_words(text: str, expected: str) -> None:

@@ -36,38 +36,63 @@
   "controls.date": "{day}. {month} {year}",
   "controls.date_no_year": "{day}. {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Regnskabskvartal til dato",
+  "controls.fiscal_year_to_date": "Regnskabsår til dato",
   "controls.from": "Fra {date}",
-  "controls.last_12_months": "Seneste 12 måneder",
-  "controls.last_28_days": "Seneste 28 dage",
-  "controls.last_7_days": "Seneste 7 dage",
-  "controls.last_90_days": "Seneste 90 dage",
   "controls.list_join": ", ",
   "controls.month_to_date": "Måned til dato",
   "controls.next_month": "Næste måned",
   "controls.no": "Nej",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Seneste {duration}",
+  "controls.preset_previous": "Forrige {duration}",
   "controls.previous_month": "Forrige måned",
+  "controls.quarter_to_date": "Kvartal til dato",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.search": "Søg",
   "controls.search_values": "Søg i værdier",
   "controls.sort_ascending": "Sortér stigende",
   "controls.sort_descending": "Sortér faldende",
+  "controls.this_fiscal_quarter": "Dette regnskabskvartal",
+  "controls.this_fiscal_year": "Dette regnskabsår",
+  "controls.this_month": "Denne måned",
+  "controls.this_quarter": "Dette kvartal",
+  "controls.this_week": "Denne uge",
+  "controls.this_year": "Dette år",
   "controls.today": "I dag",
   "controls.until": "Til {date}",
+  "controls.week_to_date": "Uge til dato",
   "controls.year_to_date": "År til dato",
   "controls.yes": "Ja",
+  "controls.yesterday": "I går",
   "duration.day": {
     "one": "{n} dag",
     "other": "{n} dage"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} regnskabskvartal",
+    "other": "{n} regnskabskvartaler"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} regnskabsår",
+    "other": "{n} regnskabsår"
   },
   "duration.month": {
     "one": "{n} måned",
     "other": "{n} måneder"
   },
+  "duration.quarter": {
+    "one": "{n} kvartal",
+    "other": "{n} kvartaler"
+  },
   "duration.week": {
     "one": "{n} uge",
     "other": "{n} uger"
+  },
+  "duration.year": {
+    "one": "{n} år",
+    "other": "{n} år"
   },
   "footer.data_as_of": "Data pr. {date} kl. {time}",
   "footer.made_with": "lavet med {brand}",

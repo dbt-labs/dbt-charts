@@ -55,9 +55,21 @@ class TabsStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     bar_height: float = Field(description="Tab bar height in pixels.")
-    border: BorderStyle = Field(description="Tab bar border style.")
+    border: BorderStyle = Field(
+        description=(
+            "Line drawn along the tab bar and around the active tab: stroke width, "
+            "color, and the radius of the active tab's top corners."
+        )
+    )
     font: Annotated[FontStyle, InheritSlot(from_path="Style.font")] = Field(
         default_factory=FontStyle, description="Tab label font style overrides."
+    )
+    min_width: float = Field(description="Minimum tab width in pixels.")
+    max_width: float = Field(
+        description="Maximum tab width in pixels; a longer label is cut with an ellipsis."
+    )
+    padding_x: float = Field(
+        description="Horizontal padding between a tab's edge and its label in pixels."
     )
     active_weight: str = Field(description="Font weight for the active tab label.")
     inactive_weight: str = Field(description="Font weight for inactive tab labels.")

@@ -58,7 +58,7 @@ class TestUnformattedNumericDefault:
     def test_kpi_parts_without_default_keeps_exact_digits(self) -> None:
         # KPI callers pass no default: below-threshold values render exactly
         # (their digit-integrity contract), not SI-compacted.
-        assert format_kpi_parts(131.5, None, _FORMATS) == ("", "131.50", "")
+        assert format_kpi_parts(131.5, None, _FORMATS) == ("", "131.5", "")
 
     def test_explicit_column_format_wins(self) -> None:
         # A set column format overrides the default, unchanged from before.

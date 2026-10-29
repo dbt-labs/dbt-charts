@@ -1,0 +1,3 @@
+kind: Fixes
+body: A bar chart with a date x now links each bar to its own date instead of 0NaN-NaN-NaN.
+time: 2026-10-28T14:54:39.660766-07:00

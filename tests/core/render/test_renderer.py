@@ -21,7 +21,10 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
-from dbt_charts.core.compile.template.daterange import resolve_daterange_preset_iso
+from dbt_charts.core.compile.template.daterange import (
+    BoardClock,
+    resolve_daterange_preset_iso,
+)
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -211,6 +214,31 @@ def test_bar_band_width_warning_uses_narrowest_placement_no_tabs() -> None:
         "detector must not be silenced by also appearing full-width "
         f"elsewhere on the same (non-tabbed) board: {render_result.warnings}"
     )
+
+
+def test_truncated_titles_warn_once_for_a_chart_placed_twice() -> None:
+    """Each placement paints the chart; the narrowest one speaks, once per field."""
+    long_text = (
+        "Connections Timeline Count Connections Observed Across All Categories "
+        "Over The Past Twelve Months"
+    ) * 6
+    yaml = _SHARED_CHART_TWO_WIDTHS_YAML.replace(
+        "    x: cat\n    y: val\n",
+        f"    x: cat\n    y: val\n    title: {long_text}\n    y_label: {long_text}\n",
+        1,
+    )
+    result = compile(yaml)
+    assert result.success and result.board is not None, result.errors
+    executor = _make_executor(result.board, result.query_registry, _category_rows(3))
+
+    render_result = render(result.board, executor, format="svg")
+
+    paths = sorted(
+        str(w.path)
+        for w in render_result.warnings
+        if w.code in {"WARN-AXIS-TITLE-TRUNCATED", "WARN-CHART-TITLE-TRUNCATED"}
+    )
+    assert paths == ["charts.s.title", "charts.s.y_label"]
 
 
 _PER_LAYER_QUERY_YAML = """
@@ -557,7 +585,7 @@ def test_a_preset_reaches_text_as_dates_and_the_control_as_its_id(
 ) -> None:
     now = utc_now()
     svg = _render_with_duckdb(tmp_path, local_project, _BOARD, variables, lambda: now)
-    start, _ = resolve_daterange_preset_iso(preset, now.date())
+    start, _ = resolve_daterange_preset_iso(preset, BoardClock(now.date(), 1, 1))
 
     assert f"From {start}" in svg
     assert "recent" in svg
@@ -606,5 +634,63 @@ def test_a_preset_dates_on_the_board_zone_clock(
 def test_an_unknown_preset_in_a_template_raises_naming_the_presets(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    with pytest.raises(ExecutionError, match="last_90_days"):
-        _render_with_duckdb(tmp_path, local_project, _HIDDEN, {"span": "last_30_dayz"})
+    with pytest.raises(ExecutionError, match="last_<N>_<unit>"):
+        _render_with_duckdb(tmp_path, local_project, _HIDDEN, {"span": "last_week"})
+
+
+# A timestamp column is passed bare; a preset name literal dates on the board clock.
+_LITERAL = """
+queries:
+  q:
+    source: db
+    sql: |
+      SELECT 'hit' AS w FROM (SELECT TIMESTAMP '2026-10-14 15:30:00' AS d) t
+      WHERE {{ filter_date_range('d', 'last_7_days') }}
+charts:
+  c:
+    query: q
+    type: table
+rows:
+  - c
+"""
+
+
+def test_a_preset_name_literal_in_filter_date_range_dates_on_the_board_clock(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    svg = _render_with_duckdb(
+        tmp_path,
+        local_project,
+        _LITERAL,
+        {},
+        clock=lambda: datetime(2026, 10, 20, 12, 0, tzinfo=UTC),
+    )
+    assert "hit" in svg
+
+    stale = _render_with_duckdb(
+        tmp_path,
+        local_project,
+        _LITERAL,
+        {},
+        clock=lambda: datetime(2026, 10, 22, 12, 0, tzinfo=UTC),
+    )
+    assert "hit" not in stale
+
+
+def test_a_preset_name_literal_resolves_when_the_executor_runs_outside_a_render(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    (tmp_path / "dbt_charts.yml").write_text(
+        'sources:\n  db:\n    type: duckdb\n    path: ":memory:"\n'
+    )
+    project = local_project(tmp_path)
+    result = compile(_LITERAL, base_dir=project.directory())
+    assert result.success and result.board is not None, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+        clock=lambda: datetime(2026, 10, 20, 12, 0, tzinfo=UTC),
+    )
+
+    assert executor.execute_query("q") == [{"w": "hit"}]

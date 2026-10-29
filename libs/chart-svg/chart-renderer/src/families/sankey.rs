@@ -319,11 +319,12 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         let _ = write!(
             out,
             "<text x=\"{}\" y=\"{}\" dy=\"0.35em\" text-anchor=\"start\" font-family=\"{}\" \
-             font-size=\"{}\" font-weight=\"{}\" fill=\"{}\">{}",
+             font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\">{}",
             num(x),
             num(y),
             xml_escape_attr(lf.family_or("sans-serif")),
             num(label_size),
+            lf.style_attr(),
             xml_escape_attr(&lf.weight_str()),
             xml_escape_attr(lf.color.as_deref().ok_or("sankey: style.label.font color missing")?),
             xml_escape(&nodes[ni].name),
@@ -331,9 +332,10 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         if show_value {
             let _ = write!(
                 out,
-                "<tspan font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\" fill=\"{}\"> {}</tspan>",
+                "<tspan font-family=\"{}\" font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\"> {}</tspan>",
                 xml_escape_attr(vf.family_or("sans-serif")),
                 num(vf.size_or(label_size)),
+                vf.style_attr(),
                 xml_escape_attr(&vf.weight_str()),
                 xml_escape_attr(vf.color.as_deref().ok_or("sankey: style.value_label.font color missing")?),
                 xml_escape(&fmt(inflow[ni].max(outflow[ni]))?),

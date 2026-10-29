@@ -26,6 +26,7 @@ use super::bind::swatch_color;
 use super::bind::unpadded_cell_text;
 use super::bind::urlencode_plus;
 use super::bind::wants_tabular_font;
+use super::numeral_paint_family;
 use super::sanitize_color;
 use super::svg_font_family;
 use super::BoardFormats;
@@ -83,7 +84,6 @@ use crate::common::css_color;
 use crate::common::Divider;
 use crate::common::Font;
 use crate::common::SUFFIX_GAP;
-use crate::common::TAB_FONT;
 use crate::common::TAB_STYLE;
 use crate::diagnostic::py_str;
 use crate::diagnostic::Diagnostic;
@@ -560,6 +560,19 @@ pub(crate) fn numeric_lane_positions(
     (prefix_x, number_x, suffix_x)
 }
 
+/// The face a cell paints in, so it measures in it: digits and dates in the numeral family.
+fn cell_measure_family<'a>(
+    col: &ColMeta,
+    row: &serde_json::Map<String, Value>,
+    families: &MeasureFonts<'a>,
+) -> &'a str {
+    if wants_tabular_font(col, row.get(col.name.as_str())) {
+        families.numeral
+    } else {
+        families.body
+    }
+}
+
 /// One column's cell demand: p95 of the fully-formatted cell strings +
 /// 2*cell_padding (production measure_column_demands), each cell measured
 /// as `measured_cell_text` with its glyph run composed in front, when the
@@ -569,7 +582,7 @@ pub(super) fn column_demand(
     rows: &[serde_json::Map<String, Value>],
     col: &ColMeta,
     fonts: &FontBook,
-    measure_family: &str,
+    families: &MeasureFonts,
     font_size: f64,
     pad: f64,
 ) -> Result<f64, String> {
@@ -579,12 +592,12 @@ pub(super) fn column_demand(
         .take(measure::SAMPLE_ROWS)
         .map(|(cell, row)| {
             let raw_value = row.get(col.name.as_str()).filter(|v| !v.is_null());
-            cell_text_with_glyph(col, raw_value, &measured_cell_text(cell))
+            let text = cell_text_with_glyph(col, raw_value, &measured_cell_text(cell))?;
+            Ok((text, cell_measure_family(col, row, families)))
         })
-        .collect::<Result<Vec<String>, String>>()?;
+        .collect::<Result<Vec<(String, &str)>, String>>()?;
     Measure { fonts }.column_demand(
-        texts.iter().map(String::as_str),
-        measure_family,
+        texts.iter().map(|(text, family)| (text.as_str(), *family)),
         font_size,
         pad,
     )
@@ -2218,7 +2231,7 @@ impl TableBody<'_> {
                         .quick("font-size", font_size.to_string())
                         .quick("fill", ink)
                         .quick("text-anchor", anchor)
-                        .quick("font-family", TAB_FONT)
+                        .quick("font-family", tab_family)
                         .quick("data-col", "0")
                         .set_if(pool_page_rows.is_some(), "data-dbt-row-number", ""),
                     &(ri + 1).to_string(),
@@ -2942,6 +2955,7 @@ pub(super) fn title_band(
         family: title_family.to_string(),
         color: title_color.to_string(),
         weight: title_weight,
+        style: title_font.style.clone(),
         text_y: title_text_y + shift.title_dy,
         title_lines,
         subtitle_lines,
@@ -2949,6 +2963,7 @@ pub(super) fn title_band(
         subtitle_truncated,
         subtitle_font_size,
         subtitle_family,
+        subtitle_style: subtitle_style.font.style.clone(),
         subtitle_color: subtitle_color.to_string(),
         subtitle_text_y: subtitle_drawn_y,
         area_h: title_area_h + shift.body_dy,
@@ -3011,6 +3026,7 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
                 .quick("x", outer.to_string())
                 .quick("y", float_repr(title_text_y))
                 .quick("font-size", title_font_size.to_string())
+                .quick_some("font-style", band.style.as_deref())
                 .quick("font-weight", title_weight.as_str())
                 .quick("fill", title_color.as_str())
                 .quick("font-family", title_family.as_str())
@@ -3036,6 +3052,7 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
                 Attrs::new()
                     .quick("x", outer.to_string())
                     .quick("font-size", float_repr(subtitle_font_size))
+                    .quick_some("font-style", band.subtitle_style.as_deref())
                     .quick("fill", subtitle_color.as_str())
                     .quick("font-family", subtitle_family.as_str())
                     .quick("data-authored-kind", "subtitle"),
@@ -3279,7 +3296,7 @@ pub(super) fn column_inputs(
         }
         demands.insert(
             col.name.to_string(),
-            column_demand(cells, rows, col, fonts, families.body, font_size, pad)?,
+            column_demand(cells, rows, col, fonts, families, font_size, pad)?,
         );
         // A hidden header paints no label, so it demands no width and sets
         // no floor.
@@ -3308,8 +3325,8 @@ pub(super) fn column_inputs(
         } else {
             0.0
         };
-        for text in &texts {
-            token_w = token_w.max(measure.widest_token(text, families.body, font_size)?);
+        for (text, row) in texts.iter().zip(rows) {
+            token_w = token_w.max(measure.widest_token(text, cell_measure_family(col, row, families), font_size)?);
         }
         // A cell that paints a glyph competes with its own `glyph run +
         // widest token` — the glyph shares a line with the word after it
@@ -3391,11 +3408,7 @@ pub(crate) fn lay_out(
     let body_color = look.body_color.as_str();
     let header_color = look.header_color.as_str();
     let link_color = look.link_color.as_deref();
-    let tab_family_owned = if look.numeral_family.contains("Source Serif") {
-        svg_font_family(&look.numeral_family)
-    } else {
-        look.numeral_family.clone()
-    };
+    let tab_family_owned = numeral_paint_family(&look.numeral_family);
     let tab_family: &str = &tab_family_owned;
     let tones = drawn.board_style.as_ref().and_then(|b| b.tones.as_ref());
     let row_roles = &chart.row_roles;
@@ -3445,7 +3458,7 @@ pub(crate) fn lay_out(
         Measure { fonts }.row_number_column(
             &rn.header,
             n_rows,
-            measure_family,
+            tab_measure_family,
             header_measure_family,
             font_now.trunc(),
             pad,
@@ -3477,6 +3490,7 @@ pub(crate) fn lay_out(
             &MeasureFonts {
                 body: measure_family,
                 header: header_measure_family,
+                numeral: tab_measure_family,
             },
             font_now,
             header_now,
@@ -4915,7 +4929,7 @@ pub fn intrinsic(bound: &Bound, measure: &Measure) -> Result<Option<IntrinsicWid
     let Bound::Rows(rows) = bound else {
         return Ok(None);
     };
-    Ok(natural_width(&rows.chart, measure.fonts)?)
+    Ok(natural_width(&rows.chart, &rows.drawn.look.numeral_family, measure.fonts)?)
 }
 
 /// The height the table takes at `width` with nothing bounding it: the same

@@ -23,6 +23,7 @@ import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.chart.normalized import PieChart
+from dbt_charts.core.compile.models.chart.resolved import ResolvedPieChart
 from dbt_charts.core.compile.models.primitives import (
     FormatConfig,
     StaticGradientColorStyle,
@@ -30,11 +31,9 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.chart.pie_attachment import (
     choose_table_placement,
-    classify_arc_render_mode,
     resolve_hybrid_heading_font,
 )
 from dbt_charts.core.compile.resolve.style.board import (
-    resolve_chart_style_context,
     resolve_style_and_context,
 )
 from dbt_charts.core.constants.pie import (
@@ -44,10 +43,10 @@ from dbt_charts.core.constants.pie import (
     RIGHT_PLACEMENT_MIN_WIDTH_FRACTION,
     RIGHT_PLACEMENT_MIN_WIDTH_PX,
     WEDGE_LABEL_MIN_SHARE,
-    WHEEL_DOMINANCE_MIN_RATIO,
 )
 from dbt_charts.core.render.chart.vega_lite import render_chart, render_resolved_chart
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.pie_layout import sized_pie_mode
 from dbt_charts.core.render.svg_utils import escape_attr
 
 from ..._engine_render import render_pie_svg
@@ -78,118 +77,90 @@ def _shares(*pcts: float) -> list[float]:
     return [p / total for p in pcts]
 
 
-def _default_label_style() -> tuple[str, float, float]:
-    """Return (font_family, font_size, label_offset) from the default theme's
-    pie slice-label style — the same values the real render dispatch reads."""
-    labels = resolve_chart_style_context(get_theme_style()).pie.marks.slice.labels
-    assert labels.font.family is not None
-    assert labels.font.size is not None
-    return labels.font.family, labels.font.size, labels.offset
-
-
-def _labeled_lines(shares: list[float], names: list[str]) -> list[str]:
-    """Build one label line per visible (share above wedge_label_min_share) slice,
-    mirroring the "{pct}% {name}" default template shape."""
-    threshold = WEDGE_LABEL_MIN_SHARE
-    return [
-        f"{round(s * 100)}% {n}"
-        for s, n in zip(shares, names, strict=True)
-        if s > threshold
-    ]
-
-
-def test_empty_shares_returns_direct():
-    """Empty shares list (zero-total data) returns "direct" so the dispatch
-    misses and the standard renderer handles the placeholder case."""
-    font_family, font_size, offset = _default_label_style()
-    assert (
-        classify_arc_render_mode([], [], font_family, font_size, offset, 600.0)
-        == "direct"
+def _modes(pcts: list[float], names: list[str], width: float) -> tuple[str, str]:
+    """``(labeled_mode, sized mode)`` of a pie of these slices in a card
+    ``width`` wide: what the data allows and what the box decides."""
+    rows = [{"n": n, "v": p} for n, p in zip(names, pcts, strict=True)]
+    board_style, context = resolve_style_and_context(get_theme_style())
+    resolved = resolve(
+        PieChart(id="p", type="pie", theta="v", color="n"),
+        rows,
+        chart_style_context=context,
+        width=width,
     )
+    assert isinstance(resolved, ResolvedPieChart)
+    return resolved.labeled_mode, sized_pie_mode(resolved, rows, board_style)
 
 
-def test_all_slices_below_label_floor_is_full_table():
-    """Degenerate case: every slice is at or under the 8% label floor, so no
-    direct label would render at all. Falls back to the full table (nothing
-    to keep on the wheel)."""
-    font_family, font_size, offset = _default_label_style()
-    shares = _shares(*([7.7] * 13))
-    assert (
-        classify_arc_render_mode(shares, [], font_family, font_size, offset, 600.0)
-        == "full_table"
-    )
+_EIGHT_NAMES = [
+    "Enterprise",
+    "Mid-Market",
+    "SMB",
+    "Self-serve",
+    "Channel",
+    "Partners",
+    "Education",
+    "Healthcare",
+]
+
+
+def test_slice_labels_that_clear_the_label_floor_are_offered_before_any_box_is_known():
+    assert _modes([35, 25, 20, 12, 8], list("ABCDE"), 600.0)[0] == "direct"
+
+
+def test_all_slices_below_label_floor_offers_no_labels():
+    """Every slice at or under the 8% floor: nothing would render a direct
+    label, so only the full table is on offer."""
+    labeled, mode = _modes([1.0] * 13, [f"S{i}" for i in range(13)], 600.0)
+    assert (labeled, mode) == ("none", "full_table")
 
 
 def test_wheel_dominant_five_slice_is_direct():
-    """A clean 5-slice pie at the 600px default keeps direct labels — the
-    dominance ratio stays comfortably above threshold.
-
-    Committed calibration point (the ceiling-based trigger this replaces
-    used to table this exact shape at 600px; the wheel-dominance measure
-    correctly keeps it labeled).
-    """
-    font_family, font_size, offset = _default_label_style()
+    """A clean 5-slice pie at the 600px default keeps direct labels: the
+    solved wheel keeps well over the dominance ratio of the label-free one."""
     names = ["North America", "Europe", "Asia Pacific", "Latin America", "Other"]
-    shares = _shares(35, 25, 20, 12, 8)
-    label_lines = _labeled_lines(shares, names)
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 600.0
-        )
-        == "direct"
-    )
+    assert _modes([35, 25, 20, 12, 8], names, 600.0) == ("direct", "direct")
 
 
 def test_starved_narrow_width_is_full_table():
-    """8 equal long-named slices at 300px starve the wheel below T=0.6.
-
-    Committed calibration point locked with RJ.
-    """
-    font_family, font_size, offset = _default_label_style()
-    names = [
-        "Enterprise",
-        "Mid-Market",
-        "SMB",
-        "Self-serve",
-        "Channel",
-        "Partners",
-        "Education",
-        "Healthcare",
-    ]
-    shares = _shares(*([1.0] * 8))
-    label_lines = _labeled_lines(shares, names)
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 300.0
-        )
-        == "full_table"
-    )
+    """8 equal long-named slices at 300px starve the wheel below T=0.6."""
+    assert _modes([1.0] * 8, _EIGHT_NAMES, 300.0) == ("direct", "full_table")
 
 
 def test_wider_width_same_data_is_direct():
-    """The same 8 equal long-named slices at 440px clear T=0.6 — the extra
-    100px is enough for labels to stop starving the wheel.
+    """The same 8 equal long-named slices clear T=0.6 once the card is wide
+    enough that the labels stop starving the wheel. The flip sits between 440px
+    and 500px, where each side's own widest label leaves the wheel its share."""
+    assert _modes([1.0] * 8, _EIGHT_NAMES, 440.0)[1] == "full_table"
+    assert _modes([1.0] * 8, _EIGHT_NAMES, 500.0) == ("direct", "direct")
 
-    Committed calibration point locked with RJ.
-    """
-    font_family, font_size, offset = _default_label_style()
-    names = [
-        "Enterprise",
-        "Mid-Market",
-        "SMB",
-        "Self-serve",
-        "Channel",
-        "Partners",
-        "Education",
-        "Healthcare",
-    ]
-    shares = _shares(*([1.0] * 8))
-    label_lines = _labeled_lines(shares, names)
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 440.0
-        )
-        == "direct"
+
+def test_each_side_reserves_only_its_own_widest_label():
+    """The widest label sits on the left; the right side reserves only for its
+    own, narrower one, so the wheel keeps its direct labels (Farmers' markets
+    at 563px)."""
+    names = ["Wholesale", "Grocers", "Juice and cider", "Farmers' markets", "Rest"]
+    assert _modes([24587, 16801, 9115, 8702, 3880], names, 563.0) == (
+        "direct",
+        "direct",
+    )
+
+
+def test_a_starved_side_still_goes_to_the_table():
+    """A single side whose labels consume the card still sends the chart to the
+    table."""
+    names = ["Wholesale", "Very long channel name " * 4]
+    assert _modes([50, 50], names, 563.0)[1] == "full_table"
+
+
+def test_a_hybrid_wheel_squeezed_beside_its_table_still_goes_to_the_table():
+    """The dominance floor reads the bare wheel in the whole card, so a hybrid
+    wheel that only matches its own narrow wheel box does not stand (the
+    legend-position-pie hybrid / narrow card)."""
+    names = ["Enterprise", "Mid-Market", "SMB", "Self-serve", "Partner", "Other"]
+    assert _modes([40, 30, 20, 8, 1.5, 0.5], names, 342.67) == (
+        "hybrid",
+        "full_table",
     )
 
 
@@ -204,25 +175,16 @@ def test_invisible_slice_threshold_config_is_two_percent() -> None:
     assert INVISIBLE_SLICE_SHARE == 0.02
 
 
-def test_wheel_dominance_min_ratio_config_is_point_six() -> None:
-    """Pin T=0.6, locked with RJ against the calibration sweep."""
-    assert WHEEL_DOMINANCE_MIN_RATIO == 0.6
-
-
 def test_threshold_boundary_is_strictly_greater():
     """Slices at exactly 8% are suppressed (count as NOT visible). The
     rule is "share > 8%", not "share >= 8%"."""
-    font_family, font_size, offset = _default_label_style()
     # Only the 68% wedge qualifies as visible (>8%); the rest sit at exactly
     # 8% and are suppressed. A single dominant label leaves the wheel intact.
-    shares = [0.68, 0.08, 0.08, 0.08, 0.08]
-    label_lines = ["68% Big"]
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 700.0
-        )
-        == "direct"
+    assert _modes([68, 8, 8, 8, 8], ["Big", "A", "B", "C", "D"], 700.0) == (
+        "direct",
+        "direct",
     )
+    assert _modes([8.0] * 12 + [4.0], [f"S{i}" for i in range(13)], 700.0)[0] == "none"
 
 
 # --------------------------------------------------------------------------
@@ -233,45 +195,27 @@ def test_threshold_boundary_is_strictly_greater():
 def test_worked_case_single_six_percent_slice_is_direct():
     """One 6% slice, no sub-2% tail: stays direct — the 6% wedge renders
     unlabeled on the wheel (hover only), no table at all."""
-    font_family, font_size, offset = _default_label_style()
-    names = ["Big", "Rest", "Small"]
-    shares = _shares(70, 24, 6)
-    label_lines = _labeled_lines(shares, names)
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 600.0
-        )
-        == "direct"
+    assert _modes([70, 24, 6], ["Big", "Rest", "Small"], 600.0) == (
+        "direct",
+        "direct",
     )
 
 
 def test_worked_case_single_one_percent_slice_is_hybrid():
     """One 1% slice: hybrid — the >8% wedges keep their direct labels, the
     1% is listed in the attached table."""
-    font_family, font_size, offset = _default_label_style()
-    names = ["Big", "Rest", "Tiny"]
-    shares = _shares(70, 29, 1)
-    label_lines = _labeled_lines(shares, names)
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 600.0
-        )
-        == "hybrid"
+    assert _modes([70, 29, 1], ["Big", "Rest", "Tiny"], 600.0) == (
+        "hybrid",
+        "hybrid",
     )
 
 
 def test_worked_case_six_and_one_percent_slices_is_hybrid():
     """A 6% AND a 1% slice: hybrid — both are <= 8% so both land in the
     table; the >8% wedges stay labeled on the wheel."""
-    font_family, font_size, offset = _default_label_style()
-    names = ["Big", "Rest", "Small", "Tiny"]
-    shares = _shares(63, 30, 6, 1)
-    label_lines = _labeled_lines(shares, names)
-    assert (
-        classify_arc_render_mode(
-            shares, label_lines, font_family, font_size, offset, 600.0
-        )
-        == "hybrid"
+    assert _modes([63, 30, 6, 1], ["Big", "Rest", "Small", "Tiny"], 600.0) == (
+        "hybrid",
+        "hybrid",
     )
 
 
@@ -565,19 +509,20 @@ def test_full_table_two_row_donut_has_no_stripe(make_chart):
     ]
     rs, ctx = resolve_style_and_context(get_theme_style())
 
-    # Positive control. This fixture reaches full_table by clearing a MEASURED
-    # label-width threshold, so a font-metric refresh could flip it to `direct`
-    # -- no table built, no rects emitted, and the stripe assertion below would
-    # pass green while checking nothing. Assert on the resolved model, which is
-    # the brittleness-free half: the opt-out itself, not its rendered absence.
-    resolved = resolve(chart, data, chart_style_context=ctx)
-    assert resolved.attached_table is not None, (
+    # Positive control. This fixture reaches full_table by the solved wheel
+    # falling under the dominance ratio at this width, so a font-metric refresh
+    # could flip it to `direct` -- no table drawn, no rects emitted, and the
+    # stripe assertion below would pass green while checking nothing.
+    resolved = resolve(chart, data, chart_style_context=ctx, width=500.0)
+    assert isinstance(resolved, ResolvedPieChart)
+    assert sized_pie_mode(resolved, data, rs) == "full_table", (
         "Fixture no longer reaches full_table mode -- the stripe assertion "
         "below would be vacuous. Re-tune the fixture, don't delete this."
     )
-    assert resolved.attached_table.style.table.row.stripe.color is None
+    assert resolved.full_attachment is not None
+    assert resolved.full_attachment.table.style.table.row.stripe.color is None
 
-    svg = render_chart(chart, rs, ctx, data, format="svg", width=600.0)
+    svg = render_chart(chart, rs, ctx, data, format="svg", width=500.0)
 
     row_h = get_theme_style().charts.table.row.height
     stripe_like = [

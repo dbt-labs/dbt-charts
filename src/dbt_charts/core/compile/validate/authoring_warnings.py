@@ -12,6 +12,7 @@ from dbt_charts.core.compile.models.primitives import LanguageCode
 from dbt_charts.core.compile.restated import restated_diagnostic
 from dbt_charts.core.diagnostics import (
     WARN_FLAT_COLS_UNSIZED_OVERFLOW,
+    WARN_HEADING_MARGIN_REDEFINED,
     WARN_HEADING_TRAILING_PERIOD,
     WARN_LABEL_TITLE_CASE,
     WARN_RESTATED_INFERRED,
@@ -69,6 +70,7 @@ def detect_authoring_warnings(
     with language_scope(language):
         _walk_board_like_mapping(raw, chart_types, [], warnings, inherited_source)
     _walk_casing(raw, [], warnings)
+    _walk_heading_margins(raw, [], warnings)
     return warnings
 
 
@@ -168,6 +170,58 @@ def _walk_casing(node: YamlValue, path: list[str], warnings: list[Diagnostic]) -
                 )
             )
         _walk_casing(value, child_path, warnings)
+
+
+_HEADING_MARGIN_MEANING = {
+    "margin_top": "it sets the space above H1 and H2 only; H3 to H6 take the paragraph gap.",
+    "margin_bottom": (
+        "it sets the space below H2 to H6 only; H1 takes the paragraph gap, and "
+        "board and section titles take their gap below from style.text.paragraph."
+    ),
+}
+
+
+def heading_margin_diagnostic(
+    key: str, path: str, source: str | None = None
+) -> Diagnostic:
+    """WARN-HEADING-MARGIN-REDEFINED for an authored ``style.text.heading`` *key*.
+
+    *source* names the meta.yml or ``extends:`` file that authored it, when it is
+    not the board itself.
+    """
+    message = WARN_HEADING_MARGIN_REDEFINED.message_template.format(
+        key=key, meaning=_HEADING_MARGIN_MEANING[key]
+    )
+    return Diagnostic.from_code(
+        WARN_HEADING_MARGIN_REDEFINED,
+        path=path if source is None else None,
+        message=message if source is None else f"{source}: {message}",
+        fix=WARN_HEADING_MARGIN_REDEFINED.fix_template,
+        fields={"key": key, "meaning": _HEADING_MARGIN_MEANING[key]},
+    )
+
+
+def _walk_heading_margins(
+    node: YamlValue, path: list[str], warnings: list[Diagnostic]
+) -> None:
+    """Flag an authored ``style.text.heading`` margin, whose meaning moved in place.
+
+    Query data is skipped; any board's own ``style`` block is checked, nested
+    boards included.
+    """
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _walk_heading_margins(item, [*path, str(index)], warnings)
+        return
+    if not isinstance(node, dict):
+        return
+    for key, value in node.items():
+        if key in _DATA_KEYS:
+            continue
+        child_path = [*path, str(key)]
+        if path[-3:] == ["style", "text", "heading"] and key in _HEADING_MARGIN_MEANING:
+            warnings.append(heading_margin_diagnostic(key, ".".join(child_path)))
+        _walk_heading_margins(value, child_path, warnings)
 
 
 def _collect_chart_types(node: YamlValue, out: dict[str, str]) -> None:

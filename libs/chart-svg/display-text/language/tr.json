@@ -36,38 +36,63 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Mali çeyrek başından bugüne",
+  "controls.fiscal_year_to_date": "Mali yıl başından bugüne",
   "controls.from": "{date} tarihinden itibaren",
-  "controls.last_12_months": "Son 12 ay",
-  "controls.last_28_days": "Son 28 gün",
-  "controls.last_7_days": "Son 7 gün",
-  "controls.last_90_days": "Son 90 gün",
   "controls.list_join": ", ",
   "controls.month_to_date": "Ay başından bugüne",
   "controls.next_month": "Sonraki ay",
   "controls.no": "Hayır",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Son {duration}",
+  "controls.preset_previous": "Önceki {duration}",
   "controls.previous_month": "Önceki ay",
+  "controls.quarter_to_date": "Çeyrek başından bugüne",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Ara",
   "controls.search_values": "Değerlerde ara",
   "controls.sort_ascending": "Artan sırala",
   "controls.sort_descending": "Azalan sırala",
+  "controls.this_fiscal_quarter": "Bu mali çeyrek",
+  "controls.this_fiscal_year": "Bu mali yıl",
+  "controls.this_month": "Bu ay",
+  "controls.this_quarter": "Bu çeyrek",
+  "controls.this_week": "Bu hafta",
+  "controls.this_year": "Bu yıl",
   "controls.today": "Bugün",
   "controls.until": "{date} tarihine kadar",
+  "controls.week_to_date": "Hafta başından bugüne",
   "controls.year_to_date": "Yıl başından bugüne",
   "controls.yes": "Evet",
+  "controls.yesterday": "Dün",
   "duration.day": {
     "one": "{n} gün",
     "other": "{n} gün"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} mali çeyrek",
+    "other": "{n} mali çeyrek"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} mali yıl",
+    "other": "{n} mali yıl"
   },
   "duration.month": {
     "one": "{n} ay",
     "other": "{n} ay"
   },
+  "duration.quarter": {
+    "one": "{n} çeyrek",
+    "other": "{n} çeyrek"
+  },
   "duration.week": {
     "one": "{n} hafta",
     "other": "{n} hafta"
+  },
+  "duration.year": {
+    "one": "{n} yıl",
+    "other": "{n} yıl"
   },
   "footer.data_as_of": "Veriler: {date}, {time}",
   "footer.made_with": "{brand} ile oluşturuldu",

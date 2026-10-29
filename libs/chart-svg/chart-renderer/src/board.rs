@@ -143,6 +143,10 @@ pub struct BoardPayload {
     /// render report sidecar (item a).
     #[serde(skip)]
     pub report: RefCell<Vec<ChartStatusEntry>>,
+    /// Each placed pie's mode, decided once (`sizing::PieModes`) and read by the
+    /// size stage and the draw alike.
+    #[serde(skip)]
+    pub pie_modes: sizing::PieModes,
     /// The italic fonts markdown emphasis consumed while painting: a paint site
     /// records into it (`embed_fonts::record_painted_italics`) and `--embed-fonts`
     /// reads it back after `render_board` returns. Never read from the payload
@@ -461,6 +465,9 @@ struct TabsStyleDoc {
     bar_height: f64,
     border: BorderStyleDoc,
     font: TabsFontDoc,
+    min_width: f64,
+    max_width: f64,
+    padding_x: f64,
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
@@ -490,6 +497,7 @@ struct FontSizeOnlyDoc {
 
 #[derive(Deserialize)]
 struct TabsFontDoc {
+    family: String,
     size: f64,
     case: String,
 }
@@ -982,6 +990,13 @@ fn dedupe_repeated_style_rules(svg: &str) -> String {
     result
 }
 
+const NO_PADDING: Padding = Padding {
+    left: 0.0,
+    right: 0.0,
+    top: 0.0,
+    bottom: 0.0,
+};
+
 pub(crate) fn selection_boxes(
     outer_width: f64,
     outer_height: f64,
@@ -1026,7 +1041,7 @@ pub(crate) fn padded_authoring_content(
 }
 
 /// `_ink_carries_padding` (`chart/rendering.py:585-602`): `chart.chart_type
-/// in PAINTS_MARKS`, false for a pie with an attached table (the composed
+/// in PAINTS_MARKS`, false for a pie sized to an attached table (the composed
 /// canvas carries the padding on its wheel child, not as a whole) and false
 /// for `callout` — its card `render_svg_family` returns full-bleed at 0,0
 /// with the padding never applied, so claiming an inset here puts the
@@ -1036,12 +1051,13 @@ pub(crate) fn padded_authoring_content(
 /// branch. Every OTHER type reaching here paints marks (bar/line/area/
 /// scatter/heatmap/pie/histogram/geoshape; `point_map` already refused at
 /// `render()` itself), so this function names only the two exceptions.
-fn ink_carries_padding(chart_json: &Value, chart_type: &str) -> bool {
+fn ink_carries_padding(chart_type: &str, pie_mode: Option<crate::families::pie::Mode>) -> bool {
     if chart_type == "pie" {
-        let has_attached_table = chart_json
-            .get("attached_table")
-            .is_some_and(|v| !v.is_null());
-        return !has_attached_table;
+        // A pie the size stage could not decide paints an error card, never a table.
+        return !matches!(
+            pie_mode,
+            Some(crate::families::pie::Mode::Hybrid | crate::families::pie::Mode::FullTable)
+        );
     }
     chart_type != "callout"
 }
@@ -1258,6 +1274,7 @@ fn wrap_chart_svg(
     outer_width: f64,
     padding: &Padding,
     card: &CardChrome,
+    pie_mode: Option<crate::families::pie::Mode>,
 ) -> Result<(String, f64), String> {
     let id = chart_json
         .get("id")
@@ -1304,7 +1321,7 @@ fn wrap_chart_svg(
             dims_height + px(padding.top) + px(padding.bottom),
         )
     } else {
-        let ink_inset = if ink_carries_padding(chart_json, chart_type) {
+        let ink_inset = if ink_carries_padding(chart_type, pie_mode) {
             *padding
         } else {
             Padding {
@@ -1489,10 +1506,11 @@ struct RenderChrome<'a> {
     /// recursive tree (`_vertical_inset`'s own `card_padding` closure
     /// capture) — a genuine, deliberate production asymmetry between the
     /// sizing pass (always root's) and the render pass (each board's own).
-    /// `render_chart_item` never reads this field itself (only `slot_dims`'
-    /// `card_pad` does); it exists solely to thread the correct value into
-    /// each nested `SizingCtx.card_padding` a board item's own recursion
-    /// builds (`render_nested_board`/`nested_board_total_height`).
+    /// `render_chart_item` reads it for the padding a non-SVG chart's ink is
+    /// drawn in (`spec_padding`) and for the natural-height estimate; it is also
+    /// threaded into each nested `SizingCtx.card_padding` a board item's own
+    /// recursion builds (`render_nested_board`/`nested_board_total_height`). A
+    /// pie's MODE is not decided here: it is decided in the scope's `card_pad`.
     root_card_padding: f64,
     /// `layouts.py::render_details_summary`'s own theme-constant reads,
     /// resolved once per level from THIS layout's own `resolved_style` —
@@ -1595,16 +1613,19 @@ fn details_chrome_from_style(style: &StyleDoc) -> DetailsChrome {
 #[derive(Clone)]
 struct TabsChrome {
     bar_height: f64,
+    min_width: f64,
+    max_width: f64,
+    padding_x: f64,
     border_color: String,
     border_width: f64,
+    border_radius: f64,
     border_dash_attrs: String,
+    font_family: String,
     font_size: f64,
     font_case: String,
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
-    active_fill: Option<String>,
-    inactive_fill: Option<String>,
     /// `resolved_style.title.font.color` (active tab) — same literal-`None`
     /// caveat as `DetailsChrome::title_font_color`.
     active_font_color: String,
@@ -1616,24 +1637,23 @@ fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
     let tabs = &style.layout.tabs;
     TabsChrome {
         bar_height: tabs.bar_height,
-        // Same mixed-source stroke read as `DetailsChrome` — see its own
-        // doc. A tab rect never carries a corner radius at all (no `rx=`
-        // attribute in production's own `_tab_rect` markup, unlike a
-        // details summary rect), so `tabs.border.radius` is never read.
-        border_color: style.border.color.clone(),
+        min_width: tabs.min_width,
+        max_width: tabs.max_width,
+        padding_x: tabs.padding_x,
+        border_color: tabs.border.color.clone(),
         border_width: tabs.border.width,
+        border_radius: tabs.border.radius,
         border_dash_attrs: crate::common::border_dash_attrs(
             tabs.border.dash_array.as_deref(),
             tabs.border.line_cap.as_deref(),
             tabs.border.dash_offset,
         ),
+        font_family: tabs.font.family.clone(),
         font_size: tabs.font.size,
         font_case: tabs.font.case.clone(),
         active_weight: tabs.active_weight.clone(),
         inactive_weight: tabs.inactive_weight.clone(),
         title_baseline_offset: tabs.title_baseline_offset,
-        active_fill: style.chart_defaults.table.header.background.clone(),
-        inactive_fill: style.chart_defaults.table.row.stripe.as_ref().map(|s| s.color.clone()),
         active_font_color: style
             .title
             .font
@@ -2058,6 +2078,8 @@ fn render_error_card_svg(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        pie_mode: None,
+        board_composed: false,
         authored_height: None,
     };
     crate::families::callout::render(&placard, fonts).map_err(|e| e.to_string())
@@ -2314,6 +2336,29 @@ fn render_chart_item(
         p
     };
 
+    // A pie's mode is the size stage's, decided once in the scope's card box
+    // (production's `pie_box` reads the owning board's style) and read here; it
+    // is drawn in the root's padding, a difference the starve warning reports.
+    // A pie the size stage could not decide paints its error card below, and
+    // is never decided again.
+    let pie_decision = if chart_type == "pie" {
+        Some(payload.pie_modes.decide(
+            chart_json,
+            item_box.width,
+            card_pad,
+            &payload.chart_datasets,
+            &payload.chart_defaults,
+            &payload.board_style,
+            payload.fonts_dir.clone(),
+            fonts,
+        )?)
+    } else {
+        None
+    };
+    let pie_mode = match &pie_decision {
+        Some(sizing::PieDecision::Mode(mode)) => Some(*mode),
+        _ => None,
+    };
     let chart_payload = Payload {
         cell_text: Vec::new(),
         // The composer sizes no custom chart (`sizing`), so no template runs here.
@@ -2351,6 +2396,8 @@ fn render_chart_item(
         interactive_controls: Default::default(),
         link_context: None,
         is_placeholder: false,
+        pie_mode: pie_mode.map(|mode| mode.name().to_string()),
+        board_composed: true,
         authored_height: item.authored_height,
         measuring: fresh_render.contains(chart_id),
     };
@@ -2379,7 +2426,11 @@ fn render_chart_item(
     } else {
         None
     };
-    let chart_svg = match render_fitted_natural(natural_payload.as_ref().unwrap_or(&chart_payload), &chart_payload, fonts) {
+    let rendered = match &pie_decision {
+        Some(sizing::PieDecision::Undecidable(why)) => Err(why.clone()),
+        _ => render_fitted_natural(natural_payload.as_ref().unwrap_or(&chart_payload), &chart_payload, fonts),
+    };
+    let chart_svg = match rendered {
         Ok(output) => {
             payload.report.borrow_mut().push(ChartStatusEntry {
                 chart_id: chart_id.to_string(),
@@ -2473,6 +2524,7 @@ fn render_chart_item(
             item_box.width,
             &padding,
             &chrome.card_style,
+            pie_mode,
         )?;
 
     let svg = match item.notes.as_deref() {
@@ -2666,6 +2718,26 @@ fn render_grid(
     Ok((format!("{bg}\n{rendered}"), max_bottom_edge))
 }
 
+/// `label`, or its longest prefix that fits `room` once "…" is appended.
+fn fit_label(
+    label: &str,
+    measure: &impl Fn(&str) -> Result<f64, String>,
+    room: f64,
+) -> Result<String, String> {
+    if measure(label)? <= room {
+        return Ok(label.to_string());
+    }
+    let chars: Vec<char> = label.chars().collect();
+    for keep in (0..=chars.len()).rev() {
+        let head: String = chars[..keep].iter().collect();
+        let cut = format!("{}…", head.trim_end());
+        if measure(&cut)? <= room {
+            return Ok(cut);
+        }
+    }
+    Ok("…".to_string())
+}
+
 /// `layouts.py::render_tabs_layout`: renders ONLY the active tab's own
 /// content (every OTHER tab's box is uniform but never rendered — see
 /// `sizing::calculate_tabs_boxes`'s own doc), plus the tab bar (one rect +
@@ -2750,42 +2822,96 @@ fn render_tabs_layout(
     } else {
         (0..n).map(|idx| format!("tab_{idx}")).collect()
     };
-    let tab_width = available_width / titles.len() as f64;
-
-    let mut tab_bar_parts = Vec::with_capacity(n);
+    // Every label is measured at the active weight so the bar does not shift
+    // when the selection moves.
+    let measure_weight: f32 = tabs
+        .active_weight
+        .parse()
+        .map_err(|_| format!("layout.tabs.active_weight {:?} is not numeric", tabs.active_weight))?;
+    let measure = |text: &str| {
+        fonts.measure_at_weight(text, &tabs.font_family, tabs.font_size, Some(measure_weight))
+    };
+    let label_room = tabs.max_width - 2.0 * tabs.padding_x;
+    let mut tab_bar_parts = Vec::with_capacity(n + 1);
+    let mut tab_x = 0.0;
+    let mut active_span = (0.0, 0.0);
     for (idx, (title, slug)) in titles.iter().zip(&slugs).enumerate() {
         let is_active = idx == active_index;
-        let x = idx as f64 * tab_width;
-        let weight = if is_active { &tabs.active_weight } else { &tabs.inactive_weight };
-        let fill = if is_active { &tabs.active_fill } else { &tabs.inactive_fill };
-        let fill_attr = fill.as_deref().unwrap_or("none");
-        let text_fill = if is_active { &tabs.active_font_color } else { &tabs.inactive_font_color };
-        let tab_rect = format!(
-            r#"<rect x="{}" y="0" width="{}" height="{}" fill="{fill_attr}" stroke="{}" stroke-width="{}"{}/>"#,
-            py_float_str(x),
-            py_float_str(tab_width),
-            py_float_str(tabs.bar_height),
-            xml_escape_attr(&tabs.border_color),
-            py_float_str(tabs.border_width),
-            tabs.border_dash_attrs, fill_attr = xml_escape_attr(fill_attr),
-        );
-        let tab_svg = format!(
-            r#"{tab_rect}<text x="{}" y="{}" text-anchor="middle" font-size="{}" fill="{text_fill}" font-weight="{weight}">{}</text>"#,
-            py_float_str(x + tab_width / 2.0),
-            py_float_str(tabs.bar_height / 2.0 + tabs.title_baseline_offset),
-            py_float_str(tabs.font_size),
-            html_escape(&display_text::case::apply_case(title, &tabs.font_case)?), text_fill = xml_escape_attr(text_fill), weight = xml_escape_attr(weight),
-        );
-        if let Some(tab_variable) = layout.tab_variable.as_deref() {
-            if !is_active {
-                let href = build_toggle_url(&payload.variable_values, tab_variable, slug);
-                tab_bar_parts.push(format!(r#"<a href="{}">{tab_svg}</a>"#, xml_escape_attr(&href)));
-                continue;
-            }
+        let label = display_text::case::apply_case(title, &tabs.font_case)?;
+        let shown = fit_label(&label, &measure, label_room)?;
+        // Whole pixels absorb the sub-pixel gap between the two engines' text
+        // measurers.
+        let tab_width = (measure(&label)? + 2.0 * tabs.padding_x)
+            .ceil()
+            .max(tabs.min_width)
+            .min(tabs.max_width);
+        if is_active {
+            active_span = (tab_x, tab_x + tab_width);
         }
-        tab_bar_parts.push(tab_svg);
+        let weight = if is_active { &tabs.active_weight } else { &tabs.inactive_weight };
+        let text_fill = if is_active { &tabs.active_font_color } else { &tabs.inactive_font_color };
+        let tooltip = if shown != label {
+            format!("<title>{}</title>", html_escape(&label))
+        } else {
+            String::new()
+        };
+        // The boxes fill the whole cell, so it is hit-testable and has an outline to mark.
+        let boxes = selection_boxes(tab_width, tabs.bar_height, &NO_PADDING, None);
+        let tab_svg = format!(
+            r#"{tooltip}{boxes}<text x="{}" y="{}" text-anchor="middle" font-family="{}" font-size="{}" fill="{}" font-weight="{}">{}</text>"#,
+            py_float_str(tab_width / 2.0),
+            py_float_str(tabs.bar_height / 2.0 + tabs.title_baseline_offset),
+            xml_escape_attr(&tabs.font_family),
+            py_float_str(tabs.font_size),
+            xml_escape_attr(text_fill),
+            xml_escape_attr(weight),
+            html_escape(&shown),
+        );
+        let mut attrs = format!(
+            r#"role="tab" aria-selected="{is_active}" transform="translate({}, 0)""#,
+            py_float_str(tab_x)
+        );
+        // A tab label is its pane's title, so it carries that key's own path.
+        let source_path = &layout.items[idx].source_path;
+        if !source_path.is_empty() {
+            attrs.push_str(&title::authored_attrs(&format!("{source_path}.title"), "title"));
+        }
+        match layout.tab_variable.as_deref() {
+            Some(tab_variable) if !is_active => {
+                let href = build_toggle_url(&payload.variable_values, tab_variable, slug);
+                tab_bar_parts.push(format!(r#"<a href="{}" {attrs}>{tab_svg}</a>"#, xml_escape_attr(&href)));
+            }
+            _ => tab_bar_parts.push(format!("<g {attrs}>{tab_svg}</g>")),
+        }
+        tab_x += tab_width;
     }
-    let tab_bar_svg = tab_bar_parts.join("\n");
+
+    let stroke = tabs.border_width;
+    let baseline_y = tabs.bar_height - stroke / 2.0;
+    let top_y = stroke / 2.0;
+    let left = active_span.0 + stroke / 2.0;
+    let right = active_span.1 - stroke / 2.0;
+    let radius = tabs.border_radius.min((right - left) / 2.0).min(baseline_y - top_y);
+    let line_end = available_width.max(tab_x);
+    let f = py_float_str;
+    let rule = format!(
+        r#"<path d="M 0 {} H {} V {} A {r} {r} 0 0 1 {} {} H {} A {r} {r} 0 0 1 {} {} V {} H {}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round"{}/>"#,
+        f(baseline_y),
+        f(left),
+        f(top_y + radius),
+        f(left + radius),
+        f(top_y),
+        f(right - radius),
+        f(right),
+        f(top_y + radius),
+        f(baseline_y),
+        f(line_end),
+        xml_escape_attr(&tabs.border_color),
+        f(stroke),
+        tabs.border_dash_attrs,
+        r = f(radius),
+    );
+    let tab_bar_svg = format!(r#"<g role="tablist">{rule}{}</g>"#, tab_bar_parts.join(""));
 
     let content_svg = if item_svg.is_empty() {
         String::new()
@@ -3129,6 +3255,7 @@ fn nested_board_sizing_context(
             style,
             text_fonts,
             allow_raw_html,
+            nested.style.title.font.case.as_deref(),
         )?
     } else {
         0.0
@@ -3198,6 +3325,8 @@ fn nested_board_total_height(
             gap: child_gap,
             card_gap,
             card_padding: root_card_padding,
+            scope_card_padding: nested.style.frame.card_padding,
+            pie_modes: &payload.pie_modes,
             chart_datasets: &payload.chart_datasets,
             defaults: &payload.chart_defaults,
             board_style: &payload.board_style,
@@ -3304,6 +3433,8 @@ pub fn nested_board_item_boxes(
         gap: child_gap,
         card_gap,
         card_padding: root_card_padding,
+        scope_card_padding: nested.style.frame.card_padding,
+        pie_modes: &payload.pie_modes,
         chart_datasets: &payload.chart_datasets,
         defaults: &payload.chart_defaults,
         board_style: &payload.board_style,
@@ -3699,6 +3830,8 @@ fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<Sized
         gap: board.layout.gap,
         card_gap,
         card_padding,
+        scope_card_padding: card_padding,
+        pie_modes: &payload.pie_modes,
         chart_datasets: &payload.chart_datasets,
         defaults: &payload.chart_defaults,
         board_style: &payload.board_style,
@@ -4023,7 +4156,14 @@ fn render_nested_board(
             title_fonts.clone(),
         )?;
         let height = measured_title_height.max(nested.style.title.min_height);
-        let line_box = title::title_line_box(style, title_fonts, measured_title_height)?;
+        let line_box = title::title_line_box(
+            &nested.title,
+            &variable_values,
+            title_case,
+            prose_width,
+            style,
+            title_fonts,
+        )?;
         (svg, height, Some(line_box))
     };
 
@@ -4059,6 +4199,7 @@ fn render_nested_board(
             style.clone(),
             text_fonts.clone(),
             allow_raw_html,
+            nested.style.title.font.case.as_deref(),
             Some(&payload.painted_italics),
         )?
     };
@@ -4135,6 +4276,8 @@ fn render_nested_board(
         gap: child_gap,
         card_gap,
         card_padding: root_card_padding,
+        scope_card_padding: nested.style.frame.card_padding,
+        pie_modes: &payload.pie_modes,
         chart_datasets: &payload.chart_datasets,
         defaults: &payload.chart_defaults,
         board_style: &payload.board_style,
@@ -4227,9 +4370,12 @@ fn render_nested_board(
     // `body_dy`. An inline title/variables band sizes itself and is never
     // given a shift (`board_title_metrics`).
     let shifted_title_height = if title_svg.is_empty() { title_height } else { title_height + title_shift.body_dy };
+    // Text opening with a heading is its row's title: it moves onto the row's
+    // shared baseline as a title would, and the card is as much taller.
+    let text_shift = if !text_svg.is_empty() && title_svg.is_empty() { title_shift.title_dy } else { 0.0 };
     let content_box = title::compute_board_content_box(
         shifted_title_height,
-        text_height,
+        text_height + text_shift,
         nested_variables_height,
         inline_header_height,
         child_gap + card_gap,
@@ -4285,6 +4431,7 @@ fn render_nested_board(
         header_end = y;
     }
     if !text_svg.is_empty() {
+        y += text_shift;
         let inner = extract_svg_inner_content(&text_svg)?;
         if !inner.is_empty() {
             header_pieces.push(header_piece(
@@ -4593,7 +4740,14 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             title_fonts.clone(),
         )?;
         let height = measured_title_height.max(board.style.title.min_height);
-        let line_box = title::title_line_box(style, title_fonts, measured_title_height)?;
+        let line_box = title::title_line_box(
+            &board.title,
+            &payload.variable_values,
+            title_case,
+            prose_width,
+            style,
+            title_fonts,
+        )?;
         (svg, height, Some(line_box))
     };
     // `boards.py::render_board_svg`'s own text branch (`_render_text_svg`).
@@ -4625,6 +4779,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             style.clone(),
             text_fonts.clone(),
             allow_raw_html,
+            board.style.title.font.case.as_deref(),
             Some(&payload.painted_italics),
         )?
     };
@@ -5069,7 +5224,7 @@ mod tests {
         let callout_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" class="dbt-chart-callout" width="320.0" height="66.4" viewBox="0 0 320.0 66.4"><rect fill="#e6f4ea"/></svg>"##;
         let padding = Padding { left: 16.0, right: 16.0, top: 16.0, bottom: 16.0 };
         let (boundary, _height) =
-            wrap_chart_svg(&chart_json, "callout", callout_svg, 320.0, &padding, &no_card())
+            wrap_chart_svg(&chart_json, "callout", callout_svg, 320.0, &padding, &no_card(), None)
                 .unwrap();
         assert!(!boundary.contains("<svg"), "root svg should be stripped: {boundary}");
         assert!(boundary.contains(r##"fill="#e6f4ea""##), "inner content must survive: {boundary}");
@@ -5084,13 +5239,13 @@ mod tests {
         let padding = Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
         let table = json!({"id": "t", "canvas": "#ffffff", "style": {"table": no_border()}});
         let (wrapped, _) =
-            wrap_chart_svg(&table, "table", table_svg, 200.0, &padding, &no_card()).unwrap();
+            wrap_chart_svg(&table, "table", table_svg, 200.0, &padding, &no_card(), None).unwrap();
         assert!(wrapped.contains(r#"data-chart-id="t" data-chart-type="table" data-chart-title="#));
         assert!(wrapped.contains(r##"data-dbt-chart-canvas="#ffffff""##));
 
         let callout = json!({"id": "c", "canvas": "#ffffff"});
         let (wrapped, _) =
-            wrap_chart_svg(&callout, "callout", table_svg, 200.0, &padding, &no_card()).unwrap();
+            wrap_chart_svg(&callout, "callout", table_svg, 200.0, &padding, &no_card(), None).unwrap();
         assert!(wrapped.contains(r#"data-chart-type="callout""#));
         assert!(!wrapped.contains("data-dbt-chart-canvas"));
     }
@@ -5130,7 +5285,7 @@ mod tests {
     }
 
     fn wrap_card(chart: &serde_json::Value, chart_type: &str, card: &CardChrome) -> String {
-        wrap_chart_svg(chart, chart_type, CARD_SVG, 200.0, &ZERO_PADDING, card).unwrap().0
+        wrap_chart_svg(chart, chart_type, CARD_SVG, 200.0, &ZERO_PADDING, card, None).unwrap().0
     }
 
     #[test]
@@ -5223,7 +5378,7 @@ mod tests {
     #[test]
     fn a_kpi_without_its_resolved_border_is_refused_by_name() {
         let kpi = json!({"id": "k"});
-        let err = wrap_chart_svg(&kpi, "kpi", CARD_SVG, 200.0, &ZERO_PADDING, &no_card())
+        let err = wrap_chart_svg(&kpi, "kpi", CARD_SVG, 200.0, &ZERO_PADDING, &no_card(), None)
             .unwrap_err();
         assert!(err.contains("chart \"k\"") && err.contains("style.kpi.border"), "{err}");
     }
@@ -5253,7 +5408,7 @@ mod tests {
         let hostile =
             json!({"dx": 0.0, "dy": 2.0, "blur": 8.0, "color": "red; background:url(//x)"});
         let card = card(square_border(), hostile);
-        let err = wrap_chart_svg(&bar(), "bar", CARD_SVG, 200.0, &ZERO_PADDING, &card)
+        let err = wrap_chart_svg(&bar(), "bar", CARD_SVG, 200.0, &ZERO_PADDING, &card, None)
             .unwrap_err();
         assert!(err.contains("ERR-CSS-COLOR-INVALID-AT-RENDER"), "{err}");
     }
@@ -5268,7 +5423,7 @@ mod tests {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="90" viewBox="0 0 200 90"><text>t</text></svg>"#;
         let padding = Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
         let wrap = |chart: serde_json::Value, chart_type: &str| {
-            wrap_chart_svg(&chart, chart_type, svg, 200.0, &padding, &no_card()).unwrap().0
+            wrap_chart_svg(&chart, chart_type, svg, 200.0, &padding, &no_card(), None).unwrap().0
         };
         let subtitled = wrap(
             json!({"id": "t", "canvas": "#fff", "subtitle": "A & \"b\"",
@@ -5297,12 +5452,15 @@ mod tests {
         // `dbt-box-inner` rect disagree with a real callout's own ink,
         // which `playground/callout-tones` caught via board_sweep.py's
         // `chrome_bytes` structural contract.
-        assert!(!ink_carries_padding(&json!({}), "callout"));
+        assert!(!ink_carries_padding("callout", None));
     }
 
     #[test]
     fn bar_ink_still_carries_padding() {
-        assert!(ink_carries_padding(&json!({}), "bar"));
+        assert!(ink_carries_padding("bar", None));
+        // A pie sizing could not decide (the port refuses it) reads as direct, not as a table.
+        assert!(ink_carries_padding("pie", None));
+        assert!(!ink_carries_padding("pie", Some(crate::families::pie::Mode::FullTable)));
     }
 
     #[test]
@@ -5572,8 +5730,9 @@ mod nested_box_sidecar_tests {
                 "layout": {
                     "tabs": {
                         "bar_height": 40.0,
-                        "border": {"width": 0.0, "color": "transparent", "radius": 4.0},
-                        "font": {"size": 14.0, "case": "title"},
+                        "min_width": 96.0, "max_width": 240.0, "padding_x": 16.0,
+                        "border": {"width": 1.0, "color": "#8A8C8F", "radius": 6.0},
+                        "font": {"family": "Inter", "size": 14.0, "case": "title"},
                         "active_weight": "600", "inactive_weight": "400",
                         "title_baseline_offset": 5.0
                     },
@@ -5621,7 +5780,7 @@ mod nested_box_sidecar_tests {
                 "spark_bar": {"max_bars": 10, "bar": {"height": 18.0, "padding": 2.0}},
                 "bar": {"aspect_ratio": 1.39}, "line": {"aspect_ratio": null},
                 "area": {"aspect_ratio": null}, "scatter": {"aspect_ratio": null},
-                "heatmap": {"aspect_ratio": null}, "pie": {"aspect_ratio": 1.0},
+                "heatmap": {"aspect_ratio": null}, "pie": {"aspect_ratio": 1.0}, "donut": {"aspect_ratio": 1.0},
                 "histogram": {"aspect_ratio": null},
                 "geoshape": {"aspect_ratio": 1.2}, "point_map": {"aspect_ratio": 1.2}
             },

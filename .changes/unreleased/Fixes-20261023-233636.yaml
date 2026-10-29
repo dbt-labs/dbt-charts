@@ -1,0 +1,3 @@
+kind: Fixes
+body: An unexpected crash now names its exception type and shows its traceback under Details on the dct serve error page, is logged, and fails only the chart it happened in.
+time: 2026-10-23T23:36:36.647304-07:00

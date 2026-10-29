@@ -1330,6 +1330,7 @@ def _resolve_bar(
         orientation=orientation,
         annotations=annotations.render(ay, style_tail["axis_x"], resolved_layers, None),
         annotation_gaps=annotations.gaps,
+        annotation_bar_trends=annotations.bar_trends,
         style=ResolvedBarStyle(
             series_label=series_label,
             stack_order=bar.stack_order,

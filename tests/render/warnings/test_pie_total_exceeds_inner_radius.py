@@ -98,7 +98,7 @@ def test_a_record_becomes_a_warning_anchored_on_the_total_format() -> None:
 
 
 def test_fires_when_total_overflows_hole() -> None:
-    [w] = _warnings(_make_donut(), _NARROW_ROWS, 88, 240)
+    [w] = _warnings(_make_donut(), _NARROW_ROWS, 104, 240)
     assert w.chart == "c1"
     assert "113,135" in w.message
 
@@ -109,21 +109,21 @@ def test_no_fire_when_total_fits() -> None:
 
 def test_no_fire_when_total_not_visible() -> None:
     chart = _make_donut(total=ChartTotal(visible=False))
-    assert _warnings(chart, _NARROW_ROWS, 88, 240) == []
+    assert _warnings(chart, _NARROW_ROWS, 104, 240) == []
 
 
 def test_compact_format_fits() -> None:
     """The warning measures the formatted string: "1M" fits where "1,000,000"
     would not."""
-    assert _warnings(_make_donut(total_format="number"), _MILLION_ROWS, 88, 240) == []
-    assert len(_warnings(_make_donut(), _MILLION_ROWS, 88, 240)) == 1
+    assert _warnings(_make_donut(total_format="number"), _MILLION_ROWS, 130, 240) == []
+    assert len(_warnings(_make_donut(), _MILLION_ROWS, 130, 240)) == 1
 
 
 def test_fires_with_decimal_theta_values() -> None:
     """Warehouse NUMERIC/DECIMAL columns arrive as Decimal; they count toward
     the total."""
     rows = [{"category": "a", "amount": Decimal("56789")}]
-    assert len(_warnings(_make_donut(), rows, 88, 240)) == 1
+    assert len(_warnings(_make_donut(), rows, 104, 240)) == 1
 
 
 def test_unauthored_total_measures_the_resolve_time_default_format() -> None:
@@ -132,7 +132,7 @@ def test_unauthored_total_measures_the_resolve_time_default_format() -> None:
     [w] = _warnings(
         _make_donut(total_format=None, total=ChartTotal(visible=True)),
         _MILLION_ROWS,
-        88,
+        130,
         240,
     )
     assert "1,000,000" in w.message
@@ -146,9 +146,14 @@ def test_fires_for_attached_table_donut() -> None:
     assert len(_warnings(_make_donut(), rows, 150, 300)) == 1
 
 
-def test_slice_label_reach_shrinks_the_measured_hole() -> None:
+def test_labels_that_would_shrink_the_hole_below_the_total_give_way_to_the_table() -> (
+    None
+):
     """Slice labels take reach on both sides of the disk, so a total that fits
-    the bare wheel can overflow a labeled one at the same slot."""
+    the bare wheel could overflow a labeled one at the same slot. The size stage
+    keeps the labels only while the hole still holds the total, so the layout it
+    picks never draws the overflow: the labels give way to the table and the
+    bare wheel's hole holds the total."""
     label_rows = [
         {"category": "Sig 0", "amount": 565675},
         {"category": "Sig 1", "amount": 565675},
@@ -169,4 +174,4 @@ def test_slice_label_reach_shrinks_the_measured_hole() -> None:
             },
         }
     )
-    assert len(_warnings(_make_donut(style=labeled_style), label_rows, 200, 400)) == 1
+    assert _warnings(_make_donut(style=labeled_style), label_rows, 200, 400) == []

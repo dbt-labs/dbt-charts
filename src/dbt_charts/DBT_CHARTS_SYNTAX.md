@@ -416,13 +416,15 @@ When set to an integer, it cascades to descendants: titled children render at
 Section titles (a titled board inside another titled board) are sized by
 `style.fonts.section.sizes`, H2 first, so a section sits above the chart titles
 under it. A title with an integer `level` reads `style.fonts.heading.sizes`
-instead, the ramp markdown headings use.
+instead. Markdown headings in `text:` follow the heading case (`style.fonts.heading.case`):
+`#` reads the first `heading` size, `##` and `###` the first two `section` sizes, and
+`####` to `######` are body size in the bold weight; none is smaller than the body.
 
 ### Named fonts
 
 Text is styled through nine named fonts under `style.fonts`: `heading`
-(board and chart titles, markdown `#` to `######`), `section` (section
-title sizes), `subtitle`, `body` (prose),
+(board and chart titles, markdown `#` to `######`; `#` size), `section`
+(section title sizes, markdown `##` and `###` sizes), `subtitle`, `body` (prose),
 `label` (axis, legend, tooltip, KPI label, table cells and header,
 variable controls), `caption` (footers, timestamps), `numeral` (KPI values,
 quantitative axis labels), `secondary` (row numbers, "+N" notes, empty-state
@@ -869,11 +871,11 @@ on axes, value labels and tooltips as well as in a KPI or table:
 |-------|------|--------------|
 | `integer` | `,.0f` | `12,346` |
 | `number` | `.3~s` | Register depends on the slot: table cells render analytic `12.4K`; KPI headline values and mark value labels render narrative `12.4k`; axis ticks compact only when the largest tick has ≥6 digits (below that the engine paints plain digits — `20,000`, no suffix). Also the engine fallback when no format is authored |
-| `number_full` | `,.2f` | `12,345.68` — every digit at every magnitude |
+| `number_full` | `,~f` | `12,345.678` — up to six decimals, grouped, never padded (`35.6`, not `35.60`). `number` and `compact` below 1 use the board's `number_full` if redefined, else two unpadded decimals (`0.67`, `0.5`) |
 | `currency` | `$.3~s` | `12400` → `$12.4K` (analytic default; narrative slots render `$12.4k`) |
 | `currency_whole` | `$,.0f` | `$12,346` |
 | `currency_full` | `$,.2f` | `$12,345.68` — cents at every magnitude |
-| `compact` | `.2~s` | `12K`, `1.2M`, `1.2B` — two significant digits with the K/M/B suffix in every slot; below 1 it falls back to `number_full` |
+| `compact` | `.2~s` | `12K`, `1.2M`, `1.2B` — two significant digits with the K/M/B suffix in every slot; below 1 it uses the board's `number_full` if redefined, else two unpadded decimals |
 | `currency_compact` | `$.2~s` | `$12K`, `$1.2M` — `compact` with the currency symbol; below 1 it falls back to `currency_full` |
 | `percent` | `.1%` | `0.42` → `42.0%` — **multiplies by 100**; for a value that already IS a whole-number percent (`42`, `148.23`), use `percent_number` |
 | `percent_whole` | `.0%` | `0.42` → `42%` |
@@ -1310,13 +1312,13 @@ annotations:
 Common fields: `text` (one line; `{{ value | format }}` prints the anchor, `{{ series }}` the series), `plane` (`background` or `foreground`; notes default `foreground`, rules/bands/trends `background`, everything but bands `foreground` on area), `series`, `y_column`, `style`.
 
 - **Anchors:** a literal in the axis column's type, a range (`from:`/`to:`, half-open `[from, to)`, either optional), a category on a discrete axis, an aggregate (`min()`, `max()`, `avg()`, `median()`, `percentile(<0-100>)`), or a clock (`now()`, `current(day|week|month|quarter|year)`; date x only). No nesting or arithmetic. Aggregates are an error on a categorical axis; on a time axis only `min()`/`max()`.
-- **`fit`:** `linear()`, `polynomial(<order >= 2>)`, `exponential()`, `log()`, `power()`. **`interval`:** `confidence(<pct>)`, `prediction(<pct>)`. A categorical x cannot be fitted.
+- **`fit`:** `linear()`, `polynomial(<order >= 2>)`, `exponential()`, `log()`, `power()`. **`interval`:** `confidence(<pct>)`, `prediction(<pct>)`. A categorical x cannot be fitted. The mark that draws the trend's column gates it: line and scatter fit; a bar (or a stacked bar's `series: total`) fits with `WARN-TREND-ON-BARS`; an area is an error (draw the column as a line or scatter layer and set `y_column`). Chart `type:` alone never decides.
 - **`series`:** required on a computed annotation (aggregate or trend) when the chart has `color`: `each`, a list of names, or `total` (pooled; the per-x sum when stacked). Error on a literal-only annotation. Only `total` on a stacked chart.
 - **`y_column`:** names the y column (picks its axis and rows). Required for a computed y anchor, trend, or derived note on a chart with several y columns or `layers:`.
 - **Position:** an annotation's text mark (`style:` > `marks:` > `text:` > `position:`) takes `edge` (`top|bottom|left|right`), `align` (`start|center|end`), `overlay` (`true|false`); `dx`/`dy` nudge. Text moves off the chart's marks, value labels and other text: it slides along its edge, and an `auto` edge or align (rules, bands, notes; the default) may also change. Text also takes `font`, `halo`, `halo_opacity`, `box`, and `max_width` (frame notes and trends).
 - **Theme:** `style.annotations.<rule|band|note|trend>.marks.*` on the board or a chart; an annotation's own `style:` wins.
 - **Not accepted** on pie, donut, map, table, or KPI charts.
-- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warnings `WARN-ANNOTATION-NOTHING-DRAWN`, `WARN-ANNOTATION-NOTE-MOVED`.
+- **Errors:** `ERR-ANNOTATION-INVALID`, `ERR-ANNOTATION-UNSUPPORTED`, `ERR-ANNOTATION-MARGIN-UNSUPPORTED`; warnings `WARN-ANNOTATION-NOTHING-DRAWN`, `WARN-ANNOTATION-NOTE-MOVED`, `WARN-TREND-ON-BARS`.
 
 ### Conditional formatting
 
@@ -1579,7 +1581,7 @@ Input types (14 total):
 | `range` | Two-handle numeric slider (returns `[low, high]`) |
 | `date` | Single date picker (also `datepicker`) |
 | `datepicker` | Single date picker |
-| `daterange` | Date range picker (returns `[start, end]`; takes dates or a preset like `last_90_days`) |
+| `daterange` | Date range picker (returns `[start, end]`; takes dates or a preset name such as `last_90_days`, `previous_3_quarters`, `this_fiscal_quarter`; see Rolling presets in the variables reference) |
 | `checkbox` | Boolean toggle |
 | `radio` | Radio group |
 
@@ -1592,6 +1594,7 @@ Common variable fields:
 | `notes` | string | Help text for this input, carried to the host rather than drawn on the board |
 | `default` | any | Value the variable takes when neither a URL param nor `--var` supplies one |
 | `placeholder` | string | Placeholder text |
+| `presets` | list of strings | `daterange` only: the picker's preset menu, replacing `style.variables.presets` |
 | `required` | bool | Block rendering until a value exists |
 | `allow_null` | bool | `null` is a valid selection |
 | `visible` | bool | Hidden when `false`; still settable via URL param |

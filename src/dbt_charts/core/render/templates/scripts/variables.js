@@ -48,9 +48,9 @@
         if (!chart.querySelector('.dbt-chart-spinner')) {
             var spinner = document.createElementNS('http://www.w3.org/2000/svg', 'g');
             spinner.setAttribute('class', 'dbt-chart-spinner');
-            var bbox = chart.getBBox ? chart.getBBox() : {width: 200, height: 200};
-            var centerX = bbox.x + bbox.width / 2;
-            var centerY = bbox.y + bbox.height / 2;
+            /*{# Never getBBox(): this runs per chart in a loop, and each layout read forces a full-page layout. #}*/
+            var centerX = parseFloat(chart.getAttribute('data-chart-width')) / 2;
+            var centerY = parseFloat(chart.getAttribute('data-chart-height')) / 2;
             spinner.appendChild(loadingGlyph(centerX, centerY));
             chart.appendChild(spinner);
         }
@@ -1246,25 +1246,25 @@
         return d;
     }
 
-    /*{# Each published group followed by a divider, then 'custom'. A preset's #}*/
-    /*{# id is also its word. #}*/
+    /*{# Each published group followed by a divider, then 'custom'. A preset #}*/
+    /*{# arrives with its label; 'custom' is a word of the language. #}*/
     function buildRail(railEl, words, groups, onPick) {
         railEl.innerHTML = '';
-        function button(id) {
+        function button(id, label) {
             var btn = document.createElement('button');
             btn.type = 'button';
-            btn.textContent = words[id];
+            btn.textContent = label;
             btn.dataset.preset = id;
             btn.addEventListener('click', function() { onPick(id); });
             railEl.appendChild(btn);
         }
         groups.forEach(function(group) {
-            group.forEach(function(p) { button(p.id); });
+            group.forEach(function(p) { button(p.id, p.label); });
             var div = document.createElement('div');
             div.className = 'dbt-preset-divider';
             railEl.appendChild(div);
         });
-        button('custom');
+        button('custom', words.custom);
     }
 
     function markRailActive(railEl, presetId) {
@@ -1378,6 +1378,9 @@
         presetGroups.forEach(function(group) {
             group.forEach(function(p) { presetRanges[p.id] = p.range; });
         });
+        /*{# A committed preset the menu leaves out still seeds the calendar. #}*/
+        var offMenu = JSON.parse(el.getAttribute('data-dbt-preset-off-menu') || 'null');
+        if (offMenu) presetRanges[offMenu.id] = offMenu.range;
 
         var range     = [null, null];
         var active    = null;   /*{# rail entry: a preset id, 'custom', or null #}*/

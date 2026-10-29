@@ -167,8 +167,8 @@ style:
         label:
           font:
             color: *mid
-    # Soft tooltip: no outline, a drop shadow, rounded swatch, and a
-    # background-fill active marker. stark is the hard-outline variant.
+    # Soft tooltip: no outline (the _base drop shadow separates the card).
+    # stark is the hard-outline variant.
     tooltip:
       background: dbt-grays.white
       label:
@@ -182,12 +182,6 @@ style:
         # No border on shadowed themes: the shadow separates the card, so the
         # outline is redundant (kept only on stark — see clarity.yaml).
         width: 0.0
-        radius: 4.0
-      shadow:
-        visible: true
-      swatch:
-        radius: 3.0
-      active_marker: fill
     hover_emphasis:
       drop_line_color: chrome[6]
       drop_line_width: 2.0

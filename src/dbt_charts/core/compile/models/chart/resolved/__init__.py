@@ -68,7 +68,7 @@ from .geoshape import ResolvedGeoshapeChart
 from .heatmap import ResolvedHeatmapChart
 from .kpi import ResolvedKpiChart, ResolvedKpiSupportConfig
 from .line import ResolvedLineChart
-from .pie import ResolvedPieChart
+from .pie import PieAttachment, ResolvedPieChart
 from .point_map import ResolvedPointMapChart
 from .scatter import ResolvedScatterChart
 from .spark_bar import ResolvedSparkBarChart
@@ -123,6 +123,7 @@ __all__ = [
     "ResolvedSupportTableSource",
     "ResolvedKpiSupportConfig",
     "ResolvedLineChart",
+    "PieAttachment",
     "ResolvedPieChart",
     "ResolvedPointMapChart",
     "ResolvedScatterChart",

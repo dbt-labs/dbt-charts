@@ -508,6 +508,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             family: x_family,
             size: x_font_size,
             weight: &x_label_weight,
+            style: ax_x.labels.font.style.as_deref(),
             fill: x_label_color,
         };
         // `x_label_y` carries the crisp shift on the constant coordinate; this is the
@@ -557,6 +558,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             family: y_family,
             size: y_font_size,
             weight: &y_label_weight,
+            style: ax_y.labels.font.style.as_deref(),
             fill: y_label_color,
         };
         let text = ax_y.labels.clip(lbl, fonts)?;

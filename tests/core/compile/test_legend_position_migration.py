@@ -307,7 +307,9 @@ def test_a_migrated_cardinal_pie_table_keeps_its_centered_default() -> None:
         ]
     ]
     resolved = make_test_resolved_chart(chart, rows, width=1100.0)
-    assert (resolved.attached_table_placement, resolved.attached_table_align) == (
+    attachment = resolved.hybrid_attachment
+    assert attachment is not None
+    assert (attachment.placement, attachment.align) == (
         "bottom",
         "center",
     )

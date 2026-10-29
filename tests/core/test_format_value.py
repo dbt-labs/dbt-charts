@@ -15,6 +15,7 @@ from dbt_charts.core.compile.format import (
     resolve_format,
     resolve_format_parts,
     resolve_label_format,
+    sub_unit_spec,
 )
 from dbt_charts.core.compile.format_value import (
     format_d3,
@@ -32,6 +33,7 @@ from dbt_charts.core.text.predefined_formats import (
 
 _KPI_COMPACT = get_theme_style().charts.kpi.value.compact
 
+_SUB_UNIT_PLAIN = ",.2~f"
 _ALIAS_FORMATS = {"tilde": "~s", "money": "$,.2f"}
 
 
@@ -148,7 +150,7 @@ class TestCompactFormats:
             (45321, "45K"),
             (1.2e9, "1.2B"),
             (-1234567, "\u22121.2M"),
-            (0.5, "0.50"),
+            (0.5, "0.5"),
         ],
     )
     def test_compact(self, value, expected):
@@ -1229,8 +1231,8 @@ class TestSiSubUnitFloor:
 
     def test_plain_quantity_fraction_paints_digits(self) -> None:
         assert format_value(0.671, "number") == "0.67"
-        assert format_value(0.2, "number") == "0.20"
-        assert format_value(-0.2, "number") == "−0.20"
+        assert format_value(0.2, "number") == "0.2"
+        assert format_value(-0.2, "number") == "−0.2"
 
     def test_money_at_or_above_one_is_unchanged(self) -> None:
         assert format_value(1.0, "currency") == "$1"
@@ -1346,7 +1348,7 @@ class TestSubUnitFloorVote:
         config = FormatConfig(spec="number", prefix="£")
         assert (
             resolve_format_parts_for_values(config, None, [0.67]).spec
-            == PREDEFINED_SPECS["number_full"].d3
+            == _SUB_UNIT_PLAIN
         )
 
     def test_inline_d3_spec_never_takes_house_floor(self) -> None:
@@ -1389,13 +1391,22 @@ def _vote(format_input, formats, values, default):
     )
 
 
+class TestRedefinedNumberFull:
+    """A board's `number_full` drives `number` and `compact` below 1."""
+
+    @pytest.mark.parametrize("raw", ["number", "compact"])
+    def test_redefinition_wins_over_the_engine_default(self, raw: str) -> None:
+        assert sub_unit_spec(raw, {"number_full": ",.4f"}) == ",.4f"
+        assert sub_unit_spec(raw, None) == _SUB_UNIT_PLAIN
+
+
 class TestSubUnitFloorVoteSpecLessAffix:
     """``column_format`` fills a spec-less affix from the engine default."""
 
-    def test_spec_less_affix_dict_below_one_falls_back_to_number_full(self) -> None:
+    def test_spec_less_affix_dict_below_one_falls_back_to_two_decimals(self) -> None:
         assert (
             _vote({"prefix": "£"}, None, [0.67], PredefinedNumberFormat.number).spec
-            == PREDEFINED_SPECS["number_full"].d3
+            == _SUB_UNIT_PLAIN
         )
 
     def test_spec_less_affix_format_config_below_one_falls_back(self) -> None:
@@ -1403,7 +1414,7 @@ class TestSubUnitFloorVoteSpecLessAffix:
             _vote(
                 FormatConfig(prefix="£"), None, [0.67], PredefinedNumberFormat.number
             ).spec
-            == PREDEFINED_SPECS["number_full"].d3
+            == _SUB_UNIT_PLAIN
         )
 
     def test_spec_less_affix_alias_below_one_falls_back(self) -> None:
@@ -1412,7 +1423,7 @@ class TestSubUnitFloorVoteSpecLessAffix:
         formats = {"gbp": FormatConfig(prefix="£")}
         assert (
             _vote("gbp", formats, [0.67], PredefinedNumberFormat.number).spec
-            == PREDEFINED_SPECS["number_full"].d3
+            == _SUB_UNIT_PLAIN
         )
 
     def test_spec_less_affix_currency_default_below_one_falls_back(self) -> None:
@@ -1456,7 +1467,7 @@ class TestResolveFormatPartsForValues:
             [0.5, 1234.5, 2456789.0],
             PredefinedNumberFormat.number,
         )
-        assert parts.spec == PREDEFINED_SPECS["number_full"].d3
+        assert parts.spec == _SUB_UNIT_PLAIN
         assert (parts.prefix, parts.suffix, parts.notation) == (
             "£",
             " GBP",
@@ -1489,7 +1500,7 @@ class TestResolveLabelFormatValuesAware:
             FormatConfig(prefix="£"), None, values=[0.67]
         )
         assert (resolved.spec, resolved.prefix) == (
-            PREDEFINED_SPECS["number_full"].d3,
+            _SUB_UNIT_PLAIN,
             "£",
         )
         assert is_house is True

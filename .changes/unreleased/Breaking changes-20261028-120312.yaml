@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: A trend annotation that reads an area mark is now a compile error; draw that column as a line or scatter layer instead. A trend over bars now warns.
+time: 2026-10-28T12:03:12.337278-07:00

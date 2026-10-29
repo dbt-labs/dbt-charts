@@ -29,9 +29,13 @@ from dbt_charts.core.compile.models.chart.normalized import (
     PAINTS_MARKS,
     SVG_LAYOUT_PADDED_TYPES,
 )
-from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
+from dbt_charts.core.compile.models.chart.resolved import (
+    ResolvedChart,
+    ResolvedPieChart,
+)
 from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
 from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
+from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -213,6 +217,7 @@ def render_layout_item(
                 padding=additive_padding(card_padding, chart_padding),
                 error_collector=error_collector,
                 title_shift=item.title_shift,
+                pie_mode=item.pie_mode,
             )
             if chart_svg:
                 rendered = chart_svg
@@ -344,6 +349,7 @@ def render_chart_item(
     padding: dict[str, float] | None = None,
     error_collector: list[Diagnostic] | None = None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
+    pie_mode: PieMode | None = None,
 ) -> tuple[str, float]:
     """Render a chart item with explicit dimensions.
 
@@ -356,6 +362,8 @@ def render_chart_item(
         available_height: Height in pixels for the chart
         resolved_style: Board-scoped ResolvedStyle for effective chart style.
         render_cache: Cache of pre-rendered SVGs shared with the sizing pass.
+        pie_mode: A pie's mode as the size stage decided it for its layout item;
+            required for a pie, whose render raises without it.
         padding: 4-sided padding dict (left/right/top/bottom). Vega-family and
             custom charts render at the outer size with their ink pre-inset by
             it; SVG-family (table/kpi/spark_bar) renders at the inner size and
@@ -407,6 +415,7 @@ def render_chart_item(
             outer_width=available_width,
             inset=inset,
             title_shift=title_shift,
+            pie_mode=pie_mode,
         )
         return svg, actual_height
     except (RenderError, ExecutionError, DbtChartsError) as e:
@@ -422,8 +431,8 @@ def render_chart_item(
             error_collector,
             resolved_style=resolved_style,
         )
-    except Exception as e:  # noqa: BLE001
-        wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
+    except Exception as e:  # noqa: BLE001 — any crash is this chart's ERR-INTERNAL, not the board's
+        wrapped = RenderError.from_unexpected(e)
         return _render_callout_block(
             wrapped,
             chart,
@@ -447,6 +456,7 @@ def _render_chart_item_inner(
     outer_width: float,
     inset: dict[str, float] | None,
     title_shift: TitleShift,
+    pie_mode: PieMode | None,
 ) -> tuple[str, float]:
     """Internal chart rendering — raises on error.
 
@@ -465,6 +475,11 @@ def _render_chart_item_inner(
     from dbt_charts.core.render.converters.chart import render_chart_artifact
     from dbt_charts.core.render.layout_sizing import build_chart_datasets
 
+    if isinstance(chart, ResolvedPieChart) and pie_mode is None:
+        # The size stage records a mode on every placed pie, or the reason it
+        # could not lay one out; a board pie reaching the render without either
+        # is a sizing bug, never a reason to decide again in another box.
+        raise RenderError(f"pie {chart.id!r} reached the render without its sized mode")
     chart_type = chart.chart_type
     is_svg_family = chart_type in SVG_LAYOUT_PADDED_TYPES
     # The engine raises ERR-CHART-PAINTED-NO-MARKS for the cartesian families
@@ -496,6 +511,7 @@ def _render_chart_item_inner(
             datasets=datasets,
             padding=padding,
             title_shift=title_shift,
+            pie_mode=pie_mode,
         )
         chart_svg = render_chart_artifact(artifact, "svg")
 
@@ -505,7 +521,6 @@ def _render_chart_item_inner(
             all_marks_degenerate,
             chart_has_nonzero_measure,
         )
-        from dbt_charts.core.render.errors import RenderError
 
         # All-zero measure data is a faithful blank render — the engine painted
         # exactly what the data said — not a defect. Only fire when the rows
@@ -536,7 +551,7 @@ def _render_chart_item_inner(
         resolved_subtitle=chart.subtitle,
         ink_inset=(
             padding
-            if padding is not None and _ink_carries_padding(chart)
+            if padding is not None and _ink_carries_padding(chart, pie_mode)
             else _ZERO_PADDING
         ),
         inset=inset,
@@ -592,23 +607,19 @@ def _card_shadow(
     return CardShadow(shadow, canvas, radius)
 
 
-def _ink_carries_padding(chart: ResolvedChart) -> bool:
+def _ink_carries_padding(chart: ResolvedChart, pie_mode: PieMode | None) -> bool:
     """True when the chart's whole SVG is one render at the outer size (a Vega
     render, or a custom chart's frame), so its ink already sits inset by the
     padding it carried.
 
     False for a ``callout``, whose card ``render_svg_family`` returns full-bleed
-    at 0,0 with the padding never applied, and false for a pie that composed a
-    companion table: the wheel above carries the padding, but the table is flush
+    at 0,0 with the padding never applied, and false for a pie sized to a
+    companion table (``pie_mode``): the wheel above carries the padding, but the table is flush
     with the composite's bottom edge, so the composite as a whole carries none.
     Claiming an inset over either one puts the block's pointer target on its own
     ink.
     """
-    # From the family module, not the package: `resolved/__init__` re-exports
-    # the `ResolvedChart` union, not its individual members.
-    from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
-
-    if isinstance(chart, ResolvedPieChart) and chart.attached_table is not None:
+    if pie_mode is not None and pie_mode != "direct":
         return False
     return chart.chart_type in PAINTS_MARKS or chart.chart_type == "custom"
 

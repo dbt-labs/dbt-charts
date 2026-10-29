@@ -39,7 +39,6 @@ from dbt_charts.core.compile.models.primitives import (
     validate_incremental_value,
 )
 from dbt_charts.core.compile.models.schema_names import FormatAlias, WarningCode
-from dbt_charts.core.diagnostics.suppression import warn_retired_codes
 
 # ============================================================================
 # QUERY-LEVEL PRIMITIVES (used by both authored and compiled layers)
@@ -147,15 +146,6 @@ class _BaseQueryFields(BaseModel):
             "the board-level incremental setting when omitted."
         ),
     )
-
-    @field_validator("ignore")
-    @classmethod
-    def _warn_retired_ignore_codes(
-        cls, v: list[WarningCode] | None
-    ) -> list[WarningCode] | None:
-        if v is not None:
-            warn_retired_codes(v, source="query.ignore")
-        return v
 
     @field_validator("incremental", mode="before")
     @classmethod

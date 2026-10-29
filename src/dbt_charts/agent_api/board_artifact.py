@@ -139,7 +139,7 @@ def emit_board_artifact(
     merged_variables: dict[str, Any] = normalize_render_values(
         {**board.variable_defaults, **(variables or {})},
         board.variable_registry or {},
-        board.regional.today(executor.rendered_at),
+        board.clock(executor.rendered_at),
     )
 
     # Matches render()'s prologue: the declared variable names are set for the

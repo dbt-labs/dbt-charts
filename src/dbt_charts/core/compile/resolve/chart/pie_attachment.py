@@ -31,26 +31,22 @@ from dbt_charts.core.compile.resolve.chart.label_data import (
 from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
 from dbt_charts.core.constants.pie import (
     ATTACHED_TABLE_GAP_PX,
-    INVISIBLE_SLICE_SHARE,
-    LABEL_REACH_COEFFICIENT,
-    OUTER_FRACTION,
     RIGHT_PLACEMENT_MAX_WHEEL_PX,
     RIGHT_PLACEMENT_MIN_WIDTH_FRACTION,
     RIGHT_PLACEMENT_MIN_WIDTH_PX,
     WEDGE_LABEL_MIN_SHARE,
-    WHEEL_DOMINANCE_MIN_RATIO,
 )
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_render import (
     ERR_PIE_NEGATIVE_THETA,
     ERR_PIE_NULL_THETA,
 )
-from dbt_charts.core.font_measure import get_font_measurer
+from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.fonts import font_is_tabular
 from dbt_charts.core.text.format_d3 import d3_format
 from dbt_charts.core.utils import CellValue
 
-ArcRenderMode = Literal["direct", "hybrid", "full_table"]
+AttachmentMode = Literal["hybrid", "full_table"]
 
 
 def validate_theta_values(chart_id: str, theta_field: str, data: ChartRows) -> None:
@@ -123,51 +119,13 @@ def compute_shares(theta_field: str, data: ChartRows) -> list[float]:
     except (TypeError, ValueError):
         return []
     total = sum(values)
+    if not math.isfinite(total):
+        raise ChartDataError(
+            f"pie: theta {theta_field!r} sums to a non-finite total ({total})"
+        )
     if total <= 0:
         return []
     return [value / total for value in values]
-
-
-def arc_disk_width(
-    label_lines: list[str],
-    font_family: str,
-    font_size: float,
-    label_offset: float,
-    width: float,
-) -> float:
-    """Width left for the arc disk after slice labels reserve their reach.
-
-    Under autosize fit the leader-line label layer shrinks the view. This is
-    the one model of that reach — shared by render-mode classification here
-    and the center-total overflow detector, so the two can't disagree about
-    how much width the labels consume.
-    """
-    measurer = get_font_measurer(font_family)
-    reach = LABEL_REACH_COEFFICIENT * max(
-        (measurer.measure(line, font_size) for line in label_lines),
-        default=0.0,
-    )
-    return max(0.0, width - 2.0 * (label_offset + reach))
-
-
-def classify_arc_render_mode(
-    shares: list[float],
-    label_lines: list[str],
-    font_family: str,
-    font_size: float,
-    label_offset: float,
-    width: float,
-) -> ArcRenderMode:
-    if not shares:
-        return "direct"
-    visible = sum(share > WEDGE_LABEL_MIN_SHARE for share in shares)
-    if visible == 0:
-        return "full_table"
-    labeled = arc_disk_width(label_lines, font_family, font_size, label_offset, width)
-    ratio = min(1.0, labeled / (width * OUTER_FRACTION))
-    if ratio < WHEEL_DOMINANCE_MIN_RATIO:
-        return "full_table"
-    return "hybrid" if min(shares) < INVISIBLE_SLICE_SHARE else "direct"
 
 
 class TablePlacement(NamedTuple):
@@ -223,7 +181,7 @@ class AttachmentPlan(NamedTuple):
 
 
 def plan_attachment(
-    mode: ArcRenderMode,
+    mode: AttachmentMode,
     shares: list[float],
     data: ChartRows,
     palette: Sequence[str],
@@ -310,7 +268,7 @@ def build_attached_table_columns(
 ) -> tuple[dict[str, TableColumnConfig], float]:
     font_family = settled(table_style.font.family)
     font_size = settled(table_style.font.size)
-    measurer = get_font_measurer(font_family)
+    measurer = get_weighted_font_measurer(font_family, settled(table_style.font.weight))
     cell_pad = table_style.column_layout.cell_padding
 
     def column_width(strings: list[str], floor: int) -> int:

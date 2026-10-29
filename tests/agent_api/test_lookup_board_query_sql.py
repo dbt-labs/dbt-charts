@@ -34,6 +34,9 @@ queries:
       SELECT * FROM t WHERE {{ filter('year', year) }}
       AND {{ filter_date_range('day', span) }}
     source: db
+  recent:
+    sql: SELECT * FROM t WHERE {{ filter_date_range('day', 'last_7_days') }}
+    source: db
 charts:
   c:
     type: kpi
@@ -59,6 +62,16 @@ def test_preview_spells_helpers_for_the_sources_dialect(
 ) -> None:
     project = _project(tmp_path, local_project, "sqlite")
     result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
+    assert result.success, result.errors
+    assert result.sql is not None
+    assert "DATE(day) BETWEEN" in result.sql
+
+
+def test_preview_dates_a_preset_name_literal_on_the_board_clock(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    project = _project(tmp_path, local_project, "sqlite")
+    result = lookup_board_query_sql("recent", Path("charts/b.yml"), project=project)
     assert result.success, result.errors
     assert result.sql is not None
     assert "DATE(day) BETWEEN" in result.sql

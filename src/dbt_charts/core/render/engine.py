@@ -35,11 +35,12 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedCustomChart,
     ResolvedGeoshapeChart,
     ResolvedKpiChart,
+    ResolvedPieChart,
     ResolvedPointMapChart,
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig
+from dbt_charts.core.compile.models.primitives import FormatConfig, PieMode
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.style.resolved.callout import ResolvedCalloutStyle
 from dbt_charts.core.compile.resolve.style.markdown_style import build_mdsvg_style
@@ -114,6 +115,7 @@ from dbt_charts.core.render.chart.table_static_pagination import (
 from dbt_charts.core.render.chart.text_truncation import (
     TruncationSurface,
     record_text_truncation,
+    reset_text_truncations,
 )
 from dbt_charts.core.render.chart.x_domain_paint_order import (
     XDomainPaintOrder,
@@ -302,7 +304,7 @@ def board_style_envelope(
     return {
         "hover_emphasis": {
             "visible": hover_emphasis.visible,
-            "dimmed_opacity": hover_emphasis.dimmed_opacity,
+            "recede_contrast": hover_emphasis.recede_contrast,
         },
         "secondary_color": board_style.secondary_color,
         "numeral_family": board_style.numeral_family,
@@ -416,8 +418,12 @@ def build_chart_payload(
     is_placeholder: bool,
     measuring: bool = False,
     authored_height: float | None = None,
+    pie_mode: PieMode | None = None,
 ) -> JsonDict:
     """The engine payload for one chart.
+
+    `pie_mode` is a pie's sized mode; absent, the engine decides from the box
+    the payload carries.
 
     `datasets` is `layout_sizing.build_chart_datasets`'s full result, forwarded
     unreshaped: `rows` is `datasets[chart.query_name]` and a layer with its own
@@ -487,6 +493,7 @@ def build_chart_payload(
             active_language(),
         ),
         "is_placeholder": is_placeholder,
+        "pie_mode": pie_mode,
         "measuring": measuring,
         "authored_height": authored_height,
         # A custom chart's template draws on the board's one output budget:
@@ -519,6 +526,7 @@ def measure_table_natural_width(
         "rows": rows,
         "column_types": {"rows": column_types(rows)},
         "fonts_dir": str(get_fonts_dir()),
+        "numeral_family": board_style.numeral_family,
         "format_locale": format_locale_wire(active_format_locale()),
         "time_locale": active_time_locale(),
         "time_zone": active_time_zone().key,
@@ -595,9 +603,25 @@ _GEOMETRY_WARNINGS = (
     "WARN-VALUE-LABELS-CROWD-WIDTH",
 )
 
+# Cuts that every painted placement records anew, so only the claiming render's
+# stand; a sizing probe is never shown, and what it cuts is not the author's to fix.
+_TRUNCATION_WARNINGS = (
+    "WARN-AXIS-TITLE-TRUNCATED",
+    "WARN-CHART-TITLE-TRUNCATED",
+    "WARN-CALLOUT-TEXT-TRUNCATED",
+    "WARN-SUPPORT-TABLE-CELL-OVERFLOW",
+    "WARN-KPI-ALIGN-OVERFLOW",
+    "WARN-KPI-INLINE-VARIANT-FALLBACK-TO-STACKED",
+    "WARN-KPI-LABEL-TRUNCATED",
+    "WARN-KPI-SUPPORT-TRUNCATED",
+    "WARN-SPARK-LABEL-TRUNCATED",
+    "WARN-TABLE-TEXT-TRUNCATED",
+)
+
 _PLACEMENT_WARNINGS = frozenset(
     {
         *_GEOMETRY_WARNINGS,
+        *_TRUNCATION_WARNINGS,
         "WARN-AXIS-LABEL-COLLISION",
         "WARN-SERIES-LABEL-TRUNCATED",
         "WARN-RAIL-VALUE-DROPPED",
@@ -650,6 +674,12 @@ _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
     ),
     "WARN-RAIL-VALUE-DROPPED": lambda p: record_series_label_truncations(
         p["chart_id"], p["authored_field"], p["series_names"], "value_dropped"
+    ),
+    "WARN-PIE-SIZED-MODE-MISSES-GUARD": lambda p: record_text_truncation(
+        p["chart_id"],
+        "pie_wheel_starved",
+        f"{p['mode']}|{p['ratio']}|{p['floor']}",
+        "style.slice_mark.labels",
     ),
     "WARN-KPI-ALIGN-OVERFLOW": lambda p: record_text_truncation(
         p["chart_id"], "kpi_align_overflow", "", "style.align"
@@ -740,6 +770,7 @@ def render_native(
     datasets: dict[str | None, Rows] | None = None,
     measuring: bool = False,
     authored_height: float | None = None,
+    pie_mode: PieMode | None = None,
 ) -> tuple[str, float | None]:
     """Render one chart in the engine; return `(svg, natural_height)`.
 
@@ -750,7 +781,7 @@ def render_native(
     `variables` and `board_width` default to the board's current values
     (`board_variables`); outside a board scope there are none. Warnings are
     recorded into the open sinks. Placement warnings (geometry, axis collision,
-    series labels) come only from painted renders, never a `measuring` probe, and a
+    series labels, text truncations) come only from painted renders, never a `measuring` probe, and a
     chart placed more than once keeps the narrowest painted placement's set. A caller whose
     render is never shown (a table's height estimate) passes `record_warnings=False`.
     Raises `ChartDataError` for any engine error, including an `ERR-ENGINE-REFUSED` gap.
@@ -773,6 +804,7 @@ def render_native(
         is_placeholder=is_placeholder,
         measuring=measuring,
         authored_height=authored_height,
+        pie_mode=pie_mode,
     )
     authored = (
         {"title": chart.title, "message": chart.message}
@@ -792,6 +824,48 @@ def render_native(
                 ERR_CUSTOM_RENDER, chart_id=chart.id, reason=str(exc)
             ) from exc
     return svg, natural_height
+
+
+_PIE_MODES: dict[str, PieMode] = {
+    "direct": "direct",
+    "hybrid": "hybrid",
+    "full_table": "full_table",
+}
+
+
+def decide_pie_mode(
+    chart: ResolvedPieChart,
+    data: Rows,
+    *,
+    width: float,
+    height: float,
+    padding: dict[str, float],
+    board_style: ResolvedStyle,
+) -> PieMode:
+    """How much of a pie the box `(width, height)` inside `padding` lets it
+    draw: `direct`, `hybrid` or `full_table`, decided by the engine's solve
+    (`pie_layout`), the same one the render draws with. Raises
+    `ChartDataError` for a pie the engine cannot fit even bare."""
+    scoped = current_board_variables()
+    payload = build_chart_payload(
+        chart,
+        {chart.query_name: data},
+        width=width,
+        height=height,
+        padding=padding,
+        board_style=board_style,
+        board_width=current_root_board_width(),
+        variables={} if scoped is None else scoped,
+        title_shift=NO_TITLE_SHIFT,
+        is_placeholder=False,
+    )
+    try:
+        mode, _radius, _free_radius, _min_radius = _engine.pie_layout(
+            dumps_payload(payload)
+        )
+    except _engine.RenderDiagnosticError as exc:
+        raise _chart_data_error(exc) from exc
+    return _PIE_MODES[mode]
 
 
 def _render_payload(
@@ -819,6 +893,7 @@ def _render_payload(
             reset_geometry_warnings(chart_id)
             reset_axis_label_collision(chart_id)
             reset_series_label_truncations(chart_id)
+            reset_text_truncations(chart_id)
         # The sink holds the most recent render's verdict: a render that fits clears an
         # earlier cramped trial of the same chart.
         if not any(w["code"] in _RAIL_WARNINGS for w in warnings):

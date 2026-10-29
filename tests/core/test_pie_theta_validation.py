@@ -164,3 +164,13 @@ def test_validate_theta_values_accepts_zero_and_positive() -> None:
     )
 
     validate_theta_values("c", "v", [{"v": 0}, {"v": 12}, {"v": 7}])
+
+
+@pytest.mark.parametrize(
+    "values", [[1e308, 1e308], [float("nan"), 1.0], [float("inf")], ["inf", 2]]
+)
+def test_a_non_finite_slice_total_is_refused_by_name(values: list[Any]) -> None:
+    from dbt_charts.core.compile.resolve.chart.pie_attachment import compute_shares
+
+    with pytest.raises(ChartDataError, match="non-finite"):
+        compute_shares("v", [{"v": value} for value in values])

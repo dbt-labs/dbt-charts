@@ -173,14 +173,14 @@ def test_pie_attachment_round_trips_in_board_artifact(tmp_path: Path) -> None:
     resolved, _render_cache = build_resolved_board(result.board, executor, {})
     original = resolved.charts["shares"]
     assert isinstance(original, ResolvedPieChart)
-    assert original.attached_table is not None
+    assert original.full_attachment is not None
 
     reloaded = load_board_artifact(dump_board_artifact(resolved))
     restored = reloaded.charts["shares"]
 
     assert isinstance(restored, ResolvedPieChart)
     assert restored == original
-    assert restored.attached_table is not None
+    assert restored.full_attachment is not None
 
     pie_document = json.loads(dump_board_artifact(resolved))["board"]["charts"][
         "shares"

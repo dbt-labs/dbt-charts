@@ -1,0 +1,3 @@
+kind: Fixes
+body: A heatmap on a named palette now honors an authored gradient hinge.
+time: 2026-10-28T14:49:30.228293-07:00

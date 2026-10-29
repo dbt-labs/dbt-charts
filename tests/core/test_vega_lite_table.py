@@ -208,7 +208,8 @@ class TestTableProportionalSizing:
         subtitle_fill = resolve_style(stark_style).secondary_color
         # The subtitle wraps, so its baseline lives on the first tspan.
         subtitle = re.search(
-            rf'<text x="0" font-size="([0-9.]+)" fill="{re.escape(subtitle_fill)}" '
+            rf'<text x="0" font-size="([0-9.]+)" font-style="normal" '
+            rf'fill="{re.escape(subtitle_fill)}" '
             # `[^>]*` tolerates any attributes (e.g. data-authored-kind) between
             # font-family and the tag close — same tolerant style as
             # `subtitle_el` below and `_svg_render.py`'s helpers, so a new
@@ -222,7 +223,8 @@ class TestTableProportionalSizing:
         # The regex anchors on the first tspan for the baseline; separately
         # assert the subtitle still renders in full across its wrapped lines.
         subtitle_el = re.search(
-            rf'<text x="0" font-size="[0-9.]+" fill="{re.escape(subtitle_fill)}"'
+            rf'<text x="0" font-size="[0-9.]+" font-style="normal" '
+            rf'fill="{re.escape(subtitle_fill)}"'
             r"[^>]*>(.*?)</text>",
             svg,
             re.DOTALL,

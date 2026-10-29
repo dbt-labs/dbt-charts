@@ -78,6 +78,11 @@ style:
       divider:
         color: *faint
   annotations:
+    rule:
+      marks:
+        rule:
+          stroke:
+            color: auto
     trend:
       marks:
         line:
@@ -215,8 +220,8 @@ style:
       row:
         divider:
           color: *faint
-    # Soft dark tooltip: no outline, a drop shadow, rounded swatch, and a
-    # background-fill active marker. stark is the hard-outline variant.
+    # Soft dark tooltip: no outline (the _base drop shadow separates the card).
+    # stark is the hard-outline variant.
     tooltip:
       background: *panel
       label:
@@ -229,12 +234,6 @@ style:
         color: *faint
         # Borderless like the other shadowed themes (see clarity.yaml).
         width: 0.0
-        radius: 4.0
-      shadow:
-        visible: true
-      swatch:
-        radius: 3.0
-      active_marker: fill
     # Inverts the "away from background" rule the other themes follow: neon's
     # canvas is chrome[12] (near-black), so a step AWAY from it is
     # lighter, not darker.
@@ -256,3 +255,8 @@ style:
       color: *faint
     input:
       background: *panel
+  layout:
+    tabs:
+      border:
+        # chrome[7] is the inactive tab ink here; chrome[8] gives the 3:1 line.
+        color: chrome[8]

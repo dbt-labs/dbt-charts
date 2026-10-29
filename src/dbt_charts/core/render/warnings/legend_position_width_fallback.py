@@ -2,10 +2,12 @@
 core/diagnostics/codes_render.py for what this fires on.
 
 Detection rule:
-  chart is a cartesian family (bar, line, area, scatter, heatmap) or a pie AND
-  chart.legend.position_overridden_by_width is not None — set at resolve
-  time (``cartesian_series_naming()`` in ``_axes.py``, ``_resolve_pie``) when
-  the card's width forced the legend off the edge the author wrote.
+  a cartesian family (bar, line, area, scatter, heatmap) has
+  chart.legend.position_overridden_by_width set — at resolve time
+  (``cartesian_series_naming()`` in ``_axes.py``), when the card's width forced
+  the legend off the edge the author wrote — or a pie's sized mode draws a
+  companion table whose attachment carries an ``overridden_edge``, the edge the
+  author wrote and the card was too narrow to hold.
 
 The detector itself does no width math: the width tier decision already
 happened at resolve, in the same function that has both the authored patch
@@ -32,17 +34,28 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, chart in ctx.layout_charts.items():
-        if not isinstance(chart, (_CartesianResolvedChartFields, ResolvedPieChart)):
+        if isinstance(chart, ResolvedPieChart):
+            # The width moves a pie's table, so only the layout the size stage
+            # sized it to can have moved off the authored edge. Sizing records a
+            # mode for every placed pie (one it cannot lay out is an error tile,
+            # not a layout chart), so a missing one is a sizing bug.
+            mode = ctx.pie_modes.get(chart_id)
+            if mode is None:
+                raise ValueError(
+                    f"pie {chart_id!r} reached the warning detectors without its sized mode"
+                )
+            attachment = chart.attachment_in(mode)
+            if attachment is None or attachment.overridden_edge is None:
+                continue
+            authored_edge = attachment.overridden_edge
+            resolved_edge = attachment.placement
+        elif isinstance(chart, _CartesianResolvedChartFields):
+            if chart.legend.position_overridden_by_width is None:
+                continue
+            authored_edge = chart.legend.position_overridden_by_width
+            resolved_edge = chart.legend.position.edge
+        else:
             continue
-        authored_edge = chart.legend.position_overridden_by_width
-        if authored_edge is None:
-            continue
-
-        resolved_edge = (
-            chart.attached_table_placement
-            if isinstance(chart, ResolvedPieChart)
-            else chart.legend.position.edge
-        )
         warnings.append(
             Diagnostic.from_code(
                 WARN_LEGEND_POSITION_WIDTH_FALLBACK,

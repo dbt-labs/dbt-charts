@@ -12,6 +12,7 @@ The provider then uses the correct nested board's resolved_style for each chart.
 
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -358,3 +359,62 @@ def test_height_provider_resolved_style_param_propagated_to_render(
         f"resolved_style (id={id(nested_rs)}), got id={captured_styles[0]} "
         f"(outer cream id={id(outer_rs)})."
     )
+
+
+def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
+    """A nested board that authors its own frame.card_padding re-renders its
+    aligned charts with that padding, not the parent board's.
+    """
+    from dbt_charts.core.compile.config import get_theme_style
+    from dbt_charts.core.compile.resolve.style.board import (
+        resolve_chart_style_context,
+        resolve_style,
+    )
+    from dbt_charts.core.execute.executor import Executor
+    from dbt_charts.core.render import layout_sizing
+    from dbt_charts.core.render.layout_sizing import (
+        SizingRenderCtx,
+        _align_board_charts,
+    )
+
+    outer_rs = resolve_style(get_theme_style("paper"))
+    outer_ctx = resolve_chart_style_context(get_theme_style("paper"))
+    nested_rs = dataclasses.replace(
+        outer_rs, frame=outer_rs.frame.model_copy(update={"card_padding": 40.0})
+    )
+
+    chart = _bar_chart("revenue")
+    chart_item = LayoutItem(type="chart", width=400.0, height=150.0, chart=chart)
+    nested_board = MagicMock()
+    nested_board.resolved_style = nested_rs
+    nested_board.chart_style_context = outer_ctx
+    nested_board.layout = Layout.model_validate(
+        {"type": "cols", "items": [chart_item], "content_height": 300.0}
+    )
+    board_item = LayoutItem.model_construct(
+        type="board", width=400.0, height=300.0, board=nested_board, chart=None
+    )
+
+    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
+    render_ctx = SizingRenderCtx(
+        executor=executor,
+        resolved_style=outer_rs,
+        chart_style_context=outer_ctx,
+        pre_resolved={"revenue": _resolved(chart, outer_ctx)},
+        natural_heights={("revenue", 400.0): 150.0},
+    )
+
+    paddings: list[object] = []
+
+    def fake_render(
+        _resolved_v2, _executor, _variables, width: float, **kwargs
+    ) -> tuple[str, float, float]:
+        paddings.append(kwargs["padding"])
+        return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0
+
+    with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
+        _align_board_charts(board_item, 300.0, render_ctx)
+
+    assert len(paddings) == 1
+    resolved = _resolved(chart, outer_ctx)
+    assert paddings[0] == layout_sizing.additive_padding(40.0, resolved.layout_padding)

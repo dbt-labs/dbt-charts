@@ -1492,8 +1492,14 @@ pub fn render_title_variables_inline_band(
         title_fonts.clone(),
     )?;
     let title_h = measured_title_h.max(title_min_height);
-    let inline_title_line_box =
-        crate::title::title_line_box(title_style.clone(), title_fonts.clone(), measured_title_h)?;
+    let inline_title_line_box = crate::title::title_line_box(
+        title,
+        variable_values,
+        title_case,
+        inner,
+        title_style.clone(),
+        title_fonts.clone(),
+    )?;
 
     let label_case = vs
         .label

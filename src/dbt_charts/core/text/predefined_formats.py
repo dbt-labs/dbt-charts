@@ -166,7 +166,7 @@ PREDEFINED_SPECS: dict[str, PredefinedSpec] = {
     PredefinedNumberFormat.integer: PredefinedSpec(",.0f"),
     PredefinedNumberFormat.delta: PredefinedSpec("+,d"),
     PredefinedNumberFormat.number: PredefinedSpec(".3~s"),
-    PredefinedNumberFormat.number_full: PredefinedSpec(",.2f"),
+    PredefinedNumberFormat.number_full: PredefinedSpec(",~f"),
     PredefinedNumberFormat.compact: PredefinedSpec(".2~s"),
     PredefinedNumberFormat.year: PredefinedSpec("d"),
     PredefinedNumberFormat.id: PredefinedSpec("d", kind=True),
@@ -186,6 +186,11 @@ PREDEFINED_SUB_UNIT_FALLBACK: dict[str, str] = {
     PredefinedNumberFormat.currency_compact.value: PredefinedNumberFormat.currency_full.value,
     PredefinedNumberFormat.compact.value: PredefinedNumberFormat.number_full.value,
 }
+
+# What `number` and `compact` print from SUB_UNIT_FLOOR to 1 when the board did
+# not redefine `number_full`: two unpadded decimals (0.6710941677 -> "0.67"),
+# not number_full's six.
+SUB_UNIT_NUMBER_SPEC = ",.2~f"
 
 # Money-affix detection for the slot vote: deliberately small and explicit.
 # Currency symbols glued directly onto a value, and the major ISO 4217 codes a

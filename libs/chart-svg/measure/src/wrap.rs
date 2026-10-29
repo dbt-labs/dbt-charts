@@ -16,6 +16,8 @@ pub fn wrap_plain(
     max_lines: usize,
 ) -> Result<Vec<String>, String> {
     let path = font_path(fonts_dir, family);
+    // unweighted: its one caller, the callout placard, paints no `font-weight`, so the browser
+    // draws it at 400.
     let measurer = cached_measurer(&path, 0, None);
     if !measurer.is_available() {
         return Err(format!("font file {path} cannot be read to measure text"));

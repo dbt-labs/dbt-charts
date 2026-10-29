@@ -770,13 +770,3 @@ def test_render_dashboard_honors_project_warnings_ignore(
     assert result.warnings == []
     assert len(result.suppressed_warnings) == 1
     assert result.suppressed_warnings[0].code == "WARN-REAGGREGATION"
-
-
-def test_query_ignore_keeps_a_retired_code_loading_with_a_warning() -> None:
-    """A retired code stays a legal `ignore:` entry."""
-    from dbt_charts.core.compile.models.query.authored import AuthoredSqlQuery
-
-    with pytest.warns(UserWarning, match="WARN-ADJACENT-TEXT-ROWS.*no longer"):
-        AuthoredSqlQuery.model_validate(
-            {"sql": "select 1", "ignore": ["WARN-ADJACENT-TEXT-ROWS"]}
-        )

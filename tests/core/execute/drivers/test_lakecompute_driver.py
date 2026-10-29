@@ -122,9 +122,16 @@ def test_every_connection_field_reaches_the_driver(
     variant: type[LakeComputeSourceBase],
 ) -> None:
     """No silent drop: each field a variant declares, once set, is sent. A field
-    added to a variant without a mapping fails here. `cache` is cache policy and
-    `max_query_duration_seconds` travels as the timeout argument."""
-    not_connection = {"type", "method", "cache", "max_query_duration_seconds"}
+    added to a variant without a mapping fails here. `cache` is cache policy,
+    `max_query_duration_seconds` travels as the timeout argument, and `metricflow`
+    names a semantic bundle the compiler reads, not the driver."""
+    not_connection = {
+        "type",
+        "method",
+        "cache",
+        "max_query_duration_seconds",
+        "metricflow",
+    }
     fields = {
         name: f"v-{name}" for name in variant.model_fields if name not in not_connection
     }

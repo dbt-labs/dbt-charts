@@ -51,19 +51,15 @@ pub fn for_family<'a>(payload: &'a Payload, chart_type: &str) -> Result<Cow<'a, 
         | "point_map" => {
             shift_vega_payload(payload, payload.title_shift)
         }
-        "pie"
-            if payload
-                .resolved
-                .get("attached_table")
-                .is_some_and(|t| !t.is_null()) =>
-        {
-            Err(
-                "pie: a title shift over an attached table is not modeled — production keeps that \
-             composite out of the title band"
-                    .to_string(),
-            )
+        "pie" => {
+            let name = payload.pie_mode.as_deref().ok_or("pie: a title shift needs the pie's sized mode")?;
+            match crate::families::pie::Mode::parse(name)? {
+                crate::families::pie::Mode::Direct => shift_vega_payload(payload, payload.title_shift),
+                _ => Err("pie: a title shift over an attached table is not modeled — production keeps that \
+                          composite out of the title band"
+                    .to_string()),
+            }
         }
-        "pie" => shift_vega_payload(payload, payload.title_shift),
         "table" | "spark_bar" => Ok(Cow::Borrowed(payload)),
         other => Err(format!(
             "{other}: production assigns no title shift to this family"
@@ -181,6 +177,7 @@ pub fn chart_title_metrics(
     slot_width: f64,
     fonts: &measure::FontBook,
     spark_title: Option<&crate::SparkBarTitle>,
+    pie_mode: Option<crate::families::pie::Mode>,
 ) -> Result<Option<TitleMetrics>, String> {
     // `title_band.py:106`: a subtitle-only chart draws no title block.
     if !chart
@@ -196,8 +193,11 @@ pub fn chart_title_metrics(
         .ok_or("title metrics: chart missing chart_type")?;
     // `title_band.py:108-111`: the composite anchors its table from the wheel's
     // own height, which a shift does not change.
-    if chart_type == "pie" && chart.get("attached_table").is_some_and(|t| !t.is_null()) {
-        return Ok(None);
+    if chart_type == "pie" {
+        let mode = pie_mode.ok_or("title metrics: a pie needs its sized mode")?;
+        if mode != crate::families::pie::Mode::Direct {
+            return Ok(None);
+        }
     }
     let chart_id = chart
         .get("id")
@@ -318,12 +318,14 @@ mod tests {
             500.0,
             &FontBook::empty(),
             None,
+            None,
         );
         let small = chart_title_metrics(
             &bar(18.0, None, Some(10.0)),
             16.0,
             500.0,
             &FontBook::empty(),
+            None,
             None,
         );
         assert_eq!(big.clone().unwrap(), m(35.0, 15.0));
@@ -344,6 +346,7 @@ mod tests {
             500.0,
             &FontBook::empty(),
             None,
+            None,
         )
         .unwrap();
         let plain = chart_title_metrics(
@@ -351,6 +354,7 @@ mod tests {
             16.0,
             500.0,
             &FontBook::empty(),
+            None,
             None,
         )
         .unwrap();
@@ -366,8 +370,8 @@ mod tests {
         let mut subtitle_only = bar(18.0, Some(11.0), Some(10.0));
         subtitle_only["title"] = Value::Null;
         let titled =
-            chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
-        let bare = chart_title_metrics(&subtitle_only, 16.0, 500.0, &fonts, None).unwrap();
+            chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None, None).unwrap();
+        let bare = chart_title_metrics(&subtitle_only, 16.0, 500.0, &fonts, None, None).unwrap();
         assert_eq!(bare, None);
         assert_eq!(shifts(&[titled, bare]), [(0.0, 0.0), (0.0, 0.0)]);
     }
@@ -377,12 +381,12 @@ mod tests {
     #[test]
     fn a_kpi_beside_bars_takes_no_part_in_the_band() {
         let fonts = FontBook::empty();
-        let kpi = chart_title_metrics(&chart_of("kpi", 18.0), 16.0, 500.0, &fonts, None).unwrap();
+        let kpi = chart_title_metrics(&chart_of("kpi", 18.0), 16.0, 500.0, &fonts, None, None).unwrap();
         assert_eq!(kpi, None);
         let big =
-            chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
+            chart_title_metrics(&bar(24.0, None, Some(10.0)), 16.0, 500.0, &fonts, None, None).unwrap();
         let small =
-            chart_title_metrics(&bar(18.0, None, Some(10.0)), 16.0, 500.0, &fonts, None).unwrap();
+            chart_title_metrics(&bar(18.0, None, Some(10.0)), 16.0, 500.0, &fonts, None, None).unwrap();
         assert_eq!(
             shifts(&[big, kpi, small]),
             [(0.0, 0.0), (0.0, 0.0), (5.0, 6.0)]
@@ -403,17 +407,18 @@ mod tests {
         let fonts = FontBook::empty();
         for family in ["callout", "sankey", "kpi"] {
             let got =
-                chart_title_metrics(&chart_of(family, 18.0), 16.0, 500.0, &fonts, None).unwrap();
+                chart_title_metrics(&chart_of(family, 18.0), 16.0, 500.0, &fonts, None, None).unwrap();
             assert_eq!(got, None, "{family}");
         }
-        let mut attached = chart_of("pie", 18.0);
-        attached["attached_table"] = json!({"columns": []});
-        assert_eq!(
-            chart_title_metrics(&attached, 16.0, 500.0, &fonts, None).unwrap(),
-            None
-        );
-        let mut plain_pie = chart_of("pie", 18.0);
-        plain_pie["attached_table"] = Value::Null;
+        use crate::families::pie::Mode;
+        let pie = chart_of("pie", 18.0);
+        for mode in [Mode::Hybrid, Mode::FullTable] {
+            assert_eq!(
+                chart_title_metrics(&pie, 16.0, 500.0, &fonts, None, Some(mode)).unwrap(),
+                None
+            );
+        }
+        let plain_pie = pie;
         for family in [
             "pie",
             "geoshape",
@@ -426,8 +431,9 @@ mod tests {
         ] {
             let mut c = plain_pie.clone();
             c["chart_type"] = json!(family);
+            let mode = (family == "pie").then_some(Mode::Direct);
             assert_eq!(
-                chart_title_metrics(&c, 16.0, 500.0, &fonts, None).unwrap(),
+                chart_title_metrics(&c, 16.0, 500.0, &fonts, None, mode).unwrap(),
                 m(30.0, 14.0),
                 "{family}"
             );
@@ -440,13 +446,13 @@ mod tests {
     fn an_unset_offset_is_vegas_default_and_layout_padding_moves_the_ascent() {
         let fonts = FontBook::empty();
         assert_eq!(
-            chart_title_metrics(&bar(18.0, None, None), 16.0, 500.0, &fonts, None).unwrap(),
+            chart_title_metrics(&bar(18.0, None, None), 16.0, 500.0, &fonts, None, None).unwrap(),
             m(30.0, 8.0)
         );
         let mut padded = bar(18.0, None, Some(10.0));
         padded["layout_padding"]["top"] = json!(4.0);
         assert_eq!(
-            chart_title_metrics(&padded, 16.0, 500.0, &fonts, None).unwrap(),
+            chart_title_metrics(&padded, 16.0, 500.0, &fonts, None, None).unwrap(),
             m(34.0, 14.0)
         );
     }
@@ -458,12 +464,12 @@ mod tests {
         let fonts = FontBook::empty();
         let mut spark = chart_of("spark_bar", 11.0);
         assert_eq!(
-            chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE)).unwrap(),
+            chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE), None).unwrap(),
             m(32.0, 8.0)
         );
         spark["subtitle"] = json!("sub");
         assert_eq!(
-            chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE)).unwrap(),
+            chart_title_metrics(&spark, 16.0, 500.0, &fonts, Some(&SPARK_TITLE), None).unwrap(),
             m(32.0, 19.0)
         );
     }
@@ -472,7 +478,7 @@ mod tests {
     fn a_titled_vega_chart_without_a_title_font_size_refuses_by_name() {
         let mut c = bar(18.0, None, Some(10.0));
         c["style"]["title_font"]["size"] = Value::Null;
-        let err = chart_title_metrics(&c, 16.0, 500.0, &FontBook::empty(), None).unwrap_err();
+        let err = chart_title_metrics(&c, 16.0, 500.0, &FontBook::empty(), None, None).unwrap_err();
         assert!(err.contains("style.title_font.size"), "{err}");
     }
 
@@ -591,9 +597,8 @@ mod tests {
                 "{family}"
             );
         }
-        let attached = payload("pie", (1.0, 2.0), |r| {
-            r["attached_table"] = json!({"columns": []})
-        });
+        let mut attached = payload("pie", (1.0, 2.0), |_| {});
+        attached.pie_mode = Some("full_table".to_string());
         assert!(shifted(&attached, "pie")
             .unwrap_err()
             .contains("attached table"));

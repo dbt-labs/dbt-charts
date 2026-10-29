@@ -460,9 +460,47 @@ pub fn oklch_to_hex(l: f64, c: f64, h: f64) -> Result<String, String> {
     ))
 }
 
+fn luminance((r, g, b): (f64, f64, f64)) -> f64 {
+    0.2126 * srgb_to_linear(r) + 0.7152 * srgb_to_linear(g) + 0.0722 * srgb_to_linear(b)
+}
+
 fn relative_luminance(hex: &str) -> Result<f64, String> {
-    let (r, g, b) = hex_rgb01(hex)?;
-    Ok(0.2126 * srgb_to_linear(r) + 0.7152 * srgb_to_linear(g) + 0.0722 * srgb_to_linear(b))
+    Ok(luminance(hex_rgb01(hex)?))
+}
+
+fn contrast_of(a: f64, b: f64) -> f64 {
+    let (hi, lo) = if a < b { (b, a) } else { (a, b) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// The share of `color` that stays when it recedes toward `canvas`: the largest share of
+/// the straight sRGB mix (`color-mix(in srgb, color share, canvas)`) whose WCAG contrast
+/// against `canvas` is at most `target`. A color already at or below `target` keeps
+/// everything (1.0): receding never makes a mark more prominent. The scan runs from the
+/// full color down so a mix whose channels move in opposite directions cannot land on a
+/// far branch of the contrast curve.
+pub fn recede_share(color: &str, canvas: &str, target: f64) -> Result<f64, String> {
+    let (mark, ground) = (hex_rgb01(color)?, hex_rgb01(canvas)?);
+    let ground_luminance = luminance(ground);
+    let at = |share: f64| {
+        let mix = |m: f64, g: f64| share * m + (1.0 - share) * g;
+        contrast_of(luminance((mix(mark.0, ground.0), mix(mark.1, ground.1), mix(mark.2, ground.2))), ground_luminance)
+    };
+    if at(1.0) <= target {
+        return Ok(1.0);
+    }
+    const STEPS: u32 = 64;
+    let below = (1..=STEPS).map(|i| 1.0 - f64::from(i) / f64::from(STEPS)).find(|&share| at(share) <= target).unwrap_or(0.0);
+    let (mut lo, mut hi) = (below, below + 1.0 / f64::from(STEPS));
+    for _ in 0..30 {
+        let mid = (lo + hi) / 2.0;
+        if at(mid) <= target {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(lo)
 }
 
 /// `wcag_contrast`: WCAG 2.1 contrast ratio between two 6-digit hex colors.
@@ -625,6 +663,41 @@ mod tests {
                 "{color} on {canvas}"
             );
         }
+    }
+
+    fn mixed_contrast(color: &str, canvas: &str, share: f64) -> f64 {
+        let (m, g) = (hex_rgb01(color).unwrap(), hex_rgb01(canvas).unwrap());
+        let mix = |a: f64, b: f64| share * a + (1.0 - share) * b;
+        contrast_of(luminance((mix(m.0, g.0), mix(m.1, g.1), mix(m.2, g.2))), luminance(g))
+    }
+
+    #[test]
+    fn a_receded_color_lands_on_the_target_contrast_on_light_and_dark_canvases() {
+        for canvas in ["#ffffff", "#faf7f0", "#161616", "#0b0b0f"] {
+            for color in ["#0073c2", "#d55e00", "#009e73", "#cc79a7", "#f0e442", "#000000"] {
+                let share = recede_share(color, canvas, 1.5).unwrap();
+                let contrast = mixed_contrast(color, canvas, share);
+                if share < 1.0 {
+                    assert!((contrast - 1.5).abs() < 0.01, "{color} on {canvas}: {contrast}");
+                } else {
+                    assert!(contrast <= 1.5, "{color} on {canvas}: {contrast}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_color_already_at_or_below_the_target_is_left_alone() {
+        assert_eq!(recede_share("#f4f4f4", "#ffffff", 1.5).unwrap(), 1.0);
+        assert_eq!(recede_share("#1c1c1c", "#161616", 1.5).unwrap(), 1.0);
+        assert_eq!(recede_share("#ffffff", "#ffffff", 1.5).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn a_dark_canvas_recedes_a_saturated_mark_further_than_a_fixed_blend_would() {
+        // A fixed 70% blend leaves a saturated blue far above 1.5:1 on a near-black canvas.
+        let share = recede_share("#0073c2", "#161616", 1.5).unwrap();
+        assert!(share < 0.5, "{share}");
     }
 
     #[test]

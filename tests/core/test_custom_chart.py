@@ -1163,8 +1163,8 @@ class TestReviewRegressions:
         rows = [{"from_stage": "visit", "to_stage": "signup", "visitors": 100}]
         custom = resolve(result.board.charts["flow"], rows, context)
         bars = resolve(result.board.charts["bars"], rows, context)
-        assert chart_title_metrics(custom, 16, 300) == chart_title_metrics(
-            bars, 16, 300
+        assert chart_title_metrics(custom, 16, 300, None) == chart_title_metrics(
+            bars, 16, 300, None
         )
 
 

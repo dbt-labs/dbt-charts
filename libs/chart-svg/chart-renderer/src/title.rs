@@ -287,6 +287,35 @@ fn resolved_title_blocks(
     Ok(blocks)
 }
 
+/// `markdown_style.py::style_prose_headings`: each top-level heading of body
+/// prose set as the theme sets headings. `fonts.heading.case` applies to its
+/// words; one drawn no larger than the body takes the bold weight, since it
+/// would otherwise differ from body text by almost nothing.
+pub fn style_prose_headings(
+    blocks: &mut [AnyBlock],
+    case: Option<&str>,
+    style: &mdsvg::style::Style,
+) -> Result<(), String> {
+    for block in blocks {
+        let AnyBlock::Heading(Heading { level, spans }) = block else {
+            continue;
+        };
+        if let Some(case) = case {
+            case_words(spans, case)?;
+        }
+        if style.get_heading_size(*level) <= style.base_font_size {
+            for span in spans.iter_mut() {
+                span.span_type = match span.span_type {
+                    SpanType::Text => SpanType::Bold,
+                    SpanType::Italic => SpanType::BoldItalic,
+                    other => other,
+                };
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `markdown_blocks.py::map_span_runs` with `markdown_style.py::_case_words`
 /// as the run function: every run of spans (paragraph, heading, list item,
 /// table cell, at any depth) is cased as one string (`apply_case_to_runs`).
@@ -476,11 +505,25 @@ pub fn title_max_content_width(
 }
 
 /// `render/sizing.py::title_line_box`: the `(top, height)` of the title
-/// text's own span inside a block of `block_height` — the level is always 1
-/// (`board_title_markdown` always emits an h1; `title_renderer` bakes the
-/// board's real level into the style's own h1 fields).
-pub fn title_line_box(style: Style, fonts: FontSlots, block_height: f64) -> Result<(f64, f64), String> {
-    Ok(mdsvg::renderer::SVGRenderer::new(style, fonts)?.heading_line_box(1, block_height))
+/// text's own span inside its block, wrapped to `width` — asked of the
+/// renderer and blocks that draw it (`board_title_markdown` always emits an
+/// h1; `title_renderer` bakes the board's real level into the style's own h1
+/// fields).
+pub fn title_line_box(
+    title: &str,
+    variables: &serde_json::Map<String, Value>,
+    title_case: Option<&str>,
+    width: f64,
+    style: Style,
+    fonts: FontSlots,
+) -> Result<(f64, f64), String> {
+    let blocks = resolved_title_blocks(title, variables, title_case)?;
+    let renderer = mdsvg::renderer::SVGRenderer::new(style, fonts)?;
+    match blocks.first() {
+        Some(AnyBlock::Heading(heading)) => renderer.heading_text_box(heading, width),
+        // A title whose image failed to resolve is drawn as its error message.
+        _ => Ok((0.0, renderer.render_content(&blocks, width, 0.0)?.height)),
+    }
 }
 
 /// `render/sizing.py::title_baseline_offset`: how far below a title block's

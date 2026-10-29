@@ -18,6 +18,7 @@ from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.compile.sql_guard import source_dialect
+from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependencies
 from dbt_charts.core.compile.template.variables import (
     check_variable_overrides,
@@ -248,82 +249,86 @@ def lookup_board_query_sql(
     target_path = named_source_target_path(
         query.source, board.sources, project.sources.sources
     )
+    clock = board.clock(utc_now())
     try:
-        merged_vars = merge_board_variables(
-            board, vars or {}, board.regional.today(utc_now())
-        )
-        # {{ queries.X }} is expanded to text first, recursively, exactly as the
-        # render/serve path does (Executor.execute_query Step 4) — don't move
-        # this after the two resolve calls below; it's what lets a template
-        # left inside X's own SQL (a plain variable, `filter()`, a literal) reach
-        # the single variable render instead of never.
-        expanded_query = resolve_query_references(
-            query,
-            all_queries={**board.queries, **compile_result.query_registry},
-            query_name=name,
-        )
-        assert isinstance(expanded_query, SqlQuery)
-        if query.dialect is not None:
-            # Resolved the way execution resolves it, so the preview agrees with
-            # what runs for file and dbt_profile sources.
-            dbt_path = linked_dbt_path(project)
-            dbt_context = (
-                DbtContext(dbt_project_path=dbt_path) if dbt_path is not None else None
+        with board_clock(clock):
+            merged_vars = merge_board_variables(board, vars or {}, clock)
+            # {{ queries.X }} is expanded to text first, recursively, exactly as the
+            # render/serve path does (Executor.execute_query Step 4) — don't move
+            # this after the two resolve calls below; it's what lets a template
+            # left inside X's own SQL (a plain variable, `filter()`, a literal) reach
+            # the single variable render instead of never.
+            expanded_query = resolve_query_references(
+                query,
+                all_queries={**board.queries, **compile_result.query_registry},
+                query_name=name,
             )
-            source_config = DefaultSourceResolver().resolve(
-                query.source, board.sources, project.sources, dbt_context, name
-            )
-            if source_config is None:
-                raise dialect_unsupported(
-                    query.dialect,
-                    "the source's warehouse",
-                    "no source resolved for this query",
+            assert isinstance(expanded_query, SqlQuery)
+            if query.dialect is not None:
+                # Resolved the way execution resolves it, so the preview agrees with
+                # what runs for file and dbt_profile sources.
+                dbt_path = linked_dbt_path(project)
+                dbt_context = (
+                    DbtContext(dbt_project_path=dbt_path)
+                    if dbt_path is not None
+                    else None
                 )
-            if dialect_differs(query.dialect, source_config):
-                if is_file_source(source_config):
+                source_config = DefaultSourceResolver().resolve(
+                    query.source, board.sources, project.sources, dbt_context, name
+                )
+                if source_config is None:
                     raise dialect_unsupported(
                         query.dialect,
-                        "duckdb",
-                        "queries on a file source are not translated, so write "
-                        "the SQL in duckdb",
+                        "the source's warehouse",
+                        "no source resolved for this query",
                     )
-                engine = engine_dialect(query.dialect, source_config)
-                translated_sql, translated_params = render_in_dialect(
-                    expanded_query.sql,
-                    query.dialect,
-                    engine,
-                    merged_vars,
-                    board.queries,
-                    not query.lenient_variables,
-                    dbt_refs,
-                    target_path,
-                    INLINE_PLACEHOLDERS,
-                )
-                return BoardQueryLookupResult(
-                    success=True,
-                    sql=inline_params_for_dialect(
-                        translated_sql,
-                        translated_params,
+                if dialect_differs(query.dialect, source_config):
+                    if is_file_source(source_config):
+                        raise dialect_unsupported(
+                            query.dialect,
+                            "duckdb",
+                            "queries on a file source are not translated, so write "
+                            "the SQL in duckdb",
+                        )
+                    engine = engine_dialect(query.dialect, source_config)
+                    translated_sql, translated_params = render_in_dialect(
+                        expanded_query.sql,
+                        query.dialect,
+                        engine,
+                        merged_vars,
+                        board.queries,
+                        not query.lenient_variables,
+                        dbt_refs,
+                        target_path,
                         INLINE_PLACEHOLDERS,
-                        get_dialect(engine),
-                    ),
-                    source=query.source,
-                )
-        resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
-        rendered = render_parameterized_with_queries(
-            resolved_sql,
-            merged_vars,
-            queries=board.queries,
-            strict=not query.lenient_variables,
-            warehouse=warehouse,
-        )
-        # Same second resolve pass execution's own SqlAdapter.prepare_sql runs:
-        # `resolve_query_references`'s dependency-graph short-circuit only
-        # recognizes the spaced `{{ queries.` spelling, so a `{{queries.X}}`
-        # reference reaches `render_parameterized_with_queries` unexpanded and
-        # is inlined there instead — carrying any `ref()` call X's own SQL had.
-        # Do not remove this as redundant with the first resolve above.
-        composed_sql, _inlined_relations = dbt_refs.resolve(rendered.sql, target_path)
+                    )
+                    return BoardQueryLookupResult(
+                        success=True,
+                        sql=inline_params_for_dialect(
+                            translated_sql,
+                            translated_params,
+                            INLINE_PLACEHOLDERS,
+                            get_dialect(engine),
+                        ),
+                        source=query.source,
+                    )
+            resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
+            rendered = render_parameterized_with_queries(
+                resolved_sql,
+                merged_vars,
+                queries=board.queries,
+                strict=not query.lenient_variables,
+                warehouse=warehouse,
+            )
+            # Same second resolve pass execution's own SqlAdapter.prepare_sql runs:
+            # `resolve_query_references`'s dependency-graph short-circuit only
+            # recognizes the spaced `{{ queries.` spelling, so a `{{queries.X}}`
+            # reference reaches `render_parameterized_with_queries` unexpanded and
+            # is inlined there instead — carrying any `ref()` call X's own SQL had.
+            # Do not remove this as redundant with the first resolve above.
+            composed_sql, _inlined_relations = dbt_refs.resolve(
+                rendered.sql, target_path
+            )
     except (JinjaError, DbtChartsError) as exc:
         return BoardQueryLookupResult(
             success=False, errors=[str(exc)], error_code=error_code_of(exc)
@@ -654,6 +659,7 @@ def query_board(
         loaded.path,
     )
 
+    clock = board.clock(utc_now())
     try:
         registry = board.variable_registry or {}
         check_variable_overrides(registry, vars or {})
@@ -665,7 +671,7 @@ def query_board(
                 registry,
             ),
             registry,
-            board.regional.today(utc_now()),
+            clock,
         )
     except ExecutionError as exc:
         return _fail(name, resolved_display, [str(exc)], error_code_of(exc))
@@ -702,9 +708,10 @@ def query_board(
                     sql=sql,
                     notes=noted,
                 )
-        exec_result = adapter_registry.execute(
-            query, variables=merged_vars or None, board=board, query_name=name
-        )
+        with board_clock(clock):
+            exec_result = adapter_registry.execute(
+                query, variables=merged_vars or None, board=board, query_name=name
+            )
     except Exception as e:  # noqa: BLE001
         return _fail(
             name,

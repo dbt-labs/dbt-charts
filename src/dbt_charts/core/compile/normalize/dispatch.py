@@ -119,6 +119,7 @@ from dbt_charts.core.compile.normalize.variables import (
     promote_inline_option_queries,
     validate_authored_variable_name,
     validate_choice_type,
+    validate_presets_scope,
     validate_variable_references,
     validate_variable_value,
 )
@@ -1022,6 +1023,7 @@ def normalize_board(
     variable_defaults: VariableValues = {}
     for var_name, var in local_variables.items():
         validate_choice_type(var_name, var)
+        validate_presets_scope(var_name, var)
         if var.default is not None:
             validate_variable_value(var_name, var, var.default)
             variable_defaults[var_name] = var.default

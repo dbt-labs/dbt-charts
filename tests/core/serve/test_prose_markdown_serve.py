@@ -80,7 +80,7 @@ class TestSymlinkedMarkdownServe:
         assert response.status_code == 200, (
             f"Expected 200, got {response.status_code}: {response.text[:300]}"
         )
-        assert "Do the thing" in response.text
+        assert "Do the Thing" in response.text
 
     def test_symlinked_md_renders_body_text(self, tmp_path: Path) -> None:
         """The rendered page includes the markdown body content."""

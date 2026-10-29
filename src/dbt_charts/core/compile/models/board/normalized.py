@@ -5,13 +5,19 @@ Purpose: Layout, Board, and core document types.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, TypeGuard
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
 from dbt_charts.core.compile.models.chart.normalized import Chart
-from dbt_charts.core.compile.models.primitives import BoardLinks, HtmlPolicy, Regional
+from dbt_charts.core.compile.models.primitives import (
+    BoardLinks,
+    HtmlPolicy,
+    PieMode,
+    Regional,
+)
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -20,6 +26,7 @@ from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,
     Variable,
 )
+from dbt_charts.core.compile.template.daterange import BoardClock
 
 # ============================================================================
 # TYPE ALIASES
@@ -160,6 +167,13 @@ class LayoutItem(BaseModel):
     title_shift: TitleShift = Field(
         default=NO_TITLE_SHIFT,
         description="Title and body offsets within a cols row; set by sizing.",
+    )
+    pie_mode: PieMode | None = Field(
+        default=None,
+        description=(
+            "How much of a pie its card lets it draw, decided once by sizing; "
+            "None for a chart that is not a pie."
+        ),
     )
 
     # Layout visibility — evaluated at render time; None means always visible.
@@ -531,6 +545,18 @@ class Board(BaseModel):
         default_factory=dict,
         description="Compilation metadata (warnings, diagnostics, source info) populated by the normalizer.",
     )
+
+    @property
+    def fiscal_year_start_month(self) -> int:
+        return self.chart_style_context.axis_x.fiscal_year_start_month
+
+    def clock(self, instant: datetime) -> BoardClock:
+        """Today in the board's zone at ``instant``, with its fiscal year start."""
+        return BoardClock(
+            self.regional.today(instant),
+            self.fiscal_year_start_month,
+            self.regional.week_start,
+        )
 
     def set_theme(self, theme: str | None) -> None:
         """Change this board's theme and re-cascade resolved_style in-place.

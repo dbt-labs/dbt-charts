@@ -4,15 +4,41 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.compile.models.chart.authored import ChartTotal
-from dbt_charts.core.compile.models.primitives import ResolvedFontStyle, ResolvedFormat
+from dbt_charts.core.compile.models.primitives import (
+    PieMode,
+    ResolvedFontStyle,
+    ResolvedFormat,
+)
 from dbt_charts.core.compile.models.style.resolved import ResolvedPieStyle
-from dbt_charts.core.compile.models.style.theme import LegendAlign
+from dbt_charts.core.compile.models.style.theme import LegendAlign, LegendEdge
 
 from ._base import _PieResolvedChartFields, _TooltipResolvedField
 from .table import ResolvedTableChart
+
+
+class PieAttachment(BaseModel):
+    """A pie's companion table and where it sits, resolved for one layout."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    table: ResolvedTableChart = Field(description="The resolved table.")
+    row_indices: tuple[int, ...] = Field(
+        min_length=1, description="Row indices projected into the table."
+    )
+    placement: Literal["left", "right", "top", "bottom"] = Field(
+        description="The edge of the wheel the table sits on."
+    )
+    align: LegendAlign = Field(description="Table position along its edge.")
+    table_width: float = Field(gt=0.0, description="The table's measured width.")
+    wheel_width: float = Field(gt=0.0, description="The width the wheel renders in.")
+    heading: str = Field(description="Heading over the table; empty for none.")
+    heading_font: ResolvedFontStyle = Field(description="The heading's font.")
+    overridden_edge: LegendEdge | None = Field(
+        description="The edge the author asked for when the card's width forced another.",
+    )
 
 
 class ResolvedPieChart(_PieResolvedChartFields, _TooltipResolvedField):
@@ -37,6 +63,13 @@ class ResolvedPieChart(_PieResolvedChartFields, _TooltipResolvedField):
     identity_field: str | None = Field(
         default=None,
         description="Column identifying each wedge in labels/tooltip/table.",
+    )
+    is_donut: bool = Field(
+        description="Authored as a donut: the board's donut slot sizes it, not the pie one.",
+    )
+    height: float | None = Field(
+        default=None,
+        description="Authored chart-root height, which pins the content height.",
     )
     total: ChartTotal | None = Field(
         default=None,
@@ -87,42 +120,34 @@ class ResolvedPieChart(_PieResolvedChartFields, _TooltipResolvedField):
     slice_label_indices: tuple[int, ...] = Field(
         description="Row indices whose mechanically rendered slice labels are visible.",
     )
-    attached_table: ResolvedTableChart | None = Field(
+    labeled_mode: Literal["direct", "hybrid", "none"] = Field(
+        description="Labeled layout the data allows: 'direct', 'hybrid' or 'none'.",
+    )
+    hybrid_attachment: PieAttachment | None = Field(
         default=None,
-        description="Final companion table, when direct labels do not suffice.",
+        description="Companion table of the hybrid layout, present when labeled_mode is 'hybrid'.",
     )
-    attached_row_indices: tuple[int, ...] = Field(
-        default=(), description="Row indices projected into the companion table."
+    full_attachment: PieAttachment | None = Field(
+        default=None,
+        description="Companion table of every slice; absent when no slice shows.",
     )
-    attached_table_placement: Literal["none", "left", "right", "top", "bottom"] = Field(
-        default="none"
-    )
-    attached_table_align: LegendAlign = Field(
-        default="start", description="Table position along its edge."
-    )
-    attached_table_width: float = Field(default=0.0)
-    wheel_width: float = Field(default=0.0)
-    attached_heading: str = Field(default="")
-    attached_heading_font: ResolvedFontStyle | None = Field(default=None)
 
     @model_validator(mode="after")
-    def _validate_attachment(self) -> ResolvedPieChart:
-        if self.attached_table is None:
-            if (
-                self.attached_row_indices
-                or self.attached_table_placement != "none"
-                or self.attached_table_width != 0.0
-                or self.wheel_width != 0.0
-                or self.attached_heading
-                or self.attached_heading_font is not None
-            ):
-                raise ValueError("pie attachment fields must all be absent")
-        elif (
-            not self.attached_row_indices
-            or self.attached_table_placement == "none"
-            or self.attached_table_width <= 0.0
-            or self.wheel_width <= 0.0
-            or self.attached_heading_font is None
+    def _validate_attachments(self) -> ResolvedPieChart:
+        if (self.hybrid_attachment is not None) != (self.labeled_mode == "hybrid"):
+            raise ValueError("a hybrid attachment goes with labeled_mode 'hybrid'")
+        # A pie with no slice to show (no rows, a non-numeric or all-zero theta)
+        # resolves without a full-table candidate; any pie with a slice needs one.
+        if self.full_attachment is None and (
+            self.labeled_mode != "direct" or self.slice_label_indices
         ):
-            raise ValueError("pie attachment fields must all be present")
+            raise ValueError("a pie with a slice to show needs a full-table attachment")
         return self
+
+    def attachment_in(self, mode: PieMode) -> PieAttachment | None:
+        """The companion table `mode` draws: none for direct."""
+        if mode == "hybrid":
+            return self.hybrid_attachment
+        if mode == "full_table":
+            return self.full_attachment
+        return None

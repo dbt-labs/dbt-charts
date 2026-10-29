@@ -5,7 +5,8 @@ use scene::{Attrs, Node};
 
 use super::model::{Curve, Stroke, Style};
 use super::place::{Connector, Mark, Placed};
-use super::{text, AnnotationCtx, Plane};
+use super::{rule_gray, text, AnnotationCtx, DataMark, Plane};
+use crate::labels_expr::colors::Color;
 use crate::contract::{aria_attrs, ItemRole};
 use crate::diagnostic::Diagnostic;
 use crate::svg::num;
@@ -26,21 +27,38 @@ fn stroked(attrs: Attrs, stroke: &Stroke) -> Attrs {
     }
 }
 
+fn rule_line(a: (f64, f64), b: (f64, f64), opacity: f64, stroke: &Stroke) -> Node {
+    Node::Line(stroked(
+        Attrs::new()
+            .set("x1", num(a.0))
+            .set("y1", num(a.1))
+            .set("x2", num(b.0))
+            .set("y2", num(b.1))
+            .set("fill", "none")
+            .set("opacity", num(opacity)),
+        stroke,
+    ))
+}
+
+/// The gray an `auto` rule draws its line and label in; `None` on a fixed
+/// stroke. A rule behind the data crosses none of it, so it sees the canvas only.
+fn auto_ink(ctx: &AnnotationCtx, p: &Placed) -> Result<Option<String>, Diagnostic> {
+    let Some(rule) = p.style.rule.as_ref().filter(|r| r.stroke.color == "auto") else { return Ok(None) };
+    let Some(Mark::Segment { a, b }) = p.mark else {
+        return Err(Diagnostic::refused("annotation rule gray: an `auto` rule has no line to measure"));
+    };
+    let canvas = Color::parse(ctx.canvas).ok_or_else(|| Diagnostic::refused(format!("annotation rule gray: canvas `{}` is not a color", ctx.canvas)))?;
+    let marks: &[DataMark] = if p.plane == Plane::Foreground { &ctx.occupied } else { &[] };
+    let under = rule_gray::crossed(marks, canvas, a, b, rule.stroke.width)?;
+    rule_gray::pick(&rule.ladder, &rule.avoid, canvas, &under).map(|g| Some(g.to_string()))
+}
+
 /// One mark in the style slot its kind reads: a segment is the rule, a rect
 /// the band or enclosure rect, a polyline the trend line, an area its
 /// interval, a circle the enclosure.
 fn mark(m: &Mark, style: &Style) -> Node {
     match m {
-        Mark::Segment { a, b } => Node::Line(stroked(
-            Attrs::new()
-                .set("x1", num(a.0))
-                .set("y1", num(a.1))
-                .set("x2", num(b.0))
-                .set("y2", num(b.1))
-                .set("fill", "none")
-                .set("opacity", num(style.rule().opacity)),
-            &style.rule().stroke,
-        )),
+        Mark::Segment { a, b } => rule_line(*a, *b, style.rule().opacity, &style.rule().stroke),
         Mark::Rect { x, y, w, h } => {
             let attrs = Attrs::new()
                 .set("x", num(*x))
@@ -169,7 +187,14 @@ pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Resu
     for p in &mine {
         let Some(lines) = p.mark.as_ref().filter(|m| !tint(m)) else { continue };
         let accessible = p.text.is_none() && p.enclosure.is_none() && p.connector.is_none();
-        marks.push(item(p, accessible, vec![mark(lines, p.style)])?);
+        let line = match (auto_ink(ctx, p)?, lines) {
+            (Some(color), Mark::Segment { a, b }) => {
+                let rule = p.style.rule();
+                rule_line(*a, *b, rule.opacity, &Stroke { color, ..rule.stroke.clone() })
+            }
+            _ => mark(lines, p.style),
+        };
+        marks.push(item(p, accessible, vec![line])?);
     }
     // Connectors and enclosures overhang the plot like text, so they are never clipped.
     let mut links = Vec::new();
@@ -196,7 +221,11 @@ pub(crate) fn nodes(ctx: &AnnotationCtx, items: &[Placed], plane: Plane) -> Resu
             let halo = if matches!(p.enclosure, Some(Mark::Rect { .. })) { &p.style.rect().fill } else { ctx.canvas };
             let bounds = Bounds::new(b.x, b.y, b.x + b.w, b.y + b.h);
             let haloed = !p.style.text.halo_over_marks || ctx.occupied.iter().any(|m| m.overlaps(&bounds));
-            labels.push(item(p, true, text::nodes(b, &p.style.text, haloed.then_some(halo)))?);
+            let mut style = p.style.text.clone();
+            if style.font.color == "auto" {
+                style.font.color = auto_ink(ctx, p)?.ok_or_else(|| Diagnostic::refused("annotation text: `auto` color on a fixed rule"))?;
+            }
+            labels.push(item(p, true, text::nodes(b, &style, haloed.then_some(halo)))?);
         }
     }
     let layer = |name: &'static str, children| Node::group(Attrs::new().set("class", name), children);

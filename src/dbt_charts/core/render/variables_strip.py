@@ -24,19 +24,24 @@ from __future__ import annotations
 
 import html
 import json
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 from dbt_charts.core.compile.models.style.theme import font_weight_as_css
 from dbt_charts.core.compile.template.daterange import (
-    DATERANGE_PRESET_GROUPS,
-    resolve_daterange_preset_iso,
+    BoardClock,
+    DaterangePreset,
+    current_board_clock,
+    parse_daterange_preset,
 )
 from dbt_charts.core.font_measure import centered_baseline_offset
 from dbt_charts.core.render.board_variables import (
     committed_text,
-    current_board_today,
 )
-from dbt_charts.core.render.controls import controls_are_interactive, controls_language
+from dbt_charts.core.render.controls import (
+    controls_are_interactive,
+    controls_language,
+    preset_label,
+)
 from dbt_charts.core.render.svg_utils import (
     attr_name,
     authored_attrs,
@@ -173,6 +178,20 @@ def _row_offsets(
     return {y: max(width - end, 0.0) for y, end in ends.items()}
 
 
+class PresetEntry(TypedDict):
+    id: str
+    label: str
+    range: list[str]
+
+
+def _preset_entry(name: str, preset: DaterangePreset, clock: BoardClock) -> PresetEntry:
+    return {
+        "id": name,
+        "label": preset_label(preset),
+        "range": [d.isoformat() for d in preset.window(clock)],
+    }
+
+
 def _draw_control(
     control: ResolvedControl,
     box: ControlBox,
@@ -307,19 +326,31 @@ def _draw_control(
             "weekStart": active_week_start(),
         }
         time_locale = f' data-dbt-time-locale="{escape_attr(json.dumps(names))}"'
-    # Each preset with the window it resolves to today: the runtime does no
-    # date math.
+    # Each preset with its label and the window it resolves to today: the
+    # runtime does no date math and knows no grammar. A divider falls where
+    # the menu passes from rolling windows to calendar-anchored ones.
     presets = ""
     if box.input == "daterange" and controls_are_interactive():
-        today = current_board_today()
-        groups = [
-            [
-                {"id": preset, "range": resolve_daterange_preset_iso(preset, today)}
-                for preset, _ in group
-            ]
-            for group in DATERANGE_PRESET_GROUPS
-        ]
+        clock = current_board_clock()
+        groups: list[list[PresetEntry]] = []
+        previous_anchored: bool | None = None
+        for name in control.presets:
+            preset = parse_daterange_preset(name)
+            anchored = preset.kind in ("this", "to_date", "previous")
+            if anchored != previous_anchored:
+                groups.append([])
+                previous_anchored = anchored
+            groups[-1].append(_preset_entry(name, preset, clock))
         presets = f' data-dbt-presets="{escape_attr(json.dumps(groups))}"'
+        # A committed preset the menu does not list still names a window the
+        # popover has to seed its calendar with.
+        if control.preset is not None and control.preset not in control.presets:
+            off_menu = _preset_entry(
+                control.preset, parse_daterange_preset(control.preset), clock
+            )
+            presets += (
+                f' data-dbt-preset-off-menu="{escape_attr(json.dumps(off_menu))}"'
+            )
     # The chrome draws the committed value; the options a host opens travel
     # with it, so a live board needs no second round trip for something the
     # render already resolved. Only a live board: the full domain of a filter is

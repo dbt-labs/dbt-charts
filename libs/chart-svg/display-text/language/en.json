@@ -36,38 +36,63 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Fiscal quarter to date",
+  "controls.fiscal_year_to_date": "Fiscal year to date",
   "controls.from": "From {date}",
-  "controls.last_12_months": "Last 12 months",
-  "controls.last_28_days": "Last 28 days",
-  "controls.last_7_days": "Last 7 days",
-  "controls.last_90_days": "Last 90 days",
   "controls.list_join": ", ",
   "controls.month_to_date": "Month to date",
   "controls.next_month": "Next month",
   "controls.no": "No",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Last {duration}",
+  "controls.preset_previous": "Previous {duration}",
   "controls.previous_month": "Previous month",
+  "controls.quarter_to_date": "Quarter to date",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Search",
   "controls.search_values": "Search values",
   "controls.sort_ascending": "Sort ascending",
   "controls.sort_descending": "Sort descending",
+  "controls.this_fiscal_quarter": "This fiscal quarter",
+  "controls.this_fiscal_year": "This fiscal year",
+  "controls.this_month": "This month",
+  "controls.this_quarter": "This quarter",
+  "controls.this_week": "This week",
+  "controls.this_year": "This year",
   "controls.today": "Today",
   "controls.until": "Until {date}",
+  "controls.week_to_date": "Week to date",
   "controls.year_to_date": "Year to date",
   "controls.yes": "Yes",
+  "controls.yesterday": "Yesterday",
   "duration.day": {
     "one": "{n} day",
     "other": "{n} days"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} fiscal quarter",
+    "other": "{n} fiscal quarters"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} fiscal year",
+    "other": "{n} fiscal years"
   },
   "duration.month": {
     "one": "{n} month",
     "other": "{n} months"
   },
+  "duration.quarter": {
+    "one": "{n} quarter",
+    "other": "{n} quarters"
+  },
   "duration.week": {
     "one": "{n} week",
     "other": "{n} weeks"
+  },
+  "duration.year": {
+    "one": "{n} year",
+    "other": "{n} years"
   },
   "footer.data_as_of": "Data as of {time} on {date}",
   "footer.made_with": "made with {brand}",

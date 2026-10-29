@@ -80,6 +80,11 @@ impl Attrs {
         }
     }
 
+    /// The value of the first attribute called `name`.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.iter().find(|(n, _, _)| n == name).map(|(_, value, _)| value.as_str())
+    }
+
     /// These attributes with each value named in `names` replaced by `f(value)`.
     pub fn map_values(mut self, names: &[&str], f: impl Fn(&str) -> String) -> Self {
         for (name, value, _) in &mut self.0 {
@@ -161,6 +166,28 @@ pub enum Node {
 impl Node {
     pub fn group(attrs: Attrs, children: Vec<Node>) -> Self {
         Self::Group { attrs, children }
+    }
+
+    /// This node and every shape, text and group beneath it with its attributes passed
+    /// through `f`.
+    pub fn map_attrs(self, f: &impl Fn(Attrs) -> Attrs) -> Self {
+        let all = |children: Vec<Node>| children.into_iter().map(|child| child.map_attrs(f)).collect();
+        match self {
+            Self::Group { attrs, children } => Self::Group { attrs: f(attrs), children: all(children) },
+            Self::TextRuns { attrs, children } => Self::TextRuns { attrs: f(attrs), children: all(children) },
+            Self::TspanRuns { attrs, children } => Self::TspanRuns { attrs: f(attrs), children: all(children) },
+            Self::Link { attrs, children } => Self::Link { attrs: f(attrs), children: all(children) },
+            Self::Rect(attrs) => Self::Rect(f(attrs)),
+            Self::Path(attrs) => Self::Path(f(attrs)),
+            Self::Line(attrs) => Self::Line(f(attrs)),
+            Self::Circle(attrs) => Self::Circle(f(attrs)),
+            Self::Polygon(attrs) => Self::Polygon(f(attrs)),
+            Self::Polyline(attrs) => Self::Polyline(f(attrs)),
+            Self::EmptyText(attrs) => Self::EmptyText(f(attrs)),
+            Self::Text(block) => Self::Text(TextBlock { attrs: f(block.attrs), ..block }),
+            Self::Tspan(block) => Self::Tspan(TextBlock { attrs: f(block.attrs), ..block }),
+            other => other,
+        }
     }
 
     /// A text run escaped as `Escape::Attr` escapes character data.

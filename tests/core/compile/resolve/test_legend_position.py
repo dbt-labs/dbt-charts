@@ -10,6 +10,10 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.models.chart.normalized import BarChart, PieChart
+from dbt_charts.core.compile.models.chart.resolved import (
+    PieAttachment,
+    ResolvedPieChart,
+)
 from dbt_charts.core.compile.models.style.authored import (
     BarChartStylePatch,
     PieChartStylePatch,
@@ -176,12 +180,19 @@ def test_authored_align_alone_does_not_conflict_with_the_top_strip() -> None:
 # --- pie ------------------------------------------------------------------
 
 
+def _attachment(resolved: ResolvedPieChart) -> PieAttachment:
+    """The companion table the pie's labeled layout implies, else the full one."""
+    attachment = resolved.hybrid_attachment or resolved.full_attachment
+    assert attachment is not None
+    return attachment
+
+
 @pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
 def test_pie_edge_reaches_the_resolved_legend_in_direct_mode(edge: str) -> None:
     resolved = make_test_resolved_chart(
         _pie({"edge": edge}, visible=True), _pie_rows(_DIRECT), width=1000.0
     )
-    assert resolved.attached_table_placement == "none"
+    assert resolved.labeled_mode == "direct"
     assert resolved.legend.position.edge == edge
 
 
@@ -193,29 +204,30 @@ def test_pie_edge_places_the_attached_table(
     resolved = make_test_resolved_chart(
         _pie({"edge": edge}), _pie_rows(values), width=1100.0
     )
-    assert resolved.attached_table_placement == edge
-    assert resolved.legend.position_overridden_by_width is None
+    assert _attachment(resolved).placement == edge
+    assert _attachment(resolved).overridden_edge is None
 
 
 def test_pie_without_an_edge_keeps_the_width_heuristic() -> None:
     wide = make_test_resolved_chart(_pie(), _pie_rows(_HYBRID), width=1100.0)
     narrow = make_test_resolved_chart(_pie(), _pie_rows(_HYBRID), width=340.0)
-    assert wide.attached_table_placement == "right"
-    assert narrow.attached_table_placement == "bottom"
+    assert _attachment(wide).placement == "right"
+    assert _attachment(narrow).placement == "bottom"
 
 
 def test_pie_side_edge_on_a_tiny_card_falls_back_loudly() -> None:
     resolved = make_test_resolved_chart(
         _pie({"edge": "left"}), _pie_rows(_HYBRID), width=340.0
     )
-    assert resolved.attached_table_placement == "bottom"
-    assert resolved.legend.position_overridden_by_width == "left"
+    assert _attachment(resolved).placement == "bottom"
+    assert _attachment(resolved).overridden_edge == "left"
     board = make_test_resolved_board(charts={resolved.id: resolved})
     warnings = detector.detect(
         WarningContext(
             board_spec=board,
             chart_results={resolved.id: _pie_rows(_HYBRID)},
             layout_charts={resolved.id: resolved},
+            pie_modes={resolved.id: "hybrid"},
         )
     )
     assert len(warnings) == 1
@@ -257,8 +269,8 @@ def test_pie_align_places_the_attached_table_along_its_edge(
     resolved = make_test_resolved_chart(
         _pie({"edge": edge, "align": align}), _pie_rows(_HYBRID), width=1100.0
     )
-    assert resolved.attached_table_placement == edge
-    assert resolved.attached_table_align == align
+    assert _attachment(resolved).placement == edge
+    assert _attachment(resolved).align == align
 
 
 @pytest.mark.parametrize(
@@ -271,7 +283,7 @@ def test_an_unset_pie_align_keeps_each_edges_long_standing_default(
     resolved = make_test_resolved_chart(
         _pie({"edge": edge}), _pie_rows(_HYBRID), width=1100.0
     )
-    assert resolved.attached_table_align == expected
+    assert _attachment(resolved).align == expected
 
 
 @pytest.mark.parametrize("leaf", ["edge", "align", "overlay"])
@@ -286,7 +298,7 @@ def test_an_explicit_null_pie_edge_keeps_the_width_heuristic() -> None:
     resolved = make_test_resolved_chart(
         _pie({"edge": None}), _pie_rows(_HYBRID), width=1100.0
     )
-    assert resolved.attached_table_placement == "right"
+    assert _attachment(resolved).placement == "right"
 
 
 @pytest.mark.parametrize("width", [200.0, 900.0])

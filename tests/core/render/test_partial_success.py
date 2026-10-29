@@ -315,6 +315,7 @@ def test_chart_internal_exception_isolated():
     assert result.board_error is None
     assert len(result.chart_errors) == 1
     assert result.chart_errors[0].code == ERR_INTERNAL.code
+    assert result.chart_errors[0].message == "RuntimeError: boom"
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +773,8 @@ def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> 
     assert isinstance(result, RenderResult)
     assert result.board_error is not None
     assert result.board_error.code == ERR_INTERNAL.code
+    assert result.board_error.message == "RuntimeError: boom"
+    assert result.board_error.detail is not None
 
 
 def test_render_dashboard_survives_build_resolved_board_chart_data_error(
@@ -1051,6 +1054,25 @@ def test_resolve_time_bare_dbt_charts_error_isolates() -> None:
     assert result.board_error is None
     assert len(result.chart_errors) == 1
     assert result.chart_errors[0].fields["chart_id"] == "broken"
+    assert 'data-chart-id="good"' in result.output
+
+
+def test_resolve_time_unexpected_exception_isolates_as_internal() -> None:
+    board = _compile_board(_HEALTHY_PLUS_PIE_YAML)
+    executor = _resolve_stage_executor(
+        {"q_good": [{"value": 42}], "q_broken": [{"label": "a", "amount": 3}]}
+    )
+
+    with _raise_at_resolve(TypeError("lineage() missing 1 required argument")):
+        result = _render_real_resolve(board, executor)
+
+    assert result.output is not None
+    assert result.board_error is None
+    (error,) = result.chart_errors
+    assert error.code == ERR_INTERNAL.code
+    assert error.fields["chart_id"] == "broken"
+    assert error.message.startswith("TypeError: lineage() missing")
+    assert error.detail is not None and "Traceback" in error.detail
     assert 'data-chart-id="good"' in result.output
 
 
@@ -1413,6 +1435,31 @@ def test_inactive_tab_query_failure_is_recorded_not_swallowed(tmp_path: Path) ->
 
     assert "hidden_chart" in resolve_errors
     assert "hidden_chart" not in resolved.charts
+    assert "active_chart" in resolved.charts
+
+
+def test_inactive_tab_crash_isolates_as_internal(tmp_path: Path) -> None:
+    from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
+
+    board, executor, _boom = _real_executor_with_failing_query(
+        tmp_path,
+        lambda: QueryError("unused", "q_bad"),
+        yaml_text=_TABS_QUERY_FAILURE_YAML,
+    )
+    real = _board_resolve_mod._resolve_chart_data_aware
+
+    def _crash(chart, *args, **kwargs):
+        if chart.id == "hidden_chart":
+            raise TypeError("boom")
+        return real(chart, *args, **kwargs)
+
+    resolve_errors: dict[str, ChartResolveFailure] = {}
+    with patch.object(_board_resolve_mod, "_resolve_chart_data_aware", _crash):
+        resolved, _cache = build_resolved_board(
+            board, executor, {}, resolve_errors=resolve_errors
+        )
+
+    assert resolve_errors["hidden_chart"].diagnostic.message == "TypeError: boom"
     assert "active_chart" in resolved.charts
 
 

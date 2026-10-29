@@ -928,6 +928,8 @@ def _resolve_tab_items(
             # Tab is a nested board. Pop TabItem-only fields not on AuthoredBoard,
             # then model_validate so style errors include the "style." loc prefix.
             tab_dict.pop("icon", None)
+            # The tab bar carries the title; the pane must not repeat it.
+            tab_dict.pop("title", None)
             nested_board = AUTHORED_BOARD_ADAPTER.validate_python(
                 tab_dict, context=AUTHORED_INPUT
             )
@@ -971,7 +973,6 @@ def _resolve_tab_items(
             # same as every other nested board (see the nested-board branch above).
             content_board = Board(
                 id=f"{board_id}_tab{idx}",
-                title=tab_item.title,
                 notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
                 base_dir=None if base_dir is None else base_dir.relpath,
                 text=tab_item.text,
@@ -1000,7 +1001,6 @@ def _resolve_tab_items(
             # branch above — _propagate_resolved_style resolves the real value.
             empty_board = Board(
                 id=f"{board_id}_tab{idx}",
-                title=tab_item.title,
                 notes=tab_item.notes or "",  # type-state: silent_fallback — notes: str
                 base_dir=None if base_dir is None else base_dir.relpath,
                 layout=Layout(type=LayoutType.ROWS, items=[]),

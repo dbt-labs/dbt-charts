@@ -3,8 +3,8 @@
 //! keyed by that value (an area's series, or a category on a single-series bar or a pie)
 //! keep their ink and every other mark recedes: its fill, outline, label, and its
 //! series' legend entry and direct label (`recede_of_series`) are
-//! mixed toward the chart canvas by the theme's hover share, as the hover runtime
-//! mixes them (`color-mix(in srgb, paint share, canvas)`), but baked into the SVG
+//! mixed toward the chart canvas to the theme's recede contrast, as the hover runtime
+//! mixes them (`color-mix(in srgb, paint share, canvas)`, share solved per color), but baked into the SVG
 //! so a PNG or PDF carries it. A receded mark's anchor is stamped
 //! `data-dbt-receded`, which the hover runtime reads to put hover on top.
 //!
@@ -20,6 +20,7 @@ use crate::families::legend::LegendEntry;
 use crate::href::{js_string, Anchor};
 use crate::Payload;
 use d3rs::color::{byte, parse_color};
+use dbt_charts_color::recede_share;
 
 /// `?name={{ channel }}` and nothing else: the one link shape that sets exactly one variable.
 fn setter(template: &str) -> Option<(&str, &str)> {
@@ -29,12 +30,12 @@ fn setter(template: &str) -> Option<(&str, &str)> {
     (named && matches!(channel, "x" | "y" | "color" | "theta")).then_some((name, channel))
 }
 
-/// How far a receded mark's ink moves toward the canvas.
+/// How far a receded mark's ink moves toward the canvas: until its WCAG contrast against it
+/// is `contrast`, so a light and a dark canvas get the same separation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Recede {
     canvas: (f64, f64, f64),
-    /// The share of the mark's own color that stays.
-    share: f64,
+    contrast: f64,
 }
 
 impl Recede {
@@ -43,12 +44,25 @@ impl Recede {
     pub(crate) fn paint(self, paint: &str) -> String {
         match parse_color(paint) {
             Some(color) if color.a == 1.0 => {
-                let mix = |mark: f64, ground: f64| byte(self.share * mark + (1.0 - self.share) * ground);
                 let (r, g, b) = self.canvas;
+                let hex = |(r, g, b): (f64, f64, f64)| format!("#{:02x}{:02x}{:02x}", byte(r), byte(g), byte(b));
+                let share = recede_share(&hex((color.r, color.g, color.b)), &hex(self.canvas), self.contrast)
+                    .expect("both colors are #rrggbb");
+                let mix = |mark: f64, ground: f64| byte(share * mark + (1.0 - share) * ground);
                 format!("#{:02x}{:02x}{:02x}", mix(color.r, r), mix(color.g, g), mix(color.b, b))
             }
             _ => paint.to_string(),
         }
+    }
+}
+
+impl Recede {
+    /// `attrs` with `fill` and `stroke` receded, each paint it had kept as `data-dbt-rest-{name}`.
+    pub(crate) fn recede_attrs(self, attrs: scene::Attrs) -> scene::Attrs {
+        ["fill", "stroke"].into_iter().fold(attrs.clone(), |receded, name| match attrs.get(name) {
+            Some(rest) => receded.map_values(&[name], |paint| self.paint(paint)).set(format!("data-dbt-rest-{name}"), rest),
+            None => receded,
+        })
     }
 }
 
@@ -98,7 +112,7 @@ impl Selection {
         let channels = d3rs::color::parse_hex(&canvas).expect("`de_canvas` accepts only #rrggbb");
         let canvas = (f64::from(channels.0), f64::from(channels.1), f64::from(channels.2));
         PROBE.set(Probe { active: true, ..PROBE.get() });
-        Ok(Selection { active: Some(Active { link: link.expect("a setter link").to_string(), channel: channel.to_string(), href, recede: Recede { canvas, share: emphasis.dimmed_opacity } }) })
+        Ok(Selection { active: Some(Active { link: link.expect("a setter link").to_string(), channel: channel.to_string(), href, recede: Recede { canvas, contrast: emphasis.recede_contrast } }) })
     }
 
     /// `anchor` stamped receded unless it is the selected mark's.

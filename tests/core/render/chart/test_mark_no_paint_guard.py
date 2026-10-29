@@ -146,6 +146,8 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
             available_height=200,
             resolved_style=_RESOLVED_STYLE,
             render_cache={},
+            # A board pie carries the mode the size stage decided for it.
+            pie_mode="direct",
         )
 
     assert "ERR-CHART-PAINTED-NO-MARKS" in svg

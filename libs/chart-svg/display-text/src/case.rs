@@ -145,12 +145,14 @@ fn force_lowercase(word_lower: &str) -> bool {
 /// A slug or path (`dbt-labs/dbt-charts`, `src/core/case.py`, a URL), as
 /// opposed to a prose pair like `pie/donut` or `x/y-axis`. Trailing sentence
 /// punctuation is ignored; one slash needs `_`, an inner `.`, or `-` in every
-/// segment. Keeps its authored case.
+/// segment; a leading slash (`/sales`) marks an absolute path outright. Keeps
+/// its authored case.
 fn is_path_like(word: &str) -> bool {
     let token = word.trim_end_matches(['.', ',', ';', ':', '!', '?']);
     let segments: Vec<&str> = token.split('/').collect();
     match segments.len() {
         0 | 1 => false,
+        _ if segments[0].is_empty() && !segments[1].is_empty() => true,
         2 => {
             segments.iter().any(|seg| {
                 seg.contains('_')
@@ -706,6 +708,7 @@ mod inline_period_tests {
             ("dbt-labs/dbt-charts", "dbt-labs/dbt-charts"),
             ("pie/donut table", "Pie/Donut Table"),
             ("a/b testing results", "A/B Testing Results"),
+            ("directory /sales now", "Directory /sales Now"),
         ] {
             assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
         }

@@ -353,13 +353,21 @@ fn column_divider_line(x: f64, height: f64, divider: &Divider) -> String {
     )
 }
 
-/// `render/prose.py::render_prose_svg`. `width` is the slot the text may
-/// occupy, already inset by `card_padding`; the container whose spans it
-/// takes is `width + 2 * card_padding`. `sink` is the paint site's own
-/// (`embed_fonts::record_painted_italics`); the prose is recorded against the
-/// family it was laid out in, `style.font_family`.
+/// How one text block is measured and flowed: what both its paint and its first
+/// baseline are asked of (`prose.py::_ProseFlow`).
+struct ProseFlow {
+    renderer: mdsvg::renderer::SVGRenderer,
+    blocks: mdsvg::types::Document,
+    boxes: Vec<(f64, f64)>,
+    measure: f64,
+    table_measure: f64,
+    tables_differ: bool,
+    metrics: Vec<mdsvg::renderer::BlockMetrics>,
+    n_cols: i64,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn render_prose_svg(
+fn prose_flow(
     markdown: &str,
     width: f64,
     col: &TextDoc,
@@ -368,16 +376,15 @@ pub fn render_prose_svg(
     style: Style,
     fonts: FontSlots,
     allow_raw_html: bool,
-    sink: Option<&PaintedItalics>,
-) -> Result<(String, f64), String> {
-    let align = style.text_align;
-    let family = style.font_family.clone();
+    heading_case: Option<&str>,
+) -> Result<ProseFlow, String> {
     let char_px = max_chars_to_px(&fonts.regular, style.base_font_size, 1);
 
     let mut blocks = mdsvg::parser::parse(markdown);
     if let Some(case) = &col.case {
         crate::title::case_blocks(&mut blocks, case)?;
     }
+    crate::title::style_prose_headings(&mut blocks, heading_case, &style)?;
     // `html_policy: trusted-raw` (`allow_raw_html`) is the one tier where
     // production renders raw HTML via `foreignObject` and nh3 instead of
     // painting its source as escaped text (`boards.py`'s
@@ -442,6 +449,33 @@ pub fn render_prose_svg(
             boxes = vec![(0.0, width + 2.0 * pad)];
         }
     }
+
+    Ok(ProseFlow { renderer, blocks, boxes, measure, table_measure, tables_differ, metrics, n_cols })
+}
+
+/// `render/prose.py::render_prose_svg`. `width` is the slot the text may
+/// occupy, already inset by `card_padding`; the container whose spans it
+/// takes is `width + 2 * card_padding`. `sink` is the paint site's own
+/// (`embed_fonts::record_painted_italics`); the prose is recorded against the
+/// family it was laid out in, `style.font_family`.
+#[allow(clippy::too_many_arguments)]
+pub fn render_prose_svg(
+    markdown: &str,
+    width: f64,
+    col: &TextDoc,
+    plan: &ProsePlan,
+    card_padding: f64,
+    style: Style,
+    fonts: FontSlots,
+    allow_raw_html: bool,
+    heading_case: Option<&str>,
+    sink: Option<&PaintedItalics>,
+) -> Result<(String, f64), String> {
+    let align = style.text_align;
+    let family = style.font_family.clone();
+    let ProseFlow { renderer, blocks, boxes, measure, table_measure, tables_differ, metrics, n_cols } =
+        prose_flow(markdown, width, col, plan, card_padding, style, fonts, allow_raw_html, heading_case)?;
+    let pad = card_padding;
 
     // Alignment belongs to the span the reader sees, not to a width the
     // renderer chose.
@@ -604,6 +638,7 @@ pub fn get_markdown_text_height(
     style: Style,
     fonts: FontSlots,
     allow_raw_html: bool,
+    heading_case: Option<&str>,
 ) -> Result<f64, String> {
     if text.is_empty() {
         return Ok(0.0);
@@ -618,9 +653,34 @@ pub fn get_markdown_text_height(
         style,
         fonts,
         allow_raw_html,
+        heading_case,
         None,
     )?
     .1)
+}
+
+/// `prose.py::prose_first_baseline`: how far below a text block's top edge its
+/// first baseline sits, when the text opens with a heading (`None` when it opens
+/// with anything else). A heading that opens a text card is that card's title: a
+/// cols row puts it on the baseline its neighbors' titles share. Asked of the
+/// flow that draws it, at the measure the prose is drawn at.
+#[allow(clippy::too_many_arguments)]
+pub fn prose_first_baseline(
+    markdown: &str,
+    width: f64,
+    col: &TextDoc,
+    plan: &ProsePlan,
+    card_padding: f64,
+    style: Style,
+    fonts: FontSlots,
+    allow_raw_html: bool,
+    heading_case: Option<&str>,
+) -> Result<Option<f64>, String> {
+    let flow = prose_flow(markdown, width, col, plan, card_padding, style, fonts, allow_raw_html, heading_case)?;
+    if !matches!(flow.blocks.first(), Some(mdsvg::types::AnyBlock::Heading(_))) {
+        return Ok(None);
+    }
+    flow.renderer.first_baseline(&flow.blocks, flow.measure).map(Some)
 }
 
 /// `markdown_fence.py::resolve_outside_fences`: fence-masked Jinja resolution — the

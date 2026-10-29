@@ -4,6 +4,7 @@
 
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from dbt_charts.core.compile.models.board.normalized import (
     NO_TITLE_SHIFT,
@@ -20,13 +21,14 @@ from dbt_charts.core.compile.models.chart.resolved.callout import (
     ResolvedCalloutChart,
 )
 from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
-from dbt_charts.core.compile.models.primitives import HtmlPolicy, Regional
+from dbt_charts.core.compile.models.primitives import HtmlPolicy, PieMode, Regional
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,
     Variable,
 )
+from dbt_charts.core.compile.template.daterange import BoardClock
 from dbt_charts.core.diagnostics import Diagnostic
 
 _AnyResolvedChart = ResolvedChart
@@ -157,6 +159,8 @@ class ResolvedLayoutItem:
     chart_error: ChartResolveFailure | None = None
     # Title and body offsets from the item's cols row; zero outside one.
     title_shift: TitleShift = NO_TITLE_SHIFT
+    # A pie's mode, decided once by the size stage; None for any other item.
+    pie_mode: PieMode | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +212,7 @@ class ResolvedBoard:
     base_dir: str | None  # type-state: optional — None is no location
     html_policy: HtmlPolicy
     regional: Regional
+    fiscal_year_start_month: int
     level: int  # Heading level (1 = root board, matches H{level})
 
     # Style (theme + board overrides already merged).
@@ -233,6 +238,14 @@ class ResolvedBoard:
     variable_defaults: VariableValues
     # Card grid this board's own text sits on; None on a board with no text.
     prose_plan: ProsePlan | None = None
+
+    def clock(self, instant: datetime) -> BoardClock:
+        """Today in the board's zone at ``instant``, with its fiscal year start."""
+        return BoardClock(
+            self.regional.today(instant),
+            self.fiscal_year_start_month,
+            self.regional.week_start,
+        )
 
     @property
     def visible_variables(self) -> "dict[str, Variable]":

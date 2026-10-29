@@ -32,7 +32,7 @@ from dbt_charts.core.compile.template.markdown_fence import resolve_outside_fenc
 from dbt_charts.core.diagnostics.codes_compile import ERR_STYLE_CSS_VALUE_INVALID
 from dbt_charts.core.text.case import apply_case_to_runs
 from mdsvg import parse as parse_markdown
-from mdsvg.types import SpanType
+from mdsvg.types import Heading, SpanType
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.markdown_blocks import SpanRun
@@ -244,6 +244,30 @@ def compact_style_kwargs(
             "style.fonts.heading.sizes must have 6 entries (H1-H6); "
             f"got {len(title_sizes)}"
         )
+    on_body_grid = heading_margin_scale == "prose"
+    # Prose headings read H1 from the H ramp, H2/H3 from the section ramp, and
+    # H4-H6 are body size; none is smaller than the body it heads. Chart and board
+    # titles keep reading the shared ramp.
+    section_sizes = _rs.chart_defaults.section_sizes
+    if on_body_grid and len(section_sizes) < 2:
+        raise ValueError(
+            "style.fonts.section.sizes must have at least 2 entries (H2 and H3 of "
+            f"markdown headings); got {len(section_sizes)}"
+        )
+    heading_sizes = (
+        [
+            max(float(size), float(_text_font_size))
+            for size in (title_sizes[0], section_sizes[0], section_sizes[1])
+        ]
+        + [float(_text_font_size)] * 3
+        if on_body_grid
+        else [float(size) for size in title_sizes]
+    )
+    paragraph_gap = (
+        float(_text_font_size)
+        * float(_text_line_height)
+        * float(max(_rs.text.paragraph.margin_top, _rs.text.paragraph.margin_bottom))
+    )
 
     title_weight = _rs.title.font.weight or 500  # type-state: silent_fallback — default
     effective_weight = (
@@ -281,11 +305,24 @@ def compact_style_kwargs(
         # visible space above / below a heading.
         "heading_margin_top_px": _heading_margin_unit
         * float(_rs.text.heading.margin_top),
+        # A board title is followed by the paragraph gap; the authored heading
+        # bottom margin belongs to headings inside prose.
         "heading_margin_bottom_px": _heading_margin_unit
-        * float(_rs.text.heading.margin_bottom),
-        "paragraph_spacing": float(_text_font_size)
-        * float(_text_line_height)
-        * float(max(_rs.text.paragraph.margin_top, _rs.text.paragraph.margin_bottom)),
+        * float(
+            _rs.text.heading.margin_bottom
+            if on_body_grid
+            else max(_rs.text.paragraph.margin_top, _rs.text.paragraph.margin_bottom)
+        ),
+        # H3-H6 are separated from what precedes them like a paragraph is; H1/H2
+        # take the authored heading margin. A heading line box is one body line, so
+        # every block in a prose column is a whole number of body lines tall.
+        "minor_heading_margin_top_px": paragraph_gap if on_body_grid else None,
+        # H1 is followed by a blank line; H2-H6 hug their text.
+        "h1_margin_bottom_px": paragraph_gap if on_body_grid else None,
+        "heading_grid_px": float(_text_font_size) * float(_text_line_height)
+        if on_body_grid
+        else None,
+        "paragraph_spacing": paragraph_gap,
         "text_color": _text_font_color,
         "heading_color": _rs.title.font.color,
         "link_color": _rs.accent,
@@ -347,12 +384,12 @@ def compact_style_kwargs(
         "text_align": text_align,
         # Top-align letterboxed markdown images (default xMidYMid centers them).
         "image_preserve_aspect_ratio": "xMidYMin meet",
-        "h1_size": float(h1_size) if h1_size is not None else float(title_sizes[0]),
-        "h2_size": float(title_sizes[1]),
-        "h3_size": float(title_sizes[2]),
-        "h4_size": float(title_sizes[3]),
-        "h5_size": float(title_sizes[4]),
-        "h6_size": float(title_sizes[5]),
+        "h1_size": float(h1_size) if h1_size is not None else heading_sizes[0],
+        "h2_size": heading_sizes[1],
+        "h3_size": heading_sizes[2],
+        "h4_size": heading_sizes[3],
+        "h5_size": heading_sizes[4],
+        "h6_size": heading_sizes[5],
         "heading_font_weight": effective_weight,
         "heading_line_height": float(_title_line_height),
         "bold_font_weight": font_weight_as_css(_bold.weight),
@@ -361,6 +398,40 @@ def compact_style_kwargs(
     }
 
     return kwargs
+
+
+def style_prose_headings(
+    blocks: list[AnyBlock], resolved_style: ResolvedStyle
+) -> list[AnyBlock]:
+    """*blocks* with each top-level markdown heading set as the theme sets headings.
+
+    ``fonts.heading.case`` applies to heading words, as it does to board and chart
+    titles (mdsvg cannot: its case knob is upper/lower only). A heading drawn at
+    body size would differ from body text by almost nothing, so it takes the bold
+    weight; larger headings are distinguished by size.
+    """
+    body_size = resolved_style.text.font.size
+    assert body_size is not None, "style.text.font.size must be configured"
+    sizes = get_compact_style(resolved_style)
+    case = resolved_style.title.font.case
+
+    def restyle(block: AnyBlock) -> AnyBlock:
+        if not isinstance(block, Heading):
+            return block
+        spans = _case_words(block.spans, case) if case is not None else block.spans
+        if sizes.get_heading_size(block.level) <= float(body_size):
+            spans = tuple(
+                replace(s, span_type=_BOLDED[s.span_type])
+                if s.span_type in _BOLDED
+                else s
+                for s in spans
+            )
+        return replace(block, spans=spans)
+
+    return [restyle(block) for block in blocks]
+
+
+_BOLDED = {SpanType.TEXT: SpanType.BOLD, SpanType.ITALIC: SpanType.BOLD_ITALIC}
 
 
 def body_text_font_family(resolved_style: ResolvedStyle) -> str:
@@ -458,7 +529,10 @@ def prose_content_widths(
             resolved_style.chart_defaults.formats,
         )
     )
-    blocks = prose_blocks(resolved, text, base_dir, None, resolved_style.text)
+    blocks = style_prose_headings(
+        prose_blocks(resolved, text, base_dir, None, resolved_style.text),
+        resolved_style,
+    )
     style = get_compact_style(resolved_style)
     renderer = SVGRenderer(
         style=style,
@@ -476,9 +550,11 @@ def _title_measure(
     resolved_style: ResolvedStyle,
     variable_values: VariableValues,
     base_dir: str | None,
+    *,
+    root: bool,
 ) -> tuple[SVGRenderer, list[AnyBlock]]:
     """The title renderer and the blocks it draws."""
-    renderer, _ = title_renderer(resolved_style, level)
+    renderer, _ = title_renderer(resolved_style, level, root=root)
     resolved_title = resolve_display_text(
         title, variable_values, {}, resolved_style.chart_defaults.formats
     )
@@ -492,6 +568,8 @@ def title_max_content_width(
     resolved_style: ResolvedStyle,
     variable_values: VariableValues,
     base_dir: str | None,
+    *,
+    root: bool,
 ) -> float:
     """Width a board title needs to draw on one line, asked of the renderer and
     blocks that paint it.
@@ -502,7 +580,7 @@ def title_max_content_width(
     if text_needs_render_data(title):
         return prose_measure(resolved_style)
     renderer, blocks = _title_measure(
-        title, level, resolved_style, variable_values, base_dir
+        title, level, resolved_style, variable_values, base_dir, root=root
     )
     return renderer.max_content_width(blocks)
 
@@ -513,6 +591,8 @@ def title_min_content_width(
     resolved_style: ResolvedStyle,
     variable_values: VariableValues,
     base_dir: str | None,
+    *,
+    root: bool,
 ) -> float:
     """Width of a board title's widest word in the title's own font: the
     narrowest it can draw without splitting a word.
@@ -523,7 +603,7 @@ def title_min_content_width(
     if text_needs_render_data(title):
         return prose_measure(resolved_style)
     renderer, blocks = _title_measure(
-        title, level, resolved_style, variable_values, base_dir
+        title, level, resolved_style, variable_values, base_dir, root=root
     )
     return renderer.min_content_width(blocks)
 
@@ -531,6 +611,8 @@ def title_min_content_width(
 def title_renderer(
     resolved_style: ResolvedStyle,
     level: int,
+    *,
+    root: bool,
     text_align: Literal["left", "center", "right"] = "left",
 ) -> tuple[SVGRenderer, str]:
     """The mdsvg renderer a board title is drawn with, and the family it resolves to.
@@ -564,8 +646,10 @@ def title_renderer(
         h1_size=font_size,
         heading_font_weight=heading_weight,
         font_family=family,
-        # Title spacing is chrome: it must not grow when body prose is resized.
-        heading_margin_scale="chrome",
+        # The root title is set as a leading `# H1` is, on the body line grid. A
+        # section title is chrome: its spacing must not grow when body prose is
+        # resized.
+        heading_margin_scale="prose" if root else "chrome",
     )
     return SVGRenderer(style=style, fonts=markdown_font_faces(family, style)), family
 

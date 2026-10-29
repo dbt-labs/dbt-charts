@@ -39,6 +39,7 @@ style:
       marks:
         rule:
           stroke:
+            color: muted
             width: 2
 
   charts:

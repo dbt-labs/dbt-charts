@@ -785,7 +785,7 @@ rows:
 # their row (data) order — so slot 0 is the *last*-seen value and slot 9 the
 # *first*-seen one. Three rows repeat early categories so every share sits at
 # ~7.7%, under WEDGE_LABEL_MIN_SHARE (8%): every slice is unlabeled, which is
-# the documented "full_table" trigger (pie_attachment.classify_arc_render_mode)
+# the documented "full_table" trigger (`labeled_mode == "none"`)
 # -- the honest way to force the attached table on, not internals-poking.
 _SWATCH_CATEGORIES = [f"V{i}" for i in range(10)]
 _SWATCH_DATA_ROWS = "\n".join(
@@ -850,7 +850,8 @@ class TestAttachedTableSwatchMatchesWedge:
     def test_every_table_row_swatch_equals_its_own_wedge_fill(self) -> None:
         resolved_board, executor = _resolve_board(_SWATCH_MATCH_BOARD)
         chart = resolved_board.charts["d"]
-        assert chart.attached_table is not None, "fixture must trigger full_table"
+        assert chart.labeled_mode == "none", "fixture must trigger full_table"
+        assert chart.full_attachment is not None
 
         data = executor.execute_query(chart.query_name, {})
         svg = _pie_svg(_SWATCH_MATCH_BOARD, "d")

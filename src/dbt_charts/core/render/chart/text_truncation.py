@@ -20,6 +20,9 @@ read the collected dict via ``WarningContext.text_truncations``.
   "support_table_cell_overflow" — strip cells wider than their band
     (engine); not a cut but a collision, so
     ``authored_text`` carries the measured "needed vs available" detail
+  "pie_wheel_starved" — a pie's sized labeled mode drawn in a box where its
+    wheel is below the dominance floor (engine); no text was cut,
+    ``authored_text`` is ``"<mode>|<ratio>|<floor>"``
 
 ``authored_field`` is the YAML key or column name the squiggle should point
 at, e.g. "x_label", "title", "label", or a column name for tables.
@@ -49,6 +52,7 @@ TruncationSurface = Literal[
     "callout_text",
     "spark_label",
     "support_table_cell_overflow",
+    "pie_wheel_starved",
 ]
 
 
@@ -80,6 +84,13 @@ def collect_text_truncations() -> Generator[dict[str, list[TextTruncation]]]:
         yield collected
     finally:
         _sinks.reset(token)
+
+
+def reset_text_truncations(chart_id: str) -> None:
+    """Forget the cuts earlier renders of the chart recorded: the last claim wins."""
+    sinks = _sinks.get()
+    if sinks:
+        sinks[-1].pop(chart_id, None)
 
 
 def record_text_truncation(

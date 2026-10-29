@@ -29,8 +29,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
-from dbt_charts.core.diagnostics import ERR_INTERNAL
-from dbt_charts.core.render.errors import RenderError
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -100,8 +98,6 @@ def current_board_data_provider() -> ChartDataProvider | None:
 _DATERANGE_PRESETS: ContextVar[Mapping[str, str]] = ContextVar(
     "dct_daterange_presets", default=MappingProxyType({})
 )
-# No default: a control dating a preset outside a render has no board clock.
-_BOARD_TODAY: ContextVar[datetime.date] = ContextVar("dct_board_today")
 
 
 @contextmanager
@@ -112,16 +108,6 @@ def daterange_presets(presets: Mapping[str, str]) -> Generator[None]:
         yield
     finally:
         _DATERANGE_PRESETS.reset(token)
-
-
-@contextmanager
-def board_clock(today: datetime.date) -> Generator[None]:
-    """Scope the board-zone date daterange presets resolve on."""
-    token = _BOARD_TODAY.set(today)
-    try:
-        yield
-    finally:
-        _BOARD_TODAY.reset(token)
 
 
 def current_daterange_presets() -> Mapping[str, str]:
@@ -145,13 +131,3 @@ def committed_text(
             ]
         )
     return str(value)
-
-
-def current_board_today() -> datetime.date:
-    """The board-zone date of the render in progress."""
-    try:
-        return _BOARD_TODAY.get()
-    except LookupError:
-        raise RenderError.from_code(
-            ERR_INTERNAL, message="no board clock in scope: render inside board_clock()"
-        ) from None

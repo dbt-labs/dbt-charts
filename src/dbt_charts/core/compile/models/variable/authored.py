@@ -22,6 +22,7 @@ from dbt_charts.core.compile.models.markers import DisplayText
 from dbt_charts.core.compile.models.primitives import ErrorHint, VariableDependencies
 from dbt_charts.core.compile.models.query.authored import AuthoredQuery
 from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
+from dbt_charts.core.compile.template.daterange import parse_daterange_preset
 
 # ============================================================================
 # ENUMS & LITERALS
@@ -197,6 +198,15 @@ class Variable(BaseModel):
         default=None,
         description='Value used when no URL param or --var sets one; a dropdown starts at "All", so omit it there. Quote one containing `: `. A daterange takes `[start, end]` or a rolling preset such as `last_90_days`.',
     )
+    presets: tuple[str, ...] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "daterange only: the picker's preset menu, in order, replacing "
+            "`style.variables.presets`. Each is a preset name (`last_30_days`, "
+            "`previous_3_quarters`, `this_fiscal_quarter`); `default` need not be one."
+        ),
+    )
     placeholder: str | None = Field(
         default=None, description="Hint text shown inside the input while it is empty."
     )
@@ -262,6 +272,16 @@ class Variable(BaseModel):
     step: int | float | None = Field(
         default=None, description="Step size for number, slider and range inputs."
     )
+
+    @field_validator("presets")
+    @classmethod
+    def _presets_are_in_the_grammar(
+        cls, value: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if value is not None:
+            for name in value:
+                parse_daterange_preset(name)
+        return value
 
     @field_validator("min", "max", "step")
     @classmethod

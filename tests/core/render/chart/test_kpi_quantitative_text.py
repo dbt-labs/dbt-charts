@@ -458,7 +458,7 @@ class TestKpiDigitIntegrity:
 
     def test_below_threshold_float_renders_exact_digits(self):
         svg = self._render(131.5)
-        assert ">131.50</tspan>" in svg
+        assert ">131.5</tspan>" in svg
         assert 'dx="2"' not in svg
 
     def test_at_threshold_year_keeps_compact_narrative(self):

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Log-scale axis labels print billions as B instead of G.
+time: 2026-10-28T14:56:46.945218-07:00

@@ -13,6 +13,7 @@ import pytest
 
 from dbt_charts.agent_api._paths import (
     partition_defaults_files,
+    render_crash_diagnostic,
     resolve_board_path,
     resolve_board_relpath,
     resolve_dbt_project_dir,
@@ -859,3 +860,12 @@ def test_partition_defaults_files_all_boards_returns_empty_defaults() -> None:
     boards, defaults_files = partition_defaults_files([Path("charts/rev.yml")])
     assert boards == [Path("charts/rev.yml")]
     assert defaults_files == []
+
+
+def test_render_crash_diagnostic_names_the_board_and_the_exception() -> None:
+    """A multi-board ``dct render`` prints only the message, so the message
+    has to say which board crashed."""
+    diagnostic = render_crash_diagnostic(Path("charts/a.yml"), TypeError("boom"))
+
+    assert diagnostic.message == "Error rendering charts/a.yml: TypeError: boom"
+    assert diagnostic.detail is not None

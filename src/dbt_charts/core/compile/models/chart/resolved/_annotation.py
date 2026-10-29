@@ -65,7 +65,9 @@ class ResolvedTrend(_Frozen):
 
 
 class ResolvedAnnotationStroke(_Frozen):
-    color: str = Field(description="Stroke color.")
+    color: str = Field(
+        description="Stroke color; a rule's may be `auto`, picked from the rule's ladder."
+    )
     width: float = Field(description="Stroke width in pixels.")
     dasharray: str | None = Field(
         description="Dash pattern in pixels, such as `6 3`; none draws solid."
@@ -75,6 +77,15 @@ class ResolvedAnnotationStroke(_Frozen):
 class ResolvedAnnotationRule(_Frozen):
     opacity: float = Field(description="Rule opacity.")
     stroke: ResolvedAnnotationStroke = Field(description="Rule stroke.")
+    ladder: tuple[str, ...] = Field(
+        description=(
+            "Grays an `auto` stroke and label pick from, canvas end first; empty "
+            "when the stroke is a fixed color."
+        )
+    )
+    avoid: tuple[str, ...] = Field(
+        description="Gridline colors an `auto` pick keeps 1.25:1 clear of."
+    )
 
 
 class ResolvedAnnotationRect(_Frozen):

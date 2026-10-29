@@ -34,8 +34,7 @@ pub fn font_file(family: &str, italic: bool, numeric: bool) -> &'static str {
 }
 
 /// `get_weighted_font_measurer(family, weight, italic=, numeric=)`
-/// (`font_measure.py:134-178`) at `size`. The HVAR-exact `mdsvg` measurer, not
-/// `FontBook::measure`, which instances the same axis ~0.004px apart.
+/// (`font_measure.py:134-178`) at `size`, through the HVAR-exact `mdsvg` measurer.
 pub fn weighted_width(
     book: &FontBook,
     family: &str,

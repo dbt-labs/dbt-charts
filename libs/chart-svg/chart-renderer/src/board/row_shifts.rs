@@ -160,12 +160,31 @@ impl Walk<'_> {
             let chart_type = chart["chart_type"].as_str().ok_or("title band: chart missing chart_type")?;
             let (slot_width, _, _) =
                 slot_dims(width, 0.0, chart_type, card_pad, &chart["layout_padding"])?;
+            let pie_mode = if chart_type == "pie" {
+                // A pie that cannot be drawn paints its error card, outside any band.
+                match self.payload.pie_modes.decide(
+                    chart,
+                    width,
+                    card_pad,
+                    &self.payload.chart_datasets,
+                    &self.payload.chart_defaults,
+                    &self.payload.board_style,
+                    self.payload.fonts_dir.clone(),
+                    self.fonts,
+                )? {
+                    crate::sizing::PieDecision::Mode(mode) => Some(mode),
+                    crate::sizing::PieDecision::Undecidable(_) => return Ok(None),
+                }
+            } else {
+                None
+            };
             let metrics = chart_title_metrics(
                 chart,
                 card_pad,
                 slot_width,
                 self.fonts,
                 self.payload.board_style.spark_bar_title.as_ref(),
+                pie_mode,
             )?;
             return Ok(metrics.map(|metrics| Target { path, metrics }));
         }
@@ -179,6 +198,32 @@ impl Walk<'_> {
         let wrapper_top = style.margin.unwrap_or_default().top + effective_padding(style).top;
         let visible_variables = nested.visible_variables();
         if nested.title.is_empty() {
+            if !nested.text.is_empty() && visible_variables.is_empty() && nested.layout.items.is_empty() {
+                let text_style =
+                    nested.text_style.clone().ok_or("nested board has text but payload carries no text_style")?;
+                let text_fonts =
+                    nested.text_fonts.clone().ok_or("nested board has text but payload carries no text_fonts")?;
+                let inner = (nested_content_width(&nested, width) - 2.0 * nested_pad).max(1.0);
+                let column = style.text.as_prose_doc();
+                let plan =
+                    nested.prose_plan.ok_or("nested board has text but payload carries no prose_plan")?;
+                let resolved = crate::prose::resolve_markdown_jinja(&nested.text, &self.payload.variable_values)?;
+                let baseline = crate::prose::prose_first_baseline(
+                    &resolved,
+                    inner,
+                    &column,
+                    &plan,
+                    nested_pad,
+                    text_style,
+                    text_fonts,
+                    nested.html_policy == "trusted-raw",
+                    style.title.font.case.as_deref(),
+                )?;
+                return Ok(baseline.map(|baseline| Target {
+                    path,
+                    metrics: TitleMetrics { ascent: wrapper_top + nested_pad + baseline, tail: 0.0 },
+                }));
+            }
             if !nested.text.is_empty() || !visible_variables.is_empty() || nested.layout.kind != "rows" {
                 return Ok(None);
             }

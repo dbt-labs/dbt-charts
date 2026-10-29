@@ -101,6 +101,16 @@ _SUMMARY_CONTENTS_NOTE = (
     "category values, KPI values, and a preview of table rows."
 )
 
+#: Ends render_board's description on every surface and rides in the MCP
+#: server's instructions. Told only to answer with a chart, strong models chart
+#: a single number too; told a single value needs none, they read "signups per
+#: day" as one number, hence the second sentence.
+SINGLE_VALUE_RULE = (
+    "A single value needs no chart: answer it in a sentence. A count or rate "
+    "asked per day, week or month is a series, not a single value: chart it "
+    "over time."
+)
+
 
 #: Shared across every agent-facing render_board schema, including Cloud
 #: MCP's own hand-written inputSchema (a different wire shape, same words) --
@@ -131,7 +141,9 @@ def _render_board_tool() -> dict[str, Any]:
     properties["include_raw_data"] = INCLUDE_RAW_DATA_PROPERTY
     return {
         **tool,
-        "description": tool["description"] + _SUMMARY_CONTENTS_NOTE,
+        "description": (
+            f"{tool['description']}{_SUMMARY_CONTENTS_NOTE} {SINGLE_VALUE_RULE}"
+        ),
         "input_schema": {
             **schema,
             "properties": properties,

@@ -45,7 +45,7 @@ def test_cells_follow_label_only(name: str) -> None:
 
 def test_header_keeps_its_family_when_the_fit_cascade_steps_down() -> None:
     columns = [f"c{i}" for i in range(3)]
-    row = ", ".join(f"{c}: 12345678901234567890" for c in columns)
+    row = ", ".join(f"{c}: 1234567890123456" for c in columns)
     board = f"""
 queries:
   q1:

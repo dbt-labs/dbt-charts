@@ -33,7 +33,7 @@ use std::collections::HashSet;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::common::color_domain_of;
+use crate::common::{color_domain_of, MeasuredAs};
 use crate::common::{
     format_y_label, row_num, row_str, symbol_radius, AxisStyle, ChartSort, Font,
     FormatSlot, RulerConfig, StyleChannel, TickLabelConfig, TitleStyle,
@@ -1181,6 +1181,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
                     .set("transform", format!("translate({pos:.3},{anchor_y:.3}) rotate({}) translate(0,{dy:.3})", p.angle))
                     .vega("font-family", x_family)
                     .set("font-size", x_font_size.to_string())
+                    .quick_some("font-style", ax_x.labels.font.style.as_deref())
                     .set("font-weight", x_label_weight.as_str())
                     .set("fill", x_label_color),
                 ax_x.labels.clip(lbl, fonts)?,
@@ -1220,6 +1221,7 @@ fn plain_x_axis(p: &PlainXPaint, fonts: &FontBook) -> Result<Vec<Node>, String> 
                     .set("text-anchor", anchor)
                     .vega("font-family", x_family)
                     .set("font-size", x_font_size.to_string())
+                    .quick_some("font-style", ax_x.labels.font.style.as_deref())
                     .set("font-weight", x_label_weight.as_str())
                     .set("fill", x_label_color),
                 ax_x.labels.clip(lbl, fonts)?,
@@ -2001,7 +2003,7 @@ fn color_legend_layout(
 ) -> Result<(Vec<String>, legend::VegaLegend), String> {
     let title = legend::legend_title_text(r.color.as_deref().unwrap_or(""), &r.legend, &r.field_labels)?;
     let labels = order.iter().map(|&idx| color_domain[idx].as_str());
-    let limited = legend::limit_legend_text(labels, &title, &r.legend, fonts)?;
+    let limited = legend::limit_legend_text(labels, &title, &r.legend, fonts, MeasuredAs::Vega)?;
     let symbols: Vec<Option<legend::LegendSymbol>> = match ring_glyphs {
         None => vec![Some(if mirror { legend::LegendSymbol::Circle } else { legend::LegendSymbol::FilledCircle }); order.len()],
         Some(names) => order

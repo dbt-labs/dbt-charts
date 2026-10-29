@@ -20,6 +20,7 @@ from dbt_charts.core.compile.models.board.normalized import (
 from dbt_charts.core.compile.models.chart.normalized import SVG_LAYOUT_PADDED_TYPES
 from dbt_charts.core.compile.models.chart.resolved import ResolvedChart
 from dbt_charts.core.compile.models.chart.resolved.pie import ResolvedPieChart
+from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.resolve.chart.label_data import (
     pie_presentation_fingerprint,
 )
@@ -31,6 +32,7 @@ from dbt_charts.core.render.chart.artifacts import ChartRenderData, RenderArtifa
 from dbt_charts.core.render.chart.serialization import build_dbt_charts_json
 from dbt_charts.core.render.converters.chart import render_chart_artifact
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.pie_layout import sized_pie_mode
 
 
 def render_resolved_chart(
@@ -46,6 +48,7 @@ def render_resolved_chart(
     title_shift: TitleShift = NO_TITLE_SHIFT,
     measuring: bool = False,
     authored_height: float | None = None,
+    pie_mode: PieMode | None = None,
 ) -> RenderArtifact:
     """Render an already-resolved chart to a RenderArtifact.
 
@@ -61,6 +64,9 @@ def render_resolved_chart(
     A pie renders at the width its data-aware layout was resolved for;
     omission reuses it and a conflicting explicit width is rejected. Other
     families fall back to the theme-family width for callers without a slot.
+
+    ``pie_mode`` is a pie's mode as the size stage decided it. Omitted (a pie no
+    sizing pass placed), it is decided here, once, in the pie's own box.
     """
     if isinstance(resolved, ResolvedPieChart):
         if width is not None and width != resolved.resolution_width:
@@ -80,6 +86,8 @@ def render_resolved_chart(
                 ERR_RESOLVED_PIE_DATA_MISMATCH, chart_id=resolved.id
             )
         resolved_width = resolved.resolution_width
+        if pie_mode is None:
+            pie_mode = sized_pie_mode(resolved, render_data, resolved_style)
     else:
         from dbt_charts.core.compile.resolve import default_chart_width
 
@@ -113,6 +121,7 @@ def render_resolved_chart(
         datasets=full_datasets,
         measuring=measuring,
         authored_height=authored_height,
+        pie_mode=pie_mode,
     )
     return RenderArtifact(kind="svg", payload=svg)
 

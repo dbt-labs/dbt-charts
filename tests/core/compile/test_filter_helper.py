@@ -10,6 +10,7 @@ from datetime import date, datetime
 import pytest
 
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
 from dbt_charts.core.compile.template.jinja import (
     _filter_date_range_helper,
     _filter_helper,
@@ -21,6 +22,7 @@ from dbt_charts.core.compile.template.parameterized import (
     make_filter_date_range_helper,
     make_filter_helper,
 )
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.dialects import get_dialect
 from dbt_charts.core.dialects.postgres import PostgresDialect
 
@@ -233,3 +235,32 @@ class TestFilterDateRangeBounds:
         )
         with pytest.raises(ValueError, match="mixes a date with a datetime"):
             helper("ts", [date(2024, 1, 1), datetime(2024, 1, 1, 17, 0)])
+
+
+class TestFilterDateRangePresetName:
+    def _helper(self, collector: _ParameterCollector):
+        return make_filter_date_range_helper(
+            collector.add_param, get_dialect("postgres")
+        )
+
+    def test_a_preset_name_resolves_on_the_board_clock(self) -> None:
+        collector = _collector()
+        with board_clock(
+            BoardClock(date(2026, 10, 20), fiscal_start_month=7, week_start=1)
+        ):
+            sql = self._helper(collector)("order_ts", "this_fiscal_quarter")
+        assert sql == "CAST(order_ts AS DATE) BETWEEN $1 AND $2"
+        assert collector.params == [date(2026, 10, 1), date(2026, 12, 31)]
+
+    def test_a_preset_name_outside_a_board_clock_is_refused(self) -> None:
+        with pytest.raises(ExecutionError, match="board_clock"):
+            self._helper(_collector())("d", "last_7_days")
+
+    def test_a_name_outside_the_grammar_states_the_grammar(self) -> None:
+        with (
+            board_clock(
+                BoardClock(date(2026, 10, 20), fiscal_start_month=1, week_start=1)
+            ),
+            pytest.raises(ValueError, match=r"last_<N>_<unit>.*got 'last_week'"),
+        ):
+            self._helper(_collector())("d", "last_week")

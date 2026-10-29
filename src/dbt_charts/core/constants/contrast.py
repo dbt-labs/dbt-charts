@@ -8,3 +8,7 @@ LABEL_INK_MIN_CONTRAST: Final[float] = 4.5
 TEXT_MIN_RATIO: Final[float] = 4.5
 # WCAG large-text floor: >=24px at any weight, or >=18.67px (14pt) bold.
 LARGE_TEXT_MIN_RATIO: Final[float] = 3.0
+# Chrome steps an `auto` annotation rule may take: the ladder's two pale and two
+# near-black ends are never eligible.
+RULE_GRAY_FIRST_STEP: Final[int] = 3
+RULE_GRAY_LAST_STEP: Final[int] = 10

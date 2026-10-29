@@ -1187,7 +1187,9 @@ def test_a_tables_title_metrics_follow_the_engines_painted_title_block() -> None
     tails: set[float] = set()
     for width in range(240, 700, 20):
         titled = _resolved(table(True), rows)
-        metrics = chart_title_metrics(titled, card_padding=0.0, slot_width=float(width))
+        metrics = chart_title_metrics(
+            titled, card_padding=0.0, slot_width=float(width), pie_mode=None
+        )
         assert metrics is not None
         _, with_title = _native(table(True), rows, width=float(width), height=0.0)
         _, without = _native(table(False), rows, width=float(width), height=0.0)
@@ -1236,12 +1238,14 @@ def test_board_style_envelope_carries_the_authored_numeral_family() -> None:
         )
 
     assert envelope_for(None)["numeral_family"] == (
-        "'dbt Sans Tabular', Inter, system-ui, sans-serif"
+        "'dbt Sans Tabular', 'Noto Emoji', Inter, system-ui, sans-serif"
     )
     patch = StylePatch.model_validate(
         {"fonts": {"numeral": {"family": "'Source Serif 4', Georgia, serif"}}}
     )
-    assert envelope_for(patch)["numeral_family"] == "'Source Serif 4', Georgia, serif"
+    assert envelope_for(patch)["numeral_family"] == (
+        "'Source Serif 4', 'Noto Emoji', Georgia, serif"
+    )
 
 
 def test_board_style_envelope_carries_the_themes_hover_emphasis() -> None:
@@ -1255,7 +1259,7 @@ def test_board_style_envelope_carries_the_themes_hover_emphasis() -> None:
     hover = style.chart_defaults.hover_emphasis
     assert envelope["hover_emphasis"] == {
         "visible": hover.visible,
-        "dimmed_opacity": hover.dimmed_opacity,
+        "recede_contrast": hover.recede_contrast,
     }
 
 
@@ -1488,7 +1492,11 @@ def test_a_resolved_annotation_draws_in_the_engine(family: str) -> None:
         "annotations": [
             {"type": "band", "x": {"from": "2024-03-01", "to": "2024-05-01"}},
             {"type": "rule", "y": "avg()", "text": "Average"},
-            {"type": "trend", "fit": "linear()", "interval": "confidence(95)"},
+            *(
+                [{"type": "trend", "fit": "linear()", "interval": "confidence(95)"}]
+                if family == "line"
+                else []
+            ),
         ],
     }
     registry = {"q": ValuesQuery(rows=_MONTHLY)}

@@ -1014,6 +1014,27 @@ class TestAttributionSurvivesTheProfileExpansion:
         )
         assert resolved.target_path is None
 
+    def test_authored_metricflow_reaches_the_resolved_config(
+        self, tmp_path: Path
+    ) -> None:
+        resolved = self._resolve(
+            tmp_path,
+            {
+                "type": "dbt_profile",
+                "profile": "analytics",
+                "target": "dev",
+                "metricflow": "target/metricflow",
+            },
+        )
+        assert resolved.metricflow == "target/metricflow"
+
+    def test_absent_metricflow_expands_to_none(self, tmp_path: Path) -> None:
+        resolved = self._resolve(
+            tmp_path,
+            {"type": "dbt_profile", "profile": "analytics", "target": "dev"},
+        )
+        assert resolved.metricflow is None
+
 
 class TestBoardPrepareSqlTargetPath:
     """Prepared board SQL resolves ref() against the source's own manifest."""

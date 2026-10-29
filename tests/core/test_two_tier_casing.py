@@ -128,9 +128,9 @@ def test_heading_tier_title_cases_chart_titles() -> None:
     assert "SpaceX Since 2006" in _texts(render_board_to_svg(PROBE))
 
 
-def test_tab_bar_and_active_pane_heading_match() -> None:
+def test_tab_labels_are_title_cased_and_the_pane_repeats_no_heading() -> None:
     texts = _texts(render_board_to_svg(PROBE))
-    assert "A Tab Label of the Region" in texts
+    assert texts.count("A Tab Label of the Region") == 1  # the tab bar alone
     assert "a tab label of the region" not in texts
     assert "Second Tab" in texts
 

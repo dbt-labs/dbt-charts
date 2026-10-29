@@ -25,7 +25,9 @@ Changes in this release:
     list item), and every value inside `style.palettes` (a role's value can
     itself be a retired whole-name spelling, regardless of which role holds
     it -- `("style", "palettes", "*")`, an ungated trailing wildcard, see
-    `_source_locations`). The path pattern reaches chart-level tokens
+    `_source_locations`), and every category pin
+    (`style.charts.category_colors.<field>.values.<label>`, whose leaf key is
+    an author-named data value). The path pattern reaches chart-level tokens
     (`charts.<id>.style.….color: category_dark[2]`) by construction: the
     resolved paths come from `_relative_field_paths` walking the whole
     `AuthoredBoard` model tree, `charts:`'s open map (`dict[str, AuthoredChart]`)
@@ -80,6 +82,8 @@ from dbt_charts.core.compile.migrations.migrations import (
     MapKeyDeletion,
     MappedScalar,
     Move,
+    YamlKeyPath,
+    board_nesting_prefixes,
     token_respell_moves,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -93,6 +97,8 @@ from dbt_charts.core.diagnostics.hints import (
 )
 
 THEME_RENAMES: dict[MappedScalar, MappedScalar] = {}
+
+_CATEGORY_PIN: YamlKeyPath = ("style", "charts", "category_colors", "*", "values", "*")
 
 # The alias vocabulary every shipped categorical palette shares (vivid-10.yml:
 # "This vocabulary is identical in editorial-10.yml"). A role-indirected
@@ -219,12 +225,27 @@ def moves(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Move, ...]:
     """Return the TokenRespell Move objects for the 0.7.0 -> 0.9.0 boundary."""
-    return token_respell_moves(
+    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+
+    # The pin path is a fixed root path, so unlike the walked leaf fields it
+    # needs the nesting prefixes to reach a nested board's own pins.
+    category_pin = Move(
         source_schema,
         target_schema,
+        _CATEGORY_PIN,
+        _CATEGORY_PIN,
         RETIRED_TOKEN_VALUE_MAP,
-        catalog=catalog,
-        category_pins=False,
+        sub_board_prefixes=board_nesting_prefixes(AuthoredBoard),
+    )
+    return (
+        *token_respell_moves(
+            source_schema,
+            target_schema,
+            RETIRED_TOKEN_VALUE_MAP,
+            catalog=catalog,
+            category_pins=False,
+        ),
+        category_pin,
     )
 
 

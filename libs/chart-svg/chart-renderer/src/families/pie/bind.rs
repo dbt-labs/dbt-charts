@@ -2,10 +2,9 @@
 //! The slices' fills, descriptions and links, the slice labels' text and ink, the center
 //! total's text, the legend's entries and the attached table's rows. It measures nothing.
 
-use serde::Deserialize;
 use serde_json::Value;
 
-use super::{LegendConfig, Resolved};
+use super::{Attachment, LegendConfig, Mode, Parts, Resolved};
 use crate::common::{category_color, category_ink, category_scale_for, row_str, CategoryColorScale};
 use crate::diagnostic::Diagnostic;
 use crate::families::legend::{
@@ -20,7 +19,7 @@ use crate::Payload;
 pub struct Bound<'a> {
     pub(crate) payload: &'a Payload,
     pub(crate) r: Resolved,
-    /// The measure per row; a missing or non-numeric cell counts as 0.
+    /// The measure per row, as Python's `compute_shares` reads a cell.
     pub(crate) thetas: Vec<f64>,
     pub(crate) total: f64,
     pub(crate) wheel: Wheel,
@@ -103,28 +102,24 @@ pub(crate) struct Attached {
     pub(crate) table: crate::families::table::Bound,
 }
 
-pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
-    let r = resolved_of(payload)?;
+/// The pie as `mode` draws it: a table attached in the hybrid and full-table modes, the
+/// labels and legend only where the mode draws them.
+pub fn bind(payload: &Payload, mode: Mode) -> Result<Bound<'_>, Diagnostic> {
+    let r = Resolved::of(payload)?;
     // Pie's authored surface can no longer produce a conditional color channel
     // (`conditional_formatting` is retired from pie/donut), but a hand-written or stale
     // resolved-JSON fixture can: one check covers the slice fill and the label ink.
     if r.resolved_channels.get("color").is_some_and(|ch| ch.mode == "conditional") {
         return Err("pie: conditional color channel not supported".into());
     }
-    let thetas: Vec<f64> = payload
-        .rows
-        .iter()
-        .map(|row| row.get(&r.theta).and_then(Value::as_f64).unwrap_or(0.0))
-        .collect();
-    let total: f64 = thetas.iter().sum();
-    if total <= 0.0 {
-        return Err("pie total is zero — nothing to draw".into());
-    }
-    let attached = match r.attached_table.as_ref().filter(|v| !v.is_null()) {
-        None => None,
-        Some(table) => Some(bind_attached(payload, &r, table, &thetas, total)?),
+    let (thetas, total) = super::pie_totals(&r.theta, &payload.rows)?;
+    let chosen = match mode {
+        Mode::Direct => None,
+        Mode::Hybrid => Some(r.hybrid_attachment.as_ref().ok_or("pie: the hybrid mode has no attachment")?),
+        Mode::FullTable => Some(r.full_attachment.as_ref().ok_or("pie: the full-table mode has no attachment")?),
     };
-    let wheel = bind_wheel(&r, &payload.rows, &thetas, total)?;
+    let attached = chosen.map(|a| bind_attached(payload, &r, a, &thetas, total)).transpose()?;
+    let wheel = bind_wheel(&r, &payload.rows, &thetas, total, mode.parts())?;
     let faded = payload.is_placeholder && attached.is_none();
     Ok(Bound { payload, r, thetas, total, wheel, attached, faded })
 }
@@ -134,19 +129,12 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
 /// zero total is the empty dataset's, not a chart of zero-valued slices (that stays
 /// refused in [`bind`]).
 pub fn bind_empty(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
-    let r = resolved_of(payload)?;
-    if r.attached_table.as_ref().is_some_and(|v| !v.is_null()) {
-        return Err("pie: empty result set not supported with an attached table".into());
-    }
+    let r = Resolved::of(payload)?;
     if legend_is_drawn(&r) {
         return Err("pie: a visible legend over an empty result set is not ported".into());
     }
-    let wheel = bind_wheel(&r, &payload.rows, &[], 0.0)?;
+    let wheel = bind_wheel(&r, &payload.rows, &[], 0.0, Mode::Direct.parts())?;
     Ok(Bound { payload, r, thetas: Vec::new(), total: 0.0, wheel, attached: None, faded: false })
-}
-
-fn resolved_of(payload: &Payload) -> Result<Resolved, Diagnostic> {
-    Ok(Resolved::from_payload(payload)?)
 }
 
 /// Whether a legend is drawn at all: visible and a color field to key it.
@@ -168,6 +156,7 @@ fn bind_wheel(
     rows: &[serde_json::Map<String, Value>],
     thetas: &[f64],
     total: f64,
+    parts: Parts,
 ) -> Result<Wheel, String> {
     // Without a color channel every wedge paints one constant `palette[0]`:
     // palette-by-index is the color scale's range, so it needs the scale to exist.
@@ -175,9 +164,10 @@ fn bind_wheel(
     // The board's plan for this field, if it binds one (#7167): the arc fill defers to it
     // over the local `slice.index % palette.len()`.
     let category_scale = color_field.and_then(|cf| category_scale_for(&r.category_colors, cf));
-    let legend = plan_legend(r, rows, category_scale)?;
-    let labels = bind_labels(r, rows, thetas, total, color_field, category_scale)?;
-    let center = bind_center(r, total)?;
+    let legend = if parts.legend { plan_legend(r, rows, category_scale)? } else { None };
+    let labels =
+        if parts.labels { bind_labels(r, rows, thetas, total, color_field, category_scale)? } else { Vec::new() };
+    let center = bind_center(r, total)?.filter(|_| parts.total);
     let slices = bind_slices(r, rows, thetas, total, color_field, category_scale)?;
     Ok(Wheel { slices, labels, center, legend })
 }
@@ -491,23 +481,11 @@ fn plan_legend(
 fn bind_attached(
     payload: &Payload,
     r: &Resolved,
-    attached: &Value,
+    attached: &Attachment,
     thetas: &[f64],
     total: f64,
 ) -> Result<Attached, Diagnostic> {
-    // Production suppresses the legend whenever the key is a table
-    // (`suppress_legend=mode != "direct"`); a payload carrying both is not production's.
-    if legend_is_drawn(r) {
-        return Err("pie: a visible legend beside an attached table is not ported".into());
-    }
-    let placement = r
-        .attached_table_placement
-        .as_deref()
-        .ok_or("pie: attached_table requires attached_table_placement")?;
-    let align = r
-        .attached_table_align
-        .as_deref()
-        .ok_or("pie: attached_table requires attached_table_align")?;
+    let (placement, align) = (attached.placement.as_str(), attached.align.as_str());
     // `LegendEdge` and `LegendAlign` (compile/models/style/theme.py) are the only values
     // `compose_attached_table_svg` indexes; anything else is not a production payload.
     let (placement_kind, align_kind) = match (placement, align) {
@@ -529,17 +507,15 @@ fn bind_attached(
             ).into())
         }
     };
-    let table_width = r.attached_table_width.ok_or("pie: attached_table requires attached_table_width")?;
-    let gap = r.attached_table_gap.ok_or("pie: attached_table requires attached_table_gap")?;
-    let wheel_width = r.wheel_width.ok_or("pie: attached_table requires wheel_width")?;
+    let (table_width, gap, wheel_width) = (attached.table_width, r.attached_table_gap, attached.wheel_width);
     let table_category_scale = r
         .identity_field
         .as_deref()
         .and_then(|cf| category_scale_for(&r.category_colors, cf));
     let table = bind_table(
         payload,
-        attached,
-        &r.attached_row_indices,
+        &attached.table,
+        &attached.row_indices,
         &r.palette,
         r.identity_field.as_ref(),
         &r.theta,
@@ -549,21 +525,15 @@ fn bind_attached(
         table_category_scale,
     )?;
 
-    let heading = r.attached_heading.as_deref().unwrap_or("");
+    let heading = attached.heading.as_str();
     let heading = if heading.is_empty() {
         None
     } else {
-        let font = r
-            .attached_heading_font
-            .as_ref()
-            .ok_or("pie: attached_table heading requires attached_heading_font")?;
-        let gap = r
-            .hybrid_heading_gap
-            .ok_or("pie: attached_table heading requires hybrid_heading_gap")?;
+        let font = &attached.heading_font;
         Some(Heading {
             text: heading.to_string(),
             size: font.size_or(11.0),
-            gap,
+            gap: r.hybrid_heading_gap,
             family: font.family_or("sans-serif").to_string(),
             weight: font.weight_str(),
             color: font.color.as_deref().unwrap_or("#000").to_string(),
@@ -647,7 +617,7 @@ fn bind_table(
 ) -> Result<crate::families::table::Bound, Diagnostic> {
     let rows = &payload.rows;
     if row_indices.is_empty() {
-        return Err("pie: attached_table requires at least one row in attached_row_indices".into());
+        return Err("pie: attached_table requires at least one row in row_indices".into());
     }
     if let Some(&bad) = row_indices.iter().find(|&&i| i >= rows.len()) {
         return Err(format!("pie: attached_table row index {bad} out of range — {} data rows", rows.len()).into());
@@ -684,6 +654,8 @@ fn bind_table(
         measuring: false,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
+        pie_mode: None,
+        board_composed: false,
         authored_height: None,
     };
     crate::families::table::bind::bind(&table_payload)

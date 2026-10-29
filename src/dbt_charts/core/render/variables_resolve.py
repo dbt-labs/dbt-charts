@@ -27,7 +27,8 @@ from dbt_charts.core.compile.normalize.variable_input_refinement import (
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.daterange import (
-    DATERANGE_PRESETS,
+    current_board_clock,
+    is_daterange_preset,
     resolve_daterange_preset_iso,
 )
 from dbt_charts.core.compile.template.variables import (
@@ -38,7 +39,6 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.render.board_variables import (
-    current_board_today,
     current_daterange_presets,
 )
 from dbt_charts.core.render.conditions import eval_bool_condition
@@ -117,6 +117,8 @@ class ResolvedControl:
     placeholder: str | None = None
     # The preset id a daterange commits; `current` then holds its dates.
     preset: str | None = None
+    # The preset menu a daterange offers; empty for every other input.
+    presets: tuple[str, ...] = ()
 
     @property
     def spec(self) -> ControlSpec:
@@ -156,11 +158,11 @@ def resolve_controls(
             current = low
         elif refined.input_type == "daterange":
             preset = current_daterange_presets().get(name)
-            if isinstance(current, str) and current in DATERANGE_PRESETS:
+            if isinstance(current, str) and is_daterange_preset(current):
                 # The fallback above is the raw `default:`, which no render
                 # narrowing has seen.
                 preset = current
-                current = resolve_daterange_preset_iso(current, current_board_today())
+                current = resolve_daterange_preset_iso(current, current_board_clock())
         elif refined.input_type == "multiselect":
             # One selection, narrowed once. A multiselect legitimately arrives
             # as a list, as a bare scalar from a URL param written before it was
@@ -195,6 +197,13 @@ def resolve_controls(
                 can_unset=not var_def.required,
                 enabled=_is_enabled(var_def, current_values, executor),
                 preset=preset,
+                presets=(
+                    variables_style.presets
+                    if var_def.presets is None
+                    else var_def.presets
+                )
+                if refined.input_type == "daterange"
+                else (),
                 placeholder=(
                     var_def.placeholder
                     if refined.input_type in FREE_ENTRY_INPUTS

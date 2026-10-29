@@ -20,7 +20,7 @@ pub const PREDEFINED_SPECS: &[PredefinedSpec] = &[
     PredefinedSpec { name: "integer", d3: ",.0f", suffix: "" },
     PredefinedSpec { name: "delta", d3: "+,d", suffix: "" },
     PredefinedSpec { name: "number", d3: ".3~s", suffix: "" },
-    PredefinedSpec { name: "number_full", d3: ",.2f", suffix: "" },
+    PredefinedSpec { name: "number_full", d3: ",~f", suffix: "" },
     PredefinedSpec { name: "compact", d3: ".2~s", suffix: "" },
     PredefinedSpec { name: "year", d3: "d", suffix: "" },
     PredefinedSpec { name: "id", d3: "d", suffix: "" },

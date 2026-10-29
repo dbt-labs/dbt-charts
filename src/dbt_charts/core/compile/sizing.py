@@ -195,9 +195,9 @@ class WidthMeasurer:
             )
             parts.append(
                 IntrinsicWidth(
-                    title_min_content_width(*title_args),
+                    title_min_content_width(*title_args, root=is_root),
                     min(
-                        title_max_content_width(*title_args),
+                        title_max_content_width(*title_args, root=is_root),
                         prose_measure(style),
                     ),
                 ).inset(inset)

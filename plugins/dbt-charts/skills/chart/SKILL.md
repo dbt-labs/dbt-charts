@@ -21,6 +21,7 @@ Data files (`.csv`, `.json`, `.parquet`) in the project root and `data/` need no
 | `execute_sql(source=SOURCE, sql=SQL)` | Run SQL against a source; the result is CSV under a byte budget, so bound rows with SQL LIMIT. |
 | `render_board(yaml_content=YAML)` | Run the board's queries and return what each chart draws (values, ranges, value labels), any problems, and the board's preview URL. |
 | `search_files(text="")` | List the project's boards; a keyword searches them; each hit's `board_path` is what `render_board` takes as `path`. |
+| Your host's file tools | Read, write and change board files; `render_board(path=BOARD)` then checks the saved file. |
 | `get_skill(name)` | Read another skill page. |
 
 These are every tool a board needs.
@@ -58,8 +59,8 @@ Also exist: `ignore`, `cache`, `incremental`, `type`, `setup_sql`, `target`, `di
 Other query types: `http` (rest api query), `values` (inline data authored as a list of row mappings, or inline data authored as column names plus positional row values), `schema` (dbt source schema query).
 
 Jinja helpers in query SQL:
-- `filter(column: str, value: Any, operator: str = '=', none: str = 'allow')`: Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. `none`: Fallback when value is null/empty/_NullValue. 'allow' (default) returns '1=1' (no constraint, show all rows). 'deny' returns '1=0' (zero rows).
-- `filter_date_range(column: str, date_range: Any)`: Generate parameterized date range filter. `date_range`: Tuple/list of [start, end] dates
+- `filter(column: str, value: Any, operator: str = '=', none: str = 'allow')`: Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. A date value compares the column by its calendar date, so pass a timestamp column bare (no DATE() or wrapping subquery). `none`: Fallback when value is null/empty/_NullValue. 'allow' (default) returns '1=1' (no constraint, show all rows). 'deny' returns '1=0' (zero rows).
+- `filter_date_range(column: str, date_range: Any)`: Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'. `date_range`: `[start, end]` dates, or a preset name
 
 ## Charts
 
@@ -138,7 +139,7 @@ A variable is an input on the page (a dropdown, slider or date picker) whose val
 
 A range bound is two variables on one column (`column: cars.model_year`), used as `filter('model_year', first_year, '>=')` and `'<='`; unset ("All") means no bound, so no `default`, `data_type`, `input` or static list.
 
-A date range is one variable, not two `input: date` variables with hard-coded defaults: `period: {column: t.order_date, input: daterange}` read as `{{ filter_date_range('order_date', period) }}`. Unset means all dates; a rolling window is a preset: `default: last_90_days`.
+A date range is one variable, not two `input: date` variables with hard-coded defaults: `period: {column: t.order_date, input: daterange}` read as `{{ filter_date_range('order_date', period) }}`. Unset means all dates; a rolling window is a preset name, which `default:` and a SQL literal (`filter_date_range('order_ts', 'last_30_days')`) both take. Names: `today`, `yesterday`, `last_<N>_<unit>`, `previous_<N>_<unit>`, `this_<unit>`, `<unit>_to_date`, with units days/weeks/months/quarters/years and `fiscal_` before quarter/year (`previous_3_quarters`, `this_fiscal_quarter`). `presets:` lists the picker's menu.
 
 `variables.<name>`:
 - `column`: A dropdown of this column's values, as 'table.column'
@@ -151,7 +152,7 @@ A date range is one variable, not two `input: date` variables with hard-coded de
 - `step` (int|number): Step size for number, slider and range inputs
 - `data_type` (string|number|date|boolean|array): The type of the values a select, radio or multiselect sends back
 - `input` (auto|select|multiselect|input|text|number|textarea|slider|range|date|datepicker|daterange|checkbox|radio, default auto): Control type. `auto` (the default) picks one from `options` and `data_type`: omit it except for `daterange`
-Also exist: `notes`, `placeholder`, `visible`, `enabled`, `query`, `operator`.
+Also exist: `notes`, `presets`, `placeholder`, `visible`, `enabled`, `query`, `operator`.
 
 `options`:
 - `static` (list of text|list of int|number): Option values that are not in the data, written out
@@ -177,7 +178,7 @@ A `rows` or `cols` entry may be an inline board with its own `title`, `variables
 
 ## Formats
 
-Built-in names, on 1234567.891 and 0.2534: `currency` $1.23M, `currency_whole` $1,234,568, `currency_full` $1,234,567.89, `currency_compact` $1.2M, `compact` 1.2M, `number` 1.23M, `number_full` 1,234,567.89, `integer` 1,234,568, `id` 1234568, `delta` +1,234,568, `year` 2025, `percent` 25.3%, `percent_whole` 25%, `percent_delta` +25.3%. Also exist: `percent_number`, `percent_number_delta`, `percentage_points_delta`, `duration`, `bytes`, `latitude`, `longitude`, `rating`. Date names: `date_short`, `time_short`, `date_year`, `date_quarter`, `date_month`, `date_week`. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
+Built-in names, on 1234567.891 and 0.2534: `currency` $1.23M, `currency_whole` $1,234,568, `currency_full` $1,234,567.89, `currency_compact` $1.2M, `compact` 1.2M, `number` 1.23M, `number_full` 1,234,567.891, `integer` 1,234,568, `id` 1234568, `delta` +1,234,568, `year` 2025, `percent` 25.3%, `percent_whole` 25%, `percent_delta` +25.3%. Also exist: `percent_number`, `percent_number_delta`, `percentage_points_delta`, `duration`, `bytes`, `latitude`, `longitude`, `rating`. Date names: `date_short`, `time_short`, `date_year`, `date_quarter`, `date_month`, `date_week`. A `date_<grain>` name is the engine's own axis label, never a format you write: a date in a table, KPI or axis takes a strftime spec such as `"%b %Y"` or `"%Y"`.
 
 ## Style
 
@@ -208,8 +209,8 @@ Keep canvas and ink colors out of the base board, and make the variant a second 
 
 For a first build and for every change request alike:
 
-1. Write all boards first (dark variants, and any notes or run file asked for).
-2. Check each board you write with `render_board(yaml_content=<yaml>)`: it runs the board's queries and returns what each chart draws and the board's problems. Fix everything it reports in one edit; run it again until it reports no errors. Fix each warning with the edit it names, unless you deliberately want what it flags; then add its code to that chart's `warnings_ignore`. An edit that applied needs no re-read; the check reports problems by line.
+1. Write all boards first (dark variants, and any notes or run file asked for). To copy a board, read it then write the copy (there is no copy verb), and change only what the user explicitly asked for. Editing a package board (`dbt_packages/<pkg>/charts/<path>`) saves your own copy at `charts/<pkg>/<path>`, which replaces the package's board; the result's `path` says where it landed.
+2. Check each board you write with `render_board(yaml_content=<yaml>)` (or `render_board(path=<board>)` once saved): it runs the board's queries and returns what each chart draws and the board's problems. Fix everything it reports in one edit; run it again until it reports no errors. Fix each warning with the edit it names, unless you deliberately want what it flags; then add its code to that chart's `warnings_ignore`. An edit that applied needs no re-read; the check reports problems by line.
 3. A card under about 250px wide (a many-column slot) draws no marks: `ERR-CHART-PAINTED-NO-MARKS`; widen the slot or use fewer columns. `WARN-TABLE-CRAMPED`: set the board root's `style.frame.width` to the width it suggests (a table has no `frame`).
 4. A board with no errors is done: no curl, no reopening a board, no re-running queries, no edits, notes included.
 

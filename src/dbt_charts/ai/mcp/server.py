@@ -25,7 +25,7 @@ from pydantic import AnyUrl, TypeAdapter
 from dbt_charts._install_hint import install_hint
 from dbt_charts.agent_api.query_csv import model_json
 from dbt_charts.ai.context import DbtChartsAIContext
-from dbt_charts.ai.tool_schemas import ALL_TOOLS
+from dbt_charts.ai.tool_schemas import ALL_TOOLS, SINGLE_VALUE_RULE
 from dbt_charts.ai.tools import dispatch_tool_call
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,8 @@ MCP_INSTRUCTIONS = (
     "Answer a data question with a chart: render_board draws it inline for the "
     "user, while execute_sql's rows reach only you. Render a stored board by "
     "'path' when one already answers the question; otherwise author "
-    "whole-board YAML as render_board's 'yaml_content'."
+    "whole-board YAML as render_board's 'yaml_content'. "
+    f"{SINGLE_VALUE_RULE}"
 )
 
 _BASE_RESOURCES = [

@@ -51,7 +51,7 @@ class TestValidateVariableValue:
         ("input_type", "value", "error_contains"),
         [
             ("daterange", "2024-01-01", "must be [start, end]"),
-            ("daterange", "last_91_days", "last_90_days"),
+            ("daterange", "last_week", "last_<N>_<unit>"),
             ("daterange", 7, "must be [start, end]"),
             ("daterange", ["2024-01-01"], "must be [start, end]"),
             ("daterange", ["a", "b", "c"], "must be [start, end]"),

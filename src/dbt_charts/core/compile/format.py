@@ -68,6 +68,7 @@ from dbt_charts.core.text.predefined_formats import (
     PREDEFINED_TIME_NAMES,
     PREDEFINED_TIME_SPECS,
     SUB_UNIT_FLOOR,
+    SUB_UNIT_NUMBER_SPEC,
     PredefinedNumberFormat,
     PredefinedTimeFormat,
     is_money_format,
@@ -222,6 +223,8 @@ def sub_unit_spec(raw: str, formats: FormatTable | None) -> str:
     sibling = PREDEFINED_SUB_UNIT_FALLBACK[raw]
     if formats is not None and sibling in formats:
         return resolve_format(sibling, formats)
+    if sibling == PredefinedNumberFormat.number_full:
+        return SUB_UNIT_NUMBER_SPEC
     return _engine_spec(sibling, formats)
 
 

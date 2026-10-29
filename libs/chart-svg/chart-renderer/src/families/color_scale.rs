@@ -912,6 +912,7 @@ impl VerticalGradient<'_> {
                     .set("text-anchor", "start")
                     .vega("font-family", cfg.title.font.family_or("sans-serif"))
                     .set("font-size", title_size.to_string())
+                    .quick_some("font-style", cfg.title.font.style.as_deref())
                     .set("font-weight", cfg.title.font.weight_str())
                     .set("fill", cfg.title.font.color.as_deref().unwrap_or("#313233")),
                 self.title,
@@ -974,6 +975,7 @@ impl VerticalGradient<'_> {
                         .set("text-anchor", "start")
                         .vega("font-family", label_family)
                         .set("font-size", label_size.to_string())
+                        .quick_some("font-style", label_font.style.as_deref())
                         .set("font-weight", label_weight.clone())
                         .set("fill", label_color)
                         .set_if(!shown, "opacity", "0"),

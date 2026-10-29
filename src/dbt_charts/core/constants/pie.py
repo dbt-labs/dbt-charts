@@ -11,13 +11,8 @@ WEDGE_LABEL_MIN_SHARE: Final[float] = 0.08
 # erase the colored sliver, leaving the source row with no visible mark or
 # hover target.
 INVISIBLE_SLICE_SHARE: Final[float] = 0.02
-# Below this fraction of the label-free disk, direct labels are starving
-# the wheel badly enough to prefer the table. Locked against the
-# calibration sweep (see the wheel-first-pie-donut-labeling initiative).
-WHEEL_DOMINANCE_MIN_RATIO: Final[float] = 0.6
-# Calibration and composition constants shared by final pie resolution
-# and the mechanical SVG/Vega emitters.
-LABEL_REACH_COEFFICIENT: Final[float] = 0.85
+# A wheel with no label to make room for fills this fraction of its box,
+# leaving the rest as whitespace.
 OUTER_FRACTION: Final[float] = 0.9
 ATTACHED_TABLE_GAP_PX: Final[float] = 12.0
 HYBRID_HEADING_GAP_PX: Final[float] = 6.0

@@ -69,6 +69,7 @@ from dbt_charts.core.compile.models.chart.resolved._annotation import (
     ResolvedTrend,
     ResolvedValueAnchor,
 )
+from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
 from dbt_charts.core.compile.models.style.resolved import (
@@ -77,6 +78,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTickLabel,
 )
 from dbt_charts.core.compile.models.style.theme.annotations import (
+    RULE_LINE,
     AnnotationPositionStyle,
     AnnotationStrokeStyle,
     AnnotationTextMarkStyle,
@@ -111,6 +113,7 @@ from dbt_charts.core.compile.resolve.chart._chart_rows import (
 from dbt_charts.core.compile.resolve.chart._domain import layers_own_y_scale
 from dbt_charts.core.compile.resolve.chart._layer_ink import LayerInk
 from dbt_charts.core.compile.resolve.chart._palette import _with_color_tokens
+from dbt_charts.core.compile.resolve.style.palette import color_from_theme
 from dbt_charts.core.compile.resolve.style.tokens import (
     SERIES_COLOR_TOKEN,
     substitute_tokens,
@@ -119,6 +122,10 @@ from dbt_charts.core.compile.template.annotation_text import (
     AnnotationTextError,
     AnnotationValue,
     render_annotation_text,
+)
+from dbt_charts.core.constants.contrast import (
+    RULE_GRAY_FIRST_STEP,
+    RULE_GRAY_LAST_STEP,
 )
 from dbt_charts.core.constants.marks import TREND_SAMPLES
 from dbt_charts.core.diagnostics.codes_compile import ERR_ANNOTATION_INVALID
@@ -221,6 +228,7 @@ class LayerY:
 
     index: int
     column: str
+    mark: Literal["bar", "line", "area", "scatter"]
     # The layer's own query; None reads the chart's rows.
     query: str | None
     color_field: str | None
@@ -245,8 +253,6 @@ class AnnotationChart:
     # Layers draw on their own y scales once any pins a side; else on the base's.
     own_y_scale: bool
     multiples: MultiplesConfig | None
-    # Rules and trends over a filled area stay above it; elsewhere they sit under the data.
-    is_area: bool
     # Ink of a chart with no color channel: what an uncolored trend wears.
     series_fill: str
     # The ink of each color value, where resolve baked it (a layer's); else
@@ -287,6 +293,7 @@ def annotation_chart(
             LayerY(
                 index,
                 layer.y,
+                layer.type,
                 None if layer.query in (None, chart.query_name) else layer.query,
                 layer.color,
                 inks[index],
@@ -296,7 +303,6 @@ def annotation_chart(
         ),
         own_y_scale=layers_own_y_scale(chart),
         multiples=chart.multiples,
-        is_area=isinstance(chart, AreaChart),
         series_fill=series_fill,
         series_inks=None,
         gradient=False,
@@ -334,6 +340,8 @@ class ResolvedAnnotations:
     drafts: tuple[_Draft, ...]
     y_values: tuple[float, ...]
     gaps: tuple[ResolvedAnnotationGap, ...]
+    # Trends that read a bar mark: they fit, with a warning.
+    bar_trends: tuple[int, ...]
 
     def index_of_y(self, refused: Callable[[float], bool]) -> int | None:
         """The first authored annotation with a base-scale y value ``refused`` takes."""
@@ -398,7 +406,7 @@ def _label_format(
     return fmt
 
 
-NO_ANNOTATIONS = ResolvedAnnotations(drafts=(), y_values=(), gaps=())
+NO_ANNOTATIONS = ResolvedAnnotations(drafts=(), y_values=(), gaps=(), bar_trends=())
 
 
 class _Invalid(ValueError):
@@ -431,12 +439,21 @@ def resolve_annotations(
         return NO_ANNOTATIONS
     drafts: list[_Draft] = []
     gaps: list[ResolvedAnnotationGap] = []
+    bar_trends: list[int] = []
     for index, annotation in enumerate(annotations):
         empty: list[str] = []
         try:
             drafts.extend(
                 _resolve_one(
-                    index, annotation, chart, dataset, datasets, ctx, rendered_at, empty
+                    index,
+                    annotation,
+                    chart,
+                    dataset,
+                    datasets,
+                    ctx,
+                    rendered_at,
+                    empty,
+                    bar_trends,
                 )
             )
         except (_Invalid, FitError) as exc:
@@ -450,7 +467,10 @@ def resolve_annotations(
             gaps.append(ResolvedAnnotationGap(index=index, reason="; ".join(empty)))
     base = [draft for draft in drafts if draft.y_axis == "base"]
     return ResolvedAnnotations(
-        drafts=tuple(drafts), y_values=tuple(_y_values(base)), gaps=tuple(gaps)
+        drafts=tuple(drafts),
+        y_values=tuple(_y_values(base)),
+        gaps=tuple(gaps),
+        bar_trends=tuple(bar_trends),
     )
 
 
@@ -463,11 +483,14 @@ def _resolve_one(
     ctx: ChartStyleContext,
     rendered_at: datetime,
     empty: list[str],
+    bar_trends: list[int],
 ) -> Iterator[_Draft]:
     """Each draft of one annotation; a scope with nothing to compute over adds
     its reason to ``empty`` instead of failing the chart."""
     computed = _is_computed(annotation)
     target = _target(annotation, plotted, plotted_dataset, datasets, computed)
+    if isinstance(annotation, TrendAnnotation):
+        _check_trend_mark(index, plotted, target.layer, bar_trends)
     chart, dataset = target.chart, target.dataset
     shared_ink = (
         annotation.y_column is not None
@@ -569,14 +592,9 @@ def _series_ink(
     )
 
 
-def _default_plane(
-    annotation: Annotation, chart: AnnotationChart
-) -> Literal["background", "foreground"]:
-    if isinstance(annotation, NoteAnnotation):
-        return "foreground"
-    if chart.is_area and annotation.type != "band":
-        return "foreground"
-    return "background"
+def _default_plane(annotation: Annotation) -> Literal["background", "foreground"]:
+    """Every line draws in front of the data; only a band's tint stays behind."""
+    return "background" if annotation.type == "band" else "foreground"
 
 
 def _renderer(
@@ -623,7 +641,7 @@ def _renderer(
         return ResolvedAnnotation(
             index=index,
             type=annotation.type,
-            plane=annotation.plane or _default_plane(annotation, chart),
+            plane=annotation.plane or _default_plane(annotation),
             panel=scope.panel,
             series=scope.series,
             y_axis=y_axis,
@@ -766,6 +784,25 @@ def _target(
         ResolvedLayerAxis(layer=layer.index) if chart.own_y_scale else "base",
         layer.index,
     )
+
+
+def _check_trend_mark(
+    index: int, chart: AnnotationChart, layer: int | None, bar_trends: list[int]
+) -> None:
+    """A fit belongs on a line or scatter: an area's fill reads as magnitude
+    from zero, so a pattern drawn over it misleads; bars fit, with a warning."""
+    mark = (
+        chart.family
+        if layer is None
+        else next(item.mark for item in chart.layers if item.index == layer)
+    )
+    if mark == "area":
+        raise _Invalid(
+            "a trend on an area mark; draw that column as a line or scatter to "
+            "fit a trend"
+        )
+    if mark == "bar":
+        bar_trends.append(index)
 
 
 def _reads(
@@ -1436,6 +1473,7 @@ def _style(
     free = (position.edge == "auto", position.align == "auto")
     if isinstance(marks, RuleAnnotationMarksStyle):
         marks = _auto_position(marks, "top", "end")
+        marks = _rule_label_follows_line(marks)
     if isinstance(marks, BandAnnotationMarksStyle):
         marks = _auto_position(marks, _band_edge(chart.horizontal, x, y), "center")
     if isinstance(marks, NoteAnnotationMarksStyle) and isinstance(
@@ -1464,6 +1502,7 @@ def _style(
         *_wrap(annotation, marks, theme),
         point_radius,
         free,
+        ctx,
     )
 
 
@@ -1541,6 +1580,18 @@ def _label_follows_line(
     )
 
 
+def _rule_label_follows_line(
+    marks: RuleAnnotationMarksStyle,
+) -> RuleAnnotationMarksStyle:
+    """A rule's `line` label wears its line's color, picked or fixed."""
+    if marks.text.font.color != RULE_LINE:
+        return marks
+    font = marks.text.font.model_copy(update={"color": marks.rule.stroke.color})
+    return marks.model_copy(
+        update={"text": marks.text.model_copy(update={"font": font})}
+    )
+
+
 def _with_series_color(marks: _Marks, color: str, note: bool) -> _Marks:
     update: dict[str, object] = {}  # type-state: object_annotation — mixed marks
     for mark_name in type(marks).model_fields:
@@ -1601,11 +1652,12 @@ def _resolved_style(
     max_share: float | None,
     point_radius: float | None,
     free: tuple[bool, bool],
+    ctx: ChartStyleContext,
 ) -> ResolvedAnnotationStyle:
     text = _resolved_text(marks.text, max_width, max_share, free)
     match marks:
         case RuleAnnotationMarksStyle():
-            return ResolvedAnnotationStyle(rule=_resolved_rule(marks), text=text)
+            return ResolvedAnnotationStyle(rule=_resolved_rule(marks, ctx), text=text)
         case BandAnnotationMarksStyle():
             return ResolvedAnnotationStyle(rect=_resolved_rect(marks), text=text)
         case NoteAnnotationMarksStyle():
@@ -1621,10 +1673,22 @@ def _resolved_style(
             )
 
 
-def _resolved_rule(marks: RuleAnnotationMarksStyle) -> ResolvedAnnotationRule:
+def _resolved_rule(
+    marks: RuleAnnotationMarksStyle, ctx: ChartStyleContext
+) -> ResolvedAnnotationRule:
+    stroke = _stroke(marks.rule.stroke, "marks.rule.stroke")
+    auto = stroke.color == AUTO
+    grids = (ctx.axis.grid.color, ctx.axis_x.grid.color, ctx.axis_y.grid.color)
     return ResolvedAnnotationRule(
         opacity=_set(marks.rule.opacity, "marks.rule.opacity"),
-        stroke=_stroke(marks.rule.stroke, "marks.rule.stroke"),
+        stroke=stroke,
+        ladder=tuple(
+            color_from_theme(f"chrome[{k}]", palettes=ctx.palettes, roles=ctx.roles)
+            for k in range(RULE_GRAY_FIRST_STEP, RULE_GRAY_LAST_STEP + 1)
+        )
+        if auto
+        else (),
+        avoid=tuple(dict.fromkeys(g for g in grids if g is not None)) if auto else (),
     )
 
 

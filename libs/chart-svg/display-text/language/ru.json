@@ -36,32 +36,53 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "С начала финансового квартала",
+  "controls.fiscal_year_to_date": "С начала финансового года",
   "controls.from": "С {date}",
-  "controls.last_12_months": "Последние 12 месяцев",
-  "controls.last_28_days": "Последние 28 дней",
-  "controls.last_7_days": "Последние 7 дней",
-  "controls.last_90_days": "Последние 90 дней",
   "controls.list_join": ", ",
   "controls.month_to_date": "С начала месяца",
   "controls.next_month": "Следующий месяц",
   "controls.no": "Нет",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Последние {duration}",
+  "controls.preset_previous": "Предыдущие {duration}",
   "controls.previous_month": "Предыдущий месяц",
+  "controls.quarter_to_date": "С начала квартала",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Поиск",
   "controls.search_values": "Поиск значений",
   "controls.sort_ascending": "Сортировать по возрастанию",
   "controls.sort_descending": "Сортировать по убыванию",
+  "controls.this_fiscal_quarter": "Этот финансовый квартал",
+  "controls.this_fiscal_year": "Этот финансовый год",
+  "controls.this_month": "Этот месяц",
+  "controls.this_quarter": "Этот квартал",
+  "controls.this_week": "Эта неделя",
+  "controls.this_year": "Этот год",
   "controls.today": "Сегодня",
   "controls.until": "По {date}",
+  "controls.week_to_date": "С начала недели",
   "controls.year_to_date": "С начала года",
   "controls.yes": "Да",
+  "controls.yesterday": "Вчера",
   "duration.day": {
     "one": "{n} день",
     "few": "{n} дня",
     "many": "{n} дней",
     "other": "{n} дня"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} финансовый квартал",
+    "few": "{n} финансовых квартала",
+    "many": "{n} финансовых кварталов",
+    "other": "{n} финансового квартала"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} финансовый год",
+    "few": "{n} финансовых года",
+    "many": "{n} финансовых лет",
+    "other": "{n} финансового года"
   },
   "duration.month": {
     "one": "{n} месяц",
@@ -69,11 +90,23 @@
     "many": "{n} месяцев",
     "other": "{n} месяца"
   },
+  "duration.quarter": {
+    "one": "{n} квартал",
+    "few": "{n} квартала",
+    "many": "{n} кварталов",
+    "other": "{n} квартала"
+  },
   "duration.week": {
     "one": "{n} неделя",
     "few": "{n} недели",
     "many": "{n} недель",
     "other": "{n} недели"
+  },
+  "duration.year": {
+    "one": "{n} год",
+    "few": "{n} года",
+    "many": "{n} лет",
+    "other": "{n} года"
   },
   "footer.data_as_of": "Данные на {date}, {time}",
   "footer.made_with": "создано в {brand}",

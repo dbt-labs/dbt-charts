@@ -17,7 +17,7 @@ mod corpus_tests;
 #[cfg(test)]
 mod tests;
 mod bound;
-mod colors;
+pub(crate) mod colors;
 mod date;
 mod funcs;
 mod geo;

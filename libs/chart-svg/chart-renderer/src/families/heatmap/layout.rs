@@ -601,6 +601,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 family: x_label_family,
                 size: x_label_fs,
                 weight: &x_label_weight,
+                style: ax_x.labels.font.style.as_deref(),
                 fill: x_label_color,
             };
             items.push(if x_angle == 0.0 {
@@ -652,6 +653,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 family: y_label_family,
                 size: y_label_fs,
                 weight: &y_label_weight,
+                style: ax_y.labels.font.style.as_deref(),
                 fill: y_label_color,
             };
             if y_angle != 0.0 {

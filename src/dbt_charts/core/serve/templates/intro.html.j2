@@ -8,19 +8,19 @@
       body {
         margin: 0;
         padding: 40px 20px;
-        background: {{ palette.panel_bg }};
-        color: {{ palette.text }};
-        font-family: {{ palette.font_family | safe }};
+        background: {{ style.background }};
+        color: {{ style.font.color }};
+        font-family: {{ style.font.family | safe }};
       }
       main { max-width: 640px; margin: 0 auto; line-height: 1.5; }
-      h1 { color: {{ palette.accent }}; font-size: 1.8rem; }
+      h1 { color: {{ style.accent }}; font-size: 1.8rem; }
       pre {
         padding: 14px 18px;
-        border: 1px solid {{ palette.border }};
+        border: 1px solid {{ style.border.color }};
         border-radius: 8px;
         overflow-x: auto;
       }
-      a { color: {{ palette.accent }}; }
+      a { color: {{ style.accent }}; }
     </style>
   </head>
   <body>

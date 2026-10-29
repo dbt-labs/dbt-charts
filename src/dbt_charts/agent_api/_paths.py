@@ -320,7 +320,9 @@ def ignore_code_diagnostics(ignore_codes: set[str]) -> list[Diagnostic]:
             diagnostics.append(
                 Diagnostic.from_code(
                     WARN_RETIRED_IGNORE_CODE,
-                    message=WARN_RETIRED_IGNORE_CODE.message_template.format(code=code),
+                    message=WARN_RETIRED_IGNORE_CODE.message_template.format(
+                        source="--ignore-warning", code=code
+                    ),
                     fix=WARN_RETIRED_IGNORE_CODE.fix_template,
                 )
             )
@@ -337,8 +339,11 @@ def ignore_code_diagnostics(ignore_codes: set[str]) -> list[Diagnostic]:
 
 
 def render_crash_diagnostic(board_path: Path, exc: Exception) -> Diagnostic:
+    crash = DbtChartsError.from_unexpected(exc)
     return DbtChartsError.from_code(
-        ERR_INTERNAL, message=f"Error rendering {board_path}: {exc}"
+        ERR_INTERNAL,
+        message=f"Error rendering {board_path}: {crash}",
+        detail=crash.detail,
     ).to_diagnostic()
 
 

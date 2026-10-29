@@ -94,6 +94,20 @@ class Style:
             regardless of H level).
         heading_margin_bottom_px: Optional absolute-px bottom margin for headings.
             When set, overrides the em scaling.
+        minor_heading_margin_top_px: Optional absolute-px top margin for H3-H6,
+            taking the place of ``heading_margin_top_px`` at those levels so
+            major and minor headings can sit at different distances from the
+            text above. None = every level uses the heading top margin.
+        h1_margin_bottom_px: Optional absolute-px bottom margin for H1 alone,
+            taking the place of ``heading_margin_bottom_px`` at that level so a
+            first-level heading can be followed by a blank line the other
+            levels do not get. None = H1 uses the heading bottom margin.
+        heading_grid_px: Optional absolute-px body line height. When set, a
+            heading keeps its natural leading between wrapped lines, but its
+            block is rounded up to whole multiples of this (a block exceeding
+            a whole multiple by under 10% of one line is not rounded up) and
+            its last baseline sits where body text's baseline sits in a line
+            of this height, so text below is exactly this far under it.
         paragraph_spacing: Space between paragraphs in pixels.
         list_indent: Indentation for list items in pixels.
         list_item_spacing: Space between list items in pixels.
@@ -230,6 +244,9 @@ class Style:
     heading_margin_bottom: float = 0.5  # em (overridden by heading_margin_bottom_px)
     heading_margin_top_px: Optional[float] = None
     heading_margin_bottom_px: Optional[float] = None
+    minor_heading_margin_top_px: Optional[float] = None
+    h1_margin_bottom_px: Optional[float] = None
+    heading_grid_px: Optional[float] = None
 
     # Spacing
     paragraph_spacing: float = 12.0

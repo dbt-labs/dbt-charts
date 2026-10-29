@@ -1018,10 +1018,13 @@ class TestVariableResolutionInSizing:
             width=800.0,
             variable_values={"region": "North America"},
             base_dir=None,
+            root=True,
         )
 
         # Height with resolved text
-        height_resolved = get_title_height(title_resolved, width=800.0, base_dir=None)
+        height_resolved = get_title_height(
+            title_resolved, width=800.0, base_dir=None, root=True
+        )
 
         # With variables, height should match the resolved text height
         assert abs(height_with_vars - height_resolved) < 1.0, (
@@ -1233,9 +1236,14 @@ Main text here."""
         title_clean = "Dashboard Title "
 
         height_with_comment = get_title_height(
-            title_with_comment, width=800.0, base_dir=None
+            title_with_comment,
+            width=800.0,
+            base_dir=None,
+            root=True,
         )
-        height_clean = get_title_height(title_clean, width=800.0, base_dir=None)
+        height_clean = get_title_height(
+            title_clean, width=800.0, base_dir=None, root=True
+        )
 
         # Heights should be essentially the same
         assert abs(height_with_comment - height_clean) < 1.0, (
@@ -3942,13 +3950,16 @@ def test_compact_style_pins_heading_sizes_from_theme() -> None:
     sizes = get_theme_style().heading_ramp()
 
     assert style.h1_size == float(sizes[0])
-    assert style.h2_size == float(sizes[1])
-    assert style.h3_size == float(sizes[2])
-    assert style.h4_size == float(sizes[3])
-    assert style.h5_size == float(sizes[4])
-    assert style.h6_size == float(sizes[5])
+    # H2/H3 read the section ramp; H4-H6 are the body size, never smaller than
+    # the body they head. The shared H ramp itself is untouched.
+    sections = get_theme_style().section_ramp()
+    assert style.h2_size == float(sections[0])
+    assert style.h3_size == float(sections[1])
+    assert style.h4_size == style.base_font_size
+    assert style.h5_size == style.base_font_size
+    assert style.h6_size == style.base_font_size
     # get_heading_size returns the absolute size, not base × scale.
-    assert style.get_heading_size(2) == float(sizes[1])
+    assert style.get_heading_size(2) == float(sections[0])
 
 
 def test_compact_style_h1_size_override_for_board_titles() -> None:
@@ -4147,17 +4158,18 @@ def test_compact_style_uses_merged_heading_typography() -> None:
     chart_defaults = dataclasses.replace(
         base.chart_defaults,
         heading_sizes=[31.0, 23.0, 19.0, 17.0, 15.0, 13.0],
+        section_sizes=[27.0, 25.0, 16.0, 12.0, 11.0],
     )
     merged = dataclasses.replace(base, title=title, chart_defaults=chart_defaults)
 
     style = get_compact_style(merged)
 
     assert style.h1_size == 31.0
-    assert style.h2_size == 23.0
-    assert style.h3_size == 19.0
-    assert style.h4_size == 17.0
-    assert style.h5_size == 15.0
-    assert style.h6_size == 13.0
+    assert style.h2_size == 27.0
+    assert style.h3_size == 25.0
+    assert style.h4_size == style.base_font_size
+    assert style.h5_size == style.base_font_size
+    assert style.h6_size == style.base_font_size
     assert style.heading_font_weight == 700
     assert style.heading_line_height == 1.15
 
@@ -4209,9 +4221,16 @@ def test_title_height_uses_merged_title_typography() -> None:
     merged = dataclasses.replace(base, title=title)
     heading = "Quarterly revenue performance by region"
 
-    default_height = get_title_height(heading, width=240.0, level=1, base_dir=None)
+    default_height = get_title_height(
+        heading, width=240.0, level=1, base_dir=None, root=True
+    )
     merged_height = get_title_height(
-        heading, width=240.0, level=1, resolved_style=merged, base_dir=None
+        heading,
+        width=240.0,
+        level=1,
+        resolved_style=merged,
+        base_dir=None,
+        root=True,
     )
 
     assert merged_height > default_height
@@ -4219,12 +4238,12 @@ def test_title_height_uses_merged_title_typography() -> None:
 
 def test_compact_style_renders_h2_at_theme_size() -> None:
     # End-to-end: rendering `## Heading` through the compact style must emit
-    # font-size matching style.title.sizes[1], not 14 × 1.6 = 22.4.
+    # font-size matching style.fonts.section.sizes[0], not 14 × 1.6 = 22.4.
     from dbt_charts.core.compile.resolve.style.markdown_style import get_compact_style
     from mdsvg import render as render_markdown
 
     style = get_compact_style()
-    expected_size = float(get_theme_style().heading_ramp()[1])
+    expected_size = float(get_theme_style().section_ramp()[0])
     svg = render_markdown("## Section heading", width=400, style=style)
     # mdsvg emits font-size as an attribute on the heading text element.
     expected_attr = f'font-size="{int(expected_size) if expected_size == int(expected_size) else expected_size}"'
@@ -4737,7 +4756,12 @@ class TestTitleMeasureMatchesPaint:
         title = "monthly revenue by region and segment"
 
         reserved = get_title_height(
-            title, 260.0, {}, resolved_style=style, base_dir=None
+            title,
+            260.0,
+            {},
+            resolved_style=style,
+            base_dir=None,
+            root=True,
         )
         painted_svg = render_title(
             title,
@@ -4746,6 +4770,7 @@ class TestTitleMeasureMatchesPaint:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
 
         painted = re.search(r'<svg[^>]* height="([\d.]+)"', painted_svg)
@@ -4769,7 +4794,12 @@ class TestTitleMeasureMatchesPaint:
         style = resolve_style(get_theme_style())
 
         reserved = get_title_height(
-            title, 400.0, {}, resolved_style=style, base_dir=None
+            title,
+            400.0,
+            {},
+            resolved_style=style,
+            base_dir=None,
+            root=True,
         )
         painted_svg = render_title(
             title,
@@ -4778,6 +4808,7 @@ class TestTitleMeasureMatchesPaint:
             variable_values={},
             base_dir=None,
             error_collector=None,
+            root=True,
         )
 
         painted = re.search(r'<svg[^>]* height="([\d.]+)"', painted_svg)

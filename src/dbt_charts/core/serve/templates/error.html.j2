@@ -6,148 +6,125 @@
     <title>
       {%- if result.board_error -%}
         [{{ result.board_error.code }}] {{ result.board_error.message | truncate(60) }}
-      {%- elif result.validation_errors -%}
-        {{ result.validation_errors | length }} error{{ 's' if result.validation_errors | length != 1 else '' }} — {{ request_path }}
       {%- else -%}
-        Render errors — {{ request_path }}
+        {{ result.validation_errors | length }} error{{ 's' if result.validation_errors | length != 1 else '' }} — {{ request_path }}
       {%- endif -%}
     </title>
     <style>
       :root {
-        color-scheme: light;
-        --panel-bg: {{ palette.panel_bg }};
-        --text: {{ palette.text }};
-        --secondary: {{ palette.secondary }};
-        --border: {{ palette.border }};
-        --accent: {{ palette.accent }};
+        --page-bg: {{ palette.page_bg }};
         --font-family: {{ palette.font_family | safe }};
+        --card-bg: {{ palette.card_bg }};
+        --card-text: {{ palette.card_text }};
+        --card-muted: color-mix(in srgb, var(--card-text) 60%, transparent);
+        --card-rule: color-mix(in srgb, var(--card-text) 20%, transparent);
+        --card-radius: {{ palette.card_radius }};
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       body {
         margin: 0;
         padding: 40px 20px;
-        background: var(--panel-bg);
-        color: var(--text);
+        background: var(--page-bg);
         font-family: var(--font-family);
       }
-      .panel {
-        max-width: 760px;
-        margin: 0 auto 24px;
-        background: var(--panel-bg);
-        border: 1px solid var(--border);
-        border-radius: 18px;
-        padding: 28px 32px;
-        box-shadow: 0 12px 32px rgba(58, 41, 16, 0.08);
+      .errors {
+        max-width: 560px;
+        margin: 32px auto 0;
+      }
+      .error {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 0 0 12px;
+        padding: 16px 18px;
+        background: var(--card-bg);
+        color: var(--card-text);
+        border-radius: var(--card-radius);
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
       }
       h1 {
-        margin: 0 0 8px;
-        color: var(--accent);
-        font-size: 1.8rem;
-        line-height: 1.15;
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        line-height: 1.3;
       }
-      h2 {
-        margin: 0 0 8px;
-        color: var(--accent);
-        font-size: 1.3rem;
-        line-height: 1.2;
+      p {
+        margin: 0;
+        font-size: 0.875rem;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
       }
-      .code-badge {
-        display: inline-block;
-        font: 0.8rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        background: #ede8db;
-        color: var(--accent);
-        border-radius: 6px;
-        padding: 2px 8px;
-        margin-bottom: 12px;
+      .location,
+      .code {
+        font: 0.75rem/1.4 var(--mono);
+        color: var(--card-muted);
       }
-      .message {
-        margin: 0 0 14px;
-        color: var(--secondary);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 0.97rem;
-        line-height: 1.5;
+      .code {
+        margin-top: 4px;
       }
-      .hint {
-        margin: 0 0 14px;
-        padding: 10px 14px;
-        background: #f0ebe0;
-        border-left: 3px solid var(--accent);
-        border-radius: 0 8px 8px 0;
-        font-family: ui-sans-serif, system-ui, sans-serif;
-        font-size: 0.93rem;
-        color: var(--text);
+      summary {
+        cursor: pointer;
+        font-size: 0.8125rem;
+        font-weight: 600;
       }
-      .location {
-        font: 0.85rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        color: var(--secondary);
-        margin: 0 0 14px;
+      pre {
+        margin: 8px 0 0;
+        padding: 10px 12px;
+        max-height: 420px;
+        overflow: auto;
+        border: 1px solid var(--card-rule);
+        border-radius: var(--card-radius);
+        font: 0.75rem/1.5 var(--mono);
+        white-space: pre;
       }
-      .doc-link {
-        font-family: ui-sans-serif, system-ui, sans-serif;
-        font-size: 0.9rem;
-        color: var(--accent);
+      a {
+        color: inherit;
       }
-      .footer {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid var(--border);
-        flex-wrap: wrap;
+      .guide {
+        margin: 0;
+        font-size: 0.8125rem;
+      }
+      .guide a {
+        color: var(--card-bg);
       }
     </style>
   </head>
   <body>
 {% if chrome %}{{ chrome | safe }}
 {% endif -%}
-{%- if result.board_error %}
-    {# --- Layout: single board-error panel --- #}
-    <div class="panel">
-      <div class="code-badge">{{ result.board_error.code }}</div>
-      <h1>{{ result.board_error.message }}</h1>
-      {%- if result.board_error.hint %}
-      <div class="hint">{{ result.board_error.hint }}</div>
-      {%- endif %}
-      {%- if result.board_error.range %}
-      <div class="location">
-        {{ result.board_error.range.file }}:{{ result.board_error.range.start_line }}
-      </div>
-      {%- endif %}
-      <div class="footer">
-        {%- set _doc_url = doc_url(result.board_error.code) %}
-        {%- if _doc_url %}
-        <a class="doc-link" href="{{ _doc_url }}" target="_blank" rel="noopener">Open docs ↗</a>
+{%- macro error_card(err) %}
+      <section class="error">
+        <h1>{{ code_title(err.code) }}</h1>
+        <p>{{ err.message }}</p>
+        {%- if err.hint %}
+        <p>{{ err.hint }}</p>
         {%- endif %}
-      </div>
-    </div>
-
-{%- elif result.validation_errors %}
-    {# --- Layout: stacked validation-error panels --- #}
-    {%- for err in result.validation_errors %}
-    <div class="panel">
-      <div class="code-badge">{{ err.code }}</div>
-      <h2>{{ err.message }}</h2>
-      {%- if err.hint %}
-      <div class="hint">{{ err.hint }}</div>
-      {%- endif %}
-      {%- if err.range %}
-      <div class="location">
-        {{ err.range.file }}:{{ err.range.start_line }}
-      </div>
-      {%- endif %}
-    </div>
-    {%- endfor %}
-    <div class="panel" style="padding: 16px 32px;">
-      <div class="footer" style="margin: 0; padding: 0; border: none;">
-        <a class="doc-link" href="{{ error_guide_url }}" target="_blank" rel="noopener">Open docs ↗</a>
-      </div>
-    </div>
-
-{%- elif result.chart_errors %}
-    {# --- Layout: board renders as-is; inline SVG callouts carry error info --- #}
-    {{ board_html | safe }}
-
+        {%- if err.range %}
+        <div class="location">{{ err.range.file }}:{{ err.range.start_line }}</div>
+        {%- endif %}
+        {%- if err.code == internal_code and err.detail %}
+        <details>
+          <summary>Details</summary>
+          <pre>{{ err.detail }}</pre>
+        </details>
+        <p>This is a bug in dbt Charts. <a href="{{ issues_url }}/new" target="_blank" rel="noopener">Report it ↗</a></p>
+        {%- elif caller is defined %}
+        {{ caller() }}
+        {%- endif %}
+        <div class="code">{{ err.code }}</div>
+      </section>
+{%- endmacro %}
+    <main class="errors">
+{%- if result.board_error %}
+      {%- call error_card(result.board_error) %}
+        <p><a href="{{ doc_url(result.board_error.code) }}" target="_blank" rel="noopener">Open docs ↗</a></p>
+      {%- endcall %}
+{%- else %}
+      {%- for err in result.validation_errors %}
+      {{- error_card(err) }}
+      {%- endfor %}
+      <p class="guide"><a href="{{ error_guide_url }}" target="_blank" rel="noopener">How to read these errors ↗</a></p>
 {%- endif %}
-
+    </main>
   </body>
 </html>

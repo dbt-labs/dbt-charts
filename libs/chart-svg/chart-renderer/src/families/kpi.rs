@@ -1854,7 +1854,7 @@ mod format_tests {
         ["currency", "currency_compact"]
             .map(|raw| (raw.to_string(), "$,.2f".to_string()))
             .into_iter()
-            .chain(["number", "compact"].map(|raw| (raw.to_string(), ",.2f".to_string())))
+            .chain(["number", "compact"].map(|raw| (raw.to_string(), d3rs::format::SUB_UNIT_NUMBER_SPEC.to_string())))
             .collect()
     }
 
@@ -2012,10 +2012,10 @@ mod format_tests {
 
     #[test]
     fn an_unformatted_value_follows_d3_ties_zero_sign_and_exponent() {
-        // format_kpi_parts(0.125, None) -> ('', '0.13', ''); (-0.001, None) -> ('', '0.00', '')
+        // format_kpi_parts(0.125, None) -> ('', '0.13', ''); (-0.001, None) -> ('', '0', '')
         assert_eq!(fmt(0.125, None, false), ("".into(), "0.13".into(), "".into()));
         assert_eq!(fmt(-5.125, None, false), ("".into(), "\u{2212}5.13".into(), "".into()));
-        assert_eq!(fmt(-0.001, None, false), ("".into(), "0.00".into(), "".into()));
+        assert_eq!(fmt(-0.001, None, false), ("".into(), "0".into(), "".into()));
         assert_eq!(fmt(-0.0, None, false), ("".into(), "0".into(), "".into()));
         // format_kpi_parts(1.5e300, None) -> ('', '1.5e+300', '')
         assert_eq!(fmt(1.5e300, None, false), ("".into(), "1.5e+300".into(), "".into()));
@@ -2028,11 +2028,11 @@ mod format_tests {
     }
 
     #[test]
-    fn null_format_float_falls_back_to_two_decimals() {
+    fn null_format_float_falls_back_to_unpadded_two_decimals() {
         // format_kpi_parts(1234.5, None, None) -> ('', '1,234.50', '')
-        assert_eq!(fmt(1234.5, None, false), ("".into(), "1,234.50".into(), "".into()));
-        // format_kpi_parts(-1234.5, None, None) -> ('', '−1,234.50', '')
-        assert_eq!(fmt(-1234.5, None, false), ("".into(), "\u{2212}1,234.50".into(), "".into()));
+        assert_eq!(fmt(1234.5, None, false), ("".into(), "1,234.5".into(), "".into()));
+        // format_kpi_parts(-1234.5, None, None) -> ('', '−1,234.5', '')
+        assert_eq!(fmt(-1234.5, None, false), ("".into(), "\u{2212}1,234.5".into(), "".into()));
     }
 
     #[test]
@@ -2074,7 +2074,7 @@ mod format_tests {
     fn a_sub_unit_value_never_prints_an_si_prefix() {
         // From 0.005 up: the board's `_full` sibling. Below: significant digits,
         // scientific below SUB_UNIT_SCIENTIFIC_FLOOR.
-        assert_eq!(fmt(0.5, Some("number"), false), ("".into(), "0.50".into(), "".into()));
+        assert_eq!(fmt(0.5, Some("number"), false), ("".into(), "0.5".into(), "".into()));
         assert_eq!(fmt(0.671, Some("number"), false), ("".into(), "0.67".into(), "".into()));
         assert_eq!(fmt(0.0023, Some("number"), false), ("".into(), "0.0023".into(), "".into()));
         assert_eq!(fmt(0.0001, Some("currency"), false), ("$".into(), "0.0001".into(), "".into()));
@@ -2261,8 +2261,7 @@ mod render_tests {
         render(p, &test_fonts()).expect_err("refuses").to_string()
     }
 
-    /// `family`'s `text` at `size`/`weight`, ttf-parser's instancing (0.004px
-    /// from the HVAR path the renderer measures with, hence the tolerances).
+    /// `family`'s `text` at `size`/`weight` in the `font_file` named.
     fn measured(font_file: &str, text: &str, size: f64, weight: f32) -> f64 {
         test_fonts().measure_at_weight(text, font_file, size, Some(weight)).unwrap()
     }

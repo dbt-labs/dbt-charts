@@ -16,14 +16,9 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     """Return one Diagnostic per (chart, authored_field) whose title was truncated."""
     warnings: list[Diagnostic] = []
     for chart_id, truncations in ctx.text_truncations.items():
-        # A chart is rendered once to size its slot and again to paint it, and each
-        # render records its own cut.
-        cuts = {
-            trunc.authored_field: trunc
-            for trunc in truncations
-            if trunc.surface == "chart_title"
-        }
-        for trunc in cuts.values():
+        for trunc in truncations:
+            if trunc.surface != "chart_title":
+                continue
             warnings.append(
                 Diagnostic.from_code(
                     WARN_CHART_TITLE_TRUNCATED,

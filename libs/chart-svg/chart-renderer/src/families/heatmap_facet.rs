@@ -424,7 +424,7 @@ impl HeatmapXAxis {
         let anchor_y = axis_top + sign * (self.tick_len + self.label_pad);
         let dy = measure::baseline_shift(baseline, self.font_size);
         // A flat label is `middle`-anchored whatever the side; a rotated one follows the angle.
-        let face = LabelFace { places: 2, anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, fill: label_color };
+        let face = LabelFace { places: 2, anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, style: ax_x.labels.font.style.as_deref(), fill: label_color };
         let flat_face = LabelFace { anchor: "middle", ..face };
         let visible = self.visible(plot_w);
         let center_of = |label: &AxisLabel| {
@@ -606,6 +606,7 @@ struct PanelStyle<'a> {
     y_family: &'a str,
     y_color: &'a str,
     y_weight: String,
+    y_style: Option<String>,
     y_label_ws: &'a [(String, f64)],
     /// `labelPadding`: where a left-anchored label starts, left of the plot.
     y_label_pad: f64,
@@ -648,6 +649,7 @@ impl PanelStyle<'_> {
             family: self.y_family,
             size: self.y_font_size,
             weight: &self.y_weight,
+            style: self.y_style.as_deref(),
             color: self.y_color,
             ticks: self.y_ticks,
             tick_len: self.y_tick_len,
@@ -671,6 +673,7 @@ struct RowFace<'a> {
     family: &'a str,
     size: f64,
     weight: &'a str,
+    style: Option<&'a str>,
     color: &'a str,
     ticks: &'a crate::common::AxisTicks,
     tick_len: f64,
@@ -690,7 +693,7 @@ fn row_axis(
     title: Option<(&str, &crate::common::AxisTitle, f64, f64, f64)>,
 ) -> Result<Vec<Node>, String> {
     let mut ink = crate::common::value_ticks(face.ticks, labels.iter().map(|&(cy, _)| cy), tick_edge, outward, face.tick_len, &[])?;
-    let label_face = LabelFace { places: 2, anchor, family: face.family, size: face.size, weight: face.weight, fill: face.color };
+    let label_face = LabelFace { places: 2, anchor, family: face.family, size: face.size, weight: face.weight, style: face.style, fill: face.color };
     ink.extend(labels.iter().map(|(cy, text)| flat_label((label_x, cy + face.shift), &label_face, false, text)));
     if let Some((text, style, edge, center, sign)) = title {
         ink.extend(crate::common::axis_title_rotated(text, style, edge, center, sign, None));
@@ -859,6 +862,7 @@ fn render_panel(
             caption: y_caption.clone(),
             val_font_size: style.y_font_size,
             val_weight: style.y_weight.clone(),
+            val_style: style.ax_y.labels.font.style_attr(),
             val_color: style.y_color.to_string(),
             val_family: style.y_family.to_string(),
         }),
@@ -907,6 +911,7 @@ struct LegendTitle<'a> {
     family: &'a str,
     color: &'a str,
     weight: String,
+    style: Option<&'a str>,
     /// Shaped width: Vega sizes the box `ceil(max(title, entries))`.
     width: f64,
 }
@@ -926,6 +931,7 @@ impl<'a> GradientLegend<'a> {
             family,
             color: font.color.as_deref().unwrap_or("#313233"),
             weight: font.weight_str(),
+            style: font.style.as_deref(),
         });
         Ok(self)
     }
@@ -1065,6 +1071,7 @@ impl<'a> GradientLegend<'a> {
                     .set("text-anchor", "start")
                     .vega("font-family", t.family)
                     .set("font-size", t.size.to_string())
+                    .quick_some("font-style", t.style)
                     .set("font-weight", t.weight.clone())
                     .set("fill", t.color),
                 t.text.as_str(),
@@ -1121,6 +1128,7 @@ impl<'a> GradientLegend<'a> {
                         .set("text-anchor", anchor)
                         .vega("font-family", self.family)
                         .set("font-size", self.font_size.to_string())
+                        .quick_some("font-style", self.legend.label.font.style.as_deref())
                         .set("font-weight", self.weight.clone())
                         .set("fill", self.color)
                         .set_if(!shown, "opacity", "0"),
@@ -1289,6 +1297,7 @@ fn render_facet(
         y_family: y_label_family,
         y_color: ax_y.labels.font.color.as_deref().unwrap_or("#626366"),
         y_weight: ax_y.labels.font.weight_str(),
+        y_style: ax_y.labels.font.style.clone(),
         y_label_ws: &y_label_ws,
         y_label_pad,
         y_label_reach,
@@ -1629,7 +1638,7 @@ mod composite {
         cases.push(("grid_right", right, include_str!("heatmap_facet_golden/grid_right.svg")));
         for (name, payload, golden) in cases {
             let svg = crate::in_payload_scope(&payload, || render(&payload, &fonts())).expect("renders");
-            assert!(svg == golden, "{name}: printed bytes differ from heatmap_facet_golden/{name}.svg");
+            assert!(svg == golden.trim_end_matches('\n'), "{name}: printed bytes differ from heatmap_facet_golden/{name}.svg");
         }
     }
 
@@ -1642,11 +1651,11 @@ mod composite {
         title_style.visible = Some(true);
         let ticks: crate::common::AxisTicks =
             serde_json::from_value(json!({"visible": true, "color": "#D0D3D9", "width": 1.5, "length": 6.0})).unwrap();
-        let face = RowFace { family: "'Inter Variable', Inter", size: 11.0, weight: "400", color: "#626366", ticks: &ticks, tick_len: 6.0, shift: 3.0 };
+        let face = RowFace { family: "'Inter Variable', Inter", size: 11.0, weight: "400", style: None, color: "#626366", ticks: &ticks, tick_len: 6.0, shift: 3.0 };
         let caption = category_axis_caption("Series", &axis_y, &["A<b".to_string(), "B".to_string()]).unwrap();
         let labels = [(10.0, "A<b".to_string()), (30.0, "B".to_string())];
         let nodes: Vec<Node> = row_axis(&face, &caption, (20.5, 0.0), (25.0, -1.0), (14.0, "end", &labels), Some(("Series", &title_style, 2.0, 20.0, -1.0)))
             .expect("draws");
-        assert_eq!(print(&nodes), include_str!("heatmap_facet_golden/row_axis.svg"));
+        assert_eq!(print(&nodes), include_str!("heatmap_facet_golden/row_axis.svg").trim_end_matches('\n'));
     }
 }

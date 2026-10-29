@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 use crate::codes;
 use crate::diagnostic::Diagnostic;
-use crate::common::{field_display_text, truncate_label, FieldLabels, Font};
+use crate::common::{field_display_text, truncate_label, truncate_label_with, FieldLabels, Font, MeasuredAs};
 use crate::contract;
 use measure::baseline_shift;
 use scene::{Attrs, Chars, Escape, Node};
@@ -752,12 +752,31 @@ pub fn legend_origin(
     if position.overlay {
         return legend_overlay_origin(position, plot, size);
     }
+    legend_edge_origin(
+        position,
+        (x_bounds.0.floor(), x_bounds.1.ceil()),
+        (y_bounds.0.floor(), y_bounds.1.ceil()),
+        size,
+    )
+}
+
+/// The reserved strip's origin on bounds taken as given: a side legend sits
+/// `VEGA_LEGEND_OFFSET` past (right) or short of (left) `x_bounds`, a top or
+/// bottom one the same off `y_bounds`. [`legend_origin`] hands it Vega's
+/// rounded bounds; a family that reserves the strip against the exact plot edge
+/// (the pie) hands it that edge, so the strip is drawn where it was reserved.
+pub fn legend_edge_origin(
+    position: &LegendPosition,
+    x_bounds: (f64, f64),
+    y_bounds: (f64, f64),
+    size: (f64, f64),
+) -> (f64, f64) {
     let (box_w, box_h) = size;
     match position.edge.as_str() {
-        "left" => (x_bounds.0.floor() - VEGA_LEGEND_OFFSET - box_w, 0.0),
-        "right" => (x_bounds.1.ceil() + VEGA_LEGEND_OFFSET, 0.0),
-        "top" => (0.0, y_bounds.0.floor() - VEGA_LEGEND_OFFSET - box_h),
-        "bottom" => (0.0, y_bounds.1.ceil() + VEGA_LEGEND_OFFSET),
+        "left" => (x_bounds.0 - VEGA_LEGEND_OFFSET - box_w, 0.0),
+        "right" => (x_bounds.1 + VEGA_LEGEND_OFFSET, 0.0),
+        "top" => (0.0, y_bounds.0 - VEGA_LEGEND_OFFSET - box_h),
+        "bottom" => (0.0, y_bounds.1 + VEGA_LEGEND_OFFSET),
         other => unreachable!("legend edge {other:?}: `legend_position` refuses a non-cardinal edge at deserialization"),
     }
 }
@@ -859,20 +878,23 @@ pub fn limit_legend_text<'a>(
     title: &str,
     cfg: &LegendConfig,
     fonts: &FontBook,
+    how: MeasuredAs,
 ) -> Result<LimitedLegendText, String> {
-    let (size, family) = (cfg.label.font.size_or(11.0), cfg.label.font.family_or("sans-serif"));
+    let (label_font, size) = (&cfg.label.font, cfg.label.font.size_or(11.0));
     let limit = cfg.label.max_width.unwrap_or(VEGA_LEGEND_LABEL_LIMIT);
+    let measure_label = |s: &str| label_font.measure_as(how, fonts, s, size);
     let (mut drawn, mut label_ws) = (Vec::new(), Vec::new());
     for label in labels {
-        label_ws.push(fonts.measure_shaped(label, family, size)?.min(limit));
-        drawn.push(truncate_label(label, limit, family, size, fonts, true)?);
+        label_ws.push(measure_label(label)?.min(limit));
+        drawn.push(truncate_label_with(label, limit, measure_label)?);
     }
     if title.is_empty() {
         return Ok(LimitedLegendText { labels: drawn, label_ws, title: String::new(), title_w: 0.0 });
     }
-    let (title_family, title_size) = (cfg.title.font.family_or("sans-serif"), cfg.title.font.size_or(12.0));
-    let title_w = fonts.measure_shaped(title, title_family, title_size)?.min(VEGA_LEGEND_TITLE_LIMIT);
-    let title = truncate_label(title, VEGA_LEGEND_TITLE_LIMIT, title_family, title_size, fonts, true)?;
+    let (title_font, title_size) = (&cfg.title.font, cfg.title.font.size_or(12.0));
+    let measure_title = |s: &str| title_font.measure_as(how, fonts, s, title_size);
+    let title_w = measure_title(title)?.min(VEGA_LEGEND_TITLE_LIMIT);
+    let title = truncate_label_with(title, VEGA_LEGEND_TITLE_LIMIT, measure_title)?;
     Ok(LimitedLegendText { labels: drawn, label_ws, title, title_w })
 }
 
@@ -1181,6 +1203,7 @@ pub fn symbol_legend(
                 .set("text-anchor", "start")
                 .vega("font-family", tf.family_or("sans-serif"))
                 .set("font-size", tfs.to_string())
+                .quick_some("font-style", tf.style.as_deref())
                 .set("font-weight", tf.weight_str())
                 .set("fill", tf.color.as_deref().unwrap_or("#313233")),
             legend.title.as_str(),
@@ -1231,6 +1254,7 @@ pub fn symbol_legend(
             .set("text-anchor", "start")
             .vega("font-family", family)
             .set("font-size", size.to_string())
+            .quick_some("font-style", label_font.style.as_deref())
             .set("font-weight", weight.clone())
             .set("fill", crate::selected::ink(entry.recede, color));
         let label = text_revealing_full_name(label_attrs, entry.label, entry.series_key.map(str::trim).filter(|full| *full != entry.label));
@@ -1440,6 +1464,7 @@ impl SizeLegend {
                     .set("y", format!("{:.2}", y + baseline_shift("top", title_size)))
                     .vega("font-family", tf.family_or("sans-serif"))
                     .set("font-size", title_size.to_string())
+                    .quick_some("font-style", tf.style.as_deref())
                     .set("font-weight", tf.weight_str())
                     .set("fill", tf.color.as_deref().unwrap_or("#313233")),
                 self.title.as_str(),
@@ -1484,6 +1509,7 @@ impl SizeLegend {
                     .set("y", format!("{:.2}", row_y + cell.c + baseline_shift("middle", label_size)))
                     .vega("font-family", lf.family_or("sans-serif"))
                     .set("font-size", label_size.to_string())
+                    .quick_some("font-style", lf.style.as_deref())
                     .set("font-weight", lf.weight_str())
                     .set("fill", lf.color.as_deref().unwrap_or("#626366")),
                 label.as_str(),
@@ -1967,6 +1993,18 @@ mod tests {
         assert_eq!(legend_origin(&strip("right"), xb, yb, plot, size), (301.0 + 18.0, 0.0));
         assert_eq!(legend_origin(&strip("top"), xb, yb, plot, size), (0.0, -4.0 - 18.0 - 45.0));
         assert_eq!(legend_origin(&strip("bottom"), xb, yb, plot, size), (0.0, 252.0 + 18.0));
+    }
+
+    /// The strip anchored on bounds it was reserved against, not Vega's rounded
+    /// ones: the same edge dispatch, so reserve and draw cannot drift.
+    #[test]
+    fn legend_edge_origin_anchors_the_exact_bounds() {
+        let (xb, yb, size) = ((0.0, 300.2), (0.0, 251.1), (60.0, 45.0));
+        let strip = |edge: &str| LegendPosition { edge: edge.into(), align: LegendAlign::Start, overlay: false };
+        assert_eq!(legend_edge_origin(&strip("left"), xb, yb, size), (0.0 - 18.0 - 60.0, 0.0));
+        assert_eq!(legend_edge_origin(&strip("right"), xb, yb, size), (300.2 + 18.0, 0.0));
+        assert_eq!(legend_edge_origin(&strip("top"), xb, yb, size), (0.0, 0.0 - 18.0 - 45.0));
+        assert_eq!(legend_edge_origin(&strip("bottom"), xb, yb, size), (0.0, 251.1 + 18.0));
     }
 
     fn legend_cfg(direction: &str, columns: Option<u32>) -> LegendConfig {

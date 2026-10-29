@@ -1760,6 +1760,7 @@ pub fn composed_rows_nodes(
                     .set("text-anchor", cell_anchor)
                     .vega("font-family", font_family)
                     .set("font-size", font_size.to_string())
+                    .quick_some("font-style", style.font.style.as_deref())
                     .set("font-weight", font_weight.clone())
                     .set("fill", font_color),
                 cell.text.as_str(),
@@ -1775,6 +1776,7 @@ pub fn composed_rows_nodes(
                 .set("text-anchor", stub_anchor)
                 .vega("font-family", label_family)
                 .set("font-size", label_size.to_string())
+                .quick_some("font-style", style.label.font.style.as_deref())
                 .set("font-weight", label_weight.clone())
                 .set("fill", row_label_color),
             row.label.as_str(),
@@ -1909,6 +1911,59 @@ fn pad() -> DecimalPad<'static> {
         fonts: FONTS.get_or_init(|| FontBook::load_dir(&dir).expect("test fonts load")),
         family: "'dbt Sans Tabular', Inter, sans-serif",
     }
+}
+
+/// The painted boxes of a rendered chart's legend and its strip, read back
+/// from the SVG: every rect and text under `role-legend`, and every text
+/// under the strip's mark group, measured with the shipped fonts.
+#[cfg(test)]
+pub(crate) fn legend_and_strip_boxes(svg: &str, fonts: &FontBook) -> (crate::vega_fit::Bounds, crate::vega_fit::Bounds) {
+    use crate::vega_fit::Bounds;
+    fn offset(node: roxmltree::Node) -> (f64, f64) {
+        node.ancestors().filter_map(|a| a.attribute("transform")).filter_map(|t| t.strip_prefix("translate(")).fold((0.0, 0.0), |(dx, dy), t| {
+            let mut xy = t.trim_end_matches(')').split(',').map(|v| v.trim().parse::<f64>().expect("numeric translate"));
+            (dx + xy.next().unwrap(), dy + xy.next().unwrap_or(0.0))
+        })
+    }
+    let doc = roxmltree::Document::parse(svg).expect("rendered SVG parses");
+    let painted = |class: &str| {
+        let mut b = Bounds::empty_new();
+        for group in doc.descendants().filter(|n| n.attribute("class") == Some(class)) {
+            for n in group.descendants().filter(|n| n.is_element()) {
+                let num = |a: &str| n.attribute(a).map(|v| v.parse::<f64>().expect("numeric attribute"));
+                let (dx, dy) = offset(n);
+                match n.tag_name().name() {
+                    "rect" => {
+                        let (x, y) = (num("x").unwrap_or(0.0) + dx, num("y").unwrap_or(0.0) + dy);
+                        b.union(&Bounds::new(x, y, x + num("width").unwrap(), y + num("height").unwrap()));
+                    }
+                    "text" => {
+                        let text: String = n.descendants().filter_map(|t| t.text()).collect();
+                        let fs = num("font-size").expect("text has a font-size");
+                        let family = n.attribute("font-family").expect("text has a font-family");
+                        let w = fonts.measure(&text, family, fs).expect("test font measures");
+                        let align = match n.attribute("text-anchor") {
+                            Some("end") => "right",
+                            Some("middle") => "center",
+                            _ => "left",
+                        };
+                        b.union(&crate::vega_fit::text_ink(num("x").unwrap() + dx, num("y").unwrap() + dy, w, fs, align, "alphabetic"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(b.x1 <= b.x2, "no {class} paint in:\n{svg}");
+        b
+    };
+    (painted("mark-group role-legend"), painted("mark-text role-mark strip"))
+}
+
+#[cfg(test)]
+pub(crate) fn assert_legend_clears_strip(svg: &str, fonts: &FontBook) {
+    let (legend, strip) = legend_and_strip_boxes(svg, fonts);
+    let apart = legend.x2 <= strip.x1 || strip.x2 <= legend.x1 || legend.y2 <= strip.y1 || strip.y2 <= legend.y1;
+    assert!(apart, "legend {legend:?} intersects strip {strip:?}\n{svg}");
 }
 
 #[cfg(test)]

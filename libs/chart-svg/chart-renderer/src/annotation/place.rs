@@ -669,6 +669,17 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
     }
 }
 
+/// Whether a note with no authored connector needs a leader: its text, placed
+/// at a bar's end, spans more of the category axis than the bar's slot, so it
+/// could as well belong to a neighbor. A circled or boxed note names its own
+/// target, and a note off a category band has no neighbors to confuse with.
+fn leader_needed(ann: &Annotation, ctx: &AnnotationCtx, site: &Site, text: (f64, f64)) -> Result<bool, Diagnostic> {
+    let (Some(anchor @ Anchor::Category { .. }), AxisMap::Band { .. }, None) = (&ann.x, &ctx.x, ann.enclose) else { return Ok(false) };
+    let Some((lo, hi)) = ctx.x.span(anchor, site)? else { return Ok(false) };
+    let along = if ctx.orientation == Orientation::Vertical { text.0 } else { text.1 };
+    Ok(along > hi - lo)
+}
+
 /// One annotation's placed geometry; `None` when it draws nothing on this
 /// panel or names nothing on the axis (the warning is recorded).
 pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Option<Placed<'a>>, Diagnostic> {
@@ -702,7 +713,16 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
         strayed: false,
     };
     let mut anchor_point = None;
-    let connected = ann.connector != ConnectorKind::None;
+    let pad = if style.text.frame.visible { style.text.frame.padding } else { 0.0 };
+    let cap = style.text.max_share.map_or(f64::INFINITY, |share| share * ctx.plot.w);
+    let limit = style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap));
+    let block = ann.text.as_ref().map(|text| text::measure_block(ctx.fonts, text, &style.text, limit)).transpose()?;
+    let leader = match &block {
+        Some(b) if ann.connector == ConnectorKind::None => leader_needed(ann, ctx, &site, (b.w + 2.0 * pad, b.h + 2.0 * pad))?,
+        _ => false,
+    };
+    let connector = if leader { ConnectorKind::Line } else { ann.connector };
+    let connected = connector != ConnectorKind::None;
     let circle_r = if ann.enclose == Some(Enclose::Circle) { style.circle().radius } else { 0.0 };
     let rect_inset = if ann.enclose == Some(Enclose::Rect) {
         style.rect().padding.expect("validate requires a note padding")
@@ -758,11 +778,7 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
             Some(Geom::Point { x: p.0, y: p.1, reach: circle_r + length + rect_inset })
         }
     };
-    if let (Some(text), Some(geom)) = (&ann.text, geom) {
-        let pad = if style.text.frame.visible { style.text.frame.padding } else { 0.0 };
-        let cap = style.text.max_share.map_or(f64::INFINITY, |share| share * ctx.plot.w);
-        let limit = style.text.max_width.map(|px| px.min(ctx.plot.w - 2.0 * (pad + GAP)).min(cap));
-        let Block { lines, line_h, w, h, ascent } = text::measure_block(ctx.fonts, text, &style.text, limit)?;
+    if let (Some(Block { lines, line_h, w, h, ascent }), Some(geom)) = (block, geom) {
         let size = (w + 2.0 * pad, h + 2.0 * pad);
         // A connected note sits its line length off the anchor on its edge side;
         // `overlay` there only lets the text draw over the plot.
@@ -795,7 +811,7 @@ pub(crate) fn place<'a>(ann: &'a Annotation, ctx: &AnnotationCtx) -> Result<Opti
             .filter(|_| connected)
             .map(|point| {
                 let reach = if ann.enclose == Some(Enclose::Circle) { circle_r } else { style.circle().point_radius };
-                Tether { point, reach, arrow: ann.connector == ConnectorKind::Arrow }
+                Tether { point, reach, arrow: connector == ConnectorKind::Arrow }
             });
         relink(&mut placed);
     }
@@ -1739,6 +1755,41 @@ mod tests {
                 Orientation::Horizontal => assert!(close(a.1, center) && close(b.1, center) && close(at.1, center)),
             }
         }
+    }
+
+    /// The contract's note on "West" of a band axis of `slots` slots, `along` px
+    /// across, with the given connector.
+    fn bar_note(o: Orientation, slots: usize, connector: ConnectorKind) -> Placed<'static> {
+        let along = if o == Orientation::Vertical { 200.0 } else { 100.0 };
+        let mut anns = contract();
+        anns[7].x = Some(Anchor::Category { value: "West".into() });
+        anns[7].connector = connector;
+        anns[7].enclose = None;
+        let anns: &'static [Annotation] = Box::leak(anns.into_boxed_slice());
+        let fonts: &'static FontBook = Box::leak(Box::new(fonts()));
+        let mut c = ctx(anns, fonts, o);
+        let mut domain: Vec<String> = (0..slots - 1).map(|i| format!("c{i}")).collect();
+        domain.push("West".into());
+        c.x = AxisMap::Band {
+            domain,
+            geometry: crate::families::cartesian::BandGeometry::new(slots, 0.0, along, 0.0, 0.0),
+            days: None,
+            range: (0.0, along),
+        };
+        place(&anns[7], &c).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_bar_note_gets_a_leader_only_when_its_text_outspans_its_slot() {
+        for o in [Orientation::Vertical, Orientation::Horizontal] {
+            assert!(bar_note(o, 1, ConnectorKind::None).connector.is_none(), "{o:?}: a wide slot claims its text");
+            assert!(bar_note(o, 40, ConnectorKind::None).connector.is_some(), "{o:?}: a thin slot cannot");
+        }
+    }
+
+    #[test]
+    fn an_authored_connector_always_draws_on_a_bar_note() {
+        assert!(bar_note(Orientation::Vertical, 1, ConnectorKind::Line).connector.is_some());
     }
 
     /// Four monthly bars over 200px (step 50, centers 25..175), with a trend

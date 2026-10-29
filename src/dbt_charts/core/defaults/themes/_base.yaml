@@ -98,7 +98,7 @@ style:
         - 11
         - 11
     # Section titles (nested board titles), H2 first: a section sits one step
-    # above the widest chart title. Markdown headings keep the H ramp above.
+    # above the widest chart title. Markdown `##` and `###` read the first two steps.
     section:
       sizes:
         - 21
@@ -178,12 +178,15 @@ style:
         rule:
           opacity: 1
           stroke:
-            color: muted
+            # Scaffold rung 7: quiet, and 3:1 against a light canvas. A theme with
+            # its own rule ink sets the color; `auto` picks a gray per rule from
+            # the canvas and the marks it crosses.
+            color: chrome[7]
             width: 1.5
         text:
           font:
             size: 11
-            color: muted
+            color: line
           # auto: 3px, only on text over a bar, point or area fill
           halo: auto
           halo_opacity: 0.75
@@ -502,7 +505,7 @@ style:
     # family picks its own.
     hover_emphasis:
       visible: true
-      dimmed_opacity: 0.7
+      recede_contrast: 1.5
 
 
     legend:
@@ -918,11 +921,10 @@ style:
             radius: 2.0
 
     kpi:
-      # KPI uses the tabular sans by default — digits aligned across cards
-      # in a row matter more than text-prose readability for a value card.
-      # The clarity parent theme overrides `kpi.value.font.family` to a
-      # serif value while keeping support/affixes on the tabular sans
-      # (see `themes/clarity.yaml`).
+      # The headline value is proportional (the numeral contract: headline
+      # numbers are not column-aligned); label, support, and affixes stay on
+      # the tabular sans. The clarity parent theme overrides the value to a
+      # serif (see `themes/clarity.yaml`).
       # Weight 500 (heading-tier) for the whole card text — the per-tier
       # hierarchy is carried by size + color, not weight. This cascades
       # into every slot unless overridden.
@@ -933,6 +935,7 @@ style:
       variant: stacked
       value:
         font:
+          extends: body
           size: 24
         compact:
           spec: ".2~s"
@@ -1227,7 +1230,7 @@ style:
     align: left
     # Block margin values, in WHOLE line-height units.
     # paragraph_spacing = font_size × line_height × paragraph.margin_bottom
-    # heading_margin_*_px = font_size × line_height × heading.margin_{top,bottom}
+    # H1/H2 top and H2-H6 bottom margins = font_size × line_height × heading.margin_{top,bottom}
     #
     # Integers, not fractions, so prose sits on a baseline grid: when text flows
     # into columns, a fractional margin puts one column out of phase with its
@@ -1236,9 +1239,12 @@ style:
     paragraph:
       margin_top: 0.0
       margin_bottom: 1.0
+    # H1/H2 sit two lines below the text above. H3-H6 sit one line below it,
+    # like a paragraph; H1 is followed by one blank line, and H2-H6 sit tight on
+    # their text.
     heading:
       margin_top: 2.0
-      margin_bottom: 1.0
+      margin_bottom: 0.0
     # Prose bold (inline **bold** runs, bold table cells) shares the theme's
     # bold token rather than mdsvg's own default (CSS bold / 700, heavier
     # than the rest of the type system).
@@ -1291,13 +1297,17 @@ style:
       active_weight: '600'
       inactive_weight: '400'
       title_baseline_offset: 5.0
+      min_width: 96.0
+      max_width: 240.0
+      padding_x: 16.0
       font:
-        extends: heading
+        extends: label
         size: 14.0
+        case: title
       border:
-        width: 0.0
-        color: transparent
-        radius: 4.0
+        width: 1.0
+        color: chrome[7]
+        radius: 6.0
     details:
       summary_height: 36.0
       arrow:
@@ -1317,6 +1327,14 @@ style:
 
   variables:
     visible: true
+    presets:
+      - today
+      - last_7_days
+      - last_28_days
+      - last_90_days
+      - last_12_months
+      - month_to_date
+      - year_to_date
     # title-inline is the structural default: board title left, variable controls
     # right, baselines aligned on one horizontal band. Untitled boards fall back
     # to a standalone variables band (render path in boards.py guards on

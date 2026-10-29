@@ -83,6 +83,23 @@ fn render_chart<'py>(
     Ok((output.svg, json_to_py(py, &output.warnings)?, output.natural_height))
 }
 
+/// How much of a pie its box lets it draw: `(mode, radius, free_radius,
+/// min_radius)` for the pie payload `render_chart` takes, decided by the same
+/// solve the render draws with (`pie_layout`). `mode` is `direct`, `hybrid` or
+/// `full_table`. A pie that cannot fit its box even bare raises
+/// `RenderDiagnosticError` like `render_chart`.
+#[pyfunction]
+fn pie_layout(py: Python<'_>, payload_json: &str) -> PyResult<(String, f64, f64, Option<f64>)> {
+    let layout = py.detach(|| {
+        let payload: Payload = serde_json::from_str(payload_json)
+            .map_err(|e| Diagnostic::from(format!("parse payload: {e}")))?;
+        let fonts = fonts_for(payload.fonts_dir.as_deref())?;
+        chart_renderer::pie_layout(&payload, &fonts)
+    });
+    let layout = layout.map_err(|diagnostic| coded_error(py, &diagnostic))?;
+    Ok((layout.mode.name().to_string(), layout.radius, layout.free_radius, layout.min_radius))
+}
+
 /// The width a table needs to show every column, columns and outer padding
 /// only (`measure_natural_width`): `None` with nothing to hug. The payload is
 /// the table's resolved chart, its rows and `fonts_dir`. A table the engine
@@ -202,6 +219,7 @@ fn apply_case(lang: &str, text: &str, case: &str) -> PyResult<String> {
 #[pymodule]
 fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_chart, m)?)?;
+    m.add_function(wrap_pyfunction!(pie_layout, m)?)?;
     m.add_function(wrap_pyfunction!(measure_table_natural_width, m)?)?;
     m.add_function(wrap_pyfunction!(table_title_geometry, m)?)?;
     m.add_function(wrap_pyfunction!(font_loads, m)?)?;

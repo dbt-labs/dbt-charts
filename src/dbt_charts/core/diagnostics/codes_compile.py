@@ -1312,18 +1312,16 @@ WARN_RETIRED_IGNORE_CODE = REGISTRY.register(
     WarningCode(
         code="WARN-RETIRED-IGNORE-CODE",
         domain="compile",
-        title="--ignore-warning names a retired warning code",
-        message_template=(
-            "--ignore-warning: {code} no longer exists and suppresses nothing"
-        ),
+        title="Ignore list names a retired warning code",
+        message_template="{source}: {code} no longer exists and suppresses nothing",
         fix_template="Remove it from the ignore list.",
         doc=(
-            "Fired when `dct render --ignore-warning` names a warning code an "
-            "earlier release shipped and a later one removed. The code can no "
-            "longer fire, so the flag is dead weight rather than a typo, and "
-            "the render proceeds."
+            "Fired when `dct render --ignore-warning`, a chart's `warnings_ignore` "
+            "or a query's `ignore` names a warning code an earlier release "
+            "shipped and a later one removed. The code can no longer fire, so "
+            "the entry is dead weight rather than a typo, and the render proceeds."
         ),
-        summary="Fired when --ignore-warning names a retired warning code.",
+        summary="Fired when an ignore list names a retired warning code.",
         docs_topic="board",
     )
 )
@@ -2292,6 +2290,36 @@ WARN_HEADING_TRAILING_PERIOD = REGISTRY.register(
             "never strips an authored period for you. An ellipsis does not count. "
             "Emitted by `compile/validate/authoring_warnings.py`."
         ),
+        docs_topic="styling",
+    )
+)
+
+WARN_HEADING_MARGIN_REDEFINED = REGISTRY.register(
+    WarningCode(
+        code="WARN-HEADING-MARGIN-REDEFINED",
+        domain="compile",
+        title="Authored heading margin now sizes fewer headings",
+        message_template=(
+            "`style.text.heading.{key}` no longer sets the space around every "
+            "heading: {meaning}"
+        ),
+        fix_template=(
+            "Delete the key to take the theme's spacing, or keep it for the "
+            "levels it still sizes. `style.text.paragraph` sets the gap the other "
+            "levels take."
+        ),
+        doc=(
+            "Fires when a board authors `style.text.heading.margin_top` or "
+            "`margin_bottom`. Both used to set the space above and below every "
+            "markdown heading and below every board and section title. Now "
+            "`margin_top` sets the space above H1 and H2 only and `margin_bottom` "
+            "the space below H2 to H6 only; H3 to H6 take the paragraph gap above "
+            "them, H1 takes it below, and a board or section title takes it below "
+            "from `style.text.paragraph`. The authored value is unchanged and "
+            "valid, so the board renders differently with nothing else to tell "
+            "the author. Emitted by `compile/validate/authoring_warnings.py`."
+        ),
+        summary="Fired when a board authors a heading margin that now sizes fewer levels.",
         docs_topic="styling",
     )
 )

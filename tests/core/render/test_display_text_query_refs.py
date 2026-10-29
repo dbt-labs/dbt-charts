@@ -457,7 +457,12 @@ def test_hug_board_measures_a_data_title_at_the_prose_measure() -> None:
     board: Board = result.board
     style = board.resolved_style
     assert title_max_content_width(
-        board.title, board.level, style, {}, board.base_dir
+        board.title,
+        board.level,
+        style,
+        {},
+        board.base_dir,
+        root=True,
     ) == prose_measure(style)
 
 

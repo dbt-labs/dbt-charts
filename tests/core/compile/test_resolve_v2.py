@@ -644,13 +644,10 @@ def test_pie_resolve_finalizes_direct_mode_before_render() -> None:
 
     assert isinstance(resolved, ResolvedPieChart)
     assert resolved.resolution_width == 600.0
-    assert resolved.attached_table is None
-    assert resolved.attached_row_indices == ()
-    assert resolved.attached_table_placement == "none"
-    assert resolved.attached_table_width == 0.0
-    assert resolved.wheel_width == 0.0
-    assert resolved.attached_heading == ""
-    assert resolved.attached_heading_font is None
+    assert resolved.labeled_mode == "direct"
+    assert resolved.hybrid_attachment is None
+    assert resolved.full_attachment is not None
+    assert resolved.full_attachment.row_indices == (0,)
     assert resolved.style.slice_mark.labels is not None
     assert resolved.slice_label_indices == (0,)
 
@@ -675,7 +672,7 @@ def test_stark_pie_direct_mode_legend_suppressed() -> None:
     )
 
     assert isinstance(resolved, ResolvedPieChart)
-    assert resolved.attached_table is None  # direct mode, not hybrid/full_table
+    assert resolved.labeled_mode == "direct"
     assert resolved.legend.visible is False
 
 
@@ -734,57 +731,25 @@ def test_pie_resolve_finalizes_hybrid_attachment_before_render() -> None:
     resolved = resolve(chart, data, _default_board_style(), width=600.0)
 
     assert isinstance(resolved, ResolvedPieChart)
-    assert isinstance(resolved.attached_table, ResolvedTableChart)
+    assert resolved.labeled_mode == "hybrid"
+    hybrid = resolved.hybrid_attachment
+    assert hybrid is not None
+    assert isinstance(hybrid.table, ResolvedTableChart)
     assert resolved.legend.visible is False
     assert resolved.style.slice_mark.labels is not None
-    assert resolved.attached_row_indices == (2, 3)
+    assert hybrid.row_indices == (2, 3)
     assert resolved.slice_label_indices == (0, 1)
-    assert resolved.attached_heading == "Too small to label"
-    assert resolved.attached_heading_font is not None
-    assert resolved.attached_table_width is not None
-    assert resolved.wheel_width is not None
+    assert hybrid.heading == "Too small to label"
+    assert hybrid.table_width > 0
+    assert hybrid.wheel_width > 0
+    assert resolved.full_attachment is not None
+    assert resolved.full_attachment.row_indices == (0, 1, 2, 3)
 
 
-def test_pie_resolve_finalizes_full_table_before_render() -> None:
-    from dbt_charts.core.compile.models.chart.resolved import ResolvedTableChart
-    from dbt_charts.core.compile.resolve import resolve
-
-    chart = PieChart(id="p", type="pie", theta="value", color="series")
-    names = [
-        "Enterprise",
-        "Mid-Market",
-        "SMB",
-        "Self-serve",
-        "Channel",
-        "Partners",
-        "Education",
-        "Tail",
-    ]
-    values = [14.0, 14.0, 14.0, 14.0, 14.0, 14.0, 14.5, 1.5]
-    data = [
-        {"series": name, "value": value}
-        for name, value in zip(names, values, strict=True)
-    ]
-    resolved = resolve(chart, data, _default_board_style(), width=300.0)
-
-    assert isinstance(resolved, ResolvedPieChart)
-    assert isinstance(resolved.attached_table, ResolvedTableChart)
-    assert resolved.legend.visible is False
-    assert resolved.style.slice_mark.labels is None
-    assert resolved.attached_row_indices == tuple(range(len(names)))
-    assert resolved.attached_heading == ""
-    assert resolved.slice_label_indices == ()
-
-
-def test_pie_hybrid_falls_back_when_companion_table_starves_the_wheel() -> None:
-    """Wheel dominance must be judged at the width the wheel actually gets.
-
-    A right-placed companion table takes width off the card, so slice labels
-    that clear the dominance floor against the *card* can still starve the
-    wheel that is left over. Two long labels either side of a donut plus a
-    one-row "too small to label" table collapsed the plotting box to a sliver
-    and rendered a ~40px-radius ring.
-    """
+def test_pie_resolve_offers_both_tables_and_leaves_the_choice_to_the_box() -> None:
+    """Whether the labels starve the wheel depends on the box the wheel is
+    drawn in, which resolve never sees: it offers the hybrid and the full table
+    and the size stage picks (`render/pie_layout.py`)."""
     from dbt_charts.core.compile.resolve import resolve
 
     chart = PieChart(id="p", type="donut", theta="value", color="series")
@@ -796,10 +761,11 @@ def test_pie_hybrid_falls_back_when_companion_table_starves_the_wheel() -> None:
     resolved = resolve(chart, data, _default_board_style(), width=564.0)
 
     assert isinstance(resolved, ResolvedPieChart)
-    assert resolved.style.slice_mark.labels is None
-    assert resolved.slice_label_indices == ()
-    assert resolved.attached_row_indices == (0, 1, 2)
-    assert resolved.attached_heading == ""
+    assert resolved.labeled_mode == "hybrid"
+    assert resolved.hybrid_attachment is not None
+    assert resolved.hybrid_attachment.row_indices == (2,)
+    assert resolved.full_attachment is not None
+    assert resolved.full_attachment.row_indices == (0, 1, 2)
 
 
 def test_donut_resolve_returns_resolved_pie_chart() -> None:

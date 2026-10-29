@@ -58,7 +58,10 @@ class TestOtherFamiliesResolveToo:
             theta="revenue",
             color="segment",
         )
-        assert legend_label_order(render_pie_svg(chart, rows)) == ["Paid", "Direct"]
+        assert legend_label_order(render_pie_svg(chart, rows, width=800.0)) == [
+            "Paid",
+            "Direct",
+        ]
 
     def test_geoshape_nominal_choropleth_resolves(self):
         # "SOUTH"/"WEST" (uppercase, against the data order) fold to the real domain entries

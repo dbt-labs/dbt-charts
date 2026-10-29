@@ -533,7 +533,10 @@ class TextStyle(BaseModel):
         description="Spacing above/below each paragraph block (in line-height units)."
     )
     heading: BlockMarginStyle = Field(
-        description="Spacing above/below heading blocks (H1–H6) in line-height units."
+        description=(
+            "Heading spacing in line-height units: margin_top sits above H1 and "
+            "H2, margin_bottom below H2 to H6; H1 takes the paragraph gap."
+        )
     )
     column: TextColumnStyle = Field(
         description="Multi-column layout for the board body-text block.",

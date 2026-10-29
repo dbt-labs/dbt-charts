@@ -897,3 +897,85 @@ def test_nested_html_policy_is_judged_against_the_inherited_one(
     board = "html_policy: trusted-raw\n" + nesting.format(policy=policy)
     hits = [w.path for w in _restated_compile_only(tmp_path, board)]
     assert any(p.endswith("html_policy") for p in hits) is warns, hits
+
+
+_ANNOTATED_LINE = (
+    "    type: line\n    query: q\n    x: year\n    y: units\n"
+    "    style:\n      annotations:\n        rule:\n          marks:\n            rule:\n"
+    "              stroke:\n                color: '#00aa00'\n"
+    "    annotations:\n      - type: rule\n        y: 5\n{annotation_style}"
+)
+_ANNOTATION_STROKE = (
+    "        style:\n          marks:\n            rule:\n"
+    "              stroke:\n                color: '#0000ff'\n"
+)
+
+
+def test_a_chart_annotation_style_the_annotation_overrides_is_not_restated(
+    tmp_path: Path,
+) -> None:
+    """The chart-level value is shadowed, not inferred: removing it changes nothing
+    only because the annotation wins, so the warning's claim is false."""
+    shadowed = _ANNOTATED_LINE.format(annotation_style=_ANNOTATION_STROKE)
+    assert _restated(tmp_path, _chart_board(shadowed)) == []
+
+
+_PIVOT = """\
+queries:
+  p:
+    type: values
+    rows:
+      - {{genre: Action, year: 1990, units: 10}}
+      - {{genre: Comedy, year: 1991, units: 7}}
+charts:
+  c:
+    type: table
+    query: p
+    columns: [year]
+{pair}rows:
+  - c
+"""
+
+
+def test_a_pivot_whose_rows_and_values_are_both_inferable_keeps_one(
+    tmp_path: Path,
+) -> None:
+    """Deleting both leaves the pivot's dimensions ambiguous, so the pair is judged
+    together: one is flagged, the other stays."""
+    board = _PIVOT.format(pair="    rows: [genre]\n    values: [units]\n")
+    assert [w.path for w in _restated(tmp_path, board)] == ["charts.c.values"]
+
+
+def test_a_pivot_declaring_only_values_is_not_flagged(
+    tmp_path: Path,
+) -> None:
+    """With `rows` omitted, `values` alone is what makes the pivot; it is not flagged."""
+    board = _PIVOT.format(pair="    values: [units]\n")
+    assert _restated(tmp_path, board) == []
+
+
+def test_a_chart_annotation_style_one_of_two_annotations_inherits_is_kept(
+    tmp_path: Path,
+) -> None:
+    """A second rule without its own stroke still draws the chart-level color."""
+    two = _ANNOTATED_LINE.format(annotation_style=_ANNOTATION_STROKE) + (
+        "      - type: rule\n        y: 8\n"
+    )
+    assert _restated(tmp_path, _chart_board(two)) == []
+
+
+def test_a_chart_annotation_style_equal_to_the_default_is_restated_unless_all_override(
+    tmp_path: Path,
+) -> None:
+    """`chrome[7]` is the theme's rule color. One rule overrides it and one inherits it,
+    so removing the chart-level key changes nothing: it is a restatement. The
+    shadow check must not hide it because a different annotation overrides."""
+    chart = _ANNOTATED_LINE.replace("'#00aa00'", "chrome[7]").format(
+        annotation_style=_ANNOTATION_STROKE
+    ) + ("      - type: rule\n        y: 8\n")
+    assert _summary(_restated(tmp_path, _chart_board(chart))) == [
+        (
+            "WARN-RESTATED-INFERRED",
+            "charts.c.style.annotations.rule.marks.rule.stroke.color",
+        )
+    ]

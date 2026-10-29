@@ -29,8 +29,10 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
+from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.render.engine import render_native
+from dbt_charts.core.render.pie_layout import pie_box
 from dbt_charts.core.render.sizing import custom_chart_height
 from dbt_charts.core.utils import Rows
 
@@ -59,6 +61,7 @@ class BoardRenderSession:
         datasets: dict[str | None, Rows] | None = None,
         measuring: bool = False,
         authored_height: float | None = None,
+        pie_mode: PieMode | None = None,
     ) -> str:
         """The chart's SVG, drawn by the engine.
 
@@ -124,9 +127,31 @@ class BoardRenderSession:
                     title_shift=title_shift,
                 )
                 return svg
+            case ResolvedPieChart():
+                # With no slot the pie draws in the box it was sized in, so the
+                # mode it carries holds there.
+                _, sized_height, sized_padding = pie_box(chart, self.board_style)
+                svg, _ = render_native(
+                    chart,
+                    data,
+                    width=width,
+                    height=sized_height if height is None else height,
+                    padding=sized_padding
+                    if height is None and padding is None
+                    else padding,
+                    board_style=self.board_style,
+                    title_shift=title_shift,
+                    is_placeholder=is_placeholder,
+                    datasets=datasets,
+                    measuring=measuring,
+                    authored_height=authored_height,
+                    # The mode is the size stage's; a slot an author pinned
+                    # smaller keeps it.
+                    pie_mode=pie_mode,
+                )
+                return svg
             case (
-                ResolvedPieChart()
-                | ResolvedGeoshapeChart()
+                ResolvedGeoshapeChart()
                 | ResolvedPointMapChart()
                 | ResolvedBarChart()
                 | ResolvedLineChart()

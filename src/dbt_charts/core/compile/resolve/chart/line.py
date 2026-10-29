@@ -566,4 +566,5 @@ def _resolve_line(
             point_radius(line_point_mark.size),
         ),
         annotation_gaps=annotations.gaps,
+        annotation_bar_trends=annotations.bar_trends,
     )

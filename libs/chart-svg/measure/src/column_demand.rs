@@ -8,17 +8,17 @@ pub const SAMPLE_ROWS: usize = 50;
 impl Measure<'_> {
     /// The p95 of the cells' measured widths over the first [`SAMPLE_ROWS`]
     /// rows, plus both cell paddings; an empty column asks for the padding alone.
+    /// Each cell is a `(text, family)` pair: a column mixes the numeral face and the body's.
     pub fn column_demand<'t>(
         &self,
-        texts: impl IntoIterator<Item = &'t str>,
-        family: &str,
+        texts: impl IntoIterator<Item = (&'t str, &'t str)>,
         font_size: f64,
         cell_padding: f64,
     ) -> Result<f64, String> {
         let mut widths = texts
             .into_iter()
             .take(SAMPLE_ROWS)
-            .map(|text| self.fonts.measure(text, family, font_size))
+            .map(|(text, family)| self.fonts.measure(text, family, font_size))
             .collect::<Result<Vec<f64>, String>>()?;
         if widths.is_empty() {
             return Ok(2.0 * cell_padding);

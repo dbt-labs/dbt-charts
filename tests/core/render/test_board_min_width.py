@@ -82,7 +82,12 @@ def _single_line(resolved: ResolvedBoard) -> float:
     )
 
     return title_max_content_width(
-        resolved.title, resolved.level, resolved.style, {}, None
+        resolved.title,
+        resolved.level,
+        resolved.style,
+        {},
+        None,
+        root=True,
     )
 
 
@@ -94,6 +99,7 @@ def _title_height(resolved: ResolvedBoard, width: float) -> float:
         level=resolved.level,
         resolved_style=resolved.style,
         base_dir=None,
+        root=True,
     )
 
 
@@ -256,5 +262,10 @@ def test_a_title_word_wider_than_the_measure_widens_the_board(local_project) -> 
     chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
     assert prose_measure(resolved.style) < resolved.width - chrome
     assert resolved.width - chrome >= title_min_content_width(
-        word, 1, resolved.style, {}, None
+        word,
+        1,
+        resolved.style,
+        {},
+        None,
+        root=True,
     )

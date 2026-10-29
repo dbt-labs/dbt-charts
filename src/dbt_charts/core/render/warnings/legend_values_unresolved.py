@@ -272,6 +272,16 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
             continue
         if chart_id not in ctx.chart_results:
             continue
+        # A pie draws its legend only in the direct mode: with every placement
+        # sized to a table there is no legend to warn about. A pie the layout
+        # never sized keeps the data check.
+        placements = ctx.pie_placement_modes.get(chart_id)
+        if (
+            isinstance(chart, ResolvedPieChart)
+            and placements
+            and all(mode != "direct" for mode in placements)
+        ):
+            continue
         rows = ctx.chart_results[chart_id]
         # A suppressed legend normally has nothing to warn about.
         # Exception: a non-wide, non-histogram grouped (stack: "none")

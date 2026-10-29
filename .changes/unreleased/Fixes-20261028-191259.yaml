@@ -1,0 +1,3 @@
+kind: Fixes
+body: MCP hosts answer a single-value question in a sentence instead of drawing a one-point chart, and still chart counts asked per day, week or month.
+time: 2026-10-28T19:12:59.195624-07:00

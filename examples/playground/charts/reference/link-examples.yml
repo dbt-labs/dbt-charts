@@ -40,7 +40,7 @@ queries:
       category,
       SUM(revenue) AS revenue
     FROM ecommerce_orders
-    WHERE category = '{{ selected_category }}'
+    WHERE {{ filter('category', selected_category) }}
     GROUP BY product, category
     ORDER BY revenue DESC
     LIMIT 10
@@ -73,7 +73,7 @@ charts:
     x: product
     y: revenue
     color: category
-    title: Products in the selected category
+    title: "Products, {{ selected_category or 'all categories' }}"
     style:
       stack: zero
 rows:

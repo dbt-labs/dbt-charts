@@ -29,7 +29,6 @@ mod word_floor;
 pub use column_demand::SAMPLE_ROWS;
 pub use stand_in::stand_in_family;
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -68,20 +67,25 @@ pub fn centered_baseline_offset(measurer: &crate::fonts::FontMeasurer, font_size
 }
 
 /// The advance, in font units, of the cluster that starts at
-/// `codepoints[i]`, and how many codepoints it spans. A mapped glyph is its
+/// `codepoints[i]`, the glyph it reads (a mapped glyph only), and how many
+/// codepoints it spans. A mapped glyph is its
 /// own advance; an emoji cluster or an unmapped codepoint books what
 /// `crate::fonts::FontMeasurer::measure` books, never an `Err` — production
 /// does not fail a chart over one rare character.
-fn cluster_advance(face: &ttf_parser::Face<'_>, codepoints: &[u32], i: usize) -> (f64, usize) {
+fn cluster_advance(
+    face: &ttf_parser::Face<'_>,
+    codepoints: &[u32],
+    i: usize,
+) -> (f64, Option<u16>, usize) {
     let upem = face.units_per_em() as f64;
     let cluster = crate::fonts::emoji_cluster_length(codepoints, i);
     if cluster > 0 {
-        return (upem * crate::fonts::EMOJI_ADVANCE_EM, cluster);
+        return (upem * crate::fonts::EMOJI_ADVANCE_EM, None, cluster);
     }
     let ch = char::from_u32(codepoints[i]).expect("came from chars()");
-    match face.glyph_index(ch).and_then(|g| face.glyph_hor_advance(g)) {
-        Some(advance) => (advance as f64, 1),
-        None => (upem * crate::fonts::unmapped_advance_em(codepoints[i]), 1),
+    match face.glyph_index(ch).and_then(|g| Some((g, face.glyph_hor_advance(g)?))) {
+        Some((g, advance)) => (advance as f64, Some(g.0), 1),
+        None => (upem * crate::fonts::unmapped_advance_em(codepoints[i]), None, 1),
     }
 }
 
@@ -116,8 +120,9 @@ fn book_zero_advance_clusters(
 /// font tables or recompiles a shape plan.
 pub struct FontBook {
     shapers: Vec<OnceLock<rustybuzz::Face<'static>>>,
-    /// Default instances only: a weighted measurement instances a copy, so
-    /// no authored weight becomes a key in a book that lives for the process.
+    /// Default instances only: a weighted measurement reads HVAR deltas for
+    /// just the glyphs it measures, so no authored weight becomes a key in a
+    /// book that lives for the process.
     parsed: Vec<OnceLock<ttf_parser::Face<'static>>>,
     /// Keyed by closed enums and a face index, so bounded by the fonts.
     plans:
@@ -291,11 +296,12 @@ impl FontBook {
     /// whatever is positioned against it overlaps — 1.41px at the footer's
     /// 11px for "dbt Charts", which `weighted_measure.rs` pins.
     ///
-    /// This instances the same `wght` axis production does
-    /// (`font_measure.get_weighted_font_measurer`), but the two
-    /// implementations interpolate to results ~0.004px apart, so instancing
-    /// alone does not buy byte parity; snapping the emitted position to whole
-    /// pixels is what does. Do not read this as making the engines agree.
+    /// A weighted run adds each glyph's HVAR delta unrounded
+    /// ([`fonts::weighted_advance_deltas`]), exactly as production's
+    /// `font_measure.get_weighted_font_measurer` does. `ttf_parser`'s own
+    /// `set_variation` + `glyph_hor_advance` rounds every advance to a whole
+    /// font unit, which lands ~0.004px off — enough to snap a footer run to
+    /// the other side of a half pixel.
     ///
     /// A face with no `fvar` table returns `Err` rather than silently
     /// measuring at its default instance: production raises there
@@ -322,38 +328,40 @@ impl FontBook {
         size: f64,
         weight: Option<f32>,
     ) -> Result<f64, String> {
-        let face = self.instanced_face(family_list, weight)?;
-        let codepoints: Vec<u32> = text.chars().map(|c| c as u32).collect();
-        let mut units = 0.0_f64;
-        let mut i = 0;
-        while i < codepoints.len() {
-            let (advance, len) = cluster_advance(&face, &codepoints, i);
-            units += advance;
-            i += len;
-        }
-        Ok(units / face.units_per_em() as f64 * size)
-    }
-
-    /// The face `family_list` resolves to, with the variable face instanced at
-    /// `weight` when given.
-    fn instanced_face(
-        &self,
-        family_list: &str,
-        weight: Option<f32>,
-    ) -> Result<Cow<'_, ttf_parser::Face<'static>>, String> {
         let i = self
             .face_for(family_list)
             .ok_or_else(|| format!("text: no font face resolved for {family_list:?}"))?;
         let face = self.parsed[i].get_or_init(|| {
             ttf_parser::Face::parse(self.face_data(i), 0).expect("validated at load")
         });
-        let Some(w) = weight else {
-            return Ok(Cow::Borrowed(face));
+        let codepoints: Vec<u32> = text.chars().map(|c| c as u32).collect();
+        let deltas = match weight {
+            Some(w) => {
+                let wght = ttf_parser::Tag::from_bytes(b"wght");
+                if !face.variation_axes().into_iter().any(|axis| axis.tag == wght) {
+                    return Err(format!("text: {family_list:?} has no wght axis to instance at {w}"));
+                }
+                let glyphs = text.chars().filter_map(|c| face.glyph_index(c)).map(|g| g.0);
+                Some(
+                    fonts::weighted_advance_deltas(face, w, glyphs)
+                        .map_err(|e| format!("text: {family_list:?}: {e}"))?,
+                )
+            }
+            None => None,
         };
-        let mut face = face.clone();
-        face.set_variation(ttf_parser::Tag::from_bytes(b"wght"), w)
-            .ok_or_else(|| format!("text: {family_list:?} has no wght axis to instance at {w}"))?;
-        Ok(Cow::Owned(face))
+        let mut units = 0.0_f64;
+        let mut pos = 0;
+        while pos < codepoints.len() {
+            let (advance, glyph, len) = cluster_advance(face, &codepoints, pos);
+            // Two adds, not `advance + delta`: production sums them as two
+            // statements, and float addition is not associative.
+            units += advance;
+            if let (Some(deltas), Some(g)) = (&deltas, glyph) {
+                units += deltas.get(&g).copied().unwrap_or(0.0);
+            }
+            pos += len;
+        }
+        Ok(units / face.units_per_em() as f64 * size)
     }
 
     /// Shaped width of `text` at `size` px — what vl-convert's own layout

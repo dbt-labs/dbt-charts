@@ -15,6 +15,7 @@ pub mod native;
 pub mod numeral_pad;
 pub mod path;
 pub mod pie;
+pub mod radial_fit;
 pub mod predefined_formats;
 pub mod py_float;
 pub mod py_str;

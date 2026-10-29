@@ -251,9 +251,9 @@ class TestSizingProviderErrorPropagation:
         )
         assert height > 0
 
-    def test_resolve_stage_runtime_error_propagates(self) -> None:
-        with pytest.raises(RuntimeError, match="bug"):
-            self._call_chart_provider_resolve_raises(RuntimeError("bug"))
+    def test_resolve_stage_runtime_error_sizes_its_error_card(self) -> None:
+        height = self._call_chart_provider_resolve_raises(RuntimeError("bug"))
+        assert height > 0
 
 
 # ---------------------------------------------------------------------------

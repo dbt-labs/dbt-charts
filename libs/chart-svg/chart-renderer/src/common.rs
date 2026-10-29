@@ -172,6 +172,19 @@ pub fn measure_at_css_weight(
     )
 }
 
+/// How a run of text is measured (`docs/laws-shared.md` § A width production bakes
+/// into its own layout takes the painted weight). A family whose layout keeps parity
+/// with Vega's (bar, line, area, scatter, heatmap) measures as vl-convert did, shaped at
+/// the default instance, because vl-convert never re-instanced a variable font; a family
+/// whose layout is its own (the pie) measures at the weight the text paints at, so the
+/// room the layout reserves is the room the ink takes. A helper that serves both takes
+/// it as an argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeasuredAs {
+    Vega,
+    Painted,
+}
+
 // Tabular numeric font used for all number cells (table.rs body cells, pie.rs
 // attached-table value column).
 pub const TAB_FONT: &str = "'dbt Sans Tabular', Inter, system-ui, sans-serif";
@@ -345,6 +358,19 @@ impl Font {
             ));
         }
         measure_at_css_weight(fonts, text, self.family_or("sans-serif"), size, &self.weight_str())
+    }
+    /// `text`'s width measured `how`.
+    pub fn measure_as(
+        &self,
+        how: MeasuredAs,
+        fonts: &measure::FontBook,
+        text: &str,
+        size: f64,
+    ) -> Result<f64, String> {
+        match how {
+            MeasuredAs::Vega => fonts.measure_shaped(text, self.family_or("sans-serif"), size),
+            MeasuredAs::Painted => self.measure_weighted(fonts, text, size),
+        }
     }
     pub fn size_or(&self, d: f64) -> f64 {
         self.size.unwrap_or(d)
@@ -829,6 +855,10 @@ impl FormatSlot {
         let digits = crate::number_locale::d3_format(spec, value).map_err(|e| format!("format {spec:?} on {value}: {e}"))?;
         match notation {
             Some(notation) if d3rs::format::parse_parts(spec)?.type_ == 's' => respell_si(&digits, spec, notation),
+            // d3's raw "G" reads as gigabytes; spell billions as the locale's analytic word, like the ruler.
+            None if d3rs::format::parse_parts(spec)?.type_ == 's' && si_letter(&digits, spec) == "G" => {
+                respell_si(&digits, spec, "analytic")
+            }
             _ => Ok(digits),
         }
     }
@@ -872,6 +902,11 @@ impl From<&str> for FormatSlot {
 /// word carries its own gap). The SI letter ends the digits, ahead of a
 /// currency the locale places after them (`format_d3.py:612`). Any other
 /// letter (milli, ...) is left as d3 wrote it.
+fn si_letter<'a>(digits: &'a str, spec: &str) -> &'a str {
+    let body = digits.strip_suffix(active_number_locale().currency_suffix(spec)).unwrap_or(digits);
+    split_si_suffix(body).1
+}
+
 fn respell_si(digits: &str, spec: &str, notation: &str) -> Result<String, String> {
     let locale = active_number_locale();
     let body = digits.strip_suffix(locale.currency_suffix(spec)).unwrap_or(digits);
@@ -2708,9 +2743,18 @@ pub fn truncate_label(
     fonts: &measure::FontBook,
     shaped: bool,
 ) -> Result<String, String> {
-    let measure = |s: &str| {
+    truncate_label_with(text, limit, |s| {
         if shaped { fonts.measure_shaped(s, family, size) } else { fonts.measure(s, family, size) }
-    };
+    })
+}
+
+/// [`truncate_label`] over a caller-supplied measurer, for a run measured at its
+/// painted weight.
+pub fn truncate_label_with(
+    text: &str,
+    limit: f64,
+    measure: impl Fn(&str) -> Result<f64, String>,
+) -> Result<String, String> {
     if measure(text)? <= limit {
         return Ok(text.to_string());
     }
@@ -3589,6 +3633,7 @@ pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: 
             .set("y", format!("{y_baseline:.1}"))
             .vega("font-family", family)
             .set("font-size", size.to_string())
+            .quick_some("font-style", f.and_then(|f| f.style.as_deref()))
             .set("font-weight", weight)
             .set("fill", color)
             .set("data-authored-kind", "title"),
@@ -3628,6 +3673,7 @@ pub fn subtitle_nodes(
                     .set("y", format!("{ly:.2}"))
                     .vega("font-family", sub_family)
                     .set("font-size", sub_fs.to_string())
+                    .quick_some("font-style", sf.and_then(|f| f.font.style.as_deref()))
                     .set("font-weight", sub_weight.clone())
                     .set("fill", sub_color)
                     .set_if(i == 0, "data-authored-kind", "subtitle"),
@@ -3651,6 +3697,7 @@ pub fn title_node(text: &str, style: Option<&TitleStyle>, x: f64, y: f64, stamp_
             .set("y", format!("{baseline:.2}"))
             .vega("font-family", family)
             .set("font-size", size.to_string())
+            .quick_some("font-style", f.and_then(|f| f.style.as_deref()))
             .set("font-weight", weight)
             .set("fill", color)
             .set_if(stamp_kind, "data-authored-kind", "title"),
@@ -4125,6 +4172,7 @@ fn axis_title_group(
     let attrs = attrs
         .vega("font-family", f.family_or("sans-serif"))
         .set("font-size", size.to_string())
+        .quick_some("font-style", f.style.as_deref())
         .set("font-weight", f.weight_str())
         .set("fill", f.color.as_deref().unwrap_or("#8A8C8F"));
     let lines: Vec<&str> = text.split('\n').collect();
@@ -5144,8 +5192,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
                     .get(raw)
                     .map(String::as_str)
                     .ok_or_else(|| format!("payload carries no sub-unit spec for {raw:?}"))?,
-                None => predefined_number_spec(fallback)
-                    .expect("sub-unit fallback name resolves to a predefined spec"),
+                None => d3rs::format::sub_unit_engine_spec(fallback),
             };
             format_spec = d3rs::format::sub_unit_spec_for_value(&format_spec, sibling, value)?;
         }
@@ -5186,7 +5233,7 @@ pub(crate) fn format_kpi_parts(value: f64, f: &FormatParts, o: &PartsOptions) ->
         number_str = if value == value.trunc() && value.abs() < 1e15 {
             crate::number_locale::d3_format(",d", if value == 0.0 { 0.0 } else { value })?
         } else {
-            crate::number_locale::d3_format(",.2f", value)?
+            crate::number_locale::d3_format(d3rs::format::SUB_UNIT_NUMBER_SPEC, value)?
         };
     } else {
         if format_spec.contains('$') {
@@ -6468,6 +6515,23 @@ mod format_slot_tests {
             let ticks: Vec<String> = [-1000.0, 0.0, 1000.0].iter().map(|&v| slot.paint_tick(v).unwrap()).collect();
             assert_eq!(ticks, expected, "{fmt}");
         }
+    }
+
+    #[test]
+    fn a_plain_axis_si_tick_spells_billions_b_never_g() {
+        let slot = slot(json!({"spec": ".3~s"}));
+        let ticks: Vec<String> = [0.0, 1.0e6, 1.0e9, 1.0e10].iter().map(|&v| slot.paint_tick(v).unwrap()).collect();
+        assert_eq!(ticks, ["0", "1M", "1B", "10B"]);
+    }
+
+    #[test]
+    fn a_plain_axis_si_tick_speaks_the_active_locales_billion_word() {
+        let es = crate::number_locale::en_us_with_words(["K", "M", "\u{a0}mil M", "\u{a0}B"], ["k", "mn", "bn", "trn"]);
+        let ticks = crate::number_locale::with_number_locale(&es, || {
+            let slot = slot(json!({"spec": ".3~s"}));
+            [1.0e3, 1.0e9, 1.0e12].map(|v| slot.paint_tick(v).unwrap())
+        });
+        assert_eq!(ticks, ["1k", "1\u{a0}mil M", "1T"]);
     }
 
     /// Oracle: `quantitative_tick_labels` over `ResolvedFormat(spec="$,.0f")`:

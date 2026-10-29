@@ -246,6 +246,7 @@ fn format_count(v: &Value, tag: Option<&CellTag>) -> Result<String, String> {
 struct TitleFont {
     size: i64,
     weight: String,
+    style: Option<String>,
     family: String,
 }
 
@@ -257,6 +258,7 @@ fn title_font_of(title_font: Option<&Font>) -> Result<TitleFont, String> {
     Ok(TitleFont {
         size: font.size.ok_or("spark_bar: style.title_font.size absent (theme required)")? as i64,
         weight: font.weight_str(),
+        style: font.style.clone(),
         family: font
             .family
             .clone()
@@ -335,6 +337,7 @@ struct Placeholder {
 struct Subtitle {
     text: String,
     size: f64,
+    style: Option<String>,
     color: String,
 }
 
@@ -451,7 +454,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
             let color = sc.subtitle.font.color.clone().ok_or(
                 "spark_bar: style.spark_bar.subtitle.font.color absent (theme required)",
             )?;
-            Some(Subtitle { text, size, color })
+            Some(Subtitle { text, size, style: sc.subtitle.font.style.clone(), color })
         }
         _ => None,
     };
@@ -659,6 +662,7 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
             py_float_str(title_baseline_y),
             Attrs::new()
                 .quick("font-size", title_size.to_string())
+                .quick_some("font-style", bound.title_font.style.as_deref())
                 .quick("font-weight", bound.title_font.weight.as_str())
                 .quick("fill", bound.text_color.as_str())
                 .quick("font-family", bound.title_font.family.as_str())
@@ -671,6 +675,7 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
                 py_float_str(title_baseline_y + title_size as f64),
                 Attrs::new()
                     .quick("font-size", py_float_str(subtitle.size))
+                    .quick_some("font-style", subtitle.style.as_deref())
                     .quick("fill", subtitle.color.as_str())
                     .quick("font-family", bound.body_family.as_str())
                     .quick("data-authored-kind", "subtitle"),

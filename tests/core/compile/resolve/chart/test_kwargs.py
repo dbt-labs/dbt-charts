@@ -158,5 +158,5 @@ rows:
         resolved_board, _ = _resolve_board(self._BOARD, resolve_errors)
         assert resolve_errors == {}, resolve_errors
         pie = resolved_board.charts["narrow_pie"]
-        assert pie.attached_table is not None, "fixture must trigger full_table"
+        assert pie.full_attachment is not None
         assert pie.category_colors == ()

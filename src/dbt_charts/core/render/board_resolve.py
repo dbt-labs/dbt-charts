@@ -25,11 +25,13 @@ from dbt_charts.core.compile.models.board.resolved import (
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
-from dbt_charts.core.render.board_variables import board_clock, board_data_provider
+from dbt_charts.core.render.board_variables import board_data_provider
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
+from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.prose import plan_board_prose
 from dbt_charts.core.text.format_d3 import regional_scope
 
@@ -198,6 +200,7 @@ def build_resolved_nested_board_static(board: Board) -> ResolvedBoard:
         title=board.title,
         notes=board.notes,
         regional=board.regional,
+        fiscal_year_start_month=board.fiscal_year_start_month,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,
@@ -258,6 +261,7 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
         title=board.title,
         notes=board.notes,
         regional=board.regional,
+        fiscal_year_start_month=board.fiscal_year_start_month,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,
@@ -306,7 +310,7 @@ def build_resolved_board(
             board.regional.zone,
             language=board.regional.resolved_language,
         ),
-        board_clock(board.regional.today(executor.rendered_at)),
+        board_clock(board.clock(executor.rendered_at)),
     ):
         return _build_resolved_board(
             board,
@@ -436,6 +440,7 @@ def _build_resolved_board(
             title=board.title,
             notes=board.notes,
             regional=board.regional,
+            fiscal_year_start_month=board.fiscal_year_start_month,
             tags=tuple(board.tags),
             text=board.text,
             base_dir=board.base_dir,
@@ -574,10 +579,15 @@ def _resolve_layout_item(
                             filter_variables=filter_variables,
                             link_open=link_open,
                         )
-                    except DbtChartsError as exc:
+                    except Exception as exc:  # noqa: BLE001 — a crash is this chart's ERR-INTERNAL, as in _require_resolved
+                        failure = (
+                            exc
+                            if isinstance(exc, DbtChartsError)
+                            else RenderError.from_unexpected(exc)
+                        )
                         chart_error = ChartResolveFailure(
                             diagnostic=stamp_chart_diagnostic(
-                                exc, item.chart.id, item.chart.source_path
+                                failure, item.chart.id, item.chart.source_path
                             ),
                             identity=ChartIdentity.from_normalized(item.chart),
                         )
@@ -612,6 +622,7 @@ def _resolve_layout_item(
         notes=item.notes,
         visible=item.visible,
         title_shift=item.title_shift,
+        pie_mode=item.pie_mode,
     )
 
 
@@ -655,6 +666,7 @@ def _resolve_nested(
         title=board.title,
         notes=board.notes,
         regional=board.regional,
+        fiscal_year_start_month=board.fiscal_year_start_month,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,

@@ -41,6 +41,7 @@ Dependencies:
 """
 
 import hashlib
+import json
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -59,6 +60,10 @@ from dbt_charts.core.compile.template._helpers import (
     _LenientUndefined,
     _QueryNamespace,
     template_error_location,
+)
+from dbt_charts.core.compile.template.daterange import (
+    current_board_clock,
+    parse_daterange_preset,
 )
 from dbt_charts.core.compile.template.environment import BoardTemplateEnvironment
 from dbt_charts.core.compile.template.output_budget import (
@@ -693,7 +698,7 @@ def make_filter_helper(emit: Emitter, dialect: SQLDialect) -> Callable[..., str]
         *,
         none: str = "allow",
     ) -> str:
-        """Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`.
+        """Filter clause `{{ filter('col', var) }}`; when the variable is All or unset it is no constraint, so never wrap it in `{% if %}`. A date value compares the column by its calendar date, so pass a timestamp column bare (no DATE() or wrapping subquery).
 
         Args:
             column: Column name (must be valid SQL identifier, not user input)
@@ -804,11 +809,11 @@ def make_filter_date_range_helper(
         column: str,
         date_range: Any,
     ) -> str:
-        """Generate parameterized date range filter.
+        """Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'.
 
         Args:
-            column: Date column name (must be valid SQL identifier)
-            date_range: Tuple/list of [start, end] dates
+            column: Date or timestamp column name (must be valid SQL identifier)
+            date_range: `[start, end]` dates, or a preset name
 
         Returns:
             SQL BETWEEN clause, or a one-sided >= / <= clause when one end is
@@ -830,14 +835,18 @@ def make_filter_date_range_helper(
             else date_range
         )
 
-        # Handle JSON string
+        # A string is a JSON `[start, end]` or a preset name, dated on the board clock.
         if isinstance(actual_value, str):
-            import json
-
-            try:
-                actual_value = json.loads(actual_value)
-            except (json.JSONDecodeError, ValueError) as e:
-                raise ValueError(f"Invalid date_range JSON: {actual_value!r}") from e
+            if actual_value.lstrip().startswith("["):
+                try:
+                    actual_value = json.loads(actual_value)
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"Invalid date_range JSON: {actual_value!r}"
+                    ) from e
+            else:
+                preset = parse_daterange_preset(actual_value.strip())
+                actual_value = preset.window(current_board_clock())
 
         if not isinstance(actual_value, (list, tuple)):
             raise ValueError(

@@ -18,7 +18,8 @@ import pytest
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.variable.authored import Variable, VariableOptions
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.render.board_variables import board_clock, daterange_presets
+from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
+from dbt_charts.core.render.board_variables import daterange_presets
 from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import (
@@ -55,6 +56,7 @@ class _NoQueries:
 
 
 _TODAY = datetime.date(2026, 10, 20)
+_CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1)
 
 
 def _strip(
@@ -64,8 +66,9 @@ def _strip(
     align="start",
     executor=None,
     variables_path="variables",
+    clock=_CLOCK,
 ):
-    with board_clock(_TODAY):
+    with board_clock(clock):
         controls = resolve_controls(
             variable_defs, current_values or {}, executor, _rs().variables
         )
@@ -784,11 +787,95 @@ def test_the_rail_publishes_each_preset_with_todays_window() -> None:
     with interactive_controls(True):
         svg, _ = _strip({"span": Variable(input="daterange")})
     groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
-    assert [[p["id"] for p in group] for group in groups] == [
-        ["today", "last_7_days", "last_28_days", "last_90_days", "last_12_months"],
-        ["month_to_date", "year_to_date"],
+    assert [[(p["id"], p["label"]) for p in group] for group in groups] == [
+        [
+            ("today", "Today"),
+            ("last_7_days", "Last 7 days"),
+            ("last_28_days", "Last 28 days"),
+            ("last_90_days", "Last 90 days"),
+            ("last_12_months", "Last 12 months"),
+        ],
+        [("month_to_date", "Month to date"), ("year_to_date", "Year to date")],
     ]
     assert groups[1][0]["range"] == ["2026-10-01", "2026-10-20"]
+
+
+def test_a_variables_own_menu_replaces_the_style_default() -> None:
+    with interactive_controls(True):
+        svg, _ = _strip(
+            {
+                "span": Variable(
+                    input="daterange",
+                    presets=(
+                        "last_30_days",
+                        "previous_3_quarters",
+                        "this_fiscal_quarter",
+                        "fiscal_year_to_date",
+                    ),
+                )
+            },
+            clock=BoardClock(_TODAY, fiscal_start_month=7, week_start=1),
+        )
+    groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
+    flat = [p for group in groups for p in group]
+
+    assert [(p["id"], p["label"], p["range"]) for p in flat] == [
+        ("last_30_days", "Last 30 days", ["2026-09-21", "2026-10-20"]),
+        (
+            "previous_3_quarters",
+            "Previous 3 quarters",
+            ["2026-01-01", "2026-09-30"],
+        ),
+        ("this_fiscal_quarter", "This fiscal quarter", ["2026-10-01", "2026-12-31"]),
+        ("fiscal_year_to_date", "Fiscal year to date", ["2026-07-01", "2026-10-20"]),
+    ]
+    # A divider falls between the rolling presets and the calendar-anchored ones.
+    assert [len(group) for group in groups] == [1, 3]
+
+
+def test_a_committed_preset_outside_the_menu_is_published_for_the_popover() -> None:
+    with interactive_controls(True), daterange_presets({"span": "yesterday"}):
+        svg, _ = _strip(
+            {"span": Variable(input="daterange")},
+            {"span": ["2026-10-19", "2026-10-19"]},
+        )
+    group = _groups(svg)[0]
+
+    assert json.loads(group.get("data-dbt-preset-off-menu")) == {
+        "id": "yesterday",
+        "label": "Yesterday",
+        "range": ["2026-10-19", "2026-10-19"],
+    }
+    menu = json.loads(group.get("data-dbt-presets"))
+    assert "yesterday" not in [p["id"] for g in menu for p in g]
+
+
+def test_a_committed_preset_in_the_menu_publishes_no_extra_entry() -> None:
+    with interactive_controls(True), daterange_presets({"span": "last_7_days"}):
+        svg, _ = _strip(
+            {"span": Variable(input="daterange")},
+            {"span": ["2026-10-14", "2026-10-20"]},
+        )
+
+    assert _groups(svg)[0].get("data-dbt-preset-off-menu") is None
+
+
+def test_previous_presets_sit_with_the_calendar_anchored_ones() -> None:
+    with interactive_controls(True):
+        svg, _ = _strip(
+            {
+                "span": Variable(
+                    input="daterange",
+                    presets=("last_7_days", "previous_1_month", "this_year"),
+                )
+            }
+        )
+    groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
+
+    assert [[p["id"] for p in g] for g in groups] == [
+        ["last_7_days"],
+        ["previous_1_month", "this_year"],
+    ]
 
 
 def test_a_preset_default_with_no_committed_value_publishes_its_id() -> None:

@@ -1,0 +1,3 @@
+kind: Fixes
+body: Faceted bar legends ellipsize long labels instead of running off the card, and a dated bar's click-to-filter link prints the row's ISO date. Bold and semibold text, such as the footer's brand link, is measured to the same fraction of a pixel in the Rust renderer as in Python, so runs placed against it no longer shift by a pixel.
+time: 2026-10-27T19:48:53.317688-07:00

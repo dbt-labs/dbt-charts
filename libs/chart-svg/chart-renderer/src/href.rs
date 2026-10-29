@@ -117,8 +117,8 @@ pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
 pub(crate) const UNDEFINED_HREF: &str = "https://vega.github.io/vega-datasets/undefined";
 
 /// How a link channel prints its column: `'' + datum[field]`, or
-/// `timeFormat(datum[field], '%Y-%m-%d')` for a date field, which a field
-/// Vega keeps as a string (an ordinal band) reads as an invalid date.
+/// `timeFormat(datum[field], '%Y-%m-%d')` for a date field; [`LinkText::InvalidDate`]
+/// is a string Vega keeps ordinal, which line and scatter print as an invalid date.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum LinkText {
     Raw,
@@ -342,16 +342,6 @@ pub(crate) struct Anchor<'a> {
 }
 
 impl Anchor<'_> {
-    /// `paint` as this mark draws it: mixed toward the canvas on a receded mark.
-    pub(crate) fn paint(anchor: Option<Self>, paint: &str) -> String {
-        match anchor.and_then(|a| a.recede) {
-            Some(recede) => recede.paint(paint),
-            None => paint.to_string(),
-        }
-    }
-}
-
-impl Anchor<'_> {
     pub(crate) fn attrs(&self) -> scene::Attrs {
         let attrs = scene::Attrs::new().set("href", self.url);
         let attrs = self.open.open_attr().map_or(attrs.clone(), |v| attrs.set("data-dbt-link-open", v));
@@ -394,9 +384,19 @@ pub(crate) fn anchor_open(anchor: Option<Anchor<'_>>) -> String {
 }
 
 /// `mark` inside its datum's `<a>`, or alone when the datum carries no link.
+///
+/// A receded datum's `fill` and `stroke` are mixed toward the canvas here, once, and the paint
+/// each had is stamped beside it (`data-dbt-rest-fill`): a per-color mix cannot be undone, and
+/// the hover runtime lights the datum back up from its own color.
 pub(crate) fn linked(anchor: Option<Anchor<'_>>, mark: scene::Node) -> scene::Node {
     match anchor {
-        Some(a) => scene::Node::Link { attrs: a.attrs(), children: vec![mark] },
+        Some(a) => {
+            let mark = match a.recede {
+                Some(recede) => mark.map_attrs(&|attrs| recede.recede_attrs(attrs)),
+                None => mark,
+            };
+            scene::Node::Link { attrs: a.attrs(), children: vec![mark] }
+        }
         None => mark,
     }
 }

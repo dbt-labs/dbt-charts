@@ -206,6 +206,8 @@ pub(crate) struct TemporalXAxis {
     label_case: Option<String>,
     color: String,
     weight: String,
+    /// The label font's `style`; `None` writes no `font-style`.
+    style: Option<String>,
     label_pad: f64,
     label_limit: f64,
     separation: f64,
@@ -370,6 +372,7 @@ impl TemporalXAxis {
             label_case: labels_cfg.font.case.clone(),
             color: labels_cfg.font.color.as_deref().unwrap_or("#626366").to_string(),
             weight: labels_cfg.font.weight_str(),
+            style: labels_cfg.font.style.clone(),
             label_pad: labels_cfg.padding.unwrap_or(6.0),
             label_limit: labels_cfg.max_width.unwrap_or(vega_fit::DEFAULT_VL_LABEL_LIMIT),
             separation: labels_cfg.min_gap.unwrap_or(0.0),
@@ -1345,6 +1348,7 @@ impl TemporalXAxis {
                     )
                     .vega("font-family", self.family.as_str())
                     .set("font-size", fs.to_string())
+                    .quick_some("font-style", self.style.as_deref())
                     .set("font-weight", self.weight.as_str())
                     .set("fill", self.color.as_str());
                 items.push(match &l.row2 {
@@ -1381,6 +1385,7 @@ impl TemporalXAxis {
                         .set("text-anchor", anchor)
                         .vega("font-family", self.family.as_str())
                         .set("font-size", fs.to_string())
+                        .quick_some("font-style", self.style.as_deref())
                         .set("font-weight", self.weight.as_str())
                         .set("fill", self.color.as_str()),
                     ax_x.labels.clip(text, fonts)?,

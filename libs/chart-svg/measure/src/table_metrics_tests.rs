@@ -59,10 +59,10 @@ fn a_column_demands_its_p95_cell_plus_padding() {
     let texts: Vec<String> = (1..=20).map(|n| "9".repeat(n)).collect();
     let widest_of_95 = fonts.measure(&texts[19], "Inter", 11.0).unwrap();
     let demand = measure
-        .column_demand(texts.iter().map(String::as_str), "Inter", 11.0, 8.0)
+        .column_demand(texts.iter().map(|t| (t.as_str(), "Inter")), 11.0, 8.0)
         .unwrap();
     assert_eq!(demand, widest_of_95 + 16.0);
-    assert_eq!(measure.column_demand([], "Inter", 11.0, 8.0).unwrap(), 16.0);
+    assert_eq!(measure.column_demand([], 11.0, 8.0).unwrap(), 16.0);
 }
 
 #[test]

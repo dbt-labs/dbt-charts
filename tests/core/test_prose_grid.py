@@ -381,14 +381,23 @@ def test_prose_above_a_nested_row_with_its_own_gap_meets_its_cards() -> None:
     assert_on(column_starts(svg, ["READOUT"])["READOUT"], card_edges(svg, 3))
 
 
+def prose_starts_without_tab_label(svg: str) -> list[float]:
+    """ROOT prose line-starts, minus the tab bar's label ("One"), which falls in its span."""
+    label_x = next(x for x, _, t in text_lines(svg) if t == "One")
+    return [
+        x
+        for x in column_starts(svg, ["ROOT"])["ROOT"]
+        if x != pytest.approx(label_x, abs=0.5)
+    ]
+
+
 def test_prose_above_a_root_tabs_board_follows_the_panel_gap() -> None:
     """Tab panels are full width; the cards inside place with the inherited style.gap."""
     svg = render_board_to_svg(
         f"width: 1200\n{QUERY}style:\n  gap: 40\ntext: |\n{_text_block('ROOT', 1400)}\n"
         "tabs:\n  items:\n    - title: One\n      cols:\n        - a\n        - b\n        - c\n"
     )
-    # 600 is the centered tab label, not prose
-    starts = [x for x in column_starts(svg, ["ROOT"])["ROOT"] if round(x) != 600]
+    starts = prose_starts_without_tab_label(svg)
     assert_on(starts, card_edges(svg, 3))
 
 
@@ -436,7 +445,7 @@ def test_prose_above_tabs_follows_the_panel_that_places_the_cards() -> None:
         "tabs:\n  items:\n    - title: One\n      style:\n        gap: 60\n"
         "      cols:\n        - a\n        - b\n        - c\n"
     )
-    starts = [x for x in column_starts(svg, ["ROOT"])["ROOT"] if round(x) != 600]
+    starts = prose_starts_without_tab_label(svg)
     assert_on(starts, card_edges(svg, 3))
 
 

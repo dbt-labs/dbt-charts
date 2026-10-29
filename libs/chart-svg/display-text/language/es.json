@@ -36,41 +36,70 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Trimestre fiscal hasta la fecha",
+  "controls.fiscal_year_to_date": "Año fiscal hasta la fecha",
   "controls.from": "Desde {date}",
-  "controls.last_12_months": "Últimos 12 meses",
-  "controls.last_28_days": "Últimos 28 días",
-  "controls.last_7_days": "Últimos 7 días",
-  "controls.last_90_days": "Últimos 90 días",
   "controls.list_join": ", ",
   "controls.month_to_date": "Mes hasta la fecha",
   "controls.next_month": "Mes siguiente",
   "controls.no": "No",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Último: {duration}",
+  "controls.preset_previous": "Anterior: {duration}",
   "controls.previous_month": "Mes anterior",
+  "controls.quarter_to_date": "Trimestre hasta la fecha",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Buscar",
   "controls.search_values": "Buscar valores",
   "controls.sort_ascending": "Orden ascendente",
   "controls.sort_descending": "Orden descendente",
+  "controls.this_fiscal_quarter": "Este trimestre fiscal",
+  "controls.this_fiscal_year": "Este año fiscal",
+  "controls.this_month": "Este mes",
+  "controls.this_quarter": "Este trimestre",
+  "controls.this_week": "Esta semana",
+  "controls.this_year": "Este año",
   "controls.today": "Hoy",
   "controls.until": "Hasta {date}",
+  "controls.week_to_date": "Semana hasta la fecha",
   "controls.year_to_date": "Año hasta la fecha",
   "controls.yes": "Sí",
+  "controls.yesterday": "Ayer",
   "duration.day": {
     "one": "{n} día",
     "many": "{n} de días",
     "other": "{n} días"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} trimestre fiscal",
+    "many": "{n} de trimestres fiscales",
+    "other": "{n} trimestres fiscales"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} año fiscal",
+    "many": "{n} de años fiscales",
+    "other": "{n} años fiscales"
   },
   "duration.month": {
     "one": "{n} mes",
     "many": "{n} de meses",
     "other": "{n} meses"
   },
+  "duration.quarter": {
+    "one": "{n} trimestre",
+    "many": "{n} de trimestres",
+    "other": "{n} trimestres"
+  },
   "duration.week": {
     "one": "{n} semana",
     "many": "{n} de semanas",
     "other": "{n} semanas"
+  },
+  "duration.year": {
+    "one": "{n} año",
+    "many": "{n} de años",
+    "other": "{n} años"
   },
   "footer.data_as_of": "Datos a {date}, {time}",
   "footer.made_with": "hecho con {brand}",

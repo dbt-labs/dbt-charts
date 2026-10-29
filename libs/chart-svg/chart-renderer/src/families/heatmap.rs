@@ -202,7 +202,7 @@ impl HeatmapResolved {
 impl ColorGradient {
     /// The color domain, its legend ticks, and the scale an authored palette
     /// paints (resolve bakes `resolved_stops` for the theme's default palette
-    /// only). A diverging scale spans its pivot-extended bounds and labels the
+    /// only); baked stops build a scale only to honor a hinge. A diverging scale spans its pivot-extended bounds and labels the
     /// pivot beside the ticks.
     pub(crate) fn ladder(
         &self,
@@ -211,7 +211,8 @@ impl ColorGradient {
         legend_drawn: bool,
     ) -> Result<(f64, f64, Vec<f64>, Option<ContinuousColor>), Diagnostic> {
         let (min, max, ticks) = gradient_ladder(rows, field, self, legend_drawn)?;
-        if self.resolved_stops.len() >= 2 {
+        let baked = self.resolved_stops.len() >= 2;
+        if baked && self.hinge.is_none() {
             return Ok((min, max, ticks, None));
         }
         let all = rows
@@ -220,7 +221,7 @@ impl ColorGradient {
             .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
         let target = ScaleTarget {
             palette: self.palette.clone(),
-            resolved_stops: None,
+            resolved_stops: baked.then(|| self.resolved_stops.clone()),
             min: self.min,
             max: self.max,
             nice: self.nice,
@@ -727,6 +728,8 @@ pub(crate) struct LabelFace<'a> {
     pub(crate) family: &'a str,
     pub(crate) size: f64,
     pub(crate) weight: &'a str,
+    /// The resolved font's `style`; `None` writes no `font-style`.
+    pub(crate) style: Option<&'a str>,
     pub(crate) fill: &'a str,
 }
 
@@ -735,6 +738,7 @@ impl LabelFace<'_> {
         Attrs::new()
             .vega("font-family", self.family)
             .set("font-size", self.size.to_string())
+            .quick_some("font-style", self.style)
             .set("font-weight", self.weight)
             .set("fill", self.fill)
     }
@@ -1139,6 +1143,29 @@ mod tests {
     fn render_json(json: Value) -> String {
         let payload: Payload = serde_json::from_value(json).unwrap();
         render(&payload, &test_fonts()).expect("heatmap renders")
+    }
+
+    /// A baked palette's stops still honor the authored hinge: the neutral midpoint lands on
+    /// the hinge, not the data midpoint, and the hinge never clamps the domain.
+    #[test]
+    fn a_hinge_moves_the_neutral_of_a_baked_palette() {
+        let render_with = |hinge: Value| {
+            render_json(heatmap_payload(|json| {
+                json["rows"] = json!([
+                    {"region": "A", "category": "X", "revenue": -2.0},
+                    {"region": "B", "category": "X", "revenue": 0.0},
+                    {"region": "C", "category": "X", "revenue": 10.0}
+                ]);
+                let gradient = &mut json["resolved"]["style"]["color_gradient"];
+                gradient["resolved_stops"] = json!(["#ff0000", "#00ff00", "#0000ff"]);
+                gradient["hinge"] = hinge;
+            }))
+        };
+        let plain = render_with(Value::Null);
+        let hinged = render_with(json!(0));
+        assert_ne!(plain, hinged);
+        assert!(hinged.contains("fill=\"rgb(0, 255, 0)\""), "the zero cell paints the middle stop: {hinged}");
+        assert!(!plain.contains("fill=\"rgb(0, 255, 0)\""));
     }
 
     #[test]

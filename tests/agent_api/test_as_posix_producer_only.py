@@ -52,7 +52,7 @@ ALLOWED: dict[tuple[str, int], str] = {
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
     ),
-    ("agent_api/_paths.py", 455): (
+    ("agent_api/_paths.py", 460): (
         "resolve_board_or_error() ERR_PATH_OUTSIDE_PROJECT: the path lies "
         "outside the project, so no ProjectPath or root exists to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."

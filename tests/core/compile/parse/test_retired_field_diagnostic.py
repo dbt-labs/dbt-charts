@@ -122,6 +122,8 @@ def _example(root: dict[str, Any], node: dict[str, Any], depth: int = 0) -> obje
             for name in node.get("required", [])
             if depth < 24
         }
+    if node.get("type") == "number" and "exclusiveMaximum" in node:
+        return (node.get("exclusiveMinimum", 0) + node["exclusiveMaximum"]) / 2
     return {"integer": 1, "number": 1.5, "boolean": True}.get(node.get("type"), "x")
 
 

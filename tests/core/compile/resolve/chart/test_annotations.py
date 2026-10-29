@@ -63,8 +63,10 @@ SERIES_ROWS: list[dict[str, Any]] = [
 ]
 
 
-def _ctx() -> ChartStyleContext:
-    return resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+def _ctx(theme: str | None = None) -> ChartStyleContext:
+    return resolve_chart_style_context(
+        get_theme_style(theme or get_default_theme_name())
+    )
 
 
 def _line(
@@ -119,7 +121,7 @@ def test_literal_anchors_read_in_the_axis_type() -> None:
     assert band.x == ResolvedRangeAnchor(
         kind="range", **{"from": "2024-03-01", "to": "2024-05-01"}
     )
-    assert (rule.plane, band.plane) == ("background", "background")
+    assert (rule.plane, band.plane) == ("foreground", "background")
     assert rule.panel is None and rule.series is None and rule.y_axis == "base"
 
 
@@ -165,7 +167,10 @@ def test_a_value_beyond_the_data_joins_the_y_domain() -> None:
 
 
 def _area(
-    annotations: list[dict[str, Any]], rows: list[dict[str, Any]], **chart: Any
+    annotations: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    theme: str | None = None,
+    **chart: Any,
 ) -> ResolvedAreaChart:
     normalized = AreaChart.model_validate(
         {
@@ -177,9 +182,83 @@ def _area(
             **chart,
         }
     )
-    resolved = resolve(normalized, rows, _ctx(), rendered_at=NOW)
+    resolved = resolve(normalized, rows, _ctx(theme), rendered_at=NOW)
     assert isinstance(resolved, ResolvedAreaChart)
     return resolved
+
+
+# dbt-grays rung 7 on the light themes that set no rule ink of their own; paper
+# and stark keep theirs (a cream, and stark's near-black).
+RULE_INK = {
+    "clarity": "#8A8C8F",
+    "vivid": "#8A8C8F",
+    "paper": "#6F685D",
+    "stark": "#313233",
+}
+
+
+def _area_rule(theme: str, **rule: Any) -> ResolvedAnnotation:
+    [item] = _area(
+        [{"type": "rule", "y": 15, "text": "Goal", **rule}],
+        ROWS,
+        theme=theme,
+        y="revenue",
+    ).annotations
+    return item
+
+
+@pytest.mark.parametrize(("theme", "ink"), RULE_INK.items())
+def test_a_rule_and_its_label_wear_the_themes_rule_ink(theme: str, ink: str) -> None:
+    rule = _area_rule(theme)
+    assert rule.style.rule.stroke.color == ink
+    assert rule.style.text.font.color == ink
+    assert rule.style.rule.ladder == () and rule.style.rule.avoid == ()
+
+
+def test_neon_leaves_the_rule_gray_to_the_engine_with_the_ladder_to_pick_from() -> None:
+    rule = _area_rule("neon")
+    assert rule.style.rule.stroke.color == "auto"
+    assert rule.style.text.font.color == "auto"
+    # Rungs 3 to 10 of dbt-grays: the pale and near-black ends are never eligible.
+    assert rule.style.rule.ladder == (
+        "#EDEFF2",
+        "#DFE1E5",
+        "#D0D3D9",
+        "#B0B2B8",
+        "#8A8C8F",
+        "#626366",
+        "#494A4C",
+        "#313233",
+    )
+    assert rule.style.rule.avoid == ("#494A4C", "#626366")
+
+
+@pytest.mark.parametrize("theme", ["neon", "clarity"])
+def test_a_rule_that_sets_its_own_color_is_not_picked_and_its_label_follows(
+    theme: str,
+) -> None:
+    rule = _area_rule(
+        theme, style={"marks": {"rule": {"stroke": {"color": "#123456"}}}}
+    )
+    assert rule.style.rule.stroke.color == "#123456"
+    assert rule.style.text.font.color == "#123456"
+    assert rule.style.rule.ladder == ()
+
+
+def test_a_series_rule_keeps_its_series_color_on_neon() -> None:
+    rules = _area(
+        [{"type": "rule", "y": "avg()", "series": "each", "text": "{{ series }}"}],
+        SERIES_ROWS,
+        theme="neon",
+        y="revenue",
+        color="region",
+        stack="none",
+    ).annotations
+    assert len(rules) == 2
+    for rule in rules:
+        assert rule.style.rule.stroke.color != "auto"
+        assert rule.style.text.font.color == rule.style.rule.stroke.color
+        assert rule.style.rule.ladder == ()
 
 
 def test_a_multi_metric_area_widens_for_an_annotation() -> None:
@@ -1068,21 +1147,24 @@ def _every_type() -> list[dict[str, Any]]:
     ]
 
 
-def test_rules_and_trends_default_under_the_data_but_over_an_area() -> None:
+def test_rules_and_trends_default_over_the_data_and_bands_under_it() -> None:
     annotations = _every_type()
     line = {a.type: a.plane for a in _line(annotations).annotations}
-    area = {a.type: a.plane for a in _area(annotations, ROWS, y="revenue").annotations}
+    # An area takes no trend; a trend over a scatter layer still sits above the fill.
+    area_annotations = [a for a in annotations if a["type"] != "trend"]
+    area = {
+        a.type: a.plane for a in _area(area_annotations, ROWS, y="revenue").annotations
+    }
     assert line == {
-        "rule": "background",
+        "rule": "foreground",
         "band": "background",
         "note": "foreground",
-        "trend": "background",
+        "trend": "foreground",
     }
     assert area == {
         "rule": "foreground",
         "band": "background",
         "note": "foreground",
-        "trend": "foreground",
     }
 
 

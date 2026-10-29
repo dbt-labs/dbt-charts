@@ -139,6 +139,7 @@ def test_g_render_title_uses_title_font_family_param() -> None:
         variable_values={},
         base_dir=None,
         error_collector=None,
+        root=True,
     )
     assert "SentinelFontG" in result
 
@@ -184,6 +185,7 @@ def test_g_render_title_uses_title_font_path(
         variable_values={},
         base_dir=None,
         error_collector=None,
+        root=True,
     )
 
     assert captured["regular"] == str(get_face(SOURCE_SERIF_4_FONT_FAMILY).measure_path)
@@ -237,6 +239,7 @@ def test_g_render_title_uses_title_font_path_not_body(
         variable_values={},
         base_dir=None,
         error_collector=None,
+        root=True,
     )
 
     assert captured["regular"] == str(get_face(INTER_VARIABLE_FONT_FAMILY).measure_path)

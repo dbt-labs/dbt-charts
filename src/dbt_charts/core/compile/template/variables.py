@@ -16,8 +16,9 @@ from typing import Any
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.template.daterange import (
-    DATERANGE_PRESETS,
-    check_daterange_preset,
+    BoardClock,
+    is_daterange_preset,
+    parse_daterange_preset,
     resolve_daterange_preset,
     resolve_daterange_preset_iso,
 )
@@ -324,27 +325,27 @@ def check_variable_overrides(
 
 def _require_preset(name: str, value: str) -> None:
     try:
-        check_daterange_preset(value)
+        parse_daterange_preset(value)
     except ValueError as e:
         raise ExecutionError(f"Variable '{name}': {e}") from None
 
 
 def resolve_daterange_presets(
-    values: VariableValues, registry: dict[str, Variable], today: date
+    values: VariableValues, registry: dict[str, Variable], clock: BoardClock
 ) -> VariableValues:
     """Each daterange preset id in ``values`` as its ``[start, end]`` dates on
-    the board's ``today``."""
+    the board's clock."""
     return {
         **values,
         **{
-            name: list(resolve_daterange_preset(preset, today))
+            name: list(resolve_daterange_preset(preset, clock))
             for name, preset in daterange_preset_ids(values, registry).items()
         },
     }
 
 
 def normalize_render_values(
-    values: VariableValues, registry: dict[str, Variable], today: date
+    values: VariableValues, registry: dict[str, Variable], clock: BoardClock
 ) -> VariableValues:
     """Narrow multiselects to lists and resolve daterange presets for render.
 
@@ -361,7 +362,7 @@ def normalize_render_values(
     down whole boards.
 
     A daterange preset id becomes its ISO ``[start, end]`` on the board's
-    ``today``; any other string raises, since a template indexing it would read
+    clock; any other string raises, since a template indexing it would read
     characters, not dates.
     """
     normalized = dict(values)
@@ -377,7 +378,7 @@ def normalize_render_values(
             and not variable_value_is_absent(raw)
         ):
             _require_preset(name, raw)
-            normalized[name] = resolve_daterange_preset_iso(raw, today)
+            normalized[name] = resolve_daterange_preset_iso(raw, clock)
     return normalized
 
 
@@ -390,7 +391,7 @@ def daterange_preset_ids(
         for name, var in registry.items()
         if var.input == "daterange"
         and isinstance(value := values.get(name), str)
-        and value in DATERANGE_PRESETS
+        and is_daterange_preset(value)
     }
 
 

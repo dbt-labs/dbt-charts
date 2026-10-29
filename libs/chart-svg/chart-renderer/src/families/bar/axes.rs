@@ -105,6 +105,8 @@ pub(crate) struct HorizontalValueAxis {
     pub(super) limit: f64,
     pub(super) color: String,
     pub(super) weight: String,
+    /// The label font's `style`; `None` writes no `font-style`.
+    pub(super) style: Option<String>,
     pub(super) title: String,
     /// The authored label the title edits: none in a facet, whose panels do not pin one.
     pub(super) title_key: Option<crate::contract::LabelKey>,
@@ -179,6 +181,7 @@ impl HorizontalValueAxis {
                         .set("text-anchor", anchor)
                         .vega("font-family", self.family.as_str())
                         .set("font-size", self.font_size.to_string())
+                        .quick_some("font-style", self.style.as_deref())
                         .set("font-weight", self.weight.as_str())
                         .set("fill", self.color.as_str()),
                     label,
@@ -410,6 +413,7 @@ impl ContinuousXAxis {
                     .set("text-anchor", anchor)
                     .vega("font-family", x_family)
                     .set("font-size", x_font_size.to_string())
+                    .quick_some("font-style", ax_x.labels.font.style.as_deref())
                     .set("font-weight", x_label_weight.as_str())
                     .set("fill", x_label_color),
                 lbl.as_str(),
@@ -508,6 +512,7 @@ impl BandXAxis {
                     .set("text-anchor", "middle")
                     .vega("font-family", cat_family)
                     .set("font-size", cat_font_size.to_string())
+                    .quick_some("font-style", ax_x.labels.font.style.as_deref())
                     .set("font-weight", cat_weight.as_str())
                     .set("fill", cat_color)
                     .set_if(hidden, "opacity", "0"),
@@ -551,7 +556,7 @@ impl BandXAxis {
                 let label_x = plot_left + band_x + band.bandwidth() / 2.0;
                 items.push(crate::families::heatmap::rotated_label(
                     (label_x, anchor_y, cat_angle, dy),
-                    &crate::families::heatmap::LabelFace { places: 2, anchor: text_anchor, family: cat_family, size: cat_font_size, weight: &cat_weight, fill: cat_color },
+                    &crate::families::heatmap::LabelFace { places: 2, anchor: text_anchor, family: cat_family, size: cat_font_size, weight: &cat_weight, style: ax_x.labels.font.style.as_deref(), fill: cat_color },
                     (row1, row2),
                     hidden_at(k),
                 ));

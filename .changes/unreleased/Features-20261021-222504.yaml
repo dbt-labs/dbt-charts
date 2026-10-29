@@ -1,0 +1,3 @@
+kind: Features
+body: Markdown headings follow the board's heading sizes, sit on the body line grid, use the theme's heading case, and line up with chart titles in the same row.
+time: 2026-10-21T22:25:04.008091-07:00

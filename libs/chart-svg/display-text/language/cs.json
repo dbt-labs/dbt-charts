@@ -36,32 +36,53 @@
   "controls.date": "{day}. {month} {year}",
   "controls.date_no_year": "{day}. {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Fiskální čtvrtletí do dnes",
+  "controls.fiscal_year_to_date": "Fiskální rok do dnes",
   "controls.from": "Od {date}",
-  "controls.last_12_months": "Posledních 12 měsíců",
-  "controls.last_28_days": "Posledních 28 dní",
-  "controls.last_7_days": "Posledních 7 dní",
-  "controls.last_90_days": "Posledních 90 dní",
   "controls.list_join": ", ",
   "controls.month_to_date": "Měsíc do dnes",
   "controls.next_month": "Další měsíc",
   "controls.no": "Ne",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Posledních {duration}",
+  "controls.preset_previous": "Předchozích {duration}",
   "controls.previous_month": "Předchozí měsíc",
+  "controls.quarter_to_date": "Čtvrtletí do dnes",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}.–{end_day}. {month} {year}",
   "controls.search": "Hledat",
   "controls.search_values": "Hledat hodnoty",
   "controls.sort_ascending": "Seřadit vzestupně",
   "controls.sort_descending": "Seřadit sestupně",
+  "controls.this_fiscal_quarter": "Toto fiskální čtvrtletí",
+  "controls.this_fiscal_year": "Tento fiskální rok",
+  "controls.this_month": "Tento měsíc",
+  "controls.this_quarter": "Toto čtvrtletí",
+  "controls.this_week": "Tento týden",
+  "controls.this_year": "Tento rok",
   "controls.today": "Dnes",
   "controls.until": "Do {date}",
+  "controls.week_to_date": "Týden do dnes",
   "controls.year_to_date": "Rok do dnes",
   "controls.yes": "Ano",
+  "controls.yesterday": "Včera",
   "duration.day": {
     "one": "{n} den",
     "few": "{n} dny",
     "many": "{n} dne",
     "other": "{n} dní"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} fiskální čtvrtletí",
+    "few": "{n} fiskální čtvrtletí",
+    "many": "{n} fiskálního čtvrtletí",
+    "other": "{n} fiskálních čtvrtletí"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} fiskální rok",
+    "few": "{n} fiskální roky",
+    "many": "{n} fiskálního roku",
+    "other": "{n} fiskálních let"
   },
   "duration.month": {
     "one": "{n} měsíc",
@@ -69,11 +90,23 @@
     "many": "{n} měsíce",
     "other": "{n} měsíců"
   },
+  "duration.quarter": {
+    "one": "{n} čtvrtletí",
+    "few": "{n} čtvrtletí",
+    "many": "{n} čtvrtletí",
+    "other": "{n} čtvrtletí"
+  },
   "duration.week": {
     "one": "{n} týden",
     "few": "{n} týdny",
     "many": "{n} týdne",
     "other": "{n} týdnů"
+  },
+  "duration.year": {
+    "one": "{n} rok",
+    "few": "{n} roky",
+    "many": "{n} roku",
+    "other": "{n} let"
   },
   "footer.data_as_of": "Data k {date}, {time}",
   "footer.made_with": "vytvořeno v {brand}",

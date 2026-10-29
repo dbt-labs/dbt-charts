@@ -2525,6 +2525,7 @@ pub(super) fn fit(
                     .set("text-anchor", y_label_anchor)
                     .vega("font-family", y_family)
                     .set("font-size", y_font_size.to_string())
+                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", y_label_weight.as_str())
                     .set("fill", y_label_color),
                 ax_y.labels.clip(lbl, fonts)?,
@@ -2558,6 +2559,7 @@ pub(super) fn fit(
                 font_family: y_family,
                 font_size: y_font_size,
                 font_weight: &y_label_weight,
+                font_style: ax_y.labels.font.style.as_deref(),
                 font_color: y_label_color,
                 tick_size: y_tick_eff,
                 ticks: &ax_y.ticks,
@@ -2602,6 +2604,7 @@ pub(super) fn fit(
                     .set("text-anchor", ghost_anchor)
                     .vega("font-family", y_family)
                     .set("font-size", y_font_size.to_string())
+                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", y_label_weight.as_str())
                     .set("fill", y_label_color),
                 ax_y.labels.clip(lbl, fonts)?,
@@ -2852,6 +2855,7 @@ pub(super) fn fit(
                 caption: y_caption.clone(),
                 val_font_size: y_font_size,
                 val_weight: y_label_weight.clone(),
+                val_style: ax_y.labels.font.style_attr(),
                 val_color: y_label_color.to_string(),
                 val_family: y_family.to_string(),
             }),

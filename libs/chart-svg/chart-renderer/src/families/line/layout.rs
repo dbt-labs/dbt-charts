@@ -18,7 +18,7 @@ use serde_json::Value;
 use crate::common::{
     axis_title_band, axis_title_text, dimension_sort_domain,
     format_y_label, is_year_shaped, row_num, row_str,
-    symbol_radius, unity_rule_fires, CaptionSpot, MarkLabels, SortAggregate, FormatSlot, VALUE_AXIS_BREATHING_ROOM,
+    symbol_radius, unity_rule_fires, CaptionSpot, MarkLabels, MeasuredAs, SortAggregate, FormatSlot, VALUE_AXIS_BREATHING_ROOM,
 };
 use crate::families::cartesian::{
     vl_default_tick_count, BandGeometry, LinearScale, LogScale, MeasureScale, PointScale,
@@ -1993,10 +1993,7 @@ pub(super) fn fit(
         )
     };
     let title = new_title(title_wrap_w)?;
-    // A rail concat defers its title wrap to the render pass, which records nothing.
-    if !show_rail {
-        title.warn_truncated(&r.id);
-    }
+    title.warn_truncated(&r.id);
 
     // production's `_correct_concat_overshoot` (`converters/chart.py`) runs
     // `apply_title_overflow_to_spec` TWICE on the rail concat, at two
@@ -2081,7 +2078,7 @@ pub(super) fn fit(
     let series_keys = crate::selected::series_keys(&legend_entries, &series);
     let legend_entries = selection.legend(legend_entries, &series_keys);
     let limited_text = legend_active
-        .then(|| limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts))
+        .then(|| limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts, MeasuredAs::Vega))
         .transpose()?;
     let vega_legend_box = limited_text
         .as_ref()
@@ -2109,7 +2106,7 @@ pub(super) fn fit(
     // halo's canvas color (the strokeDash scale is encoded on the halo and the line alike).
     let root_dash_legend: Option<(VegaLegend, LegendConfig, Vec<String>)> = if dash_legend_at_root {
         let cfg = vega_default_legend(&r.legend);
-        let lt = limit_legend_text(legend_display_labels.iter().map(String::as_str), &legend_title, &cfg, fonts)?;
+        let lt = limit_legend_text(legend_display_labels.iter().map(String::as_str), &legend_title, &cfg, fonts, MeasuredAs::Vega)?;
         let symbols: Vec<Option<LegendSymbol>> =
             series_dashes.iter().map(|dash| Some(LegendSymbol::DashCircle(dash.as_str()))).collect();
         Some((legend_from_widths(&lt.label_ws, &symbols, false, &lt.title, lt.title_w, &cfg)?, cfg, lt.labels))
@@ -2117,7 +2114,7 @@ pub(super) fn fit(
         None
     };
     let facet_legend = if facet_legend_wanted {
-        let lt = limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts)?;
+        let lt = limit_legend_text(legend_entries.iter().map(|e| e.label), &legend_title, &r.legend, fonts, MeasuredAs::Vega)?;
         // Under a columns facet with shared scales Vega-Lite drops the line's own symbol stroke width.
         let default_circle = if !has_layers && !dashed && r.multiples.as_ref().is_some_and(|m| m.columns.is_some() && m.scale != "independent") && fam == "line" {
             LegendSymbol::ThinCircle
@@ -3727,6 +3724,20 @@ pub(super) fn fit(
                     if let Some(ab) = crate::annotation::bounds(&annotation_ctx(pw, ph)) {
                         b.union(&ab);
                     }
+                    let strip_ink = composed.as_ref().map(|(rows, _, style)| {
+                        let mut ink = vega_fit::Bounds::empty_new();
+                        support_table_strip::composed_ink(
+                            &mut ink,
+                            rows,
+                            style,
+                            ay_stub_pad,
+                            pw,
+                            y_on_right,
+                            if style.position == "bottom" { ph } else { 0.0 },
+                            strip_axis_offset,
+                        );
+                        ink
+                    });
                     if let Some(lg) = &vega_legend_box {
                         // `legendParams` anchors a side legend on `xBounds` and a
                         // top/bottom one on `yBounds` (`legend.js:41-64`): the
@@ -3806,22 +3817,18 @@ pub(super) fn fit(
                         let max_rows = labels_meta.iter().map(|&(_, _, rows)| rows).max().unwrap_or(1);
                         let x_axis_y2 = row_y + x_font_size + (max_rows - 1) as f64 * (x_font_size + 2.0) + x_title_extra;
                         let x_bounds = (x_bounds.0, x_bounds.1.max(crate::annotation::text_x2(&annotation_ctx(pw, ph))));
-                        legend_pos = legend_origin(&r.legend.position, x_bounds, (scope_top, x_axis_y2), (pw, ph), size);
+                        // The legend clears the strip's rows too, ink beside the plot like an axis.
+                        let mut bounds = vega_fit::Bounds::new(x_bounds.0, scope_top, x_bounds.1, x_axis_y2);
+                        if let Some(ink) = &strip_ink {
+                            bounds.union(ink);
+                        }
+                        legend_pos = legend_origin(&r.legend.position, (bounds.x1, bounds.x2), (bounds.y1, bounds.y2), (pw, ph), size);
                         if let Some(reach) = legend_fit_bounds(&r.legend.position, legend_pos, size) {
                             b.union(&reach);
                         }
                     }
-                    if let Some((rows, _, style)) = &composed {
-                        support_table_strip::composed_ink(
-                            b,
-                            rows,
-                            style,
-                            ay_stub_pad,
-                            pw,
-                            y_on_right,
-                            if style.position == "bottom" { ph } else { 0.0 },
-                            strip_axis_offset,
-                        );
+                    if let Some(ink) = &strip_ink {
+                        b.union(ink);
                     }
                     Ok(())
                 };
@@ -5635,9 +5642,12 @@ pub(super) fn fit(
             .ok_or("area: stacked area's line_mark.stroke.color is required")?;
         for (series, runs) in &stacked_series_points {
             let color = series_fill(series, &palette_domain, &r.series_palette, is_multi, category_scale)?;
-            under.extend(runs.iter().map(|run| crate::annotation::DataMark::Area {
-                hi: run.iter().map(|&(x, _, y)| (x, y)).collect(),
-                lo: run.iter().map(|&(x, y, _)| (x, y)).collect(),
+            under.extend(runs.iter().map(|run| {
+                let area = crate::annotation::DataMark::Area {
+                    hi: run.iter().map(|&(x, _, y)| (x, y)).collect(),
+                    lo: run.iter().map(|&(x, y, _)| (x, y)).collect(),
+                };
+                crate::annotation::DataMark::Tinted(Box::new(area), color.to_string(), area_opacity)
             }));
             let d = d3rs::shape::stacked_area_path(runs, curve);
             // The path's first item: the first x's own datum, or the imputed row there.
@@ -5645,9 +5655,9 @@ pub(super) fn fit(
             let path = Node::Path(
                 Attrs::new()
                     .set("d", d)
-                    .set("fill", crate::href::Anchor::paint(anchor, &color))
+                    .set("fill", &color)
                     .set("fill-opacity", area_opacity.to_string())
-                    .set("stroke", crate::href::Anchor::paint(anchor, stroke_color))
+                    .set("stroke", stroke_color)
                     .set("stroke-width", line_w.to_string())
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join),
@@ -5663,16 +5673,19 @@ pub(super) fn fit(
     } else if draw_areas {
         for (series, runs) in &series_points {
             let color = series_fill(series, &palette_domain, &r.series_palette, is_multi, category_scale)?;
-            under.extend(runs.iter().map(|run| crate::annotation::DataMark::Area {
-                hi: run.clone(),
-                lo: run.iter().map(|&(x, _)| (x, area_floor_y)).collect(),
+            under.extend(runs.iter().map(|run| {
+                let area = crate::annotation::DataMark::Area {
+                    hi: run.clone(),
+                    lo: run.iter().map(|&(x, _)| (x, area_floor_y)).collect(),
+                };
+                crate::annotation::DataMark::Tinted(Box::new(area), color.to_string(), area_opacity)
             }));
             let d = d3rs::shape::area_path(runs, area_floor_y, curve);
             let anchor = selection.mark(r.link_open.anchor(series_href(&data_key_of(series))));
             let path = Node::Path(
                 Attrs::new()
                     .set("d", d)
-                    .set("fill", crate::href::Anchor::paint(anchor, &color))
+                    .set("fill", &color)
                     .set("fill-opacity", area_opacity.to_string()),
             );
             plot.push(crate::contract::connected_group("area", "layer_2_marks", vec![crate::href::linked(anchor, path)]));
@@ -5934,7 +5947,7 @@ pub(super) fn fit(
                 let line = Attrs::new()
                     .set("d", d)
                     .set("fill", "none")
-                    .set("stroke", crate::href::Anchor::paint(anchor, &color))
+                    .set("stroke", &color)
                     .set("stroke-width", line_w.to_string())
                     .set("stroke-linecap", cap)
                     .set("stroke-linejoin", join);
@@ -6575,7 +6588,7 @@ pub(super) fn fit(
         };
         let ghost_texts = ghost_ladder(&tick_values)?.map(|(labels, _)| labels);
         let y_shift = measure::baseline_shift("middle", y_font_sz) + 0.5;
-        let face = |anchor| LabelFace { places: 3, anchor, family: y_fam, size: y_font_sz, weight: &ywt, fill: ycol };
+        let face = |anchor| LabelFace { places: 3, anchor, family: y_fam, size: y_font_sz, weight: &ywt, style: ax_y.labels.font.style.as_deref(), fill: ycol };
         for (i, &tv) in tick_values.iter().enumerate() {
             if y_visible.as_ref().is_some_and(|v| !v[i]) {
                 continue;
@@ -6639,6 +6652,7 @@ pub(super) fn fit(
                 font_family: y_fam,
                 font_size: y_font_sz,
                 font_weight: &ywt,
+                font_style: ax_y.labels.font.style.as_deref(),
                 font_color: ax_y.labels.font.color.as_deref().unwrap_or("#626366"),
                 tick_size: y_tick_eff,
                 ticks: &ax_y.ticks,
@@ -6717,6 +6731,7 @@ pub(super) fn fit(
                     .vega("font-family", sl.font_family.as_str())
                     .set("font-size", sl.font_size.to_string())
                     .set("font-weight", sl.font_weight.as_str())
+                    .set("font-style", sl.font_style.as_str())
                     .set("fill", crate::selected::ink(selection.recede_of_series(series), &rcolor))
                     .extend(rail_label_attrs.clone()),
                 plan,
@@ -6967,6 +6982,7 @@ pub(super) fn fit(
         ghost_labels,
         val_font_size: y_font_sz,
         val_weight: ax_y.labels.font.weight_str().to_string(),
+        val_style: ax_y.labels.font.style_attr(),
         val_color: ax_y.labels.font.color.as_deref().unwrap_or("#626366").to_string(),
         val_family: y_fam.to_string(),
         val_caption: y_caption,

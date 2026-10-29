@@ -1629,3 +1629,60 @@ WARN_WAREHOUSE_CHECK_UNAVAILABLE = REGISTRY.register(
         docs_topic="queries",
     )
 )
+
+ERR_METRICFLOW_NOT_INSTALLED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-METRICFLOW-NOT-INSTALLED",
+        domain="execute",
+        title="MetricFlow compiler is not installed",
+        message_template=(
+            "This source declares a MetricFlow bundle (`metricflow:`), and the "
+            "metricflow-sql library that compiles its queries is not installed in "
+            "this Python environment. Install it with: {install}"
+        ),
+        doc=(
+            "Fired when a query runs against a source whose `metricflow:` names a "
+            "semantic bundle and `metricflow_sql` cannot be imported. The compiler "
+            "is optional and needs Python 3.12 or newer; install it into the "
+            "environment `dct` runs from. A source without `metricflow:` never "
+            "loads it."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_METRICFLOW_BUNDLE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-METRICFLOW-BUNDLE-INVALID",
+        domain="execute",
+        title="MetricFlow bundle could not be loaded",
+        message_template="MetricFlow bundle {path!r} could not be loaded: {reason}",
+        doc=(
+            "Fired when the directory a source's `metricflow:` names holds no "
+            "files, a fragment fails MetricFlow's schema, or its objects do not "
+            "resolve (a relationship to an unknown entity, two datasets with one "
+            "name). The path is relative to the project root. Fix the fragment, "
+            "or in a dbt project run `dbt parse` so the dbt-metricflow-sql plugin "
+            "rewrites `target/metricflow/`."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_METRICFLOW_COMPILE_FAILED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-METRICFLOW-COMPILE-FAILED",
+        domain="execute",
+        title="MetricFlow could not compile this query",
+        message_template="MetricFlow could not compile this query: {reason}",
+        doc=(
+            "Fired when a query reads a dataset or constellation of the source's "
+            "MetricFlow bundle and the compiler rejects it: an attribute or "
+            "calculation the bundle does not declare, a table outside the bundle "
+            "joined beside a dataset, or SQL MetricFlow cannot plan. The query "
+            "never reaches the warehouse. Check the names against the bundle's "
+            "fragments."
+        ),
+        docs_topic="queries",
+    )
+)

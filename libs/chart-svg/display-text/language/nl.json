@@ -36,38 +36,63 @@
   "controls.date": "{day} {month} {year}",
   "controls.date_no_year": "{day} {month}",
   "controls.field_label": "{label}:",
+  "controls.fiscal_quarter_to_date": "Fiscaal kwartaal tot nu toe",
+  "controls.fiscal_year_to_date": "Fiscaal jaar tot nu toe",
   "controls.from": "Vanaf {date}",
-  "controls.last_12_months": "Laatste 12 maanden",
-  "controls.last_28_days": "Laatste 28 dagen",
-  "controls.last_7_days": "Laatste 7 dagen",
-  "controls.last_90_days": "Laatste 90 dagen",
   "controls.list_join": ", ",
   "controls.month_to_date": "Maand tot nu toe",
   "controls.next_month": "Volgende maand",
   "controls.no": "Nee",
   "controls.page_range": "{first}–{last} / {total}",
+  "controls.preset_last": "Laatste {duration}",
+  "controls.preset_previous": "Vorige {duration}",
   "controls.previous_month": "Vorige maand",
+  "controls.quarter_to_date": "Kwartaal tot nu toe",
   "controls.range": "{start} – {end}",
   "controls.range_same_month": "{start_day}–{end_day} {month} {year}",
   "controls.search": "Zoeken",
   "controls.search_values": "Waarden zoeken",
   "controls.sort_ascending": "Oplopend sorteren",
   "controls.sort_descending": "Aflopend sorteren",
+  "controls.this_fiscal_quarter": "Dit fiscale kwartaal",
+  "controls.this_fiscal_year": "Dit fiscale jaar",
+  "controls.this_month": "Deze maand",
+  "controls.this_quarter": "Dit kwartaal",
+  "controls.this_week": "Deze week",
+  "controls.this_year": "Dit jaar",
   "controls.today": "Vandaag",
   "controls.until": "Tot {date}",
+  "controls.week_to_date": "Week tot nu toe",
   "controls.year_to_date": "Jaar tot nu toe",
   "controls.yes": "Ja",
+  "controls.yesterday": "Gisteren",
   "duration.day": {
     "one": "{n} dag",
     "other": "{n} dagen"
+  },
+  "duration.fiscal_quarter": {
+    "one": "{n} fiscaal kwartaal",
+    "other": "{n} fiscale kwartalen"
+  },
+  "duration.fiscal_year": {
+    "one": "{n} fiscaal jaar",
+    "other": "{n} fiscale jaren"
   },
   "duration.month": {
     "one": "{n} maand",
     "other": "{n} maanden"
   },
+  "duration.quarter": {
+    "one": "{n} kwartaal",
+    "other": "{n} kwartalen"
+  },
   "duration.week": {
     "one": "{n} week",
     "other": "{n} weken"
+  },
+  "duration.year": {
+    "one": "{n} jaar",
+    "other": "{n} jaar"
   },
   "footer.data_as_of": "Gegevens per {date} om {time}",
   "footer.made_with": "gemaakt met {brand}",

@@ -266,8 +266,9 @@ def test_repeated_pie_layout_items_carry_their_slot_width_resolution() -> None:
     assert len({width for width, _chart in pies}) == 2
     wide = max(pies, key=lambda pair: pair[0])[1]
     narrow = min(pies, key=lambda pair: pair[0])[1]
-    assert wide.attached_table is None
-    assert narrow.attached_table is not None
+    assert wide.full_attachment is not None and narrow.full_attachment is not None
+    assert wide.full_attachment.placement == "right"
+    assert narrow.full_attachment.placement == "bottom"
 
 
 class TestBuildResolvedBoardV2Tree:

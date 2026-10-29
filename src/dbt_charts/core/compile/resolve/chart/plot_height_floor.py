@@ -1,7 +1,7 @@
 """Height floor for narrow cartesian cards: a measurement, not a mutation.
 
 Extends the ``pie`` family's ``WHEEL_DOMINANCE_MIN_RATIO`` precedent
-(``compile/resolve/chart/pie_attachment.py``) to cartesian charts: below a
+(``libs/chart-svg/chart-renderer/src/families/pie.rs``) to cartesian charts: below a
 calibrated fraction of the card's own height, the plot is starved. Shared by
 every cartesian family that estimates a plot-height floor -- currently
 ``bar.py``'s own ``WARN-PLOT-HEIGHT-BELOW-MINIMUM`` measurement and this

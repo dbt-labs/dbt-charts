@@ -194,10 +194,10 @@ charts:
                 align: end
                 overlay: false
 
-  # 3. Area: a promo band with an outline, a trend with a custom interval.
-  promo_area:
+  # 3. Line: a promo band with an outline, a trend with a custom interval.
+  promo_line:
     query: monthly
-    type: area
+    type: line
     title: 3. Summer promo and trend ($M)
     x: month
     y: revenue
@@ -427,6 +427,7 @@ charts:
 
   # 7. Date bars: a faint outage band, a bar-safe halo label, a trend interval.
   monthly_bars:
+    warnings_ignore: [WARN-TREND-ON-BARS]
     query: monthly_orders
     type: bar
     title: 7. Orders by month
@@ -755,7 +756,7 @@ rows:
       - goal_line
       - segment_line
   - cols:
-      - promo_area
+      - promo_line
       - clock_area
   - cols:
       - region_bars

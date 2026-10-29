@@ -6,12 +6,18 @@ a common ``DbtChartsError`` without any of them depending on another.
 
 from __future__ import annotations
 
+import logging
+import traceback
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Self
+
+from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 
 if TYPE_CHECKING:
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
     from dbt_charts.core.diagnostics.registry import ErrorCode
+
+_log = logging.getLogger(__name__)
 
 
 class DbtChartsError(Exception):
@@ -30,8 +36,10 @@ class DbtChartsError(Exception):
     line: int | None = None
     column: int | None = None
     field_path: str = ""
-    # Foreign text (driver/subprocess output), never put in the authored
-    # message. Log-only; see from_code's detail param.
+    # Foreign text (driver/subprocess output, an internal error's traceback),
+    # never put in the authored message. Only local surfaces show it (`dct`
+    # error panels, `dct serve`'s error page); anything served to a browser or
+    # stored drops it. See from_code's detail param.
     detail: str | None = None
 
     @classmethod
@@ -96,6 +104,20 @@ class DbtChartsError(Exception):
                 continue
             setattr(inst, key, value)
         return inst
+
+    @classmethod
+    def from_unexpected(cls, exc: Exception) -> Self:
+        """ERR-INTERNAL for an exception no registered code classifies.
+
+        An internal error is a bug, and a report needs what ``str(exc)`` drops:
+        the exception's type and its traceback.
+        """
+        _log.error("Internal error: %s", exc, exc_info=exc)
+        return cls.from_code(
+            ERR_INTERNAL,
+            message=f"{type(exc).__name__}: {exc}",
+            detail="".join(traceback.format_exception(exc)),
+        )
 
     def to_diagnostic(self, file: str | None = None) -> Diagnostic:
         from dbt_charts.core.diagnostics.diagnostic import build_diagnostic

@@ -91,8 +91,8 @@ style:
       title:
         font:
           color: chrome[10]
-    # Soft tooltip: no outline, a drop shadow, rounded swatch, and a
-    # background-fill active marker. stark is the hard-outline variant.
+    # Soft tooltip: no outline (the _base drop shadow separates the card).
+    # stark is the hard-outline variant.
     tooltip:
       background: dbt-grays.white
       label:
@@ -107,12 +107,6 @@ style:
         # card, so the outline is redundant. Kept only on stark, which turns the
         # shadow off and relies on a hard outline for its utilitarian look.
         width: 0.0
-        radius: 4.0
-      shadow:
-        visible: true
-      swatch:
-        radius: 3.0
-      active_marker: fill
     # One scaffold rung past this theme's own measure gridline, at twice
     # that gridline's width -- reads as structure, not as another series.
     hover_emphasis:

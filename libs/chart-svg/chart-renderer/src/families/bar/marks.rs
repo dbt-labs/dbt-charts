@@ -691,14 +691,17 @@ pub(super) fn bar_passes(
     aria_label: Option<&str>,
     href: Option<crate::href::Anchor<'_>>,
 ) -> Result<Vec<Node>, String> {
-    let (fill, stroke) = (crate::href::Anchor::paint(href, fill), crate::href::Anchor::paint(href, stroke));
-    let (fill, stroke) = (fill.as_str(), stroke.as_str());
     let r = if horizontal {
         crate::common::bar_corner_radius(r, h, w)
     } else {
         crate::common::bar_corner_radius(r, w, h)
     };
     let stroked = stroke_w > 0.0 && stroke != "none" && !stroke.is_empty();
+    // The second stroke pass sits outside the datum's `<a>`, so `linked` never reaches it.
+    let overlay = |attrs: Attrs| match href.and_then(|anchor| anchor.recede) {
+        Some(recede) => recede.recede_attrs(attrs),
+        None => attrs,
+    };
     let stroke_attrs = |attrs: Attrs| {
         if stroked { attrs.set("stroke", stroke).set("stroke-width", stroke_w.to_string()) } else { attrs }
     };
@@ -731,7 +734,7 @@ pub(super) fn bar_passes(
         };
         let mut nodes = vec![crate::href::linked(href, shape(stroke_attrs(fill_attrs(Attrs::new())).extend(label_attrs)))];
         if stroke_repeat {
-            nodes.push(shape(stroke_attrs(Attrs::new().set("fill", "none"))));
+            nodes.push(shape(overlay(stroke_attrs(Attrs::new().set("fill", "none")))));
         }
         return grouped(nodes);
     }
@@ -805,7 +808,7 @@ pub(super) fn bar_passes(
                 children: vec![Node::Path(Attrs::new().set("d", d.as_str()))],
             });
         }
-        nodes.push(Node::Path(stroke_attrs(Attrs::new().set("d", d.as_str()).set("fill", "none"))));
+        nodes.push(Node::Path(overlay(stroke_attrs(Attrs::new().set("d", d.as_str()).set("fill", "none")))));
     }
     grouped(nodes)
 }

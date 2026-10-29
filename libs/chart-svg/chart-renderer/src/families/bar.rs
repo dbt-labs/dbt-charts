@@ -12,8 +12,7 @@
 //! inside its `.role-mark` group, wrapping the datum's first drawn element, the
 //! value percent-encoded by `_vega_encode_field`'s chain. Refuses: a `color`,
 //! stacked, `layers`, or `support_table` bar, and a
-//! `{{ color }}`/`{{ theta }}` placeholder. A date x reads `{{ x }}` as `0NaN-NaN-NaN`
-//! (`timeFormat` of a band-scale string).
+//! `{{ color }}`/`{{ theta }}` placeholder. A date x reads `{{ x }}` as the row's ISO date.
 //!
 //! Domain-sort conventions:
 //!   - Authored `chart.sort`: the sort field summed per category, either
@@ -237,8 +236,8 @@ pub(crate) struct BarResolved {
     // `resolve_column_set_link(row_detail=False)`), keyed by CHANNEL name
     // placeholders (`{{ x }}`, `{{ color }}` — never a column name; that
     // form is the table row-detail path, ported separately). Only wired on
-    // the single-series (no `color`), unstacked, unlayered, non-temporal
-    // band-scale bar, vertical or horizontal (`render()`'s own gate, and
+    // the single-series (no `color`), unstacked, unlayered
+    // band-scale or dated bar, vertical or horizontal (`render()`'s own gate, and
     // `render_facet`'s own) — every other shape refuses by name rather than
     // silently drawing a mark with no href.
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
@@ -755,9 +754,7 @@ impl BarResolved {
     /// The per-datum link (`ClickInteractivityFeature`). `{{ x }}` reads the
     /// row's own raw cell, which the band domain folds (a null and an empty
     /// string share a `row_str` key where Vega's `'' + datum` gives `"null"` and
-    /// `""`). A date x on a band scale rides as a string, which
-    /// `timeFormat(datum[x], '%Y-%m-%d')` reads as an invalid date, so it prints
-    /// `0NaN-NaN-NaN`; a time scale's x is a real date.
+    /// `""`). A date x links its ISO date, whether the scale is a band or a time scale.
     fn datum_link<'a>(&'a self, cat_field: &'a str, x_text: crate::href::LinkText) -> Option<crate::href::DatumLink<'a>> {
         Some(crate::href::DatumLink {
             template: self.link.as_deref()?,
@@ -5744,42 +5741,44 @@ mod tests {
         );
     }
 
-    /// HIGH, historically: a `position: top` strip on a grouped bar with a
-    /// top legend must not paint over the legend. `composed_cfg` now covers
-    /// a grouped bar's rail-disabled/legend-suppressed shape (this fixture's
-    /// own `false`-legend sibling), but a chart that actually KEEPS its
-    /// legend still refuses: the legend's own box under the composed pad
-    /// arm has no probed margin term yet. Pinned as a refusal instead of a
-    /// wrong render.
+    /// A kept legend on any edge clears a strip on either side of the plot:
+    /// the strip's rows are ink beside the plot, like an axis. A grouped bar
+    /// and a bar with a line layer (whose legend names the layer) both.
     #[test]
-    fn attached_support_table_top_strip_does_not_overlap_a_top_legend() {
-        let mut payload_json =
-            make_vertical_payload(&[("Alpha", 1000.0), ("Beta", 2000.0)], true);
-        payload_json["resolved"]["support_table"] = serde_json::json!({
-            "entries": [{"source": "revenue", "aggregate": "sum", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Revenue"}]
-        });
-        payload_json["resolved"]["effective_support_table_style"] = support_table_style_json();
-        let payload = make_payload(payload_json);
+    fn attached_support_table_strip_does_not_overlap_a_legend() {
         let fonts = test_fonts();
-        let svg = render(&payload, &fonts).expect("a kept top legend takes the pad arm");
-        assert!(svg.contains(">Revenue<") && svg.contains(">Alpha<"), "{svg}");
-    }
-
-    /// Same shape, `legend.position: right`.
-    #[test]
-    fn attached_support_table_top_strip_shifts_with_a_right_legend() {
-        let mut payload_json =
-            make_vertical_payload(&[("Alpha", 1000.0), ("Beta", 2000.0)], true);
-        payload_json["resolved"]["legend"]["position"] = serde_json::json!({"edge": "right", "align": "start", "overlay": false});
-        payload_json["resolved"]["legend"]["direction"] = serde_json::json!("vertical");
-        payload_json["resolved"]["support_table"] = serde_json::json!({
-            "entries": [{"source": "revenue", "aggregate": "sum", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Revenue"}]
-        });
-        payload_json["resolved"]["effective_support_table_style"] = support_table_style_json();
-        let payload = make_payload(payload_json);
-        let fonts = test_fonts();
-        let svg = render(&payload, &fonts).expect("a kept right legend takes the pad arm");
-        assert!(svg.contains(">Revenue<") && svg.contains(">Alpha<"), "{svg}");
+        for edge in ["top", "bottom", "left", "right"] {
+            for strip in ["top", "bottom"] {
+                for layered in [false, true] {
+                    let mut payload_json = make_vertical_payload(&[("Alpha", 1000.0), ("Beta", 2000.0)], !layered);
+                    if layered {
+                        payload_json["rows"] = serde_json::json!([
+                            {"product": "Alpha", "revenue": 1000.0, "target": 1200.0},
+                            {"product": "Beta", "revenue": 2000.0, "target": 1800.0}
+                        ]);
+                        payload_json["resolved"]["layers"] = serde_json::json!([line_layer_json("#779bc9")]);
+                        payload_json["resolved"]["legend"]["visible"] = serde_json::json!(true);
+                    }
+                    payload_json["resolved"]["legend"]["position"] =
+                        serde_json::json!({"edge": edge, "align": "start", "overlay": false});
+                    if edge == "left" || edge == "right" {
+                        payload_json["resolved"]["legend"]["direction"] = serde_json::json!("vertical");
+                    }
+                    payload_json["resolved"]["support_table"] = serde_json::json!({
+                        "entries": [{"source": "revenue", "aggregate": "sum", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Revenue"}]
+                    });
+                    payload_json["resolved"]["effective_support_table_style"] =
+                        if strip == "top" { support_table_style_json() } else { support_table_style_json_bottom() };
+                    if strip == "bottom" {
+                        payload_json["resolved"]["support_table_axis_offset"] = serde_json::json!(17.0);
+                    }
+                    let svg = render(&make_payload(payload_json), &fonts)
+                        .unwrap_or_else(|e| panic!("{edge} legend, {strip} strip, layered {layered}: {e:?}"));
+                    assert!(svg.contains(">Revenue<"), "{svg}");
+                    support_table_strip::assert_legend_clears_strip(&svg, &fonts);
+                }
+            }
+        }
     }
 
     /// Regression: the strip used to rebuild its own plot
@@ -16180,14 +16179,13 @@ mod tests {
             assert!(modal.contains("data-dbt-link-open=\"modal\""), "{modal}");
         }
 
-        /// `_build_href_calc_expr` applies `timeFormat` to a temporal x, which a
-        /// band-scale date string makes an invalid date: d3 pads each NaN part.
+        /// A date x on a band scale links the row's own ISO date, never a NaN placeholder.
         #[test]
-        fn a_temporal_x_with_a_link_reads_the_invalid_date_timeformat() {
+        fn a_temporal_x_with_a_link_reads_the_rows_iso_date() {
             let mut payload_json = make_vertical_payload(&[("2025-01-01", 100.0), ("2025-02-01", 90.0)], false);
             payload_json["resolved"]["link"] = json!("/data/db/main/x/?d={{ x }}");
             let svg = render(&make_payload(payload_json), &test_fonts()).unwrap();
-            assert_eq!(hrefs(&svg), ["/data/db/main/x/?d=0NaN-NaN-NaN"; 2], "{svg}");
+            assert_eq!(hrefs(&svg), ["/data/db/main/x/?d=2025-01-01", "/data/db/main/x/?d=2025-02-01"], "{svg}");
         }
 
         /// A `{{ y }}` placeholder reads the datum's own measure.

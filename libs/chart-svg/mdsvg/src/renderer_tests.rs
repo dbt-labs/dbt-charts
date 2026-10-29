@@ -626,6 +626,8 @@ fn test_short_code_block_background_shrinks_to_content() {
 #[test]
 fn test_code_block_vertical_padding_is_tighter_than_horizontal() {
     let style = Style {
+        base_font_size: 10.0,
+        line_height: 1.4,
         code_font_size: 10.0,
         code_block_padding: 12.0,
         ..Style::default()
@@ -1801,7 +1803,7 @@ fn test_heading_baseline_reports_the_line_the_heading_was_drawn_on() {
 }
 
 #[test]
-fn test_heading_line_box_is_the_block_without_its_margins() {
+fn test_heading_text_box_is_the_block_without_its_margins() {
     // The bottom margin is rhythm; what is left is the text. The top
     // margin is not in the block at all — an opening heading collapses it
     // — so the line box starts at the block's own top edge.
@@ -1816,7 +1818,9 @@ fn test_heading_line_box_is_the_block_without_its_margins() {
         .unwrap()
         .height;
 
-    let (top, height) = renderer.heading_line_box(1, block);
+    let document = parse("# Heading");
+    let AnyBlock::Heading(heading) = &document[0] else { panic!("a heading") };
+    let (top, height) = renderer.heading_text_box(heading, 400.0).unwrap();
     assert!(top.abs() < 1e-9);
     assert!((height - (block - 10.0)).abs() < 1e-9);
     let baseline = renderer.first_baseline(&parse("# Heading"), 400.0).unwrap();
@@ -3667,4 +3671,60 @@ fn an_empty_cell_still_prints_an_open_and_close_text() {
     let result = laid_out("| h |\n|---|\n|   |");
     let printed = print::print(&[result.svg()]);
     assert!(printed.contains("text-anchor=\"start\"></text>"), "{printed}");
+}
+
+// --- TestHeadingBodyLineGrid ---
+
+fn grid_style() -> Style {
+    Style {
+        base_font_size: 14.0,
+        line_height: 1.4,
+        heading_margin_top_px: Some(39.2),
+        minor_heading_margin_top_px: Some(19.6),
+        heading_margin_bottom_px: Some(0.0),
+        h1_margin_bottom_px: Some(19.6),
+        heading_line_height: Some(1.1),
+        heading_grid_px: Some(19.6),
+        paragraph_spacing: 19.6,
+        h1_size: Some(24.0),
+        h2_size: Some(18.0),
+        h3_size: Some(14.0),
+        ..Style::default()
+    }
+}
+
+fn grid_block(md: &str, width: f64) -> f64 {
+    let lead = measure_with("Body.", 400.0, 0.0, grid_style()).height;
+    measure_with(md, width, 0.0, grid_style()).height - lead
+}
+
+#[test]
+fn test_heading_block_rounds_up_to_whole_body_lines() {
+    assert!((grid_block("Body.\n\n# H", 400.0) - (39.2 + 2.0 * 19.6 + 19.6)).abs() < 1e-6);
+    assert!((grid_block("Body.\n\n## H", 400.0) - (39.2 + 19.6)).abs() < 1e-6);
+    assert!((grid_block("Body.\n\n### H", 400.0) - (19.6 + 19.6)).abs() < 1e-6);
+    let wrapped = format!("Body.\n\n# {}", "word ".repeat(40));
+    let lines = (grid_block(&wrapped, 200.0) - 39.2 - 19.6) / 19.6;
+    assert!(lines > 2.0);
+    assert!((lines - lines.round()).abs() < 1e-6);
+}
+
+#[test]
+fn test_code_block_leading_is_whole_body_lines_that_clear_the_glyph() {
+    for (code_size, leading) in [(10.0, 19.6), (14.0, 19.6), (24.0, 39.2)] {
+        for overflow in [crate::style::CodeBlockOverflow::Wrap, crate::style::CodeBlockOverflow::Show] {
+            let height = |lines: usize| {
+                let style = Style {
+                    base_font_size: 14.0,
+                    line_height: 1.4,
+                    code_font_size: code_size,
+                    code_block_overflow: overflow,
+                    ..Style::default()
+                };
+                let code = vec!["a"; lines].join("\n");
+                measure_with(&format!("```\n{code}\n```"), 400.0, 0.0, style).height
+            };
+            assert!((height(3) - height(1) - 2.0 * leading).abs() < 1e-6, "{code_size} {overflow:?}");
+        }
+    }
 }

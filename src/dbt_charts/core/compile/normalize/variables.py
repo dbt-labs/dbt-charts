@@ -38,7 +38,7 @@ from dbt_charts.core.compile.models.variable.authored import (
     Variable,
     VariableInputType,
 )
-from dbt_charts.core.compile.template.daterange import DATERANGE_PRESETS
+from dbt_charts.core.compile.template.daterange import parse_daterange_preset
 from dbt_charts.core.compile.template.variables import (
     choice_member_type,
     coerce_variable_values,
@@ -695,15 +695,14 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
     # Special case: daterange needs structural validation (2-element list)
     if input_type == "daterange":
         if isinstance(value, str):
-            if value not in DATERANGE_PRESETS:
+            try:
+                parse_daterange_preset(value)
+            except ValueError as e:
                 raise CompilationError.from_code(
                     ERR_VALIDATION_FIELD,
                     field_path=f"variables.{var_name}.default",
-                    pydantic_msg=(
-                        "daterange default must be [start, end] or a preset "
-                        f"({', '.join(DATERANGE_PRESETS)}), got {value!r}"
-                    ),
-                )
+                    pydantic_msg=str(e),
+                ) from None
             return
         if not isinstance(value, (list, tuple)) or len(value) != 2:
             raise CompilationError.from_code(
@@ -777,6 +776,16 @@ def validate_variable_value(var_name: str, var: Variable, value: Any) -> None:
             )
         if isinstance(value, str) and value.strip():
             _validate_date_string(var_name, f"{input_type} default", value)
+
+
+def validate_presets_scope(var_name: str, var: Variable) -> None:
+    """`presets` is a daterange picker's menu; any other input has none."""
+    if var.presets is not None and var.input != "daterange":
+        raise CompilationError.from_code(
+            ERR_VALIDATION_FIELD,
+            field_path=f"variables.{var_name}.presets",
+            pydantic_msg=f"presets applies to input: daterange, not {var.input}",
+        )
 
 
 def validate_choice_type(var_name: str, var: Variable) -> None:

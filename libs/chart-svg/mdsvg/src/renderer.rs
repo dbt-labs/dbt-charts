@@ -1203,6 +1203,13 @@ impl SVGRenderer {
     /// line. Python colors the lines with Pygments when `style.code_highlight`
     /// is on and the fence names a language Pygments resolves; an unknown
     /// alias falls through to the plain block (`renderer.py:815-821`).
+    /// `renderer.py::_code_line_height`: the glyph's own leading, rounded up to
+    /// whole body lines.
+    fn code_line_height(&self, font_size: f64) -> f64 {
+        let body_line = self.style.base_font_size * self.style.line_height;
+        (font_size * 1.4 / body_line).ceil() * body_line
+    }
+
     fn logical_code_lines(&self, code: &CodeBlock) -> Result<Vec<Vec<CodeSegment>>, String> {
         if self.style.code_highlight {
             if let Some(language) = code.language.as_deref().filter(|l| !l.is_empty()) {
@@ -1318,21 +1325,52 @@ impl SVGRenderer {
     /// `(0, 0)`.
     fn heading_margins(&self, block: &AnyBlock) -> (f64, f64) {
         match block {
-            AnyBlock::Heading(h) => self.heading_margins_at(self.style.get_heading_size(h.level)),
+            AnyBlock::Heading(h) => self.heading_margins_at(h.level),
             _ => (0.0, 0.0),
         }
     }
 
-    fn heading_margins_at(&self, font_size: f64) -> (f64, f64) {
-        let margin_top = self
-            .style
-            .heading_margin_top_px
-            .unwrap_or(font_size * self.style.heading_margin_top);
-        let margin_bottom = self
-            .style
-            .heading_margin_bottom_px
-            .unwrap_or(font_size * self.style.heading_margin_bottom);
+    fn heading_margins_at(&self, level: u8) -> (f64, f64) {
+        let font_size = self.style.get_heading_size(level);
+        let top_px = match self.style.minor_heading_margin_top_px {
+            Some(minor) if level >= 3 => Some(minor),
+            _ => self.style.heading_margin_top_px,
+        };
+        let margin_top = top_px.unwrap_or(font_size * self.style.heading_margin_top);
+        let bottom_px = match self.style.h1_margin_bottom_px {
+            Some(h1) if level == 1 => Some(h1),
+            _ => self.style.heading_margin_bottom_px,
+        };
+        let margin_bottom = bottom_px.unwrap_or(font_size * self.style.heading_margin_bottom);
         (margin_top, margin_bottom)
+    }
+
+    /// `renderer.py::_heading_lines`: a heading's laid-out lines, the shift
+    /// that moves them down inside their block, and the block's text extent.
+    /// With `heading_grid_px` the block is a whole number of grid lines and the
+    /// last baseline sits where body text's baseline sits in the last of them.
+    fn heading_lines(&self, heading: &Heading, width: f64) -> Result<(Vec<Line>, f64, f64), String> {
+        let style = &self.style;
+        let multiplier = style.heading_line_height.unwrap_or(style.line_height);
+        let lines = self.text_lines(
+            &heading.spans,
+            width,
+            style.get_heading_size(heading.level),
+            &style.heading_font_weight,
+            multiplier,
+            true,
+        )?;
+        let text_height: f64 = lines.iter().map(|line| line.height).sum();
+        let grid = match style.heading_grid_px {
+            Some(grid) if !lines.is_empty() => grid,
+            _ => return Ok((lines, 0.0, text_height)),
+        };
+        let box_height = ((text_height / grid - 0.1 - 1e-9).ceil().max(1.0)) * grid;
+        let last = &lines[lines.len() - 1];
+        let natural_last_baseline = text_height - last.height + last.ascent;
+        let body_baseline = self.baseline_offset(style.base_font_size, style.line_height);
+        let shift = box_height - grid + body_baseline - natural_last_baseline;
+        Ok((lines, shift, box_height))
     }
 
     /// `renderer.py::first_baseline`: how far below a document's top edge its
@@ -1343,13 +1381,19 @@ impl SVGRenderer {
     /// The first block must be a heading or a paragraph.
     pub fn first_baseline(&self, blocks: &Document, width: f64) -> Result<f64, String> {
         let (spans, font_size, font_weight, multiplier, is_heading) = match blocks.first() {
-            Some(AnyBlock::Heading(heading)) => (
-                &heading.spans,
-                self.style.get_heading_size(heading.level),
-                self.style.heading_font_weight.as_str(),
-                self.style.heading_line_height.unwrap_or(self.style.line_height),
-                true,
-            ),
+            Some(AnyBlock::Heading(heading)) => {
+                let (lines, shift, _) = self.heading_lines(heading, width)?;
+                // An empty heading paints no text; its line box still has a baseline.
+                return Ok(lines.first().map_or_else(
+                    || {
+                        self.baseline_offset(
+                            self.style.get_heading_size(heading.level),
+                            self.style.heading_line_height.unwrap_or(self.style.line_height),
+                        )
+                    },
+                    |line| line.ascent + shift,
+                ));
+            }
             Some(AnyBlock::Paragraph(paragraph)) => (
                 &paragraph.spans,
                 self.style.base_font_size,
@@ -1382,10 +1426,12 @@ impl SVGRenderer {
             .map_or(self.baseline_offset(font_size, multiplier), |line| line.ascent))
     }
 
-    /// The `(top, height)` of the text's line box inside a heading block.
-    pub fn heading_line_box(&self, level: u8, block_height: f64) -> (f64, f64) {
-        let (_, margin_bottom) = self.heading_margins_at(self.style.get_heading_size(level));
-        (0.0, block_height - margin_bottom)
+    /// `renderer.py::heading_text_box`: the `(top, height)` of a heading's text
+    /// inside its block at `width`, from the block's top edge with the top
+    /// margin collapsed.
+    pub fn heading_text_box(&self, heading: &Heading, width: f64) -> Result<(f64, f64), String> {
+        let (lines, shift, _) = self.heading_lines(heading, width)?;
+        Ok((shift, lines.iter().map(|line| line.height).sum()))
     }
 
     fn inter_block_gap(&self, prev: &AnyBlock, curr: &AnyBlock) -> f64 {
@@ -1909,21 +1955,20 @@ impl SVGRenderer {
         ctx: &RenderContext,
     ) -> Result<(Vec<Element>, f64), String> {
         let font_size = self.style.get_heading_size(heading.level);
-        let (margin_top, margin_bottom) = self.heading_margins_at(font_size);
+        let (margin_top, margin_bottom) = self.heading_margins_at(heading.level);
 
-        let multiplier = self.style.heading_line_height.unwrap_or(self.style.line_height);
         let font_weight = &self.style.heading_font_weight;
-        let lines = self.text_lines(&heading.spans, ctx.width, font_size, font_weight, multiplier, true)?;
-        let (elements, text_height) = self.paint_text_lines(
+        let (lines, shift, box_height) = self.heading_lines(heading, ctx.width)?;
+        let (elements, _) = self.paint_text_lines(
             &lines,
-            &ctx.with_offset(margin_top),
+            &ctx.with_offset(margin_top + shift),
             font_size,
             &self.scoped_class("heading"),
             font_weight,
             true,
         )?;
 
-        Ok((elements, margin_top + text_height + margin_bottom))
+        Ok((elements, margin_top + box_height + margin_bottom))
     }
 
     /// Render a code block with background.
@@ -1975,7 +2020,7 @@ impl SVGRenderer {
 
         let (padding_x, padding_y) = self.code_block_padding();
         let font_size = self.block_code_size();
-        let line_height = font_size * 1.4;
+        let line_height = self.code_line_height(font_size);
         let char_width = font_size * self.ensure_mono_char_width()?;
         let max_chars = ((ctx.width - padding_x * 2.0) / char_width) as i64;
 
@@ -2088,7 +2133,7 @@ impl SVGRenderer {
 
         let (padding_x, padding_y) = self.code_block_padding();
         let font_size = self.block_code_size();
-        let line_height = font_size * 1.4;
+        let line_height = self.code_line_height(font_size);
         let char_width = font_size * self.ensure_mono_char_width()?;
         let max_chars = (10i64).max(((ctx.width - padding_x * 2.0) / char_width) as i64);
 

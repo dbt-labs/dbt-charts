@@ -550,12 +550,12 @@ class TestQueryBoardUnboundVariables:
             "by_day",
             path,
             local_project(tmp_path),
-            vars={"date_range": "last_91_days"},
+            vars={"date_range": "last_week"},
             adapter_registry=registry,
         )
 
         assert result.success is False
-        assert "last_90_days" in result.errors[0]
+        assert "last_<N>_<unit>" in result.errors[0]
 
     def test_a_malformed_date_is_rejected_before_the_query(
         self,

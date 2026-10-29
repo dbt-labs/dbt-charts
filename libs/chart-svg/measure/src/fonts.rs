@@ -416,11 +416,23 @@ fn delta_set_index_map(data: &[u8], index: u32) -> Option<(u16, u16)> {
     Some((outer_index as u16, inner_index as u16))
 }
 
+/// One `ItemVariationData` subtable's header and its region scalars at the
+/// measured location.
+struct VarData {
+    offset: usize,
+    items_start: usize,
+    item_count: u16,
+    long_words: bool,
+    word_delta_count: usize,
+    scalars: Vec<f64>,
+}
+
 /// Parses `HVAR`'s `ItemVariationStore` directly from raw table bytes and
-/// evaluates every glyph's advance-width delta at `(location_axis,
-/// location_value)`, summing `delta * supportScalar` per region in f64 —
-/// `fontTools.varLib.varStore.VarStoreInstancer.__getitem__` /
-/// `interpolateFromDeltasAndScalars`, ported verbatim.
+/// evaluates the advance-width delta of each glyph in `glyphs` at
+/// `(location_axis, location_value)`, summing `delta * supportScalar` per
+/// region in f64 — `fontTools.varLib.varStore.VarStoreInstancer.__getitem__`
+/// / `interpolateFromDeltasAndScalars`, ported verbatim. Only the subtables
+/// and items those glyphs reach are read.
 ///
 /// `ttf_parser::hvar::Table::advance_offset` cannot be used for this: it
 /// takes `&[NormalizedCoordinate]`, and `NormalizedCoordinate` is an `i16`
@@ -430,7 +442,7 @@ fn delta_set_index_map(data: &[u8], index: u32) -> Option<(u16, u16)> {
 /// is the only way to reproduce fontTools' numbers exactly.
 fn hvar_deltas_exact(
     hvar_data: &[u8],
-    num_glyphs: u16,
+    glyphs: impl IntoIterator<Item = u16>,
     location_axis: usize,
     location_value: f64,
 ) -> HashMap<u16, f64> {
@@ -478,66 +490,34 @@ fn hvar_deltas_exact(
         regions.push(axes);
     }
 
-    // Per-VarData-subtable (major index) item deltas, keyed by item (minor
-    // index) — mirrors VarStoreInstancer's per-region scalar cache, scoped
-    // to this one fixed location since a FontMeasurer never changes weight.
-    let mut major_deltas: Vec<HashMap<u16, f64>> = Vec::with_capacity(item_var_data_offsets.len());
-    for &ivd_offset in &item_var_data_offsets {
-        let ivd = &ivs[ivd_offset..];
-        let (Some(item_count), Some(word_delta_count_raw), Some(region_index_count)) = (
-            read_u16(ivd, 0),
-            read_u16(ivd, 2),
-            read_u16(ivd, 4),
-        ) else {
-            major_deltas.push(HashMap::new());
-            continue;
-        };
-        let long_words = (word_delta_count_raw & 0x8000) != 0;
-        let word_delta_count = usize::from(word_delta_count_raw & 0x7FFF);
-        let mut region_indexes = Vec::with_capacity(region_index_count as usize);
-        let mut pos2 = 6usize;
+    // Per-subtable (major index) scalars, read once per subtable a glyph
+    // reaches — VarStoreInstancer's per-region scalar cache, scoped to this
+    // one fixed location.
+    let var_data = |major: usize| -> Option<VarData> {
+        let offset = *item_var_data_offsets.get(major)?;
+        let ivd = &ivs[offset..];
+        let item_count = read_u16(ivd, 0)?;
+        let word_delta_count_raw = read_u16(ivd, 2)?;
+        let region_index_count = read_u16(ivd, 4)?;
+        let mut scalars = Vec::with_capacity(region_index_count as usize);
+        let mut items_start = 6usize;
         for _ in 0..region_index_count {
-            region_indexes.push(read_u16(ivd, pos2).unwrap_or(0));
-            pos2 += 2;
+            let ri = read_u16(ivd, items_start).unwrap_or(0);
+            scalars.push(support_scalar(&regions[ri as usize], location_axis, location_value));
+            items_start += 2;
         }
-        let scalars: Vec<f64> = region_indexes
-            .iter()
-            .map(|&ri| support_scalar(&regions[ri as usize], location_axis, location_value))
-            .collect();
+        Some(VarData {
+            offset,
+            items_start,
+            item_count,
+            long_words: (word_delta_count_raw & 0x8000) != 0,
+            word_delta_count: usize::from(word_delta_count_raw & 0x7FFF),
+            scalars,
+        })
+    };
+    let mut subtables: HashMap<u16, Option<VarData>> = HashMap::new();
 
-        let word_size = if long_words { 4 } else { 2 };
-        let short_size = if long_words { 2 } else { 1 };
-        let region_index_count = region_index_count as usize;
-        let item_size = word_delta_count * word_size + (region_index_count - word_delta_count) * short_size;
-
-        let mut item_deltas = HashMap::with_capacity(item_count as usize);
-        for item in 0..item_count {
-            let item_off = pos2 + usize::from(item) * item_size;
-            let mut off = item_off;
-            let mut delta_sum = 0.0f64;
-            for (k, &scalar) in scalars.iter().enumerate() {
-                let d = if k < word_delta_count {
-                    if long_words {
-                        read_i32(ivd, off).unwrap_or(0) as f64
-                    } else {
-                        read_i16(ivd, off).unwrap_or(0) as f64
-                    }
-                } else if long_words {
-                    read_i16(ivd, off).unwrap_or(0) as f64
-                } else {
-                    *ivd.get(off).map(|&b| b as i8).get_or_insert(0) as f64
-                };
-                off += if k < word_delta_count { word_size } else { short_size };
-                if scalar != 0.0 {
-                    delta_sum += d * scalar;
-                }
-            }
-            item_deltas.insert(item, delta_sum);
-        }
-        major_deltas.push(item_deltas);
-    }
-
-    for gid in 0..num_glyphs {
+    for gid in glyphs {
         let (major, minor): (u16, u16) = if awm_offset != 0 {
             match delta_set_index_map(&hvar_data[awm_offset as usize..], u32::from(gid)) {
                 Some(v) => v,
@@ -546,14 +526,87 @@ fn hvar_deltas_exact(
         } else {
             (0, gid)
         };
-        if let Some(delta) = major_deltas
-            .get(major as usize)
-            .and_then(|m: &HashMap<u16, f64>| m.get(&minor))
-        {
-            out.insert(gid, *delta);
+        let Some(vd) = subtables.entry(major).or_insert_with(|| var_data(major as usize)) else {
+            continue;
+        };
+        if minor >= vd.item_count {
+            continue;
         }
+        let ivd = &ivs[vd.offset..];
+        let word_size = if vd.long_words { 4 } else { 2 };
+        let short_size = if vd.long_words { 2 } else { 1 };
+        let item_size =
+            vd.word_delta_count * word_size + (vd.scalars.len() - vd.word_delta_count) * short_size;
+        let mut off = vd.items_start + usize::from(minor) * item_size;
+        let mut delta_sum = 0.0f64;
+        for (k, &scalar) in vd.scalars.iter().enumerate() {
+            let d = if k < vd.word_delta_count {
+                if vd.long_words {
+                    read_i32(ivd, off).unwrap_or(0) as f64
+                } else {
+                    read_i16(ivd, off).unwrap_or(0) as f64
+                }
+            } else if vd.long_words {
+                read_i16(ivd, off).unwrap_or(0) as f64
+            } else {
+                *ivd.get(off).map(|&b| b as i8).get_or_insert(0) as f64
+            };
+            off += if k < vd.word_delta_count { word_size } else { short_size };
+            if scalar != 0.0 {
+                delta_sum += d * scalar;
+            }
+        }
+        out.insert(gid, delta_sum);
     }
     out
+}
+
+/// Each of `glyphs`' HVAR advance delta, in font units, with `font`'s
+/// `wght` axis at `weight` — `mdsvg.fonts.FontMeasurer._load_advance_deltas`:
+/// normalized, remapped through `avar`, then evaluated without rounding.
+///
+/// A face with no `wght` axis or no `HVAR` table is an `Err`: measuring it
+/// at its default instance would put a heavier run's neighbor on top of it.
+pub fn weighted_advance_deltas(
+    font: &TtfFont<'_>,
+    weight: f32,
+    glyphs: impl IntoIterator<Item = u16>,
+) -> Result<HashMap<u16, f64>, String> {
+    let axes: Vec<_> = font.variation_axes().into_iter().collect();
+    let axis_index = axes
+        .iter()
+        .position(|a| a.tag == Tag::from_bytes(b"wght"))
+        .ok_or_else(|| format!("weight {weight} requires a variable font with a 'wght' axis"))?;
+    let axis = axes[axis_index];
+    let raw = normalize_value(
+        weight as f64,
+        axis.min_value as f64,
+        axis.def_value as f64,
+        axis.max_value as f64,
+    );
+    let location_value = match font.tables().avar {
+        Some(avar) => {
+            let points: Vec<(f64, f64)> = avar
+                .segment_maps
+                .into_iter()
+                .nth(axis_index)
+                .map(|maps| {
+                    maps.into_iter()
+                        .map(|m| (m.from_coordinate as f64 / 16384.0, m.to_coordinate as f64 / 16384.0))
+                        .collect()
+                })
+                .unwrap_or_default();
+            piecewise_linear_map(raw, &points)
+        }
+        None => raw,
+    };
+    // Python falls back to `instantiateVariableFont` here, rebuilding
+    // glyf/gvar so hmtx itself moves — a full font instancer, out of scope
+    // for this port. Every bundled font ships HVAR.
+    let hvar_data = font.raw_face().table(Tag::from_bytes(b"HVAR")).ok_or_else(|| {
+        format!("weight {weight}: variable font has no HVAR table; the no-HVAR instancing fallback is not ported")
+    })?;
+    Ok(hvar_deltas_exact(hvar_data, glyphs, axis_index, location_value))
 }
 
 /// The CSS `font-weight` keywords the weighted measurer resolves
@@ -678,9 +731,8 @@ impl FontMeasurer {
         let Ok(font) = TtfFont::parse(&data, font_number) else {
             return unavailable(font_path);
         };
-        let axes: Vec<_> = font.variation_axes().into_iter().collect();
-        let wght_axis_index = axes.iter().position(|a| a.tag == Tag::from_bytes(b"wght"));
-        let supports_weight = wght_axis_index.is_some();
+        let supports_weight =
+            font.variation_axes().into_iter().any(|a| a.tag == Tag::from_bytes(b"wght"));
         if weight.is_some() && !supports_weight {
             panic!(
                 "FontMeasurer(weight={:?}) requires a variable font with a 'wght' axis; {:?} has none.",
@@ -689,50 +741,8 @@ impl FontMeasurer {
         }
 
         let advance_deltas = weight.map(|w| {
-            let axis_index = wght_axis_index.expect("checked above");
-            let axis = axes[axis_index];
-            let raw = normalize_value(
-                w as f64,
-                axis.min_value as f64,
-                axis.def_value as f64,
-                axis.max_value as f64,
-            );
-            let location_value = match font.tables().avar {
-                Some(avar) => {
-                    let points: Vec<(f64, f64)> = avar
-                        .segment_maps
-                        .into_iter()
-                        .nth(axis_index)
-                        .map(|maps| {
-                            maps.into_iter()
-                                .map(|m| {
-                                    (
-                                        m.from_coordinate as f64 / 16384.0,
-                                        m.to_coordinate as f64 / 16384.0,
-                                    )
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    piecewise_linear_map(raw, &points)
-                }
-                None => raw,
-            };
-            let Some(hvar_data) = font.raw_face().table(Tag::from_bytes(b"HVAR")) else {
-                // Python falls back to `instantiateVariableFont` here,
-                // rebuilding glyf/gvar so hmtx itself moves — a full font
-                // instancer, out of scope for this port. Every bundled
-                // font ships HVAR, so this is unreached in practice; it
-                // fails loudly rather than silently measuring at the
-                // default weight (delta 0), which is what reading `hmtx`
-                // directly without HVAR would otherwise do unnoticed.
-                panic!(
-                    "FontMeasurer(weight={:?}) on {:?}: variable font has no HVAR table; \
-                     the no-HVAR instancing fallback is not ported.",
-                    weight, font_path
-                );
-            };
-            hvar_deltas_exact(hvar_data, font.number_of_glyphs(), axis_index, location_value)
+            weighted_advance_deltas(&font, w, 0..font.number_of_glyphs())
+                .unwrap_or_else(|e| panic!("FontMeasurer on {font_path:?}: {e}"))
         });
 
         let units_per_em = font.units_per_em();

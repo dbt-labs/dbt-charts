@@ -73,8 +73,8 @@ def test_authored_footer_brand_weight_is_painted() -> None:
     assert 'font-weight="500"' not in _render("  footer:\n    brand_weight: 600\n")
 
 
-def test_authored_dimmed_opacity_reaches_the_runtime() -> None:
-    svg = _render("  charts:\n    hover_emphasis:\n      dimmed_opacity: 0.4\n")
+def test_authored_recede_contrast_reaches_the_runtime() -> None:
+    svg = _render("  charts:\n    hover_emphasis:\n      recede_contrast: 2.5\n")
     match = re.search(r'data-dbt-hover-emphasis="([^"]*)"', svg)
     assert match
-    assert json.loads(html.unescape(match.group(1)))["opacity"] == 0.4
+    assert json.loads(html.unescape(match.group(1)))["recedeContrast"] == 2.5

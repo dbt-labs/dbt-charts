@@ -66,7 +66,7 @@ A variable is an input on the page (a dropdown, slider or date picker) whose val
 
 A range bound is two variables on one column (`column: cars.model_year`), used as `filter('model_year', first_year, '>=')` and `'<='`; unset ("All") means no bound, so no `default`, `data_type`, `input` or static list.
 
-A date range is one variable, not two `input: date` variables with hard-coded defaults: `period: {column: t.order_date, input: daterange}` read as `{{ "{{ filter_date_range('order_date', period) }}" }}`. Unset means all dates; a rolling window is a preset: `default: last_90_days`.
+A date range is one variable, not two `input: date` variables with hard-coded defaults: `period: {column: t.order_date, input: daterange}` read as `{{ "{{ filter_date_range('order_date', period) }}" }}`. Unset means all dates; a rolling window is a preset name, which `default:` and a SQL literal (`filter_date_range('order_ts', 'last_30_days')`) both take. Names: `today`, `yesterday`, `last_<N>_<unit>`, `previous_<N>_<unit>`, `this_<unit>`, `<unit>_to_date`, with units days/weeks/months/quarters/years and `fiscal_` before quarter/year (`previous_3_quarters`, `this_fiscal_quarter`). `presets:` lists the picker's menu.
 
 {{ keys('variable') }}
 

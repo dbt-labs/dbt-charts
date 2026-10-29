@@ -89,7 +89,7 @@ class Diagnostic(BaseModel):
     chart: str | None = None
     query: str | None = None
     fields: dict[str, Any] = {}
-    # Foreign text, log-only; see DbtChartsError.detail. Distinct from the same-named
+    # Foreign text, local surfaces only; see DbtChartsError.detail. Distinct from the same-named
     # fields["detail"] key (from_query_diagnostic.py), which is authored template text.
     detail: str | None = None
     # Secondary locations for a diagnostic about a relationship between two

@@ -98,6 +98,14 @@ def test_attribution_rides_the_resolved_source(
     assert result.attribution == {"team": "ops"}
 
 
+def test_metricflow_rides_the_resolved_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _resolve(tmp_path, _TARGET, monkeypatch, metricflow="semantics")
+    assert isinstance(result, TrinoSourceConfig)
+    assert result.metricflow == "semantics"
+
+
 def test_a_key_the_trino_source_does_not_know_is_refused_without_its_values(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

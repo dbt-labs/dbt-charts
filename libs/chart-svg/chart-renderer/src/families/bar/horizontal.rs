@@ -163,6 +163,8 @@ pub(crate) struct HorizontalFacetOpts<'a> {
     pub(crate) panel_ordinal: usize,
     /// What the axis titles wrap against.
     pub(crate) title_boxes: multiples::FacetTitleBoxes,
+    /// The card's width, the room the chart-level legend fits in.
+    pub(crate) legend_w: f64,
 }
 
 /// Where a panel stands relative to the category axis' `row_footer` copy.
@@ -383,7 +385,7 @@ pub(super) fn render_horizontal_panel(
         crate::families::layers::shared_color_fields(layers.iter().map(|(l, rows)| (*l, *rows))),
         &r.legend,
     );
-    let legend_labels = limited_labels(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, legend_room(&r.legend, facet.is_none().then_some(view_w)))?;
+    let legend_labels = limited_labels(&legend_entries_typed, numeric_legends.unlisted_line, &legend_title, &r.legend, fonts, legend_room(&r.legend, Some(facet.map_or(view_w, |f| f.legend_w))))?;
     let series_keys = crate::selected::series_keys(&legend_entries_typed, &bar_link_keys(r, &color_domain, &wide_labels));
     let legend_entries_typed = r.selection.legend(with_drawn_labels(&legend_entries_typed, &legend_labels), &series_keys);
 
@@ -902,6 +904,9 @@ pub(super) fn render_horizontal_panel(
                 &centers,
                 fonts,
                 style,
+                board_style
+                    .and_then(|b| b.numeral_family.as_deref())
+                    .ok_or("bar: board_style.numeral_family (style.fonts.numeral) is missing")?,
                 Side::parse(&style.position)?,
                 ax_y.labels.padding.ok_or("bar: axis_y.labels.padding absent (theme required)")?,
                 anchored,
@@ -1507,6 +1512,7 @@ pub(super) fn render_horizontal_panel(
         limit: val_limit,
         color: ax_y.labels.font.color.as_deref().unwrap_or("#626366").to_string(),
         weight: ax_y.labels.font.weight_str(),
+        style: ax_y.labels.font.style.clone(),
         title: val_title_paint.clone(),
         title_key: facet.is_none().then_some(crate::contract::LabelKey::Y),
         caption: match &date_axis {
@@ -1752,7 +1758,7 @@ pub(super) fn render_horizontal_panel(
                 // arm's mirrored `Rounded::Negative`): a positive segment rounds
                 // its right (far) end, a negative one its left.
                 let outer = if raw_val < 0.0 { outers.1 } else { outers.0 } == Some(series);
-                under.push(crate::annotation::DataMark::rect(seg_start, bar_y, seg_w, mark_h));
+                under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(seg_start, bar_y, seg_w, mark_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
                 plot.extend(bar_passes(true, seg_start, bar_y, seg_w, mark_h, &fill, r.style.mark.opacity, stroke_color, stroke_w, if outer { corner_r } else { 0.0 },
                     Rounded::by_sign(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
             }
@@ -1818,7 +1824,7 @@ pub(super) fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), linear.position(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
             }
-            under.push(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h));
+            under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
             plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, &fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     } else {
@@ -1900,7 +1906,7 @@ pub(super) fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), val_x, bar_y + mark_h / 2.0, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
-            under.push(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h));
+            under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
             plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r,
                 ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
@@ -2182,6 +2188,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
             .set("text-anchor", anchor)
             .vega("font-family", cat_family)
             .set("font-size", cat_font_size.to_string())
+            .quick_some("font-style", ax_x.labels.font.style.as_deref())
             .set("font-weight", cat_weight.as_str())
             .set("fill", cat_color)
     };
@@ -2337,6 +2344,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
                 caption: cat_caption.clone(),
                 val_font_size: cat_font_size,
                 val_weight: cat_weight,
+                val_style: ax_x.labels.font.style_attr(),
                 val_color: cat_color.to_string(),
                 val_family: cat_family.to_string(),
             }),

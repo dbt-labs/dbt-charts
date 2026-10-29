@@ -78,6 +78,7 @@ fn wide_measures(payload: &Payload) -> bool {
 /// models cannot deserialize it.
 #[derive(Deserialize)]
 pub(crate) struct Head {
+    pub(crate) id: String,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     title: Option<String>,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]

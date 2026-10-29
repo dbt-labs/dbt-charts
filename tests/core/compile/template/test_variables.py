@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.template.daterange import BoardClock
 from dbt_charts.core.compile.template.jinja import resolve_jinja_template
 from dbt_charts.core.compile.template.variables import (
     coerce_variable_values,
@@ -22,6 +23,7 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
 _TODAY = date(2026, 10, 20)
+_CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1)
 
 
 def _registry(**inputs: str) -> dict[str, Variable]:
@@ -136,14 +138,14 @@ class TestCoerceDaterange:
 
     def test_unknown_preset_names_the_presets(self) -> None:
         reg = _registry(r="daterange")
-        with pytest.raises(ExecutionError, match="last_90_days"):
-            coerce_variable_values({"r": "last_91_days"}, reg)
+        with pytest.raises(ExecutionError, match="last_<N>_<unit>"):
+            coerce_variable_values({"r": "last_week"}, reg)
 
 
 def test_resolve_daterange_presets_dates_only_preset_values() -> None:
     reg = _registry(r="daterange", s="daterange", t="text")
     values = {"r": "last_7_days", "s": [date(2024, 1, 1), None], "t": "today"}
-    assert resolve_daterange_presets(values, reg, _TODAY) == {
+    assert resolve_daterange_presets(values, reg, _CLOCK) == {
         "r": [date(2026, 10, 14), _TODAY],
         "s": [date(2024, 1, 1), None],
         "t": "today",
@@ -153,7 +155,7 @@ def test_resolve_daterange_presets_dates_only_preset_values() -> None:
 class TestNormalizeRenderValues:
     def test_preset_reaches_templates_as_iso_dates(self) -> None:
         values = normalize_render_values(
-            {"r": "year_to_date"}, _registry(r="daterange"), _TODAY
+            {"r": "year_to_date"}, _registry(r="daterange"), _CLOCK
         )
         assert values["r"] == ["2026-01-01", "2026-10-20"]
         assert type(values["r"]) is list
@@ -162,14 +164,14 @@ class TestNormalizeRenderValues:
     def test_date_pair_and_blank_pass_through(self) -> None:
         reg = _registry(r="daterange", s="daterange")
         values = normalize_render_values(
-            {"r": ["2024-01-01", None], "s": ""}, reg, _TODAY
+            {"r": ["2024-01-01", None], "s": ""}, reg, _CLOCK
         )
         assert values == {"r": ["2024-01-01", None], "s": ""}
 
     def test_unknown_preset_raises_naming_the_presets(self) -> None:
-        with pytest.raises(ExecutionError, match="last_90_days"):
+        with pytest.raises(ExecutionError, match="last_<N>_<unit>"):
             normalize_render_values(
-                {"r": "last_91_days"}, _registry(r="daterange"), _TODAY
+                {"r": "last_week"}, _registry(r="daterange"), _CLOCK
             )
 
 

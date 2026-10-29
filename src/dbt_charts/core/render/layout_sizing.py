@@ -65,6 +65,7 @@ from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.engine import render_native
 from dbt_charts.core.render.errors import RenderError
+from dbt_charts.core.render.pie_layout import sized_pie_mode
 from dbt_charts.core.render.prose import plan_board_prose
 from dbt_charts.core.render.sizing import (
     HeightProvider,
@@ -74,6 +75,7 @@ from dbt_charts.core.render.sizing import (
     get_chart_content_height,
     get_item_content_height,
     get_title_height,
+    prose_heading_baseline,
     should_use_title_inline_band,
 )
 from dbt_charts.core.render.title_band import (
@@ -82,9 +84,10 @@ from dbt_charts.core.render.title_band import (
     chart_title_metrics,
     row_title_shifts,
 )
+from dbt_charts.core.utils import Rows
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
+    from dbt_charts.core.compile.models.primitives import PieMode, ResolvedFontStyle
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
     from dbt_charts.core.compile.resolve import AutomaticLinkCandidate
@@ -92,7 +95,7 @@ if TYPE_CHECKING:
     from dbt_charts.core.execute.executor import Executor
 
 _log = logging.getLogger(__name__)
-_FIXED_ASPECT_PIE_TYPES = frozenset({"pie", "arc"})
+_FIXED_ASPECT_PIE_TYPES = frozenset({"pie", "donut"})
 # A map's height is its theme aspect ratio over the slot width: there is no
 # content to measure, so it never renders to size its slot.
 _GEO_TYPES = frozenset({"geoshape", "map", "point_map", "bubble_map"})
@@ -337,8 +340,9 @@ def _require_resolved(
     distinct pie width gets its own finalized presentation policy while retaining
     that chart-wide title typography.
 
-    A ``DbtChartsError`` from resolution is a per-chart failure, not a board one:
-    it is recorded on ``render_ctx.resolve_errors`` and reported as ``None``.
+    A failure in resolution is a per-chart failure, not a board one: a
+    ``DbtChartsError``, or any other exception as that chart's ERR-INTERNAL, is
+    recorded on ``render_ctx.resolve_errors`` and reported as ``None``.
     This is the single catch for the whole sizing pass — every call site degrades
     on ``None`` rather than naming its own tuple of exception types, which is how
     the per-site guards this replaced had drifted out of sync with each other.
@@ -397,15 +401,18 @@ def _require_resolved(
         )
     except DbtChartsError as exc:
         _log.debug("Chart %r failed to resolve: %s", chart_id, exc)
-        render_ctx.resolve_errors[chart_id] = ChartResolveFailure(
-            diagnostic=stamp_chart_diagnostic(exc, chart_id, chart.source_path),
-            identity=ChartIdentity.from_normalized(chart),
-        )
-        return None
-
-    render_ctx.resolved_variants[variant_key] = resolved
-    render_ctx.canonical_resolved.setdefault(canonical_key, resolved)
-    return resolved
+        failure: DbtChartsError = exc
+    except Exception as exc:  # noqa: BLE001 — a crash is this chart's ERR-INTERNAL, drawn as its error card
+        failure = RenderError.from_unexpected(exc)
+    else:
+        render_ctx.resolved_variants[variant_key] = resolved
+        render_ctx.canonical_resolved.setdefault(canonical_key, resolved)
+        return resolved
+    render_ctx.resolve_errors[chart_id] = ChartResolveFailure(
+        diagnostic=stamp_chart_diagnostic(failure, chart_id, chart.source_path),
+        identity=ChartIdentity.from_normalized(chart),
+    )
+    return None
 
 
 def _get_table_height_from_data(
@@ -540,6 +547,80 @@ def build_chart_datasets(
     return datasets
 
 
+def _reset_pie_modes(layout: Layout) -> None:
+    """Forget every pie's mode: like the other sizing fields it belongs to one
+    pass, so a board sized twice decides its pies twice."""
+    for item in layout.items:
+        item.pie_mode = None
+        if item.board is not None:
+            _reset_pie_modes(item.board.layout)
+
+
+def stored_pie_mode(
+    item: LayoutItem,
+    resolved: ResolvedChart,
+    rows: Rows,
+    resolved_style: ResolvedStyle,
+) -> PieMode | None:
+    """The mode of a pie placed in ``item``: decided on the first ask of a sizing
+    pass and kept on the item for every later reader. None for any other chart.
+    Raises ``ChartDataError`` for a pie the engine cannot fit.
+    """
+    if not isinstance(resolved, ResolvedPieChart):
+        return None
+    if item.pie_mode is None:
+        item.pie_mode = sized_pie_mode(resolved, rows, resolved_style)
+    return item.pie_mode
+
+
+def _record_pie_modes_in_tree(
+    layout: Layout, render_ctx: SizingRenderCtx, executor: Executor
+) -> None:
+    """Record the mode of every placed pie the measuring passes did not ask about.
+
+    The height provider decides a pie's mode as it measures it, but a slot whose
+    height is authored, or a second placement that hits the first one's cached
+    measurement, is never measured. Every placed pie leaves sizing with its mode,
+    or, when the engine cannot lay it out at all, as a chart that failed to render
+    (its error tile), never with neither.
+    """
+    for item in active_layout_items(layout, render_ctx.variable_values):
+        if item.board is not None:
+            _record_pie_modes_in_tree(
+                item.board.layout, _nested_render_ctx(render_ctx, item.board), executor
+            )
+            continue
+        if item.chart is None or item.pie_mode is not None or item.width <= 0:
+            continue
+        resolved = _require_resolved(
+            render_ctx,
+            item.chart,
+            executor,
+            render_ctx.variables,
+            item.width,
+            render_ctx.resolved_style,
+            render_ctx.chart_style_context,
+        )
+        if not isinstance(resolved, ResolvedPieChart):
+            continue
+        try:
+            stored_pie_mode(
+                item,
+                resolved,
+                build_chart_datasets(resolved, executor, render_ctx.variables)[
+                    resolved.query_name
+                ],
+                render_ctx.resolved_style,
+            )
+        except ChartDataError as exc:
+            render_ctx.resolve_errors[item.chart.id] = ChartResolveFailure(
+                diagnostic=stamp_chart_diagnostic(
+                    exc, item.chart.id, item.chart.source_path
+                ),
+                identity=ChartIdentity.from_normalized(item.chart),
+            )
+
+
 def _render_chart_to_svg(
     resolved: ResolvedChart,
     executor: Executor,
@@ -551,11 +632,14 @@ def _render_chart_to_svg(
     padding: dict[str, int | float] | None = None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
     measuring: bool = False,
+    item: LayoutItem | None = None,
 ) -> tuple[str, float, float]:
     """Render a pre-resolved chart to SVG, returning (svg, width, height).
 
     Uses the single already-resolved ResolvedChart — no re-resolution.
     The executor's query cache makes data fetch free (no re-execution).
+    ``item`` is the layout item the chart is placed in; a pie reads (or, on
+    first ask, records) its sized mode there.
     """
     from dbt_charts.core.render.chart.vega_lite import render_resolved_chart
     from dbt_charts.core.render.converters.chart import render_chart_artifact
@@ -573,6 +657,11 @@ def _render_chart_to_svg(
         datasets=datasets,
         title_shift=title_shift,
         measuring=measuring,
+        pie_mode=(
+            None
+            if item is None
+            else stored_pie_mode(item, resolved, data, resolved_style)
+        ),
     )
     svg = render_chart_artifact(artifact, "svg")
     dims = extract_svg_dimensions(svg)
@@ -864,6 +953,7 @@ def _make_data_aware_height_provider(
                             resolved_style=resolved_style,
                             padding=additive_padding(card_pad, chart_padding),
                             measuring=item.chart.type not in _FIXED_ASPECT_PIE_TYPES,
+                            item=item,
                         )
                     except (ExecutionError, ChartDataError) as exc:
                         # Migrate-or-fail: only ExecutionError (query failed) and
@@ -892,7 +982,7 @@ def _make_data_aware_height_provider(
                         )
                     else:
                         if item.chart.type in _FIXED_ASPECT_PIE_TYPES:
-                            # Pie/arc charts have a fixed natural height — direct-label
+                            # Pie/donut charts have a fixed natural height — direct-label
                             # aspect-ratio, or an arc-attached-table composition (e.g.
                             # "right" placement composes a short/wide SVG well below
                             # the generic aspect-ratio static_estimate). Only clamp a
@@ -1031,7 +1121,7 @@ def _effective_alignment_target_for_chart(
     target_height: float,
     render_ctx: SizingRenderCtx,
 ) -> float:
-    """Return the per-chart alignment target, capping pie/arc growth."""
+    """Return the per-chart alignment target, capping pie/donut growth."""
     natural_h = render_ctx.natural_heights.get((chart.id, width))
     if (
         chart.type in _FIXED_ASPECT_PIE_TYPES
@@ -1095,7 +1185,9 @@ def _align_board_charts(
                 render_ctx,
             )
 
-    _align_cols_heights(board.layout.items, effective, render_ctx)
+    _align_cols_heights(
+        board.layout.items, effective, _nested_render_ctx(render_ctx, board)
+    )
 
 
 def _align_cols_heights(
@@ -1160,6 +1252,7 @@ def _align_cols_heights(
                 resolved_style=render_ctx.resolved_style,
                 padding=additive_padding(card_pad, chart_padding),
                 title_shift=item.title_shift,
+                item=item,
             )
         except ChartDataError as exc:
             # Migrate-or-fail: only ChartDataError (vega-lite rejected the spec)
@@ -1260,6 +1353,7 @@ def _fix_slot_heights_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> No
                 resolved_style=render_ctx.resolved_style,
                 padding=additive_padding(card_pad, chart_padding),
                 title_shift=item.title_shift,
+                item=item,
             )
         except (ExecutionError, ChartDataError) as exc:
             _log.warning(
@@ -1332,8 +1426,24 @@ def _title_band_target(
             return None
         card_pad = float(render_ctx.resolved_style.frame.card_padding)
         padding = additive_padding(card_pad, resolved.layout_padding)
+        # A pie's title band follows its sized mode; a pie the engine cannot fit
+        # draws its error tile, outside any band.
+        try:
+            pie_mode = stored_pie_mode(
+                item,
+                resolved,
+                build_chart_datasets(resolved, executor, render_ctx.variables)[
+                    resolved.query_name
+                ],
+                render_ctx.resolved_style,
+            )
+        except ChartDataError:
+            return None
         metrics = chart_title_metrics(
-            resolved, card_pad, item.width - padding["left"] - padding["right"]
+            resolved,
+            card_pad,
+            item.width - padding["left"] - padding["right"],
+            pie_mode,
         )
         return None if metrics is None else (item, metrics)
     if item.board is None:
@@ -1342,6 +1452,19 @@ def _title_band_target(
     style = board.resolved_style
     card_pad = float(style.frame.card_padding)
     if not board.title:
+        if board.text and not board.visible_variables and not board.layout.items:
+            baseline = prose_heading_baseline(
+                board,
+                max(board.layout.content_width - 2 * card_pad, 1.0),
+                variable_values,
+            )
+            if baseline is None:
+                return None
+            margin_top = style.margin.top if style.margin else 0.0
+            return item, TitleMetrics(
+                ascent=margin_top + effective_padding(style).top + card_pad + baseline,
+                tail=0.0,
+            )
         if board.text or board.visible_variables or board.layout.type != "rows":
             return None
         drawn = active_layout_items(board.layout, variable_values)
@@ -1369,6 +1492,7 @@ def _title_band_target(
         variable_values,
         board.level,
         board.base_dir,
+        root=False,
     )
     metrics = board_title_metrics(
         board,
@@ -1523,6 +1647,7 @@ def calculate_data_aware_layout(
         to (svg_string, actual_height) for Vega charts rendered during sizing)
     """
     frame = board.resolved_style.frame
+    _reset_pie_modes(board.layout)
 
     # variables=None means "no variable overrides" — normalize to {} here so
     # downstream code (SizingRenderCtx, height provider) always works with a dict.
@@ -1593,6 +1718,7 @@ def calculate_data_aware_layout(
             title_measure_width,
             variable_values,
             level=board.level,
+            root=True,
             resolved_style=board.resolved_style,
             base_dir=board.base_dir,
         )
@@ -1614,6 +1740,8 @@ def calculate_data_aware_layout(
         height_provider,
         resolved_style=board.resolved_style,
     )
+
+    _record_pie_modes_in_tree(board.layout, render_ctx, executor)
 
     # Slot-height fix: render each measured chart at its assigned slot height
     # (the sizing provider ran before item.height was set, and measures rather

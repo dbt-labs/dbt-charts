@@ -4,3 +4,5 @@
 pub const LABEL_INK_MIN_CONTRAST: f64 = 4.5;
 pub const TEXT_MIN_RATIO: f64 = 4.5;
 pub const LARGE_TEXT_MIN_RATIO: f64 = 3.0;
+pub const RULE_GRAY_FIRST_STEP: usize = 3;
+pub const RULE_GRAY_LAST_STEP: usize = 10;

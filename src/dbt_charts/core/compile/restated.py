@@ -30,7 +30,14 @@ from dbt_charts.core.compile.merge import (
 )
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.board.normalized import Board
-from dbt_charts.core.compile.models.chart.normalized import CalloutChart, Chart
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    CalloutChart,
+    Chart,
+    LineChart,
+    ScatterChart,
+)
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -555,6 +562,23 @@ def _without_leaf(chart: Chart, path: Sequence[str]) -> Chart:
     )
 
 
+def _shadowed_by_annotation(chart: Chart, path: Sequence[str]) -> bool:
+    """Whether every annotation of the type authors the leaf of
+    ``style.annotations.<type>`` itself: removing the chart's value changes nothing
+    only because the annotations win, so it is not a restatement. One annotation
+    that inherits the leaf makes the value load-bearing, which the resolve-and-compare
+    already sees."""
+    if path[:2] != ("style", "annotations") or not isinstance(
+        chart, BarChart | LineChart | AreaChart | ScatterChart
+    ):
+        return False
+    kind, *leaf = path[2:]
+    styles = [a.style for a in chart.annotations if a.type == kind]
+    return bool(styles) and all(
+        style is not None and _sets(style, leaf) for style in styles
+    )
+
+
 def auto_restated(
     chart: Chart,
     resolve: Callable[[Chart], tuple[BaseModel, _Artifact]],
@@ -579,6 +603,7 @@ def auto_restated(
             )
             or path[0] in _LAYOUT_FIELDS
             or _is_declared_default(chart, path)
+            or _shadowed_by_annotation(chart, path)
         ):
             continue
         try:
@@ -607,6 +632,10 @@ def auto_restated(
                     field=".".join(path),
                 )
             )
+    # A pivot needs one of `rows`/`values` spelled out: each is inferable from the
+    # other, but deleting both is an error. Keep `rows`, flag only `values`.
+    if {"rows", "values"} <= {w.field for w in warnings}:
+        warnings = [w for w in warnings if w.field != "rows"]
     return warnings
 
 

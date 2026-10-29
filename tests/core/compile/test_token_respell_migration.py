@@ -689,7 +689,7 @@ class TestSchemaPathExistsBareArrayBranch:
 class TestCategoryColorPins:
     """`style.charts.category_colors.<field>.values.<label>` holds color tokens
     under author-named data-value keys; a retired 0.9-era spelling there is
-    respelled like any other color field."""
+    respelled at the 0.9.0 boundary like any other color field."""
 
     def test_in_memory_respell(self) -> None:
         mapping: dict[str, Any] = {
@@ -721,8 +721,38 @@ class TestCategoryColorPins:
         )
 
         migrated = migrate_yaml_text(
-            text, catalog=catalog, registry=registry, stop_target=catalog.dev.version
+            text,
+            catalog=catalog,
+            registry=registry,
+            stop_target=catalog.latest_released.version,
         )
 
         assert "category_ink" not in migrated
         assert RETIRED_TOKEN_VALUE_MAP["category_ink.charcoal"] in migrated
+
+    def test_a_nested_boards_pin_is_respelled(self) -> None:
+        mapping: dict[str, Any] = {
+            "title": "t",
+            "rows": [
+                {
+                    "title": "inner",
+                    "style": {
+                        "charts": {
+                            "category_colors": {
+                                "region": {"values": {"Coal": "category_ink.charcoal"}}
+                            }
+                        }
+                    },
+                    "rows": ["c"],
+                }
+            ],
+            "charts": {"c": {"type": "bar", "query": "q", "x": "a", "y": "b"}},
+            "queries": {"q": {"columns": ["a", "b"], "values": [[1, 2]]}},
+        }
+
+        inner = prepare_board_mapping(mapping)["rows"][0]["style"]["charts"]
+
+        assert (
+            inner["category_colors"]["region"]["values"]["Coal"]
+            == RETIRED_TOKEN_VALUE_MAP["category_ink.charcoal"]
+        )

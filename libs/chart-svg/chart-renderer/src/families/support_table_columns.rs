@@ -90,6 +90,8 @@ pub struct ColumnBlock {
     /// ([`plot_gutter`]).
     pub gutter: f64,
     pub font_size: f64,
+    /// `style.fonts.numeral`: the family the cells paint and measure in.
+    pub numeral_family: String,
     pub cell_ink: String,
     pub label_ink: String,
 }
@@ -120,26 +122,6 @@ pub fn warn_block_share(chart_id: &str, block_width: f64, plot_width: f64, share
     }
 }
 
-/// The numeric cell typeface: Source
-/// Serif keeps its own typeface, every other family paints `dbt Sans Tabular`.
-fn cell_family(style: &SupportTableStyle) -> &'static str {
-    if style.font.family_or("").contains("Source Serif") {
-        "Source Serif 4"
-    } else {
-        "dbt Sans Tabular"
-    }
-}
-
-/// The font file production's `get_font_measurer(family, numeric=True)` measures a
-/// cell with: Source Serif itself, every other family as `dbt Sans Tabular`.
-fn cell_measure_family(style: &SupportTableStyle) -> &str {
-    if style.font.family_or("").contains("Source Serif") {
-        style.font.family_or("")
-    } else {
-        TAB_FONT
-    }
-}
-
 /// Build the block: one [`Column`] per visual column, widths per
 /// `_entry_column_widths`. `centers[i]` is category `domain[i]`'s band center
 /// along the category axis. `anchored` and `series_order` carry the same
@@ -158,6 +140,7 @@ pub fn build_block(
     centers: &[f64],
     fonts: &FontBook,
     style: &SupportTableStyle,
+    numeral_family: &str,
     side: Side,
     axis_label_padding: f64,
     anchored: bool,
@@ -181,8 +164,6 @@ pub fn build_block(
         .color
         .clone()
         .ok_or("support_table: label.font.color absent (theme required)")?;
-    let cell_measure = cell_measure_family(style);
-    let cell_paint = cell_family(style);
     let (label_family, label_size) = label_font_resolved(style);
     let header_measure = measure::stand_in_family(label_family);
     let pad = 2.0 * style.row.padding.horizontal;
@@ -230,20 +211,20 @@ pub fn build_block(
                     .map(|&v| n.cell_text(v, true))
                     .collect::<Result<_, _>>()?;
                 for text in &painted {
-                    value_w = value_w.max(fonts.measure(text, cell_measure, font_size)?);
+                    value_w = value_w.max(fonts.measure(text, numeral_family, font_size)?);
                 }
             }
             _ => {
                 // `_entry_cell_widths` measures `str(float)` though the cell paints the bare JSON number.
                 for &v in nums.iter().filter(|v| v.is_finite()) {
-                    value_w = value_w.max(fonts.measure(&py_float_str(v), cell_measure, font_size)?);
+                    value_w = value_w.max(fonts.measure(&py_float_str(v), numeral_family, font_size)?);
                 }
             }
         }
         // From the numerals, not from an anchor cell: production insets the
         // digits by the hung suffix even when no cell of the column carries.
         let hung_w = match &numerals {
-            Some(n) => fonts.measure(n.hung_suffix(), cell_measure, font_size)?,
+            Some(n) => fonts.measure(n.hung_suffix(), numeral_family, font_size)?,
             None => 0.0,
         };
         let mut header_w = 0.0_f64;
@@ -258,7 +239,7 @@ pub fn build_block(
             for (si, series) in series_order.iter().enumerate() {
                 let series_centers: Vec<f64> = centers.iter().map(|c| c + offsets[si]).collect();
                 let (series_cells, _bare_w) =
-                    build_cells(&lines[si], &series_centers, &numerals, spec, fonts, cell_paint, font_size, false)?;
+                    build_cells(&lines[si], &series_centers, &numerals, spec, fonts, numeral_family, font_size, false)?;
                 for (ci, mut cell) in series_cells.into_iter().enumerate() {
                     if lines[si][ci].is_none() {
                         continue;
@@ -285,7 +266,7 @@ pub fn build_block(
         }
         for (i, header) in headers.into_iter().enumerate() {
             let (mut cells, _bare_w) =
-                build_cells(&lines[i], centers, &numerals, spec, fonts, cell_paint, font_size, false)?;
+                build_cells(&lines[i], centers, &numerals, spec, fonts, numeral_family, font_size, false)?;
             link_cells(&mut cells, entry, domain, links);
             let header_shaped = fonts.measure_shaped(&header, label_family, label_size)?;
             columns.push(Column {
@@ -307,6 +288,7 @@ pub fn build_block(
         side,
         gutter: plot_gutter(style, axis_label_padding),
         font_size,
+        numeral_family: numeral_family.to_string(),
         cell_ink,
         label_ink,
     })
@@ -405,7 +387,7 @@ impl ColumnBlock {
         let cell_shift = measure::baseline_shift("middle", font_size);
         let label_shift = measure::baseline_shift("middle", label_size);
         let header_y = origin_y - row_height(style) / 2.0 + label_shift;
-        let paint = cell_family(style);
+        let paint = crate::families::table::numeral_paint_family(&self.numeral_family);
         let last = self.columns.len() - 1;
         let mut out = Vec::new();
         for (i, (col, edge)) in self.columns.iter().zip(self.right_edges(plot_w)).enumerate() {
@@ -417,6 +399,7 @@ impl ColumnBlock {
                     .set("text-anchor", "end")
                     .vega("font-family", label_family)
                     .set("font-size", label_size.to_string())
+                    .quick_some("font-style", style.label.font.style.as_deref())
                     .set("font-weight", label_weight.clone())
                     .set("fill", col.header_ink.as_deref().unwrap_or(label_ink)),
                 col.header.as_str(),
@@ -434,8 +417,9 @@ impl ColumnBlock {
                             .set("x", format!("{cell_x:.2}"))
                             .set("y", format!("{y:.2}"))
                             .set("text-anchor", "end")
-                            .vega("font-family", paint)
+                            .vega("font-family", paint.as_str())
                             .set("font-size", font_size.to_string())
+                            .quick_some("font-style", style.font.style.as_deref())
                             .set("font-weight", cell_weight.clone())
                             .set("fill", ink),
                         cell.text.as_str(),
@@ -531,6 +515,7 @@ mod tests {
             &centers,
             &test_fonts(),
             &style(),
+            crate::common::TAB_FONT,
             Side::Left,
             6.0,
             anchored,
@@ -557,6 +542,7 @@ mod tests {
             side: Side::Left,
             gutter: 12.0,
             font_size: 11.0,
+            numeral_family: String::new(),
             cell_ink: String::new(),
             label_ink: String::new(),
         };
@@ -752,7 +738,7 @@ mod tests {
         let series: Vec<String> = vec!["Online".into(), "Retail Stores".into()];
         let ink: Vec<String> = vec!["#111111".into(), "#222222".into()];
         let block = build_block("c",
-            &config, &rows, "cat", &dom, &[10.0, 30.0], &fonts, &style(), Side::Left, 6.0, false,
+            &config, &rows, "cat", &dom, &[10.0, 30.0], &fonts, &style(), crate::common::TAB_FONT, Side::Left, 6.0, false,
             Some("series"), &series, Some(&ink), None, None)
         .unwrap();
         assert_eq!(block.columns.len(), 2);
@@ -825,7 +811,7 @@ mod tests {
                 .collect();
             let dom: Vec<String> = vec!["A".into(), "B".into()];
             build_block("c",
-                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), Side::Left, 6.0,
+                &config, &rows, "cat", &dom, &[10.0, 30.0], &test_fonts(), &style(), crate::common::TAB_FONT, Side::Left, 6.0,
                 false, None, &[], None, None, None)
             .unwrap()
         };
@@ -845,6 +831,7 @@ mod tests {
         rows.push(rows[0].clone());
         let err = build_block("c",
             &config, &rows, "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style(),
+            crate::common::TAB_FONT,
             Side::Left, 6.0, false, None, &[], None, None, None)
         .unwrap_err();
         assert!(err.contains("ambiguous"), "{err}");
@@ -930,6 +917,7 @@ mod tests {
             let style: SupportTableStyle = serde_json::from_value(value).unwrap();
             let err = build_block("c",
                 &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
+                crate::common::TAB_FONT,
                 Side::Left, 6.0, false, None, &[], None, None, None)
             .unwrap_err();
             assert!(err.contains(needle), "{err}");
@@ -939,6 +927,7 @@ mod tests {
         let style: SupportTableStyle = serde_json::from_value(value).unwrap();
         let err = build_block("c",
             &config, &rows(), "cat", &domain(), &[10.0, 30.0, 50.0], &test_fonts(), &style,
+            crate::common::TAB_FONT,
             Side::Left, 6.0, false, None, &[], None, None, None)
         .unwrap_err();
         assert!(err.contains("label.font.color"), "{err}");

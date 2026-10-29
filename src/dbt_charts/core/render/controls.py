@@ -19,6 +19,7 @@ from functools import cache
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
+from dbt_charts.core.compile.template.daterange import DaterangePreset
 from dbt_charts.core.render.chart_interactivity import hover_runtime_source
 from dbt_charts.core.render.comment_stripping import strip_js_comments
 from dbt_charts.core.render.template_loader import render_template
@@ -61,12 +62,6 @@ def controls_are_interactive() -> bool:
 # publishes the table words on a pooled table's root.
 _CONTROLS_RUNTIME_WORDS = (
     "today",
-    "last_7_days",
-    "last_28_days",
-    "last_90_days",
-    "last_12_months",
-    "month_to_date",
-    "year_to_date",
     "custom",
     "clear",
     "apply",
@@ -90,6 +85,23 @@ _PATTERN_PLACEHOLDERS = {
     "calendar_day": ("weekday", "day", "month", "year"),
     "page_range": ("first", "last", "total"),
 }
+
+
+def preset_label(preset: DaterangePreset) -> str:
+    """The picker's text for ``preset`` in the board's language."""
+    unit = f"fiscal_{preset.unit}" if preset.fiscal else preset.unit
+    match preset.kind:
+        case "today" | "yesterday":
+            return board_word(f"controls.{preset.kind}")
+        case "this":
+            return board_word(f"controls.this_{unit}")
+        case "to_date":
+            return board_word(f"controls.{unit}_to_date")
+        case "last" | "previous":
+            return board_word(
+                f"controls.preset_{preset.kind}",
+                duration=board_word(f"duration.{unit}", preset.n),
+            )
 
 
 def controls_language() -> dict[str, str]:

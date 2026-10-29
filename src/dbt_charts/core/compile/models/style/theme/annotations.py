@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from dbt_charts.core.compile.models.factories import FontAlias, FontSlotBase
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
     Absent,
     Color,
     FontFamily,
@@ -28,6 +29,8 @@ AnnotationDasharray = Annotated[
 ]
 AnnotationCurve = Literal["linear", "natural"]
 AnnotationOpacity = Annotated[float, Field(ge=0, le=1)]
+# A rule label's color keyword: the color of the rule's own line.
+RULE_LINE = "line"
 
 
 class AnnotationStrokeStyle(BaseModel):
@@ -47,6 +50,18 @@ class AnnotationStrokeStyle(BaseModel):
         description=(
             "Dash pattern: lengths of dashes and blanks (e.g. '4 2'), or `auto` "
             "for a pattern sized to the width."
+        ),
+    )
+
+
+class RuleStrokeStyle(AnnotationStrokeStyle):
+    """A rule's line, whose color may be left to the engine."""
+
+    color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
+        default=None,
+        description=(
+            "Stroke color. `auto` draws the quietest gray of the theme's chrome "
+            "ladder that holds 3:1 against the canvas and the marks the rule crosses."
         ),
     )
 
@@ -98,6 +113,15 @@ class AnnotationFontStyle(FontSlotBase):
         default=None,
         gt=0,
         description="Line height as a unitless multiple of font size.",
+    )
+
+
+class RuleFontStyle(AnnotationFontStyle):
+    """A rule's label font, whose color may follow the rule's line."""
+
+    color: Annotated[str | None, Color(keywords=(RULE_LINE,))] = Field(
+        default=None,
+        description="Text color as a CSS color string; `line` is the rule's line color.",
     )
 
 
@@ -242,6 +266,9 @@ class BandTextMarkStyle(AnnotationTextMarkStyle):
 class RuleTextMarkStyle(AnnotationTextMarkStyle):
     """A rule's text."""
 
+    font: Annotated[RuleFontStyle, InheritSlot(from_path="Style.charts.font")] = Field(
+        default_factory=RuleFontStyle, description="Text font style."
+    )
     position: Annotated[RulePositionStyle, SkipInheritSlots()] = Field(
         default_factory=RulePositionStyle,
         description="Which side of the rule the text sits on, and where along it.",
@@ -396,8 +423,8 @@ class AnnotationRuleMarkStyle(BaseModel):
     opacity: Annotated[AnnotationOpacity | None, SkipInheritSlots()] = Field(
         default=None, description="Rule opacity, 0 to 1."
     )
-    stroke: AnnotationStrokeStyle = Field(
-        default_factory=AnnotationStrokeStyle, description="Rule stroke style."
+    stroke: RuleStrokeStyle = Field(
+        default_factory=RuleStrokeStyle, description="Rule stroke style."
     )
 
 

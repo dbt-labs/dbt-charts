@@ -2737,6 +2737,8 @@ pub(crate) struct LayerAxisInk<'a> {
     pub font_family: &'a str,
     pub font_size: f64,
     pub font_weight: &'a str,
+    /// The label font's `style`; `None` writes no `font-style`.
+    pub font_style: Option<&'a str>,
     pub font_color: &'a str,
     pub tick_size: f64,
     pub ticks: &'a crate::common::AxisTicks,
@@ -2790,6 +2792,7 @@ pub(crate) fn layer_axis(
                 .set("text-anchor", anchor)
                 .vega("font-family", ink.font_family)
                 .set("font-size", ink.font_size.to_string())
+                .quick_some("font-style", ink.font_style)
                 .set("font-weight", ink.font_weight)
                 .set("fill", ink.font_color),
             label.as_str(),

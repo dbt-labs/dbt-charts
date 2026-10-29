@@ -14,6 +14,13 @@ style:
   background: chrome[1]
   font:
     color: chrome[11]
+  # Paper's own rule ink: its muted cream, not the gray rung clarity shares.
+  annotations:
+    rule:
+      marks:
+        rule:
+          stroke:
+            color: muted
   title:
     # No color pin here — the InheritSlot carries `font.color`, so titles
     # and headings read the same ink as prose.

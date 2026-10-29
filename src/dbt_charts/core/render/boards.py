@@ -39,13 +39,13 @@ from dbt_charts.core.compile.models.style.resolved import (
     effective_padding as _effective_padding,
 )
 from dbt_charts.core.compile.sizing import FOOTER_BRAND_WORD_RE, footer_text_width
+from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 from dbt_charts.core.font_measure import (
     get_font_measurer,
     get_weighted_font_measurer,
 )
 from dbt_charts.core.render.board_variables import (
-    board_clock,
     board_data_provider,
     board_variables,
     root_board_width,
@@ -115,11 +115,8 @@ def _footer_attribution_svg(
 
     def run(end_x: float, content: str, *, brand: bool = False) -> str:
         weight = f' font-weight="{escape_attr(brand_weight)}"' if brand else ""
-        # Snapped (svg_utils.px) for two reasons: a run on a fractional
-        # pixel is split across two columns by the rasterizer, and the Rust
-        # port interpolates the 600-weight advances ~0.004px away from this
-        # one — an integer position is what makes the board sweep's exact
-        # chrome-byte comparison hold.
+        # Snapped (svg_utils.px): a run on a fractional pixel is split
+        # across two columns by the rasterizer.
         return (
             f'<text x="{format_svg_numeric(px(end_x))}" y="{format_svg_numeric(y)}" '
             f'text-anchor="end" font-size="{format_svg_numeric(size)}" '
@@ -320,7 +317,11 @@ def _measured_variable_values(
 
 
 def _board_uses_title_inline_band(
-    board: ResolvedBoard, variables: VariableValues, layout_content_width: float
+    board: ResolvedBoard,
+    variables: VariableValues,
+    layout_content_width: float,
+    *,
+    root: bool,
 ) -> bool:
     from dbt_charts.core.render.sizing import should_use_title_inline_band
 
@@ -333,6 +334,7 @@ def _board_uses_title_inline_band(
         _measured_variable_values(board, variables),
         board.level,
         board.base_dir,
+        root=root,
     )
 
 
@@ -439,6 +441,8 @@ def _render_title_variables_inline_band(
     title_authored_attrs: str,
     variables_path: str,
     error_collector: list[Diagnostic] | None,
+    *,
+    root: bool,
 ) -> tuple[str, float]:
     """One horizontal band: board title (left column) + variable controls (right).
 
@@ -471,6 +475,7 @@ def _render_title_variables_inline_band(
         measured_values,
         board.level,
         board.base_dir,
+        root=root,
     )
     col_gap = float(vs.gap)
 
@@ -484,6 +489,7 @@ def _render_title_variables_inline_band(
         inner,
         text_align,
         level=board.level,
+        root=root,
         resolved_style=board.style,
         variable_values=variables,
         base_dir=base_dir,
@@ -505,11 +511,20 @@ def _render_title_variables_inline_band(
         inner,
         measured_values,
         level=board.level,
+        root=root,
         resolved_style=board.style,
         base_dir=base_dir,
     )
     title_h = max(measured_title_h, float(board.style.title.min_height))
-    inline_title_line_box = title_line_box(measured_title_h, board.level, board.style)
+    inline_title_line_box = title_line_box(
+        board.title,
+        inner,
+        measured_values,
+        board.level,
+        board.style,
+        base_dir,
+        root=root,
+    )
 
     # The compact band packs its controls against the far edge, opposite the title.
     # Its variables are addressable exactly when its title is: both are keys of
@@ -529,7 +544,13 @@ def _render_title_variables_inline_band(
         title_h,
         vars_h,
         title_baseline_offset(
-            board.title, inner, measured_values, board.style, board.level, base_dir
+            board.title,
+            inner,
+            measured_values,
+            board.style,
+            board.level,
+            base_dir,
+            root=root,
         ),
         float(vs.font.size),
         vs.font.family,
@@ -676,11 +697,14 @@ def _build_board_content_items(
     """
     from dbt_charts.core.render.sizing import compute_board_content_box
 
+    # Text opening with a heading is its row's title: it moves onto the row's
+    # shared baseline as a title would, and the card is as much taller.
+    text_shift = title_shift.title_dy if text_svg and not title_svg else 0.0
     box = compute_board_content_box(
         title_height=(
             title_height + title_shift.body_dy if title_svg else title_height
         ),
-        text_height=text_height,
+        text_height=text_height + text_shift,
         variables_height=variables_height,
         inline_band_height=inline_header_height,
         gap=gap,
@@ -774,6 +798,7 @@ def _build_board_content_items(
         # title → text: 0 gap (heading_margin_bottom_px IS the after-heading rhythm)
 
     if text_svg:
+        y += text_shift
         md = extract_svg_inner_content(text_svg)
         if md:
             header.append(
@@ -1047,7 +1072,7 @@ def render_board_svg(
             board.regional.zone,
             language=board.regional.resolved_language,
         ),
-        board_clock(board.regional.today(executor.rendered_at)),
+        board_clock(board.clock(executor.rendered_at)),
     ):
         return _render_board_svg(
             board,
@@ -1166,7 +1191,9 @@ def _render_board_svg(
         title_height = 0.0
         root_title_line_box: tuple[float, float] | None = None
 
-        if _board_uses_title_inline_band(board, variables, layout_content_width):
+        if _board_uses_title_inline_band(
+            board, variables, layout_content_width, root=True
+        ):
             inline_header_svg, inline_header_height = (
                 _render_title_variables_inline_band(
                     board,
@@ -1178,6 +1205,7 @@ def _render_board_svg(
                     title_authored_attrs=authored_attrs("title", "title"),
                     variables_path="variables",
                     error_collector=error_collector,
+                    root=True,
                 )
             )
         elif board.title:
@@ -1187,6 +1215,7 @@ def _render_board_svg(
                 prose_width,
                 text_align,
                 level=board.level,
+                root=True,
                 resolved_style=resolved_style,
                 variable_values=variables,
                 base_dir=base_dir,
@@ -1200,6 +1229,7 @@ def _render_board_svg(
                 prose_width,
                 _measured_variable_values(board, variables),
                 level=board.level,
+                root=True,
                 resolved_style=resolved_style,
                 base_dir=base_dir,
             )
@@ -1207,7 +1237,13 @@ def _render_board_svg(
                 measured_title_height, float(board.style.title.min_height)
             )
             root_title_line_box = title_line_box(
-                measured_title_height, board.level, resolved_style
+                board.title,
+                prose_width,
+                _measured_variable_values(board, variables),
+                board.level,
+                resolved_style,
+                base_dir,
+                root=True,
             )
 
         # Render text (markdown) if present (using shared helper)
@@ -1557,7 +1593,9 @@ def render_nested_board(
     title_svg = ""
     title_height = 0.0
     nested_title_line_box: tuple[float, float] | None = None
-    if _board_uses_title_inline_band(board, variables, layout_content_width):
+    if _board_uses_title_inline_band(
+        board, variables, layout_content_width, root=False
+    ):
         inline_header_svg, inline_header_height = _render_title_variables_inline_band(
             board,
             variables,
@@ -1572,6 +1610,7 @@ def render_nested_board(
             title_authored_attrs="",
             variables_path=_nested_variables_path(source_path),
             error_collector=error_collector,
+            root=False,
         )
     elif board.title:
         from dbt_charts.core.render.sizing import get_title_height, title_line_box
@@ -1582,6 +1621,7 @@ def render_nested_board(
             prose_width,
             text_align,
             level=board.level,
+            root=False,
             resolved_style=resolved_style,
             variable_values=variables,
             base_dir=base_dir,
@@ -1592,12 +1632,19 @@ def render_nested_board(
             prose_width,
             _measured_variable_values(board, variables),
             level=board.level,
+            root=False,
             resolved_style=resolved_style,
             base_dir=base_dir,
         )
         title_height = max(measured_title_height, float(board.style.title.min_height))
         nested_title_line_box = title_line_box(
-            measured_title_height, board.level, resolved_style
+            board.title,
+            prose_width,
+            _measured_variable_values(board, variables),
+            board.level,
+            resolved_style,
+            base_dir,
+            root=False,
         )
 
     # Render text (markdown) if present (using shared helper)

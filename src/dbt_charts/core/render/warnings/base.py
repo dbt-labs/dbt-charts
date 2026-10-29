@@ -73,6 +73,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
     ResolvedLineChart,
 )
+from dbt_charts.core.compile.models.primitives import PieMode
 from dbt_charts.core.diagnostics.registry import WarningCode
 from dbt_charts.core.execute.executor import TruncationInfo
 from dbt_charts.core.render.chart.annotation_nothing_drawn import NothingDrawn
@@ -155,6 +156,12 @@ class WarningContext(BaseModel):
     # Unlike board_spec.charts (catalog), these entries are picked directly from
     # the layout tree so style/geometry fields match the slot being judged.
     layout_charts: dict[str, ResolvedChart] = {}
+    # chart id → a pie's mode as the size stage decided it for the same
+    # placement as ``layout_charts``; absent for every chart that is not a pie.
+    pie_modes: dict[str, PieMode] = {}
+    # chart id → the sized mode of every active placement of a pie (``pie_modes``
+    # keeps only the narrowest placement's).
+    pie_placement_modes: dict[str, tuple[PieMode, ...]] = {}
     # chart id → the series labels the endpoint-label rail cap cut, captured at
     # the single measure site (render/chart/features/endpoint_labels.py). Sparse —
     # only charts whose rail was actually degraded appear.

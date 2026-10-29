@@ -74,6 +74,7 @@ from dbt_charts.core.compile.models.source import (
     parse_source_config,
 )
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
 from dbt_charts.core.compile.template.listings import ListingCall, TextListings
 from dbt_charts.core.compile.template.parameterized import DateRangeFilter
 from dbt_charts.core.compile.template.variables import (
@@ -100,6 +101,7 @@ from dbt_charts.core.execute.cache_backend import (
 )
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+from dbt_charts.core.execute.metricflow import bundle_files, bundle_fingerprint
 from dbt_charts.core.execute.sql_translate import (
     dialect_differs,
     dialect_unsupported,
@@ -338,10 +340,10 @@ def _memo_key(
 
 
 def merge_board_variables(
-    board: Board, variables: VariableValues, today: date
+    board: Board, variables: VariableValues, clock: BoardClock
 ) -> VariableValues:
     """Merge a board's declared variables with caller overrides, coerced to type,
-    each daterange preset dated on the board's ``today``.
+    each daterange preset dated on the board's ``clock``.
 
     Declared names first (so an undeclared-but-defaulted variable still binds),
     then board defaults, then the caller's values. Coercion is the runtime
@@ -354,7 +356,7 @@ def merge_board_variables(
     all_variables.update(board.variable_defaults)
     merged = {**all_variables, **parse_variable_json_strings(variables)}
     return resolve_daterange_presets(
-        coerce_variable_values(merged, variable_registry), variable_registry, today
+        coerce_variable_values(merged, variable_registry), variable_registry, clock
     )
 
 
@@ -552,6 +554,7 @@ class Executor:
         # query writes matches the one a later query in the same render reads even
         # if the file's mtime changes mid-render. Keyed by source name.
         self._source_versions: dict[str, str] = {}
+        self._semantic_versions: dict[str, str] = {}
         self._warehouse_hit_ats: list[datetime] = []
         # Same idea for the dbt manifest a ref()/source() resolves against,
         # keyed by the source's authored target_path.
@@ -635,7 +638,10 @@ class Executor:
             >>> for row in data:
             ...     print(f"{row['date']}: {row['amount']}")
         """
-        rows = self._execute_rows(query_name, variables, use_cache, force_refresh)
+        # Outside a render nothing scopes the clock a preset literal in the SQL
+        # (`filter_date_range('d', 'last_7_days')`) dates on.
+        with board_clock(self.board.clock(self.rendered_at)):
+            rows = self._execute_rows(query_name, variables, use_cache, force_refresh)
         name = query_name.removeprefix("queries.")
         query = self._get_query(name)
         if rows:
@@ -1096,8 +1102,9 @@ class Executor:
             True if the result is available in cache; False otherwise.
         """
         try:
-            _, query, merged = self._prepare_call(query_name, variables)
-            return self._lookup_cached(query, merged, query_name)
+            with board_clock(self.board.clock(self.rendered_at)):
+                _, query, merged = self._prepare_call(query_name, variables)
+                return self._lookup_cached(query, merged, query_name)
         except ExecutionError:
             return False
 
@@ -1123,7 +1130,7 @@ class Executor:
         merged = merge_board_variables(
             self.board,
             variables or {},  # type-state: silent_fallback — None: no caller overrides
-            self.board.regional.today(self.rendered_at),
+            self.board.clock(self.rendered_at),
         )
         return query_name, self._get_query(query_name), merged
 
@@ -1161,8 +1168,40 @@ class Executor:
             self.board.sources,
             source_version=self._source_version(query)
             + self._manifest_version(expanded)
+            + self._semantic_version(query)
             + "".join(f"|{ref_key}" for ref_key in upstream_keys),
         )
+
+    def _semantic_version(self, query: "AnyQuery") -> str:
+        """Fingerprint of the MetricFlow bundle the query's source declares, so a
+        changed bundle never replays rows, or an error, compiled from the old one.
+        ``""`` for a source without one. Memoized per source name like
+        ``_source_version``, for the same read-key/write-key consistency.
+
+        Reads the declared ``metricflow:`` rather than resolving the source, for
+        the reason ``_database_file_version`` gives, and hashes the files without
+        loading the bundle: a bundle that fails to load, or a path that escapes
+        the project, fails at execution with its own error.
+        """
+        if not is_sql_query(query) or query.source is None:
+            return ""
+        cached = self._semantic_versions.get(query.source)
+        if cached is not None:
+            return cached
+        raw = self.board.sources.get(
+            query.source
+        ) or self.adapter_registry.project_sources.sources.get(query.source)
+        relpath = raw.get("metricflow") if raw is not None else None
+        version = ""
+        if isinstance(relpath, str):
+            try:
+                files = bundle_files(self.adapter_registry.project, relpath)
+            except ValueError:
+                files = None
+            if files is not None:
+                version = f"|metricflow:{bundle_fingerprint(files)}"
+        self._semantic_versions[query.source] = version
+        return version
 
     def _lookup_cached(
         self,

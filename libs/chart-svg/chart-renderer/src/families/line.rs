@@ -521,6 +521,7 @@ pub(crate) struct SeriesLabel {
     pub font_family: String,
     pub font_size: f64,
     pub font_weight: String,
+    pub font_style: String,
     pub dark_companion_palette: Vec<String>,
     /// `(pinned color, ink)` pairs for the `category_colors` pins outside the
     /// palette (`common::category_ink`).
@@ -820,6 +821,7 @@ pub(crate) struct LinePanelGeometry {
     /// the same way bar's own composer call does, off any panel.
     pub(crate) val_font_size: f64,
     pub(crate) val_weight: String,
+    pub(crate) val_style: String,
     pub(crate) val_color: String,
     pub(crate) val_family: String,
     pub(crate) val_caption: AxisCaption,
@@ -945,6 +947,7 @@ impl LineXAxis {
                 family: xf.family.as_deref().unwrap_or("sans-serif"),
                 size: xf.size_or(11.0),
                 weight: &xwt,
+                style: xf.style.as_deref(),
                 fill: xf.color.as_deref().unwrap_or("#626366"),
             };
             let xsz = xf.size_or(11.0);
@@ -1400,6 +1403,7 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                             caption: geom.val_caption,
                             val_font_size: geom.val_font_size,
                             val_weight: geom.val_weight,
+                            val_style: geom.val_style,
                             val_color: geom.val_color,
                             val_family: geom.val_family,
                         }),
@@ -1885,7 +1889,7 @@ mod tests {
                 "axis_x": axis_json(titles_visible, None),
                 "axis_y": line_value_axis_json(titles_visible, y_on_right),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5},
-                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
+                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": false, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
@@ -3380,6 +3384,44 @@ mod tests {
         })
     }
 
+    /// A kept legend on any edge clears a strip on either side of the plot,
+    /// on a line and on an area: the strip's rows are ink beside the plot,
+    /// like an axis.
+    #[test]
+    fn a_support_table_strip_does_not_overlap_a_legend() {
+        let fonts = test_fonts();
+        for edge in ["top", "bottom", "left", "right"] {
+            for strip in ["top", "bottom"] {
+                for draw_areas in [false, true] {
+                    let mut p = make_line_payload(true, false);
+                    p["rows"] = serde_json::json!([
+                        {"week": "2026-01-01", "signups": 100.0, "trend": 110.0},
+                        {"week": "2026-01-08", "signups": 150.0, "trend": 120.0},
+                        {"week": "2026-01-15", "signups": 130.0, "trend": 130.0},
+                    ]);
+                    p["resolved"]["layers"] = serde_json::json!([line_layer_json(None)]);
+                    p["resolved"]["legend"]["visible"] = serde_json::json!(true);
+                    p["resolved"]["legend"]["label"]["padding"] = serde_json::json!(8.0);
+                    p["resolved"]["legend"]["position"] =
+                        serde_json::json!({"edge": edge, "align": "start", "overlay": false});
+                    p["resolved"]["legend"]["direction"] =
+                        serde_json::json!(if edge == "top" || edge == "bottom" { "horizontal" } else { "vertical" });
+                    p["resolved"]["support_table"] = serde_json::json!({
+                        "entries": [{"source": "signups", "format": ",d", "label": "Signups"}]
+                    });
+                    p["resolved"]["effective_support_table_style"] =
+                        if strip == "top" { support_table_style_json() } else { support_table_style_json_bottom() };
+                    if strip == "bottom" {
+                        p["resolved"]["support_table_axis_offset"] = serde_json::json!(20.0);
+                    }
+                    let svg = render_inner(&serde_json::from_value(p).unwrap(), &fonts, draw_areas)
+                        .unwrap_or_else(|e| panic!("{edge} legend, {strip} strip, areas {draw_areas}: {e:?}"));
+                    crate::families::support_table_strip::assert_legend_clears_strip(&svg, &fonts);
+                }
+            }
+        }
+    }
+
     /// A line layer over a year below 100 is undefined at that NaN row, as the base line is.
     #[test]
     fn a_line_layer_breaks_at_a_year_below_100() {
@@ -4368,7 +4410,7 @@ mod tests {
                 "axis_x": axis_json(false, None),
                 "axis_y": value_axis_json(false, None),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5},
-                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
+                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": false, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
@@ -4800,7 +4842,7 @@ mod tests {
                 "axis_x": axis_json(false, None),
                 "axis_y": value_axis_json(false, None),
                 "line_mark": {"stroke": {"width": 4.0, "cap": "round", "join": "round"}, "halo_multiplier": 1.5},
-                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
+                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": true, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
@@ -7167,10 +7209,9 @@ mod tests {
         );
     }
 
-    /// A top horizontal legend over a composed `position: top` strip draws:
-    /// Vega's `yBounds` carries the plot and the x axis, not the strip's bare
-    /// text marks, so the legend sits `offset + box_h` above the plot with
-    /// the strip's rows between it and the plot.
+    /// A top horizontal legend over a composed `position: top` strip draws
+    /// `offset + box_h` above the strip's top row, the rows between it and
+    /// the plot.
     #[test]
     fn top_horizontal_legend_over_a_composed_top_strip_draws() {
         use serde_json::json;
@@ -8209,7 +8250,7 @@ mod tests {
                 "axis_x": axis_x_json,
                 "axis_y": value_axis_json(false, None),
                 "line_mark": line_mark,
-                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
+                "series_label": {"font_family": TEST_FONT, "font_size": 11.0, "font_weight": "400", "font_style": "normal", "dark_companion_palette": [], "pin_companions": [], "gap_px": 8.0},
                 "endpoint_labels": {"visible": false, "label_offset": 6.0},
                 "single_series_fill": "#3164a3",
                 "label_usable_ratio": 0.8
@@ -13445,10 +13486,10 @@ mod tests {
         p["resolved"]["style"]["axis_y"]["scale"] =
             serde_json::json!({"continuous": {"type": "log", "log": {"base": 2.0}}});
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
-        for rung in [">537M<", ">1.07G<", ">2.15G<", ">4.29G<", ">8.59G<"] {
+        for rung in [">537M<", ">1.07B<", ">2.15B<", ">4.29B<", ">8.59B<"] {
             assert!(svg.contains(rung), "{rung} missing: {svg}");
         }
-        assert!(!svg.contains(">1G<"), "a base-ten rung on a base-two axis: {svg}");
+        assert!(!svg.contains(">1B<"), "a base-ten rung on a base-two axis: {svg}");
     }
 
     /// An authored pair reaches Vega verbatim: no `nice` rounds it out to powers.
@@ -14023,8 +14064,8 @@ mod tests {
     /// `rungs_at`'s own guard above), not special-cased to log. Same
     /// `[990M, 7795M]`/`.3~s` shape as the log fixture, on a plain linear
     /// axis instead: `rungs_at`'s own d3 ladder at `ceil(400/40) = 10`
-    /// draws only `0`..`8G` (2-char widest, "8G"), narrower than the cover
-    /// ladder's own widest candidate ("7.8G", 4 chars) — so the gutter
+    /// draws only `0`..`8B` (2-char widest, "8B"), narrower than the cover
+    /// ladder's own widest candidate ("7.8B", 4 chars) — so the gutter
     /// here is wider than measuring the drawn ladder would give, same
     /// direction as the log arm, just on the opposite (drawn ladder
     /// narrower) side of the comparison.
@@ -14043,13 +14084,13 @@ mod tests {
         });
         let fonts = test_fonts();
         let svg = render(&payload, &fonts).expect("renders");
-        assert!(svg.contains(">8G<"), "the drawn ladder's own widest is 8G: {svg}");
-        assert!(!svg.contains(">7.8G<"), "7.8G is never drawn, only measured: {svg}");
+        assert!(svg.contains(">8B<"), "the drawn ladder's own widest is 8B: {svg}");
+        assert!(!svg.contains(">7.8B<"), "7.8B is never drawn, only measured: {svg}");
         let mf = measure::stand_in_family(TEST_FONT);
-        let drawn_widest = fonts.measure("8G", mf, 11.0).unwrap();
-        let cover_widest = fonts.measure("7.8G", mf, 11.0).unwrap();
+        let drawn_widest = fonts.measure("8B", mf, 11.0).unwrap();
+        let cover_widest = fonts.measure("7.8B", mf, 11.0).unwrap();
         assert!(cover_widest > drawn_widest, "fixture assumption: {cover_widest} vs {drawn_widest}");
-        assert_eq!(rail_plot_w(&svg), 529.0, "{svg}");
+        assert_eq!(rail_plot_w(&svg), 530.0, "{svg}");
     }
 
     /// A right-orient, ladder-less axis whose `tick_label` carries
@@ -14566,7 +14607,7 @@ mod tests {
         // Identical to `an_unbaked_linear_axis_gutter_also_measures_the_
         // cover_ladder`'s own fixture and result, `ticks.count: 6.0`
         // baked here instead of unset — the gate ignores it either way.
-        assert_eq!(rail_plot_w(&svg), 529.0, "{svg}");
+        assert_eq!(rail_plot_w(&svg), 530.0, "{svg}");
     }
 
     /// The niced domain [1e8, 1e10] (`log_nice_domain`, floor/ceil of the
@@ -14593,8 +14634,8 @@ mod tests {
         assert!(svg.contains(">100M<"), "the domain floor stays visible: {svg}");
 
         let candidates = [
-            "100M", "200M", "300M", "400M", "500M", "600M", "700M", "800M", "900M", "1G", "2G",
-            "3G", "4G", "5G", "6G", "7G", "8G", "9G", "10G",
+            "100M", "200M", "300M", "400M", "500M", "600M", "700M", "800M", "900M", "1B", "2B",
+            "3B", "4B", "5B", "6B", "7B", "8B", "9B", "10B",
         ];
         let drawn: Vec<&str> =
             candidates.iter().filter(|c| svg.contains(&format!(">{c}<"))).copied().collect();
@@ -14607,7 +14648,7 @@ mod tests {
         // from `parity_visible`'s every-other halving).
         assert_eq!(
             drawn,
-            vec!["100M", "200M", "300M", "500M", "1G", "2G", "3G", "5G", "10G"],
+            vec!["100M", "200M", "300M", "500M", "1B", "2B", "3B", "5B", "10B"],
             "{svg}"
         );
     }

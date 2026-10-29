@@ -915,3 +915,15 @@ def test_instructions_point_the_host_at_the_entry_skill(mcp_server) -> None:
     skills to find where to start."""
     assert f"get_skill(name={ENTRY_SKILL_NAME!r})" in mcp_server.instructions
     assert get_skill(ENTRY_SKILL_NAME, surface="tool").name == ENTRY_SKILL_NAME
+
+
+def test_instructions_and_render_board_say_when_an_answer_is_a_sentence(
+    mcp_server,
+) -> None:
+    """render_board carries the rule too, for hosts that never show
+    `instructions`."""
+    from dbt_charts.ai.tool_schemas import RENDER_BOARD
+
+    for text in (mcp_server.instructions, RENDER_BOARD["description"]):
+        assert "A single value needs no chart" in text
+        assert "per day, week or month" in text

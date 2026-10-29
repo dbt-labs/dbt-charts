@@ -22,7 +22,6 @@ Dependencies:
 """
 
 import contextlib
-import datetime
 import logging
 import time
 from typing import TYPE_CHECKING, Any, Protocol
@@ -47,6 +46,12 @@ from dbt_charts.core.compile.models.board.resolved import (
 )
 from dbt_charts.core.compile.models.chart.normalized import NON_ASPECT_RATIO_TYPES
 from dbt_charts.core.compile.models.chart.resolved._layer import LayeredResolvedChart
+from dbt_charts.core.compile.models.primitives import PieMode
+from dbt_charts.core.compile.template.daterange import (
+    BoardClock,
+    board_clock,
+    current_board_clock,
+)
 from dbt_charts.core.compile.template.variables import (
     check_option_values,
     daterange_preset_ids,
@@ -65,9 +70,7 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import (
-    board_clock,
     board_variables,
-    current_board_today,
     daterange_presets,
 )
 from dbt_charts.core.render.boards import render_board_svg
@@ -209,10 +212,9 @@ def _data_format_renderer(format: str) -> DataFormatRenderer:
 
 def _collect_active_layout_charts(
     board: ResolvedBoard, variables: VariableValues
-) -> dict[str, tuple["ResolvedChart", float, float, TitleShift]]:
+) -> dict[str, tuple["ResolvedChart", float, float, TitleShift, PieMode | None]]:
     """Map chart_id -> (the chart instance, its laid-out width, height and title
-    shift) for
-    the active-tab subtree.
+    shift, and a pie's sized mode) for the active-tab subtree.
 
     Reads each ``ResolvedLayoutItem`` directly rather than looking a chart id
     up in ``board.charts`` — the catalog holds one entry per id, but a shared
@@ -231,7 +233,9 @@ def _collect_active_layout_charts(
     the active subtree keeps its narrowest placement — that is where
     crowding shows.
     """
-    charts: dict[str, tuple[ResolvedChart, float, float, TitleShift]] = {}
+    charts: dict[
+        str, tuple[ResolvedChart, float, float, TitleShift, PieMode | None]
+    ] = {}
 
     def _walk(layout: ResolvedLayout) -> None:
         items = layout.items
@@ -253,12 +257,45 @@ def _collect_active_layout_charts(
                         item.width,
                         item.height,
                         item.title_shift,
+                        item.pie_mode,
                     )
             if item.board is not None:
                 _walk(item.board.layout)
 
     _walk(board.layout)
     return charts
+
+
+def _collect_pie_placement_modes(
+    board: ResolvedBoard, variables: VariableValues
+) -> dict[str, tuple[PieMode, ...]]:
+    """Map chart_id -> the sized mode of every active placement of that pie.
+
+    ``_collect_active_layout_charts`` keeps one placement per id (the narrowest,
+    where crowding shows); a judgment that needs to know whether ANY placement
+    draws something (a legend only a direct pie has) reads them all.
+    """
+    modes: dict[str, list[PieMode]] = {}
+
+    def _walk(layout: ResolvedLayout) -> None:
+        items = layout.items
+        if layout.type == "tabs" and items:
+            active = resolve_active_tab_index(
+                len(items),
+                layout.tab_variable,
+                list(layout.tab_slugs),
+                layout.default_tab,
+                variables,
+            )
+            items = (items[active],)
+        for item in items:
+            if item.chart is not None and item.width and item.pie_mode is not None:
+                modes.setdefault(item.chart.id, []).append(item.pie_mode)
+            if item.board is not None:
+                _walk(item.board.layout)
+
+    _walk(board.layout)
+    return {chart_id: tuple(found) for chart_id, found in modes.items()}
 
 
 def _tab_variables(layout: Layout) -> set[str]:
@@ -415,7 +452,9 @@ def _collect_render_warnings(
         for chart_id, authored_height in authored_chart_heights.items():
             if chart_id not in chart_results or chart_id not in active_charts:
                 continue
-            chart, layout_width, layout_height, title_shift = active_charts[chart_id]
+            chart, layout_width, layout_height, title_shift, pie_mode = active_charts[
+                chart_id
+            ]
             if chart.chart_type in NON_ASPECT_RATIO_TYPES:
                 continue
             # A render failure must not block the render: the main pass reports it.
@@ -430,6 +469,7 @@ def _collect_render_warnings(
                     datasets=build_chart_datasets(chart, executor, variables),
                     title_shift=title_shift,
                     authored_height=authored_height,
+                    pie_mode=pie_mode,
                 )
                 rerendered.append(chart_id)
     for chart_id in rerendered:
@@ -465,6 +505,12 @@ def _collect_render_warnings(
         unattributed_truncations=unattributed_truncations,
         plot_width_share_warnings=plot_width_share_warnings,
         pie_total_overflows=pie_total_overflows,
+        pie_placement_modes=_collect_pie_placement_modes(board, variables),
+        pie_modes={
+            chart_id: mode
+            for chart_id, (*_, mode) in active_charts.items()
+            if mode is not None
+        },
         contrast_warnings=contrast_warnings,
     )
     warnings = run_all(ctx)
@@ -485,7 +531,7 @@ def _render_variables(
     board: Board,
     parsed_variables: VariableValues,
     builtin_variables: VariableValues | None,
-    today: datetime.date,
+    clock: BoardClock,
 ) -> VariableValues:
     """The variable values a render runs every query and template with."""
     variable_registry = (
@@ -509,7 +555,7 @@ def _render_variables(
     # directly — so without this, `{{ v | join(', ') }}` on an unset multiselect
     # raises and the whole board renders as an error. Queries get the same
     # narrowing from coerce_variable_values; this is the render half.
-    return normalize_render_values(merged_variables, variable_registry, today)
+    return normalize_render_values(merged_variables, variable_registry, clock)
 
 
 def _prefetch_query_names(board: Board, variables: VariableValues) -> frozenset[str]:
@@ -546,7 +592,7 @@ def prefetch_tab_queries(
         board,
         parse_variable_json_strings(variables),
         builtin_variables,
-        board.regional.today(executor.rendered_at),
+        board.clock(executor.rendered_at),
     )
     misses = {
         name
@@ -589,7 +635,7 @@ def render(
             language=board.regional.resolved_language,
         ),
         daterange_presets(presets),
-        board_clock(board.regional.today(executor.rendered_at)),
+        board_clock(board.clock(executor.rendered_at)),
     ):
         return _render(
             board,
@@ -682,7 +728,7 @@ def _render(
     variable_registry = board.variable_registry or {}
     parsed_variables = parse_variable_json_strings(variables or {})
     merged_variables = _render_variables(
-        board, parsed_variables, builtin_variables, current_board_today()
+        board, parsed_variables, builtin_variables, current_board_clock()
     )
 
     # Board-level precondition: required variables must have a value before any query runs.
@@ -884,11 +930,9 @@ def _render(
                 warnings=[],
                 suppressed_warnings=[],
             )
-        except Exception as e:  # noqa: BLE001
-            from dbt_charts.core.diagnostics import ERR_INTERNAL
-
+        except Exception as e:  # noqa: BLE001 — any crash is this board's ERR-INTERNAL, not a server error
             _reset_contexts()
-            wrapped = RenderError.from_code(ERR_INTERNAL, message=str(e))
+            wrapped = RenderError.from_unexpected(e)
             return RenderResult(
                 query_ms=query_ms,
                 prefetch_query_names=prefetch_query_names,
@@ -1074,12 +1118,8 @@ def _render(
         render_warnings, suppressed_warnings = _finalize_warnings(
             {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
-    except Exception as e:  # noqa: BLE001
-        from dbt_charts.core.diagnostics import ERR_INTERNAL
-
-        board_error = RenderError.from_code(
-            ERR_INTERNAL, message=str(e)
-        ).to_diagnostic()
+    except Exception as e:  # noqa: BLE001 — any crash is this board's ERR-INTERNAL, not a server error
+        board_error = RenderError.from_unexpected(e).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
             {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
@@ -1177,14 +1217,10 @@ def _render(
             output = None
             if board_error is None:
                 board_error = e.to_diagnostic()
-        except Exception as e:  # noqa: BLE001
-            from dbt_charts.core.diagnostics import ERR_INTERNAL
-
+        except Exception as e:  # noqa: BLE001 — any crash is this board's ERR-INTERNAL, not a server error
             output = None
             if board_error is None:
-                board_error = RenderError.from_code(
-                    ERR_INTERNAL, message=str(e)
-                ).to_diagnostic()
+                board_error = RenderError.from_unexpected(e).to_diagnostic()
         if format in ("text", "text-data") and output is not None:
             # Warnings live in render_warnings (computed above, outside this
             # format-specific walk) — appended here rather than threaded into

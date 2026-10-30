@@ -203,11 +203,11 @@ Also exist: `font`, `format`, `glyph`.
 - `wrap` (bool): Allow cell text wrapping; false clips to single line
 - `header` (mapping): Table header row style
 - `row` ({height, stripe: {}, divider: {}, role, roles: {}}): Table body row style
-- `pagination` ({enabled, page_rows}): Client-side pagination defaults for table charts
+- `pagination` ({enabled, page_rows, mode}): Client-side pagination defaults for table charts
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
 - `row_numbers` ({visible, header, align}): Leading row-number column configuration
-Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `header_overflow`, `paginator`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
+Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border`, `color`, `outer_padding`, `bottom_padding`, `column_layout`, `title_row`, `header_overflow`, `paginator`, `scrollbar`, `symbol_mode`, `more_rows`, `empty_state`, `spark`, `transpose`, `text_baseline_offset`, `title_subtitle_gap`.
 
 `table style.header`: `visible`, `height`, `font`, `font_compact`, `background`, `overflow`, `divider`.
 
@@ -217,7 +217,7 @@ Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border
 - `role`: Default row role assignment; None means plain body row
 Also exist: `divider`, `roles`.
 
-`table style.pagination`: `enabled`, `page_rows`.
+`table style.pagination`: `enabled`, `page_rows`, `mode`.
 
 `table style.columns.<column>`:
 - `visible` (bool): Whether this column renders

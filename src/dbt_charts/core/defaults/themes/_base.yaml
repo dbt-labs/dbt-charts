@@ -378,6 +378,7 @@ style:
       pagination:
         enabled: true
         page_rows: 20
+        mode: pages
       text_baseline_offset: 4.0
       # No title_baseline_offset: the title baseline derives from the
       # resolved title font size (_TITLE_ASCENT_RATIO in
@@ -399,6 +400,10 @@ style:
         # Looker migrator sets this per-table so migrated tables get breathing
         # room without perturbing every authored table's column widths.
         content_headroom: 0.0
+        # Columns that need more than the slot keep their width and the table
+        # scrolls sideways; `fit` squeezes them in instead.
+        overflow: scroll
+        freeze: 0
       title_row:
         height: 40.0
       more_rows:
@@ -412,6 +417,11 @@ style:
         weight_inactive: 400
         weight_chevron: 800  # heavier than the active page so chevrons read as affordances
         item_width: 18.0  # per-item slot width (hit-rect is narrower; see render code)
+      scrollbar:
+        # Thin overlay bars drawn over the body edge of a scrolling table.
+        size: 6.0
+        inset: 2.0
+        thumb_color: chrome[6]
       empty_state:
         font:
           extends: label

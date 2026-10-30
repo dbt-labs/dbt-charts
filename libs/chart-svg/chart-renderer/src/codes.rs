@@ -92,6 +92,7 @@ pub const ERR_SUPPORT_TABLE_NO_Y_ENCODING: Code = Code { id: "ERR-SUPPORT-TABLE-
 pub const ERR_SUPPORT_TABLE_X_FIELD_DISAGREE: Code = Code { id: "ERR-SUPPORT-TABLE-X-FIELD-DISAGREE", params: &[] };
 pub const ERR_TAB_UNKNOWN: Code = Code { id: "ERR-TAB-UNKNOWN", params: &["slugs", "value", "variable"] };
 pub const ERR_TABLE_FORMAT_KIND_MISMATCH: Code = Code { id: "ERR-TABLE-FORMAT-KIND-MISMATCH", params: &["fmt", "remedy"] };
+pub const ERR_TABLE_FREEZE_INVALID: Code = Code { id: "ERR-TABLE-FREEZE-INVALID", params: &["chart_id", "reason"] };
 pub const ERR_TABLE_LINK_FILTER_UNKNOWN: Code = Code { id: "ERR-TABLE-LINK-FILTER-UNKNOWN", params: &["filter_name"] };
 pub const ERR_TABLE_PIVOT_DIMENSIONS_AMBIGUOUS: Code = Code { id: "ERR-TABLE-PIVOT-DIMENSIONS-AMBIGUOUS", params: &[] };
 pub const ERR_TABLE_PIVOT_DUPLICATE_CELL: Code = Code { id: "ERR-TABLE-PIVOT-DUPLICATE-CELL", params: &["measure", "pivot_column", "row"] };

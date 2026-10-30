@@ -376,6 +376,8 @@ COLOR_TOKEN_FIELD_TAILS: tuple[YamlKeyPath, ...] = tuple(
         "color_active",
         "color_inactive",
         "color_disabled",
+        "thumb_color",
+        "track_color",
         "focus_color",
         "drop_line_color",
         "accent",

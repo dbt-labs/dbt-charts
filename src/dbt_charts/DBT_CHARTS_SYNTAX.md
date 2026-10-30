@@ -1041,6 +1041,12 @@ style:
 # to hide a column
 type: table
 style:
+  column_layout:
+    overflow: scroll                     # scroll (default): keep column widths, scroll sideways | fit: squeeze into the slot
+    freeze: 1                            # leading visible columns pinned while scrolling (needs overflow: scroll)
+  pagination:
+    page_rows: 20                        # rows per page, or rows in view with mode: scroll
+    mode: pages                          # pages (default): pager below | scroll: vertical scroll, header pinned
   columns:
     order_id:
       visible: false                     # hide; values stay usable in link: templates

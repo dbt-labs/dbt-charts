@@ -91,17 +91,37 @@ pub fn natural_content_width(
 ) -> Option<f64> {
     let mut pinned_px = 0.0_f64;
     let mut percent = 0.0_f64;
-    let mut auto: Vec<&NaturalColumn> = Vec::new();
     for column in columns {
         match column.pin {
             Some(Pin::Px(width)) => pinned_px += width,
             Some(Pin::Percent(fraction)) => percent += fraction,
-            None => auto.push(column),
+            None => {}
         }
     }
     if percent >= 1.0 {
         return None;
     }
+    let widths: Vec<f64> = natural_auto_layout(columns, content_headroom, cell_pad)
+        .into_iter()
+        .flatten()
+        .map(|(width, _)| width)
+        .collect();
+    let rest = pinned_px + py_float_sum(&widths);
+    if rest <= 0.0 {
+        None
+    } else {
+        Some(rest / (1.0 - percent))
+    }
+}
+
+/// Each auto column's natural width (`natural_auto_width`) and whether it is
+/// compact, in column order; `None` for a pinned column.
+pub fn natural_auto_layout(
+    columns: &[NaturalColumn],
+    content_headroom: f64,
+    cell_pad: f64,
+) -> Vec<Option<(f64, bool)>> {
+    let auto: Vec<&NaturalColumn> = columns.iter().filter(|c| c.pin.is_none()).collect();
     let base: Vec<f64> = auto
         .iter()
         .map(|c| auto_column_demand(c.demand, c.word_floor, c.max_width))
@@ -124,12 +144,11 @@ pub fn natural_content_width(
             )
         })
         .collect();
-    let rest = pinned_px + py_float_sum(&widths);
-    if rest <= 0.0 {
-        None
-    } else {
-        Some(rest / (1.0 - percent))
-    }
+    let mut auto_widths = widths.into_iter().zip(is_text);
+    columns
+        .iter()
+        .map(|c| if c.pin.is_none() { auto_widths.next().map(|(w, text)| (w, !text)) } else { None })
+        .collect()
 }
 
 /// The table width at which the row
@@ -182,7 +201,7 @@ pub fn paginator_band_width(
 }
 
 /// A column's `width:`/`max_width:` as `natural_content_width` reads them.
-fn natural_column(
+pub(super) fn natural_column(
     col: &super::ColMeta,
     inputs: &ColumnInputs,
 ) -> Result<NaturalColumn, String> {
@@ -331,7 +350,11 @@ fn natural_width_in_scope(payload: &MeasurePayload, fonts: &FontBook) -> Result<
 
     // Only the page size can paginate an unbounded table; a slot short enough
     // to paginate is not known here.
-    let page_rows = if th.pagination.enabled { th.pagination.page_rows } else { None };
+    let page_rows = if th.pagination.enabled && th.pagination.mode == super::PaginationMode::Pages {
+        th.pagination.page_rows
+    } else {
+        None
+    };
     match page_rows {
         Some(page_rows) if rows.len() > page_rows + PAGINATION_GROW_CAP => {
             // The size, else 11.

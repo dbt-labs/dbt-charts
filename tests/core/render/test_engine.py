@@ -778,8 +778,13 @@ def test_spark_label_truncation_records_one_entry_per_label() -> None:
     ] * 2
 
 
+# These tables probe the squeeze a slot imposes, which only `fit` applies.
+_FIT = {"column_layout": {"overflow": "fit"}}
+
+
 def test_table_text_truncation_records_the_engine_count_per_column() -> None:
-    chart = _resolved({"type": "table", "query": "q"}, [_WIDE_ROW])
+    table = {"type": "table", "query": "q", "style": _FIT}
+    chart = _resolved(table, [_WIDE_ROW])
     payload = build_chart_payload(
         chart,
         {chart.query_name: [_WIDE_ROW]},
@@ -800,7 +805,7 @@ def test_table_text_truncation_records_the_engine_count_per_column() -> None:
     }
     assert counts
     with _sinks() as sinks:
-        _native({"type": "table", "query": "q"}, [_WIDE_ROW], width=200.0, height=0.0)
+        _native(table, [_WIDE_ROW], width=200.0, height=0.0)
     assert Counter(
         t.authored_field for t in sinks.truncations["c1"] if t.surface == "table_cell"
     ) == Counter(counts)
@@ -852,7 +857,10 @@ def test_table_columns_overflow_lands_in_its_sink() -> None:
     table = {
         "type": "table",
         "query": "q",
-        "style": {"columns": {"org_id": {"width": 300}, "table_name": {"width": 300}}},
+        "style": {
+            **_FIT,
+            "columns": {"org_id": {"width": 300}, "table_name": {"width": 300}},
+        },
     }
     row = {"org_id": "act_2zGAXPCi8w3MckVTMpVT3OSQ3Ni", "table_name": "weekly"}
     with _sinks() as sinks:
@@ -863,7 +871,7 @@ def test_table_columns_overflow_lands_in_its_sink() -> None:
 
 
 def test_table_cramping_lands_in_its_sink_with_the_engine_suggested_width() -> None:
-    table = {"type": "table", "query": "q", "style": {"preferred_width": 800}}
+    table = {"type": "table", "query": "q", "style": {**_FIT, "preferred_width": 800}}
     rows = [{f"a_long_header_name_{i}": "1,234" for i in range(6)}]
     with _sinks() as sinks:
         _native(table, rows, width=420.0, height=0.0)
@@ -876,7 +884,7 @@ def test_table_cramping_lands_in_its_sink_with_the_engine_suggested_width() -> N
 
 
 def test_a_cramped_table_outside_a_board_renders_with_no_suggested_fix() -> None:
-    table = {"type": "table", "query": "q", "style": {"preferred_width": 800}}
+    table = {"type": "table", "query": "q", "style": {**_FIT, "preferred_width": 800}}
     rows = [{f"a_long_header_name_{i}": "1,234" for i in range(6)}]
     chart = _resolved(table, rows)
     with _sinks() as sinks:

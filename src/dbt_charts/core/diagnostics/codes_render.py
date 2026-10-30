@@ -3332,6 +3332,22 @@ ERR_TABLE_SPANNER_UNKNOWN_COLUMN = REGISTRY.register(
     )
 )
 
+ERR_TABLE_FREEZE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-TABLE-FREEZE-INVALID",
+        domain="render",
+        title="column_layout.freeze cannot pin the columns it names",
+        message_template="table {chart_id!r}: column_layout.freeze {reason}",
+        doc=(
+            "Fired when a table's freeze count cannot be honored. It is larger "
+            "than the number of columns the table draws, or the table squeezes "
+            "its columns instead of scrolling them. Clamping or ignoring it would "
+            "silently pin something other than what the author asked for."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_TABLE_SPANNER_NOT_ADJACENT = REGISTRY.register(
     ErrorCode(
         code="ERR-TABLE-SPANNER-NOT-ADJACENT",

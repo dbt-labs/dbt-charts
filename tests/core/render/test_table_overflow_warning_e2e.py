@@ -56,6 +56,8 @@ charts:
   orgs:
     query: q
     type: table
+    style:
+      column_layout: {overflow: fit}
   filler_text:
     query: q
     type: kpi
@@ -139,6 +141,8 @@ charts:
   wide_table:
     query: q
     type: table
+    style:
+      column_layout: {overflow: fit}
   other_table:
     query: q
     type: table

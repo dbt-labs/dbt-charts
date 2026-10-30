@@ -50,7 +50,9 @@ def _cramped_table_board() -> str:
     return (
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800}}\n"
+        # `fit`: cramping is the squeeze a slot imposes; `scroll` has none.
+        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800, "
+        "column_layout: {overflow: fit}}}\n"
         "rows:\n  - t\n"
     )
 

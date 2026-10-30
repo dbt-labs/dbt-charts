@@ -65,6 +65,7 @@ charts:
       preferred_width: 200
       column_layout:
         default_width: 40
+        overflow: fit
 rows:
   - t1
 """

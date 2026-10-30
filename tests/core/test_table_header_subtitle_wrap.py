@@ -73,7 +73,11 @@ def _chart(make_chart, *, subtitle: str | None = None):
         x=None,
         y=None,
         title=_TITLE,
-        style={"columns": {col: {"label": label} for col, label in _LABELS.items()}},
+        style={
+            # Header wrapping is what a slot imposes under `fit`.
+            "column_layout": {"overflow": "fit"},
+            "columns": {col: {"label": label} for col, label in _LABELS.items()},
+        },
         **extra,
     )
 

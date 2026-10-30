@@ -303,6 +303,8 @@ charts:
   t:
     query: q
     type: table
+    style:
+      column_layout: {{overflow: fit}}
 rows:
   - t
 """,

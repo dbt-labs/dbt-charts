@@ -53,7 +53,7 @@ def _board(rows: list[dict[str, Any]], height: str | None = None) -> str:
     return (
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800}}\n"
+        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800, column_layout: {overflow: fit}}}\n"
         + layout
     )
 
@@ -189,6 +189,7 @@ def _board_with_columns(rows: list[dict[str, Any]], columns_yaml: str) -> str:
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
         "charts:\n  t:\n    query: q\n    type: table\n    style:\n"
+        "      column_layout: {overflow: fit}\n"
         "      columns:\n" + columns_yaml + "rows:\n  - t\n"
     )
 
@@ -250,7 +251,7 @@ def test_cols_slot_suggestion_clears_in_one_paste_back() -> None:
     yaml_text = (
         "title: T\nstyle:\n  frame:\n    width: 1200\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table}\n"
+        "charts:\n  t: {query: q, type: table, style: {column_layout: {overflow: fit}}}\n"
         "  k: {query: q, type: kpi, value: net_revenue}\n"
         "cols:\n  - t\n  - k\n"
     )

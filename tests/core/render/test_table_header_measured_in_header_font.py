@@ -29,6 +29,10 @@ _BOARD = """\
 style:
   frame:
     width: {width}
+  charts:
+    table:
+      column_layout:
+        overflow: fit
 queries:
   rev:
     type: values

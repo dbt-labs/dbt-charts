@@ -177,4 +177,7 @@ def test_every_color_field_of_the_board_model_has_a_respell_move() -> None:
         and move.value_map.get("dbt-grays.separator") == "dbt-grays.4"
     }
 
-    assert color_fields - reached == set()
+    # Added after the scaffold respell's source schema: nothing authored
+    # under it can hold a retired spelling there, so no move reaches them.
+    added_later = {"thumb_color", "track_color"}
+    assert color_fields - reached - added_later == set()

@@ -9,10 +9,12 @@ image a decoy of the same name in the directory it must not resolve against.
 from __future__ import annotations
 
 import base64
+import re
 import struct
 import zlib
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 import pytest
 
@@ -50,6 +52,11 @@ def _render(
         result_cache=None,
         format="svg",
     )
+
+
+def _plain_text(svg: str) -> str:
+    unstyled = re.sub(r"<style.*?</style>", "", svg, flags=re.DOTALL)
+    return " ".join("".join(ElementTree.fromstring(unstyled).itertext()).split())
 
 
 def _image_reads(files: dict[str, str]) -> set[str]:
@@ -297,6 +304,57 @@ class TestErrorScope:
     def test_missing_text_image(self) -> None:
         svg = self._partial("text: '![l](missing.svg)'\n")
         assert "Image error" in svg
+
+    def test_a_missing_image_leaves_the_rest_of_its_text(self) -> None:
+        svg = self._partial(
+            "text: |\n"
+            "  # Heading kept\n"
+            "\n"
+            "  Before ![logo](missing.svg) after, then `code kept`.\n"
+            "\n"
+            "  - a list item kept\n"
+        )
+        text = _plain_text(svg)
+        for kept in ("heading kept", "before", "after, then", "a list item kept"):
+            assert kept in text.lower()
+        assert "missing.svg" in text
+
+    def test_a_missing_standalone_image_leaves_its_neighbors(self) -> None:
+        svg = self._partial(
+            "text: |\n  Above kept\n\n  ![](gone.svg)\n\n  Below kept\n"
+        )
+        text = _plain_text(svg)
+        assert "Above kept" in text and "Below kept" in text
+        assert "gone.svg" in text
+
+    def test_the_marker_stands_where_the_image_was_and_the_good_image_embeds(
+        self,
+    ) -> None:
+        project = InMemoryProject(Path("/proj"), {"charts/ok.svg": _TALL})
+        result = _render(
+            project,
+            InMemoryBoard(
+                "text: 'Alpha ![ok](ok.svg) Bravo ![bad](gone.svg) Charlie'\n",
+                path=None,
+            ),
+        )
+        assert [e.code for e in result.chart_errors] == ["ERR-IMAGE-REF-UNRESOLVED"]
+        assert isinstance(result.data, str)
+        assert _EMBEDDED in result.data
+        text = _plain_text(result.data)
+        assert "gone.svg" in text
+        assert text.index("Alpha") < text.index("Bravo") < text.index("gone.svg")
+        assert text.index("gone.svg") < text.index("Charlie")
+
+    def test_every_bad_image_in_one_text_is_reported(self) -> None:
+        project = InMemoryProject(Path("/proj"), {})
+        result = _render(
+            project,
+            InMemoryBoard("text: '![a](one.svg) ![b](two.svg)'\n", path=None),
+        )
+        refs = [e.message for e in result.chart_errors]
+        assert len(refs) == 2
+        assert "one.svg" in refs[0] and "two.svg" in refs[1]
 
     def test_malformed_data_uri_in_the_title(self) -> None:
         bad = "data:image/svg+xml;base64,bm90IGFuIHN2Zw=="

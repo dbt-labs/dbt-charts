@@ -193,6 +193,29 @@ def test_double_alias_after_a_query_reference_says_to_drop_the_alias(
     )
 
     assert "delete the `AS" in out
+    assert "to alias it, wrap it: (SELECT * FROM {{ queries.base }}) AS b" in out
+
+
+@pytest.mark.parametrize(
+    "cte",
+    [
+        "WITH annual AS ({{ queries.base }}) SELECT n FROM annual",
+        "WITH annual AS {{ queries.base }} SELECT n FROM annual",
+    ],
+)
+def test_query_reference_used_as_a_cte_body_is_named_at_the_warehouse(
+    tmp_path: Path, cte: str
+) -> None:
+    (tmp_path / "data.csv").write_text("n\n1\n")
+    out = _check_file(
+        tmp_path,
+        "title: T\nsource: data.csv\nqueries:\n  base: SELECT 1 AS n\n"
+        f"  q: {cte}\n"
+        "charts:\n  k:\n    type: kpi\n    query: q\n    value: n\nrows:\n  - k\n",
+    )
+
+    assert "not a CTE body" in out
+    assert "FROM {{ queries.base }}" in out
 
 
 def test_number_format_on_a_year_axis_names_the_time_spec(tmp_path: Path) -> None:

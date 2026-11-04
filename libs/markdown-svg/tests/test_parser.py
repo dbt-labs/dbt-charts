@@ -120,6 +120,70 @@ class TestLinks:
         link_span = next(s for s in spans if s.span_type == SpanType.LINK)
         assert link_span.title == "Title"
 
+    def test_inline_code_in_a_link_label_is_a_code_link(self) -> None:
+        doc = parse("See [`file.yml`](docs/file.yml) now")
+        assert isinstance(doc[0], Paragraph)
+        link_span = next(s for s in doc[0].spans if s.span_type == SpanType.LINK)
+        assert link_span.text == "file.yml"
+        assert link_span.code is True
+        assert link_span.url == "docs/file.yml"
+
+    def test_a_label_mixing_text_and_code_splits_into_link_spans(self) -> None:
+        doc = parse('[open `a.yml` now](u "T")')
+        assert isinstance(doc[0], Paragraph)
+        assert [
+            (s.span_type, s.text, s.code, s.url, s.title) for s in doc[0].spans
+        ] == [
+            (SpanType.LINK, "open ", False, "u", "T"),
+            (SpanType.LINK, "a.yml", True, "u", "T"),
+            (SpanType.LINK, " now", False, "u", "T"),
+        ]
+
+    def test_a_plain_label_is_not_a_code_link(self) -> None:
+        doc = parse("[here](u)")
+        assert isinstance(doc[0], Paragraph)
+        assert doc[0].spans[0].code is False
+
+
+class TestCodeInsideEmphasis:
+    """CommonMark: a code span inside emphasis is emphasized code."""
+
+    @pytest.mark.parametrize(
+        ("markdown", "bold", "italic"),
+        [
+            ("**`message`**", True, False),
+            ("*`message`*", False, True),
+            ("***`message`***", True, True),
+        ],
+    )
+    def test_code_inside_emphasis_is_emphasized_code(
+        self, markdown: str, bold: bool, italic: bool
+    ) -> None:
+        doc = parse(markdown)
+        assert isinstance(doc[0], Paragraph)
+        [span] = doc[0].spans
+        assert (span.span_type, span.text, span.bold, span.italic) == (
+            SpanType.CODE,
+            "message",
+            bold,
+            italic,
+        )
+
+    def test_emphasis_mixing_text_and_code_splits_into_spans(self) -> None:
+        doc = parse("**set `tone` here**")
+        assert isinstance(doc[0], Paragraph)
+        assert [(s.span_type, s.text, s.bold) for s in doc[0].spans] == [
+            (SpanType.BOLD, "set ", False),
+            (SpanType.CODE, "tone", True),
+            (SpanType.BOLD, " here", False),
+        ]
+
+    def test_emphasis_inside_a_code_span_stays_literal(self) -> None:
+        doc = parse("`**message**`")
+        assert isinstance(doc[0], Paragraph)
+        [span] = doc[0].spans
+        assert (span.span_type, span.text) == (SpanType.CODE, "**message**")
+
 
 class TestLists:
     """Test list parsing."""

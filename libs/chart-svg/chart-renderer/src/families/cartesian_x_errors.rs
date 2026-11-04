@@ -7,10 +7,8 @@ use std::borrow::Cow;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::temporal::{
-    civil_from_days, days_in_month, days_from_civil, floor_to_bucket_start, infer_vega_type, is_time_format, normalize_labeled_temporal,
-    TimeUnit, VegaType,
-};
+use super::temporal::{floor_to_bucket_start, infer_vega_type, is_time_format, normalize_labeled_temporal, TimeUnit, VegaType};
+use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year};
 use super::x_type::{parse_date, py_cell_key, resolve_cartesian_x_type, resolve_filled_x, scaffold_rows, Grain, XAxis, XResolution};
 use crate::codes;
 use crate::common::{AxisStyle, PyKey};
@@ -148,7 +146,7 @@ fn iso_date_reads(d: &[char]) -> bool {
         }
         let year = year as i32;
         let jan1_weekday = (days_from_civil(year, 1, 1) + 4).rem_euclid(7);
-        let long_year = jan1_weekday == 4 || jan1_weekday == 3 && super::temporal::is_leap_year(year);
+        let long_year = jan1_weekday == 4 || jan1_weekday == 3 && is_leap_year(year);
         let weeks = if long_year { 53 } else { 52 };
         if !(1..=weeks).contains(&week) || !(1..=7).contains(&day) {
             return false;

@@ -105,6 +105,15 @@ impl Prelude {
         } else {
             ColorKind::Gradient
         };
+        if let Some(spec) = r.patterns.spec() {
+            let ramp = spec.scale != crate::pattern::Scale::Category;
+            match kind {
+                ColorKind::Dates => return Err(format!("heatmap: pattern on {:?}: a date column has no pattern scale", spec.field).into()),
+                ColorKind::Categories if ramp => return Err(format!("heatmap: pattern on {:?}: a ramp scale needs a numeric color column", spec.field).into()),
+                ColorKind::Gradient if !ramp => return Err(format!("heatmap: pattern on {:?}: a category scale needs a discrete color column", spec.field).into()),
+                _ => {}
+            }
+        }
         Ok(Prelude { r, rows, x_grain, y_grain, kind })
     }
 }
@@ -179,7 +188,8 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     let legend_title = crate::families::legend::legend_title_text(&r.color, &r.legend, &r.field_labels)?;
     // The mirror's ghost rule layer strokes the same color, which turns a numeric
     // gradient into a symbol legend too: a stroked circle per rung.
-    let ladder = if ghost.is_some() { symbol_ladder(&r, &coloring, &gradient_labels)? } else { Vec::new() };
+    let ramp_legend = r.patterns.spec().is_some_and(|spec| spec.scale != crate::pattern::Scale::Category);
+    let ladder = if ghost.is_some() || ramp_legend { symbol_ladder(&r, &coloring, &gradient_labels)? } else { Vec::new() };
 
     let (x_first_seen, y_first_seen) = (first_appearance(&rows, &r.x), first_appearance(&rows, &r.y));
     let (ax_x, ax_y) = (&r.style.axis_x, &r.style.axis_y);
@@ -203,6 +213,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         link: r.datum_link((x_grain.is_some(), y_grain.is_some(), kind == ColorKind::Dates)),
         mirror: ghost.is_some(),
         ghost_titles: None,
+        patterns: &r.patterns,
     };
     let cells = bind_cells(&rows, &x_domain, &y_domain, &paint)?;
     let marks = CellMarks::of(&r.style.rect_mark)?;
@@ -216,7 +227,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         coloring,
         ghost,
         ghost_texts,
-        gradient_id: format!("heat_grad-{}", crate::contract::safe_svg_id(&r.id)),
+        gradient_id: format!("heat_grad-{}", crate::contract::scoped_id(&r.id)),
         gradient_labels,
         legend_title,
         ladder,
@@ -233,7 +244,15 @@ fn symbol_ladder(r: &HeatmapResolved, coloring: &Coloring, labels: &[String]) ->
             .iter()
             .zip(ticks)
             .map(|(label, &tick)| {
-                Ok((label.clone(), GradientColors::new(&r.style.color_gradient, scale.as_ref()).at(*min, *max, tick)?))
+                let colors = GradientColors::new(&r.style.color_gradient, scale.as_ref());
+                let fill = match r.patterns.spec() {
+                    Some(spec) if spec.scale != crate::pattern::Scale::Category => {
+                        let end = if spec.scale == crate::pattern::Scale::Diverging && tick < 0.0 { min } else { max };
+                        r.patterns.step(r.patterns.step_of(tick, *min, *max)?, &colors.at(*min, *max, *end)?)?.swatch("none", 0.0).fill
+                    }
+                    _ => colors.at(*min, *max, tick)?,
+                };
+                Ok((label.clone(), fill))
             })
             .collect(),
         Coloring::DateGradient { min, max, aware } => {

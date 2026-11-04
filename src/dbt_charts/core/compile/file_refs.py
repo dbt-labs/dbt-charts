@@ -21,7 +21,6 @@ from dbt_charts.core.compile.migrations.migrations import (
     migration_notice_file,
     prepare_board_mapping,
 )
-from dbt_charts.core.compile.models.board.patch import BoardPatch
 from dbt_charts.core.compile.parse.parser import load_yaml_text
 from dbt_charts.core.diagnostics.codes_compile import ERR_FILE_SOURCE_AMBIGUOUS
 from dbt_charts.core.diagnostics.codes_render import ERR_IMAGE_REF_UNRESOLVED
@@ -39,6 +38,13 @@ INLINE_FILE_SOURCE_SUFFIXES: dict[str, str] = {
     ".csv": "csv",
     ".json": "json",
     ".parquet": "parquet",
+}
+# Database files are `sources:` entries, never inline file sources.
+_DATABASE_FILE_SOURCE_TYPES: dict[str, str] = {
+    ".duckdb": "duckdb",
+    ".db": "sqlite",
+    ".sqlite": "sqlite",
+    ".sqlite3": "sqlite",
 }
 
 
@@ -113,24 +119,14 @@ def resolve_ref(
     return path
 
 
-def resolve_file_source(
-    ref: str, anchor: ProjectDirectory | None, query_name: str
-) -> tuple[ProjectPath, str]:
-    """Resolve an inline ``source: data/x.csv`` to its file and source type.
+def _anchored_file(
+    ref: str, directory: ProjectDirectory, query_name: str
+) -> ProjectPath:
+    """The file *ref* names from *directory* or the project root.
 
-    Tried against *anchor* and the project root, so ``data/x.csv`` works from
-    any depth while ``../data/x.csv`` keeps working. Both existing is
-    ``ERR-FILE-SOURCE-AMBIGUOUS``, never a silent pick; neither returns the
-    *anchor* candidate, for execute to report the missing file per chart.
+    Both existing is ``ERR-FILE-SOURCE-AMBIGUOUS``, never a silent pick; neither
+    returns the *directory* candidate.
     """
-    directory = _anchor(ref, anchor, ())
-    file_type = INLINE_FILE_SOURCE_SUFFIXES.get(PurePosixPath(ref).suffix.lower())
-    if file_type is None:
-        raise ReferenceError(
-            ref,
-            f"query {query_name!r} — an inline file source needs one of "
-            f"{sorted(INLINE_FILE_SOURCE_SUFFIXES)}",
-        )
     # Keyed by relpath: from the root both anchors are one candidate. An anchor
     # the ref escapes is absent; only both failing is the author's error.
     candidates: dict[str, tuple[str, ProjectPath]] = {}
@@ -153,8 +149,40 @@ def resolve_file_source(
         raise CompilationError.from_code(
             ERR_FILE_SOURCE_AMBIGUOUS, query_name=query_name, ref=ref, candidates=found
         )
-    path = existing[0][1] if existing else next(iter(candidates.values()))[1]
-    return path, file_type
+    return existing[0][1] if existing else next(iter(candidates.values()))[1]
+
+
+def resolve_file_source(
+    ref: str,
+    anchor: ProjectDirectory | None,  # type-state: optional — a board with no project
+    query_name: str,
+) -> tuple[ProjectPath, str]:
+    """Resolve an inline ``source: data/x.csv`` to its file and source type.
+
+    Tried against *anchor* and the project root, so ``data/x.csv`` works from
+    any depth while ``../data/x.csv`` keeps working. A missing file returns the
+    *anchor* candidate, for execute to report per chart.
+    """
+    directory = _anchor(ref, anchor, ())
+    suffix = PurePosixPath(ref).suffix.lower()
+    file_type = INLINE_FILE_SOURCE_SUFFIXES.get(suffix)
+    if file_type is None:
+        if (kind := _DATABASE_FILE_SOURCE_TYPES.get(suffix)) is not None:
+            name = PurePosixPath(ref).stem
+            path = _anchored_file(ref, directory, query_name).relpath
+            raise ReferenceError(
+                ref,
+                f"query {query_name!r} — {ref} is a database file, not a file "
+                f"source: declare it under `sources:` in dbt_charts.yml "
+                f"({name}: {{type: {kind}, path: {path}}}) "
+                f"and write `{name}` as the source",
+            )
+        raise ReferenceError(
+            ref,
+            f"query {query_name!r} — an inline file source needs one of "
+            f"{sorted(INLINE_FILE_SOURCE_SUFFIXES)}",
+        )
+    return _anchored_file(ref, directory, query_name), file_type
 
 
 # "//host/a.png" names a remote origin even though it carries no scheme.
@@ -355,7 +383,7 @@ def read_section(
         with migration_notice_file(path.relpath):
             # A ref target may be a queries-only file, which AuthoredBoard's
             # layout requirement would mark stale on every compile.
-            migrated = prepare_board_mapping(raw, model=BoardPatch)
+            migrated = prepare_board_mapping(raw, patch=True)
         if memo is not None:
             memo[path.relpath] = migrated
     # Callers rewrite fields of what they import; the memo must stay pristine.

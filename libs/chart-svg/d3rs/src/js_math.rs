@@ -306,6 +306,120 @@ pub fn pow(x: f64, y: f64) -> f64 {
     s * z
 }
 
+/// ECMAScript WhiteSpace and LineTerminator: what `\s` and `String.prototype.trim` strip.
+pub fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}'
+            | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
+    )
+}
+
+/// JavaScript's `Number.prototype.toString` for a double: shortest round-trip digits, positional notation
+/// for exponents in [-7, 21), else `d.ddde+x`.
+pub fn js_number_string(v: f64) -> String {
+    if v.is_nan() {
+        return "NaN".to_string();
+    }
+    if v.is_infinite() {
+        return if v > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if v == 0.0 {
+        return "0".to_string();
+    }
+    let sign = if v < 0.0 { "-" } else { "" };
+    let scientific = format!("{:e}", v.abs());
+    let (mantissa, exponent) = scientific.split_once('e').unwrap();
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    let n = exponent.parse::<i32>().unwrap() + 1;
+    let k = digits.len() as i32;
+    let body = if k <= n && n <= 21 {
+        format!("{digits}{}", "0".repeat((n - k) as usize))
+    } else if 0 < n && n <= 21 {
+        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
+    } else if -6 < n && n <= 0 {
+        format!("0.{}{digits}", "0".repeat((-n) as usize))
+    } else {
+        let e = n - 1;
+        let exp = format!("e{}{}", if e < 0 { '-' } else { '+' }, e.abs());
+        if k == 1 {
+            format!("{digits}{exp}")
+        } else {
+            format!("{}.{}{exp}", &digits[..1], &digits[1..])
+        }
+    };
+    format!("{sign}{body}")
+}
+
+/// V8's `Math.exp`: fdlibm's `e_exp.c` as `src/base/ieee754.cc` ports it. Its last bit
+/// differs from a correctly rounded exp (`Math.exp(1)` is `Math.E` exactly), so d3 code
+/// that calls `Math.exp` needs this, not `f64::exp`.
+pub fn exp(x: f64) -> f64 {
+    const HALF: [f64; 2] = [0.5, -0.5];
+    const HUGE: f64 = 1.0e300;
+    const TWOM1000: f64 = 9.33263618503218878990e-302;
+    const O_THRESHOLD: f64 = 7.09782712893383973096e+02;
+    const U_THRESHOLD: f64 = -7.45133219101941108420e+02;
+    const LN2_HI: [f64; 2] = [6.93147180369123816490e-01, -6.93147180369123816490e-01];
+    const LN2_LO: [f64; 2] = [1.90821492927058770002e-10, -1.90821492927058770002e-10];
+    const INVLN2: f64 = 1.44269504088896338700e+00;
+    const P1: f64 = 1.66666666666666019037e-01;
+    const P2: f64 = -2.77777777770155933842e-03;
+    const P3: f64 = 6.61375632143793436117e-05;
+    const P4: f64 = -1.65339022054652515390e-06;
+    const P5: f64 = 4.13813679705723846039e-08;
+
+    let mut x = x;
+    let hx = hi(x);
+    let xsb = ((hx >> 31) & 1) as usize;
+    let hx = hx & 0x7fffffff;
+    if hx >= 0x40862E42 {
+        if hx >= 0x7ff00000 {
+            if ((hx & 0xfffff) as u32 | lo(x)) != 0 {
+                return x + x;
+            }
+            return if xsb == 0 { x } else { 0.0 };
+        }
+        if x > O_THRESHOLD {
+            return HUGE * HUGE;
+        }
+        if x < U_THRESHOLD {
+            return TWOM1000 * TWOM1000;
+        }
+    }
+    let (hi_, lo_, k): (f64, f64, i32) = if hx > 0x3fd62e42 {
+        let (hi_, lo_, k) = if hx < 0x3FF0A2B2 {
+            // V8 special-cases exp(1) to Math.E; the reduction below gets its last bit wrong.
+            if x == 1.0 {
+                return std::f64::consts::E;
+            }
+            (x - LN2_HI[xsb], LN2_LO[xsb], 1 - xsb as i32 - xsb as i32)
+        } else {
+            let k = (INVLN2 * x + HALF[xsb]) as i32;
+            let t = f64::from(k);
+            (x - t * LN2_HI[0], t * LN2_LO[0], k)
+        };
+        x = hi_ - lo_;
+        (hi_, lo_, k)
+    } else {
+        if hx < 0x3e300000 && HUGE + x > 1.0 {
+            return 1.0 + x;
+        }
+        (0.0, 0.0, 0)
+    };
+    let t = x * x;
+    let c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    if k == 0 {
+        return 1.0 - ((x * c) / (c - 2.0) - x);
+    }
+    let y = 1.0 - ((lo_ - (x * c) / (2.0 - c)) - hi_);
+    if k >= -1021 {
+        with_hi(y, hi(y) + (k << 20))
+    } else {
+        with_hi(y, hi(y) + ((k + 1000) << 20)) * TWOM1000
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

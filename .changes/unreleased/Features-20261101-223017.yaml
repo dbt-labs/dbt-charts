@@ -1,0 +1,3 @@
+kind: Features
+body: Draw `charts` fences on any site with `dbt_charts.integrations.markdown` in MkDocs or Pelican, replacing the `!!python/name` fence setup, or `dct render --format md` for Hugo, Jekyll, Astro and GitHub READMEs.
+time: 2026-11-01T22:30:17.089313-08:00

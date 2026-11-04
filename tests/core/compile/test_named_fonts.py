@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.merge import merge_onto_base
@@ -242,6 +243,33 @@ def test_only_heading_and_section_take_sizes() -> None:
             get_theme_style(),
             StylePatch.model_validate({"fonts": {"label": {"sizes": [1] * 6}}}),
         )
+
+
+def test_a_ramp_on_another_font_reports_the_registry_code_and_the_fix() -> None:
+    result = compile(
+        "style:\n  fonts:\n    label:\n      sizes: [1, 2]\n"
+        "rows:\n  - type: table\n    query:\n      columns: [a]\n"
+        "      values: [[1]]\n"
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-FONT-REGISTRY"
+    assert "'label' sets sizes" in error.message
+    assert "style.fonts.label" in error.message
+    assert error.hint is None
+
+
+def test_a_size_on_a_ramp_font_reports_the_registry_code_and_the_fix() -> None:
+    result = compile(
+        "style:\n  fonts:\n    heading:\n      size: 12\n"
+        "rows:\n  - type: table\n    query:\n      columns: [a]\n"
+        "      values: [[1]]\n"
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-FONT-REGISTRY"
+    assert "style.fonts.heading" in error.message
+    assert error.hint is None
 
 
 @pytest.mark.parametrize(

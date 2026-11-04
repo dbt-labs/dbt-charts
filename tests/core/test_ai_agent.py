@@ -141,6 +141,32 @@ def test_build_agent_system_prompt_lists_sources_and_exploration_guidance(
     assert "## Database Schema" not in prompt
 
 
+def test_build_sources_context_marks_sources_without_query_access(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Only the named sources are marked, and the guidance appears only then."""
+    from dbt_charts.ai import agent
+
+    project_session = ProjectSession.open(tmp_path, read_only=False)
+    registry = project_session.adapter_registry
+    monkeypatch.setattr(
+        registry,
+        "list_sql_sources",
+        lambda: [
+            {"name": "bq", "type": "bigquery"},
+            {"name": "pg", "type": "postgres"},
+        ],
+    )
+
+    marked = agent.build_sources_context(registry, frozenset({"bq"}))
+    unmarked = agent.build_sources_context(registry)
+
+    assert "- bq (bigquery) — no query access\n" in marked
+    assert "- pg (postgres)\n" in marked
+    assert "render_board(path=...)" in marked
+    assert "no query access" not in unmarked
+
+
 def test_build_agent_system_prompt_omits_sources_block_when_unconfigured(
     monkeypatch, tmp_path: Path
 ) -> None:

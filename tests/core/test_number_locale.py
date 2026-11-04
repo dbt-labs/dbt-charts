@@ -151,10 +151,10 @@ def test_a_named_locale_abbreviates_magnitudes_in_its_language() -> None:
     texts = re.findall(r">([^<>]+)<", render_board_to_svg(_MAGNITUDE_BOARD))
     assert "1\xa0Mio." in texts  # Vega axis tick
     assert "Mio." in texts  # KPI suffix lane
-    assert not [t for t in texts if re.search(r"(^|\d\s?)(M|mn)$", t)], texts
+    assert not [t for t in texts if re.search(r"(^|\d\s?)(M|m)$", t)], texts
 
 
-def test_an_anchored_table_column_keeps_a_word_on_every_row() -> None:
+def test_a_table_column_spanning_tiers_prints_each_row_in_its_own_word() -> None:
     board = """
 title: Anchors
 regional:
@@ -179,7 +179,7 @@ rows:
   - t
 """
     texts = re.findall(r">([^<>]+)<", render_board_to_svg(board))
-    assert texts.count("mil") == 3, texts
+    assert texts.count("mil") == 2 and "M" in texts, texts
 
 
 _BILLIONS_BOARD = """

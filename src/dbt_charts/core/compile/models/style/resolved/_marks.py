@@ -55,9 +55,9 @@ class ResolvedPointMarkStyle(PointMarkStyle):
     labels: ResolvedPointLabels = Field(
         default_factory=ResolvedPointLabels, description="Resolved point labels."
     )
-    endpoint_only: bool = Field(
+    anchored_only: bool = Field(
         default=False,
-        description="Draw point markers only at each series' last labeled point.",
+        description="Draw point markers only at each series' anchored points.",
     )
 
 

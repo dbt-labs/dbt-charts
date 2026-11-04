@@ -8,16 +8,17 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from dbt_charts.agent_api.project_sources import DeclaredSource, read_project_sources
+from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.models.board.normalized import Layout
 from dbt_charts.core.compile.models.chart.normalized import (
     Chart,
 )
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
-    HttpQuery,
     SqlQuery,
     ValuesQuery,
 )
+from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.template.custom_template import (
     INLINE_TEMPLATE_NAME,
     TEMPLATE_FILE_SUFFIX,
@@ -30,11 +31,12 @@ from dbt_charts.core.compile.template.custom_template import (
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
+    ERR_NO_BOARD_FILES,
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.codes_compile import ERR_CUSTOM_TEMPLATE
 from dbt_charts.core.inspect.relations import Relation
-from dbt_charts.core.project import Project, ProjectPath
+from dbt_charts.core.project import PROJECT_CONFIG_NAME, Project, ProjectPath
 
 # Chart-encoding fields surfaced to agents. Covers the stable channel fields
 # across chart families. `label` is excluded — it's a KPI-specific render hint,
@@ -98,6 +100,22 @@ class VariableDescription(BaseModel):
     type: str
     default: Any | None = None
     options: list[str] | None = None
+
+
+def describe_variables(variables: dict[str, Variable]) -> list[VariableDescription]:
+    """The variables of a board, as a caller passes them to a query."""
+    described: list[VariableDescription] = []
+    for name, var in variables.items():
+        static = var.options.static if var.options is not None else None
+        described.append(
+            VariableDescription(
+                name=name,
+                type=str(var.input),
+                default=var.default,
+                options=[str(o) for o in static] if static else None,
+            )
+        )
+    return described
 
 
 class LayoutDescription(BaseModel):
@@ -207,10 +225,6 @@ def _build_query_description(name: str, query: AnyQuery) -> QueryDescription:
             summary = f"SQL query against `{query.source}`"
             return QueryDescription(
                 name=name, type="sql", summary=summary, source=query.source, sql=sql
-            )
-        case HttpQuery():
-            return QueryDescription(
-                name=name, type="http", summary=f"HTTP request: {query.url}"
             )
         case ValuesQuery():
             return QueryDescription(name=name, type="values", summary="Inline values")
@@ -328,6 +342,8 @@ def describe_board(
     """Describe the structure of a board: queries, charts, variables, layout.
 
     With ``chart``, describe only that chart and the board context it needs.
+    *path* is never read as a title: a host gates access on the path it passes
+    here, so this must reach that board or none.
     """
     from dbt_charts.agent_api._paths import (
         resolution_error_diagnostic,
@@ -375,7 +391,7 @@ def _describe_resolved(
         return _describe_template(resolved)
 
     try:
-        result = compile_file(resolved.read_board())
+        result = compile_file(resolved.read_board(named=True), declared_sources=True)
     except OSError as exc:
         return DescribeBoardResult(
             success=False,
@@ -385,6 +401,12 @@ def _describe_resolved(
                     file=resolved.relpath
                 )
             ],
+        )
+    except CompilationError as exc:
+        return DescribeBoardResult(
+            success=False,
+            path=resolved.relpath,
+            errors=[exc.to_diagnostic(file=PROJECT_CONFIG_NAME)],
         )
 
     if result.errors:
@@ -428,7 +450,8 @@ def _describe_resolved(
                 errors=[exc.to_diagnostic(file=resolved.relpath)],
             )
         charts = {chart: board.charts[chart]}
-        queries = {k: board.queries[k] for k in collect_all_query_names(focused)}
+        all_queries = {**board.queries, **result.query_registry}
+        queries = {k: all_queries[k] for k in collect_all_query_names(focused)}
         variables = focused.variables
 
     query_descs = [
@@ -458,18 +481,6 @@ def _describe_resolved(
         for name, c in charts.items()
     ]
 
-    var_descs: list[VariableDescription] = []
-    for name, var in variables.items():
-        static = var.options.static if var.options is not None else None
-        var_descs.append(
-            VariableDescription(
-                name=name,
-                type=str(var.input),
-                default=var.default,
-                options=[str(o) for o in static] if static else None,
-            )
-        )
-
     return DescribeBoardResult(
         success=True,
         path=resolved.relpath,
@@ -477,7 +488,7 @@ def _describe_resolved(
         notes=board.notes or None,
         queries=query_descs,
         charts=chart_descs,
-        variables=var_descs,
+        variables=describe_variables(variables),
         layout=layout_desc,
     )
 
@@ -486,37 +497,39 @@ def describe_paths(
     paths: list[Path],
     *,
     project: Project,
+    chart: str | None = None,
 ) -> list[DescribeBoardResult]:
-    """Describe N board files / directories.
+    """Describe N board files / directories, each board narrowed to *chart* if given.
 
     Each argv path expands like the single-path verb: a file describes directly,
     a directory walks recursively (skipping ``_*.yml`` partials and ejected
     inspect-template directories) and also describes the custom chart
     templates under it that ``template:`` can name (``templates/**/*.svg.j2``). Results are concatenated in argv order.
+    A path no file has may name a board by its title (``_resolve_path_or_title``).
     """
     out: list[DescribeBoardResult] = []
     for p in paths:
-        out.extend(_describe_one_path(p, project))
+        out.extend(_describe_one_path(p, project, chart))
     return out
 
 
 def _describe_one_path(
     path: Path,
     project: Project,
+    chart: str | None,
 ) -> list[DescribeBoardResult]:
     """Per-argv expansion: file → [one], dir → walk."""
     from dbt_charts.agent_api._paths import (
         iter_expanded_board_files,
         resolution_error_diagnostic,
-        resolve_board_path,
     )
     from dbt_charts.core.diagnostics.base import DbtChartsError
 
     try:
-        resolved = resolve_board_path(path, project)
+        resolved = _resolve_path_or_title(path, project)
     except ValueError as exc:
-        # resolve_board_path failed — path never became a ProjectPath, so there
-        # is no root to relativize against via posix_relpath. Echo the raw
+        # Unusable path or a shared title — path never became a ProjectPath, so
+        # there is no root to relativize against via posix_relpath. Echo the raw
         # input POSIX-normalized (not a project identity, just consistent
         # display for an input that never resolved).
         return [
@@ -528,7 +541,7 @@ def _describe_one_path(
         ]
 
     if resolved.is_yaml or resolved.relpath.endswith(TEMPLATE_FILE_SUFFIX):
-        return [_describe_resolved(resolved)]
+        return [_describe_resolved(resolved, chart)]
 
     boards = iter_expanded_board_files(project, resolved.relpath)
     # Templates are described only under `templates/` itself: a board walk,
@@ -553,13 +566,38 @@ def _describe_one_path(
                 path=resolved.relpath,
                 errors=[
                     DbtChartsError.from_code(
-                        ERR_INTERNAL,
-                        message=f"No board files found in {resolved.relpath}",
+                        ERR_NO_BOARD_FILES, path=resolved.relpath
                     ).to_diagnostic()
                 ],
             )
         ]
-    return [_describe_resolved(pf) for pf in [*boards, *templates]]
+    return [_describe_resolved(pf, chart) for pf in [*boards, *templates]]
+
+
+def _resolve_path_or_title(path: Path, project: Project) -> ProjectPath:
+    """Resolve a board path, or the title of one board when no file has that path.
+
+    A path that exists always wins. Otherwise a board whose title equals
+    *path*, ignoring case, is the board meant; a title several boards share
+    raises ``ValueError`` naming them. With no match the unresolved path comes
+    back for the caller to report as missing.
+    """
+    from dbt_charts.agent_api._paths import resolve_board_path
+
+    resolved = resolve_board_path(path, project)
+    if resolved.exists() or path.is_absolute():
+        return resolved
+    title = path.as_posix()
+    matches = [
+        label.file_path
+        for label in project.board_labels()
+        if label.title.casefold() == title.casefold()
+    ]
+    if len(matches) > 1:
+        raise ValueError(
+            f"{len(matches)} boards are titled {title!r} ({', '.join(matches)})"
+        )
+    return project.path(matches[0]) if matches else resolved
 
 
 # ---------------------------------------------------------------------------
@@ -660,8 +698,15 @@ def describe_project(
     incomplete: list[IncompleteBoard] = []
     readers: dict[str, set[str]] = {}
     for board_path in iter_expanded_board_files(project, None, include_markdown=True):
-        result = compile_file(board_path.read_board())
         url = url_for_file(board_path.relpath)
+        try:
+            result = compile_file(board_path.read_board(), declared_sources=True)
+        except CompilationError as exc:
+            boards.append(BoardOverview(path=board_path.relpath, url=url))
+            incomplete.append(
+                IncompleteBoard(board=board_path.relpath, reason=str(exc))
+            )
+            continue
         board = result.board
         if not result.success or board is None:
             boards.append(BoardOverview(path=board_path.relpath, url=url))

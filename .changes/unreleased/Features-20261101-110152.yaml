@@ -1,0 +1,3 @@
+kind: Features
+body: Migrated boards keep the source's chart stacking and axis bounds, turn headings and notes into titles and text instead of callouts, carry Sigma table totals as KPIs, draw total rows only where the source shows them, keep Looker's ∅ for empty values, and translate Looker offset windows exactly.
+time: 2026-11-01T11:01:52.622755-08:00

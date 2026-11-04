@@ -533,10 +533,12 @@ fn rendered_vega_height(
         // (`calculate_cols_boxes`'s own `fresh_render` set, `board.rs::
         // render_chart_item`).
         variables: Default::default(),
+        variable_options: Default::default(),
         filter_variables: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: true,
+        placement: 0,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
         pie_mode,
@@ -608,10 +610,12 @@ fn spark_bar_natural_height(
         geometries: None,
         // spark_bar has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
+        variable_options: Default::default(),
         filter_variables: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: false,
+        placement: 0,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
         pie_mode: None,
@@ -732,10 +736,12 @@ fn get_table_height_from_data(
         geometries: None,
         // table has no rail-concat law `measuring` gates — inert here.
         variables: Default::default(),
+        variable_options: Default::default(),
         filter_variables: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: false,
+        placement: 0,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
         pie_mode: None,
@@ -882,11 +888,13 @@ pub fn sized_pie_mode(
         language: None,
         datasets: None,
         variables: Default::default(),
+        variable_options: Default::default(),
         filter_variables: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         geometries: None,
         measuring: false,
+        placement: 0,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
         pie_mode: None,
@@ -945,10 +953,12 @@ pub fn resolve_chart_item_height(
             geometries: None,
             // callout has no rail-concat law `measuring` gates — inert here.
             variables: Default::default(),
+            variable_options: Default::default(),
             filter_variables: Default::default(),
             interactive_controls: Default::default(),
             link_context: None,
             measuring: false,
+            placement: 0,
             title_shift: crate::TitleShift::default(),
             is_placeholder: false,
             pie_mode: None,
@@ -1061,9 +1071,16 @@ fn resolve_layout_height(authoring: &ItemAuthoring, available: f64) -> Option<f6
     }
 }
 
-/// `board_alignment_overrides`'s own closure signature — see
-/// `SizingCtx::board_alignment_overrides`'s doc for what it computes.
-type AlignmentOverridesFn<'a> = dyn Fn(&Value, f64, f64, f64) -> Result<HashMap<String, f64>, String> + 'a;
+/// A tabs layout's pane offset and height floor, resolved once per level
+/// (`board.rs::tabs_pane`). `top`: `(0, card_padding + bar_height)`, no
+/// floor. `left`: `(rail_width + card_padding, 0)`, floored at the rail's
+/// own extent (`card_padding + n * bar_height`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TabsPane {
+    pub x: f64,
+    pub y: f64,
+    pub min_height: f64,
+}
 
 /// Bundles the sizing-pass constants every measurement/assignment function
 /// below needs, mirroring `layout_sizing.SizingRenderCtx` — one struct
@@ -1072,6 +1089,10 @@ pub struct SizingCtx<'a> {
     pub gap: f64,
     pub card_gap: f64,
     pub card_padding: f64,
+    /// `sizing.py::calculate_layout_items`'s `fill_height`: a cols row takes all
+    /// of its available height. True for a nested board, whose available height
+    /// is its cell's; a root board's also holds its title and text.
+    pub fill_height: bool,
     /// The card padding of the board this scope belongs to (a nested board's own),
     /// which decides a pie's mode; `card_padding` is the root's, for the height inset.
     pub scope_card_padding: f64,
@@ -1099,28 +1120,24 @@ pub struct SizingCtx<'a> {
     /// level — the same `card_gap`/`payload`/`fonts` triple every call in the
     /// tree needs, captured once instead of re-plumbed as positional args.
     pub nested_board_height: &'a dyn Fn(&Value, f64) -> Result<f64, String>,
-    /// `layout_sizing.py::_col_chart_body_target`'s board branch: a nested `type: board` item's own
-    /// contribution to a cols row's `chart_target` — `item.height` (empirically the row's own
-    /// `row_height`, the third argument here — see `board.rs`'s own citation for why that
-    /// equality holds) when every sub-item is a Vega chart in a `rows` layout, else the max of
-    /// its DIRECT sub-items' own natural heights. Bound in `board.rs` (needs
-    /// `nested_board_item_boxes`, which needs font measurement this module has no reason to
-    /// depend on).
-    pub board_chart_target_contribution: &'a dyn Fn(&Value, f64, f64) -> Result<f64, String>,
-    /// `layout_sizing.py::_align_board_charts`, run once a cols row's own
-    /// `chart_target` is known: the flat `chart_id -> forced_height` map
-    /// for every DIRECT Vega chart child of a nested board item the
-    /// alignment condition (`cols` layout, or exactly one Vega chart)
-    /// reaches — empty when it does not apply. Bound in `board.rs`
-    /// alongside `board_chart_target_contribution` for the same reason.
-    pub board_alignment_overrides: &'a AlignmentOverridesFn<'a>,
-    /// The board's own `resolved_style.layout.tabs.bar_height` /
-    /// `.details.summary_height` — theme constants `_calculate_tabs_
-    /// dimensions`/`details_chrome_height`/`is_item_collapsed_summary` read.
+    /// `sizing.py::_takes_spare_height`'s board branch: whether anything drawn
+    /// inside a nested board can use more height than its content needs, the
+    /// `bool` being whether it sits alone in its layout. Bound in `board.rs`, which
+    /// holds the nested board's parsed items and visibility rules.
+    pub board_takes_spare_height: &'a dyn Fn(&Value, bool) -> Result<bool, String>,
+    /// `sizing.py::_holds_only_content_sized_charts`' board branch: a nested
+    /// board holds at least one chart, and every one at any depth is content-sized.
+    /// Bound in `board.rs` for the same reason.
+    pub board_holds_only_content_sized_charts: &'a dyn Fn(&Value) -> Result<bool, String>,
+    /// Where this level's tabs pane starts and the floor a left rail puts
+    /// under its height (`sizing.py::tab_content_offset`/`tab_rail_extent`),
+    /// the style values `_calculate_tabs_dimensions` and
+    /// `_measure_tabs_layout_height` read. `layout.details.summary_height`
+    /// is the value `details_chrome_height`/`is_item_collapsed_summary` read.
     /// Threaded per `SizingCtx` build site (one per nesting level) since a
     /// nested board can theme-override its own `style.layout` independently
     /// of its parent, same as every other per-level style field here.
-    pub tabs_bar_height: f64,
+    pub tabs_pane: TabsPane,
     pub details_summary_height: f64,
     /// `variable_values` — the SAME raw request-level overrides dict at
     /// EVERY nesting level (`render_nested_board`'s own `variables`
@@ -1192,11 +1209,6 @@ fn item_height(item: &LayoutItemInput, ctx: &SizingCtx, width: f64) -> Result<f6
                 }
                 None => return Err("chart item missing its resolved chart".to_string()),
             };
-            if let Some(overridden) = item.chart_height_override {
-                // A parent row's `_align_board_charts` already decided this
-                // height; `forced_fresh_renders` recovers the unforced natural.
-                return Ok(overridden);
-            }
             resolve_chart_item_height(
                 chart_json,
                 item.authoring.chart_height,
@@ -1214,7 +1226,9 @@ fn item_height(item: &LayoutItemInput, ctx: &SizingCtx, width: f64) -> Result<f6
                 );
                 if item_details_expanded(details_variable, ctx)? {
                     let content_h = (ctx.nested_board_height)(board_json, width)?;
-                    return Ok(details_chrome_height(ctx) + content_h);
+                    let chrome =
+                        details_chrome_height(ctx.details_summary_height, ctx.gap, ctx.card_gap);
+                    return Ok(chrome + content_h);
                 }
                 return Ok(ctx.details_summary_height);
             }
@@ -1244,11 +1258,11 @@ fn item_details_expanded(details_variable: &str, ctx: &SizingCtx) -> Result<bool
 
 /// `render/sizing.py::details_chrome_height`: the vertical overhead the
 /// details chrome (summary bar) adds above an EXPANDED nested board's own
-/// content — `summary_height + gap + card_gap`, using the CALLING layout's
-/// own `gap`/`card_gap` (already `ctx.gap`/`ctx.card_gap` at this
-/// recursion level), matching production's own per-call-site parameters.
-fn details_chrome_height(ctx: &SizingCtx) -> f64 {
-    ctx.details_summary_height + ctx.gap + ctx.card_gap
+/// content — `summary_height + gap + card_gap`, each caller passing its own
+/// layout's `gap`/`card_gap`, matching production's own per-call-site
+/// parameters.
+pub(crate) fn details_chrome_height(summary_height: f64, gap: f64, card_gap: f64) -> f64 {
+    summary_height + gap + card_gap
 }
 
 /// render/sizing.py::_clamp_to_authored_ceiling
@@ -1286,43 +1300,71 @@ pub struct LayoutItemInput<'a> {
     /// `details_present` is true (`ItemDoc::details_present`'s own
     /// both-fields gate); read by `item_details_expanded`.
     pub details_variable: Option<&'a str>,
-    /// `layout_sizing.py::_align_board_charts`'s own `sub.height = ...`
-    /// write, applied upstream (`board.rs::board_alignment_overrides`) —
-    /// `Some` only for a DIRECT Vega chart child of a nested board that
-    /// sits in a parent `cols` row and keeps the written height: a `rows`
-    /// (or `grid`) layout with exactly one Vega chart. A nested
-    /// `cols` layout never gets one (its own row alignment rewrites it).
-    /// `item_height` returns this verbatim, bypassing the natural-height
-    /// computation entirely, the same direct assignment production makes.
-    pub chart_height_override: Option<f64>,
 }
 
-/// Chart ids a parent row's alignment forced (`chart_height_override`) to a
-/// height at least a pixel off their unforced natural: production re-renders
-/// them (`_align_board_charts` -> `_align_cols_heights`, `layout_sizing.py:1354`),
-/// so the paint is a fresh `measuring` render. The set belongs to this one
-/// nested layout; a chart id shared with a direct chart elsewhere is not
-/// affected. Each forced chart costs one extra `item_height` evaluation (a
-/// sizing-probe render) to recover its unforced natural.
-pub fn forced_fresh_renders(
-    items: &[LayoutItemInput],
-    boxes: &[ItemBox],
-    ctx: &SizingCtx,
-) -> Result<HashSet<String>, String> {
-    let mut fresh = HashSet::new();
-    for (item, item_box) in items.iter().zip(boxes) {
-        let (Some(chart), Some(_)) = (item.chart, item.chart_height_override) else {
-            continue;
-        };
-        let Some(id) = chart.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let unforced = LayoutItemInput { chart_height_override: None, ..*item };
-        if height_moved(item_height(&unforced, ctx, item_box.width)?, item_box.height) {
-            fresh.insert(id.to_string());
-        }
+/// `sizing.py::_takes_spare_height`'s chart branch, for a chart `chart_type`
+/// (`None`: no chart) with an authored `chart_height`.
+pub(crate) fn chart_takes_spare_height(
+    chart_type: Option<&str>,
+    chart_height: Option<f64>,
+    alone: bool,
+) -> bool {
+    match chart_type {
+        None => alone,
+        Some("pie" | "donut") => false,
+        Some(_) if alone => true,
+        Some("custom") => true,
+        Some(other) => !is_non_aspect_ratio_type(other) && chart_height.is_none(),
     }
-    Ok(fresh)
+}
+
+/// An item's chart type, which a chart that failed to resolve still has: Python
+/// reads it off the normalized chart, here it sits on the `chart_error` identity.
+pub(crate) fn item_chart_type<'a>(
+    chart: Option<&'a Value>,
+    chart_error: Option<&'a Value>,
+) -> Option<&'a str> {
+    match (chart, chart_error) {
+        (Some(chart), _) => chart.get("chart_type").and_then(Value::as_str),
+        (None, Some(failure)) => {
+            failure.get("identity").and_then(|i| i.get("chart_type")).and_then(Value::as_str)
+        }
+        (None, None) => None,
+    }
+}
+
+fn is_content_sized_item(chart: Option<&Value>, chart_error: Option<&Value>) -> bool {
+    item_chart_type(chart, chart_error).is_some_and(is_content_sized_chart)
+}
+
+/// `sizing.py::_holds_only_content_sized_charts`.
+fn holds_only_content_sized_charts(item: &LayoutItemInput, ctx: &SizingCtx) -> Result<bool, String> {
+    if let Some(board_json) = item.board {
+        return (ctx.board_holds_only_content_sized_charts)(board_json);
+    }
+    Ok(is_content_sized_item(item.chart, item.chart_error))
+}
+
+/// `NON_ASPECT_RATIO_TYPES`: the families that draw to their content.
+pub(crate) fn is_content_sized_chart(chart_type: &str) -> bool {
+    is_non_aspect_ratio_type(chart_type) || chart_type == "custom"
+}
+
+/// `sizing.py::_takes_spare_height` for one layout item.
+fn takes_spare_height(item: &LayoutItemInput, alone: bool, ctx: &SizingCtx) -> Result<bool, String> {
+    if let Some(board_json) = item.board {
+        if item.details_present {
+            let details_variable = item.details_variable.expect(
+                "details_present implies details_variable is Some (ItemDoc::details_present)",
+            );
+            if !item_details_expanded(details_variable, ctx)? {
+                return Ok(false);
+            }
+        }
+        return (ctx.board_takes_spare_height)(board_json, alone);
+    }
+    let chart_type = item_chart_type(item.chart, item.chart_error);
+    Ok(chart_takes_spare_height(chart_type, item.authoring.chart_height, alone))
 }
 
 /// render/sizing.py::_calculate_rows_dimensions, ported as its own two-pass
@@ -1381,12 +1423,32 @@ pub fn calculate_rows_boxes(
     }
 
     let remaining = (available_content_height - total_specified).max(0.0);
-    let auto_total: f64 = content_heights
+    let auto_heights: Vec<f64> = content_heights
         .iter()
         .zip(&specified_heights)
         .filter(|(_, s)| s.is_none())
         .map(|(h, _)| *h)
-        .sum();
+        .collect();
+    let auto_total = d3rs::py_float::py_float_sum(&auto_heights);
+
+    // `_calculate_rows_dimensions`: auto items that can use spare height share it
+    // in proportion to their content heights.
+    let spare = remaining - auto_total;
+    let mut grown = vec![0.0; n];
+    if ctx.fill_height && spare > 0.0 {
+        let mut growing = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            if specified_heights[i].is_none() && takes_spare_height(item, n == 1, ctx)? {
+                growing.push(i);
+            }
+        }
+        let growing_total: f64 = growing.iter().map(|&i| content_heights[i]).sum();
+        if growing_total > 0.0 {
+            for i in growing {
+                grown[i] = spare * content_heights[i] / growing_total;
+            }
+        }
+    }
 
     let mut boxes = Vec::with_capacity(n);
     let mut current_y = 0.0;
@@ -1396,7 +1458,7 @@ pub fn calculate_rows_boxes(
             None if auto_total > 0.0 && remaining < auto_total => {
                 content_heights[i] * (remaining / auto_total)
             }
-            None => content_heights[i],
+            None => content_heights[i] + grown[i],
         };
         boxes.push(ItemBox {
             x: 0.0,
@@ -1496,11 +1558,11 @@ pub fn resolve_active_tab_index(
 }
 
 /// render/sizing.py::_calculate_tabs_dimensions: every item shares ONE
-/// uniform box — the ACTIVE tab's own content height (measured at full
-/// `available_width`, unlike a rows/cols item — a tab has no authored
-/// width-fraction concept), min-clamped to `available_height - tab_bar_
-/// height` with no floor at 0 (a literal port of production's own
-/// arithmetic) — at `(x=0, y=tab_bar_height, width=available_width)`.
+/// uniform box: the ACTIVE tab's own content height (measured at the pane
+/// width `available_width - pane.x`; a tab has no authored width-fraction
+/// concept), min-clamped to `available_height - pane.y` with no floor at 0
+/// (a literal port of production's own arithmetic), at `(x=pane.x,
+/// y=pane.y, width=available_width - pane.x)` (`ctx.tabs_pane`).
 /// Every item gets assigned this SAME box even though only the active one
 /// ever renders, mirroring production's own SIZED `ResolvedLayoutItem`
 /// (`board_sweep.py`'s own `_oracle_layout_boxes` reads `item.x/y/width/
@@ -1524,51 +1586,43 @@ pub fn calculate_tabs_boxes(
         default_tab,
         ctx.variable_values,
     )?;
-    let active_content_h = item_height(&items[active_index], ctx, available_width)?;
-    let content_height = active_content_h.min(available_height - ctx.tabs_bar_height);
+    // The pane sits below the bar (`top`) or right of the rail and its
+    // gutter (`left`); the active item is measured at the pane's width.
+    let pane = ctx.tabs_pane;
+    let pane_width = available_width - pane.x;
+    let active_content_h = item_height(&items[active_index], ctx, pane_width)?;
+    let tab_available = available_height - pane.y;
+    let content_height = if ctx.fill_height { tab_available } else { active_content_h.min(tab_available) };
     Ok(items
         .iter()
         .map(|_| ItemBox {
-            x: 0.0,
-            y: ctx.tabs_bar_height,
-            width: available_width,
+            x: pane.x,
+            y: pane.y,
+            width: pane_width,
             height: content_height,
         })
         .collect())
 }
 
-/// layout_sizing.py::_col_chart_body_target: max natural chart
-/// body height across a cols row's Vega items — a direct chart item reads
-/// its PASS-1-fixed natural (see `calculate_cols_boxes`'s doc); a nested
-/// `type: board` item delegates to `ctx.board_chart_target_contribution`
-/// (bound in `board.rs`, ported alongside `_align_board_charts` — see its
-/// own doc for why the two live together).
-fn col_chart_body_target(
-    items: &[LayoutItemInput],
-    fixed_naturals: &[Option<f64>],
-    resolved_widths: &[f64],
-    row_height: f64,
-    ctx: &SizingCtx,
-) -> Result<f64, String> {
+/// layout_sizing.py::_col_chart_body_target: max natural chart body height
+/// across a cols row's direct Vega items, each reading its PASS-1-fixed natural
+/// (see `calculate_cols_boxes`'s doc). A nested board already filled its cell.
+fn col_chart_body_target(items: &[LayoutItemInput], fixed_naturals: &[Option<f64>]) -> f64 {
     let mut max_h = 0.0_f64;
     for (i, item) in items.iter().enumerate() {
-        if let Some(chart) = item.chart {
-            let Some(chart_type) = chart.get("chart_type").and_then(Value::as_str) else {
-                continue;
-            };
-            if is_non_aspect_ratio_type(chart_type) {
-                continue;
-            }
-            if let Some(h) = fixed_naturals[i] {
-                max_h = max_h.max(h);
-            }
-        } else if let Some(board_json) = item.board {
-            let contribution =
-                (ctx.board_chart_target_contribution)(board_json, resolved_widths[i], row_height)?;
-            max_h = max_h.max(contribution);
+        let Some(chart_type) =
+            item.chart.and_then(|c| c.get("chart_type")).and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if is_non_aspect_ratio_type(chart_type) {
+            continue;
+        }
+        if let Some(h) = fixed_naturals[i] {
+            max_h = max_h.max(h);
         }
     }
-    Ok(max_h)
+    max_h
 }
 
 /// layout_sizing.py::_effective_alignment_target_for_chart: caps
@@ -1706,10 +1760,7 @@ fn facet_height_at(chart_json: &Value, width: f64, height: f64, ctx: &SizingCtx)
 /// addressed by index instead of a global map.
 ///
 /// `_align_all_cols_in_tree`'s OWN re-render call, `_align_cols_heights`
-/// (`layout_sizing.py:1322-1425`), is ported for BOTH branches: `item.board is not None`
-/// (`_align_board_charts`, via `ctx.board_alignment_overrides` — see that
-/// function's own citation for why the write DOES reach the frozen tree)
-/// AND the direct-chart-item branch, which re-renders a Vega item at the
+/// (`layout_sizing.py:1322-1425`), is ported: it re-renders a direct Vega item at the
 /// alignment target to refresh `render_ctx.render_cache` — a `(chart_id,
 /// width, height)` cache miss on the new height, not a reuse of the
 /// sizing probe's cached SVG. `render_chart_item` (board.rs) has no such
@@ -1743,6 +1794,11 @@ struct ColsMeasure {
     /// `col_chart_body_target`/`fix_slot_heights` exclude anyway.
     naturals: Vec<Option<f64>>,
     row_height: f64,
+    /// An authored height set the row, so `fill_height` leaves it alone.
+    authored_row: bool,
+    /// The tallest height any item draws: a content-sized cell's authored height
+    /// reserves the row, but the other cells only reach this.
+    max_drawn: f64,
 }
 
 fn measure_cols(
@@ -1762,27 +1818,36 @@ fn measure_cols(
 
     let mut max_specified = 0.0_f64;
     let mut max_auto = 0.0_f64;
+    let mut max_drawn = 0.0_f64;
     let mut naturals: Vec<Option<f64>> = Vec::with_capacity(n);
     for (i, item) in items.iter().enumerate() {
         match resolve_layout_height(item.authoring, available_height) {
             Some(resolved) => {
                 max_specified = max_specified.max(resolved);
+                let drawn = if holds_only_content_sized_charts(item, ctx)? {
+                    item_height(item, ctx, widths[i])?.min(resolved)
+                } else {
+                    resolved
+                };
+                max_drawn = max_drawn.max(drawn);
                 naturals.push(None);
             }
             None => {
                 let h = item_height(item, ctx, widths[i])?;
                 max_auto = max_auto.max(h);
+                max_drawn = max_drawn.max(h);
                 naturals.push(Some(h));
             }
         }
     }
     let max_content_height = max_specified.max(max_auto);
-    let row_height = if max_specified >= max_auto {
+    let authored_row = max_specified >= max_auto;
+    let row_height = if authored_row {
         max_content_height
     } else {
         max_content_height.min(available_height)
     };
-    Ok(ColsMeasure { widths, naturals, row_height })
+    Ok(ColsMeasure { widths, naturals, row_height, authored_row, max_drawn })
 }
 
 /// render/sizing.py::_measure_cols_layout_height: the cols row's own height,
@@ -1807,47 +1872,36 @@ pub fn calculate_cols_boxes(
     available_width: f64,
     available_height: f64,
     ctx: &SizingCtx,
-) -> Result<(Vec<ItemBox>, HashMap<String, f64>, HashSet<String>), String> {
+) -> Result<(Vec<ItemBox>, HashSet<String>), String> {
     let n = items.len();
     if n == 0 {
-        return Ok((Vec::new(), HashMap::new(), HashSet::new()));
+        return Ok((Vec::new(), HashSet::new()));
     }
     let effective_gap = ctx.gap + ctx.card_gap;
-    let ColsMeasure { widths: resolved_widths, naturals, row_height } =
+    let ColsMeasure { widths: resolved_widths, naturals, row_height, authored_row, max_drawn } =
         measure_cols(items, available_width, available_height, ctx)?;
+    let row_height = if ctx.fill_height && !authored_row { available_height } else { row_height };
+    let chart_cell_height = if authored_row { max_drawn.min(row_height) } else { row_height };
+    let mut cell_heights = Vec::with_capacity(n);
+    for item in items {
+        let content_sized = holds_only_content_sized_charts(item, ctx)?;
+        cell_heights.push(if content_sized { row_height } else { chart_cell_height });
+    }
 
-    let fixed_naturals = fix_slot_heights(items, row_height, &naturals, &resolved_widths, ctx)?;
-    let chart_target =
-        col_chart_body_target(items, &fixed_naturals, &resolved_widths, row_height, ctx)?;
+    let fixed_naturals =
+        fix_slot_heights(items, chart_cell_height, &naturals, &resolved_widths, ctx)?;
+    let chart_target = col_chart_body_target(items, &fixed_naturals);
 
-    let mut item_heights = vec![row_height; n];
-    // `layout_sizing.py::_align_all_cols_in_tree`'s cols branch:
-    // the direct-chart-item rewrite above, THEN `_align_cols_
-    // heights`'s own board-item branch (`_align_board_charts`) — both
-    // gated on the SAME `if chart_target > 0:`.
-    let mut overrides: HashMap<String, f64> = HashMap::new();
+    let mut item_heights = cell_heights;
     // `layout_sizing.py::_align_cols_heights`'s direct-chart branch:
-    // a chart whose PRISTINE natural (`naturals[i]`, the
-    // sizing probe's own measured height) isn't already this row's
-    // assigned height gets a FRESH `_render_chart_to_svg(...,
+    // a chart whose natural (`fixed_naturals[i]`, which
+    // `_fix_slot_heights_in_tree` already moved to its slot render) isn't
+    // this row's assigned height gets a FRESH `_render_chart_to_svg(...,
     // height=item.height)` — a cache miss (`render_cache` keys on
     // `(chart_id, width, height)`, `board.rs::render_chart_item`'s own
-    // doc), not a reuse of the sizing probe's cached SVG. `fresh_render`
-    // is a SEPARATE set from `overrides` on purpose: `overrides` already
-    // means "chart id -> forced height for a nested board's OWN sizing"
-    // (`board_alignment_overrides`, below), keyed by chart id alone — the
-    // corpus places one chart in several slots, so a direct chart here
-    // sharing an id with a chart inside a nested board placed in the SAME
-    // row would collide in a single shared map (the direct insert and the
-    // nested `extend` overwriting each other by item order, and a nested
-    // board's own alignment wrongly flipping an unrelated direct chart's
-    // `measuring` to `true` — a real double-growth risk for a rail chart
-    // with disagreeing wraps). `render_chart_item` treats a chart id
-    // present in `fresh_render` as getting this SAME second real render
-    // production performs, so the RailConcat probe-wrap law (`Payload::
-    // measuring`) fires on it exactly like it fired on the first
-    // (`render_first_vega_height`'s own) probe — not a reuse of the
-    // already-decided slot render.
+    // doc), not a reuse of the sizing probe's cached SVG. `render_chart_item`
+    // treats a chart id in `fresh_render` as getting that second real render, so
+    // the RailConcat probe-wrap law (`Payload::measuring`) fires on it.
     let mut fresh_render: HashSet<String> = HashSet::new();
     if chart_target > 0.0 {
         for (i, item) in items.iter().enumerate() {
@@ -1864,20 +1918,12 @@ pub fn calculate_cols_boxes(
                     chart_target,
                 );
                 if let (Some(natural), Some(id)) =
-                    (naturals[i], chart.get("id").and_then(Value::as_str))
+                    (fixed_naturals[i], chart.get("id").and_then(Value::as_str))
                 {
                     if height_moved(natural, item_heights[i]) {
                         fresh_render.insert(id.to_string());
                     }
                 }
-            } else if let Some(board_json) = item.board {
-                let item_overrides = (ctx.board_alignment_overrides)(
-                    board_json,
-                    resolved_widths[i],
-                    chart_target,
-                    row_height,
-                )?;
-                overrides.extend(item_overrides);
             }
         }
     }
@@ -1894,7 +1940,7 @@ pub fn calculate_cols_boxes(
         });
         current_x += width + effective_gap;
     }
-    Ok((boxes, overrides, fresh_render))
+    Ok((boxes, fresh_render))
 }
 
 /// render/sizing.py::_measure_grid_layout_height +
@@ -1910,21 +1956,15 @@ pub fn calculate_grid_boxes(
     items: &[LayoutItemInput],
     columns: i64,
     available_width: f64,
-    _available_height: f64,
+    available_height: f64,
     ctx: &SizingCtx,
-) -> Result<(Vec<ItemBox>, HashMap<String, f64>, HashSet<String>), String> {
+) -> Result<Vec<ItemBox>, String> {
     let effective_gap = ctx.gap + ctx.card_gap;
     let total_gap_x = effective_gap * (columns - 1) as f64;
     let col_width = (available_width - total_gap_x) / columns as f64;
 
     let mut row_heights: HashMap<i64, f64> = HashMap::new();
     let mut placements = Vec::with_capacity(items.len());
-    // A direct chart item's own PRISTINE natural (row_span==1: identical
-    // to `content` below; row_span>1: `content` is still this item's own
-    // full requirement, comparable against the grouped height the same
-    // way — see the `fresh_render` check below). `None` for a non-Vega/
-    // board item, mirroring `calculate_cols_boxes`'s own `naturals`.
-    let mut naturals: Vec<Option<f64>> = Vec::with_capacity(items.len());
     for item in items {
         let col = item
             .authoring
@@ -1936,7 +1976,14 @@ pub fn calculate_grid_boxes(
             .ok_or("sizing: grid auto-flow placement not ported (item has no authored row)")?;
         let (col_span, row_span) = item_grid_span(item.authoring.col_span, item.authoring.row_span);
         let width = grid_span_width(col_width, col_span, effective_gap);
-        let content = item_height(item, ctx, width)?;
+        // An authored height sets the row. An infinite available height is a measure
+        // pass, where a percentage takes the content height as production's does.
+        let content = match resolve_layout_height(item.authoring, available_height)
+            .filter(|h| h.is_finite())
+        {
+            Some(authored) => authored,
+            None => item_height(item, ctx, width)?,
+        };
         let height_per_row = content / row_span as f64;
         for r in row..row + row_span {
             let entry = row_heights.entry(r).or_insert(0.0);
@@ -1944,12 +1991,37 @@ pub fn calculate_grid_boxes(
                 *entry = height_per_row;
             }
         }
-        naturals.push(item.chart.and(Some(content)));
         placements.push((col, row, col_span, row_span, width));
     }
 
     let mut sorted_rows: Vec<i64> = row_heights.keys().copied().collect();
     sorted_rows.sort_unstable();
+    // `_calculate_grid_dimensions`: rows holding an item that can use spare
+    // height share it in proportion to their heights.
+    let total_gap_y = effective_gap * sorted_rows.len().saturating_sub(1) as f64;
+    let spare = available_height - total_gap_y - row_heights.values().sum::<f64>();
+    if ctx.fill_height && spare > 0.0 {
+        let mut growing_rows: Vec<i64> = Vec::new();
+        let mut specified_rows: Vec<i64> = Vec::new();
+        for (item, &(_, row, _, row_span, _)) in items.iter().zip(&placements) {
+            if resolve_layout_height(item.authoring, available_height).is_some() {
+                specified_rows.extend(row..row + row_span);
+            }
+            if takes_spare_height(item, items.len() == 1, ctx)? {
+                growing_rows.extend(row..row + row_span);
+            }
+        }
+        growing_rows.retain(|r| !specified_rows.contains(r));
+        growing_rows.sort_unstable();
+        growing_rows.dedup();
+        let growing_total: f64 = growing_rows.iter().map(|r| row_heights[r]).sum();
+        if growing_total > 0.0 {
+            for r in growing_rows {
+                let h = row_heights[&r];
+                row_heights.insert(r, h + spare * h / growing_total);
+            }
+        }
+    }
     let mut row_y: HashMap<i64, f64> = HashMap::new();
     let mut current_y = 0.0;
     for r in sorted_rows {
@@ -1974,59 +2046,7 @@ pub fn calculate_grid_boxes(
         });
     }
 
-    // `layout_sizing.py::_align_grid_rows` (called from `_align_all_cols_
-    // in_tree`'s "grid" arm, unconditionally — grid has no upfront
-    // `chart_target > 0` gate the way cols does): groups items by `(row,
-    // item.height)` — EXACT float equality, a dict key in production —
-    // and for any group with more than one item, delegates to
-    // `_align_cols_heights(row_items, row_height, render_ctx)`. Its
-    // `item.board is not None` branch recurses into `_align_board_
-    // charts`, which rewrites a box (the same board-item box rewrite
-    // `board.rs::board_alignment_overrides` already ports for the cols
-    // case) — reused verbatim here with `target_height == row_height`
-    // (grid's own `_align_grid_rows` has no separate `chart_target`
-    // concept the way cols's `_col_chart_body_target` does — the group's
-    // own shared height IS the target). Its direct-chart-item branch
-    // writes no box, but DOES trigger the SAME fresh-render `Payload::
-    // measuring` law `calculate_cols_boxes` models — see this crate's own
-    // `fresh_render` doc there for why it is a SEPARATE set from
-    // `overrides`, not folded into the same map.
-    let mut overrides: HashMap<String, f64> = HashMap::new();
-    let mut fresh_render: HashSet<String> = HashSet::new();
-    let mut row_groups: Vec<(i64, f64, Vec<usize>)> = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        let row = item.authoring.row.unwrap_or(0);
-        let height = boxes[i].height;
-        match row_groups.iter_mut().find(|(r, h, _)| *r == row && *h == height) {
-            Some(group) => group.2.push(i),
-            None => row_groups.push((row, height, vec![i])),
-        }
-    }
-    for (_, row_height, idxs) in &row_groups {
-        if idxs.len() <= 1 {
-            continue;
-        }
-        for &i in idxs {
-            if let Some(board_json) = items[i].board {
-                let item_overrides = (ctx.board_alignment_overrides)(
-                    board_json,
-                    boxes[i].width,
-                    *row_height,
-                    *row_height,
-                )?;
-                overrides.extend(item_overrides);
-            } else if let Some(chart) = items[i].chart {
-                if let (Some(natural), Some(id)) =
-                    (naturals[i], chart.get("id").and_then(Value::as_str))
-                {
-                    if height_moved(natural, boxes[i].height) {
-                        fresh_render.insert(id.to_string());
-                    }
-                }
-            }
-        }
-    }
-    Ok((boxes, overrides, fresh_render))
+    Ok(boxes)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2047,9 +2067,10 @@ pub struct ContainerBox {
 /// "rows" through that dedicated re-derivation before ever reaching this
 /// dispatch, so a "rows" arm here would be a second, unreachable
 /// implementation of the same law — reviewed as exactly that (round 2
-/// HIGH-R2-B). `_measure_tabs_layout_height` returns `content_height +
-/// tab_bar_height` for the ACTIVE tab alone; `calculate_tabs_boxes` (below)
-/// already assigns that identical `(y=tab_bar_height, height=content_
+/// HIGH-R2-B). `_measure_tabs_layout_height` returns `pane_y +
+/// content_height` for the ACTIVE tab alone (floored at a left rail's
+/// extent, which the callers pass as `min_height`); `calculate_tabs_boxes`
+/// (below) already assigns that identical `(y=pane_y, height=content_
 /// height)` box to EVERY item in the layout (mirroring
 /// `_calculate_tabs_dimensions`'s own uniform assignment across all tabs,
 /// matching production's own SIZED `ResolvedLayoutItem`s), so "rows" and
@@ -2255,6 +2276,14 @@ mod tests {
     }
 
     // ---- compile/sizing.py::resolve_cols_widths ----
+
+    #[test]
+    fn a_failed_chart_keeps_its_type_from_the_chart_error_identity() {
+        let failure = serde_json::json!({"identity": {"chart_type": "table"}});
+        assert_eq!(item_chart_type(None, Some(&failure)), Some("table"));
+        assert!(is_content_sized_item(None, Some(&failure)));
+        assert!(!is_content_sized_item(None, None));
+    }
 
     #[test]
     fn resolve_cols_widths_all_auto_splits_equally() {

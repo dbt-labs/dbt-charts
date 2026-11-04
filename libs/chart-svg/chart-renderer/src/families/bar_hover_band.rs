@@ -6,10 +6,10 @@
 //! near-zero total) gets an extent.
 
 use crate::constants::bar::{HOVER_BAND_EXTEND_FRACTION, HOVER_BAND_TRIGGER_FRACTION};
-use super::cartesian::LinearScale;
+use d3rs::scale::Continuous;
 use crate::common::row_num;
 use crate::contract::{aria_attrs, mark_group, ItemRole};
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathData, Role};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -104,14 +104,14 @@ impl HoverBand {
 
     /// The layer. `vertical` bars grow up from the baseline; `extent` is
     /// the plot's pixel size along the measure axis.
-    pub(crate) fn node(&self, vertical: bool, scale: &LinearScale, extent: f64, link_open: crate::href::LinkOpen) -> Result<Node, String> {
-        let baseline = scale.position(0.0);
+    pub(crate) fn node(&self, vertical: bool, scale: &Continuous, extent: f64, link_open: crate::href::LinkOpen) -> Result<Node, String> {
+        let baseline = scale.scale(0.0);
         let band = extent * HOVER_BAND_EXTEND_FRACTION;
         let trigger = extent * HOVER_BAND_TRIGGER_FRACTION;
         let mut paths = Vec::new();
         for row in &self.rows {
             let grows = match (&self.gate, row.value) {
-                (Gate::Each, Some(v)) => (scale.position(v) - baseline).abs() < trigger,
+                (Gate::Each, Some(v)) => (scale.scale(v) - baseline).abs() < trigger,
                 (Gate::Each, None) => false,
                 (Gate::Carriers(_), _) => row.carrier,
             };
@@ -120,13 +120,10 @@ impl HoverBand {
             let reach = if !grows { 0.0 } else if vertical { -sign * band } else { sign * band };
             let (lo, len) = (baseline.min(baseline + reach), reach.abs());
             let label = aria_attrs(row.aria.as_deref(), ItemRole::Bar)?;
-            let d = if vertical {
-                format!("M{:.2},{lo:.2}h{:.2}v{len:.2}h-{:.2}Z", row.start, row.size, row.size)
-            } else {
-                format!("M{lo:.2},{:.2}h{len:.2}v{:.2}h-{len:.2}Z", row.start, row.size)
-            };
+            let (x, y, w, h) = if vertical { (row.start, lo, row.size, len) } else { (lo, row.start, len, row.size) };
+            let d = PathData::new().move_to(x, y).line_to(x + w, y).line_to(x + w, y + h).line_to(x, y + h).close();
             let anchor = link_open.anchor(row.href.as_deref());
-            let path = Node::Path(Attrs::new().set("d", d).set("fill", FILL).set("opacity", "0").extend(label));
+            let path = Node::path(Role::Chrome, d, Attrs::new().set("fill", FILL).num("opacity", 0.0).extend(label));
             paths.push(crate::href::linked(anchor, path));
         }
         mark_group("rect", "hover_band_marks", paths)

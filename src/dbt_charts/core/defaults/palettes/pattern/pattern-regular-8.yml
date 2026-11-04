@@ -1,0 +1,19 @@
+# Pattern palette — pattern-regular-8
+name: pattern-regular-8
+description: |
+  Eight categorical fill patterns with regular geometry only: hatch, hexagons,
+  crosshatch, brick dots, grid, horizontal and vertical stripes, and a pixel dither.
+  Slots 5-7 degrade in skinny marks, which is why they come last: vertical
+  stripes vanish in narrow vertical bars, horizontal stripes vanish in thin
+  horizontal bars and short stacked segments, and the grid falls back to its
+  surviving direction.
+kind: categorical
+motifs:
+  - hatch-45
+  - bendday-hex
+  - crosshatch
+  - dots-brick
+  - grid
+  - hatch-0
+  - hatch-90
+  - dither

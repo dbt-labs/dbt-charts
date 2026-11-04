@@ -6,14 +6,13 @@
 # merged style, so a theme switch recolors them like any built-in chart.
 
 title: Custom charts
+width: 1440
 source: examples_db
 notes: |
   Shapes dbt Charts has no `type:` for, each drawn by a template in `templates/`.
   The Sankey and funnel answer dbt-labs/dbt-charts#3, the XmR chart answers
   dbt-labs/dbt-charts#44, and the pictogram follows a 1938 Isotype chart.
 style:
-  frame:
-    width: 1440
   charts:
     category_colors:
       qualification:
@@ -34,6 +33,17 @@ queries:
       - [Trial, Churned, 1800]
       - [Paid, Annual, 500]
       - [Paid, Monthly, 800]
+  offices:
+    columns: [office, lon, lat]
+    values:
+      - [San Francisco, -122.4, 37.8]
+      - [New York, -74.0, 40.7]
+      - [Toronto, -79.4, 43.7]
+      - [São Paulo, -46.6, -23.5]
+      - [London, -0.1, 51.5]
+      - [Berlin, 13.4, 52.5]
+      - [Lagos, 3.4, 6.5]
+      - [Tokyo, 139.7, 35.7]
   activation_funnel:
     columns: [stage, users]
     values:
@@ -254,6 +264,17 @@ charts:
       corner_label: Cheaper and stickier
       x_title: Cost per signup
       y_title: Signups still active after 90 days
+  office_globe:
+    type: custom
+    template: globe
+    query: offices
+    title: Offices on the globe
+    subtitle: Turned to face their center; Tokyo is on the far side
+    style:
+      aspect_ratio: 1
+    x: lon
+    y: lat
+    color: office
   # Inline: the template, header included, lives under `svg:` instead of templates/.
   trade_balance:
     type: custom
@@ -324,6 +345,15 @@ rows:
   - cols:
     - defect_xmr
     - plan_radar
+- title: Globe
+  rows:
+  - cols:
+    - office_globe
+    - text: |
+        A **globe** draws each place with `d3.geo_path` over
+        `d3.geo_orthographic()`, turned to face the center of the places.
+        The projection clips what is on the far side, so the graticule
+        ends at the horizon and Tokyo is not drawn.
 - title: Quadrants
   rows:
   - cols:

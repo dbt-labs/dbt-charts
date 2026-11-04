@@ -77,6 +77,18 @@ def test_preview_dates_a_preset_name_literal_on_the_board_clock(
     assert "DATE(day) BETWEEN" in result.sql
 
 
+def test_preview_inlines_variable_values_as_literals(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """Offline SQL carries the values themselves: a declared default is a literal
+    in the text, never a parameter placeholder a warehouse would reject."""
+    project = _project(tmp_path, local_project, "sqlite")
+    result = lookup_board_query_sql("main", Path("charts/b.yml"), project=project)
+    assert result.success, result.errors
+    assert "2024-01-01" in result.sql and "2024-01-31" in result.sql
+    assert "$1" not in result.sql and "?" not in result.sql
+
+
 def test_preview_coerces_values_like_execution(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:

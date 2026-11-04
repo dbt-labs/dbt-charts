@@ -1,4 +1,4 @@
-"""Daterange presets: rolling windows a daterange value names instead of dates.
+"""Daterange presets: relative windows a daterange value names instead of dates.
 
 A preset is a whole daterange value (`default: last_90_days`, `?span=last_90_days`)
 and resolves against the date of the render, so a board or link stays rolling.
@@ -17,25 +17,38 @@ from typing import Final, Literal
 from dbt_charts.core.diagnostics import ERR_INTERNAL
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
-Kind = Literal["today", "yesterday", "last", "previous", "this", "to_date"]
+Kind = Literal[
+    "today",
+    "yesterday",
+    "last",
+    "previous",
+    "before_previous",
+    "this",
+    "to_date",
+]
 Unit = Literal["day", "week", "month", "quarter", "year"]
 
 _DAY: Final = timedelta(days=1)
 _UNITS: Final[dict[str, Unit]] = {
     unit: unit for unit in ("day", "week", "month", "quarter", "year")
 }
+_ROLLING_KINDS: Final[dict[str, Kind]] = {
+    kind: kind for kind in ("last", "previous", "before_previous")
+}
 _MONTHS_IN: Final[dict[str, int]] = {"month": 1, "quarter": 3, "year": 12}
 
 GRAMMAR: Final = (
-    "today, yesterday, last_<N>_<unit>, previous_<N>_<unit>, this_<unit>, "
+    "today, yesterday, last_<N>_<unit>, previous_<N>_<unit>, "
+    "before_previous_<N>_<unit>, this_<unit>, "
     "<unit>_to_date (units: days, weeks, months, quarters, years, singular or "
     "plural; this_ and "
     "_to_date take week, month, quarter or year; fiscal_ may precede quarter or "
-    "year in all but last_, e.g. this_fiscal_quarter, previous_1_fiscal_year)"
+    "year, e.g. this_fiscal_quarter, last_4_fiscal_quarters)"
 )
 
 _ROLLING = re.compile(
-    r"(?P<kind>last|previous)_(?P<n>[1-9]\d*)_(?P<fiscal>fiscal_)?"
+    r"(?P<kind>last|previous|before_previous)_(?P<n>[1-9]\d*)_"
+    r"(?P<fiscal>fiscal_)?"
     r"(?P<unit>day|week|month|quarter|year)s?"
 )
 _THIS = re.compile(r"this_(?P<fiscal>fiscal_)?(?P<unit>week|month|quarter|year)")
@@ -50,6 +63,7 @@ class BoardClock:
     today: date
     fiscal_start_month: int
     week_start: int
+    time_zone: str
 
 
 @dataclass(frozen=True)
@@ -59,24 +73,29 @@ class DaterangePreset:
     n: int = 1
     fiscal: bool = False
 
-    def window(self, clock: BoardClock) -> tuple[date, date]:
-        """The inclusive ``(start, end)`` this preset names on ``clock``."""
+    def window(self, clock: BoardClock) -> tuple[date | None, date]:
+        """The inclusive ``(start, end)`` this preset names on ``clock``.
+
+        ``before_previous`` has no lower bound: its start is ``None``.
+        """
         today = clock.today
         if self.kind == "today":
             return today, today
         if self.kind == "yesterday":
             return today - timedelta(days=1), today - timedelta(days=1)
-        if self.kind == "last":
-            # Rolling: N units back from today, today included.
-            return _shift_unit(today, self.unit, -self.n) + _DAY, today
         anchor = clock.fiscal_start_month if self.fiscal else 1
         start = _unit_start(today, self.unit, anchor, clock.week_start)
         if self.kind == "to_date":
             return start, today
         if self.kind == "this":
             return start, _shift_unit(start, self.unit, 1) - _DAY
-        # previous: the N complete units before the current one.
+        if self.kind == "last":
+            # Calendar-aligned: the current unit and the N-1 before it, to today.
+            return _shift_unit(start, self.unit, 1 - self.n), today
         first = _shift_unit(start, self.unit, -self.n)
+        if self.kind == "before_previous":
+            return None, first - _DAY
+        # previous: the N complete units before the current one.
         return first, start - _DAY
 
 
@@ -114,7 +133,7 @@ def _parse(name: str) -> DaterangePreset | None:
     kind: Kind
     n = 1
     if match := _ROLLING.fullmatch(name):
-        kind = "last" if match["kind"] == "last" else "previous"
+        kind = _ROLLING_KINDS[match["kind"]]
         n = int(match["n"])
     elif match := _THIS.fullmatch(name):
         kind = "this"
@@ -124,7 +143,7 @@ def _parse(name: str) -> DaterangePreset | None:
         return None
     unit = _UNITS[match["unit"]]
     fiscal = match["fiscal"] is not None
-    if fiscal and (unit not in ("quarter", "year") or kind == "last"):
+    if fiscal and unit not in ("quarter", "year"):
         return None
     return DaterangePreset(kind, unit, n, fiscal)
 
@@ -144,14 +163,17 @@ def parse_daterange_preset(name: str) -> DaterangePreset:
     return preset
 
 
-def resolve_daterange_preset(preset: str, clock: BoardClock) -> tuple[date, date]:
+def resolve_daterange_preset(
+    preset: str, clock: BoardClock
+) -> tuple[date | None, date]:
     """The inclusive ``(start, end)`` a preset names on ``clock``."""
     return parse_daterange_preset(preset).window(clock)
 
 
 def resolve_daterange_preset_iso(preset: str, clock: BoardClock) -> list[str]:
     """The preset's window as the ISO ``[start, end]`` an authored range is."""
-    return [d.isoformat() for d in resolve_daterange_preset(preset, clock)]
+    start, end = resolve_daterange_preset(preset, clock)
+    return ["" if start is None else start.isoformat(), end.isoformat()]
 
 
 # No default: resolving a preset outside a render has no board clock.

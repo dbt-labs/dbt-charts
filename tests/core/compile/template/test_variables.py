@@ -23,7 +23,7 @@ from dbt_charts.core.compile.template.variables import (
 from dbt_charts.core.diagnostics.execution import ExecutionError
 
 _TODAY = date(2026, 10, 20)
-_CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1)
+_CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1, time_zone="UTC")
 
 
 def _registry(**inputs: str) -> dict[str, Variable]:
@@ -344,3 +344,21 @@ class TestCoerceChoice:
     def test_empty_choice_is_unset(self) -> None:
         reg = {"y": self._var("select", options={"static": [2023, 2024]})}
         assert coerce_variable_values({"y": ""}, reg)["y"] is None
+
+
+class TestMalformedMultiselect:
+    """A bracketed string the JSON narrowing could not parse is a typo, not a
+    one-member selection that matches nothing."""
+
+    def test_unparsed_bracketed_string_raises_a_coded_error(self) -> None:
+        reg = _registry(channel="multiselect")
+        with pytest.raises(ExecutionError) as caught:
+            coerce_variable_values({"channel": '["email"'}, reg)
+        assert caught.value.code is not None
+        assert caught.value.code.code == "ERR-VARIABLE-VALUE-INVALID"
+        assert "'channel'" in str(caught.value)
+
+    def test_blank_and_empty_list_select_everything(self) -> None:
+        reg = _registry(channel="multiselect")
+        assert coerce_variable_values({"channel": ""}, reg)["channel"] == []
+        assert coerce_variable_values({"channel": []}, reg)["channel"] == []

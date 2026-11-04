@@ -23,14 +23,18 @@ from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from ..._results import rows_result, rows_schema
+
 
 def _ok_adapter(value: int = 1) -> Mock:
     ok = Mock()
     ok.is_success = True
     ok.data = [{"value": value}]
+    ok.schema = rows_schema(ok.data)
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.return_value = ok
     return registry
 
@@ -98,7 +102,7 @@ class TestCacheDisabledIsNoStore:
             key = compute_cache_key(query, {}, result.board.sources)
             cache.put(
                 *key,
-                [{"value": 999}],
+                rows_result([{"value": 999}]),
                 board_slug="test",
                 query_name="q",
             )
@@ -256,6 +260,9 @@ class TestTtlLazyExpiry:
                 )
 
             adapter.execute.return_value.data = [{"value": 2}]
+            adapter.execute.return_value.schema = rows_schema(
+                adapter.execute.return_value.data
+            )
             # A fresh Executor forces the persistent-cache path (bypasses the
             # first executor's own in-memory _cache memo).
             executor2 = Executor(
@@ -528,6 +535,9 @@ class TestSiblingQueriesKeepTheirOwnTtl:
 
             # A distinguishable value proves a re-run rather than a stale hit.
             adapter.execute.return_value.data = [{"value": 2}]
+            adapter.execute.return_value.schema = rows_schema(
+                adapter.execute.return_value.data
+            )
 
             impatient = _sibling_executor(
                 result.board, result.query_registry, adapter, cache
@@ -592,6 +602,9 @@ class TestForceRefreshClearsEveryPolicySlot:
             assert len(executor._cache) == 2, "two policies, two slots"
 
             adapter.execute.return_value.data = [{"value": 2}]
+            adapter.execute.return_value.schema = rows_schema(
+                adapter.execute.return_value.data
+            )
             executor.execute_query("patient", force_refresh=True)
 
             assert executor.execute_query("impatient") == [{"value": 2}], (
@@ -622,7 +635,9 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
             query = result.board.queries["q"]
             key = compute_cache_key(query, {}, result.board.sources)
             # A fresh entry the disabled query must not be handed.
-            cache.put(*key, [{"value": 999}], board_slug="test", query_name="q")
+            cache.put(
+                *key, rows_result([{"value": 999}]), board_slug="test", query_name="q"
+            )
 
             executor = Executor(
                 result.board,
@@ -691,6 +706,9 @@ class TestSiblingsDoNotShareOneMemoSlot:
 
             # A distinguishable value proves a re-run rather than a memo hit.
             adapter.execute.return_value.data = [{"value": 2}]
+            adapter.execute.return_value.schema = rows_schema(
+                adapter.execute.return_value.data
+            )
 
             impatient = executor.execute_query("impatient")
             assert adapter.execute.call_count == 2, (
@@ -725,6 +743,9 @@ class TestSiblingsDoNotShareOneMemoSlot:
             assert adapter.execute.call_count == 1
 
             adapter.execute.return_value.data = [{"value": 2}]
+            adapter.execute.return_value.schema = rows_schema(
+                adapter.execute.return_value.data
+            )
 
             live = executor.execute_query("live")
             assert adapter.execute.call_count == 2, (
@@ -775,6 +796,7 @@ class TestQueryDataAgesOnFailure:
     def test_failed_adapter_query_contributes_data_age_record(self) -> None:
         result = df_compile(_board_yaml("cache: false"))
         registry = Mock()
+        registry.project_file_sources.return_value = {}
         registry.execute.side_effect = RuntimeError("warehouse down")
 
         executor = Executor(
@@ -845,9 +867,11 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         try:
             result = df_compile(_board_yaml("cache: true"))
             adapter = Mock()
+            adapter.project_file_sources.return_value = {}
             ok = Mock()
             ok.is_success = True
             ok.data = [{"value": i} for i in range(10)]
+            ok.schema = rows_schema(ok.data)
             ok.resolved_relations = None
             ok.truncated_reason = None
             adapter.execute.return_value = ok
@@ -884,6 +908,7 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         try:
             result = df_compile(_board_yaml("cache: true"))
             adapter = Mock()
+            adapter.project_file_sources.return_value = {}
             ok = Mock()
             ok.is_success = True
             ok.data = [
@@ -891,6 +916,7 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
                 {"value": "x" * 500},
                 {"value": "also small"},
             ]
+            ok.schema = rows_schema(ok.data)
             ok.resolved_relations = None
             ok.truncated_reason = None
             adapter.execute.return_value = ok
@@ -931,9 +957,11 @@ class TestResultLimitsEnforcedBeforeCacheWrite:
         try:
             result = df_compile(_board_yaml("cache: true"))
             adapter = Mock()
+            adapter.project_file_sources.return_value = {}
             ok = Mock()
             ok.is_success = True
             ok.data = [{"value": "x" * 500}, {"value": "small"}]
+            ok.schema = rows_schema(ok.data)
             ok.resolved_relations = None
             ok.truncated_reason = None
             adapter.execute.return_value = ok

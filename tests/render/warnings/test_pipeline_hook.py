@@ -46,6 +46,7 @@ def _make_executor(board, query_registry, rows=None):
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry
@@ -153,6 +154,7 @@ def test_failed_query_chart_omitted_from_chart_results(
     failing_ok.data = []
     failing_ok.resolved_relations = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.side_effect = RuntimeError("query failed")
     failing_executor = Executor(
         result.board,

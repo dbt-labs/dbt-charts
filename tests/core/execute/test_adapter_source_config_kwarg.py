@@ -198,6 +198,7 @@ class TestDbtContextWireUp:
         fake_dbt = MagicMock(spec=DbtAdapter)
         fake_dbt.supported_types = {"sql"}
         fake_dbt.dbt_project_path = Path()
+        fake_dbt.target_name = None
         registry._adapters.insert(0, fake_dbt)
 
         registry.execute(_sql_query(source="some_name"))

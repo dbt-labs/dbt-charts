@@ -86,7 +86,7 @@ pub struct AnnotationCtx<'a> {
     pub fonts: &'a FontBook,
     /// Canvas color behind the plot; the halo stroke.
     pub canvas: &'a str,
-    /// `format!("{}-ann{}", contract::safe_svg_id(chart_id), panel_ordinal)`.
+    /// `format!("{}-ann{}", contract::scoped_id(chart_id), panel_ordinal)`.
     pub clip_id: String,
     /// The chart's own ink inside and around the plot, plot-relative: what
     /// text moves off. Set at paint before the `Foreground` call; empty in the fit.
@@ -94,13 +94,13 @@ pub struct AnnotationCtx<'a> {
 }
 
 /// Chart ink annotation text may sit on, plot-relative: a bar's, point's or
-/// label's box, an area fill between its top and bottom outlines, or a
-/// stroked line; outlines and lines sorted by x.
+/// label's box, a filled outline (an area), or a stroked line; lines sorted by x.
 #[derive(Debug, Clone)]
 pub enum DataMark {
     Box(Bounds),
-    Area { hi: Vec<(f64, f64)>, lo: Vec<(f64, f64)> },
     Line { points: Vec<(f64, f64)>, width: f64 },
+    /// A filled outline of any shape, closed implicitly: a layer's area.
+    Polygon(Vec<(f64, f64)>),
     /// A fill or bar with its color and opacity: what an `auto` rule keeps contrast against.
     Tinted(Box<DataMark>, String, f64),
 }
@@ -113,22 +113,97 @@ impl DataMark {
         DataMark::Box(Bounds::new(x, y, x + w, y + h))
     }
 
+    /// The chart's marks among `plot`, the nodes of the plot group the layout just built, in that
+    /// group's frame, every layer's: a bar, a point or a rounded bar is a box, a stroked layer
+    /// path is its segments, a filled layer path (an area) its outline polygons.
+    pub fn plot_marks(plot: &[scene::Node]) -> Vec<Self> {
+        let mut out = Vec::new();
+        for mark in scene::marks(plot) {
+            // A receded bar stamps the paint it had; rule contrast reads that, not the mixed one.
+            // SVG's initial `fill` is black, its initial `stroke` none and `stroke-width` 1;
+            // each inherits down the tree.
+            let fill = mark.attrs.get("data-dbt-rest-fill").or_else(|| mark.paint("fill")).unwrap_or("black");
+            let opacity = mark.paint_num("fill-opacity").unwrap_or(1.0);
+            if let (scene::Shape::Path(path), None) = (mark.shape, mark.datum) {
+                let runs = Self::flatten(path, &mark.map);
+                if fill != "none" {
+                    out.extend(runs.into_iter().map(|run| DataMark::Tinted(Box::new(DataMark::Polygon(run)), fill.to_string(), opacity)));
+                } else if mark.paint("stroke").is_some_and(|stroke| stroke != "none") {
+                    let width = mark.paint_num("stroke-width").unwrap_or(1.0) * mark.map.a.hypot(mark.map.b);
+                    out.extend(Self::segments(runs, width));
+                }
+                continue;
+            }
+            let b = DataMark::Box(mark.bounds.into());
+            out.push(DataMark::Tinted(Box::new(b), fill.to_string(), opacity));
+        }
+        out
+    }
+
+    /// The measured value labels among `nodes`, a slice whose origin is the plot's top-left
+    /// `(left, top)`, in the plot's frame.
+    pub fn labels_in(nodes: &[scene::Node], (left, top): (f64, f64)) -> Vec<Self> {
+        scene::labels(nodes).into_iter().map(|b| DataMark::Box(Bounds::new(b.x1 - left, b.y1 - top, b.x2 - left, b.y2 - top))).collect()
+    }
+
+    /// A path's subpaths as polylines under `map`, curves sampled; a closed subpath ends where
+    /// it began.
+    fn flatten(path: &scene::PathData, map: &scene::Affine) -> Vec<Vec<(f64, f64)>> {
+        const CURVE_STEPS: usize = 16;
+        let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+        for command in path.commands() {
+            match *command {
+                scene::PathCommand::M(x, y) => runs.push(vec![map.apply((x, y))]),
+                scene::PathCommand::L(x, y) => runs.last_mut().expect("a path starts with M").push(map.apply((x, y))),
+                scene::PathCommand::C(x1, y1, x2, y2, x, y) => {
+                    let run = runs.last_mut().expect("a path starts with M");
+                    let from = *run.last().expect("a run has its start");
+                    let (p1, p2, to) = (map.apply((x1, y1)), map.apply((x2, y2)), map.apply((x, y)));
+                    let at = |t: f64, a: f64, b: f64, c: f64, d: f64| {
+                        let u = 1.0 - t;
+                        u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
+                    };
+                    for i in 1..=CURVE_STEPS {
+                        let t = i as f64 / CURVE_STEPS as f64;
+                        run.push((at(t, from.0, p1.0, p2.0, to.0), at(t, from.1, p1.1, p2.1, to.1)));
+                    }
+                }
+                scene::PathCommand::A { .. } => panic!("a layer mark is drawn with lines and curves, not arcs"),
+                scene::PathCommand::Z => {
+                    let run = runs.last_mut().expect("a path starts with M");
+                    run.push(run[0]);
+                }
+            }
+        }
+        runs
+    }
+
+    /// Polylines as one two-point `Line` per segment, x-ordered: a path need not be a function
+    /// of x (a horizontal bar's layer runs down the page).
+    fn segments(runs: Vec<Vec<(f64, f64)>>, width: f64) -> Vec<Self> {
+        runs.iter()
+            .flat_map(|run| match run.as_slice() {
+                [only] => vec![[*only, *only]],
+                run => run.windows(2).map(|w| [w[0], w[1]]).collect(),
+            })
+            .map(|mut pair| {
+                pair.sort_by(|a, b| a.0.total_cmp(&b.0));
+                DataMark::Line { points: pair.to_vec(), width }
+            })
+            .collect()
+    }
+
     /// Whether a halo `auto` draws on text over `b`: a line is no mark to it.
     fn overlaps(&self, b: &Bounds) -> bool {
         match self {
             DataMark::Box(m) => m.x1 < b.x2 && m.x2 > b.x1 && m.y1 < b.y2 && m.y2 > b.y1,
             DataMark::Line { .. } => false,
             DataMark::Tinted(m, ..) => m.overlaps(b),
-            // Sampled every pixel across the text: the fill's column there
-            // must reach into the text's rows.
-            DataMark::Area { hi, lo } => {
-                let (Some(a), Some(z)) = (hi.first(), hi.last()) else { return false };
-                let (x1, x2) = (b.x1.max(a.0.min(z.0)), b.x2.min(a.0.max(z.0)));
-                let steps = (x2 - x1).ceil().max(0.0) as usize;
-                (0..=steps).map(|i| (x1 + i as f64).min(x2)).filter(|_| x1 <= x2).any(|x| {
-                    let (top, bottom) = (y_at(hi, x), y_at(lo, x));
-                    top.min(bottom) < b.y2 && top.max(bottom) > b.y1
-                })
+            DataMark::Polygon(ring) => {
+                let corners = [(b.x1, b.y1), (b.x2, b.y1), (b.x2, b.y2), (b.x1, b.y2)];
+                ring.windows(2).any(|e| edge_hits(e[0], e[1], b))
+                    || ring.last().zip(ring.first()).is_some_and(|(z, a)| edge_hits(*z, *a, b))
+                    || corners.iter().any(|c| inside(ring, *c))
             }
         }
     }
@@ -151,12 +226,9 @@ impl DataMark {
         match self {
             DataMark::Box(b) => vec![*b],
             DataMark::Tinted(m, ..) => m.boxes(),
-            DataMark::Area { hi, lo } => columns(hi, &|c0, c1| {
-                let ys = [y_at(hi, c0), y_at(hi, c1), y_at(lo, c0), y_at(lo, c1)];
-                (ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max))
-            }),
+            DataMark::Polygon(ring) => polygon_boxes(ring),
             DataMark::Line { points, width } => columns(points, &|c0, c1| {
-                let inner = points.iter().filter(|p| p.0 > c0 && p.0 < c1).map(|p| p.1);
+                let inner = points.iter().filter(|p| (p.0 > c0 && p.0 < c1) || c0 == c1).map(|p| p.1);
                 let ys: Vec<f64> = [y_at(points, c0), y_at(points, c1)].into_iter().chain(inner).collect();
                 let (y0, y1) = (ys.iter().copied().fold(f64::INFINITY, f64::min), ys.iter().copied().fold(f64::NEG_INFINITY, f64::max));
                 (y0 - width / 2.0, y1 + width / 2.0)
@@ -171,17 +243,79 @@ impl DataMark {
         match self {
             DataMark::Tinted(m, ..) => m.covers(x, y, half),
             DataMark::Box(b) => b.x1 - half <= x && x <= b.x2 + half && b.y1 - half <= y && y <= b.y2 + half,
-            DataMark::Area { hi, lo } => {
-                let (Some(a), Some(z)) = (hi.first(), hi.last()) else { return false };
-                if x < a.0.min(z.0) || x > a.0.max(z.0) {
-                    return false;
-                }
-                let (top, bottom) = (y_at(hi, x), y_at(lo, x));
-                top.min(bottom) - half <= y && y <= top.max(bottom) + half
-            }
             DataMark::Line { .. } => false,
+            DataMark::Polygon(ring) => {
+                inside(ring, (x, y)) || ring.iter().zip(ring.iter().cycle().skip(1)).any(|(a, z)| distance_to_edge((x, y), *a, *z) <= half)
+            }
         }
     }
+}
+
+/// Whether the closed `ring` holds `p`, even-odd.
+fn inside(ring: &[(f64, f64)], p: (f64, f64)) -> bool {
+    ring.iter().zip(ring.iter().cycle().skip(1)).filter(|(a, z)| (a.1 > p.1) != (z.1 > p.1) && p.0 < a.0 + (p.1 - a.1) / (z.1 - a.1) * (z.0 - a.0)).count() % 2 == 1
+}
+
+/// Whether the segment `a`-`z` meets the box `b` (Liang-Barsky).
+fn edge_hits(a: (f64, f64), z: (f64, f64), b: &Bounds) -> bool {
+    let (d, mut t0, mut t1) = ((z.0 - a.0, z.1 - a.1), 0.0_f64, 1.0_f64);
+    for (p, q) in [(-d.0, a.0 - b.x1), (d.0, b.x2 - a.0), (-d.1, a.1 - b.y1), (d.1, b.y2 - a.1)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 { t0 = t0.max(t) } else { t1 = t1.min(t) }
+        }
+    }
+    t0 <= t1
+}
+
+fn distance_to_edge(p: (f64, f64), a: (f64, f64), z: (f64, f64)) -> f64 {
+    let (dx, dy) = (z.0 - a.0, z.1 - a.1);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 == 0.0 { 0.0 } else { (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len2).clamp(0.0, 1.0) };
+    (p.0 - a.0 - t * dx).hypot(p.1 - a.1 - t * dy)
+}
+
+/// The rows the closed `ring` covers at `x`, as sorted `(top, bottom)` runs.
+fn rows_at(ring: &[(f64, f64)], x: f64) -> Vec<(f64, f64)> {
+    let mut ys: Vec<f64> = ring
+        .iter()
+        .zip(ring.iter().cycle().skip(1))
+        .filter(|(a, z)| (a.0 > x) != (z.0 > x))
+        .map(|(a, z)| a.1 + (x - a.0) / (z.0 - a.0) * (z.1 - a.1))
+        .collect();
+    ys.sort_by(f64::total_cmp);
+    ys.chunks_exact(2).map(|c| (c[0], c[1])).collect()
+}
+
+/// `COLUMN`-wide slices of the polygon, one box per run of rows it covers there: the runs at
+/// the slice's edges and at every vertex inside it, merged where they touch.
+fn polygon_boxes(ring: &[(f64, f64)]) -> Vec<Bounds> {
+    const NUDGE: f64 = 1e-9;
+    let (x0, x1) = ring.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+    if ring.is_empty() {
+        return Vec::new();
+    }
+    let steps = ((x1 - x0) / COLUMN).ceil().max(1.0) as usize;
+    let mut out = Vec::new();
+    for i in 0..steps {
+        let (c0, c1) = (x0 + i as f64 * COLUMN, (x0 + (i + 1) as f64 * COLUMN).min(x1));
+        let scans = [c0 + NUDGE, c1 - NUDGE].into_iter().chain(ring.iter().map(|p| p.0).filter(|x| *x > c0 && *x < c1).flat_map(|x| [x - NUDGE, x + NUDGE]));
+        let mut runs: Vec<(f64, f64)> = scans.flat_map(|x| rows_at(ring, x)).collect();
+        runs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for run in runs {
+            match merged.last_mut() {
+                Some(last) if run.0 <= last.1 => last.1 = last.1.max(run.1),
+                _ => merged.push(run),
+            }
+        }
+        out.extend(merged.into_iter().map(|(top, bottom)| Bounds::new(c0, top, c1, bottom)));
+    }
+    out
 }
 
 /// The outline's y at x, straight between its points; flat past its ends.
@@ -278,12 +412,13 @@ pub fn x_day_bounds(annotations: &[Annotation]) -> impl Iterator<Item = i64> + '
     annotations.iter().flat_map(Annotation::x_days).flat_map(|d| [d.floor() as i64, d.ceil() as i64])
 }
 
-/// ISO dates of the earliest and latest annotation day on x that fall before
+/// The earliest and latest annotation day on x, as ISO dates, that fall before
 /// or after every day in `data` (the days of the axis's dates): they extend a bucket scaffold as data
 /// does. A range's exclusive end adds none by itself. A day inside the data maps onto its existing bucket and adds none.
-pub fn x_dates_outside(data: &[f64], annotations: &[Annotation]) -> Vec<String> {
+pub fn x_dates_outside(data: &[f64], annotations: &[Annotation]) -> crate::time_axis::Dates {
+    let mut out = crate::time_axis::Dates::default();
     let (Some(lo), Some(hi)) = (data.iter().copied().reduce(f64::min), data.iter().copied().reduce(f64::max)) else {
-        return Vec::new();
+        return out;
     };
     let days: Vec<i64> = annotations
         .iter()
@@ -292,14 +427,11 @@ pub fn x_dates_outside(data: &[f64], annotations: &[Annotation]) -> Vec<String> 
         .collect();
     let before = days.iter().copied().filter(|&d| (d as f64) < lo.floor()).min();
     let after = days.iter().copied().filter(|&d| d as f64 > hi).max();
-    [before, after]
-        .into_iter()
-        .flatten()
-        .map(|d| {
-            let (y, m, d) = crate::families::temporal::civil_from_days(d);
-            format!("{y:04}-{m:02}-{d:02}")
-        })
-        .collect()
+    for day in [before, after].into_iter().flatten() {
+        let (y, m, d) = d3rs::calendar::civil_from_days(day);
+        out.push(format!("{y:04}-{m:02}-{d:02}"), Some(day as f64));
+    }
+    out
 }
 
 /// A temporal x extent in whole days, widened to every date the annotations
@@ -398,12 +530,8 @@ mod tests {
     use super::text::tests::fonts;
     use super::*;
     use crate::diagnostic::collect;
-    use crate::families::cartesian::BandGeometry;
-    use crate::time_axis::date_text_day;
-
-    fn day(s: &str) -> f64 {
-        date_text_day(s).unwrap()
-    }
+    use crate::time_axis::testing::day;
+    use d3rs::scale::Band;
 
     /// A 200x100 plot at (30, 20) on a dated x and a 0..40M y.
     fn ctx<'a>(anns: &'a [Annotation], fonts: &'a FontBook) -> AnnotationCtx<'a> {
@@ -471,7 +599,7 @@ mod tests {
     }
 
     fn days(domain: &[String]) -> Vec<f64> {
-        domain.iter().map(|d| date_text_day(d).unwrap()).collect()
+        domain.iter().map(|d| day(d)).collect()
     }
 
     #[test]
@@ -481,7 +609,7 @@ mod tests {
         assert!(x_dates_outside(&days(&domain), &inside).is_empty());
         let anns = [Scalar::Date("2030-01-01".into()), Scalar::Date("2020-03-05".into()), Scalar::Date("2024-01-01".into())]
             .map(rule_x);
-        assert_eq!(x_dates_outside(&days(&domain), &anns), ["2020-03-05", "2030-01-01"]);
+        assert_eq!(x_dates_outside(&days(&domain), &anns).text, ["2020-03-05", "2030-01-01"]);
         assert!(x_dates_outside(&days(&domain), &[]).is_empty());
     }
 
@@ -495,8 +623,9 @@ mod tests {
     fn monthly_scaffold(domain: &[&str], anns: &[Annotation]) -> Vec<String> {
         use crate::families::temporal::{complete_buckets, TimeUnit};
         let domain: Vec<String> = domain.iter().map(|d| d.to_string()).collect();
-        let widened: Vec<String> = domain.iter().cloned().chain(x_dates_outside(&days(&domain), anns)).collect();
-        complete_buckets(&widened, TimeUnit::YearMonth, 1)
+        let mut widened = crate::time_axis::testing::dates(&domain);
+        widened.extend(x_dates_outside(&days(&domain), anns));
+        complete_buckets(&widened, TimeUnit::YearMonth, 1).text
     }
 
     #[test]
@@ -525,7 +654,10 @@ mod tests {
     fn background_paints_the_clip_and_its_own_plane_only() {
         let svg = painted(&dated(), Plane::Background);
         assert!(svg.starts_with("<clipPath id=\"rev-ann0\"><rect x=\"0\" y=\"0\" width=\"200\" height=\"100\"/></clipPath>"));
-        assert!(svg.contains("<g class=\"annotations annotations-background\" transform=\"translate(30,20)\">"));
+        let fonts = fonts();
+        let group = nodes(&ctx(&dated(), &fonts), Plane::Background).unwrap().pop().unwrap();
+        assert_eq!(group.attrs.get("class"), Some("annotations annotations-background"));
+        assert_eq!(group.affine().apply((0.0, 0.0)), (30.0, 20.0));
         assert!(!svg.contains("annotations-foreground"));
         assert_eq!(svg.matches("<rect x=").count(), 3, "the clip rect and two bands");
     }
@@ -631,6 +763,115 @@ mod tests {
         assert!(!painted_over(&anns, Plane::Foreground, &[beside]).contains(HALOED));
     }
 
+    /// The halo tests the marks of every layer of the tree the layout built: in the plot group's
+    /// own frame, chrome left out.
+    #[test]
+    fn the_halo_reads_the_marks_of_the_plot_nodes() {
+        use scene::{Attrs, Node, Role};
+        let mark = |layer, rect: (f64, f64, f64, f64)| {
+            Node::rect(Role::Mark { layer, series: None, datum: None }, rect, Attrs::new().set("fill", "#336699").num("fill-opacity", 0.5))
+        };
+        let inner = Node::group(Role::Chrome, Attrs::new(), vec![mark(0, (1.0, 2.0, 3.0, 4.0))]).translate(10.0, 20.0);
+        let plot = vec![
+            Node::rect(Role::Chrome, (0.0, 0.0, 99.0, 99.0), Attrs::new()),
+            mark(0, (5.0, 6.0, 7.0, 8.0)),
+            mark(1, (50.0, 60.0, 70.0, 80.0)),
+            inner,
+        ];
+        let boxes: Vec<(f64, f64, f64, f64)> = DataMark::plot_marks(&plot)
+            .into_iter()
+            .map(|m| match m {
+                DataMark::Tinted(inner, ..) => match *inner {
+                    DataMark::Box(b) => (b.x1, b.y1, b.x2, b.y2),
+                    _ => unreachable!("a rect mark is a box"),
+                },
+                _ => unreachable!("a rect mark is a tinted box"),
+            })
+            .collect();
+        assert_eq!(boxes, [(5.0, 6.0, 12.0, 14.0), (50.0, 60.0, 120.0, 140.0), (11.0, 22.0, 14.0, 26.0)]);
+    }
+
+    /// A layer's stroked path counts by its segments, never by the box around it, and a point by
+    /// its box.
+    #[test]
+    fn a_layer_line_is_its_segments_and_a_point_its_box() {
+        use scene::{Attrs, Node, PathData, Role};
+        let layer = Role::Mark { layer: 1, series: None, datum: None };
+        let line = Attrs::new().set("fill", "none").set("stroke", "#000").num("stroke-width", 2.0);
+        let path = PathData::new().move_to(10.0, 50.0).line_to(40.0, 10.0).line_to(40.0, 30.0);
+        let point = Node::circle(layer.clone(), (0.0, 0.0), 3.0, Attrs::new().set("fill", "#fff")).translate(40.0, 30.0);
+        let plot = vec![Node::path(layer, path, line).translate(100.0, 0.0), point];
+        let marks = DataMark::plot_marks(&plot);
+        let [DataMark::Line { points: a, width: wa }, DataMark::Line { points: b, width: wb }, DataMark::Tinted(circle, ..)] = marks.as_slice() else {
+            panic!("two segments and a point: {marks:?}")
+        };
+        assert_eq!((a.as_slice(), *wa), ([(110.0, 50.0), (140.0, 10.0)].as_slice(), 2.0));
+        assert_eq!((b.as_slice(), *wb), ([(140.0, 10.0), (140.0, 30.0)].as_slice(), 2.0));
+        let DataMark::Box(c) = circle.as_ref() else { panic!("a point is a box") };
+        assert_eq!((c.x1, c.y1, c.x2, c.y2), (37.0, 27.0, 43.0, 33.0));
+        // The box around the line covers (120, 20); the line does not.
+        assert!(marks.iter().all(|m| !m.overlaps(&Bounds::new(119.0, 19.0, 121.0, 21.0))));
+        assert!(marks.iter().flat_map(DataMark::boxes).all(|b| !(b.x1 < 121.0 && b.x2 > 119.0 && b.y1 < 21.0 && b.y2 > 19.0)));
+        // A vertical segment covers its whole run.
+        assert!(marks.iter().flat_map(DataMark::boxes).any(|b| b.x1 <= 140.0 && b.x2 >= 140.0 && b.y1 <= 12.0 && b.y2 >= 28.0));
+    }
+
+    /// SVG semantics for a path's paint: no fill and no stroke draws nothing, a stroke's width
+    /// is the nearest one set up the tree, else 1.
+    #[test]
+    fn a_path_counts_by_the_paint_it_has_or_inherits() {
+        use scene::{Attrs, Node, PathData, Role};
+        let mark = Role::Mark { layer: 1, series: None, datum: None };
+        let path = || PathData::new().move_to(0.0, 0.0).line_to(10.0, 5.0);
+        let invisible = Node::path(mark.clone(), path(), Attrs::new().set("fill", "none").num("stroke-opacity", 0.0));
+        assert!(DataMark::plot_marks(&[invisible]).is_empty());
+        let inked = Attrs::new().set("fill", "none").set("stroke", "#000");
+        let inherited = Node::group(Role::Chrome, Attrs::new().num("stroke-width", 3.0), vec![Node::path(mark.clone(), path(), inked.clone())]);
+        let own = Node::path(mark, path(), inked);
+        let widths: Vec<f64> = DataMark::plot_marks(&[inherited, own])
+            .into_iter()
+            .map(|m| match m {
+                DataMark::Line { width, .. } => width,
+                other => panic!("a stroked path is a line: {other:?}"),
+            })
+            .collect();
+        assert_eq!(widths, [3.0, 1.0]);
+    }
+
+    /// An area layer's fill counts by its outline, not the box around it.
+    #[test]
+    fn an_area_layers_fill_is_its_polygon() {
+        use scene::{Attrs, Node, PathData, Role};
+        let fill = Attrs::new().set("fill", "#336699").num("fill-opacity", 0.2);
+        // A right triangle: the box (0..10) x (0..10) holds it and the corner (9, 1) is outside.
+        let path = PathData::new().move_to(0.0, 0.0).line_to(0.0, 10.0).line_to(10.0, 10.0).close();
+        let plot = vec![Node::path(Role::Mark { layer: 1, series: None, datum: None }, path, fill)];
+        let marks = DataMark::plot_marks(&plot);
+        let [mark @ DataMark::Tinted(inner, color, alpha)] = marks.as_slice() else { panic!("one tinted polygon: {marks:?}") };
+        assert!(matches!(inner.as_ref(), DataMark::Polygon(_)));
+        assert_eq!((color.as_str(), *alpha), ("#336699", 0.2));
+        assert!(mark.overlaps(&Bounds::new(1.0, 8.0, 3.0, 9.0)));
+        assert!(!mark.overlaps(&Bounds::new(8.0, 0.0, 9.5, 1.0)));
+        // A box swallowing the whole triangle, and one an edge only crosses.
+        assert!(mark.overlaps(&Bounds::new(-5.0, -5.0, 20.0, 20.0)));
+        assert!(mark.overlaps(&Bounds::new(4.0, 3.0, 6.0, 5.5)));
+        let slices = mark.boxes();
+        assert!(slices.iter().all(|s| s.y1 >= s.x1 - 1e-6), "{slices:?}");
+        assert!(slices.iter().all(|s| !(s.x1 < 9.0 && s.x2 > 8.0 && s.y1 < 1.0)), "{slices:?}");
+        assert!(mark.covers(2.0, 9.0, 0.0) && !mark.covers(9.0, 1.0, 0.5));
+    }
+
+    /// A receded mark's tint is the paint it stamped, not the mix drawn.
+    #[test]
+    fn a_base_mark_tints_the_halo_with_the_paint_it_had_at_rest() {
+        use scene::{Attrs, Node, Role};
+        let attrs = Attrs::new().set("fill", "#aabbcc").set("data-dbt-rest-fill", "#336699").num("fill-opacity", 0.5);
+        let plot = vec![Node::rect(Role::Mark { layer: 0, series: None, datum: None }, (0.0, 0.0, 4.0, 4.0), attrs)];
+        let marks = DataMark::plot_marks(&plot);
+        let [DataMark::Tinted(_, fill, alpha)] = marks.as_slice() else { panic!("one tinted mark") };
+        assert_eq!((fill.as_str(), *alpha), ("#336699", 0.5));
+    }
+
     #[test]
     fn paint_warns_for_a_note_that_left_its_side_without_a_connector() {
         let mut anns: Vec<Annotation> = contract().into_iter().filter(|a| a.index == 7).collect();
@@ -648,7 +889,7 @@ mod tests {
     fn halo_auto_tests_an_area_fill_by_its_outline_not_its_box() {
         let (anns, b) = over_marks("FY24 goal");
         let base = b.y2 + 60.0;
-        let area = |hi: Vec<(f64, f64)>| DataMark::Area { lo: hi.iter().map(|p| (p.0, base)).collect(), hi };
+        let area = |hi: Vec<(f64, f64)>| DataMark::Polygon(hi.iter().copied().chain(hi.iter().rev().map(|p| (p.0, base))).collect());
         let under = area(vec![(0.0, b.y1 - 10.0), (200.0, b.y1 - 10.0)]);
         assert!(painted_over(&anns, Plane::Foreground, &[under]).contains(HALOED));
         // Its box covers the text, but the fill only climbs past it far to the right.
@@ -695,7 +936,7 @@ mod tests {
         let mut c = ctx(&anns, &fonts);
         c.x = AxisMap::Band {
             domain: vec!["East".into()],
-            geometry: BandGeometry::new(1, 0.0, 200.0, 0.0, 0.0),
+            geometry: Band::new(1, [0.0, 200.0], 0.0, 0.0, 0.5, false),
             days: None,
             range: (0.0, 200.0),
         };

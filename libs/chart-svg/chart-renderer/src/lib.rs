@@ -19,7 +19,9 @@ pub mod href;
 pub mod js_date;
 pub mod label_template;
 pub mod labels_expr;
+pub(crate) mod legend_view;
 pub mod number_locale;
+pub mod pattern;
 pub mod prose;
 pub(crate) mod selected;
 pub mod sizing;
@@ -40,7 +42,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use diagnostic::{Diagnostic, RenderOutput};
-use scene::{Attrs, Chars, Escape, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -163,11 +165,6 @@ pub struct BoardStyle {
     /// the envelope; that column errors when it is absent.
     #[serde(default)]
     pub dark_companion_palette: Option<Vec<String>>,
-    /// The root board's width, which `WARN-TABLE-CRAMPED`'s suggested width is
-    /// sized against. Optional in the envelope; a cramped table renders without
-    /// the suggested width when it is absent.
-    #[serde(default)]
-    pub board_width: Option<f64>,
     /// The board's `style.formats` alias table: a format name the board
     /// redefined (`date_short: "%Y-%m-%d"`) resolves through it. Null: no table.
     #[serde(default)]
@@ -200,7 +197,7 @@ pub struct BoardStyle {
     /// The board's resolved `regional.locale.time`: the month, day and period
     /// names (and the `%c %x %X` patterns) a date prints in. Required, like
     /// `format_locale`.
-    pub time_locale: time_locale::TimeLocale,
+    pub time_locale: d3rs::time_format::Locale,
     /// The board's `regional.time_zone`: the zone an instant prints its wall
     /// clock in. Absent is UTC, the authored default.
     #[serde(default = "time_zone::utc", deserialize_with = "time_zone::deserialize")]
@@ -269,17 +266,16 @@ impl PlaceholderStyle {
     /// `placeholder.py::add_placeholder_overlay`'s text cased by `case`, and its
     /// font weight as printed.
     pub fn overlay_label(&self, case: Option<&str>) -> Result<(String, String), Diagnostic> {
-        use crate::svg::py_float_str;
+        use d3rs::py_float::float_repr;
         let overlay = &self.overlay;
         let text = match case {
             Some(case) if case != "none" => display_text::case::apply_case(&overlay.text, case)?,
             _ => overlay.text.clone(),
         };
-        // `escape_attr` prints a keyword as written, an int bare, a float with its `.0`.
         let weight = match &overlay.font.weight {
             Value::String(s) => s.clone(),
             Value::Number(n) if n.is_i64() || n.is_u64() => n.to_string(),
-            Value::Number(n) => py_float_str(n.as_f64().ok_or("placeholder font weight is not a number")?),
+            Value::Number(n) => float_repr(n.as_f64().ok_or("placeholder font weight is not a number")?),
             other => return Err(format!("placeholder font weight {other} is neither a keyword nor a number").into()),
         };
         Ok((text, weight))
@@ -287,31 +283,23 @@ impl PlaceholderStyle {
 
     /// The overlay as nodes: a `width` x `height` wash and the label centered on it.
     pub fn overlay_node(&self, width: f64, height: f64, family: &str, text: String, weight: String) -> Node {
-        use crate::svg::py_float_str;
         let overlay = &self.overlay;
-        let wash = Node::Rect(
-            Attrs::new()
-                .quick("class", "dbt-pointer-inert")
-                .quick("x", "0")
-                .quick("y", "0")
-                .quick("width", py_float_str(width))
-                .quick("height", py_float_str(height))
-                .quick("fill", overlay.background.as_str()),
+        let wash = Node::rect(
+            Role::Chrome,
+            (0.0, 0.0, width, height),
+            Attrs::new().quick("class", "dbt-pointer-inert").quick("fill", overlay.background.as_str()),
         );
-        let label = Node::Text(TextBlock {
-            attrs: Attrs::new()
-                .quick("class", "dbt-pointer-inert")
-                .quick("x", py_float_str(width / 2.0))
-                .quick("y", py_float_str(height / 2.0))
-                .quick("text-anchor", "middle")
-                .quick("dominant-baseline", "middle")
-                .quick("font-family", family)
-                .quick("font-size", py_float_str(overlay.font.size))
-                .quick("font-weight", weight)
-                .quick("fill", overlay.font.color.as_str()),
-            text: Chars::new(text, Escape::Quick),
-        });
-        Node::group(Attrs::new().quick("class", "placeholder-overlay"), vec![wash, label])
+        let attrs = Attrs::new()
+            .quick("class", "dbt-pointer-inert")
+            .quick("text-anchor", "middle")
+            .quick("dominant-baseline", "middle")
+            .quick("font-family", family)
+            .num("font-size", overlay.font.size)
+            .quick("font-weight", weight)
+            .quick("fill", overlay.font.color.as_str());
+        let runs = vec![Run::Chars(Chars::new(text, Escape::Quick))];
+        let label = Node::new(Role::Label, attrs, Shape::Text { at: (width / 2.0, height / 2.0), bounds: None, runs });
+        Node::group(Role::Chrome, Attrs::new().quick("class", "placeholder-overlay"), vec![wash, label])
     }
 }
 
@@ -376,6 +364,14 @@ pub(crate) fn test_payload(mut payload: Value) -> Payload {
 /// thousands of lines, and `payload.width`/`.height`/`.background`/
 /// `.padding` stay read off the shared `Payload` throughout) — a much
 /// larger diff than the fold itself. Revisit if a third family joins it.
+/// A declared variable's choices, and whether it holds several of them at once.
+#[derive(Deserialize, Clone, Debug)]
+pub struct VariableOptions {
+    /// As the board lists them; the legend prints each the way a row's cell prints.
+    pub options: Vec<Value>,
+    pub multiple: bool,
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(remote = "Self")]
 pub struct Payload {
@@ -397,6 +393,10 @@ pub struct Payload {
     /// `{chart_id}_page` from (`board_variables.current_board_variables()`).
     #[serde(default)]
     pub variables: serde_json::Map<String, Value>,
+    /// The options of each declared select, radio or multiselect variable a chart's link names:
+    /// a legend that sets such a variable lists every option, whatever its rows hold.
+    #[serde(default)]
+    pub variable_options: std::collections::BTreeMap<String, VariableOptions>,
     /// The board's declared variable names: a table cell in a column of the
     /// same name links to `?col=value` (`automatic_link.get_filter_variables_context`).
     #[serde(default)]
@@ -431,10 +431,8 @@ pub struct Payload {
     /// production's ONE "static estimate, before any layout decision"
     /// measurement call (`layout_sizing.py`'s `item.height == 0` branch) —
     /// AND by `board.rs::render_chart_item` for a cols-row chart `sizing::
-    /// calculate_cols_boxes` force-realigned away from its own pristine
-    /// natural, and for a chart alone in a nested `rows` board that a parent
-    /// cols row forced (`sizing::forced_fresh_renders`): production gives
-    /// that a FRESH render too (`render_cache`
+    /// calculate_cols_boxes` realigned away from its slot natural: production
+    /// gives that a FRESH render too (`render_cache`
     /// misses on the new height, `layout_sizing.py::_align_cols_heights`),
     /// not a reuse of the first probe's cached SVG. Every OTHER board
     /// paint renders at its own already-decided slot height (a real cache
@@ -468,6 +466,10 @@ pub struct Payload {
     /// horizontal bar's category floor is judged against it.
     #[serde(default)]
     pub authored_height: Option<f64>,
+    /// Which placement of its chart in the board this render draws (0 for the first): a later
+    /// one mints its ids in a namespace of its own (`contract::scoped_id`).
+    #[serde(default)]
+    pub placement: usize,
     /// A pie's sized mode (`direct`, `hybrid`, `full_table`): what the size stage
     /// decided from the pie's box (`families::pie::pie_layout`). Absent, the pie
     /// decides from the box it is rendered in.
@@ -496,7 +498,7 @@ impl Payload {
 
     /// This payload over `resolved` and `rows`, without copying the ones it replaces.
     pub(crate) fn with_inputs(&self, resolved: Value, rows: Vec<serde_json::Map<String, Value>>) -> Payload {
-        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, max_template_output_bytes, cell_text } = self;
+        let Payload { resolved: _, rows: _, width, height, background, fonts_dir, padding, board_style, language, variables, variable_options, filter_variables, interactive_controls, link_context, datasets, geometries, measuring, title_shift, is_placeholder, pie_mode, board_composed, authored_height, placement, max_template_output_bytes, cell_text } = self;
         Payload {
             resolved,
             rows,
@@ -508,6 +510,7 @@ impl Payload {
             board_style: board_style.clone(),
             language: language.clone(),
             variables: variables.clone(),
+            variable_options: variable_options.clone(),
             filter_variables: filter_variables.clone(),
             interactive_controls: *interactive_controls,
             link_context: link_context.clone(),
@@ -519,6 +522,7 @@ impl Payload {
             pie_mode: pie_mode.clone(),
             board_composed: *board_composed,
             authored_height: *authored_height,
+            placement: *placement,
             max_template_output_bytes: *max_template_output_bytes,
             cell_text: cell_text.clone(),
         }
@@ -657,8 +661,7 @@ fn render_in_scope(
     fonts: &measure::FontBook,
 ) -> Result<(String, Option<f64>), Diagnostic> {
     let draw = || {
-        render_family(payload, fonts)
-            .map(|(svg, extra)| (text::expand_lines(svg), extra))
+        contract::with_placement(payload.placement, || render_family(payload, fonts))
             .map_err(|d| labels_expr::recode(d, payload))
     };
     let needs = labels_expr::needs(&payload.resolved);

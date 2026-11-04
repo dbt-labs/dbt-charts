@@ -1,7 +1,7 @@
 """Detector: WARN_AXIS_LABEL_COLLISION — see its `doc` in
 core/diagnostics/codes_render.py for what this fires on.
 
-Policy-only, mirroring ``table_cramped.py``: the fact is captured at render
+Policy-only, mirroring ``table_columns_overflow.py``: the fact is captured at render
 time (``render/chart/axis_label_collision.py``, from the engine's own skip/tilt
 pick) — this
 detector only reads what was recorded, it does not re-measure anything.

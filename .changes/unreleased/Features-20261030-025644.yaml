@@ -1,0 +1,3 @@
+kind: Features
+body: Change every member holding one role to another with `dct cloud member role-all ROLE --from ROLE`, with `--dry-run` to preview.
+time: 2026-10-30T02:56:44.375999-07:00

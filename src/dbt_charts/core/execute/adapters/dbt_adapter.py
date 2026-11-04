@@ -144,11 +144,11 @@ def _read_lakecompute_target(
     """
     from dbt_charts.core.compile.models.source import (
         LAKECOMPUTE_ADAPTER,
-        reject_retired_lakecompute_type,
+        reject_retired_source_type,
     )
     from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
 
-    reject_retired_lakecompute_type(str(target["type"]).lower())
+    reject_retired_source_type(str(target["type"]).lower())
     if "path" in target:
         raise ValueError(
             "lakecompute 'path' selects dbt's local DuckDB engine; dbt Charts "
@@ -220,6 +220,19 @@ def _read_trino_target(
     return {"type": "trino", **connection}
 
 
+def _profile_target_name(
+    profile: dict[str, Any],  # type-state: explicit_any — raw dbt-owned profile mapping
+    target_name: str | None,
+) -> str:
+    """The target *profile* connects with: *target_name*, else dbt's own default."""
+    from dbt_charts.core.project_roots import resolve_dbt_target_name
+
+    default_target = profile.get(
+        "target", "dev"
+    )  # type-state: silent_fallback — dbt's own default
+    return resolve_dbt_target_name(target_name) or default_target
+
+
 def _read_target_dict(
     dbt_project_path: Path | None,
     profile_name: str,
@@ -253,8 +266,9 @@ def _read_target_dict(
             None when no dbt project is linked: relative paths stay as authored
             and profiles.yml is looked up without the project-local step.
         profile_name: The dbt profile name.
-        target_name: The dbt target name. None means use the profile's declared
-            default target (profile["target"]), falling back to "dev" if absent.
+        target_name: The dbt target name. None means ``$DBT_TARGET``, then the
+            profile's declared default target (profile["target"]), falling back
+            to "dev" if absent.
         profiles_dir: Explicit absolute path to the profiles.yml directory when the
             file does not live at dbt_project_path. None = standard resolution order.
         render: False (default) returns the target with its Jinja/env_var() left
@@ -276,7 +290,7 @@ def _read_target_dict(
             f"Profile '{profile_name}' not found in {profiles_path}. "
             f"Available profiles: {available}"
         )
-    resolved_target = target_name or profile.get("target", "dev")
+    resolved_target = _profile_target_name(profile, target_name)
     outputs = profile.get("outputs", {})
     target = outputs.get(resolved_target)
     if target is None:
@@ -496,7 +510,7 @@ class DbtAdapter(BaseAdapter):
         *,
         project: Project,
         dbt_project_path: Path,
-        target_name: str,
+        target_name: str | None,
         profile_name: str | None = None,
     ) -> None:
         """Initialize dbt adapter.
@@ -508,7 +522,8 @@ class DbtAdapter(BaseAdapter):
                 / dbt_project.yml resolution, which stays a raw filesystem
                 read (out of the Project seam) since dbt's own config
                 resolution order is disk-anchored.
-            target_name: dbt target name
+            target_name: dbt target name (None: $DBT_TARGET, then the profile's
+                default)
             profile_name: dbt profile name (default: $DBT_PROFILE, then dbt_project.yml)
         """
         self.project = project
@@ -644,15 +659,16 @@ class DbtAdapter(BaseAdapter):
         """
         from dbt_charts.core.project_roots import resolve_dbt_profile_name
 
-        self.profile_name = resolve_dbt_profile_name(
+        profile_name = resolve_dbt_profile_name(
             self.profile_name, self.dbt_project_path
         )
+        self.profile_name = profile_name
 
         # This path has no render step of its own downstream, unlike
         # source_resolver._expand_dbt_profile — see the `render` arg.
         return _read_target_dict(
             self.dbt_project_path,
-            self.profile_name,
+            profile_name,
             self.target_name,
             render=True,
         )
@@ -680,11 +696,17 @@ class DbtAdapter(BaseAdapter):
 
         target_dict = self._resolve_target_dict()
         if target_dict["type"] in DRIVER_SOURCE_TYPES:
+            from dbt_charts.core.project_roots import resolve_dbt_profile_name
+
+            profile_name = resolve_dbt_profile_name(
+                self.profile_name, self.dbt_project_path
+            )
+            _, profiles = _read_profiles_yml(self.dbt_project_path)
             raise ExecutionError.from_code(
                 ERR_DBT_TARGET_NEEDS_SOURCE,
                 warehouse=target_dict["type"],
-                target=self.target_name,
-                profile=self.profile_name,
+                target=_profile_target_name(profiles[profile_name], self.target_name),
+                profile=profile_name,
             )
         from dbt_charts.core.execute.adapters.dbt_adapter_factory import build_adapter
 

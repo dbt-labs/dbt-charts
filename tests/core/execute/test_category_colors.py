@@ -42,7 +42,7 @@ def _plan(yaml_content: str, focus: str | None = None) -> dict[str, CategoryColo
         adapter_registry=build_adapter_registry(project),
         query_registry=result.query_registry,
     )
-    scales = plan_board_category_colors(board, executor, {})
+    scales = plan_board_category_colors(board, executor, {}, {})
     return {s.field: s for s in scales}
 
 

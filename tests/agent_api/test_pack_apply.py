@@ -378,3 +378,17 @@ def test_apply_entity_dashboard_has_title(
     ticket_path = tmp_path / "charts" / "zendesk" / "ticket-overview.yml"
     data = yaml.safe_load(ticket_path.read_text())
     assert "title" in data, f"ticket-overview.yml missing title: {data}"
+
+
+def test_apply_scaffolds_into_the_projects_boards_folder(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    """With ``boards_dir: notes`` the boards land in ``notes/``, never in a
+    ``charts/`` folder that boards_dir displaced."""
+    (tmp_path / "dbt_charts.yml").write_text("boards_dir: notes\n")
+
+    result = apply_proposal(_zendesk_proposal(), local_project(tmp_path))
+
+    assert (tmp_path / "notes" / "zendesk" / "index.yml").exists()
+    assert not (tmp_path / "charts").exists()
+    assert "notes/zendesk/index.yml" in {p.as_posix() for p in result.created_files}

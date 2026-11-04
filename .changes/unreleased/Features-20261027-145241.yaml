@@ -1,0 +1,3 @@
+kind: Features
+body: 'Line charts accept `connect: <column>` to connect points in that column''s order instead of x order, for connected scatters.'
+time: 2026-10-27T14:52:41.997858-07:00

@@ -7,7 +7,7 @@
 use d3rs::arc::Arc;
 use d3rs::pie::pie;
 use measure::{baseline_shift, Measure};
-use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 
 use d3rs::radial_fit::{Ink, SolveError};
 
@@ -22,7 +22,6 @@ use crate::families::legend::{
 };
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
-use crate::svg::{num, num_full, py_float_str};
 use crate::vega_fit;
 
 /// A pie fills the width it is given: nothing to hug.
@@ -39,7 +38,7 @@ pub fn height_for_width(bound: &Bound, width: f64, measure: &Measure) -> Result<
     }
     let cell = Rect { x: 0.0, y: 0.0, width, height: bound.payload.height };
     let laid_out = layout(bound, cell, measure)?;
-    let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+    let Some(extent) = scene::root_extent(&laid_out.nodes) else {
         return Err("pie: layout is one root card".to_string().into());
     };
     Ok(extent.height)
@@ -89,7 +88,7 @@ fn compose(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Composed, Dia
                 .ok_or("pie: a placeholder chart needs board_style.placeholder.overlay.font.family")?;
             let (text, weight) = style.overlay_label(None)?;
             vec![
-                Node::group(Attrs::new().set("opacity", py_float_str(style.opacity)), drawn.nodes),
+                Node::group(Role::Chrome, Attrs::new().num("opacity", style.opacity), drawn.nodes),
                 style.overlay_node(frame.w, frame.h, family, text, weight),
             ]
         } else {
@@ -152,11 +151,8 @@ fn compose(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Composed, Dia
         }
     };
 
-    let donut = Node::group(Attrs::new().set("transform", format!("translate({donut_x:.2}, 0)")), drawn.nodes);
-    let table = Node::group(
-        Attrs::new().set("transform", format!("translate({table_x:.2}, {table_y:.2})")),
-        table_nodes,
-    );
+    let donut = Node::group(Role::Chrome, Attrs::new(), drawn.nodes).translate(donut_x, 0.0);
+    let table = Node::group(Role::Chrome, Attrs::new(), table_nodes).translate(table_x, table_y);
     Ok(Composed {
         root: frame.sized(w, outer_h).root_node(vec![donut, table]),
         canvas: Rect { x: 0.0, y: 0.0, width: w, height: outer_h },
@@ -199,34 +195,31 @@ fn attached_wheel<'a>(
     if report {
         table_laid.diagnostics.into_iter().for_each(crate::diagnostic::warn);
     }
-    let mut table_h = match table_laid.nodes.as_slice() {
-        [Node::Svg { extent, .. }] => extent.height,
-        _ => return Err("pie: the attached table lays out one root card".to_string().into()),
+    let Some(table_extent) = scene::root_extent(&table_laid.nodes) else {
+        return Err("pie: the attached table lays out one root card".to_string().into());
     };
+    let mut table_h = table_extent.height;
     let mut table_nodes = table_laid.nodes;
 
     if let Some(heading) = &attached.heading {
         let block = heading.size + 2.0 + heading.gap;
         let text = Node::text(
+            Role::Title,
+            (0.0, heading.size * 0.8),
             Attrs::new()
-                .set("x", "0")
-                .set("y", format!("{:.2}", heading.size * 0.8))
                 .set("font-family", heading.family.as_str())
-                .set("font-size", format!("{}", heading.size))
+                .num("font-size", heading.size)
                 .set("font-weight", heading.weight.as_str())
                 .set("fill", heading.color.as_str()),
             heading.text.as_str(),
         );
-        let table = Node::group(Attrs::new().set("transform", format!("translate(0, {block:.2})")), table_nodes);
+        let table = Node::group(Role::Chrome, Attrs::new(), table_nodes).translate(0.0, block);
         table_h += block;
-        table_nodes = vec![Node::Svg {
-            extent: Extent { width: attached.table_width, height: table_h },
-            attrs: Attrs::new()
-                .set("xmlns", "http://www.w3.org/2000/svg")
-                .set("width", num(attached.table_width))
-                .set("height", num(table_h)),
-            children: vec![text, table],
-        }];
+        table_nodes = vec![Node::new(
+            Role::Chrome,
+            Attrs::new(),
+            Shape::Svg { extent: Extent { width: attached.table_width, height: table_h }, children: vec![text, table] },
+        )];
     }
 
     // The wheel is a full standalone VL render, so the slot height plays no part: the composed
@@ -269,7 +262,6 @@ fn attached_wheel<'a>(
         wheel_h,
         (pad_l, pad_r, wheel_pad_t, pad_b),
         r.background.as_str(),
-        num_full,
     );
     Ok(AttachedWheel { wheel_frame, wheel_h, title_style, table_nodes, table_h, top_table_y, title_dx })
 }
@@ -347,7 +339,7 @@ impl PieLegend {
     fn entries(&self) -> Vec<LegendEntry<'_>> {
         self.entries
             .iter()
-            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None, recede: None })
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None, recede: None, action: None })
             .collect()
     }
 
@@ -376,7 +368,8 @@ fn lay_out_legend(plan: &LegendPlan, r: &Resolved, measure: &Measure) -> Result<
     // An unstroked symbol bounds the bare 10px glyph (no stroke ring), which tightens the row
     // pitch; a stroked one is the grid's default entry.
     let entry_symbol = plan.symbol_stroke.is_none().then_some(LegendSymbol::FilledCircle);
-    let layout = legend_from_widths(&label_ws, &vec![entry_symbol; entries.len()], false, &title, title_w, cfg)?;
+    let symbols: Vec<_> = entries.iter().map(|(_, fill)| crate::families::legend::entry_symbol(fill, entry_symbol)).collect();
+    let layout = legend_from_widths(&label_ws, &symbols, false, &title, title_w, cfg)?;
     Ok(PieLegend { entries, keys: plan.keys.clone(), layout, symbol_stroke: plan.symbol_stroke.clone() })
 }
 
@@ -396,7 +389,7 @@ struct Placed<'a> {
 
 /// The text attributes a font carries, up to the weight; the caller adds the fill.
 fn text_font(attrs: Attrs, font: &Font, size: f64, default_family: &str) -> Attrs {
-    let attrs = attrs.vega("font-family", font.family_or(default_family)).set("font-size", format!("{size}"));
+    let attrs = attrs.vega("font-family", font.family_or(default_family)).num("font-size", size);
     let attrs = match font.style.as_deref() {
         Some(style) => attrs.set("font-style", style),
         None => attrs,
@@ -563,8 +556,8 @@ fn solve_wheel<'a>(
     let solved = d3rs::radial_fit::solve(plot, cap, arc_stroke_w, &callouts, &centered).map_err(|e| match e {
         SolveError::NoRoom(why) => WheelError::NoRoom(format!(
             "pie: {why} in a {}×{} chart box",
-            num_full(plot.x2 - plot.x1),
-            num_full(plot.y2 - plot.y1)
+            print::number(plot.x2 - plot.x1),
+            print::number(plot.y2 - plot.y1)
         )),
         SolveError::Inconsistent(why) => WheelError::from(format!("pie: {why}")),
     })?;
@@ -657,10 +650,9 @@ fn wheel(
     if title_pos.is_some() && !title.block().title_lines.is_empty() {
         let title_nodes = title.nodes_at(pad_l, title_y);
         // A left-placed table pushes the wheel right, and the title group slides back by that
-        // much so it stays on the card's own left edge. Printed `{dx:g}`.
+        // much so it stays on the card's own left edge.
         if title_dx != 0.0 {
-            let transform = format!("translate({},0)", d3rs::py_float::format_g(title_dx));
-            nodes.push(Node::group(Attrs::new().set("transform", transform), title_nodes));
+            nodes.push(Node::group(Role::Chrome, Attrs::new(), title_nodes).translate(title_dx, 0.0));
         } else {
             nodes.extend(title_nodes);
         }
@@ -669,16 +661,16 @@ fn wheel(
     let gap = r.style.slice_mark.gap.unwrap_or(0.0);
     let corner = r.style.slice_mark.corner_radius.unwrap_or(0.0);
     let slices = pie(thetas, 0.0, std::f64::consts::TAU, gap);
-    let mark_style = || {
+    let mark_style = |themed_stroke: bool| {
         let mut attrs = Attrs::new();
-        if let Some(s) = &r.style.slice_mark.stroke {
+        if let (true, Some(s)) = (themed_stroke, &r.style.slice_mark.stroke) {
             attrs = attrs
                 .set("stroke", s.color.as_deref().unwrap_or("none"))
-                .set("stroke-width", format!("{}", s.width.unwrap_or(1.0)))
+                .num("stroke-width", s.width.unwrap_or(1.0))
                 .set("stroke-linejoin", s.join.as_deref().unwrap_or("miter"));
         }
         match r.style.slice_mark.opacity {
-            Some(opacity) => attrs.set("opacity", format!("{opacity}")),
+            Some(opacity) => attrs.num("opacity", opacity),
             None => attrs,
         }
     };
@@ -686,6 +678,7 @@ fn wheel(
         Some(label) => Reads::Label(label),
         None => Reads::Bare,
     };
+    r.patterns.reset_fallbacks();
     let mut wedges = Vec::with_capacity(slices.len());
     for slice in &slices {
         let path = Arc {
@@ -700,17 +693,26 @@ fn wheel(
         .path();
         let bound_slice = &wheel.slices[slice.index];
         let anchor = r.selection.mark(r.link_open.anchor(bound_slice.href.as_deref()));
-        let fill = &bound_slice.fill;
+        // The wedge's short side: its radial depth, or its arc at the mid radius.
+        let short_side = (radius - inner).min((slice.end_angle - slice.start_angle).abs() * (radius + inner) / 2.0);
+        let mark = bound_slice.fill.for_mark(short_side, "none", 0.0);
+        // A patterned wedge draws fill-only, then its shared edge line.
         wedges.push(contract::item_group("arc", "layer_0_marks", ItemRole::ArcMark, reads_of(slice.index), |aria| {
             let attrs = Attrs::new()
-                .set("d", path)
-                .set("fill", fill)
-                .extend(mark_style())
+                .set("fill", &mark.fill)
+                .quick_some("data-dbt-ink", mark.ink.as_deref())
+                .extend(mark_style(mark.ink.is_none()))
                 .extend(aria);
-            crate::href::linked(anchor, Node::Path(attrs))
+            let role = Role::Mark { layer: 0, series: None, datum: Some(slice.index) };
+            crate::href::linked(anchor, Node::path(role, path.clone(), attrs))
         })?);
+        if mark.ink.is_some() {
+            let join = r.style.slice_mark.stroke.as_ref().map_or("miter", |s| s.join.as_deref().unwrap_or("miter"));
+            let extra = Attrs::new().set("stroke-linejoin", join);
+            wedges.push(crate::pattern::edge_node(path.clone(), &mark.edge, crate::pattern::PIE_EDGE_W, &extra));
+        }
     }
-    nodes.push(Node::group(Attrs::new().set("transform", format!("translate({cx},{cy})")), wedges));
+    nodes.push(Node::group(Role::Chrome, Attrs::new(), wedges).translate(cx, cy));
 
     // Center total — Vega text baselines: value "bottom", caption "top". Both text layers carry
     // one row, so a description inherited from the arc layer would name the FIRST slice
@@ -722,11 +724,10 @@ fn wheel(
         let value_size = value_font.size_or(14.0);
         let value_y = cy + baseline_shift("bottom", value_size);
         let value_text = Node::text(
+            Role::Label,
+            (cx, value_y),
             text_font(
-                Attrs::new()
-                    .set("x", format!("{cx:.2}"))
-                    .set("y", format!("{value_y:.2}"))
-                    .set("text-anchor", "middle"),
+                Attrs::new().set("text-anchor", "middle"),
                 value_font,
                 value_size,
                 "sans-serif",
@@ -740,11 +741,10 @@ fn wheel(
             let label_size = label_font.size_or(11.0);
             let label_y = cy + baseline_shift("top", label_size);
             let label_node = Node::text(
+                Role::Label,
+                (cx, label_y),
                 text_font(
-                    Attrs::new()
-                        .set("x", format!("{cx:.2}"))
-                        .set("y", format!("{label_y:.2}"))
-                        .set("text-anchor", "middle"),
+                    Attrs::new().set("text-anchor", "middle"),
                     label_font,
                     label_size,
                     "sans-serif",
@@ -762,7 +762,7 @@ fn wheel(
         for sl in &placed {
             let top = sl.mid.cos() >= 0.0;
             let right = sl.mid.sin() >= 0.0;
-            let x = num_full(cx + sl.mid.sin() * (radius + label_offset));
+            let x = cx + sl.mid.sin() * (radius + label_offset);
             let y_anchored = cy - sl.mid.cos() * (radius + label_offset)
                 + if top { -(sl.label.lines.len() as f64 * label_lh) } else { 0.0 };
             let first_dy = baseline_shift("top", label_fs);
@@ -772,13 +772,13 @@ fn wheel(
                 .lines
                 .iter()
                 .enumerate()
-                .map(|(i, line)| {
-                    Node::Tspan(TextBlock {
-                        attrs: Attrs::new()
-                            .set("x", x.as_str())
-                            .set("dy", format!("{}", if i == 0 { 0.0 } else { label_lh })),
-                        text: Chars::new(line.as_str(), Escape::Attr),
-                    })
+                .map(|(i, line)| Run::Tspan {
+                    x: Some(x),
+                    y: None,
+                    dx: None,
+                    dy: Some(if i == 0 { 0.0 } else { label_lh }),
+                    attrs: Attrs::new(),
+                    runs: vec![Run::Chars(Chars::new(line.as_str(), Escape::Attr))],
                 })
                 .collect::<Vec<_>>();
             nodes.push(contract::item_group(
@@ -788,17 +788,15 @@ fn wheel(
                 reads_of(sl.label.idx),
                 |aria| {
                     let attrs = text_font(
-                        Attrs::new()
-                            .set("x", x.as_str())
-                            .set("y", num_full(y_anchored + first_dy))
-                            .set("text-anchor", if right { "start" } else { "end" }),
+                        Attrs::new().set("text-anchor", if right { "start" } else { "end" }),
                         &labels.font,
                         label_fs,
                         "sans-serif",
                     )
                     .set("fill", &sl.label.fill)
                     .extend(aria);
-                    crate::href::linked(anchor, Node::TextRuns { attrs, children: tspans })
+                    let text = Node::new(Role::Label, attrs, Shape::Text { at: (x, y_anchored + first_dy), bounds: None, runs: tspans });
+                    crate::href::linked(anchor, text)
                 },
             )?);
         }
@@ -820,6 +818,9 @@ fn wheel(
         ));
     }
 
+    if let Some(defs) = r.patterns.finish(true)? {
+        nodes.insert(1, defs);
+    }
     Ok(DrawnWheel {
         nodes,
         radius,

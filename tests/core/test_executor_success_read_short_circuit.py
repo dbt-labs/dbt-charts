@@ -18,6 +18,8 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result, rows_schema
+
 BOARD_YAML = """
 title: Test
 queries:
@@ -44,6 +46,7 @@ def _make_executor(result_cache: TrivialDuckDBCache) -> tuple[Executor, Mock]:
     """Return (executor, mock_registry) with an adapter that raises if called."""
     result = _compiled()
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.side_effect = AssertionError(
         "adapter.execute() must not be called — should have hit result cache",
     )
@@ -81,7 +84,7 @@ def _seed_cache(cache: TrivialDuckDBCache) -> None:
         source_hash,
         query_hash,
         variables_hash,
-        CACHED_ROWS,
+        rows_result(CACHED_ROWS),
         board_slug=_board_slug(),
         query_name="revenue",
     )
@@ -141,10 +144,12 @@ class TestDuckDBSuccessCacheShortCircuit:
             _seed_cache(cache)
             result = _compiled()
             mock_registry = Mock()
+            mock_registry.project_file_sources.return_value = {}
             fresh_rows = [{"amount": 1}]
             ok = Mock()
             ok.is_success = True
             ok.data = fresh_rows
+            ok.schema = rows_schema(ok.data)
             ok.resolved_relations = None
             ok.truncated_reason = None
             mock_registry.execute.return_value = ok
@@ -167,9 +172,11 @@ class TestDuckDBSuccessCacheShortCircuit:
         """When no result cache is configured, adapter is always called."""
         result = _compiled()
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         ok = Mock()
         ok.is_success = True
         ok.data = [{"amount": 42}]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         mock_registry.execute.return_value = ok
@@ -207,7 +214,7 @@ class TestDuckDBSuccessCacheShortCircuit:
                 source_hash,
                 stale_hash,
                 variables_hash,
-                [{"amount": 0}],  # stale rows
+                rows_result([{"amount": 0}]),  # stale rows
                 board_slug=_board_slug(),
                 query_name="revenue",
             )
@@ -215,9 +222,11 @@ class TestDuckDBSuccessCacheShortCircuit:
             # Adapter returns fresh data
             fresh_rows = [{"amount": 999}]
             mock_registry = Mock()
+            mock_registry.project_file_sources.return_value = {}
             ok = Mock()
             ok.is_success = True
             ok.data = fresh_rows
+            ok.schema = rows_schema(ok.data)
             ok.resolved_relations = None
             ok.truncated_reason = None
             mock_registry.execute.return_value = ok

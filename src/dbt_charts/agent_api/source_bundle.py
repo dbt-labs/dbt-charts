@@ -20,7 +20,7 @@ import re
 import shutil
 import tempfile
 import urllib.parse
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -109,6 +109,7 @@ class SourceBundle:
         self.tool = tool
         self.url = url
         self.raw = raw
+        self.png_required = True
         (root / "kpi").mkdir(parents=True, exist_ok=True)
 
     def write(self, relpath: str, data: str | bytes) -> None:
@@ -119,7 +120,14 @@ class SourceBundle:
         else:
             path.write_bytes(data)
 
-    def finish(self, *, extra: dict[str, str | list[str]] | None = None) -> None:
+    def finish(
+        self,
+        *,
+        extra: dict[str, str | list[str]] | None = None,
+        missing_images: Sequence[str] = (),
+    ) -> None:
+        """Seal the bundle; ``missing_images`` names images the source failed to
+        render, which the outline also records, and waives the png requirement."""
         raw_path = self.root / self.raw
         if not raw_path.is_file():
             raise BundleError(f"bundle is missing {self.raw}")
@@ -132,10 +140,11 @@ class SourceBundle:
             **(extra or {}),
         }
         self.write("source.json", json.dumps(source, indent=2) + "\n")
-        check_layout(self.root, raw=self.raw)
+        self.png_required = not missing_images
+        check_layout(self.root, raw=self.raw, png_required=self.png_required)
 
 
-def check_layout(root: Path, *, raw: str) -> None:
+def check_layout(root: Path, *, raw: str, png_required: bool = True) -> None:
     """Raise `BundleError` naming the first required file or directory missing."""
     for name in ("outline.md", "source.json", raw):
         if not (root / name).is_file():
@@ -143,6 +152,8 @@ def check_layout(root: Path, *, raw: str) -> None:
     if not (root / "kpi").is_dir():
         raise BundleError("bundle is missing the kpi/ directory")
     for directory, pattern in (("queries", "*.sql"), ("png", "*.png")):
+        if directory == "png" and not png_required:
+            continue
         if not any((root / directory).glob(pattern)):
             raise BundleError(f"bundle has no {directory}/{pattern} files")
 
@@ -161,8 +172,9 @@ def staged_bundle(
     out.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
     try:
-        yield SourceBundle(staging, tool=tool, url=url, raw=raw)
-        check_layout(staging, raw=raw)
+        bundle = SourceBundle(staging, tool=tool, url=url, raw=raw)
+        yield bundle
+        check_layout(staging, raw=raw, png_required=bundle.png_required)
         retired = staging.with_name(f"{staging.name}.old")
         if out.exists():
             out.rename(retired)

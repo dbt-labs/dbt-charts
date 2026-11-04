@@ -204,7 +204,7 @@ def test_migrate_stops_at_the_lock(tmp_path: Path) -> None:
 
 
 def test_migrate_leaves_a_board_newer_than_the_lock_unchanged(tmp_path: Path) -> None:
-    newer = "title: T\nstyle:\n  frame:\n    width: 800\ncharts:\n  c:\n    query: q\n    type: line\n"
+    newer = "title: T\nstyle:\n  frame:\n    margin: 8\ncharts:\n  c:\n    query: q\n    type: line\n"
     project = _project(tmp_path, {"charts/a.yaml": newer}, lock="0.4.0")
 
     summary = migrate_paths(

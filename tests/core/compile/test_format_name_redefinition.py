@@ -197,6 +197,15 @@ def test_redefined_currency_reaches_a_data_table_strip() -> None:
     assert svg.count("$1,234,567") > _currency_svg("").count("$1,234,567")
 
 
+def test_a_redefined_full_digit_name_keeps_its_digits_in_a_strip() -> None:
+    """A redefined name prints exactly its own spec: the strip never compacts it."""
+    style = "style:\n  formats:\n    currency_whole: '$,.1f'"
+    strip = (
+        "    support_table:\n      - source: revenue\n        format: currency_whole\n"
+    )
+    assert "$1,234,567.0" in render_board_to_svg(_board(style, _BAR + strip))
+
+
 def test_a_redefined_number_reaches_table_cells_and_kpis_with_its_affix() -> None:
     formats = {"number": FormatConfig(spec=",.0f", suffix=" units")}
     cell = format_kpi_parts(1234.0, None, formats, default_number=True)

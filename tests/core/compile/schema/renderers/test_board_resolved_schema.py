@@ -42,6 +42,6 @@ def test_board_resolved_schema_query_defs_are_discriminated() -> None:
     """AnyQuery's discriminator must survive into the published schema as a
     query_type-tagged shape, not a bare untagged oneOf/anyOf."""
     defs = _schema()["$defs"]
-    for name in ("SqlQuery", "HttpQuery", "ValuesQuery", "SchemaQuery"):
+    for name in ("SqlQuery", "ValuesQuery", "SchemaQuery"):
         assert name in defs, f"{name} missing from $defs"
         assert "query_type" in defs[name]["properties"]

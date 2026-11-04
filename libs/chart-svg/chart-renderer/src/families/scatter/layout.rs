@@ -6,11 +6,11 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use measure::Measure;
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathData, Role};
 
 use super::bind::Bound;
-use super::{BarX, LogX, NominalRound, PlainXPaint, FacetX, LayeredLegend, LegendStack, LinearX, LogAxis, NO_EXTENT, PlainXAxis, PointDatum, RULE_POINT_SIZE, RuleFires, ScatterPanelOpts, XFrame, XLayers, YScale, category_text, color_legend_glyph_names, color_legend_layout, column_extent, date_axis, finite_frac, kept_reading, legend_entry_order, legend_gradient_id, linear_x_scale, log_x_axis, needs_band, plain_x_axis, point_glyph, point_scale_domain, point_x_fracs, point_x_padding, point_x_scale, quantitative_color, reads_chart_rows, rows_at, rule_aria, rule_point, shape_legend_fill, shape_merges_into_color, shape_scale_domain, size_area, size_legend, size_legend_nodes, unfilled_stroke, visible_tick_labels, x_has_nan_years, y_when_x_invalid};
-use crate::Payload;
+use super::{BarX, LogX, NominalRound, PlainXPaint, FacetX, LayeredLegend, LegendStack, LinearX, LogAxis, NO_EXTENT, PlainXAxis, PointDatum, RULE_POINT_SIZE, RuleFires, ScatterPanelOpts, XFrame, XLayers, YScale, category_text, color_legend_glyph_names, color_legend_layout, column_extent, date_axis, finite_frac, kept_reading, legend_entry_order, legend_gradient_id, linear_x_scale, log_x_axis, x_edge_pad, needs_band, plain_x_axis, point_glyph, point_scale_domain, point_x_padding, point_x_scale, quantitative_color, reads_chart_rows, rows_at, rule_aria, rule_point, shape_legend_fill, shape_merges_into_color, shape_scale_domain, size_area, size_legend, size_legend_nodes, unfilled_stroke, visible_tick_labels, x_has_nan_years, y_when_x_invalid};
+use crate::{Padding, Payload};
 use crate::common::{AxisStyle, format_y_label, row_num, row_str, symbol_radius};
 use crate::diagnostic::Diagnostic;
 use crate::families::{facet_compose, legend, multiples};
@@ -22,10 +22,10 @@ use crate::families::layers::{DualAxisTitles, LayerAxis, LayerAxisFrame, LayerAx
 use crate::families::legend::{VEGA_LEGEND_OFFSET, stack_legends};
 use crate::families::temporal::{VegaType, infer_vega_type};
 use crate::frame::ChartFrame;
-use crate::svg::py_float_str;
 use measure::FontBook;
 use serde_json::Value;
 use crate::vega_fit;
+use d3rs::scale::{Band, Continuous};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 
 /// A scatter fills the width it is given: nothing to hug.
@@ -44,10 +44,20 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     if bound.r.multiples.is_some() {
         return Err("scatter: layout draws one plot; a multiples chart is composed by render".into());
     }
-    let payload: Cow<Payload> = if (cell.width, cell.height) == (bound.payload.width, bound.payload.height) {
+    let Some(unviewed) = &bound.r.unviewed else { return laid_out(bound, cell, measure, None) };
+    let whole = super::bind::bind(unviewed)?;
+    let whole_box = laid_out(&whole, cell, measure, None)?.data_box;
+    crate::legend_view::pin_plot_box(whole_box, bound.payload.padding, |padding| {
+        laid_out(bound, cell, measure, Some(padding)).map(|laid| (laid.data_box, laid))
+    })
+}
+
+/// `bound` laid out in `cell`, its card padded by `padding` when given.
+fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Padding>) -> Result<Layout, Diagnostic> {
+    let payload: Cow<Payload> = if padding.is_none() && (cell.width, cell.height) == (bound.payload.width, bound.payload.height) {
         Cow::Borrowed(&*bound.payload)
     } else {
-        Cow::Owned(Payload { width: cell.width, height: cell.height, ..Payload::clone(&bound.payload) })
+        Cow::Owned(Payload { width: cell.width, height: cell.height, padding: padding.or(bound.payload.padding), ..Payload::clone(&bound.payload) })
     };
     let (fitted, diagnostics) = crate::diagnostic::collect(|| fit(bound, &payload, measure.fonts, None, None));
     let fitted = fitted?;
@@ -93,7 +103,7 @@ pub(super) fn fit(
     // A facet panel is laid out by `pad_plot` against its composite's
     // padding, never its own: the card padding belongs to the composite.
     let pad = if panel.is_some() { None } else { payload.padding.as_ref() };
-    let domain_rows: &[serde_json::Map<String, Value>] = panel.map_or(&payload.rows, |o| o.shared_rows);
+    let domain_rows: &[serde_json::Map<String, Value>] = panel.map_or_else(|| r.whole_rows.as_deref().unwrap_or(&payload.rows), |o| o.shared_rows);
     // Each layer's rows: a layer on the base query draws over this panel's
     // own rows, while the scales read the whole chart's.
     let layer_rows = overlays
@@ -252,7 +262,13 @@ pub(super) fn fit(
     // every panel draws every base mark.
     let base_rows: &[serde_json::Map<String, Value>] =
         if panel.is_some() && x_dates && !overlays.is_empty() { domain_rows } else { &payload.rows };
-    for row in base_rows {
+    let shown_by_view = |row: &serde_json::Map<String, Value>| {
+        r.color.as_deref().is_none_or(|color| crate::legend_view::shown(r.legend_view.as_ref(), &row_str(row, color)))
+    };
+    // The numeric and date axes fit what a legend view draws; a view that draws nothing leaves the
+    // axes of the whole chart.
+    let axis_rows = crate::legend_view::axis_rows(r.whole_rows.as_deref(), base_rows);
+    for row in axis_rows {
         let Some((xv, yv, sv)) = kept_reading(row, r, x_nominal, x_dates, y_nominal) else {
             // A row with no valid x draws no mark but still shows in the y domain.
             if let Some(yv) = y_when_x_invalid(row, r, x_nominal, x_dates, y_nominal) {
@@ -264,14 +280,19 @@ pub(super) fn fit(
         if let Some(yv) = yv {
             y_dmin = y_dmin.min(yv);
             y_dmax = y_dmax.max(yv);
-            kept_y.push(yv);
-        }
-        if let Some(sv) = sv {
-            kept_size.push(sv);
         }
         if !x_nominal {
             x_min = x_min.min(xv);
             x_max = x_max.max(xv);
+        }
+        if !shown_by_view(row) {
+            continue;
+        }
+        if let Some(yv) = yv {
+            kept_y.push(yv);
+        }
+        if let Some(sv) = sv {
+            kept_size.push(sv);
         }
         kept.push((xv, row));
     }
@@ -291,6 +312,11 @@ pub(super) fn fit(
     // The color and shape scales read the rows Vega keeps over the whole
     // chart (`domain_rows`), not this panel's own `kept`.
     let drawn = rows_at(domain_rows, &bound.drawn);
+    let shown_drawn: Vec<&serde_json::Map<String, Value>> = Some(drawn.iter().copied().filter(|row| shown_by_view(row)).collect::<Vec<_>>())
+        .filter(|shown| !shown.is_empty())
+        .unwrap_or_else(|| drawn.clone());
+    let whole_kept: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
+    let (category_rows, category_kept) = if r.whole_rows.is_some() { (domain_rows, whole_kept.as_slice()) } else { (payload.rows.as_slice(), kept.as_slice()) };
     // `_value_tooltip_field`'s own type inference (`infer_vega_type_from_
     // data`) would call an all-date-like nominal y "temporal" and format it
     // through `tooltip_header_date_expr` -- this port has no ported
@@ -323,6 +349,7 @@ pub(super) fn fit(
     // point-mark range — `symbol_radius` (√size/2) turns a scaled AREA back
     // into the drawn circle's radius, same convention the marks already use.
     let size_domain = bound.size_domain;
+    let edge_pad = x_edge_pad(r, size_domain);
     // ── X scale: nominal (`point`, `scale.padding`) or continuous (zero
     // unless authored off, then d3 nice count 10) ────────────────────────
     // Both shapes resolve to a FRACTION of the plot width (0 at the left),
@@ -365,12 +392,13 @@ pub(super) fn fit(
         }
     } else if x_dates {
         let axis = date_axis(
-            payload,
             r,
             time,
-            &drawn,
+            &shown_drawn,
             &XLayers::of(r, overlays, &layer_domain_rows),
+            axis_rows,
             svg_w,
+            edge_pad,
             x_title_text.clone(),
             panel.is_none().then_some(crate::contract::LabelKey::X),
             fonts,
@@ -396,7 +424,7 @@ pub(super) fn fit(
         // Production orders only a categorical y (a dot plot) by `chart.sort`.
         // The layers' union scale lists its categories in paint order, never sorted.
         let domain = if overlays.is_empty() {
-            point_scale_domain(&payload.rows, &kept, &r.x, None)?
+            point_scale_domain(category_rows, category_kept, &r.x, None)?
         } else {
             let mut seen: Vec<String> = Vec::new();
             for &(_, row) in &kept {
@@ -415,7 +443,7 @@ pub(super) fn fit(
         let (fracs, bandwidth) = if overlays.iter().any(needs_band) {
             point_x_scale(ax_x, domain.len(), true)
         } else {
-            (point_x_fracs(if mirror_wants_band { 0.5 } else { point_x_padding(ax_x) }, domain.len()), None)
+            (Band::point(domain.len(), [0.0, 1.0], if mirror_wants_band { 0.5 } else { point_x_padding(ax_x) }, 0.5, false).positions(), None)
         };
         x_bandwidth = bandwidth;
         for (category, &frac) in domain.iter().zip(&fracs) {
@@ -456,14 +484,14 @@ pub(super) fn fit(
                 })
             })
             .collect::<Result<_, String>>()?
-    } else if kept.is_empty() && overlays.is_empty() {
-        // No row has an x: the scale's domain is empty, so its axis draws no gridline, tick or label.
+    } else if x_min > x_max && overlays.is_empty() {
+        // No row, shown or hidden by a legend view, has an x: the scale's domain is empty, so its axis draws no gridline, tick or label.
         Vec::new()
     } else if ax_x.is_quantitative && ax_x.is_log_scale() {
         log_x = Some((x_min, x_max));
         vec![0.0; kept.len()]
     } else {
-        let lin = linear_x_scale(r, x_min, x_max, (x_zero_rule_fires, x_unity_rule_fires))?;
+        let lin = linear_x_scale(r, x_min, x_max, (x_zero_rule_fires, x_unity_rule_fires), edge_pad)?;
         linear_x = Some(lin);
         vec![0.0; kept.len()]
     };
@@ -591,7 +619,7 @@ pub(super) fn fit(
             let every: Vec<(f64, &serde_json::Map<String, Value>)> = drawn.iter().map(|&row| (0.0, row)).collect();
             point_scale_domain(domain_rows, &every, &r.y, r.sort.as_ref())?
         } else {
-            point_scale_domain(&payload.rows, &kept, &r.y, r.sort.as_ref())?
+            point_scale_domain(category_rows, category_kept, &r.y, r.sort.as_ref())?
         };
         y_scale_caption = CaptionScale::Discrete { values: domain.clone(), format: vega_axis_format(ax_y, false)? };
         let bands = domain.len() as f64;
@@ -666,7 +694,7 @@ pub(super) fn fit(
         for (idx, (&(_, row), &yv)) in kept.iter().zip(kept_y.iter()).enumerate() {
             points_data.push((kept_x_frac[idx], ladder.frac_from_top(yv), series_of(row), mark_radii[idx], row));
         }
-        y_scale = Some(YScale::Bent(vega_fit::Bend::Log, (ladder.lo, ladder.hi)));
+        y_scale = Some(YScale::Bent(ax_y.transform(), (ladder.lo, ladder.hi)));
         layer_y_frac = Box::new(move |v| ladder.frac_from_top(v));
     } else {
         let (y_min, y_max) = match authored_y_domain(ax_y, y_ladder_pass.2) {
@@ -688,25 +716,20 @@ pub(super) fn fit(
         // value as its only tick; a `NaN` one (an unparsable authored pair)
         // has neither ticks nor positions.
         let y_span = y_max - y_min;
-        let y_bend = ax_y.bend();
+        let y_transform = ax_y.transform();
         if crate::labels_expr::view::active() {
-            crate::labels_expr::view::register_bent("y", y_bend, y_min, y_max, crate::labels_expr::view::Span::Height);
+            crate::labels_expr::view::register_continuous("y", y_transform, y_min, y_max, crate::labels_expr::view::Span::Height);
         }
-        let y_frac = move |v: f64| -> f64 {
-            if y_span == 0.0 {
-                return 0.5;
-            }
-            let top = y_bend.fwd(y_max);
-            finite_frac((top - y_bend.fwd(v)) / (top - y_bend.fwd(y_min)))
-        };
+        let y_from_top = Continuous::new(y_transform, [y_min, y_max], [1.0, 0.0]);
+        let y_frac = move |v: f64| finite_frac(y_from_top.scale(v));
         if zero_rule_fires {
             baseline_rule_fracs[0] = Some(y_frac(0.0));
         }
         if unity_rule_fires {
             baseline_rule_fracs[1] = Some(y_frac(1.0));
         }
-        y_scale = Some(YScale::Bent(y_bend, (y_min, y_max)));
-        layer_y_frac = Box::new(y_frac);
+        y_scale = Some(YScale::Bent(y_transform, (y_min, y_max)));
+        layer_y_frac = Box::new(y_frac.clone());
         let y_eps = y_span.abs() * 1e-9;
         // A ladder production bakes is drawn as is; an unbaked one is Vega's
         // own d3 ticks at `ceil(height / 40)`, which the fitted height decides
@@ -725,13 +748,14 @@ pub(super) fn fit(
                 .filter(|&tv| tv >= y_min.min(y_max) - y_eps && tv <= y_min.max(y_max) + y_eps)
                 .collect()
         };
+        let labeling = ax_y.labeling(&ladder, fonts)?;
         for (i, &tv) in ladder.iter().enumerate() {
             y_ticks.push(y_frac(tv));
             y_tick_values.push(tv);
             y_labels.push(ax_y.labels.apply_expr("y", tv, format_y_label(
                 tv,
-                ax_y.ruler.as_ref(),
-                ax_y.tick_label.as_ref(),
+                labeling.ruler.as_ref(),
+                labeling.tick_label.as_ref(),
                 ax_y.labels.format.as_ref(),
                 i,
                 ladder.len(),
@@ -953,7 +977,7 @@ pub(super) fn fit(
         .collect::<Result<_, String>>()?;
     // A layer value's offset from the plot top: on the layer's own scale, else the shared one.
     let layer_y_at = |index: usize, v: f64, ph: f64| match layer_axes.get(index) {
-        Some(la) => la.scale(ph).position(v),
+        Some(la) => la.scale(ph).scale(v),
         None => ph * layer_y_frac(v),
     };
     // A line or scatter layer's value labels join the fit like any text mark: per
@@ -1158,7 +1182,7 @@ pub(super) fn fit(
     // per kept point at the board font; its ink joins the fit like any mark's,
     // so text and measured advance are fixed ahead of the plot rect.
     let value_labels = r.style.point_mark.labels.as_ref().filter(|l| l.visible);
-    value_labels.map(|ml| ml.refuse_last("scatter")).transpose()?;
+    value_labels.map(|ml| ml.refuse_anchors("scatter")).transpose()?;
     let value_label_font = value_labels.and_then(|ml| ml.font.as_ref());
     let value_label_family = match (value_labels, value_label_font.and_then(|f| f.family.as_deref())) {
         (None, _) => "",
@@ -1247,7 +1271,7 @@ pub(super) fn fit(
         if let Some(lin) = &linear_x {
             let (ticks, labels, rules, domain) = lin.at(pw)?;
             if crate::labels_expr::view::active() {
-                crate::labels_expr::view::register_bent("x", lin.bend, domain.0, domain.1, crate::labels_expr::view::Span::Width);
+                crate::labels_expr::view::register_continuous("x", lin.transform, domain.0, domain.1, crate::labels_expr::view::Span::Width);
             }
             return Ok(XFrame {
                 ticks,
@@ -1403,9 +1427,9 @@ pub(super) fn fit(
             axis.day_domain(pw).map(|extent| AxisMap::Time { extent, range: (0.0, pw) }).ok_or_else(|| refuse("annotations on a date x need its time scale, not a point scale"))?
         } else if let Some(lin) = bar_x.linear {
             let domain = lin.domain_at(pw);
-            match lin.bend {
-                vega_fit::Bend::Linear => AxisMap::Linear { domain, range: (0.0, pw) },
-                bend => AxisMap::Bent { bend, domain, range: (0.0, pw) },
+            match lin.transform {
+                d3rs::scale::Transform::Identity => AxisMap::Linear { domain, range: (0.0, pw) },
+                transform => AxisMap::Bent { transform, domain, range: (0.0, pw) },
             }
         } else if let Some(log) = &bar_x.log {
             let ladder = log.ladder(pw)?;
@@ -1414,9 +1438,9 @@ pub(super) fn fit(
             return Err(refuse("annotations cannot map this x axis"));
         };
         let y = match y_scale.as_ref().expect("every y branch sets its scale") {
-            YScale::Bent(vega_fit::Bend::Linear, domain) => AxisMap::Linear { domain: *domain, range: (ph, 0.0) },
-            YScale::Bent(vega_fit::Bend::Log, domain) => AxisMap::Log { domain: *domain, range: (ph, 0.0) },
-            YScale::Bent(bend, domain) => AxisMap::Bent { bend: *bend, domain: *domain, range: (ph, 0.0) },
+            YScale::Bent(d3rs::scale::Transform::Identity, domain) => AxisMap::Linear { domain: *domain, range: (ph, 0.0) },
+            YScale::Bent(d3rs::scale::Transform::Log { .. }, domain) => AxisMap::Log { domain: *domain, range: (ph, 0.0) },
+            YScale::Bent(transform, domain) => AxisMap::Bent { transform: *transform, domain: *domain, range: (ph, 0.0) },
             YScale::Points { fracs, domain } => AxisMap::Point {
                 domain: domain.clone(),
                 positions: fracs.iter().map(|f| f * ph).collect(),
@@ -1437,7 +1461,7 @@ pub(super) fn fit(
             orientation: Orientation::Vertical,
             fonts,
             canvas: bg,
-            clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), panel.map_or(0, |o| o.panel_ordinal)),
+            clip_id: format!("{}-ann{}", crate::contract::scoped_id(&r.id), panel.map_or(0, |o| o.panel_ordinal)),
             occupied: Vec::new(),
         })
     };
@@ -1606,7 +1630,7 @@ pub(super) fn fit(
                 for (la, zero_rule) in layer_axes.iter().zip(&layer_zero_rules) {
                     la.union_axis_ink(b, (pw, ph), 0.0, y_limit, y_font_size);
                     if let Some(width) = zero_rule {
-                        let y = la.scale(ph).position(0.0);
+                        let y = la.scale(ph).scale(0.0);
                         b.union(&vega_fit::Bounds::new(0.0, y, pw, y).expand(*width));
                     }
                 }
@@ -1741,20 +1765,12 @@ pub(super) fn fit(
     );
 
     // ── Emission ─────────────────────────────────────────────────────────
-    // Outer canvas dims are `payload.width`/`payload.height` echoed
-    // verbatim — vl-convert never re-rounds them the way it rounds
-    // INTERNAL mark coordinates (the `{:.3}` grid/rule lines elsewhere in
-    // this file); `py_float_str` matches its own float-to-string exactly
-    // (whole numbers keep `.0`, others print full precision — same fix as
-    // bar.rs's/line.rs's sibling arms, found via a repeating-decimal
-    // `aspect_ratio` height, a `chrome_bytes`-only board-sweep DIFF
-    // invisible to the pixel-only per-chart ratchet).
     // A panel's canvas is its plot plus the ink margins the fit measured.
     let (canvas_w, canvas_h) = match panel {
         Some(_) => (left_margin + plot_w + m.right, top_margin + plot_h),
         None => (view_w, svg_h),
     };
-    let frame = ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, py_float_str);
+    let frame = ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg);
     let head = match (m.title_pos, &title_plan) {
         (Some((tx, ty)), Some(plan)) => plan.nodes(&r.title_source(), pad_l + left_margin + tx, pad_t + top_margin + ty),
         _ => Vec::new(),
@@ -1769,7 +1785,7 @@ pub(super) fn fit(
         points_data.into_iter().zip(&xf.points).map(|(mut point, &x_frac)| { point.0 = x_frac; point }).collect();
     let x_pos = |frac: f64| frac * plot_w;
     let y_pos = |frac: f64| y_px(plot_h, frac, y_round);
-    let (rx1, rx2) = crate::common::floor_rule_span(plot_w, ax_x, ax_x.ticks.visible.unwrap_or(true) || temporal_x.as_ref().is_some_and(|axis| axis.draws_ticks()), xf.ticks.iter().map(|&frac| x_pos(frac).round() + 0.5));
+    let (rx1, rx2) = crate::common::floor_rule_span(plot_w, ax_x, ax_x.ticks.visible.unwrap_or(true) || temporal_x.as_ref().is_some_and(|axis| axis.draws_ticks()), xf.ticks.iter().map(|&frac| crate::common::tick_round(x_pos(frac))));
     // The floor rule also spans the full stroke of a vertical rule standing on its edge.
     let x_rule_w = ax_x.grid.threshold.as_ref().map_or(0.0, |zx| zx.width.unwrap_or(2.0));
     let floor_span = xf.rules.iter().flatten().fold((rx1, rx2), |(lo, hi), &frac| (lo.min(x_pos(frac) - x_rule_w / 2.0), hi.max(x_pos(frac) + x_rule_w / 2.0)));
@@ -1795,16 +1811,12 @@ pub(super) fn fit(
             .ticks
             .iter()
             .map(|&frac| {
-                let gx = x_pos(frac).round() + 0.5;
-                Node::Line(
-                    Attrs::new()
-                        .set("x1", format!("{gx:.3}"))
-                        .set("y1", "0.5")
-                        .set("x2", format!("{gx:.3}"))
-                        .set("y2", format!("{:.3}", plot_h + 0.5))
-                        .set("stroke", gc)
-                        .set("stroke-width", gw.to_string())
-                        .set("opacity", go.to_string()),
+                let gx = crate::common::tick_round(x_pos(frac));
+                Node::line(
+                    Role::Grid,
+                    (gx, 0.5),
+                    (gx, plot_h + 0.5),
+                    ax_x.grid.stroke(gc, gw).num("opacity", go),
                 )
             })
             .collect();
@@ -1817,16 +1829,12 @@ pub(super) fn fit(
         let lines = y_ticks
             .iter()
             .map(|&frac| {
-                let gy = y_pos(frac).round() + 0.5;
-                Node::Line(
-                    Attrs::new()
-                        .set("x1", "0.5")
-                        .set("y1", format!("{gy:.3}"))
-                        .set("x2", format!("{:.3}", plot_w + 0.5))
-                        .set("y2", format!("{gy:.3}"))
-                        .set("stroke", gc)
-                        .set("stroke-width", gw.to_string())
-                        .set("opacity", go.to_string()),
+                let gy = crate::common::tick_round(y_pos(frac));
+                Node::line(
+                    Role::Grid,
+                    (0.5, gy),
+                    (plot_w + 0.5, gy),
+                    ax_y.grid.stroke(gc, gw).num("opacity", go),
                 )
             })
             .collect();
@@ -1844,7 +1852,7 @@ pub(super) fn fit(
         if color_domain.is_empty() {
             return Ok(r.style.single_series_fill.clone());
         }
-        crate::common::series_color(series, &color_domain, &r.series_palette, category_scale)
+        crate::common::series_color(series, &color_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
     };
     // A date x typed ordinal (an authored type, a fiscal year) rides as a string, which `timeFormat` reads as invalid.
     let x_law = if x_dates {
@@ -1933,16 +1941,7 @@ pub(super) fn fit(
                 crate::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
-                    Node::Line(
-                        Attrs::new()
-                            .set("x1", format!("{rx1:.3}"))
-                            .set("y1", format!("{gy:.3}"))
-                            .set("x2", format!("{rx2:.3}"))
-                            .set("y2", format!("{gy:.3}"))
-                            .set("stroke", zc)
-                            .set("stroke-width", zw.to_string())
-                            .extend(aria),
-                    )
+                    Node::line(Role::Grid, (rx1, gy), (rx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
                 },
             )?);
             if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
@@ -1972,16 +1971,7 @@ pub(super) fn fit(
                 crate::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
-                    Node::Line(
-                        Attrs::new()
-                            .set("x1", format!("{gx:.3}"))
-                            .set("y1", "0.000")
-                            .set("x2", format!("{gx:.3}"))
-                            .set("y2", format!("{plot_h:.3}"))
-                            .set("stroke", zc)
-                            .set("stroke-width", zw.to_string())
-                            .extend(aria),
-                    )
+                    Node::line(Role::Grid, (gx, 0.0), (gx, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
                 },
             )?);
             if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
@@ -2010,14 +2000,11 @@ pub(super) fn fit(
     };
     let mut ghost_points: Vec<(String, f64, f64, String, Option<String>)> = Vec::new();
     // With a shape channel the ghost rule layer carries a small point per datum beside its rule.
-    let mut ghost_symbols: Vec<(String, f64, f64, String, String, Option<String>)> = Vec::new();
+    let mut ghost_symbols: Vec<(PathData, f64, f64, String, String, Option<String>)> = Vec::new();
     let value_label_ink = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
     let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>)> = Vec::new();
-    // The points, which annotation text tests for its halo.
-    let mut under = Vec::new();
-    for (x_frac, y_frac, series, mark_r, row) in &points_data {
+    for (datum, (x_frac, y_frac, series, mark_r, row)) in points_data.iter().enumerate() {
         let (cx, cy) = (x_pos(*x_frac), y_pos(*y_frac));
-        under.push(crate::annotation::DataMark::rect(cx - mark_r, cy - mark_r, 2.0 * mark_r, 2.0 * mark_r));
         let channel_ink = match &color_scale {
             Some(scale) => {
                 let field = r.color.as_deref().expect("a color scale implies a color channel");
@@ -2125,7 +2112,7 @@ pub(super) fn fit(
             let x_str = match &temporal_x {
                 Some(axis) => axis.tooltip_date(&row_str(row, &r.x))?,
                 None => match row.get(&r.x).and_then(Value::as_f64) {
-                    Some(v) => crate::families::color_scale::js_number_string(v),
+                    Some(v) => d3rs::js_math::js_number_string(v),
                     None => category_text(row, &r.x),
                 },
             };
@@ -2141,21 +2128,17 @@ pub(super) fn fit(
         let d = point_glyph(r, row, &shape_domain, *mark_r)?;
         let href = datum_link.as_ref().filter(|_| base_linked).map(|link| link.href(row)).transpose()?;
         let anchor = r.link_open.anchor(href.as_deref());
-        let glyph = Attrs::new()
-            .set("transform", format!("translate({cx:.4},{cy:.4})"))
-            .set("d", d)
-            .set("fill", fill.as_str());
+        let glyph = Attrs::new().set("fill", fill.as_str());
         let glyph = match &stroke {
             Some(stroke) => glyph
                 .set("stroke", stroke.as_str())
-                .set("stroke-width", mark_sw.to_string())
+                .num("stroke-width", mark_sw)
                 .set_if(miter_limit.is_some(), "stroke-miterlimit", miter_limit.unwrap_or_default()),
-            None => glyph.set_if(mark_sw > 0.0, "stroke-width", mark_sw.to_string()),
+            None if mark_sw > 0.0 => glyph.num("stroke-width", mark_sw),
+            None => glyph,
         };
-        let mark = crate::href::linked(
-            anchor,
-            Node::Path(glyph.set("opacity", mark_opacity.to_string()).extend(label_attrs)),
-        );
+        let role = Role::Mark { layer: 0, series: Some(series.clone()).filter(|series| !series.is_empty()), datum: Some(datum) };
+        let mark = crate::href::linked(anchor, Node::path(role, d, glyph.num("opacity", mark_opacity).extend(label_attrs)).translate(cx, cy));
         plot.push(if aria.is_some() { crate::contract::mark_group("symbol", &points_layer_name, vec![mark])? } else { mark });
         if value_labels.is_some() && !y_nominal {
             // The text layer inherits the color channel as its fill.
@@ -2177,14 +2160,7 @@ pub(super) fn fit(
         let baseline = value_label_dy + measure::baseline_shift(value_label_baseline, value_label_size);
         let mut labels = Vec::new();
         for ((cx, cy, aria, color, href), (text, w)) in value_label_marks.iter().zip(&value_label_texts) {
-            under.push(crate::annotation::DataMark::Box(vega_fit::text_ink(
-                cx + value_label_dx,
-                cy + value_label_dy,
-                *w,
-                value_label_size,
-                value_label_align,
-                value_label_baseline,
-            )));
+            let ink = vega_fit::text_ink(cx + value_label_dx, cy + value_label_dy, *w, value_label_size, value_label_align, value_label_baseline);
             let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
             let anchor = r.link_open.anchor(href.as_deref());
             let label = crate::common::value_label(
@@ -2198,7 +2174,8 @@ pub(super) fn fit(
                 color,
                 label_attrs,
                 text,
-            );
+            )
+            .with_text_bounds(ink.into());
             labels.push(crate::href::linked(anchor, label));
         }
         if tooltip_labels {
@@ -2261,6 +2238,7 @@ pub(super) fn fit(
                 };
                 let line_subset = |subset: &[serde_json::Map<String, Value>], series_color: &str| -> Result<Vec<Node>, String> {
                     crate::families::layers::line_layer_marks(
+                        index + 1,
                         l,
                         subset,
                         line_x_of,
@@ -2339,6 +2317,7 @@ pub(super) fn fit(
                     };
                     let aria = caption(mark.row, mark.value)?;
                     bars.extend(crate::families::bar::marks::layer_bar(
+                        index + 1,
                         &y_of,
                         plot_h,
                         clip,
@@ -2379,7 +2358,7 @@ pub(super) fn fit(
             (layer_axes.get(index), layer_zero_rules.get(index), ax_y.grid.threshold.as_ref())
         {
             let zc = zl.stroke();
-            let gy = la.scale(plot_h).position(0.0);
+            let gy = la.scale(plot_h).scale(0.0);
             let layer_edge = if la.side == LayerSide::Right { plot_w + 0.5 } else { 0.5 };
             let (lx1, lx2) = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
             plot.push(crate::contract::item_group(
@@ -2388,21 +2367,16 @@ pub(super) fn fit(
                 crate::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
-                    Node::Line(
-                        Attrs::new()
-                            .set("x1", format!("{lx1:.3}"))
-                            .set("y1", format!("{gy:.3}"))
-                            .set("x2", format!("{lx2:.3}"))
-                            .set("y2", format!("{gy:.3}"))
-                            .set("stroke", zc)
-                            .set("stroke-width", width.to_string())
-                            .extend(aria),
-                    )
+                    Node::line(Role::Grid, (lx1, gy), (lx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
                 },
             )?);
         }
     }
-    let annotations = annotations.map(|ctx| crate::annotation::AnnotationCtx { occupied: under, ..ctx });
+    let annotations = annotations.map(|ctx| {
+        let mut occupied = crate::annotation::DataMark::plot_marks(&plot);
+        occupied.extend(crate::annotation::DataMark::labels_in(&plot, (0.0, 0.0)));
+        crate::annotation::AnnotationCtx { occupied, ..ctx }
+    });
     if let Some(ctx) = &annotations {
         plot.extend(crate::annotation::nodes(ctx, crate::annotation::Plane::Foreground)?);
     }
@@ -2422,15 +2396,16 @@ pub(super) fn fit(
             let mut symbols = Vec::new();
             for (glyph, cx, cy, fill, label, href) in &ghost_symbols {
                 let anchor = r.link_open.anchor(href.as_deref());
-                let symbol = Node::Path(
+                let symbol = Node::path(
+                    Role::Chrome,
+                    glyph.clone(),
                     Attrs::new()
-                        .set("transform", format!("translate({cx:.4},{cy:.4})"))
-                        .set("d", glyph.as_str())
                         .set("fill", fill.as_str())
-                        .set("stroke-width", "2")
-                        .set("opacity", "1")
+                        .num("stroke-width", 2.0)
+                        .num("opacity", 1.0)
                         .extend(crate::contract::aria_attrs(Some(label), crate::contract::ItemRole::Point)?),
-                );
+                )
+                .translate(*cx, *cy);
                 symbols.push(crate::href::linked(anchor, symbol));
             }
             plot.push(crate::contract::mark_group("symbol", "ghost_symbol_marks", symbols)?);
@@ -2440,12 +2415,12 @@ pub(super) fn fit(
     // X ticks + labels.
     let floor_rule = ax_y.grid.threshold.as_ref().and_then(|zl| {
         let base = baseline_rule_fracs.iter().flatten().map(|&frac| y_pos(frac));
-        let nested = layer_axes.iter().zip(&layer_zero_rules).filter(|(_, width)| width.is_some()).map(|(la, _)| la.scale(plot_h).position(0.0));
+        let nested = layer_axes.iter().zip(&layer_zero_rules).filter(|(_, width)| width.is_some()).map(|(la, _)| la.scale(plot_h).scale(0.0));
         crate::common::rule_on_edge(base.chain(nested), x_edge.edge_y(plot_h)).then(|| zl.stroke().to_string())
     });
     let x_rules = ax_x.grid.threshold.as_ref().map_or_else(Vec::new, |zx| {
         let at_rules = xf.rules.iter().flatten().map(|&frac| x_pos(frac));
-        at_rules.map(|at| crate::common::PaintedRule { at, tick_at: at.round() + 0.5, stroke: zx.stroke().to_string(), width: zx.width.unwrap_or(2.0) }).collect()
+        at_rules.map(|at| crate::common::PaintedRule { at, tick_at: crate::common::tick_round(at), stroke: zx.stroke().to_string(), width: zx.width.unwrap_or(2.0) }).collect()
     });
     let x_threshold_rules: Vec<_> = crate::common::thresholds(&x_rules);
     if let Some(axis) = temporal_x.as_ref().filter(|_| panel.is_none()) {
@@ -2499,15 +2474,12 @@ pub(super) fn fit(
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
             for &frac in &y_ticks {
-                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, y_pos(frac).round() + 0.5, tc, tw);
-                items.push(Node::Line(
-                    Attrs::new()
-                        .set("x1", format!("{y_axis_x:.3}"))
-                        .set("y1", format!("{gy:.3}"))
-                        .set("x2", format!("{:.3}", y_axis_x + y_outward * y_tick_eff))
-                        .set("y2", format!("{gy:.3}"))
-                        .set("stroke", tc)
-                        .set("stroke-width", tw.to_string()),
+                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), tc, tw);
+                items.push(Node::line(
+                    Role::Axis,
+                    (y_axis_x, gy),
+                    (y_axis_x + y_outward * y_tick_eff, gy),
+                    Attrs::new().set("stroke", tc).num("stroke-width", tw),
                 ));
             }
         }
@@ -2518,13 +2490,13 @@ pub(super) fn fit(
                 continue;
             }
             let gy = y_pos(frac) + 0.5 + measure::baseline_shift("middle", y_font_size);
-            items.push(Node::text(
+            items.push(crate::text::label(
+                Role::Axis,
+                (y_label_x, gy),
                 Attrs::new()
-                    .set("x", format!("{y_label_x:.3}"))
-                    .set("y", format!("{gy:.3}"))
                     .set("text-anchor", y_label_anchor)
                     .vega("font-family", y_family)
-                    .set("font-size", y_font_size.to_string())
+                    .num("font-size", y_font_size)
                     .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", y_label_weight.as_str())
                     .set("fill", y_label_color),
@@ -2580,15 +2552,12 @@ pub(super) fn fit(
             let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
             let tw = ax_y.ticks.width.unwrap_or(1.0);
             for &frac in &y_ticks {
-                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, y_pos(frac).round() + 0.5, tc, tw);
-                items.push(Node::Line(
-                    Attrs::new()
-                        .set("x1", format!("{ghost_x:.3}"))
-                        .set("y1", format!("{gy:.3}"))
-                        .set("x2", format!("{:.3}", ghost_x + ghost_out * y_tick_eff))
-                        .set("y2", format!("{gy:.3}"))
-                        .set("stroke", tc)
-                        .set("stroke-width", tw.to_string()),
+                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), tc, tw);
+                items.push(Node::line(
+                    Role::Axis,
+                    (ghost_x, gy),
+                    (ghost_x + ghost_out * y_tick_eff, gy),
+                    Attrs::new().set("stroke", tc).num("stroke-width", tw),
                 ));
             }
         }
@@ -2597,13 +2566,13 @@ pub(super) fn fit(
                 continue;
             }
             let gy = y_pos(frac) + 0.5 + measure::baseline_shift("middle", y_font_size);
-            items.push(Node::text(
+            items.push(crate::text::label(
+                Role::Chrome,
+                (ghost_x + ghost_out * ghost_off, gy),
                 Attrs::new()
-                    .set("x", format!("{:.3}", ghost_x + ghost_out * ghost_off))
-                    .set("y", format!("{gy:.3}"))
                     .set("text-anchor", ghost_anchor)
                     .vega("font-family", y_family)
-                    .set("font-size", y_font_size.to_string())
+                    .num("font-size", y_font_size)
                     .quick_some("font-style", ax_y.labels.font.style.as_deref())
                     .set("font-weight", y_label_weight.as_str())
                     .set("fill", y_label_color),
@@ -2665,7 +2634,7 @@ pub(super) fn fit(
     if let Some((labels, lg)) = color_legend.as_ref().filter(|_| !layered) {
         let fills = color_domain
             .iter()
-            .map(|label| crate::common::series_color(label, &color_domain, &r.series_palette, category_scale))
+            .map(|label| crate::common::series_color(label, &color_domain, &r.series_palette, category_scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color))
             .collect::<Result<Vec<_>, _>>()?;
         let glyphs = legend_glyph_names
             .iter()
@@ -2690,8 +2659,14 @@ pub(super) fn fit(
                 }),
                 series_key: Some(&color_domain[idx]),
                 recede: None,
+                action: None,
             })
             .collect();
+        let keys: Vec<Option<&str>> = legend_order.iter().map(|&idx| Some(color_domain[idx].as_str())).collect();
+        let entries = match &r.legend_view {
+            Some(view) => view.entries(entries, &keys),
+            None => entries,
+        };
         let (x, y) = (base.0 + color_off.0 + slide.0, base.1 + color_off.1 + slide.1);
         plot.extend(legend::drawn_symbol_legend(
             &entries,
@@ -2740,8 +2715,8 @@ pub(super) fn fit(
         })
         .transpose()?;
     let panel_layer_ink = panel.map(|_| layer_ink(plot_w, plot_h)).transpose()?;
-    let group = Attrs::new().set("transform", format!("translate({group_x:.3},{group_y:.3})"));
-    let cuts = panel.map(|_| frame.cuts(&head, &group, &plot, &[], Some(&crate::frame::ValueAxisAt::Plot(value_axis))));
+    let plot_group = |children: Vec<Node>| Node::group(Role::Chrome, Attrs::new(), children).translate(group_x, group_y);
+    let cuts = panel.map(|_| crate::families::facet_compose::PanelInk::new(&head, &plot_group, &plot, &[], Some(crate::families::facet_compose::ValueAxisAt::Plot(value_axis))));
     let geometry = panel.zip(cuts).map(|(o, cuts)| {
         let (plot_left, plot_top) = (pad_l + left_margin, pad_t + top_margin);
         let (plot_right, plot_bottom) = (plot_left + plot_w, plot_top + plot_h);
@@ -2811,8 +2786,7 @@ pub(super) fn fit(
         }
         let label_shift = measure::baseline_shift("middle", y_font_size) + 0.5;
         PanelGeometry {
-            content_start: cuts.content_start,
-            svg_end: cuts.svg_end,
+            content: cuts.content.clone(),
             ink,
             axis_w_overhang: left_margin + m.right,
             left_mark_overhang: left_margin,
@@ -2855,7 +2829,7 @@ pub(super) fn fit(
                 caption: y_caption.clone(),
                 val_font_size: y_font_size,
                 val_weight: y_label_weight.clone(),
-                val_style: ax_y.labels.font.style_attr(),
+                val_style: ax_y.labels.font.style.clone(),
                 val_color: y_label_color.to_string(),
                 val_family: y_family.to_string(),
             }),
@@ -2864,11 +2838,11 @@ pub(super) fn fit(
             value_title_w: if o.paint_value_axis && y_title_extra > 0.0 { y_title_w } else { 0.0 },
             legend: None,
             value_axis: paint_value_axis
-                .then(|| crate::families::facet_compose::ValueAxisInk { range: cuts.value_axis(), origin: (group_x, group_y) }),
+                .then(|| cuts.value_axis((group_x, group_y))),
         }
     });
     let mut body = head;
-    body.push(Node::group(group, plot));
+    body.push(plot_group(plot));
     Ok(Fitted {
         svg: frame.svg(body),
         data_box: Rect { x: group_x, y: group_y, width: plot_w, height: plot_h },
@@ -2905,7 +2879,7 @@ pub(super) struct Fitted {
 pub(super) fn authored_y_domain(ax_y: &AxisStyle, plot_h: f64) -> Option<(f64, f64)> {
     let (lo, hi) = ax_y.coerced_continuous_domain()?;
     let pad = ax_y.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0);
-    let (lo, hi) = vega_fit::pad_domain((lo, hi), plot_h, pad, ax_y.bend());
+    let (lo, hi) = vega_fit::pad_domain((lo, hi), plot_h, pad, ax_y.transform());
     Some(crate::families::cartesian::authored_domain_pair(ax_y, lo, hi))
 }
 
@@ -2934,7 +2908,7 @@ pub(super) fn unauthored_measure_domain(ax: &AxisStyle, data_lo: f64, data_hi: f
     let pad = ax.scale.get("padding").and_then(Value::as_f64).unwrap_or(0.0);
     let (lo, hi) = if ax.is_zero_false() { (data_lo, data_hi) } else { (data_lo.min(0.0), data_hi.max(0.0)) };
     let (lo, hi) = (ax.domain_min.unwrap_or(lo), ax.domain_max.unwrap_or(hi));
-    let (lo, hi) = vega_fit::pad_domain((lo, hi), extent, pad, ax.bend());
+    let (lo, hi) = vega_fit::pad_domain((lo, hi), extent, pad, ax.transform());
     let rounds = ax.scale.get("nice").and_then(Value::as_bool).unwrap_or(layered || !ax.has_baked_edge());
     if rounds && hi > lo { d3rs::ticks::d3_nice(lo, hi, 10) } else { (lo, hi) }
 }

@@ -319,8 +319,8 @@ pub fn style_prose_headings(
 /// `markdown_blocks.py::map_span_runs` with `markdown_style.py::_case_words`
 /// as the run function: every run of spans (paragraph, heading, list item,
 /// table cell, at any depth) is cased as one string (`apply_case_to_runs`).
-/// Code spans and images keep their text: code is literal, and an image's
-/// alt is not a word.
+/// Code spans (a code link's label included) and images keep their text: code
+/// is literal, and an image's alt is not a word.
 pub(crate) fn case_blocks(blocks: &mut [AnyBlock], case: &str) -> Result<(), String> {
     for block in blocks {
         match block {
@@ -354,7 +354,7 @@ pub(crate) fn case_blocks(blocks: &mut [AnyBlock], case: &str) -> Result<(), Str
 fn case_words(spans: &mut [Span], case: &str) -> Result<(), String> {
     let mut words: Vec<&mut Span> = spans
         .iter_mut()
-        .filter(|s| !matches!(s.span_type, SpanType::Code | SpanType::Image))
+        .filter(|s| !s.code && !matches!(s.span_type, SpanType::Code | SpanType::Image))
         .collect();
     let cased = display_text::case::apply_case_to_runs(
         &words.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(),
@@ -598,6 +598,7 @@ pub fn compute_board_content_box(
     inline_band_height: f64,
     gap: f64,
     has_layout_items: bool,
+    opens_with_text: bool,
     card_padding: f64,
 ) -> BoardContentBox {
     let mut height = 0.0;
@@ -619,6 +620,7 @@ pub fn compute_board_content_box(
         }
         height += text_height;
         has_prev = true;
+        prev_is_title = false;
     }
     if variables_height > 0.0 {
         if has_prev {
@@ -626,9 +628,17 @@ pub fn compute_board_content_box(
         }
         height += variables_height;
         has_prev = true;
+        prev_is_title = false;
     }
     let content_top = if has_prev { card_padding } else { 0.0 };
-    let gap_before_layout = if has_layout_items && has_prev { gap } else { 0.0 };
+    let gap_before_layout = if prev_is_title && opens_with_text {
+        // A title above a leading text row is title -> text by another spelling.
+        -card_padding
+    } else if has_layout_items && has_prev {
+        gap
+    } else {
+        0.0
+    };
     BoardContentBox {
         content_top,
         non_layout_height: height + content_top,
@@ -687,6 +697,14 @@ mod tests {
         assert_eq!(
             painted_runs(title, "title"),
             ["v1.2 ", "rev usd", " of ", "the Docs Here", " ", "Summary"]
+        );
+    }
+
+    #[test]
+    fn title_case_leaves_a_code_link_label_literal() {
+        assert_eq!(
+            painted_runs("see [`linked code`](docs/x.md) here", "title"),
+            ["See ", "linked code", " Here"]
         );
     }
 
@@ -890,46 +908,54 @@ mod tests {
     }
 
     #[test]
+    fn compute_board_content_box_takes_back_a_leading_text_rows_inset_under_a_title() {
+        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, true, true, 16.0);
+        assert_eq!(box_.gap_before_layout, -16.0);
+        let with_text = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, true, true, 16.0);
+        assert_eq!(with_text.gap_before_layout, 8.0);
+    }
+
+    #[test]
     fn compute_board_content_box_degenerates_with_no_title_or_text() {
-        let box_ = compute_board_content_box(0.0, 0.0, 0.0, 0.0, 8.0, true, 16.0);
+        let box_ = compute_board_content_box(0.0, 0.0, 0.0, 0.0, 8.0, true, false, 16.0);
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (0.0, 0.0, 0.0));
     }
 
     #[test]
     fn compute_board_content_box_reserves_padding_and_gap_for_a_title() {
-        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, true, 16.0);
+        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, true, false, 16.0);
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 56.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_no_gap_before_layout_without_layout_items() {
-        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, false, 16.0);
+        let box_ = compute_board_content_box(40.0, 0.0, 0.0, 0.0, 8.0, false, false, 16.0);
         assert_eq!(box_.gap_before_layout, 0.0);
     }
 
     #[test]
     fn compute_board_content_box_title_to_text_is_a_zero_gap() {
-        let box_ = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, true, 16.0);
+        let box_ = compute_board_content_box(40.0, 20.0, 0.0, 0.0, 8.0, true, false, 16.0);
         // 40 (title) + 0 gap + 20 (text) + 16 (card_padding) = 76.
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 76.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_text_only_takes_the_normal_gap_to_layout() {
-        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 0.0, 8.0, true, 16.0);
+        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 0.0, 8.0, true, false, 16.0);
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 36.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_adds_variables_after_text_with_a_normal_gap() {
-        let box_ = compute_board_content_box(40.0, 20.0, 30.0, 0.0, 8.0, true, 16.0);
+        let box_ = compute_board_content_box(40.0, 20.0, 30.0, 0.0, 8.0, true, false, 16.0);
         // 40 (title) + 0 gap + 20 (text) + 8 gap + 30 (variables) + 16 (card_padding).
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 114.0, 8.0));
     }
 
     #[test]
     fn compute_board_content_box_inline_band_replaces_title_and_variables() {
-        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 50.0, 8.0, true, 16.0);
+        let box_ = compute_board_content_box(0.0, 20.0, 0.0, 50.0, 8.0, true, false, 16.0);
         // 50 (inline band) + 8 gap (band -> text is a normal gap, not the
         // title-to-text zero gap) + 20 (text) + 16 (card_padding).
         assert_eq!((box_.content_top, box_.non_layout_height, box_.gap_before_layout), (16.0, 94.0, 8.0));

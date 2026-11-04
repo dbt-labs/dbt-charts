@@ -21,6 +21,7 @@ from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
     ERR_LOCKED_SCHEMA_VERSION,
+    ERR_NO_BOARD_FILES,
     ERR_QUERY_FORMAT_COLUMN_MISSING,
     ERR_WAREHOUSE_QUERY_INVALID,
     WARN_COLUMN_CHECK_UNAVAILABLE,
@@ -123,12 +124,12 @@ def _validate_one_path(
         ]
 
     if resolved.is_yaml or resolved.is_markdown:
-        return [_validate_resolved(resolved, project, adapter_registry)]
+        return [_validate_resolved(resolved, project, adapter_registry, True)]
 
     # No explicit path -> validate every board root (host + installed
     # packages), not just the host charts/ dir `resolved` degenerated to.
     under = None if path is None else resolved.relpath
-    boards = iter_expanded_board_files(project, under)
+    boards = iter_expanded_board_files(project, under, include_markdown=True)
     if not boards:
         return [
             ValidateResult(
@@ -136,13 +137,12 @@ def _validate_one_path(
                 path=resolved.relpath,
                 errors=[
                     DbtChartsError.from_code(
-                        ERR_INTERNAL,
-                        message=f"No board files found in {resolved.relpath}",
+                        ERR_NO_BOARD_FILES, path=resolved.relpath
                     ).to_diagnostic()
                 ],
             )
         ]
-    return [_validate_resolved(pf, project, adapter_registry) for pf in boards]
+    return [_validate_resolved(pf, project, adapter_registry, False) for pf in boards]
 
 
 def validate(path: Path, *, project: Project) -> ValidateResult:
@@ -160,18 +160,23 @@ def validate(path: Path, *, project: Project) -> ValidateResult:
             errors=[resolution_error_diagnostic(exc)],
         )
 
-    return _validate_resolved(resolved, project)
+    return _validate_resolved(resolved, project, None, True)
 
 
 def _validate_resolved(
     resolved: ProjectPath,
     project: Project,
-    adapter_registry: AdapterRegistry | None = None,
+    adapter_registry: AdapterRegistry | None,
+    named: bool,
 ) -> ValidateResult:
-    """Validate an already-resolved board path — no re-resolution."""
+    """Validate an already-resolved board path — no re-resolution.
+
+    *named* is true for a path the user typed, false for one a folder listed.
+    """
     from dbt_charts.core.compile.compiler import compile_file, validate_compiled_queries
     from dbt_charts.core.dbt_model_columns import check_model_columns
     from dbt_charts.core.dbt_ref_check import check_manifest_refs
+    from dbt_charts.core.link_targets import check_link_targets
 
     if not resolved.exists():
         return ValidateResult(
@@ -222,7 +227,9 @@ def _validate_resolved(
         lock_errors = []  # compile_file below reports the unreadable file
 
     try:
-        result = compile_file(resolved.read_board())
+        result = compile_file(
+            resolved.read_board(named), declared_sources=adapter_registry is None
+        )
     except OSError as exc:
         return ValidateResult(
             success=False,
@@ -243,6 +250,7 @@ def _validate_resolved(
     validate_compiled_queries(result)
     check_manifest_refs(result, project)
     check_model_columns(result, project)
+    check_link_targets(result, project, resolved.relpath)
 
     errors = [*lock_errors, *result.errors]
     warnings = list(result.warnings)
@@ -282,14 +290,21 @@ def annotate_with_data_lint(
     from dbt_charts.agent_api.data_paths import data_alias_errors_for_file
 
     try:
-        source_names = frozenset(project.sources.sources.keys())
+        source_names = frozenset(project.declared_sources.sources.keys())
     except CompilationError as exc:
         # The registry is project-level: report it once against the config
         # file instead of letting the lazy load crash the verb.
+        diagnostic = exc.to_diagnostic(file=PROJECT_CONFIG_NAME)
+        if any(
+            r.path == PROJECT_CONFIG_NAME
+            and any(e.code == diagnostic.code for e in r.errors)
+            for r in results
+        ):
+            return results
         config_result = ValidateResult(
             success=False,
             path=PROJECT_CONFIG_NAME,
-            errors=[exc.to_diagnostic(file=PROJECT_CONFIG_NAME)],
+            errors=[diagnostic],
         )
         return [*results, config_result]
 

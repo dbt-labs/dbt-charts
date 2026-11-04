@@ -33,17 +33,21 @@ _SCAN_SINGLE_FILES = (DBT_CHARTS_PKG_DIR / "cli" / "_error_format.py",)
 # site means routing it through ``posix_relpath``/``.relpath`` and deleting
 # the entry, not widening this allowlist to paper over a new ad-hoc call.
 ALLOWED: dict[tuple[str, int], str] = {
-    ("agent_api/describe.py", 346): (
+    ("agent_api/describe.py", 362): (
         "describe_board() except ValueError: resolve_board_path failed, path "
         "never became a ProjectPath — no root to relativize against via "
         "posix_relpath. Echoes the raw caller input, POSIX-normalized for "
         "display consistency, not a resolved project identity."
     ),
-    ("agent_api/describe.py", 525): (
+    ("agent_api/describe.py", 538): (
         "_describe_one_path() except ValueError: same shape as "
         "describe_board() above — resolution failed, nothing to relativize."
     ),
-    ("agent_api/validate.py", 120): (
+    ("agent_api/describe.py", 590): (
+        "_resolve_path_or_title(): no file has the caller's path, so its raw "
+        "text is compared as a board title, never used as a project identity."
+    ),
+    ("agent_api/validate.py", 121): (
         "_validate_one_path() except ValueError: resolve_board_path failed, "
         "raw_path never became a ProjectPath — no root to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."
@@ -52,7 +56,7 @@ ALLOWED: dict[tuple[str, int], str] = {
         "validate() except ValueError: same shape — resolution failed, "
         "nothing to relativize against."
     ),
-    ("agent_api/_paths.py", 460): (
+    ("agent_api/_paths.py", 455): (
         "resolve_board_or_error() ERR_PATH_OUTSIDE_PROJECT: the path lies "
         "outside the project, so no ProjectPath or root exists to relativize "
         "against. Echoes the raw caller input, POSIX-normalized."

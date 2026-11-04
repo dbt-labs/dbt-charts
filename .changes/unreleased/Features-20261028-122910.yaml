@@ -1,0 +1,3 @@
+kind: Features
+body: Daterange preset before_previous_<N>_<unit> (everything before the previous N units, no lower bound).
+time: 2026-10-28T12:29:10.059878-07:00

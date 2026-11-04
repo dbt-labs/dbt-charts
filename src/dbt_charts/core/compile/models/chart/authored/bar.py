@@ -18,7 +18,7 @@ from dbt_charts.core.compile.models.markers import Channel
 from dbt_charts.core.compile.models.style.authored import BarChartStylePatch
 
 from ._annotation import Annotation
-from ._base import SUPPORT_TABLE_TYPE_RULE, _CartesianChartFields
+from ._base import SUPPORT_TABLE_TYPE_RULE, _CartesianChartFields, _PatternChannelField
 from ._layer import (
     CARTESIAN_LAYER_SUPPORTED_CHART_TYPES,
     Y_START_NOT_NULL,
@@ -28,7 +28,7 @@ from ._layer import (
 from ._tooltip import _TooltipFields
 
 
-class BarChart(_CartesianChartFields, _TooltipFields):
+class BarChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
     """Authored patch for bar and histogram charts; histogram adds automatic x binning."""
 
     model_config = ConfigDict(extra="forbid")
@@ -49,6 +49,12 @@ class BarChart(_CartesianChartFields, _TooltipFields):
                 ),
             ),
             nonempty=("layers",),
+        ),
+        Forbids(
+            ("pattern", "style.pattern"),
+            "pattern is not supported on type: histogram: its bars are bins of "
+            "rows, so a column has no single value to pattern by.",
+            when=(ValueIn("type", ("histogram",)),),
         ),
         Forbids(
             ("annotations",),

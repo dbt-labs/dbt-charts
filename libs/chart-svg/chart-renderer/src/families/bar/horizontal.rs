@@ -3,7 +3,8 @@
 use crate::common::{VALUE_AXIS_BREATHING_ROOM, axis_title_text, distinct_values, row_num, row_str};
 use crate::diagnostic::Diagnostic;
 use crate::families::axis_caption::{category_axis_caption, date_value_caption, value_axis_caption};
-use crate::families::cartesian::{BandScale, LinearScale, vl_default_tick_count};
+use crate::families::cartesian::{BandScale, vl_default_tick_count};
+use d3rs::scale::{Band, Continuous};
 use crate::families::facet_compose::{GhostStyle, PanelGeometry};
 use crate::families::layers::{AreaFrame, LayerClaim, LayerScale, LayerStack, OverlayBarLayer, OverlayLayer, PointColor, claim_layers, layer_color_groups, layer_color_promoted, layer_color_text, layer_series_swatches, layer_series_text, merged_legend_title, panel_layer_rows, resolve_layer_rows, union_x_domain};
 use crate::families::legend::{LegendEntry, LegendSymbol, drawn_symbol_legend, legend_fit_bounds, legend_origin, legend_room, legend_slide, limited_labels, title_only_legend, vega_legend, with_drawn_labels};
@@ -13,12 +14,11 @@ use crate::families::temporal::{AuthoredTimeFormat, detect_time_unit, grain_form
 use crate::families::{facet_compose, multiples, span, support_table_columns, support_table_strip};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::Rect;
-use crate::svg::num_full;
-use crate::time_axis::{Grain as AxisGrain, TimeAxis};
+use crate::time_axis::TimeAxis;
 use crate::{Padding, Payload, codes, vega_fit};
 
 use measure::FontBook;
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -31,7 +31,7 @@ use super::facet::color_1to1_with_cat;
 use super::labels::{LabelBuild, LabelDecor, LabelDecors, LabelGeometry, LabelLayer, LabelSpec, LayerLabelFit, LayerLabelFitItem, category_clearance, mark_labels, plain_sites, value_label_layers};
 use super::layout::{Drawn, warn_band_too_narrow};
 use super::legend::{LayeredBarLegend, LegendState, bar_link_keys, build_legend_state, numeric_legends_of};
-use super::marks::{RangedLayerAria, Rounded, bar_passes, baseline_rule_layers, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, labels_on_zero_stack, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, unity_rule};
+use super::marks::{RangedLayerAria, Rounded, bar_passes, base_mark, baseline_rule_layers, datum_by_key, layer_mark, baseline_rules, capped_thickness, collapsed_bars, direction_layers, grouped_overlap_fraction, horizontal_bar_layer_marks, hover_band_for, labels_on_zero_stack, layer_block_rows, layer_day_numbers, link_hrefs, painted_series_bars, ranged_extent, strip_cell_aria, touching_width, unity_rule};
 use super::tooltip::{bar_datum_aria, stack_group_total, tooltip_order_domain};
 use super::vertical::refuse_numeric_x_on_bands;
 
@@ -202,6 +202,9 @@ pub(super) fn render_horizontal_panel(
     board_style: Option<&crate::BoardStyle>,
     facet: Option<&HorizontalFacetOpts>,
 ) -> Result<(Drawn, Option<HorizontalFacetPanel>), Diagnostic> {
+    if facet.is_none() {
+        r.patterns.reset_fallbacks();
+    }
     let eff_title_style = crate::common::effective_title_style(
         r.style.title_font.as_ref(),
         r.title_style.as_ref(),
@@ -222,8 +225,8 @@ pub(super) fn render_horizontal_panel(
     // (production's `apply_legend_entry_order(encoding["color"], order)` —
     // no reversal, see `common::sorted_series_by_stack_order`).
     let state = build_chart_domains(
-        facet.map_or(rows, |f| f.chart_rows),
-        facet.map_or(r.all_rows.as_deref().unwrap_or(rows), |f| f.cat_rows),
+        facet.map_or(r.whole_rows.as_deref().unwrap_or(rows), |f| f.chart_rows),
+        facet.map_or(r.whole_rows.as_deref().or(r.all_rows.as_deref()).unwrap_or(rows), |f| f.cat_rows),
         facet.map(|f| f.color_one_to_one),
         cat_field,
         val_field,
@@ -235,6 +238,7 @@ pub(super) fn render_horizontal_panel(
         &r.wide_measures,
         wide_series,
         r.palette.is_empty(),
+        r.legend_view.as_ref().and_then(|view| view.series()),
     )?;
     let BarChartState {
         mut cat_domain,
@@ -246,6 +250,8 @@ pub(super) fn render_horizontal_panel(
         palette_domain,
         ..
     } = state;
+    // A legend view draws fewer series than the color domain names; the sub-bands split by those.
+    let layout_domain: Vec<String> = crate::legend_view::shown_among(r.legend_view.as_ref(), &color_domain);
     // Each layer's own x column widens the shared band domain, as on the vertical arm.
     let layer_x_columns: Vec<(&[serde_json::Map<String, Value>], &str)> =
         layers.iter().map(|(l, rows)| (*rows, l.x().unwrap_or(cat_field.as_str()))).collect();
@@ -280,7 +286,9 @@ pub(super) fn render_horizontal_panel(
     // bucket still headers through the continuous-date fallback.
     let x_is_standard_date =
         crate::families::temporal::x_values_are_standard_dates(&horizontal_domain_strs);
-    let tooltip_tu = detect_time_unit(&horizontal_domain_strs);
+    // The categories' instants: a horizontal bar has no chart axis, and its layers' categories are in the domain.
+    let cat_axis = TimeAxis::over(&cat_domain);
+    let tooltip_tu = detect_time_unit(&cat_axis.dates(&cat_domain));
     let grain_header_format =
         AuthoredTimeFormat::parse("bar", grain_format(&r.style.axis_x.grain_formats, tooltip_tu))?;
     let order_domain =
@@ -304,7 +312,7 @@ pub(super) fn render_horizontal_panel(
     let cat_pad = ax_x
         .labels.padding
         .ok_or("bar: axis_x.labels.padding absent (theme required)")?;
-    let n_categories = crate::common::count_horizontal_bar_categories(rows, cat_field);
+    let n_categories = crate::common::count_horizontal_bar_categories(r.whole_rows.as_deref().unwrap_or(rows), cat_field);
     let derived = horizontal_min_height(r, n_categories)?;
     // A facet panel's height is the composer's, which applied the floor to the whole card.
     let h = if facet.is_some() { payload_height } else { payload_height.max(derived) };
@@ -322,9 +330,11 @@ pub(super) fn render_horizontal_panel(
     // suppressed (`apply_chart_support_table_post_pass`'s `_suppress_series_legend`)
     // — see `build_legend_state`'s own doc comment.
     let has_per_series = support_table.is_some_and(|c| c.entries.iter().any(|e| e.per_series.is_some()));
+    // A linked legend lists its variable's options in their order, not the stack's.
+    let legend_order = r.legend_view.as_ref().and_then(|view| view.series()).unwrap_or(&stack_order);
     let legend = build_legend_state(
         &color_domain,
-        &stack_order,
+        legend_order,
         &palette_domain,
         is_stacked,
         &r.legend,
@@ -337,6 +347,7 @@ pub(super) fn render_horizontal_panel(
         &r.field_labels,
         &wide_labels,
         r.numeric_color.is_some(),
+        &r.patterns,
     )?;
     let LegendState { shown: legend_shown, title: legend_title, entries: legend_entries } = legend;
     let base_legend_label = axis_title_text(val_field, r.y_label.as_deref(), &r.field_labels)?;
@@ -353,7 +364,7 @@ pub(super) fn render_horizontal_panel(
             .iter()
             .map(|v| {
                 let domain = if is_stacked { &palette_domain } else { &color_domain };
-                Ok((v.clone(), crate::common::series_color(v, domain, &r.series_palette, category_scale)?))
+                Ok((v.clone(), crate::common::series_color(v, domain, &r.series_palette, category_scale, &r.patterns)?.swatch("none", 0.0).fill))
             })
             .collect::<Result<_, String>>()?
     };
@@ -411,7 +422,7 @@ pub(super) fn render_horizontal_panel(
     // (`BaselineFeature.apply` skips the chart: its pooled verdict would be
     // wrong for a panel with its own domain).
     let independent_scale = facet.is_some_and(|f| f.independent_scale);
-    let value_rows = facet.map_or(rows, |f| f.value_domain_rows);
+    let value_rows = facet.map_or_else(|| crate::legend_view::axis_rows(r.whole_rows.as_deref(), rows), |f| f.value_domain_rows);
     let rules = if independent_scale {
         None
     } else {
@@ -464,7 +475,7 @@ pub(super) fn render_horizontal_panel(
     }
     let mut val_tick_labels = match &date_axis {
         Some(axis) => axis.labels.clone(),
-        None => format_tick_labels(&tick_values, ax_y, normalize, "x")?,
+        None => format_tick_labels(&tick_values, ax_y, normalize, "x", fonts)?,
     };
 
 
@@ -506,7 +517,8 @@ pub(super) fn render_horizontal_panel(
     let link = r.datum_link(cat_field, crate::href::LinkText::Raw);
     // Under a layer, a date x that is not authored `temporal` leaves the base's own marks unlinked.
     let base_link = link.as_ref().filter(|_| layers.is_empty() || ax_x.resolved_authored_type() == Some("temporal") || !x_is_standard_date);
-    let hrefs = link_hrefs(base_link, rows, (cat_field, color_field), false)?;
+    let hrefs = link_hrefs(base_link, rows, (cat_field, color_field), r.y_start.is_none())?;
+    let datum_of = datum_by_key(rows, (cat_field, color_field), r.y_start.is_none());
     let strip_links = crate::href::first_datum_links(base_link, rows, cat_field)?;
     let anchor_of = |key: &(String, String)| r.selection.mark(r.link_open.anchor(hrefs.get(key).map(String::as_str)));
     // Rows of one `(category, series)` stack over each other, in row order.
@@ -590,7 +602,7 @@ pub(super) fn render_horizontal_panel(
     // arm whenever the last visible tick sits short of a headroom-driven
     // domainMax. Grouped/stacked shapes never reach here (`mark_labels`
     // draws single-series labels only).
-    let zero_text = zero_label(&r, rows, &LinearScale::new(linear_domain_min, linear_domain_max, 0.0, w))?;
+    let zero_text = zero_label(&r, rows, &Continuous::linear([linear_domain_min, linear_domain_max], [0.0, w]))?;
     // Axis titles: category (VL y, chart.x) on the left, measure (VL x,
     // chart.y) on the bottom — see common.rs's axis_title_band for the
     // measured constant. Horizontal-bar channel flip: category title uses
@@ -616,7 +628,9 @@ pub(super) fn render_horizontal_panel(
     let val_title_w = crate::common::widest_title_line(&ax_y.title, &val_title_paint, fonts)?;
 
     let val_font_size = ax_y.labels.font.size_or(11.0);
-    let val_pad = ax_y.labels.padding.unwrap_or(6.0);
+    // `labels.visible: false` keeps ticks and grid but no label text, and no row for it.
+    let val_labels_hidden = ax_y.labels.visible == Some(false);
+    let val_pad = if val_labels_hidden { 0.0 } else { ax_y.labels.padding.unwrap_or(6.0) };
     let val_family = ax_y.labels.font.family.as_deref().unwrap_or("sans-serif");
 
     // ── Plot-rect negotiation ──────────────────────────────────────────────
@@ -664,7 +678,7 @@ pub(super) fn render_horizontal_panel(
         if is_stacked { category_totals(rows, cat_field, val_field) } else { HashMap::new() };
     let painted_grouped = (is_grouped && !is_stacked).then(|| {
         let (mut painted, layers) = painted_series_bars(
-            &color_domain,
+            &layout_domain,
             &cat_domain,
             &data_map,
             ranged.as_ref(),
@@ -686,27 +700,20 @@ pub(super) fn render_horizontal_panel(
         (painted, layers)
     });
     let spans = match &painted_grouped {
-        _ if is_stacked => stack_spans(
-            &cat_domain,
-            &stack_paint_order,
-            &data_map,
-            normalize,
-            &category_totals_all,
-            center_stack.as_ref(),
-        ),
+        _ if is_stacked => stack_spans(&cat_domain, &stack_paint_order, &data_map, normalize, center_stack.as_ref())?,
         Some((painted, _)) => grouped_spans(painted, &data_map, ranged.as_ref()),
         // A colorless `center` bar is a stack of one series.
         None if center_stack.is_some() => {
-            stack_spans(&cat_domain, &[String::new()], &data_map, false, &category_totals_all, center_stack.as_ref())
+            stack_spans(&cat_domain, &[String::new()], &data_map, false, center_stack.as_ref())?
         }
         None if !tier_depth.is_empty() => {
-            stack_spans(&cat_domain, &with_tiers(&[String::new()], &tier_depth), &data_map, false, &category_totals_all, None)
+            stack_spans(&cat_domain, &with_tiers(&[String::new()], &tier_depth), &data_map, false, None)?
         }
         None => SegmentSpans::new(),
     };
     // A site's band-axis center: the band's middle, or its series' sub-band's.
     let horizontal_center = |bw: f64| {
-        let (n_series, one_to_one) = (color_domain.len(), one_to_one);
+        let (n_series, one_to_one) = (layout_domain.len(), one_to_one);
         move |_: &str, band_y: f64, slot: Option<usize>| match slot {
             None => band_y + bw / 2.0,
             Some(si) => {
@@ -724,7 +731,7 @@ pub(super) fn render_horizontal_panel(
             None => CenterStack::over([rows], cat_field, val_field, false),
         });
         let label_spans =
-            stack_label_spans(&r, label_stack.as_ref(), &cat_domain, &stack_order, &data_map, &category_totals_all);
+            stack_label_spans(r, label_stack.as_ref(), &cat_domain, &stack_order, &data_map)?;
         value_label_layers(&LabelBuild {
             r: &r,
             rows,
@@ -813,8 +820,8 @@ pub(super) fn render_horizontal_panel(
     }
     // An endpoint-label rail needs a stacked bar, which never splits its columns, so
     // a railed bar's bands are one series wide and never under the floor.
-    let series = if split_columns { color_domain.len() } else { 1 };
-    warn_band_too_narrow(chart_id, h, distinct_values(rows, cat_field), series);
+    let series = if split_columns { layout_domain.len() } else { 1 };
+    warn_band_too_narrow(chart_id, h, distinct_values(r.whole_rows.as_deref().unwrap_or(rows), cat_field), series);
 
     // The category axis follows `axis_y.position` on a horizontal bar.
     let cat_on_right = match ax_y.position.as_deref() {
@@ -1074,7 +1081,7 @@ pub(super) fn render_horizontal_panel(
             )?
         } else {
             let family = measure::stand_in_family(val_family);
-            let widest = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize, "x")?
+            let widest = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, normalize, "x", fonts)?
                 .iter()
                 .try_fold(0.0_f64, |acc, label| fonts.measure(label, family, val_font_size).map(|w| acc.max(w)))?;
             widest.min(val_limit) + VALUE_AXIS_BREATHING_ROOM
@@ -1107,7 +1114,7 @@ pub(super) fn render_horizontal_panel(
     )?;
     title.warn_truncated(&r.id);
     refuse_numeric_x_on_bands(&r)?;
-    let annotation_days: Option<Vec<f64>> = TimeAxis::new(AxisGrain::default(), HashMap::new()).days(&cat_domain);
+    let annotation_days: Option<Vec<f64>> = cat_axis.dates(&cat_domain).day.into_iter().collect();
     // The chart's own ink past the plot, set by the fit's ink closure on every
     // pass; the last write is the drawn size's.
     let annotation_reach = Cell::new(crate::annotation::Reach::default());
@@ -1126,7 +1133,7 @@ pub(super) fn render_horizontal_panel(
             reach: annotation_reach.get(),
             x: AxisMap::Band {
                 domain: cat_domain.clone(),
-                geometry: crate::families::cartesian::BandGeometry::new(cat_domain.len(), 0.0, ph, band_pi, band_po),
+                geometry: Band::new(cat_domain.len(), [0.0, ph], band_pi, band_po, 0.5, false),
                 days: annotation_days.clone(),
                 range: (0.0, ph),
             },
@@ -1135,7 +1142,7 @@ pub(super) fn render_horizontal_panel(
             orientation: Orientation::Horizontal,
             fonts,
             canvas: r.canvas.as_str(),
-            clip_id: format!("{}-ann{}", crate::contract::safe_svg_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
+            clip_id: format!("{}-ann{}", crate::contract::scoped_id(&r.id), facet.map_or(0, |f| f.panel_ordinal)),
             occupied: Vec::new(),
         }
     };
@@ -1166,7 +1173,7 @@ pub(super) fn render_horizontal_panel(
         let val_label_rows = std::cell::RefCell::new(Vec::<usize>::new());
         let measure_labels = |labels: &[String]| -> Result<Vec<f64>, String> {
             *val_label_rows.borrow_mut() = labels.iter().map(|l| crate::text::line_count(l)).collect();
-            labels.iter().map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
+            labels.iter().filter(|_| !val_labels_hidden).map(|l| fonts.measure_shaped(l, val_family, val_font_size)).collect()
         };
         let mut val_label_ws = measure_labels(&val_tick_labels)?;
         // Rotated left axis title: ink extends `round(0.21·fs)+round(0.8·fs)`
@@ -1306,7 +1313,7 @@ pub(super) fn render_horizontal_panel(
                 // Zero rule — boundStroke expands by the FULL stroke width.
                 // A zero-anchored negative floor moves the rule OFF the
                 // plot's left edge (x=0 is then the domain floor, not
-                // zero); the "-1mn" tick's own ink already unions that
+                // zero); the "-1m" tick's own ink already unions that
                 // edge, so only a genuinely interior rule needs its own
                 // bounds. The 100% rule, when drawn, is a stroke of its own at
                 // its scale position (the far edge for a normalize stack).
@@ -1321,11 +1328,11 @@ pub(super) fn render_horizontal_panel(
                 }
                 for LayerLabelFit { style, items, .. } in &layer_caption_ink {
                     let band = BandScale::new(cat_domain.clone(), 0.0, ph, band_pi, band_po);
-                    let linear = LinearScale::new(linear_domain_min, linear_domain_max, 0.0, pw);
+                    let linear = Continuous::linear([linear_domain_min, linear_domain_max], [0.0, pw]);
                     for LayerLabelFitItem { val, width, cat, spot } in items {
                         let Some(band_y) = band.position(cat) else { continue };
                         b.union(&style.ink(
-                            linear.position(*val).clamp(0.0, pw),
+                            linear.scale(*val).clamp(0.0, pw),
                             band_y + band.bandwidth() / 2.0,
                             *width,
                             spot,
@@ -1334,7 +1341,7 @@ pub(super) fn render_horizontal_panel(
                 }
                 if !label_layers.is_empty() || bar_layer_labels.iter().any(Option::is_some) {
                     let band = BandScale::new(cat_domain.clone(), 0.0, ph, band_pi, band_po);
-                    let linear = LinearScale::new(linear_domain_min, linear_domain_max, 0.0, pw);
+                    let linear = Continuous::linear([linear_domain_min, linear_domain_max], [0.0, pw]);
                     let center = horizontal_center(band.bandwidth());
                     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
                     for layer in label_layers.iter().chain(bar_layer_labels.iter().flatten()) {
@@ -1419,7 +1426,7 @@ pub(super) fn render_horizontal_panel(
         if let Some(rungs) = unbaked_rungs(ax_y, normalize, false, linear_domain_min, linear_domain_max, m.plot_w) {
             if rungs != tick_values {
                 tick_values = rungs;
-                val_tick_labels = format_tick_labels(&tick_values, ax_y, normalize, "x")?;
+                val_tick_labels = format_tick_labels(&tick_values, ax_y, normalize, "x", fonts)?;
                 val_label_ws = measure_labels(&val_tick_labels)?;
                 m = fit(&tick_values, &val_label_ws);
             }
@@ -1477,7 +1484,7 @@ pub(super) fn render_horizontal_panel(
     });
     let plot_right = plot_left + plot_w;
     let plot_bottom = plot_top + plot_h;
-    let linear = LinearScale::new(linear_domain_min, linear_domain_max, 0.0, plot_w);
+    let linear = Continuous::linear([linear_domain_min, linear_domain_max], [0.0, plot_w]);
     if crate::labels_expr::view::active() {
         use crate::labels_expr::view::{register_axis, register_band, register_linear, AxisSpec, Orient, Span};
         register_linear("x", linear_domain_min, linear_domain_max, Span::Width);
@@ -1501,8 +1508,8 @@ pub(super) fn render_horizontal_panel(
     let corner_r = r.style.mark.border.radius.unwrap_or(0.0);
     let value_axis = HorizontalValueAxis {
         ticks: tick_values.clone(),
-        labels: val_tick_labels.clone(),
-        shown: val_tick_labels.iter().map(|l| ax_y.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
+        labels: val_tick_labels.iter().filter(|_| !val_labels_hidden).cloned().collect(),
+        shown: val_tick_labels.iter().filter(|_| !val_labels_hidden).map(|l| ax_y.labels.clip(l, fonts)).collect::<Result<_, _>>()?,
         visible: val_visible.take(),
         domain: (linear_domain_min, linear_domain_max),
         flush_threshold: flush_thr,
@@ -1526,7 +1533,7 @@ pub(super) fn render_horizontal_panel(
     let cat_caption = category_axis_caption(&cat_title_paint, ax_x, &cat_domain)?;
 
     // ── SVG emission ───────────────────────────────────────────────────────
-    let frame = ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg, num_full);
+    let frame = ChartFrame::new(canvas_w, canvas_h, (pad_l, pad_r, pad_t, pad_b), bg);
     // What precedes the plot group: the title, the legend and the rail.
     let mut head: Vec<Node> = title.nodes(vega_title_pos, (plot_left, plot_top));
     if head.is_empty() {
@@ -1548,6 +1555,7 @@ pub(super) fn render_horizontal_panel(
             let (dx, dy) = legend_slide(&r.id, &r.legend.position, lg, (plot_w, plot_h))?;
             head.extend(drawn_symbol_legend(&legend_entries_typed, lg, &r.legend, LegendSymbol::Square(swatch_stroke), *lx + dx, *ly + dy, stamp_legend_series));
             head.extend(numeric_legends.nodes_after(lg, &r.legend, fonts, (plot_w, plot_h), (*lx + dx, *ly + dy))?);
+            head.extend(crate::legend_view::legend_clear(lg, &legend_entries_typed, &r.legend, (*lx + dx, *ly + dy), crate::legend_view::Inset::below_titles(&head, pad_t, canvas_w - pad_r, canvas_h - pad_b), fonts)?);
         }
     }
 
@@ -1555,34 +1563,20 @@ pub(super) fn render_horizontal_panel(
     // TOP category row (cat_domain's first entry — the row nearest the rail).
     if show_rail {
         if let Some(top_cat) = cat_domain.first() {
-            let totals = if normalize {
-                category_totals(rows, cat_field, val_field)
-            } else {
-                HashMap::new()
-            };
-            let total = if normalize {
-                totals.get(top_cat).copied().ok_or_else(|| {
-                    format!("bar: internal error — no stacked total computed for category {top_cat:?}")
-                })?
-            } else {
-                0.0
-            };
             let sl = &r.style.series_label;
             let rail = top_rail.as_ref().expect("a drawn rail has its pane");
             // The pane sits `spacing` below the rail's bottom edge, its own
             // top ink (the zero rule, the header) between them.
             let rail_y = plot_top - rail_pane_overhang - rail.spacing - rail.height + rail.text_dy;
-            let mut cum = 0.0_f64;
             let mut rail_labels: Vec<Node> = Vec::new();
             for series in &stack_order {
-                let raw_val = data_map.get(&(top_cat.clone(), series.clone())).copied().unwrap_or(0.0);
-                if raw_val <= 0.0 {
+                let key = (top_cat.clone(), series.clone());
+                if data_map.get(&key).is_none_or(|&raw_val| raw_val <= 0.0) {
                     continue;
                 }
-                let seg_val = if normalize { raw_val / total } else { raw_val };
-                let seg_start = linear.position(cum);
-                let seg_end = linear.position(cum + seg_val);
-                cum += seg_val;
+                let span = spans[&key];
+                let seg_start = linear.scale(span.start);
+                let seg_end = linear.scale(span.end);
                 let seg_mid = plot_left + (seg_start + seg_end) / 2.0;
                 // Companion ink occupies the fill's palette slot — the
                 // board slot when bound, else the local palette_domain
@@ -1599,19 +1593,9 @@ pub(super) fn render_horizontal_panel(
                     Some(field) => crate::contract::series_label_attrs(field, series)?,
                     None => Attrs::new(),
                 };
-                rail_labels.push(Node::text(
-                    Attrs::new()
-                        .set("x", format!("{seg_mid:.2}"))
-                        .set("y", format!("{rail_y:.2}"))
-                        .set("text-anchor", "middle")
-                        .vega("font-family", sl.font_family.as_str())
-                        .set("font-size", sl.font_size.to_string())
-                        .set("font-weight", sl.font_weight.as_str())
-                        .set("font-style", sl.font_style.as_str())
-                        .set("fill", rcolor.as_str())
-                        .extend(rail_label_attrs),
-                    series.as_str(),
-                ));
+                let label_attrs = Attrs::new().set("text-anchor", "middle").vega("font-family", sl.font_family.as_str()).num("font-size", sl.font_size).set("font-weight", sl.font_weight.as_str()).set("font-style", sl.font_style.as_str()).set(crate::contract::SERIES_KEY, series.as_str()).set("fill", rcolor.as_str()).extend(rail_label_attrs);
+                let label_attrs = crate::legend_view::direct_label(r.legend_view.as_ref(), label_attrs, series);
+                rail_labels.push(Node::text(Role::Label, (seg_mid, rail_y), label_attrs, series.as_str()));
             }
             if tooltip_labels {
                 head.push(crate::contract::mark_group("text", "concat_0_marks", rail_labels)?);
@@ -1647,7 +1631,7 @@ pub(super) fn render_horizontal_panel(
             // translate; the label keeps its exact position (`bar_review`
             // ref: labels 201.5/283.89/366.27/448.66/531.05, grid
             // 201.5/283.5/366.5/448.5/531.5 = floor(label) + 0.5).
-            let pos = linear.position(tv);
+            let pos = linear.scale(tv);
             let x = pos.round() + gd;
             // A rung on the domain max snaps OUTWARD by up to `1 −
             // frac(plot_w)`, and Vega draws it there (probe: plot 331.6,
@@ -1656,21 +1640,13 @@ pub(super) fn render_horizontal_panel(
             if x < -0.5 || x > plot_w + 1.0 {
                 continue;
             }
-            lines.push(Node::Line(
-                Attrs::new()
-                    .set("x1", format!("{x:.2}"))
-                    .set("y1", format!("{gd:.1}"))
-                    .set("x2", format!("{x:.2}"))
-                    .set("y2", format!("{:.2}", plot_h + gd))
-                    .set("stroke", gc)
-                    .set("stroke-width", gw.to_string()),
-            ));
+            lines.push(Node::line(Role::Grid, (x, gd), (x, plot_h + gd), grid.faded_stroke(gc, gw)));
         }
         plot.push(crate::contract::grid_group(lines));
     }
     if let Some(t) = &tear {
         let gc = crate::common::required_ink(grid.color.as_deref(), "bar", "grid.color")?;
-        plot.push(t.node(linear.position(t.edge), plot_w, plot_h, true, gc, grid.width.unwrap_or(1.0)));
+        plot.push(t.node(linear.scale(t.edge), plot_w, plot_h, true, gc, grid.width.unwrap_or(1.0)));
     }
 
     // The rail sits a fixed distance above the plot and reserves no room for annotation text.
@@ -1705,8 +1681,6 @@ pub(super) fn render_horizontal_panel(
         String::new()
     };
 
-    // The base bars, which annotation text tests for its halo.
-    let mut under = Vec::new();
     // Bars
     if is_stacked {
         let bw = band.bandwidth();
@@ -1732,7 +1706,7 @@ pub(super) fn render_horizontal_panel(
                     let total_row =
                         if has_negative || center { None } else { Some(stack_group_total(&category_totals_all, cat)?) };
                     bar_datum_aria(
-                        tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()),
+                        tooltip_labels, cat, Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()),
                         order_domain.as_deref().map(|d| crate::contract::tooltip_order_rank(d, base_series(series))),
                         value_title, tooltip_fmt, raw_val,
                         (normalize && !has_negative).then_some(raw_val / total), total_row, extras.of(&key)?, None,
@@ -1745,21 +1719,23 @@ pub(super) fn render_horizontal_panel(
                     band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(raw_val));
                 }
                 label_decors.insert(key.clone(), LabelDecor { aria: aria.clone(), fill: None });
-                let x1 = linear.position(span.start);
-                let x2 = linear.position(span.end);
+                let x1 = linear.scale(span.start);
+                let x2 = linear.scale(span.end);
                 let (seg_start, seg_end) = if x1 <= x2 { (x1, x2) } else { (x2, x1) };
                 let seg_w = seg_end - seg_start;
-                let fill = crate::common::series_color(base_series(series), &palette_domain, &r.series_palette, category_scale)?;
+                let paint = crate::common::series_color(base_series(series), &palette_domain, &r.series_palette, category_scale, &r.patterns)?;
                 if ghosts_on {
-                    ghost_points.push((aria.clone(), x2, bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
+                    ghost_points.push((aria.clone(), x2, bar_y + mark_h / 2.0, paint.color().to_string(), hrefs.get(&key).cloned()));
                 }
+                let mark = paint.for_mark(seg_w.min(mark_h), stroke_color, stroke_w);
                 // Corner radius flips with sign (Vega's mixed-sign layer
                 // split — see `bar_passes`'s doc comment and the vertical
                 // arm's mirrored `Rounded::Negative`): a positive segment rounds
                 // its right (far) end, a negative one its left.
                 let outer = if raw_val < 0.0 { outers.1 } else { outers.0 } == Some(series);
-                under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(seg_start, bar_y, seg_w, mark_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
-                plot.extend(bar_passes(true, seg_start, bar_y, seg_w, mark_h, &fill, r.style.mark.opacity, stroke_color, stroke_w, if outer { corner_r } else { 0.0 },
+                let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
+                let segment_r = if outer { corner_r } else { 0.0 };
+                plot.extend(bar_passes(base_mark(&datum_of, &key), true, seg_start, bar_y, seg_w, mark_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w, segment_r,
                     Rounded::by_sign(raw_val), false, None, aria.as_deref(), anchor_of(&key))?);
             }
         }
@@ -1771,7 +1747,7 @@ pub(super) fn render_horizontal_panel(
         // which Vega-Lite offsets by `(1 − band)/2` of the CATEGORY scale's
         // bandwidth — not the sub-step's — or, for a positive overlap, a
         // `(1 + f) × bandwidth('yOffset')` size centered on the sub-band.
-        let sub_step = support_table_strip::sub_band_step(outer_bw, color_domain.len(), one_to_one);
+        let sub_step = support_table_strip::sub_band_step(outer_bw, layout_domain.len(), one_to_one);
         let (mark_h, sub_pad) = if one_to_one {
             let h = capped_thickness((sub_step * mark_band_width).min(sub_step), r.style.mark.max_size);
             (h, (sub_step - h) / 2.0)
@@ -1782,6 +1758,13 @@ pub(super) fn render_horizontal_panel(
             let centered = f > 0.0 || r.style.mark.max_size.is_some();
             (h, if centered { (sub_step - h) / 2.0 } else { (1.0 - b) / 2.0 * outer_bw })
         };
+        // Patterned bars on the chart's own ground close the gaps between them and share one ink edge.
+        let (mark_h, sub_step) = if !one_to_one && mark_h < sub_step && r.patterns.is_active() {
+            let touching = touching_width(color_domain.len(), sub_step, mark_h);
+            (touching, touching)
+        } else {
+            (mark_h, sub_step)
+        };
 
         // Bars span the zero rule to their value, whichever side of it that
         // is; a mixed-sign measure paints its `>= 0` sub-layer and then its
@@ -1789,7 +1772,8 @@ pub(super) fn render_horizontal_panel(
         let (painted, layers) = painted_grouped.as_ref().expect("a grouped bar's painted series come with its spans");
         bar_layers_painted = *layers;
         for (si, series, cat) in painted {
-            let fill = crate::common::series_color(base_series(series), &color_domain, &r.series_palette, category_scale)?;
+            let paint = crate::common::series_color(base_series(series), &color_domain, &r.series_palette, category_scale, &r.patterns)?;
+            let fill = paint.color().to_string();
             let Some(band_y) = band.position(cat) else { continue };
             let sub_start = band_y + support_table_strip::sub_band_start(sub_step, *si, one_to_one);
             let bar_y = sub_start + sub_pad;
@@ -1798,21 +1782,21 @@ pub(super) fn render_horizontal_panel(
             let start = ranged.as_ref().map(|rb| rb.starts.get(&key).copied());
             let (bar_x, bar_w, ends) = match (start, spans.get(&key)) {
                 (Some(None), _) => continue,
-                (Some(Some(start)), _) => ranged_extent(|v| linear.position(v), val, Some(start)),
+                (Some(Some(start)), _) => ranged_extent(|v| linear.scale(v), val, Some(start)),
                 // A row stacked over its cell's earlier ones spans from where they end.
-                (None, Some(span)) if is_tier(series) => ranged_extent(|v| linear.position(v), span.end, Some(span.start)),
-                (None, _) => ranged_extent(|v| linear.position(v), val, None),
+                (None, Some(span)) if is_tier(series) => ranged_extent(|v| linear.scale(v), span.end, Some(span.start)),
+                (None, _) => ranged_extent(|v| linear.scale(v), val, None),
             };
             let order = order_domain.as_deref().map(|d| crate::contract::tooltip_order_rank(d, base_series(series)));
             let plain = || {
                 bar_datum_aria(
-                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
+                    tooltip_labels, cat, Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
                     value_title, tooltip_fmt, val, None, None, extras.of(&key)?, None,
                 )
             };
             let aria = match (&ranged, start) {
                 (Some(rb), Some(Some(start))) => rb.aria(
-                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
+                    tooltip_labels, cat, &cat_axis, tooltip_tu, x_is_standard_date, grain_header_format, Some(series_text(base_series(series)).as_str()), order,
                     (value_title, tooltip_fmt), (start, val), plain,
                 )?,
                 _ => plain()?,
@@ -1822,10 +1806,11 @@ pub(super) fn render_horizontal_panel(
                 band.push(cat, series, aria.as_deref(), hrefs.get(&key).map(String::as_str), bar_y, mark_h, Some(val));
             }
             if ghosts_on {
-                ghost_points.push((aria.clone(), linear.position(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
+                ghost_points.push((aria.clone(), linear.scale(val).clamp(0.0, plot_w), bar_y + mark_h / 2.0, fill.clone(), hrefs.get(&key).cloned()));
             }
-            under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
-            plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, &fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
+            let mark = paint.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
+            let (edge, edge_w) = mark.seam(crate::pattern::STACK_EDGE_W);
+            plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, edge, edge_w, corner_r, ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     } else {
         let bw = band.bandwidth();
@@ -1834,7 +1819,7 @@ pub(super) fn render_horizontal_panel(
         // Zero-anchored measure axis: bars split by sign at the zero rule's
         // own x, not a hardcoded local origin — a negative floor moves the
         // zero rule off the plot's left edge (see `value_domain_and_ticks`).
-        let zero_x = linear.position(0.0);
+        let zero_x = linear.scale(0.0);
         // A ranged bar's rises and falls split into layers of their own on a
         // numeric axis; a date span has no sign (`bar_span_signs` reads only
         // numeric cells), so a gantt stays one layer that rounds both ends.
@@ -1857,12 +1842,12 @@ pub(super) fn render_horizontal_panel(
             let bar_y = band_y + bar_pad;
             // A category with no row (a synthesized calendar bucket) has no datum.
             let Some(&val) = data_map.get(&key) else { continue };
-            let val_x = linear.position(val);
+            let val_x = linear.scale(val);
             let start = ranged.as_ref().and_then(|rb| rb.starts.get(&key).copied());
             let (bar_x, bar_w, ends) = match start {
                 _ if spans.contains_key(&key) => {
                     let span = &spans[&key];
-                    let (x, w, _) = ranged_extent(|v| linear.position(v), span.end, Some(span.start));
+                    let (x, w, _) = ranged_extent(|v| linear.scale(v), span.end, Some(span.start));
                     (x, w, Rounded::by_sign(val))
                 }
                 None if val_x >= zero_x => (zero_x, val_x - zero_x, Rounded::Positive),
@@ -1871,29 +1856,28 @@ pub(super) fn render_horizontal_panel(
                 // `vega.js:35708-35740`); both ends round, but a numeric fall
                 // keeps its left pair only (`bar_corner_props`).
                 Some(start) => {
-                    let start_x = linear.position(start);
+                    let start_x = linear.scale(start);
                     let ends = if numeric_span && val < start { Rounded::Fall } else { Rounded::Both };
                     (val_x.min(start_x), (val_x - start_x).abs(), ends)
                 }
             };
-            let fill = r.style.single_series_fill.as_str();
             let plain = || {
                 bar_datum_aria(
-                    tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, (!layers.is_empty()).then_some(value_title), None, value_title, tooltip_fmt, val, None, None, extras.of(&key)?, None,
+                    tooltip_labels, cat, Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, (!layers.is_empty()).then_some(value_title), None, value_title, tooltip_fmt, val, None, None, extras.of(&key)?, None,
                 )
             };
             let aria = match (&ranged, start, &span_block) {
                 (Some(_), Some(_), Some(block)) => {
                     let datum = rows.iter().find(|row| row_str(row, cat_field) == *cat).expect("a ranged bar has its row");
                     Some(block.label(
-                        &crate::contract::tooltip_header_text(cat, tooltip_tu, x_is_standard_date, grain_header_format)?,
+                        &crate::contract::tooltip_header_text(cat, cat_axis.date(cat), tooltip_tu, x_is_standard_date, grain_header_format)?,
                         layer_series.get(cat).map(String::as_str),
                         datum,
                         tooltip_fmt,
                     )?)
                 }
                 (Some(rb), Some(start), None) => {
-                    rb.aria(tooltip_labels, cat, tooltip_tu, x_is_standard_date, grain_header_format, None, None, (value_title, tooltip_fmt), (start, val), plain)?
+                    rb.aria(tooltip_labels, cat, &cat_axis, tooltip_tu, x_is_standard_date, grain_header_format, None, None, (value_title, tooltip_fmt), (start, val), plain)?
                 }
                 _ => plain()?,
             };
@@ -1906,8 +1890,8 @@ pub(super) fn render_horizontal_panel(
             if ghosts_on {
                 ghost_points.push((aria.clone(), val_x, bar_y + mark_h / 2.0, ghost_ink.clone(), hrefs.get(&key).cloned()));
             }
-            under.push(crate::annotation::DataMark::Tinted(Box::new(crate::annotation::DataMark::rect(bar_x, bar_y, bar_w, mark_h)), fill.to_string(), r.style.mark.opacity.unwrap_or(1.0)));
-            plot.extend(bar_passes(true, bar_x, bar_y, bar_w, mark_h, fill, r.style.mark.opacity, stroke_color, stroke_w, corner_r,
+            let mark = r.single_series_paint(rows, &cat_domain, cat)?.for_mark(bar_w.min(mark_h), stroke_color, stroke_w);
+            plot.extend(bar_passes(base_mark(&datum_of, &key), true, bar_x, bar_y, bar_w, mark_h, &mark.fill, mark.ink.as_deref(), r.style.mark.opacity, &mark.stroke, mark.stroke_w, corner_r,
                 ends, true, None, aria.as_deref(), anchor_of(&key))?);
         }
     }
@@ -1935,7 +1919,7 @@ pub(super) fn render_horizontal_panel(
                 let describe = |row: &serde_json::Map<String, Value>, val: f64| {
                     if let Some(block) = &span_block {
                         let cat = row_str(row, bl.x.as_deref().unwrap_or(cat_field));
-                        let header = crate::contract::tooltip_header_text(&cat, tooltip_tu, x_is_standard_date, grain_header_format)?;
+                        let header = crate::contract::tooltip_header_text(&cat, cat_axis.date(&cat), tooltip_tu, x_is_standard_date, grain_header_format)?;
                         let series = layer_series.get(&cat).map(String::as_str);
                         let label = if bl.y_start.is_some() {
                             block.layer_bar_label(&header, series, row, tooltip_fmt)
@@ -1946,13 +1930,13 @@ pub(super) fn render_horizontal_panel(
                     }
                     if let Some(own) = own_aria.as_ref().filter(|_| tooltip_labels) {
                         let cat = row_str(row, bl.x.as_deref().unwrap_or(cat_field));
-                        let header = crate::contract::tooltip_header_text(&cat, tooltip_tu, x_is_standard_date, grain_header_format)?;
+                        let header = crate::contract::tooltip_header_text(&cat, cat_axis.date(&cat), tooltip_tu, x_is_standard_date, grain_header_format)?;
                         return own.label(bl, &header, row, bl.axis_y.tooltip_format_or(tooltip_fmt)).map(Some);
                     }
                     let color_value = bl.color.as_deref().filter(|_| color_promoted).map(|cf| layer_color_text(row, cf));
                     let series = layer_series_text(&layer_name, color_value.as_deref());
                     bar_datum_aria(
-                        tooltip_labels, &row_str(row, bl.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format,
+                        tooltip_labels, &row_str(row, bl.x.as_deref().unwrap_or(cat_field)), Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format,
                         Some(series.as_str()), None, layer_name.as_str(), bl.axis_y.tooltip_format_or(tooltip_fmt), val, None,
                         None, &[], None,
                     )
@@ -1974,11 +1958,11 @@ pub(super) fn render_horizontal_panel(
                             None => layer_scale.color_of_value(m.series.as_deref()).to_string(),
                         },
                     };
-                    let (x1, x2) = (linear.position(m.from), linear.position(m.to));
+                    let (x1, x2) = (linear.scale(m.from), linear.scale(m.to));
                     let aria = describe(m.row, m.value)?;
                     let layer_href = crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())).map(|link| link.href(m.row)).transpose()?;
                     layer_bars.extend(bar_passes(
-                        true, x1.min(x2), band_y + bar_pad, (x2 - x1).abs(), mark_h, &fill, bl.bar_mark.opacity, bl_stroke_color,
+                        layer_mark(1 + position, bl, m.row, m.datum), true, x1.min(x2), band_y + bar_pad, (x2 - x1).abs(), mark_h, &fill, None, bl.bar_mark.opacity, bl_stroke_color,
                         bl_stroke_w, bl_corner_r, if layer_clip { Rounded::Fall } else if bl.y_start.is_none() { Rounded::by_sign(m.value) } else if m.to >= m.from { Rounded::Both } else { Rounded::Fall }, true, None, aria.as_deref(),
                         r.link_open.anchor(layer_href.as_deref()),
                     )?);
@@ -2017,7 +2001,7 @@ pub(super) fn render_horizontal_panel(
                     true,
                     |row| band.position(&row_str(row, sl.x.as_deref().unwrap_or(cat_field))).map(|by| by + band.bandwidth() / 2.0),
                     None,
-                    |val| crate::families::layers::clamp_unless_clipped(linear.position(val), plot_w, layer_clips[position]),
+                    |val| crate::families::layers::clamp_unless_clipped(linear.scale(val), plot_w, layer_clips[position]),
                     |row, val| {
                         let Some(block) = &span_block else {
                             if ranged.is_some() {
@@ -2026,12 +2010,12 @@ pub(super) fn render_horizontal_panel(
                             let color_value = sl.color.as_deref().filter(|_| color_promoted).map(|cf| layer_color_text(row, cf));
                             let series = layer_series_text(&layer_name, color_value.as_deref());
                             return bar_datum_aria(
-                                tooltip_labels, &row_str(row, sl.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
+                                tooltip_labels, &row_str(row, sl.x.as_deref().unwrap_or(cat_field)), Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
                                 layer_name.as_str(), sl.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, &[], None,
                             );
                         };
                         let cat = row_str(row, sl.x.as_deref().unwrap_or(cat_field));
-                        let header = crate::contract::tooltip_header_text(&cat, tooltip_tu, x_is_standard_date, grain_header_format)?;
+                        let header = crate::contract::tooltip_header_text(&cat, cat_axis.date(&cat), tooltip_tu, x_is_standard_date, grain_header_format)?;
                         block.label(&header, layer_series.get(&cat).map(String::as_str), row, tooltip_fmt).map(Some)
                     },
                     match &claim.fill {
@@ -2056,18 +2040,19 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
                  -> Result<Vec<Node>, String> {
                     let series = layer_series_text(layer_name, color_value);
                     crate::families::layers::line_layer_marks(
+                        1 + position,
                         l,
                         rows,
                         |row| band.position(&row_str(row, l.x.as_deref().unwrap_or(cat_field))).map(|by| by + band.bandwidth() / 2.0),
                         None,
-                        |val| crate::families::layers::clamp_unless_clipped(linear.position(val), plot_w, layer_clips[position]),
-                        &AreaFrame { free_y: &|val| linear.position(val), plot: (plot_w, plot_h), clip: layer_clips[position] },
+                        |val| crate::families::layers::clamp_unless_clipped(linear.scale(val), plot_w, layer_clips[position]),
+                        &AreaFrame { free_y: &|val| linear.scale(val), plot: (plot_w, plot_h), clip: layer_clips[position] },
                         true,
                         fill,
                         r.canvas.as_str(),
                         |row, val| {
                             bar_datum_aria(
-                                tooltip_labels, &row_str(row, l.x.as_deref().unwrap_or(cat_field)), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
+                                tooltip_labels, &row_str(row, l.x.as_deref().unwrap_or(cat_field)), Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, Some(series.as_str()), None,
                                 layer_name, l.axis_y.tooltip_format_or(tooltip_fmt), val, None, None, &[], None,
                             )
                         },
@@ -2118,19 +2103,13 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
         if let Some(rules) = rules {
             let zc = zl.stroke();
             let zw = zl.width.unwrap_or(2.0);
-            let rule_x = |on: bool, datum: f64| on.then(|| linear.position(datum));
+            let rule_x = |on: bool, datum: f64| on.then(|| linear.scale(datum));
             let (zero_x, unity_x) = (rule_x(rules.zero, 0.0), rule_x(rules.unity, 1.0));
             // The 100% rule is a layer of its own.
             let rule_xs: Vec<f64> = [zero_x, unity_x].into_iter().flatten().collect();
             painted_layers += rule_xs.len();
-            plot.extend(baseline_rule_layers(bar_layers_painted, &rule_xs, |x| {
-                Attrs::new()
-                    .set("x1", format!("{x:.2}"))
-                    .set("y1", "0")
-                    .set("x2", format!("{x:.2}"))
-                    .set("y2", format!("{plot_h:.2}"))
-                    .set("stroke", zc)
-                    .set("stroke-width", zw.to_string())
+            plot.extend(baseline_rule_layers(bar_layers_painted, &rule_xs, |x, aria| {
+                Node::line(Role::Grid, (x, 0.0), (x, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
             })?);
         }
     }
@@ -2150,11 +2129,10 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     let center = horizontal_center(band.bandwidth());
     let geom = LabelGeometry { band: &band, center: &center, linear: &linear };
     for layer in &label_layers {
-        under.extend(layer.site_inks(&geom, None).map(|(_, b)| crate::annotation::DataMark::Box(b)));
         layer.warn_if_crowded(&r.id, None, &geom, None, None);
         let points = layer.points(&geom, None, &label_decors, &r.selection, |site| {
             bar_datum_aria(
-                tooltip_labels, &site.cat, tooltip_tu, x_is_standard_date, grain_header_format, None, None, value_title,
+                tooltip_labels, &site.cat, Some(&cat_axis), tooltip_tu, x_is_standard_date, grain_header_format, None, None, value_title,
                 tooltip_fmt, site.value, None, None, &[], None,
             )
         })?;
@@ -2170,7 +2148,9 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     }
 
     // Over the value labels; the plot origin is offset into the page frame.
-    let annotations = crate::annotation::AnnotationCtx { occupied: under, ..annotation_ctx((plot_left, plot_top), plot_w, plot_h) };
+    let mut occupied = crate::annotation::DataMark::plot_marks(&plot);
+    occupied.extend(crate::annotation::DataMark::labels_in(&tail, (plot_left, plot_top)));
+    let annotations = crate::annotation::AnnotationCtx { occupied, ..annotation_ctx((plot_left, plot_top), plot_w, plot_h) };
     tail.extend(crate::annotation::nodes(&annotations, crate::annotation::Plane::Foreground)?);
 
     // Category labels (left axis). Vega-fit path draws them the way the
@@ -2181,14 +2161,11 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     // reports (or paints) the labels instead.
     let cat_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let cat_weight = ax_x.labels.font.weight_str();
-    let cat_attrs = |x: f64, y: f64, anchor: &str| {
+    let cat_attrs = |anchor: &str| {
         Attrs::new()
-            .set("x", format!("{x:.2}"))
-            .set("y", format!("{y:.2}"))
             .set("text-anchor", anchor)
             .vega("font-family", cat_family)
-            .set("font-size", cat_font_size.to_string())
-            .quick_some("font-style", ax_x.labels.font.style.as_deref())
+            .num("font-size", cat_font_size).quick_some("font-style", ax_x.labels.font.style.as_deref())
             .set("font-weight", cat_weight.as_str())
             .set("fill", cat_color)
     };
@@ -2197,21 +2174,24 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     // line is cut; a cut name keeps its full text on hover. A wrapped block centers its ink (line
     // one's cap top to the last baseline) on the band; a single line keeps Vega's `middle` shift.
     let cat_paint = |shown: &str, center_y: f64| -> Result<CatLabel, String> {
-        let lines = cat_lines(shown, two_lines_fit)?;
+        let cut_lines = cat_lines(shown, two_lines_fit)?;
+        let full = Some(shown).filter(|full| cut_lines.join(" ") != *full).map(str::to_string);
+        let lines: Vec<String> = cut_lines.iter().flat_map(|line| line.split(measure::LINE_SEP)).map(str::to_string).collect();
         let y = if lines.len() == 1 {
             center_y + measure::baseline_shift("middle", cat_font_size)
         } else {
             center_y + CAP_HEIGHT_EM * cat_font_size / 2.0 - cat_line_height * (lines.len() - 1) as f64 / 2.0
         };
-        let full = Some(shown).filter(|full| lines.join(" ") != *full).map(str::to_string);
         Ok(CatLabel { y, lines, full })
     };
     let cat_node = |x: f64, anchor: &str, label: &CatLabel| {
         crate::families::cartesian::lines_label_node(
-            cat_attrs(x, label.y, anchor),
+            Role::Axis,
+            (x, label.y),
+            cat_attrs(anchor),
             &label.lines,
             label.full.as_deref(),
-            &format!("{x:.2}"),
+            x,
             cat_line_height,
         )
     };
@@ -2303,12 +2283,15 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     };
 
 
-    let group_attrs = Attrs::new().set("transform", format!("translate({plot_left:.2},{plot_top:.2})"));
-    // The splice points a facet composite cuts the printed panel at.
-    let cuts = facet.map(|_| frame.cuts(&head, &group_attrs, &plot, &tail, None));
+    let plot_group = |children: Vec<Node>| Node::group(Role::Chrome, Attrs::new(), children).translate(plot_left, plot_top);
+    // A faceted panel leaves its tiles to the composite, which defines them once.
+    if let Some(defs) = r.patterns.finish(facet.is_none())? {
+        head.insert(0, defs);
+    }
+    let cuts = facet.map(|_| crate::families::facet_compose::PanelInk::new(&head, &plot_group, &plot, &tail, None));
     let svg: Node = {
         let mut body = head;
-        body.push(Node::group(group_attrs, plot));
+        body.push(plot_group(plot));
         body.extend(tail);
         frame.svg(body)
     };
@@ -2327,8 +2310,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
     let facet_panel = cuts.map(|cuts| HorizontalFacetPanel {
         // Under `pad` the panel's own margins are the canvas offsets, so `plot_left`/`plot_top` are `m.left`/`m.top`.
         geometry: PanelGeometry {
-            content_start: cuts.content_start,
-            svg_end: cuts.svg_end,
+            content: cuts.content,
             ink,
             axis_w_overhang: plot_left + right_reach,
             left_mark_overhang: plot_left,
@@ -2344,7 +2326,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
                 caption: cat_caption.clone(),
                 val_font_size: cat_font_size,
                 val_weight: cat_weight,
-                val_style: ax_x.labels.font.style_attr(),
+                val_style: ax_x.labels.font.style.clone(),
                 val_color: cat_color.to_string(),
                 val_family: cat_family.to_string(),
             }),

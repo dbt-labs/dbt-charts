@@ -105,7 +105,7 @@ pub(crate) fn js_string(value: Option<&Value>) -> Result<String, String> {
         Some(Value::String(s)) => Ok(s.clone()),
         Some(Value::Number(n)) => {
             let f = n.as_f64().ok_or_else(|| format!("value {n}: not an f64"))?;
-            Ok(crate::families::color_scale::js_number_string(f))
+            Ok(d3rs::js_math::js_number_string(f))
         }
         Some(other) => Err(format!("value {other}: not a scalar")),
     }
@@ -194,12 +194,12 @@ impl DatumLink<'_> {
                 LinkText::InvalidDate => Ok("0NaN-NaN-NaN".to_string()),
                 LinkText::Days => {
                     let day = cell.and_then(Value::as_f64).ok_or_else(|| format!("link value {cell:?}: not a day number"))?;
-                    let (year, month, day) = crate::families::temporal::civil_from_days(day as i64);
+                    let (year, month, day) = d3rs::calendar::civil_from_days(day as i64);
                     Ok(format!("{year:04}-{month:02}-{day:02}"))
                 }
                 LinkText::Date => match cell.and_then(crate::families::heatmap::date_cell_day) {
                     Some(day) => {
-                        let (year, month, day) = crate::families::temporal::civil_from_days(day.floor() as i64);
+                        let (year, month, day) = d3rs::calendar::civil_from_days(day.floor() as i64);
                         Ok(format!("{year:04}-{month:02}-{day:02}"))
                     }
                     // A labeled bucket (`2024-Q1`) reads as its start date.
@@ -376,13 +376,6 @@ impl LinkOpen {
     }
 }
 
-/// Vega's href mark structure: the `<a>` sits inside the `.role-mark` group and
-/// wraps only the datum's first drawn element — a stroke-only antialiasing
-/// overlay that follows is the same datum, never a second linked mark.
-pub(crate) fn anchor_open(anchor: Option<Anchor<'_>>) -> String {
-    anchor.map_or_else(String::new, |a| format!("<a{}>", print::attributes(&a.attrs())))
-}
-
 /// `mark` inside its datum's `<a>`, or alone when the datum carries no link.
 ///
 /// A receded datum's `fill` and `stroke` are mixed toward the canvas here, once, and the paint
@@ -395,14 +388,10 @@ pub(crate) fn linked(anchor: Option<Anchor<'_>>, mark: scene::Node) -> scene::No
                 Some(recede) => mark.map_attrs(&|attrs| recede.recede_attrs(attrs)),
                 None => mark,
             };
-            scene::Node::Link { attrs: a.attrs(), children: vec![mark] }
+            scene::Node::new(scene::Role::Chrome, a.attrs(), scene::Shape::Link(vec![mark]))
         }
         None => mark,
     }
-}
-
-pub(crate) fn anchor_close(anchor: Option<Anchor<'_>>) -> &'static str {
-    if anchor.is_some() { "</a>" } else { "" }
 }
 
 #[cfg(test)]

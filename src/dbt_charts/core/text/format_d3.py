@@ -55,7 +55,7 @@ from dbt_charts.core.text.predefined_formats import (
 )
 
 # The house notation vocabulary — analytic (SI-prefix, " K"/" M") or narrative
-# (prose-style, "k"/"mn"). Declared once here; every other module that needs
+# (prose-style, "k"/"m"). Declared once here; every other module that needs
 # it (FormatConfig, the Vega expression emitter, the shared-scale resolver)
 # imports this name rather than restating the same two-value Literal.
 Notation = Literal["analytic", "narrative"]

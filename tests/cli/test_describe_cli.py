@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from dbt_charts.cli.main import app
@@ -104,6 +105,70 @@ class TestDftDescribeRichOutput:
         )
         assert result.exit_code == 0
         assert "Sales Dashboard" in result.output
+
+    def test_text_output_prints_each_querys_sql(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        board = tmp_path / "sales.yml"
+        board.write_text(
+            _BOARD_YAML.replace(
+                "    sql: SELECT month, SUM(amount) AS total FROM orders GROUP BY 1\n",
+                "    sql: |\n"
+                "      SELECT month, SUM(amount) AS total\n"
+                "      FROM orders WHERE [status] = 'paid' AND region IN ('north', 'south', 'east', 'west')\n"
+                "      GROUP BY 1\n",
+            )
+        )
+
+        result = runner.invoke(
+            app, ["describe", str(board), "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.output
+        lines = result.output.splitlines()
+        assert "    SELECT month, SUM(amount) AS total" in lines
+        assert (
+            "    FROM orders WHERE [status] = 'paid' AND region IN "
+            "('north', 'south', 'east', 'west')" in lines
+        )
+        assert "    GROUP BY 1" in lines
+
+    def test_chart_text_output_prints_its_querys_sql(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        board = tmp_path / "sales.yml"
+        board.write_text(_BOARD_YAML)
+
+        result = runner.invoke(
+            app,
+            [
+                "describe",
+                str(board),
+                "--chart",
+                "trend",
+                "--project-dir",
+                str(tmp_path),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert (
+            "    SELECT month, SUM(amount) AS total FROM orders GROUP BY 1"
+            in result.output.splitlines()
+        )
+
+    @pytest.mark.parametrize("chart", [[], ["--chart", "trend"]])
+    def test_board_title_resolves_to_its_file(
+        self, tmp_path: Path, chart: list[str]
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "sales.yml").write_text(_BOARD_YAML)
+
+        result = runner.invoke(
+            app,
+            ["describe", "Sales Dashboard", *chart, "--project-dir", str(tmp_path)],
+        )
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+        assert "SELECT month, SUM(amount) AS total FROM orders GROUP BY 1" in (
+            result.output
+        )
 
     def test_missing_file_exits_1(self, tmp_path: Path) -> None:
         (tmp_path / "dbt_charts.yml").write_text("# project marker\n")

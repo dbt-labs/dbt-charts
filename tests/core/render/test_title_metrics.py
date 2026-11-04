@@ -209,13 +209,18 @@ class TestTitleCase:
             ("what it is **for**", ["What It Is ", "For"]),
         ],
     )
-    def test_the_default_title_case_reads_across_emphasis(
+    def test_title_case_reads_across_emphasis(
         self, title: str, words: list[str]
     ) -> None:
+        assert _cased_words(title, "title") == words
+
+    def test_a_title_prints_as_typed_unless_the_theme_sets_a_case(self) -> None:
         style = resolve_style(get_theme_style())
-        (heading,) = title_blocks(title, title, 1, style, _CHARTS, None)
+        (heading,) = title_blocks(
+            "re**venue** growth", "re**venue** growth", 1, style, _CHARTS, None
+        )
         assert isinstance(heading, Heading)
-        assert [s.text for s in heading.spans] == words
+        assert [s.text for s in heading.spans] == ["re", "venue", " growth"]
 
     def test_upper_case_that_lengthens_a_word_keeps_every_letter(self) -> None:
         assert _cased_words("straße **x**", "upper") == ["STRASSE ", "X"]

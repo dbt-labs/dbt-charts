@@ -17,8 +17,8 @@ read the collected dict via ``WarningContext.text_truncations``.
   "table_cell"   — table header or body cell (engine)
   "callout_text" — callout title, message, or hint (callout family)
   "spark_label"  — spark-bar row label (engine)
-  "support_table_cell_overflow" — strip cells wider than their band
-    (engine); not a cut but a collision, so
+  "support_table_cell_overflow" — strip cells closer together than the row
+    padding (engine); not a cut but a collision, so
     ``authored_text`` carries the measured "needed vs available" detail
   "pie_wheel_starved" — a pie's sized labeled mode drawn in a box where its
     wheel is below the dominance floor (engine); no text was cut,

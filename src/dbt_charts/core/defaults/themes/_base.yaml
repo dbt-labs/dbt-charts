@@ -25,6 +25,9 @@ style:
     category: vivid-10
     sequence: dbt-seq-blue
     diverge: dbt-div-blue-red
+    pattern_category: pattern-mixed-8
+    pattern_sequential: pattern-dots
+    pattern_diverging: pattern-hatch-dots
 
   # Semantic tone palette for KPI support rows and table conditional glyphs —
   # shared board-level slot, not one chart family's. Four tones: positive,
@@ -41,6 +44,11 @@ style:
   # ramp.
   roles:
     ink: chrome[10]
+    # One step off the canvas: the error tile's fill.
+    panel: chrome[2]
+    # The error tile's hairline stripes, stepped to show about the same contrast
+    # against the panel in every theme.
+    stripe: chrome[5]
     accent: info.solid-hover
 
   accent: accent
@@ -85,7 +93,6 @@ style:
     heading:
       family: *font_sans
       weight: 500
-      case: title
       # Tight headline leading. Convention: larger type wants tighter line-height.
       # At ~24px the body 1.25 multiplier reads loose between wrapped title lines;
       # 1.1 sits in the standard display-headline range.
@@ -499,6 +506,8 @@ style:
         size: 10.0
         radius: 3.0
       active_marker: fill
+      max_rows: 7
+      group_limit: 100
 
     # Whether a chart visually answers "what am I pointing at", beyond the
     # tooltip. One switch for the whole family of mechanisms; each chart
@@ -854,6 +863,9 @@ style:
           join: auto
 
     bar:
+      pattern:
+        ground: background
+        inverse: false
       # Authors who want a stacked bar chart opt in via ``chart.style.stack: "zero"``.
       # Side-by-side (grouped) is the default when a color channel is present.
       stack: none
@@ -883,6 +895,9 @@ style:
         height: 20.0
 
     area:
+      pattern:
+        ground: background
+        inverse: false
       # Authors who want a stacked area chart opt in via ``chart.style.stack: "zero"``.
       stack: none
       endpoint_labels:
@@ -1107,6 +1122,9 @@ style:
     donut:
       inner_radius: 0.6
     pie:
+      pattern:
+        ground: background
+        inverse: false
       aspect_ratio: 1.0
       inner_radius: 0
       # Donut center total — the big number on top, smaller caption below.
@@ -1161,6 +1179,9 @@ style:
           # chart — see the co-location warning task.
 
     heatmap:
+      pattern:
+        ground: background
+        inverse: false
       cell_padding: 2.0
       color:
         gradient:
@@ -1230,7 +1251,7 @@ style:
     align: left
     # Block margin values, in WHOLE line-height units.
     # paragraph_spacing = font_size × line_height × paragraph.margin_bottom
-    # H1/H2 top and H2-H6 bottom margins = font_size × line_height × heading.margin_{top,bottom}
+    # H1/H2 top and H3-H6 bottom margins = font_size × line_height × heading.margin_{top,bottom}
     #
     # Integers, not fractions, so prose sits on a baseline grid: when text flows
     # into columns, a fractional margin puts one column out of phase with its
@@ -1240,8 +1261,8 @@ style:
       margin_top: 0.0
       margin_bottom: 1.0
     # H1/H2 sit two lines below the text above. H3-H6 sit one line below it,
-    # like a paragraph; H1 is followed by one blank line, and H2-H6 sit tight on
-    # their text.
+    # like a paragraph; H1 and H2 are followed by one blank line, and H3-H6 sit
+    # tight on their text.
     heading:
       margin_top: 2.0
       margin_bottom: 0.0
@@ -1299,11 +1320,11 @@ style:
       title_baseline_offset: 5.0
       min_width: 96.0
       max_width: 240.0
+      rail_max_lines: 2
       padding_x: 16.0
       font:
         extends: label
         size: 14.0
-        case: title
       border:
         width: 1.0
         color: chrome[7]
@@ -1337,8 +1358,9 @@ style:
       - year_to_date
     # title-inline is the structural default: board title left, variable controls
     # right, baselines aligned on one horizontal band. Untitled boards fall back
-    # to a standalone variables band (render path in boards.py guards on
-    # `_board_uses_title_inline_band`, which requires both title and variables).
+    # to a standalone variables band packed to the same right edge (render path
+    # in boards.py guards on `_board_uses_title_inline_band`, which requires both
+    # title and variables).
     position: title-inline
     title_inline_title_max_width: 0.0
     title_inline_band_bottom_pad: 24.0

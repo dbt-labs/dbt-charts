@@ -141,8 +141,8 @@ rows:
 def _first_ink_offset_x(svg: str, authored_path: str) -> float:
     """Local x of the first painted element inside the tagged authoring group.
 
-    Walks past the group's own opening tag and its two non-painting boundary
-    rects, then returns the x of the first ``translate(x, ...)`` or explicit
+    Walks past the group's own opening tag, its two non-painting boundary
+    rects and a chart root's background rect, then returns the x of the first ``translate(x, ...)`` or explicit
     ``x="..."`` on a paint-bearing element — whichever comes first in document
     order. This is a local offset relative to the tagged group's own coordinate
     frame, which is exactly what "does the tagged box start outside its own ink
@@ -160,6 +160,9 @@ def _first_ink_offset_x(svg: str, authored_path: str) -> float:
         if not boundary_rect:
             break
         rest = rest[boundary_rect.end() :]
+    # A chart's own root and its background rect span the whole card: chrome, not ink.
+    if root := re.match(r'<svg [^>]*class="marks"[^>]*><rect x="0" y="0"[^>]*/>', rest):
+        rest = rest[root.end() :]
     ink = re.search(
         r'<(?:rect|text|tspan|g)\b[^>]*?\btransform="translate\(([-\d.]+)'
         r'|<(?:rect|text|tspan)\b[^>]*?\bx="([-\d.]+)"',

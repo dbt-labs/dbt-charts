@@ -38,8 +38,10 @@ Key Principles:
        - Root dashboard has page padding (handled in renderer)
 
     4. Nested layouts follow these rules recursively
-       - A nested rows layout inside a cols item gets the full height of that item
-       - Items within that nested layout then divide that height
+       - A nested layout gets the full height of the item that holds it
+       - Items within a nested cols layout each take all of that height; items
+         within a nested rows or grid layout divide it, the spare height going
+         to the items that can use it (see _takes_spare_height)
 
 Example:
     cols:
@@ -74,15 +76,19 @@ Cross-module API:
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.resolved import (
+        ResolvedBoard,
         ResolvedLayoutItem,
     )
     from dbt_charts.core.compile.models.style.theme import TextStyle
     from dbt_charts.core.render.variables_layout import VariablesLayout
+    from dbt_charts.core.render.variables_strip import StripAlign
 
 from dbt_charts.core.compile.config import (
     get_theme_style,
@@ -95,6 +101,7 @@ from dbt_charts.core.compile.models.board.normalized import (
     VariableValues,
 )
 from dbt_charts.core.compile.models.chart.normalized import (
+    NON_ASPECT_RATIO_TYPES,
     Chart,
     CustomChart,
     PieChart,
@@ -112,6 +119,9 @@ from dbt_charts.core.compile.models.style.theme import (
     VariablesStyle,
 )
 from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.normalize.single_series_allocation import (
+    iter_charts_in_reading_order,
+)
 from dbt_charts.core.compile.resolve.chart._kwargs import _FAMILY_SLOT
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import (
@@ -130,11 +140,15 @@ from dbt_charts.core.compile.sizing import (
 )
 from dbt_charts.core.constants.estimates import SPARK_BAR_TITLE_HEIGHT_PX
 from dbt_charts.core.diagnostics.codes_render import ERR_TAB_UNKNOWN
+from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.numeric import aspect_ratio_height
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.variables_layout import WRAP_EPSILON, lay_out_variables
 from dbt_charts.core.render.variables_resolve import resolve_controls
+from dbt_charts.core.text.case import CaseValue, apply_case
+from dbt_charts.core.text.format_d3 import board_word
+from mdsvg.fonts import wrap_text_precise
 
 # ============================================================================
 # HEIGHT PROVIDER PROTOCOL
@@ -689,6 +703,25 @@ def compute_variable_controls_height(
     ).height
 
 
+def standalone_variables_band(
+    title: str | None,
+    content_width: float,
+    card_padding: float,
+    variables_style: VariablesStyle,
+) -> tuple[float, StripAlign]:
+    """Width and packing edge of a variables band on its own line.
+
+    Under ``title-inline``, an untitled board's controls keep the edge they have
+    beside a title. The band starts inset by ``card_padding`` like chart content,
+    and packing right insets the far side too, where the title-inline band ends.
+    A titled board here ran out of room beside its title, so its strip flows
+    from the leading edge under the title.
+    """
+    if not title and variables_style.position == "title-inline":
+        return max(content_width - 2 * card_padding, 0.0), "end"
+    return max(content_width - card_padding, 0.0), "start"
+
+
 def should_use_title_inline_band(
     title: str | None,
     visible_variables: dict[str, Variable],
@@ -728,7 +761,8 @@ def should_use_title_inline_band(
     )
     if layout.rows > _TITLE_INLINE_VARIABLE_MAX_ROWS:
         return False
-    widest = max(box.x + box.width for box in layout.boxes)
+    placed = [*layout.boxes, *([layout.reset] if layout.reset else [])]
+    widest = max(box.x + box.width for box in placed)
     return widest <= vars_w + WRAP_EPSILON
 
 
@@ -1298,6 +1332,143 @@ def active_layout_items(
     return [i for i in items if item_is_drawn(i.visible, variable_values)]
 
 
+def tab_bar_extent(resolved_style: ResolvedStyle) -> float:
+    """Vertical space a tab bar claims: its card-padding inset plus the bar."""
+    return float(resolved_style.frame.card_padding) + float(
+        resolved_style.layout.tabs.bar_height
+    )
+
+
+def tab_font(resolved_style: ResolvedStyle) -> tuple[str, float, CaseValue, float]:
+    """The tab font's family, size, case and line height, which the theme
+    cascade always sets."""
+    font = resolved_style.layout.tabs.font
+    if (
+        font.family is None
+        or font.size is None
+        or font.case is None
+        or font.line_height is None
+    ):
+        raise ValueError(
+            "layout.tabs.font family, size, case and line_height must be resolved"
+        )
+    return font.family, font.size, font.case, font.line_height
+
+
+def tab_labels(
+    tab_titles: Sequence[str] | None, count: int, resolved_style: ResolvedStyle
+) -> list[str]:
+    """Each tab's label as drawn: its title (or the numbered default) in the tab case."""
+    case = tab_font(resolved_style)[2]
+    titles = (
+        tab_titles
+        if tab_titles and len(tab_titles) == count
+        else [board_word("tab.title", n=str(idx + 1)) for idx in range(count)]
+    )
+    return [apply_case(title, case) for title in titles]
+
+
+def tab_label_measurer(resolved_style: ResolvedStyle) -> Callable[[str], float]:
+    """Width of a tab label at the active weight, so a tab does not resize
+    when the selection moves."""
+    family, size, _, _ = tab_font(resolved_style)
+    measurer = get_weighted_font_measurer(
+        family, resolved_style.layout.tabs.active_weight
+    )
+
+    def measure(text: str) -> float:
+        return measurer.measure(text, size)
+
+    return measure
+
+
+def tab_cell_width(label: str, resolved_style: ResolvedStyle) -> float:
+    """One tab's width: its label plus padding, clamped to the min/max width."""
+    tabs = resolved_style.layout.tabs
+    # Whole pixels absorb the sub-pixel gap between the two engines' text
+    # measurers.
+    natural = math.ceil(tab_label_measurer(resolved_style)(label) + 2 * tabs.padding_x)
+    return min(max(float(natural), tabs.min_width), tabs.max_width)
+
+
+def tab_rail_width(labels: Sequence[str], resolved_style: ResolvedStyle) -> float:
+    """A left rail's width: every tab shares the widest tab's width."""
+    return max((tab_cell_width(label, resolved_style) for label in labels), default=0.0)
+
+
+def tab_rail_lines(label: str, resolved_style: ResolvedStyle) -> tuple[list[str], bool]:
+    """A rail label wrapped to ``rail_max_lines``; ``True`` when text was cut."""
+    tabs = resolved_style.layout.tabs
+    family, size, _, _ = tab_font(resolved_style)
+    return wrap_text_precise(
+        label,
+        tabs.max_width - 2 * tabs.padding_x,
+        size,
+        get_weighted_font_measurer(family, tabs.active_weight),
+        max_lines=tabs.rail_max_lines,
+        ellipsis=True,
+    )
+
+
+def tab_line_step(resolved_style: ResolvedStyle) -> float:
+    """Distance between two baselines of a wrapped tab label."""
+    _, size, _, line_height = tab_font(resolved_style)
+    return size * line_height
+
+
+def tab_rail_cell_height(line_count: int, resolved_style: ResolvedStyle) -> float:
+    """A rail cell: the bar height, plus one line step per wrapped line."""
+    return resolved_style.layout.tabs.bar_height + (line_count - 1) * tab_line_step(
+        resolved_style
+    )
+
+
+def tab_content_offset(
+    tab_position: str | None,
+    tab_titles: Sequence[str] | None,
+    count: int,
+    resolved_style: ResolvedStyle,
+) -> tuple[float, float]:
+    """``(x, y)`` where a tabs layout's pane starts.
+
+    ``"top"``: below the inset bar. ``"left"``: right of the rail plus a
+    card-padding gutter, so the pane keeps the full height.
+    """
+    if tab_position == "left":
+        labels = tab_labels(tab_titles, count, resolved_style)
+        gutter = float(resolved_style.frame.card_padding)
+        return tab_rail_width(labels, resolved_style) + gutter, 0.0
+    return 0.0, tab_bar_extent(resolved_style)
+
+
+def tab_rail_extent(
+    tab_titles: Sequence[str] | None, count: int, resolved_style: ResolvedStyle
+) -> float:
+    """Vertical space a left rail claims: its card-padding inset plus every cell."""
+    cells = sum(
+        tab_rail_cell_height(
+            len(tab_rail_lines(label, resolved_style)[0]), resolved_style
+        )
+        for label in tab_labels(tab_titles, count, resolved_style)
+    )
+    return float(resolved_style.frame.card_padding) + cells
+
+
+def tabs_layout_height(
+    tab_position: str | None,
+    tab_titles: Sequence[str] | None,
+    count: int,
+    pane_y: float,
+    pane_height: float,
+    resolved_style: ResolvedStyle,
+) -> float:
+    """A tabs layout's height: the pane below its offset, and never shorter than a left rail."""
+    height = pane_y + pane_height
+    if tab_position == "left":
+        return max(height, tab_rail_extent(tab_titles, count, resolved_style))
+    return height
+
+
 def _measure_tabs_layout_height(
     layout: Layout,
     card_gap: float,
@@ -1315,7 +1486,6 @@ def _measure_tabs_layout_height(
     items, a tab item never carries an authored ``layout_height`` (``TabItem``
     has no ``height`` field) — content-aware measurement is the only path.
     """
-    tab_bar_height = float(resolved_style.layout.tabs.bar_height)
     active_item = layout.items[
         resolve_active_tab_index(
             len(layout.items),
@@ -1325,16 +1495,26 @@ def _measure_tabs_layout_height(
             variable_values,
         )
     ]
+    pane_x, pane_y = tab_content_offset(
+        layout.tab_position, layout.tab_titles, len(layout.items), resolved_style
+    )
     content_height = _resolve_height(
         active_item,
         card_gap,
         gap,
-        available_width,
+        available_width - pane_x,
         variable_values,
         height_provider,
         resolved_style=resolved_style,
     )
-    return content_height + tab_bar_height
+    return tabs_layout_height(
+        layout.tab_position,
+        layout.tab_titles,
+        len(layout.items),
+        pane_y,
+        content_height,
+        resolved_style,
+    )
 
 
 def _set_render_ready_sizing(item: LayoutItem) -> None:
@@ -1367,6 +1547,7 @@ def calculate_layout_items(
     height_provider: HeightProvider | None = None,
     *,
     resolved_style: ResolvedStyle,
+    fill_height: bool = False,
 ) -> None:
     """Calculate dimensions for all items in a layout.
 
@@ -1380,6 +1561,9 @@ def calculate_layout_items(
         gap: Gap between items in pixels
         variable_values: Variable values to resolve Jinja against
         resolved_style: Board-resolved style for cascade-aware height calculations.
+        fill_height: The layout takes all of ``available_height`` rather than its
+            content's height. True for a nested board, whose available height is
+            its cell's; a root board's also holds its title and text.
     """
     # active_layout_items needs a real dict; variable_values stays Optional for
     # this widely-called signature.
@@ -1398,6 +1582,7 @@ def calculate_layout_items(
         variable_values,
         height_provider,
         resolved_style=resolved_style,
+        fill_height=fill_height,
     )
 
     for item in drawn:
@@ -1422,6 +1607,7 @@ def _apply_layout_dimensions(
     height_provider: HeightProvider | None = None,
     *,
     resolved_style: ResolvedStyle,
+    fill_height: bool,
 ) -> None:
     """Apply the correct layout dimension calculator based on layout type."""
     if layout.type == "rows":
@@ -1434,6 +1620,7 @@ def _apply_layout_dimensions(
             variable_values,
             height_provider,
             resolved_style=resolved_style,
+            fill_height=fill_height,
         )
         return
     if layout.type == "cols":
@@ -1446,6 +1633,7 @@ def _apply_layout_dimensions(
             variable_values,
             height_provider,
             resolved_style=resolved_style,
+            fill_height=fill_height,
         )
         return
     if layout.type == "grid":
@@ -1459,6 +1647,7 @@ def _apply_layout_dimensions(
             variable_values,
             height_provider,
             resolved_style=resolved_style,
+            fill_height=fill_height,
         )
         return
     if layout.type == "tabs":
@@ -1471,6 +1660,7 @@ def _apply_layout_dimensions(
             variable_values,
             height_provider,
             resolved_style=resolved_style,
+            fill_height=fill_height,
         )
         return
     _calculate_rows_dimensions(
@@ -1482,6 +1672,7 @@ def _apply_layout_dimensions(
         variable_values,
         height_provider,
         resolved_style=resolved_style,
+        fill_height=fill_height,
     )
 
 
@@ -1495,7 +1686,25 @@ class BoardContentBox:
 
     content_top: float  # inset from the block's top edge to the first element
     non_layout_height: float  # content_top + elements + their inter-element gaps
-    gap_before_layout: float  # gap prepended to layout block (0 if no layout items or no content above)
+    gap_before_layout: float  # gap prepended to layout block (0 if no layout items or no content above; negative when a title claims a text row's inset)
+
+
+def opens_with_text(
+    board: Board | ResolvedBoard, variable_values: VariableValues
+) -> bool:
+    """Whether ``board`` stacks a plain text block as its first drawn item."""
+    if board.layout.type != "rows":
+        return False
+    for item in board.layout.items:
+        if item_is_drawn(item.visible, variable_values):
+            first = item.board
+            return (
+                first is not None
+                and bool(first.text)
+                and not first.title
+                and not (item.details_variable and item.details_summary)
+            )
+    return False
 
 
 def compute_board_content_box(
@@ -1506,6 +1715,7 @@ def compute_board_content_box(
     inline_band_height: float,
     gap: float,
     has_layout_items: bool,
+    opens_with_text: bool,
     card_padding: float,
 ) -> BoardContentBox:
     """Single owner of vertical stacking arithmetic for board non-layout content.
@@ -1522,6 +1732,8 @@ def compute_board_content_box(
     - All other adjacent pairs (inline_band→text, text→variables, title→variables
       when no text, inline_band→variables): full ``gap``.
     - gap_before_layout: ``gap`` iff has_layout_items AND non_layout_height > 0.
+      A title above a leading text row is title→text by another spelling: no gap,
+      and the row's own ``card_padding`` inset is taken back so the two forms match.
 
     Args:
         title_height: Pre-measured title height (0 if absent or use_title_inline).
@@ -1534,6 +1746,7 @@ def compute_board_content_box(
         gap: Board-level gap (used for all inter-element spacing except title→text).
         has_layout_items: True when the board has layout items following the
             non-layout elements.
+        opens_with_text: True when the first drawn layout item is a text block.
         card_padding: The inset a chart's ink carries inside its own card, and so
             the inset this band's first element carries inside the block's.
 
@@ -1565,8 +1778,12 @@ def compute_board_content_box(
             height += gap
         height += variables_height
         has_prev = True
+        prev_is_title = False
 
-    gap_before_layout = gap if (has_layout_items and has_prev) else 0.0
+    if prev_is_title and opens_with_text:
+        gap_before_layout = -card_padding
+    else:
+        gap_before_layout = gap if (has_layout_items and has_prev) else 0.0
     content_top = card_padding if has_prev else 0.0
 
     return BoardContentBox(
@@ -1631,11 +1848,14 @@ def nested_board_sizing_context(
         else:
             title_h = 0.0
         if nested_board.visible_variables:
+            band_width, _ = standalone_variables_band(
+                nested_board.title, content_width, card_pad, nrs.variables
+            )
             variables_h = compute_variable_controls_height(
                 nested_board.visible_variables,
-                content_width,
+                band_width,
                 variable_values,
-                nested_board.resolved_style.variables,
+                nrs.variables,
             )
         else:
             variables_h = 0.0
@@ -1662,6 +1882,10 @@ def nested_board_sizing_context(
         inline_band_height=inline_band_h,
         gap=effective_child_gap,
         has_layout_items=bool(nested_board.layout.items),
+        opens_with_text=opens_with_text(
+            nested_board,
+            variable_values or {},  # type-state: silent_fallback — no variables set
+        ),
         card_padding=float(nrs.frame.card_padding),
     )
     non_layout_height = box.non_layout_height + box.gap_before_layout
@@ -1717,6 +1941,42 @@ def _calculate_nested_board_layout(
         variable_values=variable_values,
         height_provider=height_provider,
         resolved_style=nested_board.resolved_style,
+        fill_height=True,
+    )
+
+
+def _takes_spare_height(
+    item: LayoutItem, alone: bool, variable_values: VariableValues | None
+) -> bool:
+    """Whether an item can use more height than its content needs.
+
+    A chart that draws to its slot can, unless it has a chart-root ``height``, and a
+    nested board can when anything inside it can, at any depth. A pie or donut keeps
+    its fixed aspect. Anything else that sits ``alone`` in its layout takes the slot
+    as a direct item would, a chart-root ``height`` included.
+    """
+    if item.board is not None:
+        if is_item_collapsed_summary(item, variable_values):
+            return False
+        drawn = active_layout_items(
+            item.board.layout,
+            variable_values or {},  # type-state: silent_fallback — no variables set
+        )
+        return alone or any(
+            _takes_spare_height(sub, len(drawn) == 1, variable_values) for sub in drawn
+        )
+    chart = item.chart
+    if chart is None:
+        return alone
+    if isinstance(chart, PieChart):
+        return False
+    if alone:
+        return True
+    if isinstance(chart, CustomChart):
+        return True
+    return (
+        isinstance(chart, _CartesianChartFields | _GeoChartFields)
+        and chart.height is None
     )
 
 
@@ -1730,6 +1990,7 @@ def _calculate_rows_dimensions(
     height_provider: HeightProvider | None = None,
     *,
     resolved_style: ResolvedStyle,
+    fill_height: bool = False,
 ) -> None:
     """Calculate dimensions for items in a rows layout.
 
@@ -1740,6 +2001,8 @@ def _calculate_rows_dimensions(
     - Remaining height is distributed among auto items based on content type
     - If auto items exceed remaining space, they scale proportionally
     - Specified items are never scaled; if they exceed available space the layout overflows
+    - With ``fill_height``, auto items that can use spare height share it in
+      proportion to their content heights
 
     Args:
         items: List of layout items
@@ -1748,6 +2011,7 @@ def _calculate_rows_dimensions(
         card_gap: Gap between cards (inter-item spacing)
         gap: Gap between items in pixels
         variable_values: Variable values to resolve Jinja against
+        fill_height: See ``calculate_layout_items``.
     """
     n = len(items)
     if n == 0:
@@ -1816,6 +2080,19 @@ def _calculate_rows_dimensions(
         else:
             item_heights.append(content_heights[i])
 
+    spare = remaining - auto_total
+    if fill_height and spare > 0:
+        growing = [
+            i
+            for i, item in enumerate(items)
+            if specified_heights[i] is None
+            and _takes_spare_height(item, n == 1, variable_values)
+        ]
+        growing_total = sum(content_heights[i] for i in growing)
+        if growing_total > 0:
+            for i in growing:
+                item_heights[i] += spare * content_heights[i] / growing_total
+
     # Second pass: assign dimensions
     current_y = 0.0
     for i, item in enumerate(items):
@@ -1845,6 +2122,16 @@ def _resolve_layout_height(item: LayoutItem, available: float) -> float | None:
     return h if h is not None and h > 0 else None
 
 
+def _holds_only_content_sized_charts(item: LayoutItem) -> bool:
+    """The item's charts, direct or at any depth, all draw to their content."""
+    if item.chart is not None:
+        return item.chart.type in NON_ASPECT_RATIO_TYPES
+    if item.board is None:
+        return False
+    chart_types = [c.type for c in iter_charts_in_reading_order(item.board)]
+    return bool(chart_types) and all(t in NON_ASPECT_RATIO_TYPES for t in chart_types)
+
+
 def _calculate_cols_dimensions(
     items: list[LayoutItem],
     available_width: float,
@@ -1855,6 +2142,7 @@ def _calculate_cols_dimensions(
     height_provider: HeightProvider | None = None,
     *,
     resolved_style: ResolvedStyle,
+    fill_height: bool = False,
 ) -> None:
     """Calculate dimensions for items in a cols layout.
 
@@ -1866,6 +2154,9 @@ def _calculate_cols_dimensions(
 
     This ensures alignment: all items in a row have the same height.
     The height is the max of what each item needs, but won't exceed available.
+    With ``fill_height`` it is all of available, unless an authored height set it.
+    A table or KPI cell's authored height reserves the row, but the other cells
+    only reach what it draws.
 
     Args:
         items: List of layout items
@@ -1874,6 +2165,7 @@ def _calculate_cols_dimensions(
         card_gap: Gap between cards (inter-item spacing)
         gap: Gap between items in pixels
         variable_values: Variable values to resolve Jinja against
+        fill_height: See ``calculate_layout_items``.
     """
     n = len(items)
     if n == 0:
@@ -1901,33 +2193,45 @@ def _calculate_cols_dimensions(
     # explicit height wins and the row overflows rather than being capped.
     max_specified = 0.0
     max_auto = 0.0
+    max_drawn = 0.0
     for i, item in enumerate(items):
         # Percentages resolve against available_height (no vertical gap in cols)
         resolved = _resolve_layout_height(item, available_height)
-        if resolved is not None:
+        if resolved is not None and not _holds_only_content_sized_charts(item):
             max_specified = max(max_specified, resolved)
-        else:
-            item_w = resolved_widths[i]
-            ch = _resolve_height(
-                item,
-                card_gap,
-                gap,
-                item_w,
-                variable_values,
-                height_provider,
-                resolved_style=resolved_style,
-            )
+            max_drawn = max(max_drawn, resolved)
+            continue
+        ch = _resolve_height(
+            item,
+            card_gap,
+            gap,
+            resolved_widths[i],
+            variable_values,
+            height_provider,
+            resolved_style=resolved_style,
+        )
+        if resolved is None:
             max_auto = max(max_auto, ch)
+            max_drawn = max(max_drawn, ch)
+        else:
+            # A content-sized cell reserves its authored slot but draws its content.
+            max_specified = max(max_specified, resolved)
+            max_drawn = max(max_drawn, min(ch, resolved))
 
     max_content_height = max(max_specified, max_auto)
     # Cap to available height unless a user-specified height drove the max.
     # >= so that a specified height equal to the content max still wins
     # (the user explicitly asked for this height, so don't clamp it).
-    row_height = (
-        max_content_height
-        if max_specified >= max_auto
-        else min(max_content_height, available_height)
-    )
+    if max_specified >= max_auto:
+        row_height = max_content_height
+        chart_cell_height = min(max_drawn, row_height)
+    else:
+        row_height = (
+            available_height
+            if fill_height
+            else min(max_content_height, available_height)
+        )
+        chart_cell_height = row_height
 
     # Second pass: assign dimensions
     current_x = 0.0
@@ -1937,7 +2241,9 @@ def _calculate_cols_dimensions(
             item_width / content_width if content_width > 0 else 1.0 / n
         )
         item.width = item_width
-        item.height = row_height  # All items get same height
+        item.height = (
+            row_height if _holds_only_content_sized_charts(item) else chart_cell_height
+        )
         item.x = current_x
         item.y = 0.0
         # Add gap between items, but not after the last item
@@ -1960,6 +2266,7 @@ def _calculate_grid_dimensions(
     height_provider: HeightProvider | None = None,
     *,
     resolved_style: ResolvedStyle,
+    fill_height: bool = False,
 ) -> None:
     """Calculate dimensions for items in a grid layout.
 
@@ -2102,6 +2409,21 @@ def _calculate_grid_dimensions(
             for r, h in row_content_heights.items()
         }
 
+    spare = available_height - total_gap_y - sum(row_heights.values())
+    if fill_height and spare > 0:
+        growing_rows: set[int] = set()
+        for item in items:
+            if _takes_spare_height(item, len(items) == 1, variable_values):
+                first_row = item.row or 0  # type-state: silent_fallback — unset: row 0
+                growing_rows.update(
+                    range(first_row, first_row + item_grid_span(item)[1])
+                )
+        growing_rows -= specified_rows
+        growing_total = sum(row_heights[r] for r in growing_rows)
+        if growing_total > 0:
+            for r in growing_rows:
+                row_heights[r] += spare * row_heights[r] / growing_total
+
     # Calculate row Y positions. An unoccupied row index has no content to
     # draw, so it advances nothing — charging it default_chart_height is what
     # turned a grid with items at rows 0 and 40 into a 286-megapixel render.
@@ -2148,14 +2470,16 @@ def _calculate_tabs_dimensions(
     height_provider: HeightProvider | None = None,
     *,
     resolved_style: ResolvedStyle,
+    fill_height: bool = False,
 ) -> None:
     """Calculate dimensions for items in a tabs layout.
 
     In a tabs layout:
-    - Each tab gets the full container size (minus tab bar height)
+    - Each tab gets the full container size minus the tab bar (``top``) or
+      the rail and its gutter (``left``)
     - Only one tab is visible at a time
     - Height comes from the active tab's content only, not the union
-      across all tabs
+      across all tabs, or with ``fill_height`` from all that is available
 
     A tab item never carries an authored ``layout_height`` (``TabItem`` has
     no ``height`` field) — content-aware measurement, capped to what's
@@ -2170,9 +2494,12 @@ def _calculate_tabs_dimensions(
         gap: Gap (unused for tabs)
         variable_values: Variable values to resolve Jinja against
     """
-    tab_bar_height = float(resolved_style.layout.tabs.bar_height)
     items = layout.items
-    tab_available = available_height - tab_bar_height
+    pane_x, pane_y = tab_content_offset(
+        layout.tab_position, layout.tab_titles, len(items), resolved_style
+    )
+    pane_width = available_width - pane_x
+    tab_available = available_height - pane_y
     active_item = items[
         resolve_active_tab_index(
             len(items),
@@ -2186,18 +2513,18 @@ def _calculate_tabs_dimensions(
         active_item,
         card_gap,
         gap,
-        available_width,
+        pane_width,
         variable_values,
         height_provider,
         resolved_style=resolved_style,
     )
-    content_height = min(ch, tab_available)
+    content_height = tab_available if fill_height else min(ch, tab_available)
 
     for item in items:
         item.width_fraction = 1.0
-        item.width = available_width
+        item.width = pane_width
         item.height = content_height
-        item.x = 0.0
-        item.y = tab_bar_height
+        item.x = pane_x
+        item.y = pane_y
         # Set render-ready sizing fields
         _set_render_ready_sizing(item)

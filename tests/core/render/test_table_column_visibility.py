@@ -608,7 +608,6 @@ class TestUnaddressedVisibleEntryRaises:
         ]
         svg = _render(
             {
-                "row": {"role": "_df_row_role"},
                 "columns": {
                     "region": {},
                     "revenue": {"format": "$,.0f"},
@@ -616,6 +615,7 @@ class TestUnaddressedVisibleEntryRaises:
                 },
             },
             data,
+            row_role="_df_row_role",
         )
         assert "East" in svg
         assert "Row Role" not in svg

@@ -6,6 +6,7 @@ use super::date::{self, Unit};
 use super::jsre;
 use super::parse::Node;
 use super::val::{self, throws, EvalError, Res, Text, Val};
+use d3rs::scale::Transform;
 
 /// How this engine answers a name in Vega's function table.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -214,14 +215,6 @@ pub(super) fn js_round(x: f64) -> f64 {
     if r == 0.0 && x.is_sign_negative() { -0.0 } else { r }
 }
 
-pub(super) fn js_pow(base: f64, exp: f64) -> f64 {
-    if exp.is_nan() || (base.abs() == 1.0 && exp.is_infinite()) {
-        f64::NAN
-    } else {
-        base.powf(exp)
-    }
-}
-
 fn js_max(args: &[Val]) -> f64 {
     let mut out = f64::NEG_INFINITY;
     for a in args {
@@ -256,7 +249,7 @@ fn to_date_ms(v: &Val) -> Res<f64> {
         Val::Undefined => f64::NAN,
         Val::Null => 0.0,
         Val::Bool(b) => f64::from(*b),
-        Val::Num(n) => date::time_clip(*n),
+        Val::Num(n) => d3rs::calendar::time_clip(*n),
         Val::Str(s) => date::parse_date(s)?,
         other => date::parse_date(&other.to_text()?)?,
     })
@@ -269,7 +262,7 @@ fn new_date(args: &[Val]) -> Res<f64> {
         [one] => to_date_ms(one)?,
         many => {
             let n = |i: usize, default: f64| many.get(i).map_or(default, Val::to_number);
-            let wall = date::make_time(date::full_year(n(0, f64::NAN)), n(1, 0.0), n(2, 1.0), n(3, 0.0), n(4, 0.0), n(5, 0.0), n(6, 0.0));
+            let wall = d3rs::calendar::make_time(d3rs::calendar::full_year(n(0, f64::NAN)), n(1, 0.0), n(2, 1.0), n(3, 0.0), n(4, 0.0), n(5, 0.0), n(6, 0.0));
             crate::time_zone::expression_local_instant_ms(wall).map_err(EvalError::Unmodeled)?
         }
     })
@@ -442,7 +435,7 @@ fn split(text: &str, sep: &Val, limit: &Val) -> Res<Val> {
 }
 
 fn parse_float(s: &str) -> f64 {
-    let t = s.trim_start_matches(val::is_js_space);
+    let t = s.trim_start_matches(d3rs::js_math::is_js_space);
     let b = t.as_bytes();
     let mut i = 0;
     if matches!(b.first(), Some(b'+' | b'-')) {
@@ -485,7 +478,7 @@ fn parse_float(s: &str) -> f64 {
 }
 
 fn parse_int(s: &str, radix: f64) -> f64 {
-    let t = s.trim_start_matches(val::is_js_space);
+    let t = s.trim_start_matches(d3rs::js_math::is_js_space);
     let (sign, mut rest) = match t.chars().next() {
         Some('-') => (-1.0, &t[1..]),
         Some('+') => (1.0, &t[1..]),
@@ -602,7 +595,7 @@ fn sequence_too_long() -> EvalError {
 }
 
 /// The board's time vocabulary, which production stamps into the Vega config `timeFormat` and `timeParse` read.
-fn time_locale() -> Res<std::rc::Rc<crate::time_locale::TimeLocale>> {
+fn time_locale() -> Res<std::rc::Rc<d3rs::time_format::Locale>> {
     crate::time_locale::active_time_locale().map_err(EvalError::Unknown)
 }
 
@@ -717,33 +710,19 @@ fn domain_arg(v: &Val) -> Res<Vec<f64>> {
     }
 }
 
-fn lift_ground(kind: &str, p: f64, domain0: f64) -> (Box<dyn Fn(f64) -> f64>, Box<dyn Fn(f64) -> f64>) {
-    let sign = if domain0 > 0.0 { 1.0 } else if domain0 < 0.0 { -1.0 } else { domain0 };
-    match kind {
-        "linear" => (Box::new(|x| x), Box::new(|x| x)),
-        "log" => (Box::new(move |x| libm::log(sign * x)), Box::new(move |x| sign * libm::exp(x))),
-        "pow" => (
-            Box::new(move |x| if x < 0.0 { -js_pow(-x, p) } else { js_pow(x, p) }),
-            Box::new(move |x| if x < 0.0 { -js_pow(-x, 1.0 / p) } else { js_pow(x, 1.0 / p) }),
-        ),
-        _ => (
-            Box::new(move |x| js_sign(x) * libm::log1p((x / p).abs())),
-            Box::new(move |x| js_sign(x) * libm::expm1(x.abs()) * p),
-        ),
-    }
-}
-
-pub(super) fn js_sign(x: f64) -> f64 {
-    if x.is_nan() || x == 0.0 { x } else { x.signum() }
-}
-
 fn pan_zoom(name: &str, args: &Args) -> Res<Val> {
     let domain = domain_arg(args.get(0))?;
     let zoom = name.starts_with("zoom");
     let kind = if name.ends_with("Linear") { "linear" } else if name.ends_with("Log") { "log" } else if name.ends_with("Pow") { "pow" } else { "symlog" };
     let extra = if zoom { 3 } else { 2 };
     let param = if kind == "pow" || kind == "symlog" { args.num(extra) } else { f64::NAN };
-    let (lift, ground) = lift_ground(kind, param, domain[0]);
+    let transform = match kind {
+        "linear" => Transform::Identity,
+        "log" => Transform::Log { base: std::f64::consts::E },
+        "pow" => Transform::Pow(param),
+        _ => Transform::Symlog(param),
+    };
+    let (lift, ground) = crate::vega_fit::lift_ground(transform, domain[0]);
     let coerce = |v: &Val| if matches!(v, Val::Null | Val::Undefined) || matches!(v, Val::Str(s) if s.is_empty()) { 0.0 } else { v.to_number() };
     let d_first = if kind == "linear" { coerce(args.get(0).clone().as_array_first()) } else { lift(domain[0]) };
     let d_last = if kind == "linear" { coerce(args.get(0).clone().as_array_last()) } else { lift(*domain.last().unwrap_or(&f64::NAN)) };
@@ -946,7 +925,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
         let ms = date_arg()?;
         Ok(if name.starts_with("utc") { ms } else { ms + date::local_offset_ms(ms)? })
     };
-    let part = |f: fn(&date::Dt) -> i64| -> Res<Val> { Ok(Val::Num(date::breakdown(local_ms()?).map_or(f64::NAN, |d| f(&d) as f64))) };
+    let part = |f: fn(&d3rs::calendar::Dt) -> i64| -> Res<Val> { Ok(Val::Num(d3rs::calendar::breakdown(local_ms()?).map_or(f64::NAN, |d| f(&d) as f64))) };
     Ok(match name {
         // ---- math
         "isNaN" => Val::Bool(matches!(a.get(0), Val::Num(x) if x.is_nan())),
@@ -964,7 +943,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
         "log" => Val::Num(libm::log(n(0))),
         "max" => Val::Num(js_max(vals)),
         "min" => Val::Num(js_min(vals)),
-        "pow" => Val::Num(js_pow(n(0), n(1))),
+        "pow" => Val::Num(d3rs::js_math::pow(n(0), n(1))),
         "random" => Val::Num(random()),
         "round" => Val::Num(js_round(n(0))),
         "sin" => Val::Num(libm::sin(n(0))),
@@ -975,7 +954,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
         "now" => Val::Num(now()),
         "utc" => {
             let g = |i: usize, d: f64| if a.has(i) { a.num(i) } else { d };
-            Val::Num(date::make_time(date::full_year(g(0, f64::NAN)), g(1, 0.0), g(2, 1.0), g(3, 0.0), g(4, 0.0), g(5, 0.0), g(6, 0.0)))
+            Val::Num(d3rs::calendar::make_time(d3rs::calendar::full_year(g(0, f64::NAN)), g(1, 0.0), g(2, 1.0), g(3, 0.0), g(4, 0.0), g(5, 0.0), g(6, 0.0)))
         }
         "datetime" => Val::Date(new_date(vals)?),
         "date" | "utcdate" => part(|d| d.day)?,
@@ -991,7 +970,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
             let ms = date_arg()?;
             Val::Num(if ms.is_nan() { f64::NAN } else { -date::local_offset_ms(ms)? / 60_000.0 + 0.0 })
         }
-        "quarter" | "utcquarter" => Val::Num(1.0 + date::breakdown(local_ms()?).map_or(0, |d| d.month / 3) as f64),
+        "quarter" | "utcquarter" => Val::Num(1.0 + d3rs::calendar::breakdown(local_ms()?).map_or(0, |d| d.month / 3) as f64),
         "week" | "utcweek" => Val::Num(date::week_vega(local_ms()?)),
         "dayofyear" | "utcdayofyear" => Val::Num(date::day_of_year_vega(local_ms()?)),
         // ---- sequence
@@ -1349,7 +1328,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
                     Val::Date(ms) => *ms,
                     other => other.to_number(),
                 };
-                let ms = date::time_clip(raw);
+                let ms = d3rs::calendar::time_clip(raw);
                 let utc = name == "utcFormat";
                 let locale = time_locale()?;
                 Val::Str(match a.get(1) {
@@ -1385,7 +1364,7 @@ pub fn call(name: &str, vals: &[Val], datum: &Val) -> Res<Val> {
                     _ => (0.0, 2.0 + k, "%a"),
                 };
                 // A name lookup, not an instant: read on the UTC clock it was built on.
-                Val::Str(date::time_format(spec, date::make_time(2000.0, month, day, 0.0, 0.0, 0.0, 0.0), true, &*time_locale()?)?)
+                Val::Str(date::time_format(spec, d3rs::calendar::make_time(2000.0, month, day, 0.0, 0.0, 0.0, 0.0), true, &*time_locale()?)?)
             }
         }
         "timeUnitSpecifier" => time_unit_specifier(&a)?,

@@ -7,11 +7,12 @@
 use std::borrow::Cow;
 
 use crate::codes;
+use d3rs::stack::{stack, Offset, Order};
 use crate::diagnostic::Diagnostic;
 use crate::number_locale::active_number_locale;
 use print::xml_escape_attr;
 use measure::FontBook;
-use scene::{Attrs, Chars, Escape, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape, Transform};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -314,6 +315,9 @@ pub struct Font {
     /// resolved font carries one (`apply_label_font`'s `fontStyle`).
     #[serde(default)]
     pub style: Option<String>,
+    /// The face's digits share one width, so a column of them aligns.
+    #[serde(default)]
+    pub tabular_figures: bool,
 }
 
 impl Font {
@@ -813,8 +817,8 @@ impl FormatSlot {
     /// the digits at this slot's notation, the slot's affix wraps them, and an
     /// anchored affix (one tick per ladder) leads the sign so the anchor's
     /// digits line up with the bare ticks beside it (`painted_sign_placement`).
-    pub fn paint_anchored(&self, spec: &str, value: f64, anchored: bool, pad_table: &[String]) -> Result<String, String> {
-        let digits = self.padded_digits(spec, value, pad_table)?;
+    pub fn paint_anchored(&self, spec: &str, value: f64, anchored: bool) -> Result<String, String> {
+        let digits = self.digits(spec, self.notation.as_deref(), value)?;
         let (sign, body) = split_sign(&digits);
         let placement = if anchored { SignPlacement::AfterPrefix } else { self.placement() };
         Ok(self.wear_at(placement, sign, body))
@@ -823,16 +827,8 @@ impl FormatSlot {
     /// A ladder tick's bare digits at this slot's notation and `spec`
     /// (`numeral_vega_expr(datum.value, tick_label.format, fmt.notation)`):
     /// the text every tick off the anchor paints.
-    pub fn bare_digits(&self, spec: &str, value: f64, pad_table: &[String]) -> Result<String, String> {
-        self.padded_digits(spec, value, pad_table)
-    }
-
-    /// The digits followed by the decimal-alignment pad `pad_table` selects
-    /// for them (none when the table is empty).
-    fn padded_digits(&self, spec: &str, value: f64, pad_table: &[String]) -> Result<String, String> {
-        let digits = self.digits(spec, self.notation.as_deref(), value)?;
-        let pad = crate::families::table::bind::decimal_pad_for(pad_table, &digits)?;
-        Ok(format!("{digits}{pad}"))
+    pub fn bare_digits(&self, spec: &str, value: f64) -> Result<String, String> {
+        self.digits(spec, self.notation.as_deref(), value)
     }
 
     /// The d3 digits of `value`, an SI letter respelled at `notation`.
@@ -1003,6 +999,104 @@ pub struct TickLabelConfig {
     /// signature exactly.
     #[serde(default)]
     pub scientific_format: Option<String>,
+}
+
+/// The ruler and `tick_label` a ladder is labeled with.
+#[derive(Clone, Default)]
+pub struct Labeling {
+    pub ruler: Option<RulerConfig>,
+    pub tick_label: Option<TickLabelConfig>,
+}
+
+impl AxisStyle {
+    /// How the ladder `ticks` is labeled. The baked ruler and `tick_label` describe the ladder resolve
+    /// saw; on an axis a legend view refit ([`Self::refit`]) they are decided again for the ladder
+    /// drawn, by the functions resolve decides with (`d3rs::numeral_scale::decide_ruler` and
+    /// `decide_tick_label`) over the same inputs. Resolve baked nothing for a format the author wrote
+    /// themselves, and that stays as written.
+    pub fn labeling(&self, ticks: &[f64], fonts: &FontBook) -> Result<Labeling, String> {
+        let baked = Labeling { ruler: self.ruler.clone(), tick_label: self.tick_label.clone() };
+        let Some(format) = self.labels.format.as_ref().filter(|_| self.refit && ticks.len() >= 2 && (self.ruler.is_some() || self.tick_label.is_some())) else {
+            return Ok(baked);
+        };
+        let parts = d3rs::format::parse_parts(&format.spec).map_err(|e| format!("{}: {e}", format.spec))?;
+        let case = self.labels.font.case.as_deref().unwrap_or("none");
+        let edge = self.position.as_deref().filter(|position| matches!(*position, "left" | "right"));
+        let fallback = d3rs::numeral_scale::label_align_fallback_fires(self.labels.align.as_deref(), edge, case);
+        let inputs = d3rs::numeral_scale::LabelInputs {
+            si_format: (parts.type_ == 's').then_some(format.spec.as_str()),
+            fixed_decimal_format: (format.is_house() && matches!(parts.type_, 'f' | '%') && parts.precision.is_some_and(|p| p > 0)).then_some(format.spec.as_str()),
+            format_is_house: format.is_house(),
+            format_affixed: format.has_affix_text(),
+            notation: format.notation.as_deref(),
+            repeat: format.repeat.as_deref(),
+            label_expr_authored: self.labels.expr.is_some(),
+            column_forming: self.column_forming,
+            start_anchored: d3rs::numeral_scale::render_align(self.labels.align.as_deref(), edge, fallback) == Some("left"),
+            tabular: self.labels.font.tabular_figures,
+        };
+        let family = self.labels.font.family.as_deref().unwrap_or_default();
+        let drawn: Vec<f64> =
+            ticks.iter().copied().filter(|&tick| self.domain_min.is_none_or(|lo| tick >= lo) && self.domain_max.is_none_or(|hi| tick <= hi)).collect();
+        let ruler = match &self.ruler {
+            Some(_) => d3rs::numeral_scale::decide_ruler(&inputs, ticks).map_err(|e| match e {
+                d3rs::numeral_scale::LabelError::ColumnNeedsTabularFont => "a column-forming axis needs a tabular label font".to_string(),
+                d3rs::numeral_scale::LabelError::Other(message) => message,
+            })?,
+            None => None,
+        };
+        if let (Some(choice), Some(baked_ruler)) = (&ruler, &self.ruler) {
+            // The same magnitude and end keep the ruler resolve baked; another takes its word and width.
+            let anchor_at_start = d3rs::numeral_scale::ruler_anchor_at_start(&drawn, self.domain_max.is_some());
+            if choice.exponent == baked_ruler.exponent && anchor_at_start == baked_ruler.anchor_at_start {
+                return Ok(baked);
+            }
+            let mut rescaled = baked_ruler.clone();
+            rescaled.anchor_at_start = anchor_at_start;
+            rescaled.exponent = choice.exponent;
+            rescaled.mode = choice.mode.as_str().to_string();
+            rescaled.register = choice.register.clone();
+            if choice.reserve {
+                rescaled.reservation = measure::reservation::compose_suffix_reservation(
+                    &*fonts.measurer(family)?,
+                    &suffix_at_register(choice.exponent, rescaled.analytic()?)?,
+                    family,
+                )?;
+            }
+            return Ok(Labeling { ruler: Some(rescaled), tick_label: None });
+        }
+        let Some(choice) = d3rs::numeral_scale::decide_tick_label(&inputs, ticks, &drawn)? else {
+            // A ruler that no longer applies to a literal format leaves its ticks to the format as written.
+            return Ok(Labeling { ruler: None, tick_label: self.tick_label.clone() });
+        };
+        let pad_table = if choice.pad_decimals { decimal_pad_table(&choice.digit_spec, choice.precision, ticks, family, fonts)? } else { Vec::new() };
+        Ok(Labeling {
+            ruler: None,
+            tick_label: Some(TickLabelConfig {
+                format: choice.digit_spec,
+                prefix: choice.prefix,
+                anchor_at_start: choice.anchor_at_start,
+                decimal_pad_table: pad_table,
+                si_format: None,
+                scientific_format: None,
+            }),
+        })
+    }
+}
+
+/// The pad table that aligns the decimals of `values` printed with `digit_spec`; empty when every
+/// value carries the same number of decimals.
+fn decimal_pad_table(digit_spec: &str, precision: usize, values: &[f64], family: &str, fonts: &FontBook) -> Result<Vec<String>, String> {
+    let mut depths = std::collections::HashSet::new();
+    for &value in values {
+        let text = crate::number_locale::d3_format(digit_spec, value)?;
+        depths.insert(text.split_once('.').map_or(0, |(_, fraction)| fraction.len()));
+    }
+    if depths.len() < 2 {
+        return Ok(Vec::new());
+    }
+    let (digit_unit, dot_unit) = measure::reservation::compose_decimal_units(&*fonts.measurer(family)?, family)?;
+    Ok(d3rs::numeral_pad::build_decimal_pad_table(precision, &digit_unit, &dot_unit))
 }
 
 /// `truncate_text_precise`: `text` when it fits, else the longest char prefix
@@ -1369,7 +1463,7 @@ pub fn sub_unit_guarded_format(
     if let (Some(anchored), Some(slot)) = (affix, labels_format.filter(|s| s.has_affix_text())) {
         if value != 0.0 {
             return slot
-                .paint_anchored(band_spec, value, anchored, &[])
+                .paint_anchored(band_spec, value, anchored)
                 .map_err(|e| format!("tick_label affixed spec {band_spec:?}: {e}"));
         }
     }
@@ -1377,7 +1471,7 @@ pub fn sub_unit_guarded_format(
         // Only the SI arm takes the format's notation (`numeral_vega_expr(..,
         // tick_label.si_format, fmt.notation)`).
         return match labels_format {
-            Some(slot) => slot.bare_digits(si_format, value, &[]),
+            Some(slot) => slot.bare_digits(si_format, value),
             None => crate::number_locale::d3_format(si_format, value),
         }
         .map_err(|e| format!("tick_label si_format {si_format:?}: {e}"));
@@ -1565,10 +1659,10 @@ pub fn format_y_label(
                 };
             let text = match affixed_slot {
                 Some(slot) if on_anchor => slot
-                    .paint_anchored(&anchor_spec, value, anchored, &[])
+                    .paint_anchored(&anchor_spec, value, anchored)
                     .map_err(|e| format!("tick_label affixed spec {anchor_spec:?}: {e}"))?,
                 Some(slot) => slot
-                    .bare_digits(&tl.format, value, &[])
+                    .bare_digits(&tl.format, value)
                     .map_err(|e| format!("tick_label format {:?}: {e}", tl.format))?,
                 None if on_anchor && !tl.prefix.is_empty() => crate::number_locale::d3_format(&anchor_spec, value)
                     .map_err(|e| format!("tick_label anchor spec {anchor_spec:?}: {e}"))?,
@@ -1824,6 +1918,14 @@ pub struct AxisStyle {
     /// abbreviate. Mutually exclusive with `ruler`.
     #[serde(default)]
     pub tick_label: Option<TickLabelConfig>,
+    /// A legend view cleared the baked ladder, so the ruler and `tick_label` resolve baked for the
+    /// whole chart's ladder no longer describe the one drawn: see [`AxisStyle::labeling`].
+    #[serde(skip)]
+    pub refit: bool,
+    /// The ticks of this axis stack into a column: every axis but a horizontal bar's measure axis.
+    /// Set with `refit`, which is where the renderer re-decides how the ticks are labeled.
+    #[serde(skip)]
+    pub column_forming: bool,
     /// Temporal cadence field — unsupported in Rust renderer.
     #[serde(default)]
     pub time_unit: Option<Value>,
@@ -1880,12 +1982,18 @@ pub struct AxisStyle {
     pub zero_anchored: bool,
 }
 
+/// Where Vega draws a tick or gridline at scale `position`: `tickRound` snaps it to a whole pixel (`Math.round`), and
+/// the axis group's crisp `translate` of 0.5 puts the 1px stroke on that pixel's center.
+pub fn tick_round(position: f64) -> f64 {
+    d3rs::js_math::js_round(position) + 0.5
+}
+
 /// The row a value-axis tick mark sits on: Vega's `tickRound` snaps the rung's
 /// scale `position` to a whole pixel inside the axis group's crisp +0.5
 /// translate, the same row the gridline takes. `origin` is the plot top in the
 /// frame the mark is emitted in.
 pub fn tick_row(origin: f64, position: f64) -> f64 {
-    origin + position.round() + 0.5
+    origin + tick_round(position)
 }
 
 /// A gridline or tick ink the resolve stage always fills; its absence refuses
@@ -1972,20 +2080,6 @@ pub fn tick_look<'a>(rules: &[ThresholdRule<'a>], pos: f64, stroke: &'a str, wid
 /// negative), stroked with `ticks`' own color and width unless `rules` paint a
 /// threshold rule at its value. Vega draws a mark per rung on every axis whose
 /// `ticks` is true (`vega-parser/src/parsers/axis.js`).
-pub fn emit_value_ticks(
-    svg: &mut String,
-    ticks: &AxisTicks,
-    rows: impl IntoIterator<Item = f64>,
-    edge_x: f64,
-    outward: f64,
-    len: f64,
-    rules: &[ThresholdRule],
-) -> Result<(), String> {
-    svg.push_str(&print::print(&value_ticks(ticks, rows, edge_x, outward, len, rules)?));
-    Ok(())
-}
-
-/// [`emit_value_ticks`] as nodes.
 pub fn value_ticks(
     ticks: &AxisTicks,
     rows: impl IntoIterator<Item = f64>,
@@ -2004,15 +2098,7 @@ pub fn value_ticks(
     Ok(rows
         .map(|row| {
             let (y, stroke, width) = tick_look(rules, row, color, width);
-            Node::Line(
-                Attrs::new()
-                    .set("x1", format!("{x1:.2}"))
-                    .set("y1", format!("{y:.2}"))
-                    .set("x2", format!("{x2:.2}"))
-                    .set("y2", format!("{y:.2}"))
-                    .set("stroke", stroke)
-                    .set("stroke-width", width.to_string()),
-            )
+            crate::contract::rule(Role::Axis, (x1, y), (x2, y), stroke, width)
         })
         .collect())
 }
@@ -2043,7 +2129,6 @@ pub fn x_tick_marks(
     rules: &[ThresholdRule],
     xs: impl IntoIterator<Item = f64>,
     (floor_y, end_y): (f64, f64),
-    places: usize,
 ) -> Result<Vec<Node>, String> {
     let themed = required_ink(ticks.color.as_deref(), "axis", "ticks.color")?;
     let stroke = floor_rule.unwrap_or(themed);
@@ -2052,17 +2137,20 @@ pub fn x_tick_marks(
         .into_iter()
         .map(|x| {
             let (x, stroke, width) = tick_look(rules, x, stroke, width);
-            Node::Line(
-                Attrs::new()
-                    .set("x1", format!("{x:.places$}"))
-                    .set("y1", format!("{floor_y:.places$}"))
-                    .set("x2", format!("{x:.places$}"))
-                    .set("y2", format!("{end_y:.places$}"))
-                    .set("stroke", stroke)
-                    .set("stroke-width", width.to_string()),
-            )
+            crate::contract::rule(Role::Axis, (x, floor_y), (x, end_y), stroke, width)
         })
         .collect())
+}
+
+/// `scale`'s position for `v`. A log scale with a zero floor (an area's fill baseline
+/// joining the domain) puts every value at -Infinity / -Infinity, which Vega's SVG
+/// prints as 0.
+pub fn zero_floor_position(scale: &d3rs::scale::Continuous, v: f64) -> f64 {
+    if matches!(scale.transform, d3rs::scale::Transform::Log { .. }) && scale.domain[0] == 0.0 {
+        0.0
+    } else {
+        scale.scale(v)
+    }
 }
 
 impl AxisStyle {
@@ -2203,24 +2291,36 @@ impl AxisStyle {
 
     /// The transform of `scale.continuous.type`; Vega's defaults for the
     /// exponent (1) and the symlog constant (1) when unauthored.
-    pub fn bend(&self) -> crate::vega_fit::Bend {
-        use crate::vega_fit::Bend;
+    pub fn transform(&self) -> d3rs::scale::Transform {
+        use d3rs::scale::Transform;
         let continuous = self.scale.get("continuous");
         let param = |kind: &str, key: &str| {
             continuous.and_then(|c| c.get(kind)).and_then(|p| p.get(key)).and_then(Value::as_f64).unwrap_or(1.0)
         };
         match continuous.and_then(|c| c.get("type")).and_then(Value::as_str) {
-            Some("log") => Bend::Log,
-            Some("pow") => Bend::Pow(param("pow", "exponent")),
-            Some("sqrt") => Bend::Pow(0.5),
-            Some("symlog") => Bend::Symlog(param("symlog", "constant")),
-            _ => Bend::Linear,
+            Some("log") => Transform::Log { base: self.log_base() },
+            Some("pow") => Transform::Pow(param("pow", "exponent")),
+            Some("sqrt") => Transform::Pow(0.5),
+            Some("symlog") => Transform::Symlog(param("symlog", "constant")),
+            _ => Transform::Identity,
         }
     }
 
     /// The authored `scale.values`, Vega's explicit tick positions.
     pub fn authored_scale_values(&self) -> Option<Vec<f64>> {
         self.scale.get("values")?.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect())
+    }
+
+    /// A log axis's scale over `domain` at the axis's base, onto the unit interval: the one its ticks,
+    /// niced ends and label mask come from.
+    pub fn log_scale(&self, (lo, hi): (f64, f64)) -> d3rs::scale::Continuous {
+        d3rs::scale::Continuous::new(d3rs::scale::Transform::Log { base: self.log_base() }, [lo, hi], [0.0, 1.0])
+    }
+
+    /// `domain` rounded out to powers of the axis's base; a descending pair keeps its order.
+    pub fn log_nice(&self, domain: (f64, f64)) -> (f64, f64) {
+        let nice = self.log_scale(domain).nice(0).domain;
+        (nice[0], nice[1])
     }
 
     /// The log scale's authored base, Vega's default 10 when unauthored.
@@ -2449,6 +2549,14 @@ pub fn x_threshold_fires(
     }
 }
 
+/// A dash pattern as an SVG `stroke-dasharray`; absent or empty is solid.
+pub fn dash_array(dash: Option<&[f64]>) -> Option<String> {
+    match dash {
+        None | Some([]) => None,
+        Some(dash) => Some(dash.iter().map(f64::to_string).collect::<Vec<_>>().join(",")),
+    }
+}
+
 /// The axis domain line (VL `domain`), hidden by the theme.
 #[derive(Deserialize, Clone)]
 pub struct AxisLine {
@@ -2494,6 +2602,22 @@ pub struct TornBaseline {
 }
 
 impl AxisGrid {
+    /// The `stroke-dasharray` of an authored dash; absent or `[]` draws solid.
+    pub fn dasharray(&self) -> Option<String> {
+        dash_array(self.dash.as_deref())
+    }
+
+    /// A gridline's stroke attributes in this grid's dash.
+    pub fn stroke(&self, color: &str, width: f64) -> Attrs {
+        Attrs::new().set("stroke", color).num("stroke-width", width).quick_some("stroke-dasharray", self.dasharray())
+    }
+
+    /// [`Self::stroke`] plus an authored opacity, for the sites that draw an
+    /// unset or opaque grid with no opacity attribute at all.
+    pub fn faded_stroke(&self, color: &str, width: f64) -> Attrs {
+        self.stroke(color, width).num_some("opacity", self.opacity.filter(|&o| o != 1.0))
+    }
+
     /// Production's `ResolvedAxisGridThresholdStyle.visible` — the
     /// independent off-switch `_insert_zero_rule`/`_insert_top_rules`/
     /// `_apply_unity`/`_apply_x_threshold` all check (`baseline.py`): it
@@ -2919,12 +3043,12 @@ where
 #[derive(Deserialize, Clone)]
 #[serde(from = "MarkLabelsWire")]
 pub struct MarkLabels {
-    /// On for `true` and for `"last"`.
+    /// On for `true`, `"last"` and an anchor list.
     pub visible: bool,
-    /// `labels.visible: "last"`: only each series' most recent non-null point is
-    /// labeled. Only point and line labels author it; every other reader of
-    /// these labels calls `refuse_last`.
-    pub last_only: bool,
+    /// The marks of each series `labels.visible` names; empty labels every mark.
+    /// Only point, line and bar labels author these; every other reader of these
+    /// labels calls `refuse_anchors`.
+    pub anchors: Vec<LabelAnchor>,
     /// Label a different column than the measure.
     pub field: Option<String>,
     pub format: Option<FormatSlot>,
@@ -2957,12 +3081,58 @@ struct MarkLabelsWire {
     stacked: Option<bool>,
 }
 
-/// `labels.visible` on the wire: `true`, `false`, or `"last"`.
+/// `labels.visible` on the wire: `true`, `false`, `"last"`, or a list of anchors.
 #[derive(Deserialize)]
 #[serde(untagged)]
 pub(crate) enum LabelsVisible {
     Flag(bool),
     Last(LastTag),
+    Anchors(Vec<LabelAnchor>),
+}
+
+/// One mark `labels.visible` picks from each series.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum LabelAnchor {
+    First,
+    Last,
+    Min,
+    Max,
+}
+
+/// The `(series, axis position)` each anchor picks from `points`, the non-null
+/// `(series, axis position, value)` of a chart. Every series answers for itself,
+/// and `min` or `max` picks every position tied for it.
+pub fn anchored_points(anchors: &[LabelAnchor], points: &[(String, usize, f64)]) -> std::collections::HashSet<(String, usize)> {
+    #[derive(Clone, Copy)]
+    struct Span {
+        first: usize,
+        last: usize,
+        min: f64,
+        max: f64,
+    }
+    let mut spans: std::collections::HashMap<&str, Span> = std::collections::HashMap::new();
+    for (series, at, value) in points {
+        let (at, value) = (*at, *value);
+        let span = spans.entry(series).or_insert(Span { first: at, last: at, min: value, max: value });
+        span.first = span.first.min(at);
+        span.last = span.last.max(at);
+        span.min = span.min.min(value);
+        span.max = span.max.max(value);
+    }
+    let mut picked = std::collections::HashSet::new();
+    for (series, at, value) in points {
+        let span = &spans[series.as_str()];
+        if anchors.iter().any(|anchor| match anchor {
+            LabelAnchor::First => *at == span.first,
+            LabelAnchor::Last => *at == span.last,
+            LabelAnchor::Min => *value == span.min,
+            LabelAnchor::Max => *value == span.max,
+        }) {
+            picked.insert((series.clone(), *at));
+        }
+    }
+    picked
 }
 
 #[derive(Deserialize)]
@@ -2972,9 +3142,17 @@ enum LastTag {
 }
 
 impl LabelsVisible {
-    /// Any labels at all: `true` and `"last"` both draw some.
+    /// Any labels at all: everything but `false` draws some.
     pub(crate) fn on(&self) -> bool {
         !matches!(self, Self::Flag(false))
+    }
+
+    fn anchors(self) -> Vec<LabelAnchor> {
+        match self {
+            Self::Flag(_) => Vec::new(),
+            Self::Last(_) => vec![LabelAnchor::Last],
+            Self::Anchors(anchors) => anchors,
+        }
     }
 }
 
@@ -2982,7 +3160,7 @@ impl From<MarkLabelsWire> for MarkLabels {
     fn from(w: MarkLabelsWire) -> Self {
         MarkLabels {
             visible: w.visible.on(),
-            last_only: matches!(w.visible, LabelsVisible::Last(_)),
+            anchors: w.visible.anchors(),
             field: w.field,
             format: w.format,
             dx: w.dx,
@@ -2995,11 +3173,11 @@ impl From<MarkLabelsWire> for MarkLabels {
 }
 
 impl MarkLabels {
-    /// Backstop for `ERR-LABELS-LAST-UNSUPPORTED` (compile): a reader with no notion of
-    /// a series' last point refuses `"last"` by name.
-    pub fn refuse_last(&self, family: &str) -> Result<(), String> {
-        if self.last_only {
-            return Err(format!("{family}: labels.visible \"last\" needs a line chart; use true to label every mark"));
+    /// Backstop for `ERR-LABELS-ANCHOR-UNSUPPORTED` (compile): a reader with no notion of
+    /// a series' own marks refuses anchors by name.
+    pub fn refuse_anchors(&self, family: &str) -> Result<(), String> {
+        if !self.anchors.is_empty() {
+            return Err(format!("{family}: labels.visible anchors need a line or bar chart; use true to label every mark"));
         }
         Ok(())
     }
@@ -3593,24 +3771,15 @@ pub fn title_block_nodes(
     nodes
 }
 
-/// Emit the standard chart title; returns the vertical band consumed (size + 10).
-///
-/// `x` is the left inset (`pad_l`); `pad_t` is the top padding — the baseline is derived
-/// internally as `pad_t + baseline_shift("top", size)`, Vega's own top-baseline shift
-/// (the same law `emit_title_vega` uses). Callers use the returned band for `plot_top`.
-pub fn emit_title(
-    out: &mut String,
-    title: Option<&str>,
-    style: Option<&TitleStyle>,
-    x: f64,
-    pad_t: f64,
-) -> f64 {
-    let Some(title) = title else { return 0.0 };
-    out.push_str(&print::print(&[plain_title_node(title, style, x, pad_t)]));
+/// The band a [`plain_title_node`] reserves above the plot.
+pub fn plain_title_height(style: Option<&TitleStyle>) -> f64 {
     style.and_then(|t| t.font.size).unwrap_or(18.0) + 10.0
 }
 
-/// [`emit_title`]'s text as a node: the title with `font.case` applied, anchored start at `x`.
+/// The standard chart title as a node: the title with `font.case` applied, anchored start at `x`.
+///
+/// `pad_t` is the top padding; the baseline is `pad_t + baseline_shift("top", size)`, Vega's own
+/// top-baseline shift (the law `emit_title_vega` uses).
 pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: f64) -> Node {
     let f = style.map(|t| &t.font);
     let family = f.and_then(|f| f.family.as_deref()).unwrap_or("serif");
@@ -3626,19 +3795,8 @@ pub fn plain_title_node(title: &str, style: Option<&TitleStyle>, x: f64, pad_t: 
     // themes) is a payload bug, so it fails loudly here rather than silently falling
     // back to the raw title.
     let cased_title = display_text::case::apply_case(title, font_case)
-        .unwrap_or_else(|e| panic!("emit_title: {e}"));
-    Node::text(
-        Attrs::new()
-            .set("x", format!("{x:.1}"))
-            .set("y", format!("{y_baseline:.1}"))
-            .vega("font-family", family)
-            .set("font-size", size.to_string())
-            .quick_some("font-style", f.and_then(|f| f.style.as_deref()))
-            .set("font-weight", weight)
-            .set("fill", color)
-            .set("data-authored-kind", "title"),
-        cased_title,
-    )
+        .unwrap_or_else(|e| panic!("plain_title_node: {e}"));
+    Node::text(Role::Title, (x, y_baseline), Attrs::new().vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set("data-authored-kind", "title"), cased_title)
 }
 
 /// The wrapped subtitle lines as nodes.
@@ -3667,18 +3825,7 @@ pub fn subtitle_nodes(
         .map(|(i, sub)| {
             let ly = sy + i as f64 * (sub_fs + crate::vega_fit::TitleInk::LINE_ADVANCE_EXTRA);
             // Same one-group-not-one-per-line law as the title above.
-            Node::text(
-                Attrs::new()
-                    .set("x", format!("{x:.2}"))
-                    .set("y", format!("{ly:.2}"))
-                    .vega("font-family", sub_family)
-                    .set("font-size", sub_fs.to_string())
-                    .quick_some("font-style", sf.and_then(|f| f.font.style.as_deref()))
-                    .set("font-weight", sub_weight.clone())
-                    .set("fill", sub_color)
-                    .set_if(i == 0, "data-authored-kind", "subtitle"),
-                sub.as_str(),
-            )
+            Node::text(Role::Title, (x, ly), Attrs::new().vega("font-family", sub_family).num("font-size", sub_fs).quick_some("font-style", sf.and_then(|f| f.font.style.as_deref())).set("font-weight", sub_weight.clone()).set("fill", sub_color).set_if(i == 0, "data-authored-kind", "subtitle"), sub.as_str())
         })
         .collect()
 }
@@ -3691,18 +3838,7 @@ pub fn title_node(text: &str, style: Option<&TitleStyle>, x: f64, y: f64, stamp_
     let color = f.and_then(|f| f.color.as_deref()).unwrap_or("#1a1a1a");
     let weight = f.map(|f| f.weight_str()).unwrap_or_else(|| "600".into());
     let baseline = y + measure::baseline_shift("top", size);
-    Node::text(
-        Attrs::new()
-            .set("x", format!("{x:.2}"))
-            .set("y", format!("{baseline:.2}"))
-            .vega("font-family", family)
-            .set("font-size", size.to_string())
-            .quick_some("font-style", f.and_then(|f| f.style.as_deref()))
-            .set("font-weight", weight)
-            .set("fill", color)
-            .set_if(stamp_kind, "data-authored-kind", "title"),
-        text,
-    )
+    Node::text(Role::Title, (x, baseline), Attrs::new().vega("font-family", family).num("font-size", size).quick_some("font-style", f.and_then(|f| f.style.as_deref())).set("font-weight", weight).set("fill", color).set_if(stamp_kind, "data-authored-kind", "title"), text)
 }
 
 /// Numeric value from a row column, tolerating strings.
@@ -4151,52 +4287,45 @@ pub fn axis_title_at(
     // The title lives inside Vega's axis group, which the ticks and
     // gridlines already crisp-shift by +0.5 — the title inherits it too.
     let x = center_x + 0.5;
-    let attrs = Attrs::new()
-        .set("x", format!("{x:.2}"))
-        .set("y", format!("{title_y:.2}"))
-        .set("text-anchor", "middle");
-    Some(axis_title_group(text, style, attrs, x, key))
+    Some(axis_title_group(text, style, (x, title_y), None, x, key))
 }
 
-/// The title group around `text`: `attrs` lead the `<text>` and its font finishes them; a
+/// The title group around `text` anchored at `at`, rotated by `turn` degrees about it when given; a
 /// wrapped title's lines after the first step `lineHeight` from `line_x`.
 fn axis_title_group(
     text: &str,
     style: &AxisTitle,
-    attrs: Attrs,
+    at: (f64, f64),
+    turn: Option<f64>,
     line_x: f64,
     key: Option<crate::contract::LabelKey>,
 ) -> Node {
     let f = &style.font;
     let size = f.size_or(11.0);
-    let attrs = attrs
+    let attrs = Attrs::new()
+        .set("text-anchor", "middle")
         .vega("font-family", f.family_or("sans-serif"))
-        .set("font-size", size.to_string())
-        .quick_some("font-style", f.style.as_deref())
+        .num("font-size", size).quick_some("font-style", f.style.as_deref())
         .set("font-weight", f.weight_str())
         .set("fill", f.color.as_deref().unwrap_or("#8A8C8F"));
     let lines: Vec<&str> = text.split('\n').collect();
-    let title = match lines[..] {
-        [line] => Node::text(attrs, line),
-        _ => Node::TextRuns {
-            attrs,
-            children: lines
-                .iter()
-                .enumerate()
-                .map(|(i, line)| {
-                    let step = if i == 0 {
-                        Attrs::new()
-                    } else {
-                        Attrs::new()
-                            .set("x", format!("{line_x:.2}"))
-                            .set("dy", crate::vega_fit::label_row_advance(size).to_string())
-                    };
-                    Node::Tspan(TextBlock { attrs: step, text: Chars::new(*line, Escape::Attr) })
-                })
-                .collect(),
-        },
-    };
-    Node::group(crate::contract::axis_title_attrs(key), vec![title])
+    let runs = lines
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let chars = vec![Run::Chars(Chars::new(*line, Escape::Attr))];
+            match i {
+                0 if lines.len() == 1 => Run::Chars(Chars::new(*line, Escape::Attr)),
+                0 => Run::Tspan { x: None, y: None, dx: None, dy: None, attrs: Attrs::new(), runs: chars },
+                _ => Run::Tspan { x: Some(line_x), y: None, dx: None, dy: Some(crate::vega_fit::label_row_advance(size)), attrs: Attrs::new(), runs: chars },
+            }
+        })
+        .collect();
+    let mut title = Node::new(Role::Axis, attrs, Shape::Text { at, bounds: None, runs });
+    if let Some(deg) = turn {
+        title = title.with_transform(Transform::Rotate { deg, about: Some(at) });
+    }
+    Node::group(Role::Axis, crate::contract::axis_title_attrs(key), vec![title])
 }
 
 /// [`emit_axis_title_bottom`] as a node.
@@ -4234,7 +4363,7 @@ pub fn axis_title_flat(
     }
 }
 
-/// Emit a rotated (vertical) axis title for a left- or right-side axis,
+/// A rotated (vertical) axis title for a left- or right-side axis,
 /// centered on the plot's extent in that direction.
 ///
 /// `label_edge_x` is the tick label band's outer edge (away from the plot) —
@@ -4242,21 +4371,6 @@ pub fn axis_title_flat(
 /// `sign` is `-1.0` for a left-side axis (rotate -90°, title sits further
 /// left) and `1.0` for a right-side axis (rotate 90°, title sits further
 /// right). No-op when `axis_title_band` would return `0.0`.
-pub fn emit_axis_title_rotated(
-    out: &mut String,
-    text: &str,
-    style: &AxisTitle,
-    label_edge_x: f64,
-    center_y: f64,
-    sign: f64,
-    key: Option<crate::contract::LabelKey>,
-) {
-    out.extend(
-        axis_title_rotated(text, style, label_edge_x, center_y, sign, key).map(|node| print::print(&[node])),
-    );
-}
-
-/// [`emit_axis_title_rotated`] as a node.
 pub fn axis_title_rotated(
     text: &str,
     style: &AxisTitle,
@@ -4279,12 +4393,7 @@ pub fn axis_title_rotated(
     // by +0.5 in both coordinates — the title's y (its position ALONG the
     // axis) inherits it too, same as the bottom title's x above.
     let y = center_y + 0.5;
-    let attrs = Attrs::new()
-        .set("x", format!("{title_x:.2}"))
-        .set("y", format!("{y:.2}"))
-        .set("text-anchor", "middle")
-        .set("transform", format!("rotate({angle} {title_x:.2} {y:.2})"));
-    Some(axis_title_group(text, style, attrs, title_x, key))
+    Some(axis_title_group(text, style, (title_x, y), Some(angle), title_x, key))
 }
 
 /// Display string from a row column. This is production's Vega-drawn
@@ -4530,17 +4639,15 @@ pub fn value_label(
         _ => "middle",
     };
     let attrs = Attrs::new()
-        .set("x", format!("{x:.2}"))
-        .set("y", format!("{baseline_y:.2}"))
         .set("text-anchor", text_anchor)
         .vega("font-family", family)
-        .set("font-size", size.to_string())
+        .num("font-size", size)
         .set("font-weight", weight);
     let attrs = match font_style {
         Some(style) => attrs.set("font-style", style),
         None => attrs,
     };
-    Node::text(attrs.set("fill", color).extend(aria), text)
+    Node::text(Role::Label, (x, baseline_y), attrs.set("fill", color).extend(aria), text)
 }
 
 #[cfg(test)]
@@ -4793,50 +4900,135 @@ pub fn wide_series_names(
     names
 }
 
-/// Vega's `center` stack offset: a category whose stack piles `total` of
-/// magnitude floats to the middle of the tallest one, `max_total`.
-pub fn center_offset(max_total: f64, total: f64) -> f64 {
-    (max_total - total) / 2.0
+/// A board's `stack` mode on d3-shape's stack, `values[series][column]` with NaN
+/// for no datum, baseline series first, and each datum's `[start, end]` back.
+///
+/// `zero` is the diverging offset: positives pile up from 0, negatives down from
+/// it, a zero riding the positive pile. `normalize` expands each sign's series over that sign's own sum, so a
+/// mixed-sign column is two `[0, 1]` piles and a negative segment is drawn as its
+/// magnitude; a sign's pile that sums to 0 (a column of zeros, or a zero beside a
+/// negative) has no share and its spans are NaN (Vega's 0/0), where d3 would leave
+/// the zeros unscaled. `center` is the
+/// silhouette of the magnitudes floated up by half the tallest column, so the
+/// tallest fills `[0, max]` and every column centers on `max / 2`. An unknown
+/// mode refuses by name.
+pub fn grammar_stack(mode: &str, values: &[Vec<f64>]) -> Result<Vec<Vec<[f64; 2]>>, String> {
+    match mode {
+        "zero" => Ok(zero_stack(values)),
+        "normalize" => Ok(normalized(values)),
+        "center" => {
+            let columns = values.first().map_or(0, Vec::len);
+            Ok(centered(values, tallest_pile((0..columns).map(|j| values.iter().map(move |series| series[j])))))
+        }
+        other => Err(format!("stack: unknown mode {other:?}")),
+    }
 }
 
-/// Vega's `center` and `normalize` offsets pile `|v|` (`stackCenter`,
-/// `stackNormalize` in `vega-transforms/Stack.js`): a negative value draws its
-/// magnitude upward, never below the baseline as `zero` stacks it.
-pub fn abs_total(values: impl IntoIterator<Item = f64>) -> f64 {
-    values.into_iter().map(f64::abs).sum()
+/// The largest column sum of magnitudes, an absent (NaN) datum adding nothing: the
+/// height of the tallest `center` pile.
+pub fn tallest_pile<C: IntoIterator<Item = f64>>(columns: impl IntoIterator<Item = C>) -> f64 {
+    columns
+        .into_iter()
+        .map(|column| column.into_iter().filter(|v| !v.is_nan()).map(f64::abs).sum::<f64>())
+        .fold(0.0, f64::max)
 }
 
-/// Vega's `stackZero` running sums for one category (`vega-transforms/Stack.js`):
-/// a value below zero descends from 0, anything else (zero included) climbs
-/// from `start`. A segment is `(start, end)`; the mark's `y` edge is `end`.
-#[derive(Clone, Copy, Debug)]
-pub struct StackZero {
-    pos: f64,
-    neg: f64,
+/// `grammar_stack("center", values)` with the tallest pile given: a facet centers
+/// every panel on the tallest column of all of them.
+pub fn centered(values: &[Vec<f64>], tallest: f64) -> Vec<Vec<[f64; 2]>> {
+    let magnitudes: Vec<Vec<f64>> = values.iter().map(|series| series.iter().map(|v| v.abs()).collect()).collect();
+    let mut spans = stack(&magnitudes, Order::None, Offset::Silhouette).series;
+    for span in spans.iter_mut().flatten() {
+        span[0] += tallest / 2.0;
+        span[1] += tallest / 2.0;
+    }
+    spans
 }
 
-impl StackZero {
-    pub fn new(start: f64) -> Self {
-        Self { pos: start, neg: 0.0 }
-    }
+fn normalized(values: &[Vec<f64>]) -> Vec<Vec<[f64; 2]>> {
+    // A sign's pile that sums to 0 has no share to divide by (Vega's 0/0): d3's expand
+    // leaves its zeros at [0, 0], here they have no span.
+    let sign = |keep: fn(f64) -> bool| -> Vec<Vec<[f64; 2]>> {
+        let kept: Vec<Vec<f64>> = values
+            .iter()
+            .map(|series| series.iter().map(|&v| if keep(v) { v } else { f64::NAN }).collect())
+            .collect();
+        let mut spans = stack(&kept, Order::None, Offset::Expand).series;
+        for j in 0..kept.first().map_or(0, Vec::len) {
+            if kept.iter().map(|series| series[j]).filter(|v| !v.is_nan()).sum::<f64>() == 0.0 {
+                for span in spans.iter_mut() {
+                    span[j] = [f64::NAN; 2];
+                }
+            }
+        }
+        spans
+    };
+    let (positive, negative) = (sign(|v| v >= 0.0), sign(|v| v < 0.0));
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, series)| {
+            series
+                .iter()
+                .enumerate()
+                .map(|(j, &v)| if v < 0.0 { negative[i][j] } else { positive[i][j] })
+                .collect()
+        })
+        .collect()
+}
 
-    /// The next segment; a caller that normalizes passes the already
-    /// normalized value for a non-negative one.
-    pub fn push(&mut self, v: f64) -> (f64, f64) {
-        let sum = if v < 0.0 { &mut self.neg } else { &mut self.pos };
-        let start = *sum;
-        *sum += v;
-        (start, *sum)
+/// Where a rail label anchors on a stacked segment: its midpoint, or the raw zero
+/// stack's midpoint, 0, for a normalized segment with no share (`_stacked_midpoints`:
+/// `mid / col_total if col_total else mid`).
+pub fn rail_anchor(span: [f64; 2]) -> f64 {
+    if span[0].is_nan() {
+        0.0
+    } else {
+        (span[0] + span[1]) / 2.0
     }
+}
 
-    /// The positive pile's height; the column total when nothing is negative.
-    pub fn pos_total(&self) -> f64 {
-        self.pos
+/// The `[start, end]` of every item on its key's `zero` pile, in input order:
+/// items sharing a key stack in the order they come, one series each.
+pub fn zero_piles<K: Eq + std::hash::Hash>(items: impl IntoIterator<Item = (K, f64)>) -> Vec<(f64, f64)> {
+    let mut piles: Vec<Vec<f64>> = Vec::new();
+    let mut pile_of: std::collections::HashMap<K, usize> = std::collections::HashMap::new();
+    let mut place: Vec<(usize, usize)> = Vec::new();
+    for (key, value) in items {
+        let pile = *pile_of.entry(key).or_insert_with(|| {
+            piles.push(Vec::new());
+            piles.len() - 1
+        });
+        place.push((pile, piles[pile].len()));
+        piles[pile].push(value);
     }
+    let spans: Vec<Vec<[f64; 2]>> = piles
+        .iter()
+        .map(|pile| {
+            let one_point_each: Vec<Vec<f64>> = pile.iter().map(|&v| vec![v]).collect();
+            zero_stack(&one_point_each).into_iter().map(|series| series[0]).collect()
+        })
+        .collect();
+    place.into_iter().map(|(pile, i)| (spans[pile][i][0], spans[pile][i][1])).collect()
+}
 
-    pub fn neg_total(&self) -> f64 {
-        self.neg
+/// d3's diverging offset, except that a zero datum rides the top of the positive pile
+/// below it (Vega's `stackZero`, and d3's own `none` offset) instead of sitting at the
+/// baseline: a zero-height segment keeps the seam between its neighbors, so a series that
+/// is null or absent at one x pinches to a wedge there rather than dipping to 0.
+fn zero_stack(values: &[Vec<f64>]) -> Vec<Vec<[f64; 2]>> {
+    let mut spans = stack(values, Order::None, Offset::Diverging).series;
+    for j in 0..values.first().map_or(0, Vec::len) {
+        let mut top = 0.0;
+        for (series, span) in values.iter().zip(spans.iter_mut()) {
+            if series[j] == 0.0 {
+                span[j] = [top, top];
+            } else if series[j] > 0.0 {
+                top = span[j][1];
+            }
+        }
     }
+    spans
 }
 
 /// Baseline-first series order of a stacked chart — port of
@@ -5419,22 +5611,20 @@ mod axis_title_tests {
     #[test]
     fn value_ticks_run_outward_from_the_axis_edge_on_each_row() {
         let t = ticks(serde_json::json!({"visible": true, "color": "#112233", "width": 2.0}));
-        let mut left = String::new();
-        emit_value_ticks(&mut left, &t, [tick_row(10.0, 3.4)], 50.5, -1.0, 6.0, &[]).unwrap();
+        let left = print::print(&value_ticks(&t, [tick_row(10.0, 3.4)], 50.5, -1.0, 6.0, &[]).unwrap());
         assert_eq!(
             left,
-            "<line x1=\"44.50\" y1=\"13.50\" x2=\"50.50\" y2=\"13.50\" \
+            "<line x1=\"44.5\" y1=\"13.5\" x2=\"50.5\" y2=\"13.5\" \
              stroke=\"#112233\" stroke-width=\"2\"/>"
         );
-        let mut right = String::new();
-        emit_value_ticks(&mut right, &t, [13.5], 50.5, 1.0, 6.0, &[]).unwrap();
-        assert!(right.contains("x1=\"50.50\"") && right.contains("x2=\"56.50\""));
+        let right = print::print(&value_ticks(&t, [13.5], 50.5, 1.0, 6.0, &[]).unwrap());
+        assert!(right.contains("x1=\"50.5\"") && right.contains("x2=\"56.5\""));
     }
 
     #[test]
     fn a_tick_without_an_ink_refuses_by_name() {
         let t = ticks(serde_json::json!({"visible": true}));
-        let err = emit_value_ticks(&mut String::new(), &t, [13.5], 50.5, 1.0, 6.0, &[]).unwrap_err();
+        let err = value_ticks(&t, [13.5], 50.5, 1.0, 6.0, &[]).unwrap_err();
         assert_eq!(err, "axis: ticks.color absent (theme required)");
     }
 
@@ -5479,8 +5669,8 @@ mod axis_title_tests {
         // 0.5`.
         let style = title_style(11.0, 10.0, Some(true));
         let out = print::print(&axis_title_bottom("revenue", &style, 239.0, 14.8, 11.0, None).into_iter().collect::<Vec<_>>());
-        assert!(out.contains("y=\"35.80\""), "expected baseline near 35.8: {out}");
-        assert!(out.contains("x=\"239.50\""), "plot_x + 0.5 + pw/2: {out}");
+        assert!(out.contains("y=\"35.8\""), "expected baseline near 35.8: {out}");
+        assert!(out.contains("x=\"239.5\""), "plot_x + 0.5 + pw/2: {out}");
         assert!(out.contains(">revenue<"));
     }
 
@@ -5492,11 +5682,11 @@ mod axis_title_tests {
     fn emit_axis_title_bottom_x_carries_the_axis_groups_crisp_translate() {
         let style = title_style(11.0, 10.0, Some(true));
         let out = print::print(&axis_title_bottom("revenue", &style, 100.0, 14.8, 11.0, None).into_iter().collect::<Vec<_>>());
-        assert!(out.contains("x=\"100.50\""), "center_x + 0.5: {out}");
+        assert!(out.contains("x=\"100.5\""), "center_x + 0.5: {out}");
     }
 
     #[test]
-    fn emit_axis_title_rotated_places_title_past_the_label_edge() {
+    fn axis_title_rotated_places_title_past_the_label_edge() {
         // Measured production: bar-charts_4's category title x is exactly
         // 10.0px (title.padding) further from the plot than the label's own
         // left edge, plus the fixed 2.0px rotate nudge — deleting either term
@@ -5504,21 +5694,19 @@ mod axis_title_tests {
         // ALONG the axis) carries the same +0.5 crisp translate as the x
         // does on a bottom title.
         let style = title_style(11.0, 10.0, Some(true));
-        let mut out = String::new();
-        emit_axis_title_rotated(&mut out, "category", &style, 16.0, 167.0, -1.0, None);
-        assert!(out.contains("x=\"4.00\""), "expected 16 - (10 + 2): {out}");
-        assert!(out.contains("rotate(-90 4.00 167.50)"), "plot_y + 0.5 + ph/2: {out}");
+        let out = print::print(&axis_title_rotated("category", &style, 16.0, 167.0, -1.0, None).into_iter().collect::<Vec<_>>());
+        assert!(out.contains("x=\"4\""), "expected 16 - (10 + 2): {out}");
+        assert!(out.contains("rotate(-90 4 167.5)"), "plot_y + 0.5 + ph/2: {out}");
     }
 
     /// The rotated title's y carries the axis group's +0.5 crisp translate,
     /// isolated from the label-edge math above.
     #[test]
-    fn emit_axis_title_rotated_y_carries_the_axis_groups_crisp_translate() {
+    fn axis_title_rotated_y_carries_the_axis_groups_crisp_translate() {
         let style = title_style(11.0, 10.0, Some(true));
-        let mut out = String::new();
-        emit_axis_title_rotated(&mut out, "category", &style, 16.0, 100.0, -1.0, None);
-        assert!(out.contains("y=\"100.50\""), "center_y + 0.5: {out}");
-        assert!(out.contains("rotate(-90 4.00 100.50)"), "rotate pivot uses the shifted y too: {out}");
+        let out = print::print(&axis_title_rotated("category", &style, 16.0, 100.0, -1.0, None).into_iter().collect::<Vec<_>>());
+        assert!(out.contains("y=\"100.5\""), "center_y + 0.5: {out}");
+        assert!(out.contains("rotate(-90 4 100.5)"), "rotate pivot uses the shifted y too: {out}");
     }
 }
 
@@ -6121,6 +6309,21 @@ pub fn category_color(scale: &CategoryColorScale, value: &str, palette: &[String
     Ok(palette[slot].clone())
 }
 
+/// [`category_color`] as a [`crate::pattern::Paint`]: the tile of the value's palette slot when
+/// `plan` patterns it. A pinned value of an unpatterned chart needs no slot.
+pub fn category_paint(
+    scale: &CategoryColorScale,
+    value: &str,
+    palette: &[String],
+    plan: &crate::pattern::PatternPlan,
+) -> Result<crate::pattern::Paint, String> {
+    let hue = category_color(scale, value, palette)?;
+    if !plan.is_active() {
+        return Ok(crate::pattern::Paint::Color(hue));
+    }
+    plan.category(slot_for(scale, value, palette.len())?, &hue)
+}
+
 /// The INK `value`'s fill pairs with: the palette slot's companion, except a
 /// value pinned to a color outside the palette, which takes that pinned
 /// color's own ink from `pin_companions` (`(pinned color, ink)` pairs,
@@ -6148,7 +6351,8 @@ pub fn category_ink(
 /// positional assignment over `palette_domain` (its chart-local order —
 /// alphabetical, dash-cycle, whatever the family already builds). Every
 /// family's series-fill lookup routes through this one function so the
-/// precedence lives in exactly one place. A `value` absent from
+/// precedence lives in exactly one place. `plan` swaps in the value's pattern tile; a family with
+/// no pattern channel passes the default plan and takes [`Paint::color`](crate::pattern::Paint::color). A `value` absent from
 /// `palette_domain` refuses — the same guarantee bar.rs's pre-#7167 "series
 /// {s} not in palette domain" error made, since every wired caller's domain
 /// is built from the same rows the value comes from. `palette` is a
@@ -6158,15 +6362,20 @@ pub fn series_color(
     palette_domain: &[String],
     palette: &[String],
     scale: Option<&CategoryColorScale>,
-) -> Result<String, String> {
+    plan: &crate::pattern::PatternPlan,
+) -> Result<crate::pattern::Paint, String> {
     if let Some(scale) = scale {
-        return category_color(scale, value, palette);
+        return category_paint(scale, value, palette, plan);
     }
     let idx = palette_domain
         .iter()
         .position(|s| s == value)
         .ok_or_else(|| format!("internal error — {value:?} not in this chart's own color domain"))?;
-    palette_slot(palette, idx).map(str::to_string)
+    let hue = palette_slot(palette, idx)?;
+    if !plan.is_active() {
+        return Ok(crate::pattern::Paint::Color(hue.to_string()));
+    }
+    plan.category(idx, hue)
 }
 
 /// Slot `idx` of a series palette, wrapping past its end as Vega's ordinal scale cycles a short range.
@@ -6269,13 +6478,31 @@ mod category_color_tests {
         let palette = pal(&["#a", "#b", "#c", "#d"]);
         let domain = vec!["East".to_string(), "North".to_string()]; // chart-local order
         assert_eq!(
-            series_color("East", &domain, &palette, Some(&s)).unwrap(),
+            series_color("East", &domain, &palette, Some(&s), &Default::default()).unwrap().color(),
             "#d"
         );
         assert_eq!(
-            series_color("North", &domain, &palette, Some(&s)).unwrap(),
+            series_color("North", &domain, &palette, Some(&s), &Default::default()).unwrap().color(),
             "#a"
         );
+    }
+
+    /// A chart with no pattern paints exactly `series_color`; a patterned one takes the tile of the
+    /// slot the board's scale seats the value in.
+    #[test]
+    fn series_color_is_the_plain_color_without_a_pattern_and_the_slot_tile_with_one() {
+        use crate::pattern::{Paint, PatternPlan};
+        let s = scale(json!({"field": "region", "slots": {"North": 0, "East": 1}, "overrides": {}}));
+        let palette = pal(&["#aa0000", "#00aa00"]);
+        let domain = vec!["East".to_string(), "North".to_string()];
+        let plain = PatternPlan::default();
+        assert_eq!(series_color("East", &domain, &palette, Some(&s), &plain).unwrap(), Paint::Color("#00aa00".into()));
+        let resolved = json!({"id": "c", "pattern": {"field": "region", "scale": "category", "motifs": ["hatch-45", "crosshatch"], "ground": "background", "inverse": false}, "canvas": "#ffffff"});
+        let plan = PatternPlan::from_resolved(&resolved).unwrap();
+        let east = series_color("East", &domain, &palette, Some(&s), &plan).unwrap();
+        assert!(east.for_mark(100.0, "none", 0.0).fill.contains("crosshatch-00aa00-ffffff"), "East is slot 1");
+        let north = series_color("North", &domain, &palette, None, &plan).unwrap();
+        assert!(north.for_mark(100.0, "none", 0.0).fill.contains("crosshatch-00aa00-ffffff"), "no scale: North is domain position 1");
     }
 
     /// An authored override wins outright, even over a value that also owns
@@ -6316,8 +6543,8 @@ mod category_color_tests {
     fn no_scale_falls_back_to_chart_local_position() {
         let palette = pal(&["#a", "#b", "#c"]);
         let domain = vec!["East".to_string(), "North".to_string()];
-        assert_eq!(series_color("East", &domain, &palette, None).unwrap(), "#a");
-        assert_eq!(series_color("North", &domain, &palette, None).unwrap(), "#b");
+        assert_eq!(series_color("East", &domain, &palette, None, &Default::default()).unwrap().color(), "#a");
+        assert_eq!(series_color("North", &domain, &palette, None, &Default::default()).unwrap().color(), "#b");
     }
 
     /// A value missing from the chart's own local domain (unbound case) is
@@ -6329,7 +6556,7 @@ mod category_color_tests {
     fn a_value_outside_the_local_domain_refuses_even_without_a_scale() {
         let palette = pal(&["#a", "#b"]);
         let domain = vec!["East".to_string()];
-        let err = series_color("Ghost", &domain, &palette, None).unwrap_err();
+        let err = series_color("Ghost", &domain, &palette, None, &Default::default()).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
         let err = series_ink("Ghost", &domain, &palette, &palette, &[], None).unwrap_err();
         assert!(err.contains("Ghost"), "{err}");
@@ -6526,7 +6753,7 @@ mod format_slot_tests {
 
     #[test]
     fn a_plain_axis_si_tick_speaks_the_active_locales_billion_word() {
-        let es = crate::number_locale::en_us_with_words(["K", "M", "\u{a0}mil M", "\u{a0}B"], ["k", "mn", "bn", "trn"]);
+        let es = crate::number_locale::en_us_with_words(["K", "M", "\u{a0}mil M", "\u{a0}B"], ["k", "m", "bn", "trn"]);
         let ticks = crate::number_locale::with_number_locale(&es, || {
             let slot = slot(json!({"spec": ".3~s"}));
             [1.0e3, 1.0e9, 1.0e12].map(|v| slot.paint_tick(v).unwrap())
@@ -6593,7 +6820,7 @@ mod format_slot_tests {
         assert_eq!(analytic.paint(1_234_567.0).unwrap(), "US$1.23M");
         assert_eq!(analytic.paint(2500.0).unwrap(), "US$2.5K");
         let narrative = slot(json!({"spec": ".3~s", "prefix": "US$", "notation": "narrative"}));
-        assert_eq!(narrative.paint(1_234_567.0).unwrap(), "US$1.23mn");
+        assert_eq!(narrative.paint(1_234_567.0).unwrap(), "US$1.23m");
         assert_eq!(narrative.paint(2500.0).unwrap(), "US$2.5k");
         let bare = slot(json!({"spec": ".3~s", "notation": "analytic", "raw": ".3~s"}));
         assert_eq!(bare.paint(1_234_567.0).unwrap(), "1.23M");
@@ -6640,14 +6867,14 @@ mod format_slot_tests {
     fn a_house_value_label_spells_its_register_inside_the_affix() {
         let label = |v: Value, value: f64| format_mark_label(Some(&slot(v)), value, true).unwrap();
         let chf = json!({"spec": ".3~s", "prefix": "CHF ", "raw": "number"});
-        assert_eq!(label(chf.clone(), 1_234_567.0), "CHF 1.23mn");
-        assert_eq!(label(chf.clone(), -1_234_567.0), "CHF \u{2212}1.23mn");
+        assert_eq!(label(chf.clone(), 1_234_567.0), "CHF 1.23m");
+        assert_eq!(label(chf.clone(), -1_234_567.0), "CHF \u{2212}1.23m");
         assert_eq!(label(chf, 0.67), "CHF 0.67");
         let analytic = json!({"spec": ".3~s", "prefix": "US$", "notation": "analytic", "raw": "number"});
         assert_eq!(label(analytic.clone(), 2500.0), "US$2.5K");
         assert_eq!(label(analytic.clone(), 0.67), "US$0.67");
         assert_eq!(label(analytic, 0.0), "US$0");
-        assert_eq!(label(json!({"spec": ".3~s", "raw": "number"}), 1_234_567.0), "1.23mn");
+        assert_eq!(label(json!({"spec": ".3~s", "raw": "number"}), 1_234_567.0), "1.23m");
     }
 
     #[test]
@@ -6931,5 +7158,120 @@ mod axis_labels_expr_tests {
         assert_eq!(labels(Some("right"), Some("datum.label")).align_kept("right"), None);
         assert_eq!(labels(Some("center"), Some("datum.label")).align_kept("right"), None);
         assert_eq!(labels(Some("left"), Some("datum.label")).align_kept("right"), Some("left"));
+    }
+}
+
+#[cfg(test)]
+mod grammar_stack_tests {
+    use super::*;
+
+    const NAN: f64 = f64::NAN;
+
+    /// One column per entry of `columns`, one series per row: `values[series][column]`.
+    fn series_major(columns: &[&[f64]]) -> Vec<Vec<f64>> {
+        (0..columns[0].len()).map(|i| columns.iter().map(|column| column[i]).collect()).collect()
+    }
+
+    fn spans(mode: &str, columns: &[&[f64]]) -> Vec<Vec<[f64; 2]>> {
+        grammar_stack(mode, &series_major(columns)).expect("a known mode")
+    }
+
+    fn assert_spans(got: &[Vec<[f64; 2]>], series: usize, column: usize, want: [f64; 2]) {
+        assert_eq!(got[series][column], want, "series {series}, column {column}: {got:?}");
+    }
+
+    #[test]
+    fn zero_piles_positives_up_and_negatives_down_from_the_baseline() {
+        let got = spans("zero", &[&[3.0, -2.0, 4.0, 0.0]]);
+        assert_spans(&got, 0, 0, [0.0, 3.0]);
+        assert_spans(&got, 1, 0, [-2.0, 0.0]);
+        assert_spans(&got, 2, 0, [3.0, 7.0]);
+        assert_spans(&got, 3, 0, [7.0, 7.0]);
+    }
+
+    #[test]
+    fn zero_lets_a_zero_datum_ride_the_positive_pile_below_it() {
+        let got = spans("zero", &[&[0.0, 2.0, 0.0, -1.0, 0.0]]);
+        assert_spans(&got, 0, 0, [0.0, 0.0]);
+        assert_spans(&got, 1, 0, [0.0, 2.0]);
+        assert_spans(&got, 2, 0, [2.0, 2.0]);
+        assert_spans(&got, 3, 0, [-1.0, 0.0]);
+        assert_spans(&got, 4, 0, [2.0, 2.0]);
+    }
+
+    #[test]
+    fn zero_skips_an_absent_datum() {
+        let got = spans("zero", &[&[3.0, NAN, 4.0]]);
+        assert!(got[1][0][1].is_nan(), "{got:?}");
+        assert_spans(&got, 2, 0, [3.0, 7.0]);
+    }
+
+    #[test]
+    fn normalize_gives_each_sign_its_own_unit_pile() {
+        let got = spans("normalize", &[&[1.0, 3.0, -2.0, -6.0]]);
+        assert_spans(&got, 0, 0, [0.0, 0.25]);
+        assert_spans(&got, 1, 0, [0.25, 1.0]);
+        assert_spans(&got, 2, 0, [0.0, 0.25]);
+        assert_spans(&got, 3, 0, [0.25, 1.0]);
+    }
+
+    #[test]
+    fn normalize_skips_an_absent_datum_and_leaves_an_all_zero_column_without_a_share() {
+        let got = spans("normalize", &[&[1.0, NAN, 3.0], &[0.0, 0.0, NAN]]);
+        assert_spans(&got, 0, 0, [0.0, 0.25]);
+        assert!(got[1][0][1].is_nan(), "{got:?}");
+        assert_spans(&got, 2, 0, [0.25, 1.0]);
+        assert!(got[0][1].iter().all(|v| v.is_nan()) && got[1][1].iter().all(|v| v.is_nan()), "{got:?}");
+    }
+
+    #[test]
+    fn normalize_gives_a_zero_beside_a_negative_no_share() {
+        let got = spans("normalize", &[&[0.0, -5.0], &[0.0, 2.0]]);
+        assert!(got[0][0].iter().all(|v| v.is_nan()), "{got:?}");
+        assert_spans(&got, 1, 0, [0.0, 1.0]);
+        assert_spans(&got, 0, 1, [0.0, 0.0]);
+        assert_spans(&got, 1, 1, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn center_floats_each_column_to_the_middle_of_the_tallest() {
+        let got = spans("center", &[&[4.0, 6.0], &[1.0, 3.0]]);
+        assert_spans(&got, 0, 0, [0.0, 4.0]);
+        assert_spans(&got, 1, 0, [4.0, 10.0]);
+        assert_spans(&got, 0, 1, [3.0, 4.0]);
+        assert_spans(&got, 1, 1, [4.0, 7.0]);
+    }
+
+    #[test]
+    fn center_piles_a_negative_as_its_magnitude_and_skips_an_absent_datum() {
+        let got = spans("center", &[&[4.0, 6.0, 0.0], &[-2.0, NAN, 2.0]]);
+        assert_spans(&got, 0, 1, [3.0, 5.0]);
+        assert!(got[1][1][1].is_nan(), "{got:?}");
+        assert_spans(&got, 2, 1, [5.0, 7.0]);
+    }
+
+    #[test]
+    fn an_unknown_mode_refuses_by_name() {
+        let err = grammar_stack("silhouette", &[vec![1.0]]).unwrap_err();
+        assert!(err.contains("\"silhouette\""), "{err}");
+    }
+
+    #[test]
+    fn zero_piles_stack_each_key_in_item_order() {
+        let got = zero_piles([("a", 2.0), ("b", 5.0), ("a", 3.0), ("a", -1.0)]);
+        assert_eq!(got, vec![(0.0, 2.0), (0.0, 5.0), (2.0, 5.0), (-1.0, 0.0)]);
+    }
+}
+
+#[cfg(test)]
+mod tick_round_tests {
+    use super::tick_round;
+
+    /// `Math.round` breaks a tie toward +infinity, where `f64::round` breaks it away from zero.
+    #[test]
+    fn a_tick_snaps_to_a_pixel_center_as_math_round_does() {
+        assert_eq!(tick_round(2.4), 2.5);
+        assert_eq!(tick_round(2.5), 3.5);
+        assert_eq!(tick_round(-2.5), -1.5);
     }
 }

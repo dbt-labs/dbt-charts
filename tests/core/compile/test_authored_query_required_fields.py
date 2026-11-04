@@ -8,7 +8,6 @@ from pydantic import TypeAdapter, ValidationError
 from dbt_charts.core.compile.models.board.authored import AuthoredBoard
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
-    AuthoredHttpQuery,
     AuthoredQuery,
     AuthoredValuesQuery,
 )
@@ -25,11 +24,6 @@ def _validate_board(schema: dict, board: dict) -> None:
 
 def _validate(query: dict[str, object]) -> AuthoredQuery:
     return _ADAPTER.validate_python(normalize_query_value(query))
-
-
-def test_http_query_requires_url() -> None:
-    with pytest.raises(ValidationError, match="url"):
-        _validate({"type": "http"})
 
 
 def test_values_query_requires_rows_or_columns_and_values() -> None:
@@ -107,18 +101,10 @@ def test_values_query_accepts_columns_and_values() -> None:
     assert query.values == [[1]]
 
 
-def test_http_query_accepts_url() -> None:
-    query = _validate({"type": "http", "url": "https://api.example.com/data"})
-
-    assert isinstance(query, AuthoredHttpQuery)
-    assert query.url == "https://api.example.com/data"
-
-
 _REPRESENTATIVE_VALID_QUERIES = [
     {"sql": "select 1 as value"},
     {"columns": ["value"], "values": [[1]]},
     {"rows": [{"value": 1}]},
-    {"url": "https://api.example.com/data"},
 ]
 
 

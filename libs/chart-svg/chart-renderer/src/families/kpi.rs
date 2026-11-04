@@ -3,7 +3,6 @@
 //! overflow, the conditional and gradient color and background channels, and the
 //! house number and date formats under the board's number locale.
 
-use d3rs::py_float::format_g;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -21,13 +20,12 @@ use crate::common::{
 };
 use crate::diagnostic::{warn, Diagnostic};
 use crate::layout::{Insets, IntrinsicWidth, Layout, Rect};
-use crate::svg::py_float_str;
 use crate::{Payload, TonesStyle};
 use measure::weighted::weighted_width;
 use measure::wrap::wrap_label;
 use measure::{FontBook, Measure};
 use print::print;
-use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run as TextRun, Shape};
 const CAP_HEIGHT_RATIO: f64 = 0.7;
 const DESCENDER_RATIO: f64 = 0.2;
 const AFFIX_ELEVATION: f64 = 0.37;
@@ -278,7 +276,7 @@ impl SlotFont {
     fn attrs(&self) -> Attrs {
         let mut attrs = Attrs::new()
             .quick("font-family", self.family.as_str())
-            .quick("font-size", py_float_str(self.size))
+            .num("font-size", self.size)
             .quick("font-weight", self.weight.as_str());
         if self.italic {
             attrs = attrs.quick("font-style", "italic");
@@ -821,12 +819,9 @@ fn fit_explainer(
 }
 
 /// `extra` rides before the font attributes.
-fn run_tspans(runs: &[Run], extra: &Attrs) -> Vec<Node> {
+fn run_tspans(runs: &[Run], y: Option<f64>, dx: Option<f64>, extra: &Attrs) -> Vec<TextRun> {
     runs.iter()
-        .map(|r| {
-            let attrs = extra.clone().extend(r.font.attrs()).quick("fill", r.fill);
-            tspan(attrs, r.text.as_str())
-        })
+        .map(|r| tspan(y, dx, extra.clone().extend(r.font.attrs()).quick("fill", r.fill), r.text.as_str()))
         .collect()
 }
 
@@ -1360,58 +1355,33 @@ fn run_x(content_x: f64, available_width: f64, run_width: f64, align: Option<&st
 
 // ── Nodes ───────────────────────────────────────────────────
 
-/// The parts of the card in document order, the newline the markup has always
-/// put between them written as text.
-#[derive(Default)]
-struct Parts(Vec<Node>);
-
-fn newline() -> Node {
-    Node::Chars(Chars::new("\n", Escape::Quick))
+/// The newline a card's text has always carried between its runs: a space to the renderer.
+fn newline() -> TextRun {
+    TextRun::Chars(Chars::new("\n", Escape::Quick))
 }
 
-fn tspan(attrs: Attrs, text: impl Into<String>) -> Node {
-    Node::Tspan(TextBlock { attrs, text: Chars::new(text, Escape::Quick) })
+/// A run at `y` (and nudged by `dx`) when it restarts its baseline.
+fn tspan(y: Option<f64>, dx: Option<f64>, attrs: Attrs, text: impl Into<String>) -> TextRun {
+    TextRun::Tspan { x: None, y, dx, dy: None, attrs, runs: vec![TextRun::Chars(Chars::new(text, Escape::Quick))] }
 }
 
-fn title(text: &str) -> Node {
-    Node::Title(Chars::new(text, Escape::Quick))
+fn title(text: &str) -> TextRun {
+    TextRun::Title(Chars::new(text, Escape::Quick))
 }
 
-impl Parts {
-    fn push(&mut self, node: Node) {
-        if !self.0.is_empty() {
-            self.0.push(newline());
-        }
-        self.0.push(node);
+/// `inner` inside the card's link when it has one.
+fn linked(b: &Bound, inner: Vec<Node>) -> Vec<Node> {
+    let Some(link) = &b.link else {
+        return inner;
+    };
+    let mut attrs = Attrs::new().quick("href", link.url.as_str());
+    if let Some(open) = link.open.open_attr() {
+        attrs = attrs.quick("data-dbt-link-open", open);
     }
-
-    fn append(&mut self, other: Parts) {
-        if other.0.is_empty() {
-            return;
-        }
-        if !self.0.is_empty() {
-            self.0.push(newline());
-        }
-        self.0.extend(other.0);
+    if let Some(target) = link.open.target() {
+        attrs = attrs.quick("target", target);
     }
-
-    /// `inner` inside the card's link when it has one.
-    fn append_linked(&mut self, b: &Bound, inner: Parts) {
-        let Some(link) = &b.link else {
-            return self.append(inner);
-        };
-        let mut attrs = Attrs::new().quick("href", link.url.as_str());
-        if let Some(open) = link.open.open_attr() {
-            attrs = attrs.quick("data-dbt-link-open", open);
-        }
-        if let Some(target) = link.open.target() {
-            attrs = attrs.quick("target", target);
-        }
-        let mut children = vec![newline()];
-        children.extend(inner.0);
-        children.push(newline());
-        self.push(Node::Link { attrs, children });
-    }
+    vec![Node::new(Role::Chrome, attrs, Shape::Link(inner))]
 }
 
 /// Where the card's text runs sit under its width and the height it draws.
@@ -1423,36 +1393,25 @@ struct Stack {
     label_truncated: bool,
 }
 
-fn text_row(x: f64, y: f64, children: Vec<Node>) -> Node {
-    Node::TextRuns {
-        attrs: Attrs::new()
-            .quick("x", py_float_str(x))
-            .quick("y", py_float_str(y))
-            .quick("text-anchor", "start"),
-        children,
-    }
+fn text_row(x: f64, y: f64, runs: Vec<TextRun>) -> Node {
+    Node::new(Role::Label, Attrs::new().quick("text-anchor", "start"), Shape::Text { at: (x, y), bounds: None, runs })
 }
 
 /// The card fill reaches back out over the padding the render box was shrunk by.
-fn chrome(b: &Bound, parts: &mut Parts, w: f64, h: f64) {
+fn chrome(b: &Bound, parts: &mut Vec<Node>, w: f64, h: f64) {
     let Some(fill) = b.colors.card_fill.as_deref() else {
         return;
     };
     let (x, y, w, h) = crate::common::card_box(w, h, b.inset.as_ref());
-    parts.push(Node::Rect(
-        Attrs::new()
-            .quick("x", format_g(x))
-            .quick("y", format_g(y))
-            .quick("width", format_g(w))
-            .quick("height", format_g(h))
-            .quick("rx", format_g(b.kpi.border.radius))
-            .quick("fill", fill),
+    parts.push(Node::new(
+        Role::Chrome,
+        Attrs::new().quick("fill", fill),
+        Shape::Rect { x, y, w, h, rx: b.kpi.border.radius },
     ));
 }
 
-fn value_tspan(font: &SlotFont, y: f64, fill: &str, text: String, extra: Attrs) -> Node {
-    let attrs = Attrs::new().quick("y", py_float_str(y)).extend(font.attrs()).quick("fill", fill);
-    tspan(attrs.extend(extra), text)
+fn value_tspan(font: &SlotFont, y: f64, dx: Option<f64>, fill: &str, text: String) -> TextRun {
+    tspan(Some(y), dx, font.attrs().quick("fill", fill), text)
 }
 
 /// Glyph, prefix, number and suffix, each in its own slot
@@ -1462,42 +1421,18 @@ fn value_tspans(
     value_baseline: f64,
     prefix_baseline: f64,
     glyph_baseline: f64,
-) -> Vec<Node> {
+) -> Vec<TextRun> {
     let (run, slots, colors) = (&b.value, &b.slots, &b.colors);
     let mut nodes = Vec::new();
     if !run.glyph.is_empty() {
-        nodes.push(value_tspan(
-            &slots.glyph,
-            glyph_baseline,
-            &colors.glyph_fill,
-            format!("{} ", run.glyph),
-            Attrs::new(),
-        ));
+        nodes.push(value_tspan(&slots.glyph, glyph_baseline, None, &colors.glyph_fill, format!("{} ", run.glyph)));
     }
     if run.is_numeric && !run.prefix.is_empty() {
-        nodes.push(value_tspan(
-            &slots.affix,
-            prefix_baseline,
-            &colors.affix_fill,
-            run.prefix.clone(),
-            Attrs::new(),
-        ));
+        nodes.push(value_tspan(&slots.affix, prefix_baseline, None, &colors.affix_fill, run.prefix.clone()));
     }
-    nodes.push(value_tspan(
-        &slots.value,
-        value_baseline,
-        &colors.value_fill,
-        run.number.clone(),
-        Attrs::new(),
-    ));
+    nodes.push(value_tspan(&slots.value, value_baseline, None, &colors.value_fill, run.number.clone()));
     if run.is_numeric && !run.suffix.is_empty() {
-        nodes.push(value_tspan(
-            &slots.affix,
-            value_baseline,
-            &colors.affix_fill,
-            run.suffix.clone(),
-            Attrs::new().quick("dx", "2"),
-        ));
+        nodes.push(value_tspan(&slots.affix, value_baseline, Some(2.0), &colors.affix_fill, run.suffix.clone()));
     }
     nodes
 }
@@ -1509,10 +1444,10 @@ fn stacked(
     m: &Measure,
     st: &Stack,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<Parts, String> {
+) -> Result<Vec<Node>, String> {
     let slots = &b.slots;
     let v = &st.vertical;
-    let mut parts = Parts::default();
+    let mut parts = Vec::new();
     chrome(b, &mut parts, st.width, st.height);
 
     // Usable content width, shared by every row's align computation: value,
@@ -1556,9 +1491,7 @@ fn stacked(
         v.value_baseline,
         value_tspans(b, v.value_baseline, v.prefix_baseline, v.glyph_baseline),
     );
-    let mut linked = Parts::default();
-    linked.push(value);
-    parts.append_linked(b, linked);
+    parts.extend(linked(b, vec![value]));
 
     // Label: a reserved slot, top-aligned within it. The slot is reserved even
     // when the label is empty — only the <text> is skipped.
@@ -1576,20 +1509,23 @@ fn stacked(
         for (index, (line, line_x)) in st.label_lines.iter().zip(&line_xs).enumerate() {
             let line_y = v.label_baseline_first + index as f64 * v.label_line_height;
             children.push(newline());
-            children.push(tspan(
-                Attrs::new().quick("x", py_float_str(*line_x)).quick("y", py_float_str(line_y)),
-                line.as_str(),
-            ));
+            children.push(TextRun::Tspan {
+                x: Some(*line_x),
+                y: Some(line_y),
+                dx: None,
+                dy: None,
+                attrs: Attrs::new(),
+                runs: vec![TextRun::Chars(Chars::new(line.as_str(), Escape::Quick))],
+            });
         }
         children.push(newline());
         let attrs = Attrs::new()
-            .quick("x", py_float_str(line_xs[0]))
-            .quick("y", py_float_str(v.label_baseline_first))
             .quick("data-authored-kind", "label")
             .quick("text-anchor", "start")
             .extend(slots.label.attrs())
             .quick("fill", b.colors.label_fill.as_str());
-        parts.push(Node::TextRuns { attrs, children });
+        let at = (line_xs[0], v.label_baseline_first);
+        parts.push(Node::new(Role::Label, attrs, Shape::Text { at, bounds: None, runs: children }));
     }
 
     if let Some(width) = support_width {
@@ -1598,7 +1534,7 @@ fn stacked(
         if let (true, Some(s)) = (support_cut, b.support.as_ref()) {
             children.push(title(&s.explainer));
         }
-        children.extend(run_tspans(&support_runs, &Attrs::new()));
+        children.extend(run_tspans(&support_runs, None, None, &Attrs::new()));
         parts.push(text_row(support_x, v.support_baseline, children));
     }
     Ok(parts)
@@ -1611,7 +1547,7 @@ fn inline(
     m: &Measure,
     st: &Stack,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<Parts, String> {
+) -> Result<Vec<Node>, String> {
     let (slots, kpi) = (&b.slots, &b.kpi);
     let pad = &kpi.content_padding;
     let (width, height) = (st.width, st.height);
@@ -1628,7 +1564,7 @@ fn inline(
     let run_width = inline_run_width(b, m)?;
     let available_width = width - pad.horizontal();
 
-    let mut parts = Parts::default();
+    let mut parts = Vec::new();
     chrome(b, &mut parts, width, height);
 
     let align = card_align(
@@ -1640,25 +1576,19 @@ fn inline(
     );
     let row_x = run_x(pad.left, available_width, run_width, align);
     let mut children = value_tspans(b, value_baseline, prefix_baseline, glyph_baseline);
-    let baseline = Attrs::new().quick("y", py_float_str(value_baseline));
-    let gap = Attrs::new().quick("dx", py_float_str(INLINE_GAP));
+    let (baseline, gap) = (Some(value_baseline), Some(INLINE_GAP));
     if !b.label_text.is_empty() {
-        let attrs = baseline
-            .clone()
+        let attrs = Attrs::new()
             .quick("data-authored-kind", "label")
             .extend(slots.label.attrs())
-            .quick("fill", b.colors.label_fill.as_str())
-            .extend(gap.clone());
-        children.push(tspan(attrs, b.label_text.as_str()));
+            .quick("fill", b.colors.label_fill.as_str());
+        children.push(tspan(baseline, gap, attrs, b.label_text.as_str()));
     }
     if !support_runs.is_empty() {
-        let first = baseline.clone().extend(gap);
-        children.extend(run_tspans(&support_runs[..1], &first));
-        children.extend(run_tspans(&support_runs[1..], &baseline));
+        children.extend(run_tspans(&support_runs[..1], baseline, gap, &Attrs::new()));
+        children.extend(run_tspans(&support_runs[1..], baseline, None, &Attrs::new()));
     }
-    let mut linked = Parts::default();
-    linked.push(text_row(row_x, value_baseline, children));
-    parts.append_linked(b, linked);
+    parts.extend(linked(b, vec![text_row(row_x, value_baseline, children)]));
     Ok(parts)
 }
 
@@ -1669,7 +1599,7 @@ fn compact(
     m: &Measure,
     st: &Stack,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<Parts, String> {
+) -> Result<Vec<Node>, String> {
     let (slots, kpi) = (&b.slots, &b.kpi);
     let pad = &kpi.content_padding;
     let (width, height) = (st.width, st.height);
@@ -1713,30 +1643,29 @@ fn compact(
     };
     let top_baseline = value_baseline - (top_line_size + 4.0);
 
-    let mut parts = Parts::default();
+    let mut parts = Vec::new();
     chrome(b, &mut parts, width, height);
-    let mut linked = Parts::default();
-    linked.push(text_row(
+    let mut column = vec![text_row(
         block_x,
         value_baseline,
         value_tspans(b, value_baseline, prefix_baseline, glyph_baseline),
-    ));
+    )];
     let right_column_text =
-        |parts: &mut Parts, runs: &[Run], baseline: f64, is_label: bool| {
+        |parts: &mut Vec<Node>, runs: &[Run], baseline: f64, is_label: bool| {
             let extra = if is_label {
                 Attrs::new().quick("data-authored-kind", "label")
             } else {
                 Attrs::new()
             };
-            parts.push(text_row(right_column_x, baseline, run_tspans(runs, &extra)));
+            parts.push(text_row(right_column_x, baseline, run_tspans(runs, None, None, &extra)));
         };
     if !top.is_empty() {
-        right_column_text(&mut linked, &top, top_baseline, kind_on_top);
+        right_column_text(&mut column, &top, top_baseline, kind_on_top);
     }
     if !bottom.is_empty() {
-        right_column_text(&mut linked, &bottom, value_baseline, kind_on_bottom);
+        right_column_text(&mut column, &bottom, value_baseline, kind_on_bottom);
     }
-    parts.append_linked(b, linked);
+    parts.extend(linked(b, column));
     Ok(parts)
 }
 
@@ -1797,21 +1726,11 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     Ok(Layout {
         data_box,
         insets,
-        nodes: vec![Node::Svg {
-            extent: Extent {
-                width: cell.width,
-                height: height,
-            },
-            attrs: Attrs::new()
-                .quick("xmlns", "http://www.w3.org/2000/svg")
-                .quick("width", py_float_str(cell.width))
-                .quick("height", py_float_str(height))
-                .quick(
-                    "viewBox",
-                    format!("0 0 {} {}", py_float_str(cell.width), py_float_str(height)),
-                ),
-            children: parts.0,
-        }],
+        nodes: vec![Node::new(
+            Role::Chrome,
+            Attrs::new(),
+            Shape::Svg { extent: Extent { width: cell.width, height }, children: parts },
+        )],
         diagnostics,
         title_pos: None,
     })
@@ -2406,16 +2325,16 @@ mod render_tests {
         set(&mut p, "/format", json!({"spec": "$,.0f"}));
         let svg = svg_of(&p);
         let (value_y, prefix_y, glyph_y) = (
-            py_float_str(8.0 + 24.0 * CAP_HEIGHT_RATIO),
-            py_float_str(8.0 + 24.0 * CAP_HEIGHT_RATIO - (24.0 - 11.0) * AFFIX_ELEVATION),
-            py_float_str(8.0 + 24.0 * CAP_HEIGHT_RATIO - (24.0 - 11.0) * AFFIX_ELEVATION),
+            print::geometry(8.0 + 24.0 * CAP_HEIGHT_RATIO),
+            print::geometry(8.0 + 24.0 * CAP_HEIGHT_RATIO - (24.0 - 11.0) * AFFIX_ELEVATION),
+            print::geometry(8.0 + 24.0 * CAP_HEIGHT_RATIO - (24.0 - 11.0) * AFFIX_ELEVATION),
         );
         let serif = quick_xml::escape::escape(SERIF);
         let want = format!(
-            "<text x=\"8.0\" y=\"{value_y}\" text-anchor=\"start\">\
-             <tspan y=\"{glyph_y}\" font-family=\"{serif}\" font-size=\"11.0\" font-weight=\"500\" fill=\"#222222\">▲ </tspan>\
-             <tspan y=\"{prefix_y}\" font-family=\"{serif}\" font-size=\"11.0\" font-weight=\"500\" fill=\"#222222\">$</tspan>\
-             <tspan y=\"{value_y}\" font-family=\"{serif}\" font-size=\"24.0\" font-weight=\"500\" fill=\"#222222\">1,234</tspan></text>"
+            "<text x=\"8\" y=\"{value_y}\" text-anchor=\"start\">\
+             <tspan y=\"{glyph_y}\" font-family=\"{serif}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">▲ </tspan>\
+             <tspan y=\"{prefix_y}\" font-family=\"{serif}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">$</tspan>\
+             <tspan y=\"{value_y}\" font-family=\"{serif}\" font-size=\"24\" font-weight=\"500\" fill=\"#222222\">1,234</tspan></text>"
         );
         assert!(svg.contains(&want), "want {want}\ngot {svg}");
     }
@@ -2426,7 +2345,9 @@ mod render_tests {
         set(&mut p, "/format", json!({"spec": ".2~s", "notation": "narrative"}));
         p.rows[0].insert("revenue".into(), json!(4_820_000.0));
         let svg = svg_of(&p);
-        assert!(svg.contains("font-size=\"11.0\" font-weight=\"500\" fill=\"#222222\" dx=\"2\">mn</tspan>"), "{svg}");
+        let value_y = print::geometry(8.0 + 24.0 * CAP_HEIGHT_RATIO);
+        assert!(svg.contains(&format!("<tspan y=\"{value_y}\" dx=\"2\" ")), "{svg}");
+        assert!(svg.contains("font-size=\"11\" font-weight=\"500\" fill=\"#222222\">m</tspan>"), "{svg}");
     }
 
     #[test]
@@ -2636,10 +2557,10 @@ mod render_tests {
         assert_eq!(tspans_in_label(&svg).len(), 2, "{svg}");
         let label_y = 8.0 + 24.0 * CAP_HEIGHT_RATIO + MINIMUM_TITLE_VALUE_GAP + 11.0 * CAP_HEIGHT_RATIO;
         let support_y = label_y + 2.0 * 15.0;
-        assert!(svg.contains(&format!("<text x=\"8.0\" y=\"{}\" text-anchor=\"start\"><tspan", py_float_str(support_y))), "{svg}");
+        assert!(svg.contains(&format!("<text x=\"8\" y=\"{}\" text-anchor=\"start\"><tspan", print::geometry(support_y))), "{svg}");
         // Card height: support baseline + descender + bottom padding.
-        let want_h = py_float_str(support_y + 11.0 * 0.2 + 8.0);
-        assert!(svg.starts_with(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120.0\" height=\"{want_h}\"")), "{svg}");
+        let want_h = print::number(support_y + 11.0 * 0.2 + 8.0);
+        assert!(svg.starts_with(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"{want_h}\"")), "{svg}");
     }
 
     #[test]
@@ -2657,7 +2578,7 @@ mod render_tests {
         p.height = 10.0;
         let svg = svg_of(&p);
         let label_y = 8.0 + 24.0 * CAP_HEIGHT_RATIO + MINIMUM_TITLE_VALUE_GAP + 11.0 * CAP_HEIGHT_RATIO;
-        let want_h = py_float_str(label_y + 11.0 * 0.2 + 8.0);
+        let want_h = print::number(label_y + 11.0 * 0.2 + 8.0);
         assert!(svg.contains(&format!("height=\"{want_h}\" viewBox")), "{svg}");
     }
 
@@ -2668,7 +2589,7 @@ mod render_tests {
         let svg = svg_of(&p);
         assert!(!svg.contains("data-authored-kind"), "{svg}");
         let label_y = 8.0 + 24.0 * CAP_HEIGHT_RATIO + MINIMUM_TITLE_VALUE_GAP + 11.0 * CAP_HEIGHT_RATIO;
-        assert!(svg.contains(&format!("y=\"{}\" text-anchor", py_float_str(label_y + 15.0))), "{svg}");
+        assert!(svg.contains(&format!("y=\"{}\" text-anchor", print::geometry(label_y + 15.0))), "{svg}");
     }
 
     // ── Alignment ────────────────────────────────────────────────────────────
@@ -2692,12 +2613,12 @@ mod render_tests {
     }
 
     #[test]
-    fn run_positions_print_as_python_floats() {
+    fn run_positions_print_without_a_trailing_zero() {
         for variant in ["stacked", "inline", "compact"] {
             let mut p = with_support(kpi_payload(variant, 400.0));
             set(&mut p, "/style/kpi/content_padding/left", json!(0.0));
             let svg = svg_of(&p);
-            assert!(svg.contains("<text x=\"0.0\""), "{variant}: {svg}");
+            assert!(svg.contains("<text x=\"0\""), "{variant}: {svg}");
         }
     }
 
@@ -2799,8 +2720,8 @@ mod render_tests {
         set(&mut p, "/style/kpi/support/glyph/font/size", json!(14.0));
         set(&mut p, "/style/kpi/support/font/weight", json!(700.0));
         let svg = svg_of(&p);
-        assert!(svg.contains("font-size=\"14.0\" font-weight=\"500\" fill=\"#626366\">▲ </tspan>"), "{svg}");
-        assert!(svg.contains("font-size=\"11.0\" font-weight=\"700\" fill=\"#626366\">+12.5%</tspan>"), "{svg}");
+        assert!(svg.contains("font-size=\"14\" font-weight=\"500\" fill=\"#626366\">▲ </tspan>"), "{svg}");
+        assert!(svg.contains("font-size=\"11\" font-weight=\"700\" fill=\"#626366\">+12.5%</tspan>"), "{svg}");
     }
 
     #[test]
@@ -2862,10 +2783,10 @@ mod render_tests {
         let mut p = kpi_payload("stacked", 300.0);
         set(&mut p, "/glyph", json!("●"));
         let authored = svg_of(&p);
-        assert!(authored.contains("font-size=\"11.0\"") && !authored.contains("font-size=\"16.0\""), "{authored}");
+        assert!(authored.contains("font-size=\"11\"") && !authored.contains("font-size=\"16\""), "{authored}");
         p.resolved["value_rules"] = json!([{"gt": 0, "glyph": "↑"}]);
         let derived = svg_of(&p);
-        assert!(derived.contains("font-size=\"16.0\"") && derived.contains("↑ "), "{derived}");
+        assert!(derived.contains("font-size=\"16\"") && derived.contains("↑ "), "{derived}");
     }
 
     #[test]
@@ -2888,15 +2809,15 @@ mod render_tests {
     #[test]
     fn inline_flows_value_label_and_support_on_one_baseline_with_a_gap_before_each_slot() {
         let svg = svg_of(&with_support(kpi_payload("inline", 400.0)));
-        let y = py_float_str((120.0 + 24.0 * CAP_HEIGHT_RATIO) / 2.0);
+        let y = print::geometry((120.0 + 24.0 * CAP_HEIGHT_RATIO) / 2.0);
         let label = format!(
-            "<tspan y=\"{y}\" data-authored-kind=\"label\" font-family=\"{}\" font-size=\"11.0\" font-weight=\"500\" fill=\"#222222\" dx=\"14.0\">Quarterly Revenue</tspan>",
+            "<tspan y=\"{y}\" dx=\"14\" data-authored-kind=\"label\" font-family=\"{}\" font-size=\"11\" font-weight=\"500\" fill=\"#222222\">Quarterly Revenue</tspan>",
             quick_xml::escape::escape(SANS)
         );
         assert!(svg.contains(&label), "{svg}");
         // The first support run carries the gap; `extra` rides before the font attributes.
-        assert!(svg.contains(&format!("<tspan y=\"{y}\" dx=\"14.0\" font-family=\"{}\" font-size=\"11.0\" font-weight=\"500\" fill=\"#626366\">▲ </tspan>", quick_xml::escape::escape(SANS))), "{svg}");
-        assert!(svg.contains(&format!("<tspan y=\"{y}\" font-family=\"{}\" font-size=\"11.0\" font-weight=\"500\" fill=\"#626366\">+12.5%</tspan>", quick_xml::escape::escape(SANS))), "{svg}");
+        assert!(svg.contains(&format!("<tspan y=\"{y}\" dx=\"14\" font-family=\"{}\" font-size=\"11\" font-weight=\"500\" fill=\"#626366\">▲ </tspan>", quick_xml::escape::escape(SANS))), "{svg}");
+        assert!(svg.contains(&format!("<tspan y=\"{y}\" font-family=\"{}\" font-size=\"11\" font-weight=\"500\" fill=\"#626366\">+12.5%</tspan>", quick_xml::escape::escape(SANS))), "{svg}");
         assert_eq!(svg.matches("<text").count(), 1, "{svg}");
     }
 
@@ -2904,7 +2825,7 @@ mod render_tests {
     fn inline_that_does_not_fit_falls_back_to_the_stacked_arrangement() {
         let svg = svg_of(&with_support(kpi_payload("inline", 150.0)));
         assert!(svg.matches("<text").count() >= 3, "stacked paints value, label and support text: {svg}");
-        assert!(!svg.contains("dx=\"14.0\""), "{svg}");
+        assert!(!svg.contains("dx=\"14\""), "{svg}");
     }
 
     #[test]
@@ -2912,7 +2833,7 @@ mod render_tests {
         let mut p = kpi_payload("inline", 20.0);
         set(&mut p, "/label", json!(""));
         let svg = svg_of(&p);
-        assert!(svg.contains("height=\"120.0\""), "{svg}");
+        assert!(svg.contains("height=\"120\""), "{svg}");
     }
 
     #[test]
@@ -2943,9 +2864,9 @@ mod render_tests {
         let texts = compact_texts(&svg);
         assert_eq!(texts.len(), 3, "{svg}");
         let value_y = (120.0 + 24.0 * CAP_HEIGHT_RATIO) / 2.0;
-        assert_eq!(texts[0].1, py_float_str(value_y));
-        assert_eq!(texts[1].1, py_float_str(value_y - (11.0 + 4.0)), "label: one label line-height above");
-        assert_eq!(texts[2].1, py_float_str(value_y));
+        assert_eq!(texts[0].1, print::geometry(value_y));
+        assert_eq!(texts[1].1, print::geometry(value_y - (11.0 + 4.0)), "label: one label line-height above");
+        assert_eq!(texts[2].1, print::geometry(value_y));
         assert!(svg.contains("<text x=\"") && svg.contains("data-authored-kind=\"label\" font-family="), "{svg}");
         assert_eq!(texts[1].0, texts[2].0, "one right column");
     }
@@ -2960,7 +2881,7 @@ mod render_tests {
         // The split explainer is unspaced and secondary; the top line carries the glyph and value.
         assert!(svg.contains("fill=\"#626366\">growth</tspan>"), "{svg}");
         let value_y = (120.0 + 24.0 * CAP_HEIGHT_RATIO) / 2.0;
-        assert_eq!(texts[1].1, py_float_str(value_y - (11.0 + 4.0)));
+        assert_eq!(texts[1].1, print::geometry(value_y - (11.0 + 4.0)));
     }
 
     #[test]
@@ -3007,7 +2928,7 @@ mod render_tests {
         );
         let svg = svg_of(&p);
         assert!(svg.contains("fill=\"#112233\""), "{svg}");
-        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"120\" rx=\"0\" fill=\"#808080\""), "one-row domain takes the middle stop: {svg}");
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"120\" fill=\"#808080\""), "one-row domain takes the middle stop: {svg}");
     }
 
     fn text_kpi(format: &str, cell: Value) -> Payload {
@@ -3125,8 +3046,8 @@ mod render_tests {
         let svg = svg_of(&padded);
         assert!(
             svg.contains(&format!(
-                "<rect x=\"-16\" y=\"-16\" width=\"132\" height=\"{}\" rx=\"0\" fill=\"#d9a45b\"",
-                format_g(inner_h + 32.0)
+                "<rect x=\"-16\" y=\"-16\" width=\"132\" height=\"{}\" fill=\"#d9a45b\"",
+                print::geometry(inner_h + 32.0)
             )),
             "{svg}"
         );
@@ -3142,11 +3063,11 @@ mod render_tests {
     }
 
     #[test]
-    fn card_rect_prints_its_box_and_radius_through_the_g_format() {
+    fn card_rect_prints_its_box_and_radius_at_the_printed_hundredth() {
         // `_emit_card_chrome(palette, cfg, 312.456, 80.0, inset)` with
         // inset {left: 0.5, right: 0.25, top: 0.75, bottom: 0.125}, radius
         // 4.125, card_fill "#d9a45b":
-        //   <rect x="-0.5" y="-0.75" width="313.206" height="80.875" rx="4.125" fill="#d9a45b"/>
+        //   <rect x="-0.5" y="-0.75" width="313.21" height="80.88" rx="4.12" fill="#d9a45b"/>
         let mut p = kpi_payload("compact", 312.456);
         p.height = 80.0;
         set(&mut p, "/style/kpi/background", json!("#d9a45b"));
@@ -3156,7 +3077,7 @@ mod render_tests {
         let svg = svg_of(&p);
         assert!(
             svg.contains(
-                "<rect x=\"-0.5\" y=\"-0.75\" width=\"313.206\" height=\"80.875\" rx=\"4.125\" fill=\"#d9a45b\"/>"
+                "<rect x=\"-0.5\" y=\"-0.75\" width=\"313.21\" height=\"80.88\" rx=\"4.12\" fill=\"#d9a45b\"/>"
             ),
             "{svg}"
         );
@@ -3172,7 +3093,7 @@ mod render_tests {
             for requested in [0.0, natural, natural + 40.0] {
                 let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: requested };
                 let laid_out = layout(&bound, cell, &measure).unwrap();
-                let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+                let Some(extent) = scene::root_extent(&laid_out.nodes) else {
                     panic!("a card is one root");
                 };
                 assert_eq!(extent.height, requested.max(natural));
@@ -3189,7 +3110,7 @@ mod render_tests {
         let bound = bind(&with_support(kpi_payload("inline", 150.0))).unwrap();
         let cell = Rect { x: 0.0, y: 0.0, width: 150.0, height: 10.0 };
         let laid_out = layout(&bound, cell, &measure).unwrap();
-        let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+        let Some(extent) = scene::root_extent(&laid_out.nodes) else {
             panic!("a card is one root");
         };
         assert_eq!(extent.height, height_for_width(&bound, 150.0, &measure).unwrap());
@@ -3200,7 +3121,7 @@ mod render_tests {
         let fonts = test_fonts();
         let cell = Rect { x: 0.0, y: 0.0, width, height };
         let laid_out = layout(bound, cell, &Measure { fonts: &fonts }).unwrap();
-        let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+        let Some(extent) = scene::root_extent(&laid_out.nodes) else {
             panic!("a card is one root");
         };
         extent.height

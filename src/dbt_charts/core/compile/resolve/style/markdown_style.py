@@ -32,7 +32,7 @@ from dbt_charts.core.compile.template.markdown_fence import resolve_outside_fenc
 from dbt_charts.core.diagnostics.codes_compile import ERR_STYLE_CSS_VALUE_INVALID
 from dbt_charts.core.text.case import apply_case_to_runs
 from mdsvg import parse as parse_markdown
-from mdsvg.types import Heading, SpanType
+from mdsvg.types import Heading, Span, SpanType
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.markdown_blocks import SpanRun
@@ -99,7 +99,7 @@ MDSVG_STRUCTURAL_FIELDS: frozenset[str] = frozenset(
         # style.text.code.font.size is already the per-board absolute escape hatch.
         "code_font_scale",
         # Inline code chip geometry — not in the dbt charts theme yet; mdsvg owns
-        # the defaults (3px padding, 3px radius). Add to the mapper when dct
+        # the defaults. Add to the mapper when dct
         # exposes style.text.code.inline_padding / .inline_radius theme tokens.
         "inline_code_padding",
         "inline_code_border_radius",
@@ -317,8 +317,8 @@ def compact_style_kwargs(
         # take the authored heading margin. A heading line box is one body line, so
         # every block in a prose column is a whole number of body lines tall.
         "minor_heading_margin_top_px": paragraph_gap if on_body_grid else None,
-        # H1 is followed by a blank line; H2-H6 hug their text.
-        "h1_margin_bottom_px": paragraph_gap if on_body_grid else None,
+        # H1 and H2 are followed by a blank line; H3-H6 hug their text.
+        "major_heading_margin_bottom_px": paragraph_gap if on_body_grid else None,
         "heading_grid_px": float(_text_font_size) * float(_text_line_height)
         if on_body_grid
         else None,
@@ -706,15 +706,17 @@ def _case_words(spans: SpanRun, case: CaseValue) -> SpanRun:
     """Apply *case* to the words of one run of spans as one string
     (``apply_case_to_runs``), however inline formatting splits them.
 
-    Code spans and images keep their text: code is literal, and an image's
-    URL is data (upper-casing ``logo.svg`` names a different file).
+    Code spans (a code link's label included) and images keep their text: code
+    is literal, and an image's URL is data (upper-casing ``logo.svg`` names a
+    different file).
     """
-    words = [s for s in spans if s.span_type not in _UNCASED_SPANS]
+    words = [s for s in spans if not _is_uncased(s)]
     cased = iter(apply_case_to_runs([s.text for s in words], case))
-    return tuple(
-        s if s.span_type in _UNCASED_SPANS else replace(s, text=next(cased))
-        for s in spans
-    )
+    return tuple(s if _is_uncased(s) else replace(s, text=next(cased)) for s in spans)
+
+
+def _is_uncased(span: Span) -> bool:
+    return span.code or span.span_type in _UNCASED_SPANS
 
 
 _UNCASED_SPANS = frozenset({SpanType.CODE, SpanType.IMAGE})

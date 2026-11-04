@@ -294,7 +294,7 @@ def render_tabs_layout_terminal(
         available_height: Available terminal height in characters
         tab_titles: Optional list of tab titles
         default_tab: Default active tab (not used in terminal)
-        tab_position: Tab position ("top" or "bottom", not used in terminal)
+        tab_position: Tab position ("top" or "left", not used in terminal)
         background: Optional background color (not used in terminal)
         resolved_style: Board-scoped style for grid column config.
 

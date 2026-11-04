@@ -933,6 +933,32 @@ def wcag_contrast(hex_a: str, hex_b: str) -> float:
     return (l1 + 0.05) / (l2 + 0.05)
 
 
+def opacity_for_contrast(ink: str, canvas: str, target: float) -> float:
+    """The opacity at which ``ink`` over ``canvas`` reaches ``target`` contrast.
+
+    A fixed opacity would leave a dark ink louder than a pale one; solving per
+    ink gives every ink one apparent strength, light canvas or dark. An ink that
+    never reaches ``target`` stays opaque.
+    """
+    r, g, b, _ = parse_css_color(ink)
+    under = parse_css_color(canvas)
+
+    def contrast(opacity: float) -> float:
+        painted = composite_over((r, g, b, opacity), under)
+        return wcag_contrast(rgb01_to_hex(*painted[:3]), canvas)
+
+    if contrast(1.0) <= target:
+        return 1.0
+    low, high = 0.0, 1.0
+    for _ in range(12):
+        middle = (low + high) / 2
+        if contrast(middle) < target:
+            low = middle
+        else:
+            high = middle
+    return round(high, 3)
+
+
 def is_light_canvas(canvas: str) -> bool:
     """True when black ink has more contrast against `canvas` than white does.
 
@@ -944,6 +970,18 @@ def is_light_canvas(canvas: str) -> bool:
     ``ensure_readable_ink``'s docstring for the failure a 0.5 pivot causes.
     """
     return wcag_contrast("#000000", canvas) >= wcag_contrast("#ffffff", canvas)
+
+
+CanvasTone = Literal["light", "dark"]
+
+
+def canvas_tone(canvas: str) -> CanvasTone:
+    """Whether an opaque `canvas` is light or dark, by `is_light_canvas`.
+
+    Derived, never authored: the tone of a canvas is a fact about its color,
+    so a theme cannot declare one that disagrees with the canvas it paints.
+    """
+    return "light" if is_light_canvas(canvas) else "dark"
 
 
 def ensure_readable_ink(color: str, background: str, min_ratio: float = 4.5) -> str:

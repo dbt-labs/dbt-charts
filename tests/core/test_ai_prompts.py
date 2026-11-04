@@ -240,6 +240,9 @@ class TestReadSyntaxGuide:
     def test_returns_the_packaged_syntax_guide(self) -> None:
         assert read_syntax_guide().startswith("# dbt charts YAML Syntax")
 
+    def test_tells_the_agent_a_link_is_the_board_slug(self) -> None:
+        assert "A board link is the target board's slug" in read_syntax_guide()
+
 
 class TestSkillsIndexPromptReferencesRealTools:
     """Pins the contract progressive disclosure depends on: every tool name

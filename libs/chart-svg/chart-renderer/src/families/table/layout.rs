@@ -8,6 +8,7 @@ use super::bind::column_font_lanes;
 use super::bind::glyph_possible;
 use super::bind::glyph_run;
 use super::bind::is_date_like_cell;
+use super::bind::iso_day;
 use super::bind::is_magnitude_suffix;
 use super::bind::is_numeric_cell;
 use super::bind::is_plain_date_lane_cell;
@@ -39,7 +40,6 @@ use super::MeasureFonts;
 use super::PageItem;
 use super::PaginatorTheme;
 use super::PivotLevel;
-use super::PyNum;
 use super::Resolved;
 use super::Rows;
 use super::RowRole;
@@ -91,17 +91,18 @@ use crate::layout::Insets;
 use crate::layout::IntrinsicWidth;
 use crate::layout::Layout;
 use crate::layout::Rect;
-use crate::svg::num_full;
 use crate::tree::Open;
+use crate::tree::Span;
 use crate::tree::Tree;
 use crate::TitleShift;
-use d3rs::py_float::float_repr;
 use d3rs::py_float::py_float_sum;
 use measure::FontBook;
 use measure::Measure;
 use scene::Attrs;
 use scene::Extent;
 use scene::Node;
+use scene::Role;
+use scene::Transform;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -112,21 +113,58 @@ use std::collections::BTreeSet;
 /// The words `table_runtime.js` prints, by the last segment of their
 /// `controls.*` catalog id. The page has no catalog, so the pool root carries
 /// them in the board's language; the page range keeps its placeholders.
-const POOL_RUNTIME_WORDS: [&str; 6] =
-    ["sort_ascending", "sort_descending", "clear_sort", "search", "search_values", "page_range"];
+const POOL_RUNTIME_WORDS: [&str; 18] = [
+    "sort_text_ascending",
+    "sort_text_descending",
+    "sort_number_ascending",
+    "sort_number_descending",
+    "sort_date_ascending",
+    "sort_date_descending",
+    "clear_sort",
+    "search",
+    "search_values",
+    "select_all",
+    "clear",
+    "filter_by_range",
+    "filter_by_values",
+    "previous_month",
+    "next_month",
+    "calendar_header",
+    "calendar_day",
+    "page_range",
+];
 
 fn pool_runtime_words() -> Result<String, String> {
     let mut words = serde_json::Map::new();
     for word in POOL_RUNTIME_WORDS {
-        let args: &[(&str, &str)] = if word == "page_range" {
-            &[("first", "{first}"), ("last", "{last}"), ("total", "{total}")]
-        } else {
-            &[]
+        let args: &[(&str, &str)] = match word {
+            "page_range" => &[("first", "{first}"), ("last", "{last}"), ("total", "{total}")],
+            "calendar_header" => &[("month", "{month}"), ("year", "{year}")],
+            "calendar_day" => &[
+                ("weekday", "{weekday}"),
+                ("day", "{day}"),
+                ("month", "{month}"),
+                ("year", "{year}"),
+            ],
+            _ => &[],
         };
         let text = display_text::language::tr(&format!("controls.{word}"), None, args)?;
         words.insert(word.to_string(), serde_json::Value::String(text));
     }
     Ok(serde_json::Value::Object(words).to_string())
+}
+
+/// The month and day names and first weekday a date column's calendar prints,
+/// in the shape the date controls' calendar reads.
+fn calendar_time_locale() -> Result<String, String> {
+    let locale = crate::time_locale::active_time_locale()?;
+    Ok(serde_json::json!({
+        "months": locale.months,
+        "days": locale.days,
+        "shortDays": locale.short_days,
+        "weekStart": crate::time_locale::active_week_start(),
+    })
+    .to_string())
 }
 
 /// Python's `sum(d.values())` over a column map.
@@ -621,21 +659,6 @@ pub(super) fn python_round(x: f64) -> f64 {
     }
 }
 
-impl PyNum {
-    pub(super) fn value(self) -> f64 {
-        match self {
-            PyNum::Int(v) | PyNum::Float(v) => v,
-        }
-    }
-
-    pub(super) fn text(self) -> String {
-        match self {
-            PyNum::Int(v) => format!("{v}"),
-            PyNum::Float(v) => float_repr(v),
-        }
-    }
-}
-
 /// One horizontal divider segment. A solid line
 /// is a `<rect>` (integer `y` + integer height = exact pixel coverage at any
 /// browser scale); a dashed one needs a stroked `<line>` centered on the same
@@ -645,33 +668,30 @@ pub(super) fn emit_divider_segment(
     tree: &mut Tree,
     x1: f64,
     x2: f64,
-    y: PyNum,
-    thickness: PyNum,
+    y: f64,
+    thickness: f64,
     divider: &Divider,
     class: Option<&str>,
 ) {
     if divider.dasharray.is_none() {
         tree.rect(
+            Role::Grid,
+            (x1, y, x2 - x1, thickness),
             Attrs::new()
-                .quick("x", float_repr(x1))
-                .quick("y", y.text())
-                .quick("width", float_repr(x2 - x1))
-                .quick("height", thickness.text())
                 .quick("fill", divider.color.as_str())
                 .quick_some("class", class)
                 .quick("shape-rendering", "crispEdges"),
         );
         return;
     }
-    let mid = float_repr(y.value() + thickness.value() / 2.0);
+    let mid = y + thickness / 2.0;
     tree.line(
+        Role::Grid,
+        (x1, mid),
+        (x2, mid),
         Attrs::new()
-            .quick("x1", float_repr(x1))
-            .quick("y1", mid.as_str())
-            .quick("x2", float_repr(x2))
-            .quick("y2", mid.as_str())
             .quick("stroke", divider.color.as_str())
-            .quick("stroke-width", thickness.text())
+            .num("stroke-width", thickness)
             .quick_some("stroke-dasharray", divider.dasharray.as_deref())
             .quick_some("class", class),
     );
@@ -894,11 +914,7 @@ pub(super) fn strip_js_comments(source: &str) -> String {
 /// rather than read from `dbt-charts/src/` at build or run time.
 pub(super) fn embed_table_pagination_script(tree: &mut Tree) {
     let stripped = strip_js_comments(include_str!("../../../assets/table_pagination.js"));
-    tree.open(Open::Script, Attrs::new().quick("type", "text/javascript"));
-    tree.text("\n");
-    tree.cdata(&format!("\n{stripped}\n"));
-    tree.text("\n");
-    tree.close(Open::Script);
+    tree.script(Attrs::new().quick("type", "text/javascript"), &stripped);
 }
 
 /// Static-export pagination control bar: right-anchored chevrons + windowed
@@ -924,19 +940,19 @@ pub(super) fn render_pagination_controls(
     fonts: &FontBook,
 ) -> Result<(), String> {
     let window = if compact { Vec::new() } else { paginator_window(page, total_pages) };
-    enum Role {
+    enum Slot {
         Prev,
         Next,
         Page,
         Ellipsis,
     }
-    impl Role {
+    impl Slot {
         fn as_str(&self) -> &'static str {
             match self {
-                Role::Prev => "prev",
-                Role::Next => "next",
-                Role::Page => "page",
-                Role::Ellipsis => "ellipsis",
+                Slot::Prev => "prev",
+                Slot::Next => "next",
+                Slot::Page => "page",
+                Slot::Ellipsis => "ellipsis",
             }
         }
     }
@@ -951,21 +967,21 @@ pub(super) fn render_pagination_controls(
         )
     };
 
-    let mut sequence: Vec<(Role, String, String)> =
-        vec![(Role::Prev, PAGINATOR_PREV_CHEVRON.to_string(), prev_target)];
+    let mut sequence: Vec<(Slot, String, String)> =
+        vec![(Slot::Prev, PAGINATOR_PREV_CHEVRON.to_string(), prev_target)];
     for item in window {
         match item {
             PageItem::Ellipsis => {
-                sequence.push((Role::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), "0".to_string()))
+                sequence.push((Slot::Ellipsis, PAGINATOR_ELLIPSIS.to_string(), "0".to_string()))
             }
             PageItem::Page(p) => sequence.push((
-                Role::Page,
+                Slot::Page,
                 p.to_string(),
                 (if p <= last_enabled_page { p } else { 0 }).to_string(),
             )),
         }
     }
-    sequence.push((Role::Next, PAGINATOR_NEXT_CHEVRON.to_string(), next_target));
+    sequence.push((Slot::Next, PAGINATOR_NEXT_CHEVRON.to_string(), next_target));
 
     let font_size = theme.font.size_or(11.0) as i64;
     // Production passes the table body family; paginator.font contributes
@@ -983,8 +999,8 @@ pub(super) fn render_pagination_controls(
     let slot_widths = sequence
         .iter()
         .map(|(role, glyph, _)| match role {
-            Role::Prev | Role::Next | Role::Ellipsis => Ok(aux_slot_w),
-            Role::Page => Measure { fonts }.page_slot(
+            Slot::Prev | Slot::Next | Slot::Ellipsis => Ok(aux_slot_w),
+            Slot::Page => Measure { fonts }.page_slot(
                 glyph,
                 measure::stand_in_family(body_family),
                 font_size as f64,
@@ -1005,7 +1021,7 @@ pub(super) fn render_pagination_controls(
         slot_left += slot_w;
     }
     for i in 0..sequence.len() {
-        if matches!(sequence[i].0, Role::Ellipsis) {
+        if matches!(sequence[i].0, Slot::Ellipsis) {
             let (prev, next) = (&sequence[i - 1].1, &sequence[i + 1].1);
             let prev_edge =
                 centers[i - 1] + fonts.measure(prev, measure_family, font_size as f64)? / 2.0;
@@ -1021,10 +1037,11 @@ pub(super) fn render_pagination_controls(
     // table has 37 pages of rows". Dropped entirely (never shrunk) if it
     // would collide with the right-anchored sequence — production gates on
     // the sequence's own left edge.
+    // A page holding only total rows reads as its last data row.
     let label_text = display_text::language::tr(
         "controls.page_range",
         None,
-        &[("first", &row_start.to_string()), ("last", &row_end.to_string()), ("total", &total_rows.to_string())],
+        &[("first", &row_start.min(row_end).to_string()), ("last", &row_end.to_string()), ("total", &total_rows.to_string())],
     )?;
     // `get_font_measurer(font_family)`: every non-serif
     // family measures as Inter, whatever the label paints in.
@@ -1035,10 +1052,10 @@ pub(super) fn render_pagination_controls(
     )?;
     if padding + label_w <= sequence_left {
         tree.text_el(
+            Role::Label,
+            (padding, text_y),
             Attrs::new()
                 .quick("class", "dbt-paginator-label")
-                .quick("x", format!("{padding:.1}"))
-                .quick("y", format!("{text_y:.1}"))
                 .quick("font-size", font_size.to_string())
                 .quick("fill", theme.color_inactive.as_str())
                 .quick("font-family", font_family)
@@ -1051,6 +1068,7 @@ pub(super) fn render_pagination_controls(
 
     tree.open(
         Open::Group,
+        Role::Chrome,
         Attrs::new()
             .quick("class", "dbt-paginator")
             .quick("data-paginator", page_var_name),
@@ -1058,18 +1076,18 @@ pub(super) fn render_pagination_controls(
     for (i, (role, glyph, target)) in sequence.iter().enumerate() {
         let center_x = centers[i];
 
-        let is_active_page = matches!(role, Role::Page) && *target == page.to_string();
-        let is_disabled_chevron = matches!(role, Role::Prev | Role::Next) && target == "0";
-        let is_ellipsis = matches!(role, Role::Ellipsis);
+        let is_active_page = matches!(role, Slot::Page) && *target == page.to_string();
+        let is_disabled_chevron = matches!(role, Slot::Prev | Slot::Next) && target == "0";
+        let is_ellipsis = matches!(role, Slot::Ellipsis);
 
-        let is_disabled_page = matches!(role, Role::Page) && target == "0";
+        let is_disabled_page = matches!(role, Slot::Page) && target == "0";
         let (color, weight, clickable) = if is_active_page {
             (theme.color_active.as_str(), theme.weight_active, false)
         } else if is_disabled_chevron {
             (theme.color_disabled.as_str(), theme.weight_chevron, false)
         } else if is_disabled_page {
             (theme.color_disabled.as_str(), theme.weight_inactive, false)
-        } else if matches!(role, Role::Prev | Role::Next) {
+        } else if matches!(role, Slot::Prev | Slot::Next) {
             (theme.color_active.as_str(), theme.weight_chevron, true)
         } else if is_ellipsis {
             (theme.color_inactive.as_str(), theme.weight_inactive, false)
@@ -1082,12 +1100,10 @@ pub(super) fn render_pagination_controls(
             // A live host commits the variable the control names; an export
             // names only the target its inline script toggles.
             tree.rect(
+                Role::Chrome,
+                (rect_x, rect_y, rect_w, rect_h),
                 Attrs::new()
                     .quick("class", "dbt-page-target")
-                    .quick("x", format!("{rect_x:.1}"))
-                    .quick("y", format!("{rect_y:.1}"))
-                    .quick("width", format!("{rect_w:.1}"))
-                    .quick("height", format!("{rect_h:.1}"))
                     .quick("fill", "transparent")
                     .quick_some("data-dbt-page-var", interactive.then_some(page_var_name))
                     .quick("data-dbt-page-target", target.as_str()),
@@ -1095,9 +1111,9 @@ pub(super) fn render_pagination_controls(
         }
 
         tree.text_el(
+            Role::Label,
+            (center_x, text_y),
             Attrs::new()
-                .quick("x", format!("{center_x:.1}"))
-                .quick("y", format!("{text_y:.1}"))
                 .quick("font-size", font_size.to_string())
                 .quick("fill", color)
                 .quick("text-anchor", "middle")
@@ -1118,6 +1134,25 @@ pub(super) fn render_pagination_controls(
 }
 
 // ── In-cell spark marks ──────────
+
+/// A spark bar's coordinates snap to a tenth of a pixel one by one: the snapped edges, not the
+/// exact ones, are what a column of bars lines up on.
+fn tenth(v: f64) -> f64 {
+    format!("{v:.1}").parse().expect("a fixed-point number parses")
+}
+
+/// What a spark's shapes are; the cell's row stamps its datum on them.
+fn spark_mark() -> Role {
+    Role::Mark { layer: 0, series: None, datum: None }
+}
+
+/// `nodes` as the marks the row at `datum` draws.
+fn row_marks(nodes: Vec<Node>, datum: usize) -> Vec<Node> {
+    nodes
+        .into_iter()
+        .map(|node| Node { role: Role::Mark { layer: 0, series: None, datum: Some(datum) }, ..node })
+        .collect()
+}
 
 /// Clamp `value` against
 /// `max_value`, honoring sign only when `signed`. `signed=false` reproduces
@@ -1148,10 +1183,8 @@ pub(super) fn signed_fraction(value: f64, max_value: f64, signed: bool) -> (f64,
 }
 
 /// A signed column grows each bar from
-/// its midline (`has_negative`); `width`/`height` print bare — production's
-/// `int(...)`-computed size is a genuine Python int, and this renderer's
-/// `spark_width`/`spark_height` mirror that with `f64::trunc()`.
-/// `border_radius` is a theme float, so it takes `py_float`.
+/// its midline (`has_negative`); `width`/`height` are whole pixels, truncated like production's
+/// `int(...)` (`spark_width`/`spark_height` use `f64::trunc()`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_spark_bar(
     value: f64,
@@ -1168,43 +1201,16 @@ pub(super) fn render_spark_bar(
     let (fill_x, fill_width) = if has_negative {
         let half_width = width / 2.0;
         let fill_width = fraction * half_width;
-        (
-            format!(
-                "{:.1}",
-                if is_negative {
-                    half_width - fill_width
-                } else {
-                    half_width
-                }
-            ),
-            fill_width,
-        )
+        (if is_negative { half_width - fill_width } else { half_width }, fill_width)
     } else {
-        ("0".to_string(), fraction * width)
+        (0.0, fraction * width)
     };
-    let radius_s = float_repr(border_radius);
     let mut tree = Tree::new();
     if normalize {
-        tree.rect(
-            Attrs::new()
-                .quick("x", "0")
-                .quick("y", "0")
-                .quick("width", width.to_string())
-                .quick("height", height.to_string())
-                .quick("fill", background)
-                .quick("rx", radius_s.as_str()),
-        );
+        tree.rounded(spark_mark(), (0.0, 0.0, width, height), border_radius, Attrs::new().quick("fill", background));
     }
     if fill_width > 0.0 {
-        tree.rect(
-            Attrs::new()
-                .quick("x", fill_x)
-                .quick("y", "0")
-                .quick("width", format!("{fill_width:.1}"))
-                .quick("height", height.to_string())
-                .quick("fill", color)
-                .quick("rx", radius_s.as_str()),
-        );
+        tree.rounded(spark_mark(), (tenth(fill_x), 0.0, tenth(fill_width), height), border_radius, Attrs::new().quick("fill", color));
     }
     tree.finish()
 }
@@ -1239,15 +1245,7 @@ pub(super) fn render_spark_column(
     };
     let mut tree = Tree::new();
     if fill_height > 0.0 {
-        tree.rect(
-            Attrs::new()
-                .quick("x", "0")
-                .quick("y", format!("{fill_y:.1}"))
-                .quick("width", width.to_string())
-                .quick("height", format!("{fill_height:.1}"))
-                .quick("fill", color)
-                .quick("rx", float_repr(border_radius)),
-        );
+        tree.rounded(spark_mark(), (0.0, tenth(fill_y), width, tenth(fill_height)), border_radius, Attrs::new().quick("fill", color));
     }
     tree.finish()
 }
@@ -1257,8 +1255,7 @@ pub(super) fn render_spark_column(
 /// (baseline at the array's own minimum), zero-midline the moment any value
 /// is negative (min-rebasing would erase the negative: `(v-min)/range`
 /// scales `-40 -30 -20 -10` identically to `10 20 30 40`). `x`/`y`/`width`/
-/// `height` are genuine `:.1f` rounds (not the bare-float T1 law); `rx` is
-/// the theme's bare `columns.border.radius` float, so `py_float`.
+/// `height` snap to a tenth; `rx` is the theme's `columns.border.radius`.
 /// `negative_fill` is the tone a negative bar takes when `negative_color` is on.
 pub(super) fn render_spark_columns(
     values: &[f64],
@@ -1272,22 +1269,14 @@ pub(super) fn render_spark_columns(
     let num_bars = values.len() as f64;
     let total_gap = theme.gap * (num_bars - 1.0);
     let bar_width = (width - total_gap) / num_bars;
-    let radius_s = float_repr(theme.border.radius);
     // A non-finite value keeps its x-slot but draws no bar and adds nothing to
     // the domain (the null rule of `coerce_numeric_cell`).
     let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
     let has_negative = finite.iter().any(|v| *v < 0.0);
     let mut tree = Tree::new();
     let mut bar = |x: f64, y: f64, bar_height: f64, fill: &str| {
-        tree.rect(
-            Attrs::new()
-                .quick("x", format!("{x:.1}"))
-                .quick("y", format!("{y:.1}"))
-                .quick("width", format!("{bar_width:.1}"))
-                .quick("height", format!("{bar_height:.1}"))
-                .quick("fill", fill.to_string())
-                .quick("rx", radius_s.as_str()),
-        );
+        let snapped = (tenth(x), tenth(y), tenth(bar_width), tenth(bar_height));
+        tree.rounded(spark_mark(), snapped, theme.border.radius, Attrs::new().quick("fill", fill.to_string()));
     };
     if has_negative {
         let max_abs = finite.iter().fold(0.0_f64, |acc, v| acc.max(v.abs()));
@@ -1338,16 +1327,15 @@ pub(super) fn render_spark_columns(
 /// A dashed rule across the vertical
 /// middle, drawn for a zero-value `line` or `columns` cell.
 pub(super) fn render_empty_spark(width: f64, height: f64, theme: &SparkEmptyTheme) -> Vec<Node> {
-    let y = float_repr(height / 2.0);
+    let y = height / 2.0;
     let mut tree = Tree::new();
     tree.line(
+        spark_mark(),
+        (theme.inset_x, y),
+        (width - theme.inset_x, y),
         Attrs::new()
-            .quick("x1", float_repr(theme.inset_x))
-            .quick("y1", y.as_str())
-            .quick("x2", float_repr(width - theme.inset_x))
-            .quick("y2", y.as_str())
             .quick("stroke", theme.stroke.color.as_str())
-            .quick("stroke-width", float_repr(theme.stroke.width))
+            .num("stroke-width", theme.stroke.width)
             .quick("stroke-dasharray", theme.stroke.dasharray.as_str()),
     );
     tree.finish()
@@ -1362,24 +1350,15 @@ pub(super) fn render_single_value_line(
     color: &str,
     theme: &SparkSingleValueTheme,
 ) -> Vec<Node> {
-    let y = float_repr(height / 2.0);
+    let y = height / 2.0;
     let mut tree = Tree::new();
     tree.line(
-        Attrs::new()
-            .quick("x1", float_repr(theme.inset_x))
-            .quick("y1", y.as_str())
-            .quick("x2", float_repr(width - theme.inset_x))
-            .quick("y2", y.as_str())
-            .quick("stroke", color)
-            .quick("stroke-width", SPARK_LINE_STROKE_WIDTH),
+        spark_mark(),
+        (theme.inset_x, y),
+        (width - theme.inset_x, y),
+        Attrs::new().quick("stroke", color).quick("stroke-width", SPARK_LINE_STROKE_WIDTH),
     );
-    tree.circle(
-        Attrs::new()
-            .quick("cx", float_repr(width / 2.0))
-            .quick("cy", y.as_str())
-            .quick("r", float_repr(theme.marker_radius))
-            .quick("fill", color),
-    );
+    tree.circle(spark_mark(), (width / 2.0, y), theme.marker_radius, Attrs::new().quick("fill", color));
     tree.finish()
 }
 
@@ -1400,39 +1379,22 @@ pub(super) fn render_spark_area(
     let first_x = padding.left;
     let last_x = padding.left + (width - (padding.left + padding.right));
     let mut tree = Tree::new();
-    tree.polygon(
-        Attrs::new()
-            .quick(
-                "points",
-                format!(
-                    "{} {} {}",
-                    py_float_str_pair(first_x, bottom_y),
-                    joined_points(&points),
-                    py_float_str_pair(last_x, bottom_y)
-                ),
-            )
-            .quick("fill", color)
-            .quick("fill-opacity", float_repr(fill_opacity)),
-    );
+    let outline = std::iter::once((first_x, bottom_y)).chain(points.iter().copied()).chain([(last_x, bottom_y)]).collect();
+    tree.poly(spark_mark(), outline, true, Attrs::new().quick("fill", color).num("fill-opacity", fill_opacity));
     emit_spark_line(&mut tree, values, &points, color, last_visible, false);
     tree.finish()
-}
-
-/// Python's `f"{x},{y}"` for two floats.
-pub(super) fn py_float_str_pair(x: f64, y: f64) -> String {
-    format!("{},{}", float_repr(x), float_repr(y))
 }
 
 /// `_normalize_points` for a
 /// series of two or more values: x is `padding.left + i/(n-1) * plot_width`,
 /// y maps `[min, max]` onto the plot height (a flat series sits on
-/// `padding.top + plot_height/2`), both printed `:.1f`.
+/// `padding.top + plot_height/2`), both snapped to a tenth.
 pub(super) fn spark_points(
     values: &[f64],
     width: f64,
     height: f64,
     padding: &SparkPaddingTheme,
-) -> Vec<(String, String)> {
+) -> Vec<(f64, f64)> {
     let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
     let max_val = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let value_range = max_val - min_val;
@@ -1449,17 +1411,9 @@ pub(super) fn spark_points(
             } else {
                 padding.top + plot_height / 2.0
             };
-            (format!("{x:.1}"), format!("{y:.1}"))
+            (tenth(x), tenth(y))
         })
         .collect()
-}
-
-pub(super) fn joined_points(points: &[(String, String)]) -> String {
-    points
-        .iter()
-        .map(|(x, y)| format!("{x},{y}"))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// The polyline through `points`. The optional dots follow it: the last point
@@ -1468,32 +1422,27 @@ pub(super) fn joined_points(points: &[(String, String)]) -> String {
 pub(super) fn emit_spark_line(
     tree: &mut Tree,
     values: &[f64],
-    points: &[(String, String)],
+    points: &[(f64, f64)],
     color: &str,
     last_visible: bool,
     min_max_visible: bool,
 ) {
-    tree.polyline(
+    tree.poly(
+        spark_mark(),
+        points.to_vec(),
+        false,
         Attrs::new()
-            .quick("points", joined_points(points))
             .quick("fill", "none")
             .quick("stroke", color)
             .quick("stroke-width", SPARK_LINE_STROKE_WIDTH)
             .quick("stroke-linecap", "round")
             .quick("stroke-linejoin", "round"),
     );
-    let mut dot = |index: usize, radius: &str| {
-        let (x, y) = &points[index];
-        tree.circle(
-            Attrs::new()
-                .quick("cx", x.as_str())
-                .quick("cy", y.as_str())
-                .quick("r", radius)
-                .quick("fill", color),
-        );
+    let mut dot = |index: usize, radius: f64| {
+        tree.circle(spark_mark(), points[index], radius, Attrs::new().quick("fill", color));
     };
     if last_visible {
-        dot(points.len() - 1, "2.5");
+        dot(points.len() - 1, 2.5);
     }
     if min_max_visible {
         let min_val = values.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -1504,8 +1453,8 @@ pub(super) fn emit_spark_line(
                 .position(|&v| v == target)
                 .expect("min and max come from the values")
         };
-        dot(first_of(min_val), "2");
-        dot(first_of(max_val), "2");
+        dot(first_of(min_val), 2.0);
+        dot(first_of(max_val), 2.0);
     }
 }
 
@@ -1737,8 +1686,8 @@ fn affix_tspan(
     fill: Option<&str>,
 ) {
     tree.tspan(
+        Span::x(x),
         Attrs::new()
-            .quick("x", float_repr(x))
             .quick("text-anchor", anchor)
             .quick_some("fill", fill)
             .set_if(gate.is_some(), "class", AFFIX_CLASS)
@@ -1845,6 +1794,7 @@ impl TableBody<'_> {
         let Self {
             rows,
             row_roles,
+            data_rank,
             row_heights,
             summary_gap_unit,
             rows_start_y,
@@ -1951,10 +1901,8 @@ impl TableBody<'_> {
         // inside the existing row band, so the table never grows.
         let row_divider = &th.row.divider.line;
         let row_rule_width = row_divider.width;
-        let outer_s = float_repr(outer);
-        let content_w_s = float_repr(content_w);
         // The row link covers the data columns, never the index gutter.
-        let (band_x_s, band_w_s) = (float_repr(outer + rn_w), float_repr(content_w - rn_w));
+        let (band_x, band_w) = (outer + rn_w, content_w - rn_w);
 
         // The row each column's `shared_scale` magnitude word anchors on in the page
         // a pool opens with: its first nonzero value, else the first row.
@@ -1988,7 +1936,6 @@ impl TableBody<'_> {
             let this_row_h = row_heights[ri];
             let row_y = rows_start_y + page_row_y_offset[local_ri] + page_summary_gap_at[local_ri];
             let text_y = row_y + row_text_baseline(ri);
-            let text_y_s = float_repr(text_y);
             let role = row_roles[ri];
             let is_summary = is_summary_role(role);
 
@@ -2014,6 +1961,7 @@ impl TableBody<'_> {
             // Coordinates stay absolute; the runtime translates the group.
             tree.open(
                 Open::Group,
+                Role::Chrome,
                 Attrs::new()
                     .quick("class", "dbt-table-row")
                     .quick("data-dbt-row", ri.to_string())
@@ -2027,8 +1975,8 @@ impl TableBody<'_> {
                         "data-dbt-row-role",
                         if matches!(role, RowRole::Total) { "total" } else { "summary" },
                     )
-                    .set_if(pool_page_rows.is_some(), "data-dbt-y", row_y.to_string())
-                    .set_if(pool_page_rows.is_some(), "data-dbt-h", this_row_h.to_string()),
+                    .num_some("data-dbt-y", pool_page_rows.map(|_| row_y))
+                    .num_some("data-dbt-h", pool_page_rows.map(|_| this_row_h)),
             );
 
             // Alternating stripe on odd rows (1, 3, …) — suppressed on
@@ -2051,11 +1999,9 @@ impl TableBody<'_> {
                     // its own last column, same defect the header rule fix
                     // above already addressed for the rule sites.
                     tree.rect(
+                        Role::Chrome,
+                        (outer, row_y, content_w, fill_height),
                         Attrs::new()
-                            .quick("x", outer_s.as_str())
-                            .quick("y", row_y.to_string())
-                            .quick("width", content_w_s.as_str())
-                            .quick("height", fill_height.to_string())
                             .quick("fill", stripe_color.as_str())
                             .set_if(pool_page_rows.is_some(), "data-dbt-stripe", "")
                             .set_if(pool_page_rows.is_some() && slot % 2 == 0, "display", "none"),
@@ -2075,14 +2021,7 @@ impl TableBody<'_> {
                 if let Some(bg) = sanitize_color(rt.background.as_deref())? {
                     // Content span, not `svg_w` — same
                     // fix as the row stripe above.
-                    tree.rect(
-                        Attrs::new()
-                            .quick("x", outer_s.as_str())
-                            .quick("y", row_y.to_string())
-                            .quick("width", content_w_s.as_str())
-                            .quick("height", fill_height.to_string())
-                            .quick("fill", bg),
-                    );
+                    tree.rect(Role::Chrome, (outer, row_y, content_w, fill_height), Attrs::new().quick("fill", bg));
                 }
                 // The line above a summary row; a total row draws two with a
                 // 1px gap, from its own divider, never
@@ -2091,13 +2030,9 @@ impl TableBody<'_> {
                 if summary_divider.visible {
                     // `line_h` is `max(1, int(width))` — it truncates, distinct
                     // from the row line's `python_round` below — and `row_y` is
-                    // `int(round(...))`, so
-                    // `y_upper`/`y_lower`/`y_single` are production ints too:
-                    // all stay bare, never `py_float`-wrapped like the
-                    // genuinely-float row line's `y` below.
+                    // `int(round(...))`, so `y_upper`/`y_lower`/`y_single` are whole pixels.
                     let line_h = summary_divider.width.trunc().max(1.0);
                     let (rule_x1, rule_x2) = (outer + pad, outer + content_w - pad);
-                    let thickness = PyNum::Int(line_h);
                     if matches!(role, RowRole::Total) {
                         let gap = 1.0;
                         let y_upper = row_y - line_h - gap - line_h;
@@ -2107,8 +2042,8 @@ impl TableBody<'_> {
                                 tree,
                                 rule_x1,
                                 rule_x2,
-                                PyNum::Int(y_line),
-                                thickness,
+                                y_line,
+                                line_h,
                                 summary_divider,
                                 None,
                             );
@@ -2118,8 +2053,8 @@ impl TableBody<'_> {
                             tree,
                             rule_x1,
                             rule_x2,
-                            PyNum::Int(row_y - line_h),
-                            thickness,
+                            row_y - line_h,
+                            line_h,
                             summary_divider,
                             None,
                         );
@@ -2190,6 +2125,7 @@ impl TableBody<'_> {
                     // pointer is anywhere in the row, a cell's own link included.
                     tree.open(
                         Open::Link,
+                        Role::Chrome,
                         Attrs::new()
                             .quick("href", row_href_checked)
                             .quick("aria-label", row_label)
@@ -2197,14 +2133,12 @@ impl TableBody<'_> {
                             .quick_some("target", link_open.target()),
                     );
                     tree.rect(
+                        Role::Chrome,
+                        (band_x, row_y, band_w, this_row_h),
                         Attrs::new()
                             .quick("class", "dbt-table-row-link")
                             .quick("fill", "transparent")
-                            .quick("style", format!("--dbt-link: {link_color}"))
-                            .quick("x", band_x_s.as_str())
-                            .quick("y", row_y.to_string())
-                            .quick("width", band_w_s.as_str())
-                            .quick("height", this_row_h.to_string()),
+                            .quick("style", format!("--dbt-link: {link_color}")),
                     );
                     tree.close(Open::Link);
                 }
@@ -2225,16 +2159,16 @@ impl TableBody<'_> {
                     (outer + pad, "start")
                 };
                 tree.text_el(
+                    Role::Label,
+                    (x, text_y),
                     Attrs::new()
-                        .quick("x", float_repr(x))
-                        .quick("y", text_y_s.as_str())
                         .quick("font-size", font_size.to_string())
                         .quick("fill", ink)
                         .quick("text-anchor", anchor)
                         .quick("font-family", tab_family)
                         .quick("data-col", "0")
                         .set_if(pool_page_rows.is_some(), "data-dbt-row-number", ""),
-                    &(ri + 1).to_string(),
+                    &(data_rank[ri] + 1).to_string(),
                 );
             }
             for (ci, col) in cols.iter().enumerate() {
@@ -2256,20 +2190,19 @@ impl TableBody<'_> {
                             ],
                         ));
                     };
-                    let swatch_x = python_round(cx + 4.0) as i64;
-                    let swatch_y_s = float_repr(row_y + (this_row_h - SWATCH_SIZE) / 2.0);
-                    tree.open(
+                    let swatch_x = python_round(cx + 4.0);
+                    let swatch_y = row_y + (this_row_h - SWATCH_SIZE) / 2.0;
+                    tree.open_at(
                         Open::Group,
-                        Attrs::new()
-                            .quick("transform", format!("translate({swatch_x}, {swatch_y_s})"))
-                            .quick_some("class", cell_pe_class),
+                        Role::Chrome,
+                        vec![Transform::Translate { x: swatch_x, y: swatch_y }],
+                        Attrs::new().quick_some("class", cell_pe_class),
                     );
-                    tree.rect(
-                        Attrs::new()
-                            .quick("width", SWATCH_SIZE.to_string())
-                            .quick("height", SWATCH_SIZE.to_string())
-                            .quick("rx", "3")
-                            .quick("fill", color),
+                    tree.rounded(
+                        Role::Mark { layer: 0, series: None, datum: Some(ri) },
+                        (0.0, 0.0, SWATCH_SIZE, SWATCH_SIZE),
+                        3.0,
+                        Attrs::new().quick("fill", color),
                     );
                     tree.close(Open::Group);
                     continue;
@@ -2281,16 +2214,15 @@ impl TableBody<'_> {
                 // `content.is_empty()` check below), draws no mark and falls
                 // through to the ordinary cell paint below (only the empty-
                 // content case is reached by this corpus). `spark_x = px(cell_x
-                // + 4)` — an int, bare; `spark_y = row_y + (this_row_h -
+                // + 4)`; `spark_y = row_y + (this_row_h -
                 // spark_height) / 2` centers the mark in the row's own
                 // (possibly grown) band — `this_row_h` is production's
-                // `per_row_height` — and is a genuine float, so
-                // `py_float`. Only the SIZING call below reads the NOMINAL row
+                // `per_row_height`. Only the SIZING call below reads the NOMINAL row
                 // height (`row_h`, not `this_row_h`): the mark's visual size
                 // stays pinned to it so a wrapped row growing taller doesn't
                 // grow its spark, but the mark still centers in the row's
                 // actual (grown) band.
-                if let Some(spark) = &col.cfg.spark {
+                if let (Some(spark), false) = (&col.cfg.spark, is_summary) {
                     if let Some(value) = rows[ri].get(col.name.as_str()) {
                         if !value.is_null() {
                             // `column` is the only ported-elsewhere mark whose
@@ -2325,25 +2257,21 @@ impl TableBody<'_> {
                                     // every other mark fills the cell from `cx + 4`.
                                     let spark_x = if spark.spark_type == "column" {
                                         if col.is_numeric || col.is_date {
-                                            python_round(cx + (col_ws[ci] - spark_w) / 2.0) as i64
+                                            python_round(cx + (col_ws[ci] - spark_w) / 2.0)
                                         } else {
-                                            python_round(cx + pad) as i64
+                                            python_round(cx + pad)
                                         }
                                     } else {
-                                        python_round(cx + 4.0) as i64
+                                        python_round(cx + 4.0)
                                     };
-                                    let spark_y_s =
-                                        float_repr(row_y + (this_row_h - spark_h) / 2.0);
-                                    tree.open(
+                                    let spark_y = row_y + (this_row_h - spark_h) / 2.0;
+                                    tree.open_at(
                                         Open::Group,
-                                        Attrs::new()
-                                            .quick(
-                                                "transform",
-                                                format!("translate({spark_x}, {spark_y_s})"),
-                                            )
-                                            .quick_some("class", cell_pe_class),
+                                        Role::Chrome,
+                                        vec![Transform::Translate { x: spark_x, y: spark_y }],
+                                        Attrs::new().quick_some("class", cell_pe_class),
                                     );
-                                    tree.extend(content);
+                                    tree.extend(row_marks(content, ri));
                                     tree.close(Open::Group);
                                     continue;
                                 }
@@ -2356,19 +2284,18 @@ impl TableBody<'_> {
                 // below, since production paints the background rect before
                 // deciding which text shape to draw.
                 let raw_value = rows[ri].get(col.name.as_str()).filter(|v| !v.is_null());
-                let sort_key = pool_page_rows.and_then(|_| sort_key(raw_value));
+                let day = pool_page_rows.filter(|_| col.is_day).and_then(|_| iso_day(raw_value));
+                let sort_key = pool_page_rows
+                    .and_then(|_| sort_key(raw_value))
+                    .filter(|_| !col.is_day || day.is_some());
                 let cell_style =
                     resolve_cell_style(col, &rows[ri], raw_value, &scale_rows, role, tones)?;
                 let (column_font_color, column_font_weight) = column_font_lanes(col, &rows[ri]);
                 if let Some(bg) = &cell_style.background {
-                    let cx_s = float_repr(cx);
-                    let cw_s = float_repr(col_ws[ci]);
                     tree.rect(
+                        Role::Chrome,
+                        (cx, row_y, col_ws[ci], fill_height),
                         Attrs::new()
-                            .quick("x", cx_s)
-                            .quick("y", row_y.to_string())
-                            .quick("width", cw_s)
-                            .quick("height", fill_height.to_string())
                             .quick("fill", bg.as_str())
                             .quick_some("class", cell_pe_class),
                     );
@@ -2459,6 +2386,7 @@ impl TableBody<'_> {
                     };
                     tree.open(
                         Open::Link,
+                        Role::Chrome,
                         Attrs::new()
                             .quick("href", href)
                             .quick_some("data-dbt-link-open", open.open_attr())
@@ -2466,6 +2394,7 @@ impl TableBody<'_> {
                     );
                     tree.open(
                         Open::Group,
+                        Role::Chrome,
                         Attrs::new()
                             .quick("class", "dbt-table-link")
                             .quick("style", format!("color: {}", css_color(fill_color)?)),
@@ -2487,17 +2416,18 @@ impl TableBody<'_> {
                 let null_body_font = cell.is_null && col.cfg.format.is_none();
                 if (col.is_numeric || col.is_date) && null_body_font {
                     tree.text_el(
+                        Role::Label,
+                        (cx + col_ws[ci] / 2.0, text_y),
                         Attrs::new()
                             .quick_some("class", cell_link_class)
-                            .quick("x", float_repr(cx + col_ws[ci] / 2.0))
-                            .quick("y", text_y_s.as_str())
                             .quick("font-size", font_size.to_string())
                             .quick("fill", fill_color)
                             .quick("text-anchor", "middle")
                             .quick("font-family", body_family)
                             .quick_some("font-weight", row_font_weight.as_deref())
                             .quick("data-col", data_col.to_string())
-                            .quick_some("data-dbt-sort", sort_key.as_deref()),
+                            .quick_some("data-dbt-sort", sort_key.as_deref())
+                            .quick_some("data-dbt-day", day.as_deref()),
                         &cell.text,
                     );
                 } else if (col.is_numeric || col.is_date)
@@ -2515,24 +2445,6 @@ impl TableBody<'_> {
                     // A left-aligned column has no lane: the whole cell is one
                     // start-anchored run, so its tspans carry no x of their own.
                     let left_run = col.is_numeric && col.cfg.align.as_deref() == Some("left");
-                    tree.open(
-                        Open::Text,
-                        Attrs::new()
-                            .quick_some("class", cell_link_class)
-                            .quick_some("x", left_run.then(|| float_repr(cx + pad)))
-                            .quick_some("text-anchor", left_run.then_some("start"))
-                            .quick("y", text_y_s.as_str())
-                            .quick("font-size", font_size.to_string())
-                            .quick("fill", fill_color)
-                            .quick("font-family", tab_family)
-                            .quick("style", TAB_STYLE)
-                            .quick_some("font-weight", cell_font_weight.as_deref())
-                            .quick_some("font-style", font_style)
-                            .quick_some("text-decoration", font_decoration)
-                            .quick("data-col", data_col.to_string())
-                            .quick_some("data-value", lane_value)
-                            .quick_some("data-dbt-sort", sort_key.as_deref()),
-                    );
                     // A glyph is the row's own and rides with it; the format's affixes
                     // follow the page's anchor rows. The glyph sits left of the
                     // prefix lane and carries its own `fill` only when BOTH a glyph
@@ -2546,16 +2458,51 @@ impl TableBody<'_> {
                         anchor_variant(symbol_rows[ci] == Some(local_ri), ri == magnitude_rows[ci]);
                     let glyph = cell_style.glyph.as_deref();
                     let glyph_fill = glyph.and(cell_style.glyph_color.as_deref());
+                    // A null is always centered on the number lane, even in a run.
+                    let placed = !left_run || cell.is_null;
+                    let (number_x, number_anchor) = if cell.is_null {
+                        (number_xs[ci] - number_ws[ci] / 2.0, "middle")
+                    } else {
+                        (number_xs[ci], "end")
+                    };
+                    // The text sits where its first tspan does; the tspans place themselves.
+                    let first_x = if left_run {
+                        cx + pad
+                    } else if glyph.is_some() {
+                        glyph_xs[ci]
+                    } else if !affix_lane(by_anchor, |v| v.0.as_deref(), cell.prefix.as_deref()).is_empty() {
+                        prefix_xs[ci]
+                    } else {
+                        number_x
+                    };
+                    tree.open_text(
+                        Role::Label,
+                        (first_x, text_y),
+                        Attrs::new()
+                            .quick_some("class", cell_link_class)
+                            .quick_some("text-anchor", left_run.then_some("start"))
+                            .quick("font-size", font_size.to_string())
+                            .quick("fill", fill_color)
+                            .quick("font-family", tab_family)
+                            .quick("style", TAB_STYLE)
+                            .quick_some("font-weight", cell_font_weight.as_deref())
+                            .quick_some("font-style", font_style)
+                            .quick_some("text-decoration", font_decoration)
+                            .quick("data-col", data_col.to_string())
+                            .quick_some("data-value", lane_value)
+                            .quick_some("data-dbt-sort", sort_key.as_deref())
+                            .quick_some("data-dbt-day", day.as_deref()),
+                    );
                     if left_run {
                         if let Some(glyph) = glyph {
                             let text = match cell.prefix {
                                 Some(_) => format!("{glyph} "),
                                 None => glyph.to_string(),
                             };
-                            tree.tspan(Attrs::new().quick_some("fill", glyph_fill), &text);
+                            tree.tspan(Span::default(), Attrs::new().quick_some("fill", glyph_fill), &text);
                         }
                         if let Some(prefix) = cell.prefix.as_deref() {
-                            tree.tspan(Attrs::new(), prefix);
+                            tree.tspan(Span::default(), Attrs::new(), prefix);
                         }
                     } else {
                         if let Some(glyph) = glyph {
@@ -2576,28 +2523,16 @@ impl TableBody<'_> {
                     } else {
                         cell.text.clone()
                     };
-                    // A null is always centered on the number lane, even in a run.
-                    let placed = !left_run || cell.is_null;
-                    let (number_x, number_anchor) = if cell.is_null {
-                        (number_xs[ci] - number_ws[ci] / 2.0, "middle")
-                    } else {
-                        (number_xs[ci], "end")
-                    };
                     let led = glyph.is_some() || cell.prefix.is_some();
                     tree.tspan(
-                        Attrs::new()
-                            .quick_some("x", placed.then(|| float_repr(number_x)))
-                            .quick_some("text-anchor", placed.then_some(number_anchor))
-                            .quick_some("dx", (!placed && led).then(|| float_repr(SUFFIX_GAP))),
+                        Span { x: placed.then_some(number_x), dx: (!placed && led).then_some(SUFFIX_GAP), ..Span::default() },
+                        Attrs::new().quick_some("text-anchor", placed.then_some(number_anchor)),
                         &number_text,
                     );
                     for (suffix, mask) in affix_lane(by_anchor, |v| v.1.as_deref(), cell.suffix.as_deref()) {
                         if left_run {
                             let gap = !col.is_date && is_magnitude_suffix(suffix);
-                            tree.tspan(
-                                Attrs::new().quick_some("dx", gap.then(|| float_repr(SUFFIX_GAP))),
-                                suffix,
-                            );
+                            tree.tspan(Span::dx(gap.then_some(SUFFIX_GAP)), Attrs::new(), suffix);
                         } else {
                             affix_tspan(tree, suffix_xs[ci], "start", suffix, mask.map(|m| (m, variant)), None);
                         }
@@ -2627,13 +2562,13 @@ impl TableBody<'_> {
                     } else {
                         (body_family, None)
                     };
-                    let tx_s = float_repr(tx);
                     // Glyph for non-three-lane cells (text/date/null): a leading
                     // colored tspan, first line only for a wrapped cell.
                     let glyph_prefix = cell_style.glyph.as_deref();
                     let emit_glyph_prefix = |tree: &mut Tree| {
                         if let Some(glyph) = glyph_prefix {
                             tree.tspan(
+                                Span::default(),
                                 Attrs::new().quick_some("fill", cell_style.glyph_color.as_deref()),
                                 &format!("{glyph} "),
                             );
@@ -2647,11 +2582,11 @@ impl TableBody<'_> {
                             let line_height = font_size + th.text_baseline_offset;
                             let total_text_h = lines.len() as f64 * line_height;
                             let first_y = row_y + (this_row_h - total_text_h) / 2.0 + font_size;
-                            tree.open(
-                                Open::Text,
+                            tree.open_text(
+                                Role::Label,
+                                (tx, first_y),
                                 Attrs::new()
                                     .quick_some("class", cell_link_class)
-                                    .quick("x", tx_s.as_str())
                                     .quick("font-size", font_size.to_string())
                                     .quick("fill", fill_color)
                                     .quick("text-anchor", anchor)
@@ -2660,16 +2595,12 @@ impl TableBody<'_> {
                                     .quick_some("font-style", font_style)
                                     .quick_some("text-decoration", font_decoration)
                                     .quick("data-col", data_col.to_string())
-                                    .quick_some("data-dbt-sort", sort_key.as_deref()),
+                                    .quick_some("data-dbt-sort", sort_key.as_deref())
+                                    .quick_some("data-dbt-day", day.as_deref()),
                             );
                             for (li, line) in lines.iter().enumerate() {
                                 let ly = first_y + li as f64 * line_height;
-                                tree.open(
-                                    Open::Tspan,
-                                    Attrs::new()
-                                        .quick("x", tx_s.as_str())
-                                        .quick("y", float_repr(ly)),
-                                );
+                                tree.open_tspan(Span::at(tx, ly), Attrs::new());
                                 if li == 0 {
                                     emit_glyph_prefix(tree);
                                 }
@@ -2687,12 +2618,11 @@ impl TableBody<'_> {
                             } else {
                                 cell.text.clone()
                             };
-                            tree.open(
-                                Open::Text,
+                            tree.open_text(
+                                Role::Label,
+                                (tx, text_y),
                                 Attrs::new()
                                     .quick_some("class", cell_link_class)
-                                    .quick("x", tx_s.as_str())
-                                    .quick("y", text_y_s.as_str())
                                     .quick("font-size", font_size.to_string())
                                     .quick("fill", fill_color)
                                     .quick("text-anchor", anchor)
@@ -2702,7 +2632,8 @@ impl TableBody<'_> {
                                     .quick_some("font-style", font_style)
                                     .quick_some("text-decoration", font_decoration)
                                     .quick("data-col", data_col.to_string())
-                                    .quick_some("data-dbt-sort", sort_key.as_deref()),
+                                    .quick_some("data-dbt-sort", sort_key.as_deref())
+                                    .quick_some("data-dbt-day", day.as_deref()),
                             );
                             emit_glyph_prefix(tree);
                             tree.text(&text);
@@ -2717,10 +2648,9 @@ impl TableBody<'_> {
             }
 
             if will_draw_row_rule {
-                // `rule_y = row_y + per_row_height - rule_reserve_px`
-                // is an int in production: `row_y` is `int(round(...))` and
-                // every per-row height is an int, so it prints bare like the
-                // summary/total lines' `y`.
+                // `rule_y = row_y + per_row_height - rule_reserve_px`: `row_y` is
+                // `int(round(...))` and every per-row height is an int, so it is a whole
+                // pixel like the summary/total lines' `y`.
                 let rule_y = row_y + this_row_h - rule_reserve_px;
                 // On a linked table the divider must not catch the pointer,
                 // or it reopens a dead strip in the band beneath it
@@ -2729,6 +2659,7 @@ impl TableBody<'_> {
                 if pool_page_rows.is_some() {
                     tree.open(
                         Open::Group,
+                        Role::Chrome,
                         Attrs::new()
                             .quick("data-dbt-row-rule", "")
                             .set_if(rule_hidden, "display", "none"),
@@ -2738,8 +2669,8 @@ impl TableBody<'_> {
                     tree,
                     outer + pad,
                     outer + content_w - pad,
-                    PyNum::Int(rule_y),
-                    PyNum::Int(rule_reserve_px),
+                    rule_y,
+                    rule_reserve_px,
                     row_divider,
                     rule_class,
                 );
@@ -3020,11 +2951,10 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
         &band.subtitle_family,
     );
     if let (true, Some(title_text)) = (band.has_title, band.cased_title.as_deref()) {
-        tree.open(
-            Open::Text,
+        tree.open_text(
+            Role::Title,
+            (outer, title_text_y),
             Attrs::new()
-                .quick("x", outer.to_string())
-                .quick("y", float_repr(title_text_y))
                 .quick("font-size", title_font_size.to_string())
                 .quick_some("font-style", band.style.as_deref())
                 .quick("font-weight", title_weight.as_str())
@@ -3038,20 +2968,15 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
         }
         let title_line_h = title_font_size.trunc() + 2.0;
         for (i, line) in band.title_lines.iter().enumerate() {
-            tree.tspan(
-                Attrs::new()
-                    .quick("x", outer.to_string())
-                    .quick("y", float_repr(title_text_y + i as f64 * title_line_h)),
-                line,
-            );
+            tree.tspan(Span::at(outer, title_text_y + i as f64 * title_line_h), Attrs::new(), line);
         }
         tree.close(Open::Text);
         if let (true, Some(subtitle_text)) = (band.has_subtitle, band.subtitle.as_deref()) {
-            tree.open(
-                Open::Text,
+            tree.open_text(
+                Role::Title,
+                (outer, subtitle_text_y),
                 Attrs::new()
-                    .quick("x", outer.to_string())
-                    .quick("font-size", float_repr(subtitle_font_size))
+                    .num("font-size", subtitle_font_size)
                     .quick_some("font-style", band.subtitle_style.as_deref())
                     .quick("fill", subtitle_color.as_str())
                     .quick("font-family", subtitle_family.as_str())
@@ -3062,10 +2987,8 @@ pub(super) fn emit_title_band(tree: &mut Tree, band: &TitleBand, outer: f64) {
             }
             for (i, line) in band.subtitle_lines.iter().enumerate() {
                 tree.tspan(
-                    Attrs::new().quick("x", outer.to_string()).quick(
-                        "y",
-                        float_repr(subtitle_text_y + i as f64 * (subtitle_font_size + 2.0)),
-                    ),
+                    Span::at(outer, subtitle_text_y + i as f64 * (subtitle_font_size + 2.0)),
+                    Attrs::new(),
                     line,
                 );
             }
@@ -3153,22 +3076,14 @@ fn lay_out_empty(
         .filter(|b| !b.is_empty() && !b.eq_ignore_ascii_case("transparent"))
     {
         let (bx, by, bw, bh) = card_box(width, table_height, padding.as_ref());
-        tree.rect(
-            Attrs::new()
-                .quick("x", num_full(bx))
-                .quick("y", num_full(by))
-                .quick("width", num_full(bw))
-                .quick("height", num_full(bh))
-                .quick("fill", bg)
-                .quick("rx", "4"),
-        );
+        tree.rounded(Role::Chrome, (bx, by, bw, bh), 4.0, Attrs::new().quick("fill", bg));
     }
     emit_title_band(&mut tree, &band, outer);
     tree.text_el(
+        Role::Label,
+        (width / 2.0, table_height / 2.0),
         Attrs::new()
-            .quick("x", float_repr(width / 2.0))
-            .quick("y", float_repr(table_height / 2.0))
-            .quick("font-size", float_repr(size))
+            .num("font-size", size)
             .quick("fill", ink)
             .quick("text-anchor", "middle")
             .quick("font-family", family.as_str()),
@@ -3193,6 +3108,18 @@ fn lay_out_empty(
         title_pos: None,
     })
 }
+
+/// Header lines past which a header is too much for its column. Two is the
+/// `wrap-two` cap and the theme default, so a header that fits in two reads as
+/// designed; a third line means the column was starved, not that the author
+/// chose a long label.
+const HEADER_LINE_LIMIT: usize = 2;
+
+/// Fewest lines a wrapped text cell takes before it can count as a tower. A
+/// block taller than the column is wide is not worth a warning at two lines
+/// (a thin column holding a short phrase), so the check also asks for this
+/// many.
+const TALL_CELL_MIN_LINES: usize = 4;
 
 /// The effective header overflow mode for `col`: the column's own, else the
 /// chart's promoted one, else the table style's, else the theme's
@@ -3238,9 +3165,19 @@ pub(super) fn wrapped_headers(
             out.push(WrappedHeader {
                 lines: vec![col.header.clone()],
                 truncated: false,
+                needed_lines: 1,
             });
             continue;
         }
+        let (needed, _) = crate::common::wrap_text_measured(
+            &col.header,
+            content_area,
+            header_font_size,
+            header_measure_family,
+            fonts,
+            None,
+            false,
+        )?;
         let mode = header_overflow_mode(r, th, col)?;
         let (lines, truncated) = crate::common::prepare_title_lines(
             &col.header,
@@ -3255,7 +3192,11 @@ pub(super) fn wrapped_headers(
         } else {
             lines
         };
-        out.push(WrappedHeader { lines, truncated });
+        out.push(WrappedHeader {
+            lines,
+            truncated,
+            needed_lines: needed.len(),
+        });
     }
     Ok(out)
 }
@@ -3285,6 +3226,7 @@ pub(super) fn column_inputs(
     let mut demands: BTreeMap<String, f64> = BTreeMap::new();
     let mut header_demands: BTreeMap<String, f64> = BTreeMap::new();
     let mut word_floors: BTreeMap<String, f64> = BTreeMap::new();
+    let mut header_floor_words: BTreeMap<String, String> = BTreeMap::new();
     for (col, cells) in cols.iter().zip(cell_data.iter()) {
         // A swatch cell holds a color, not text: the painted square sets the
         // width (`SWATCH_CELL_DEMAND`).
@@ -3320,11 +3262,12 @@ pub(super) fn column_inputs(
             .take(measure::SAMPLE_ROWS)
             .map(measured_cell_text)
             .collect();
-        let mut token_w = if header_visible {
-            measure.widest_token(&col.header, families.header, header_size)?
+        let (header_token_w, header_word) = if header_visible {
+            measure.widest_word(&col.header, families.header, header_size)?
         } else {
-            0.0
+            (0.0, "")
         };
+        let mut token_w = header_token_w;
         for (text, row) in texts.iter().zip(rows) {
             token_w = token_w.max(measure.widest_token(text, cell_measure_family(col, row, families), font_size)?);
         }
@@ -3349,11 +3292,15 @@ pub(super) fn column_inputs(
             token_w = token_w.max(glyph_term);
         }
         word_floors.insert(col.name.to_string(), token_w + 2.0 * pad);
+        if header_token_w > 0.0 && header_token_w >= token_w {
+            header_floor_words.insert(col.name.to_string(), header_word.to_string());
+        }
     }
     Ok(ColumnInputs {
         demands,
         header_demands,
         word_floors,
+        header_floor_words,
     })
 }
 
@@ -3412,6 +3359,12 @@ pub(crate) fn lay_out(
     let tab_family: &str = &tab_family_owned;
     let tones = drawn.board_style.as_ref().and_then(|b| b.tones.as_ref());
     let row_roles = &chart.row_roles;
+    let data_rank: Vec<usize> = std::iter::once(0)
+        .chain(row_roles.iter().scan(0, |n, role| {
+            *n += usize::from(!is_summary_role(*role));
+            Some(*n)
+        }))
+        .collect();
     let cell_data = &chart.cell_data;
     let force_compact = &chart.force_compact;
     let bar_auto_max = &chart.bar_auto_max;
@@ -3530,6 +3483,10 @@ pub(crate) fn lay_out(
     };
     let (mut inputs, mut pins, mut caps, mut col_ws) =
         allocate(font_size, header_size, pad, table_w - rn_w)?;
+    // The padding the widths were allocated at: the fit cascade steps `pad`
+    // down without re-allocating, so only the row-number re-allocation below
+    // allocates at the stepped one.
+    let mut alloc_pad = pad;
 
     // ── Fit cascade: allocation ran at the theme's cell padding; if any
     // numeric/date cell or short header overflows its content area (text
@@ -3598,11 +3555,13 @@ pub(crate) fn lay_out(
     if rn.visible && font_size < initial_font_size {
         rn_w = row_number_width(font_size)?;
         (inputs, pins, caps, col_ws) = allocate(font_size, header_size, pad, table_w - rn_w)?;
+        alloc_pad = pad;
     }
     let ColumnInputs {
         demands,
         header_demands,
-        ..
+        word_floors,
+        header_floor_words,
     } = inputs;
 
     // Content edge for horizontal elements that span every column (row
@@ -3635,14 +3594,50 @@ pub(crate) fn lay_out(
     const OVERFLOW_EPSILON: f64 = 1e-6;
     let content_overflows = content_w > table_w + OVERFLOW_EPSILON;
     if content_overflows {
-        diagnostics.push(Diagnostic::new(
-            &codes::WARN_TABLE_COLUMNS_OVERFLOW,
-            [
-                ("chart_id", json!(chart_id)),
-                ("needed_width", json!(content_w + 2.0 * outer)),
-                ("available_width", json!(width)),
-            ],
-        ));
+        // A word floor is the cause only when the columns fit with the floors
+        // lifted; otherwise pins, numeric lanes or the row-number column
+        // overflow on their own and no word is to blame. Of the columns a
+        // floor holds up, the one with the widest word is named: the header's
+        // own word, else just its width, as a cell's value is never printed.
+        let unfloored = calculate_column_layout_port(
+            &column_names,
+            force_compact,
+            &pins,
+            &caps,
+            table_w - rn_w,
+            &demands,
+            &header_demands,
+            &BTreeMap::new(),
+            th.column_layout.width_similarity_threshold,
+            th.column_layout.content_headroom,
+            alloc_pad,
+        );
+        let fits_unfloored =
+            rn_w + unfloored.values().sum::<f64>() <= table_w + OVERFLOW_EPSILON;
+        let floor_of = |ci: usize| word_floors[cols[ci].name.as_str()];
+        let culprit = (0..cols.len())
+            .filter(|&ci| col_ws[ci] - unfloored[cols[ci].name.as_str()] > OVERFLOW_EPSILON)
+            .max_by(|&a, &b| floor_of(a).total_cmp(&floor_of(b)))
+            .filter(|_| fits_unfloored);
+        let cause = culprit.map_or(Value::Null, |ci| {
+            let name = cols[ci].name.as_str();
+            json!({
+                "column": name,
+                "word_width": word_floors[name] - 2.0 * alloc_pad,
+                "header_word": header_floor_words.get(name),
+            })
+        });
+        diagnostics.push(
+            Diagnostic::new(
+                &codes::WARN_TABLE_COLUMNS_OVERFLOW,
+                [
+                    ("chart_id", json!(chart_id)),
+                    ("needed_width", json!(content_w + 2.0 * outer)),
+                    ("available_width", json!(width)),
+                ],
+            )
+            .with_sink_param("cause", cause),
+        );
     }
 
     // Precompute per-column x offsets and midpoints.
@@ -3672,6 +3667,8 @@ pub(crate) fn lay_out(
             }
             let content_w = col_ws[ci] - 2.0 * pad;
             let mut col_lines: Vec<Option<Vec<String>>> = Vec::with_capacity(n_rows);
+            let mut tall_cells = 0_usize;
+            let mut tallest = 0_usize;
             for (ri, cell) in cell_data[ci].iter().enumerate() {
                 if cell.text.is_empty() || content_w <= 0.0 {
                     col_lines.push(None);
@@ -3708,6 +3705,12 @@ pub(crate) fn lay_out(
                     false,
                 )?;
                 if lines.len() > 1 {
+                    if lines.len() >= TALL_CELL_MIN_LINES
+                        && lines.len() as f64 * line_height > content_w
+                    {
+                        tall_cells += 1;
+                        tallest = tallest.max(lines.len());
+                    }
                     let grown = python_round(
                         lines.len() as f64 * line_height - th.text_baseline_offset + 2.0 * pad,
                     );
@@ -3718,6 +3721,18 @@ pub(crate) fn lay_out(
                 }
             }
             wrapped_lines.push(col_lines);
+            if tall_cells > 0 && !chart_id.is_empty() {
+                diagnostics.push(Diagnostic::new(
+                    &codes::WARN_TABLE_CONTENT_TALLER_THAN_WIDE,
+                    [
+                        ("chart_id", json!(chart_id)),
+                        ("column", json!(col.name)),
+                        ("max_lines", json!(tallest)),
+                        ("cell_count", json!(tall_cells)),
+                        ("column_width", json!(col_ws[ci])),
+                    ],
+                ));
+            }
         }
     } else {
         wrapped_lines.extend((0..cols.len()).map(|_| vec![None; n_rows]));
@@ -3939,57 +3954,21 @@ pub(crate) fn lay_out(
     };
     let truncations: RefCell<Vec<(String, usize)>> = RefCell::new(Vec::new());
     if !chart_id.is_empty() {
-        for (col, header) in cols.iter().zip(&header_lines) {
-            if header.truncated {
-                count_cut(&truncations, col.name.as_str());
+        for ((col, header), &col_w) in cols.iter().zip(&header_lines).zip(&col_ws) {
+            if header.needed_lines > HEADER_LINE_LIMIT {
+                diagnostics.push(Diagnostic::new(
+                    &codes::WARN_TABLE_HEADER_EXTRA_WRAP,
+                    [
+                        ("chart_id", json!(chart_id)),
+                        ("column", json!(col.name)),
+                        ("header", json!(col.header)),
+                        ("lines", json!(header.needed_lines)),
+                        ("column_width", json!(col_w)),
+                        ("column_count", json!(cols.len())),
+                        ("table_width", json!(table_w)),
+                    ],
+                ));
             }
-        }
-    }
-    // Cramping: headers wrapped because the columns' demand exceeds the budget
-    // they were divided into. A table that also overflows
-    // its slot is WARN-TABLE-COLUMNS-OVERFLOW's case.
-    let wrapped_count = header_lines.iter().filter(|h| h.lines.len() > 1).count();
-    if wrapped_count > 0 && !content_overflows {
-        let mut demand = 0.0_f64;
-        let mut relative_fraction = 0.0_f64;
-        for col in cols {
-            if let Some(&pinned) = pins.get(col.name.as_str()) {
-                demand += pinned;
-                if matches!(&col.cfg.width, Some(WidthHint::Text(s)) if s.trim().ends_with('%')) {
-                    relative_fraction += pinned / table_w;
-                }
-                continue;
-            }
-            let mut col_demand =
-                demands[col.name.as_str()].max(header_demands[col.name.as_str()] + 2.0 * pad);
-            let relative_cap =
-                matches!(&col.cfg.max_width, Some(WidthHint::Text(s)) if s.trim().ends_with('%'));
-            if let (Some(Some(cap)), false) = (caps.get(col.name.as_str()), relative_cap) {
-                col_demand = col_demand.min(*cap);
-            }
-            demand += col_demand;
-        }
-        let shortfall = demand - table_w;
-        // The fix is sized from the root board's width: a render outside a
-        // board has none to suggest, so it warns of nothing.
-        let board_width = drawn.board_style.as_ref().and_then(|b| b.board_width);
-        if let (true, Some(board_width)) =
-            (shortfall >= 1.0 && relative_fraction < 1.0, board_width)
-        {
-            let needed_budget = (demand - relative_fraction * table_w) / (1.0 - relative_fraction);
-            let growth = (needed_budget - table_w).max(0.0) * board_width / table_w;
-            let suggested_width = ((board_width + growth) / 50.0).ceil() * 50.0;
-            diagnostics.push(Diagnostic::new(
-                &codes::WARN_TABLE_CRAMPED,
-                [
-                    ("chart_id", json!(chart_id)),
-                    ("wrapped_headers", json!(wrapped_count)),
-                    ("column_count", json!(cols.len())),
-                    ("needed_width", json!(demand)),
-                    ("available_width", json!(table_w)),
-                    ("suggested_width", json!(suggested_width)),
-                ],
-            ));
         }
     }
     let max_header_lines = header_lines
@@ -4292,27 +4271,16 @@ pub(crate) fn lay_out(
     // Hosts inline this content into the board without the root <svg>'s
     // viewport, so an overflowing table must clip itself: unclipped, its
     // columns paint over whatever sits beside it in a `cols` row. The clip id
-    // is the geometry itself: chart ids repeat across a board tree, and two
-    // clips sharing an id must share a shape.
+    // derives from the chart's id and placement: `url(#id)` resolves document-wide, so a chart
+    // placed twice, at two sizes, needs a clip each.
     if content_overflows {
-        let (bx, by, bw, bh) = card_box(svg_w, svg_h, drawn.padding.as_ref());
-        let (bx, by, bw, bh) = (num_full(bx), num_full(by), num_full(bw), num_full(bh));
-        let clip_id = format!("table-clip-{bx}-{by}-{bw}-{bh}");
-        tree.open(Open::Defs, Attrs::new());
-        tree.open(Open::ClipPath, Attrs::new().quick("id", clip_id.as_str()));
-        tree.rect(
-            Attrs::new()
-                .quick("x", bx.as_str())
-                .quick("y", by.as_str())
-                .quick("width", bw.as_str())
-                .quick("height", bh.as_str()),
-        );
+        let clip_id = format!("table-clip-{}", crate::contract::scoped_id(chart_id));
+        tree.open(Open::Defs, Role::Chrome, Attrs::new());
+        tree.open(Open::ClipPath, Role::Chrome, Attrs::new().quick("id", clip_id.as_str()));
+        tree.rect(Role::Chrome, card_box(svg_w, svg_h, drawn.padding.as_ref()), Attrs::new());
         tree.close(Open::ClipPath);
         tree.close(Open::Defs);
-        tree.open(
-            Open::Group,
-            Attrs::new().quick("clip-path", format!("url(#{clip_id})")),
-        );
+        tree.open(Open::Group, Role::Chrome, Attrs::new().quick("clip-path", format!("url(#{clip_id})")));
     }
     // Omit the rect when the table's OWN background is
     // unset or the literal string "transparent" — never `payload.background`
@@ -4329,27 +4297,27 @@ pub(crate) fn lay_out(
         // padding`, the same law kpi.rs's own card-fill rect ports —
         // production calls it with `inset=drawn.padding`.
         let (bx, by, bw, bh) = card_box(svg_w, svg_h, drawn.padding.as_ref());
-        tree.rect(
-            Attrs::new()
-                .quick("x", num_full(bx))
-                .quick("y", num_full(by))
-                .quick("width", num_full(bw))
-                .quick("height", num_full(bh))
-                .quick("fill", bg)
-                .quick("rx", "4"),
-        );
+        tree.rounded(Role::Chrome, (bx, by, bw, bh), 4.0, Attrs::new().quick("fill", bg));
     }
 
     if let Some(page_rows) = pool_page_rows {
         tree.open(
             Open::Group,
+            Role::Chrome,
             Attrs::new()
                 .quick("data-dbt-table", chart_id)
                 .quick("data-dbt-page-rows", page_rows.to_string())
                 .quick("data-dbt-page", current_page.to_string())
                 .quick("data-dbt-rows-y", rows_start_y.to_string())
                 .quick("data-dbt-summary-gap", summary_gap_unit.to_string())
-                .quick("data-dbt-language", pool_runtime_words()?),
+                .quick("data-dbt-language", pool_runtime_words()?)
+                .quick_some(
+                    "data-dbt-time-locale",
+                    cols.iter()
+                        .any(|col| col.is_day)
+                        .then(calendar_time_locale)
+                        .transpose()?,
+                ),
         );
     }
     emit_title_band(&mut tree, &band, outer);
@@ -4368,14 +4336,7 @@ pub(crate) fn lay_out(
             if let Some(fill) = header_fill {
                 // The full table
                 // width less the outer padding on both sides.
-                tree.rect(
-                    Attrs::new()
-                        .quick("x", num_full(outer))
-                        .quick("y", num_full(row_y))
-                        .quick("width", num_full(table_w - 2.0 * outer))
-                        .quick("height", num_full(group_row_height))
-                        .quick("fill", fill),
-                );
+                tree.rect(Role::Chrome, (outer, row_y, table_w - 2.0 * outer, group_row_height), Attrs::new().quick("fill", fill));
             }
             let label_y = row_y
                 + group_row_height / 2.0
@@ -4395,27 +4356,18 @@ pub(crate) fn lay_out(
                     // tc.header.font.color`.
                     let rule_w = 1.0;
                     let span_rule_y = row_y + group_row_height - rule_w;
-                    let (span_rule_x_s, span_rule_y_s, span_rule_w_s, rule_w_s) = (
-                        float_repr(x_left + pad),
-                        float_repr(span_rule_y),
-                        float_repr(x_right - x_left - 2.0 * pad),
-                        float_repr(rule_w),
-                    );
                     tree.rect(
+                        Role::Grid,
+                        (x_left + pad, span_rule_y, x_right - x_left - 2.0 * pad, rule_w),
                         Attrs::new()
-                            .quick("x", span_rule_x_s)
-                            .quick("y", span_rule_y_s)
-                            .quick("width", span_rule_w_s)
-                            .quick("height", rule_w_s)
                             .quick("fill", header_color)
                             .quick("shape-rendering", "crispEdges"),
                     );
                 }
-                let (center_x_s, label_y_s) = (float_repr(center_x), float_repr(label_y));
                 tree.text_el(
+                    Role::Label,
+                    (center_x, label_y),
                     Attrs::new()
-                        .quick("x", center_x_s)
-                        .quick("y", label_y_s)
                         .quick("font-size", header_size.to_string())
                         .quick("font-weight", header_weight.as_str())
                         .quick("fill", header_color)
@@ -4430,14 +4382,7 @@ pub(crate) fn lay_out(
     // `_render_header_section`'s fill: the header band across
     // the cell-content span (`cell_pad=0`), under the rule.
     if let (true, Some(fill)) = (header_visible, header_fill) {
-        tree.rect(
-            Attrs::new()
-                .quick("x", num_full(outer))
-                .quick("y", num_full(leaf_header_y))
-                .quick("width", num_full(content_w))
-                .quick("height", num_full(header_h))
-                .quick("fill", fill),
-        );
+        tree.rect(Role::Chrome, (outer, leaf_header_y, content_w, header_h), Attrs::new().quick("fill", fill));
     }
 
     if header_visible && header_divider.line.visible && header_divider.continuous {
@@ -4448,8 +4393,8 @@ pub(crate) fn lay_out(
             &mut tree,
             outer + pad,
             outer + content_w - pad,
-            PyNum::Int(rule_y),
-            PyNum::Float(header_divider.line.width),
+            rule_y,
+            header_divider.line.width,
             &header_divider.line,
             None,
         );
@@ -4481,8 +4426,8 @@ pub(crate) fn lay_out(
                 &mut tree,
                 x1,
                 x2,
-                PyNum::Int(rule_y),
-                PyNum::Float(header_divider.line.width),
+                rule_y,
+                header_divider.line.width,
                 &header_divider.line,
                 None,
             );
@@ -4491,7 +4436,6 @@ pub(crate) fn lay_out(
 
     // Header labels, bottom-aligned: every header's last line sits at the
     // same baseline.
-    let header_text_y_s = float_repr(header_text_y);
     if let (true, true) = (rn.visible, header_visible) {
         let (x, anchor) = if rn.align == "right" {
             (outer + rn_w - pad, "end")
@@ -4499,9 +4443,9 @@ pub(crate) fn lay_out(
             (outer + pad, "start")
         };
         tree.text_el(
+            Role::Label,
+            (x, header_text_y),
             Attrs::new()
-                .quick("x", float_repr(x))
-                .quick("y", header_text_y_s.as_str())
                 .quick("font-size", header_size.to_string())
                 .quick("font-weight", header_weight.as_str())
                 .quick("fill", header_color)
@@ -4524,7 +4468,6 @@ pub(crate) fn lay_out(
             } else {
                 (cx + pad, "start")
             };
-        let x_s = float_repr(x);
         let sortable = pool_page_rows.is_some()
             && col.cfg.spark.is_none()
             && !is_swatch(col)
@@ -4540,7 +4483,13 @@ pub(crate) fn lay_out(
                 .set_if(
                     sortable,
                     "data-dbt-sort-type",
-                    if col.is_numeric { "number" } else { "text" },
+                    if col.is_numeric {
+                        "number"
+                    } else if col.is_day {
+                        "date"
+                    } else {
+                        "text"
+                    },
                 )
                 .quick("font-size", header_size.to_string())
                 .quick("font-weight", header_weight.as_str())
@@ -4551,6 +4500,7 @@ pub(crate) fn lay_out(
         if let Some(link) = &col.cfg.header_link {
             tree.open(
                 Open::Link,
+                Role::Chrome,
                 Attrs::new()
                     .quick("href", crate::href::checked_href_diagnostic(link)?)
                     .quick_some("data-dbt-link-open", col.cfg.header_link_open.open_attr())
@@ -4558,27 +4508,17 @@ pub(crate) fn lay_out(
             );
         }
         if header.lines.len() > 1 {
-            tree.open(
-                Open::Text,
-                Attrs::new().quick("x", x_s.as_str()).extend(header_attrs()),
-            );
+            let start_y = header_text_y - (header.lines.len() - 1) as f64 * header_line_h;
+            tree.open_text(Role::Label, (x, start_y), header_attrs());
             if header.truncated {
                 tree.title(&col.header);
             }
-            let start_y = header_text_y - (header.lines.len() - 1) as f64 * header_line_h;
             for (li, line) in header.lines.iter().enumerate() {
-                let ly = float_repr(start_y + li as f64 * header_line_h);
-                tree.tspan(Attrs::new().quick("x", x_s.as_str()).quick("y", ly), line);
+                tree.tspan(Span::at(x, start_y + li as f64 * header_line_h), Attrs::new(), line);
             }
             tree.close(Open::Text);
         } else {
-            tree.open(
-                Open::Text,
-                Attrs::new()
-                    .quick("x", x_s.as_str())
-                    .quick("y", header_text_y_s.as_str())
-                    .extend(header_attrs()),
-            );
+            tree.open_text(Role::Label, (x, header_text_y), header_attrs());
             if header.truncated {
                 tree.title(&col.header);
             }
@@ -4593,6 +4533,7 @@ pub(crate) fn lay_out(
     let body = TableBody {
         rows,
         row_roles: &row_roles,
+        data_rank: &data_rank,
         row_heights: &row_heights,
         summary_gap_unit,
         rows_start_y,
@@ -4681,6 +4622,7 @@ pub(crate) fn lay_out(
             let display = if page_n == initial_page { "" } else { "none" };
             tree.open(
                 Open::Group,
+                Role::Chrome,
                 Attrs::new()
                     .quick("class", "dbt-table-page")
                     .quick("data-dbt-table-page", chart_id)
@@ -4698,9 +4640,9 @@ pub(crate) fn lay_out(
                 &page_var_name,
                 svg_w,
                 page_indicator_y,
-                page_offset + 1,
-                page_offset + page_n_shown,
-                n_rows,
+                data_rank[page_offset] + 1,
+                data_rank[page_offset + page_n_shown],
+                data_rank[n_rows],
                 outer,
                 false,
                 false,
@@ -4738,6 +4680,7 @@ pub(crate) fn lay_out(
                 let last = (first + n_shown).min(n_rows);
                 tree.open(
                     Open::Group,
+                    Role::Chrome,
                     Attrs::new()
                         .quick("data-dbt-pager", page.to_string())
                         .set_if(page != current_page, "display", "none"),
@@ -4752,9 +4695,9 @@ pub(crate) fn lay_out(
                     &page_var_name,
                     svg_w,
                     canvas_y,
-                    first + 1,
-                    last,
-                    n_rows,
+                    data_rank[first] + 1,
+                    data_rank[last],
+                    data_rank[n_rows],
                     outer,
                     false,
                     false,
@@ -4766,6 +4709,7 @@ pub(crate) fn lay_out(
             // runtime relabels and retargets.
             tree.open(
                 Open::Group,
+                Role::Chrome,
                 Attrs::new()
                     .quick("data-dbt-pager", "compact")
                     .set_if(per_page, "display", "none"),
@@ -4780,9 +4724,9 @@ pub(crate) fn lay_out(
                 &page_var_name,
                 svg_w,
                 canvas_y,
-                1,
-                n_shown.min(n_rows),
-                n_rows,
+                data_rank[0] + 1,
+                data_rank[n_shown.min(n_rows)],
+                data_rank[n_rows],
                 outer,
                 false,
                 true,
@@ -4819,9 +4763,9 @@ pub(crate) fn lay_out(
                     &format!("{chart_id}_page"),
                     svg_w,
                     indicator_y,
-                    live_offset + 1,
-                    live_offset + live_shown,
-                    n_rows,
+                    data_rank[live_offset] + 1,
+                    data_rank[live_offset + live_shown],
+                    data_rank[n_rows],
                     outer,
                     drawn.interactive_controls,
                     false,
@@ -4845,10 +4789,10 @@ pub(crate) fn lay_out(
                     .as_deref()
                     .ok_or("table: truncated rows need style.table.more_rows.font.style")?;
                 tree.text_el(
+                    Role::Label,
+                    (svg_w / 2.0, indicator_y),
                     Attrs::new()
-                        .quick("x", float_repr(svg_w / 2.0))
-                        .quick("y", float_repr(indicator_y))
-                        .quick("font-size", float_repr(more_size))
+                        .num("font-size", more_size)
                         .quick("fill", more_ink)
                         .quick("text-anchor", "middle")
                         .quick("font-style", more_style)
@@ -4886,10 +4830,10 @@ pub(crate) fn lay_out(
             .as_deref()
             .ok_or("table: empty result set needs style.table.empty_state.font.color")?;
         tree.text_el(
+            Role::Label,
+            (svg_w / 2.0, rows_start_y + row_h / 2.0),
             Attrs::new()
-                .quick("x", crate::svg::py_float_str(svg_w / 2.0))
-                .quick("y", crate::svg::py_float_str(rows_start_y + row_h / 2.0))
-                .quick("font-size", crate::svg::py_float_str(size))
+                .num("font-size", size)
                 .quick("fill", ink)
                 .quick("text-anchor", "middle")
                 .quick("font-family", body_family.as_str()),
@@ -4936,7 +4880,7 @@ pub fn intrinsic(bound: &Bound, measure: &Measure) -> Result<Option<IntrinsicWid
 /// `layout`, read back as the root card's height.
 pub fn height_for_width(bound: &Bound, width: f64, measure: &Measure) -> Result<f64, Diagnostic> {
     let laid_out = lay_out(bound, width, None, measure)?;
-    let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+    let Some(extent) = scene::root_extent(&laid_out.nodes) else {
         return Err("table: layout is one root card".to_string().into());
     };
     Ok(extent.height)

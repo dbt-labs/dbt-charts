@@ -252,7 +252,6 @@ class TestSourceConnectorsCollected:
             "CsvSourceConfig",
             "ParquetSourceConfig",
             "JsonSourceConfig",
-            "HttpSourceConfig",
             "DbtProfileSourceConfig",
         }
     )

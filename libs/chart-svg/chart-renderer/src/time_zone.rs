@@ -204,8 +204,8 @@ mod tests {
     #[test]
     fn an_aware_timestamp_prints_on_its_board_zone_date() {
         let _ny = zone_scope("America/New_York");
-        assert_eq!(crate::time_axis::parse_iso_date("2024-03-10T03:00:00Z"), Some((2024, 3, 9)));
-        assert_eq!(crate::time_axis::parse_iso_date("2024-03-10T03:00:00"), Some((2024, 3, 10)));
+        let dates = crate::time_axis::testing::dates(&["2024-03-10T03:00:00Z", "2024-03-10T03:00:00"]);
+        assert_eq!((dates.civil(0), dates.civil(1)), (Some((2024, 3, 9)), Some((2024, 3, 10))));
     }
 
     #[test]

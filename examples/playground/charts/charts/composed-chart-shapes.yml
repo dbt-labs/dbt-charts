@@ -6,12 +6,11 @@
 # per shape, each built using the standard recipe for that shape.
 
 title: Composed chart shapes
+width: 1872
 source: examples_db
 notes: shapes an author asks for by name that dbt Charts has no `type:` for. Each cell is the
   natural recipe for one of them, rendered so the verdict is a picture and not an opinion.
 style:
-  frame:
-    width: 1872
   charts:
     category_colors:
       direction:

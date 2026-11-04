@@ -1,9 +1,8 @@
 //! The scales an axis `labels.expr` reads through `scale()`, `invert()`, `domain()`, `range()` and
 //! `bandwidth()`: d3-scale's, as Vega registers them (vega-scale's band and point included).
 
-use super::funcs::{js_pow, js_sign};
-use crate::families::cartesian::BandGeometry;
 use super::val::{throws, EvalError, Res, Val};
+use d3rs::scale::{Band, Continuous, Transform};
 
 /// The most ticks a label expression may ask a scale for: far past any axis, short of an allocation that aborts.
 const MAX_TICKS: f64 = 1_000_000.0;
@@ -41,13 +40,17 @@ impl Kind {
     fn continuous(self) -> bool {
         matches!(self, Kind::Linear | Kind::Log | Kind::Pow(_) | Kind::Symlog(_) | Kind::Time | Kind::Utc)
     }
-}
 
-#[derive(Debug, Clone)]
-struct Bands {
-    step: f64,
-    bandwidth: f64,
-    values: Vec<f64>,
+    /// The d3 transform of a continuous kind: `time` and `utc` interpolate like `linear`.
+    fn transform(self) -> Transform {
+        match self {
+            Kind::Linear | Kind::Time | Kind::Utc => Transform::Identity,
+            Kind::Log => Transform::Log { base: 10.0 },
+            Kind::Pow(e) => Transform::Pow(e),
+            Kind::Symlog(c) => Transform::Symlog(c),
+            Kind::Band { .. } | Kind::Point { .. } | Kind::Ordinal => unreachable!("{} is not a continuous scale", self.name()),
+        }
+    }
 }
 
 /// A scale at a given range: d3's object, built once and read many times.
@@ -56,59 +59,7 @@ pub struct Scale {
     kind: Kind,
     domain: Vec<Val>,
     range: Vec<Val>,
-    bands: Option<Bands>,
-}
-
-type Fx = Box<dyn Fn(f64) -> f64>;
-
-/// d3's `(transform, untransform)` pair for a continuous scale with the domain `domain`.
-fn transforms(kind: Kind, domain: &[f64]) -> (Fx, Fx) {
-    match kind {
-        Kind::Log if domain.first().is_some_and(|d| *d < 0.0) => (Box::new(|x| -libm::log(-x)), Box::new(|x| -libm::exp(-x))),
-        Kind::Log => (Box::new(libm::log), Box::new(libm::exp)),
-        Kind::Pow(e) if e == 1.0 => (Box::new(|x| x), Box::new(|x| x)),
-        Kind::Pow(e) if e == 0.5 => (
-            Box::new(|x| if x < 0.0 { -(-x).sqrt() } else { x.sqrt() }),
-            Box::new(|x| if x < 0.0 { -x * x } else { x * x }),
-        ),
-        Kind::Pow(e) => (
-            Box::new(move |x| if x < 0.0 { -js_pow(-x, e) } else { js_pow(x, e) }),
-            Box::new(move |x| if x < 0.0 { -js_pow(-x, 1.0 / e) } else { js_pow(x, 1.0 / e) }),
-        ),
-        Kind::Symlog(c) => (
-            Box::new(move |x| js_sign(x) * libm::log1p((x / c).abs())),
-            Box::new(move |x| js_sign(x) * libm::expm1(x.abs()) * c),
-        ),
-        _ => (Box::new(|x| x), Box::new(|x| x)),
-    }
-}
-
-/// d3's `normalize(a, b)`.
-fn normalize(a: f64, b: f64, x: f64) -> f64 {
-    let span = b - a;
-    if span != 0.0 { (x - a) / span } else if span.is_nan() { f64::NAN } else { 0.5 }
-}
-
-fn lerp(a: f64, b: f64, t: f64) -> f64 {
-    a * (1.0 - t) + b * t
-}
-
-/// d3's `bimap`/`polymap`: the piecewise-linear map from `domain` onto `range`.
-fn piecewise(domain: &[f64], range: &[f64], x: f64) -> f64 {
-    let n = domain.len().min(range.len());
-    if n > 2 {
-        let j = n - 1;
-        let (mut d, mut r) = (domain[..n].to_vec(), range[..n].to_vec());
-        if d[j] < d[0] {
-            d.reverse();
-            r.reverse();
-        }
-        let i = d[1..j].partition_point(|v| *v <= x);
-        let i = i.min(j - 1);
-        return lerp(r[i], r[i + 1], normalize(d[i], d[i + 1], x));
-    }
-    let (d0, d1, r0, r1) = (domain[0], domain[1], range[0], range[1]);
-    if d1 < d0 { lerp(r1, r0, normalize(d1, d0, x)) } else { lerp(r0, r1, normalize(d0, d1, x)) }
+    band: Option<Band>,
 }
 
 /// `InternMap`'s key equality: `valueOf` for objects, then `SameValueZero`.
@@ -129,7 +80,7 @@ fn nums(v: &[Val]) -> Vec<f64> {
 
 impl Scale {
     pub fn new(kind: Kind, domain: Vec<Val>, range: Vec<Val>) -> Self {
-        let mut scale = Scale { kind, domain, range, bands: None };
+        let mut scale = Scale { kind, domain, range, band: None };
         scale.rescale();
         scale
     }
@@ -145,14 +96,12 @@ impl Scale {
             _ => return,
         };
         let r = nums(&self.range);
-        let reverse = r[1] < r[0];
-        let (start, stop) = if reverse { (r[1], r[0]) } else { (r[0], r[1]) };
-        let geometry = BandGeometry::new(self.domain.len(), start, stop, inner, outer);
-        let mut values: Vec<f64> = (0..self.domain.len()).map(|i| geometry.edge(i, 0.0)).collect();
-        if reverse {
-            values.reverse();
-        }
-        self.bands = Some(Bands { step: geometry.step(), bandwidth: geometry.bandwidth(), values });
+        self.band = Some(Band::new(self.domain.len(), [r[0], r[1]], inner, outer, 0.5, false));
+    }
+
+    /// The continuous scale d3 builds from this one's kind, domain and range.
+    fn as_continuous(&self) -> Continuous {
+        Continuous { transform: self.kind.transform(), domain: nums(&self.domain), range: nums(&self.range), clamp: false }
     }
 
     fn index_of(&self, v: &Val) -> Option<usize> {
@@ -163,7 +112,7 @@ impl Scale {
     pub fn call(&self, v: &Val) -> Val {
         match self.kind {
             Kind::Band { .. } | Kind::Point { .. } => match self.index_of(v) {
-                Some(i) => Val::Num(self.bands.as_ref().expect("a band scale is rescaled").values[i]),
+                Some(i) => Val::Num(self.band.as_ref().expect("a band scale is rescaled").position(i)),
                 None => Val::Undefined,
             },
             Kind::Ordinal => match self.index_of(v) {
@@ -178,31 +127,21 @@ impl Scale {
                 if x.is_nan() {
                     return Val::Undefined;
                 }
-                let domain = nums(&self.domain);
-                let (t, _) = transforms(self.kind, &domain);
-                let d: Vec<f64> = domain.iter().map(|d| t(*d)).collect();
-                Val::Num(piecewise(&d, &nums(&self.range), t(x)))
+                Val::Num(self.as_continuous().scale(x))
             }
         }
     }
 
-    fn invert_continuous(&self, y: f64) -> f64 {
-        let domain = nums(&self.domain);
-        let (t, u) = transforms(self.kind, &domain);
-        let d: Vec<f64> = domain.iter().map(|d| t(*d)).collect();
-        u(piecewise(&nums(&self.range), &d, y))
-    }
-
     fn date_or_num(&self, n: f64) -> Val {
         // `new Date(n)` clips to the instants a Date holds, and is invalid past them.
-        if matches!(self.kind, Kind::Time | Kind::Utc) { Val::Date(super::date::time_clip(n)) } else { Val::Num(n) }
+        if matches!(self.kind, Kind::Time | Kind::Utc) { Val::Date(d3rs::calendar::time_clip(n)) } else { Val::Num(n) }
     }
 
     fn invert_bands(&self, lo: f64, hi: f64) -> Val {
-        let bands = self.bands.as_ref().expect("a band scale is rescaled");
+        let band = self.band.as_ref().expect("a band scale is rescaled");
         let r = nums(&self.range);
         let reverse = r[1] < r[0];
-        let mut values = bands.values.clone();
+        let mut values = band.positions();
         if reverse {
             values.reverse();
         }
@@ -220,7 +159,7 @@ impl Scale {
         let bisect_right = |x: f64| values.partition_point(|v| *v <= x) as isize;
         let mut a = (bisect_right(lo) - 1).max(0);
         let mut b = if lo == hi { a } else { bisect_right(hi) - 1 };
-        if lo - values[a as usize] > bands.bandwidth + 1e-10 {
+        if lo - values[a as usize] > band.bandwidth + 1e-10 {
             a += 1;
         }
         if reverse {
@@ -258,9 +197,9 @@ impl Scale {
                 if hi.less_than(&lo) == Some(true) {
                     std::mem::swap(&mut lo, &mut hi);
                 }
-                Ok(Val::Array(vec![self.date_or_num(self.invert_continuous(lo.to_number())), self.date_or_num(self.invert_continuous(hi.to_number()))]))
+                Ok(Val::Array(vec![self.date_or_num(self.as_continuous().invert(lo.to_number())), self.date_or_num(self.as_continuous().invert(hi.to_number()))]))
             }
-            (_, v) => Ok(self.date_or_num(self.invert_continuous(v.to_number()))),
+            (_, v) => Ok(self.date_or_num(self.as_continuous().invert(v.to_number()))),
         }
     }
 
@@ -279,11 +218,11 @@ impl Scale {
 
     /// `scale.bandwidth()` where the scale has one, else Vega's `0`.
     pub fn bandwidth(&self) -> f64 {
-        self.bands.as_ref().map_or(0.0, |b| b.bandwidth)
+        self.band.as_ref().map_or(0.0, |b| b.bandwidth)
     }
 
     pub fn step(&self) -> f64 {
-        self.bands.as_ref().map_or(f64::NAN, |b| b.step)
+        self.band.as_ref().map_or(f64::NAN, |b| b.step)
     }
 
     /// `String(scale.copy())`: the source of the closure d3 builds, as the minifier left it in the bundle that
@@ -307,8 +246,8 @@ impl Scale {
             return Err(EvalError::Unmodeled(crate::refuse!("labels.expr asking a scale for more than {MAX_TICKS} ticks is not supported")));
         }
         Ok(match self.kind {
-            Kind::Linear | Kind::Pow(_) | Kind::Symlog(_) => {
-                Some(d3rs::ticks::d3_ticks(u, v, count_n.max(0.0) as usize).into_iter().map(Val::Num).collect())
+            Kind::Linear | Kind::Log | Kind::Pow(_) | Kind::Symlog(_) => {
+                Some(self.as_continuous().ticks(count_n.max(0.0) as usize).into_iter().map(Val::Num).collect())
             }
             Kind::Time | Kind::Utc => {
                 let (lo, hi) = (u.min(v) / 864e5, u.max(v) / 864e5);
@@ -320,63 +259,6 @@ impl Scale {
                     days.reverse();
                 }
                 Some(days.into_iter().map(|day| Val::Date(day * 864e5)).collect())
-            }
-            Kind::Log => {
-                let base = 10.0_f64;
-                let reflect = u.min(v) < 0.0 || d[0] < 0.0;
-                let (lo, hi) = (u.min(v), u.max(v));
-                let rev = v < u;
-                let logs = |x: f64| if reflect { -libm::log10(-x) } else { libm::log10(x) };
-                let pow10 = |x: f64| -> f64 {
-                    if x.is_finite() { format!("1e{}", super::val::num_to_str(x)).parse::<f64>().unwrap_or(f64::NAN) } else if x < 0.0 { 0.0 } else { x }
-                };
-                let pows = |x: f64| -> f64 { if reflect { -pow10(-x) } else { pow10(x) } };
-                let (mut i, mut j) = (logs(lo), logs(hi));
-                let mut z: Vec<f64> = Vec::new();
-                if j - i < count_n {
-                    i = i.floor();
-                    j = j.ceil();
-                    if lo > 0.0 {
-                        let mut ii = i;
-                        while ii <= j {
-                            for k in 1..(base as i32) {
-                                let t = if ii < 0.0 { f64::from(k) / pows(-ii) } else { f64::from(k) * pows(ii) };
-                                if t < lo {
-                                    continue;
-                                }
-                                if t > hi {
-                                    break;
-                                }
-                                z.push(t);
-                            }
-                            ii += 1.0;
-                        }
-                    } else {
-                        let mut ii = i;
-                        while ii <= j {
-                            for k in (1..(base as i32)).rev() {
-                                let t = if ii > 0.0 { f64::from(k) / pows(-ii) } else { f64::from(k) * pows(ii) };
-                                if t < lo {
-                                    continue;
-                                }
-                                if t > hi {
-                                    break;
-                                }
-                                z.push(t);
-                            }
-                            ii += 1.0;
-                        }
-                    }
-                    if (z.len() as f64) * 2.0 < count_n {
-                        z = d3rs::ticks::d3_ticks(lo, hi, count_n as usize);
-                    }
-                } else {
-                    z = d3rs::ticks::d3_ticks(i, j, (j - i).min(count_n).max(0.0) as usize).into_iter().map(pows).collect();
-                }
-                if rev {
-                    z.reverse();
-                }
-                Some(z.into_iter().map(Val::Num).collect())
             }
             _ => None,
         })

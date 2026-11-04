@@ -22,6 +22,14 @@
 public_url: ""
 
 # ============================================================================
+# BOARDS
+# ============================================================================
+# boards_dir: the project-relative folder that holds board files. "." means the
+# project root itself. Boards are identified as charts/<rest> either way.
+
+boards_dir: charts
+
+# ============================================================================
 # QUERY-RESULT CACHE
 # ============================================================================
 # The cascade root that every source, board, and query inherits (field-by-

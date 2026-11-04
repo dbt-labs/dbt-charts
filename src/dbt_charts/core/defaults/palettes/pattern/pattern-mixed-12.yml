@@ -1,0 +1,23 @@
+# Pattern palette — pattern-mixed-12
+name: pattern-mixed-12
+description: |
+  Twelve categorical fill patterns. Slots 1-7 match pattern-mixed-8, so a chart
+  can switch to this palette without reshuffling them. The late slots come last
+  because they are the weakest in skinny marks: 135-degree hatch and horizontal
+  stripes are close relatives of the earlier hatches, horizontal stripes vanish
+  in thin horizontal bars and short stacked segments, and the grid falls back to
+  its surviving direction.
+kind: categorical
+motifs:
+  - hatch-45
+  - bluenoise-dots
+  - dash-field
+  - bendday-hex
+  - worms-fine
+  - crosshatch
+  - pebbles-fine
+  - dots-brick
+  - hatch-135
+  - grid
+  - hatch-0
+  - dither

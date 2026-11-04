@@ -10,6 +10,7 @@ UI chrome such as menus is handled outside core rendering.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -33,13 +34,17 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedChart,
     ResolvedPieChart,
 )
+from dbt_charts.core.compile.models.chart.resolved._base import (
+    _SharedResolvedChartFields,
+)
 from dbt_charts.core.compile.models.chart.resolved.callout import ResolvedCalloutChart
 from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
-from dbt_charts.core.compile.models.primitives import PieMode
+from dbt_charts.core.compile.models.primitives import PieMode, ResolvedFontStyle
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
+from dbt_charts.core.render.board_variables import held_legend_view
 from dbt_charts.core.render.chart.spec_builders import additive_padding
 from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.errors import RenderError
@@ -63,6 +68,13 @@ from dbt_charts.core.render.svg_utils import (
     round_clipped,
     selection_boxes,
     shadow_rect,
+)
+from dbt_charts.core.render.title_band import (
+    TitleMetrics,
+    chart_title_metrics,
+    failed_title_font,
+    failed_title_metrics,
+    failed_title_text,
 )
 from dbt_charts.core.text.format_d3 import board_word
 
@@ -199,7 +211,9 @@ def render_layout_item(
                 width,
                 height,
                 error_collector,
+                variables,
                 resolved_style=resolved_style,
+                title_shift=item.title_shift,
             )
         elif item.type == "chart" and item.chart:
             # Per-family padding: baked into layout_padding at construction time
@@ -249,6 +263,86 @@ def render_layout_item(
     return rendered, actual_height
 
 
+@dataclass(frozen=True)
+class _FailedTitle:
+    """A failed chart's title as its tile draws it: text, font, and the two
+    heights the row's band decides, in the slot."""
+
+    text: str | None
+    font: ResolvedFontStyle
+    baseline: float
+    tile_top: float
+
+
+def _failed_title(
+    text: str | None,
+    font: ResolvedFontStyle,
+    metrics: TitleMetrics,
+    title_shift: TitleShift,
+) -> _FailedTitle:
+    """The title takes the place a healthy chart's title takes, moved by the
+    row's band; an untitled chart's tile fills the slot."""
+    if not text:
+        return _FailedTitle(None, font, 0.0, 0.0)
+    return _FailedTitle(
+        text,
+        font,
+        metrics.ascent + title_shift.title_dy,
+        metrics.ascent + metrics.tail + title_shift.body_dy,
+    )
+
+
+def _render_stage_title(
+    chart: ResolvedChart,
+    resolved_style: ResolvedStyle,
+    title_shift: TitleShift,
+    available_width: float,
+    padding: dict[str, float] | None,
+    pie_mode: PieMode | None,
+) -> _FailedTitle:
+    """The title of a chart that resolved and failed later, on the band's law.
+
+    A titled chart that draws a Vega-style title is banded by
+    ``chart_title_metrics`` from its own title font, subtitle and padding; the
+    tile uses those same numbers. A KPI or other chart with no title slot of its
+    own is outside the band and takes the board's tier font.
+    """
+    card_padding = float(resolved_style.frame.card_padding)
+    text = ChartIdentity.from_resolved(chart).title
+    own_font = (
+        chart.style.title_font
+        if isinstance(chart, _SharedResolvedChartFields)
+        else None
+    )
+    font = (
+        own_font
+        if own_font is not None
+        else failed_title_font(
+            resolved_style.chart_defaults.title_fonts, available_width
+        )
+    )
+    slot_width = (
+        available_width - padding["left"] - padding["right"]
+        if padding is not None
+        else available_width
+    )
+    banded = (
+        None
+        if isinstance(chart, ResolvedPieChart) and pie_mode is None
+        else chart_title_metrics(chart, card_padding, slot_width, pie_mode)
+    )
+    metrics = banded if banded is not None else failed_title_metrics(font, card_padding)
+    return _failed_title(text, font, metrics, title_shift)
+
+
+def _shadow_under(
+    resolved_style: ResolvedStyle, canvas: str, radius: float
+) -> CardShadow | None:
+    """The board's card shadow under a card painted on ``canvas``, if it draws one."""
+    shadow = resolved_style.box_shadow
+    return None if shadow is None else CardShadow(shadow, canvas, radius)
+
+
 def _render_callout_block(
     exc: DbtChartsError,
     chart: ResolvedChart,
@@ -257,6 +351,9 @@ def _render_callout_block(
     error_collector: list[Diagnostic] | None,
     *,
     resolved_style: ResolvedStyle,
+    title_shift: TitleShift,
+    padding: dict[str, float] | None,
+    pie_mode: PieMode | None,
 ) -> tuple[str, float]:
     """Build an inline error SVG block and optionally collect the Diagnostic.
 
@@ -276,11 +373,20 @@ def _render_callout_block(
     if error_collector is not None:
         error_collector.append(diagnostic)
 
+    identity = ChartIdentity.from_resolved(chart)
+    title = _render_stage_title(
+        chart, resolved_style, title_shift, available_width, padding, pie_mode
+    )
     return _wrap_rendered_chart_svg(
-        ChartIdentity.from_resolved(chart),
+        identity,
         render_error_placard(
             diagnostic,
             chart_id=chart.id,
+            chart_title=title.text,
+            title_font=title.font,
+            title_baseline=title.baseline,
+            tile_top=title.tile_top,
+            content_left=float(resolved_style.frame.card_padding),
             width=available_width,
             height=available_height,
             style=resolved_style.chart_defaults.callout_error,
@@ -289,8 +395,12 @@ def _render_callout_block(
         resolved_title=chart.id,
         extra_classes=("dbt-chart-callout",),
         is_error_fallback=True,
-        card_border=None,
-        card_shadow=None,
+        card_border=resolved_style.chart_defaults.border,
+        card_shadow=_shadow_under(
+            resolved_style,
+            resolved_style.chart_defaults.ink_canvas,
+            resolved_style.chart_defaults.border.radius,
+        ),
         inset=None,
         # The placard draws at the full available size — no padding is baked
         # into it, so there is nothing for its box to sit outside of.
@@ -303,8 +413,10 @@ def _render_chart_resolve_failure(
     available_width: float,
     available_height: float,
     error_collector: list[Diagnostic] | None,
+    variables: VariableValues,
     *,
     resolved_style: ResolvedStyle,
+    title_shift: TitleShift,
 ) -> tuple[str, float]:
     """Draw the tile for a chart that never resolved.
 
@@ -315,11 +427,23 @@ def _render_chart_resolve_failure(
     if error_collector is not None:
         error_collector.append(failure.diagnostic)
 
+    font = failed_title_font(failure.title_fonts, available_width)
+    title = _failed_title(
+        failed_title_text(failure.identity.title, variables, resolved_style),
+        font,
+        failed_title_metrics(font, float(resolved_style.frame.card_padding)),
+        title_shift,
+    )
     return _wrap_rendered_chart_svg(
         failure.identity,
         render_error_placard(
             failure.diagnostic,
             chart_id=failure.identity.id,
+            chart_title=title.text,
+            title_font=title.font,
+            title_baseline=title.baseline,
+            tile_top=title.tile_top,
+            content_left=float(resolved_style.frame.card_padding),
             width=available_width,
             height=available_height,
             style=resolved_style.chart_defaults.callout_error,
@@ -328,8 +452,12 @@ def _render_chart_resolve_failure(
         resolved_title=failure.identity.id,
         extra_classes=("dbt-chart-callout",),
         is_error_fallback=True,
-        card_border=None,
-        card_shadow=None,
+        card_border=resolved_style.chart_defaults.border,
+        card_shadow=_shadow_under(
+            resolved_style,
+            resolved_style.chart_defaults.ink_canvas,
+            resolved_style.chart_defaults.border.radius,
+        ),
         inset=None,
         # The placard draws at the full available size — no padding is baked
         # into it, so there is nothing for its box to sit outside of.
@@ -430,6 +558,9 @@ def render_chart_item(
             available_height,
             error_collector,
             resolved_style=resolved_style,
+            title_shift=title_shift,
+            padding=padding,
+            pie_mode=pie_mode,
         )
     except Exception as e:  # noqa: BLE001 — any crash is this chart's ERR-INTERNAL, not the board's
         wrapped = RenderError.from_unexpected(e)
@@ -440,6 +571,9 @@ def render_chart_item(
             available_height,
             error_collector,
             resolved_style=resolved_style,
+            title_shift=title_shift,
+            padding=padding,
+            pie_mode=pie_mode,
         )
 
 
@@ -592,19 +726,15 @@ def _card_shadow(
 
     KPI and callout carry no composited canvas of their own, so they take the board's.
     """
-    shadow = resolved_style.box_shadow
-    if shadow is None:
-        return None
+    defaults = resolved_style.chart_defaults
     if isinstance(chart, ResolvedCalloutChart):
-        return CardShadow(
-            shadow, resolved_style.chart_defaults.ink_canvas, chart.style.border.radius
+        return _shadow_under(
+            resolved_style, defaults.ink_canvas, chart.style.border.radius
         )
-    if isinstance(chart, ResolvedKpiChart):
-        canvas = resolved_style.chart_defaults.ink_canvas
-    else:
-        canvas = chart.canvas
-    radius = (border or resolved_style.chart_defaults.border).radius
-    return CardShadow(shadow, canvas, radius)
+    canvas = (
+        defaults.ink_canvas if isinstance(chart, ResolvedKpiChart) else chart.canvas
+    )
+    return _shadow_under(resolved_style, canvas, (border or defaults.border).radius)
 
 
 def _ink_carries_padding(chart: ResolvedChart, pie_mode: PieMode | None) -> bool:
@@ -761,6 +891,13 @@ def _wrap_rendered_chart_svg(
         attrs_parts.append('data-dbt-magnitude-colored="true"')
     if identity.canvas is not None and not is_error_fallback:
         attrs_parts.append(f'data-dbt-chart-canvas="{escape_attr(identity.canvas)}"')
+    # The chart's legend view and its value, for a host that replaces its
+    # variable state and for Reset: a chart that draws no entry or label to
+    # change it still holds the view.
+    if (held_view := held_legend_view(identity.id)) is not None:
+        param, value = held_view
+        attrs_parts.append(f'data-dbt-legend-view="{escape_attr(param)}"')
+        attrs_parts.append(f'data-dbt-legend-active="{escape_attr(value)}"')
 
     attrs_str = " " + " ".join(attrs_parts)
     return f"<g{attrs_str}>{description}{boundary}</g>", actual_height

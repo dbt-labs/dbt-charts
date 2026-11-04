@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.compile.compiler import compile_file
+from dbt_charts.core.compile.compiler import CompileResult, compile_file
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.normalize.dispatch import normalize_board
 from dbt_charts.core.compile.parse.parser import parse_yaml
@@ -172,8 +172,7 @@ rows:
             query_registry={},
         )
         svg = render(compiled, executor, format="svg").output
-        # Theme default case: title — "Child for my_table" → "Child for My_table"
-        assert "Child for My_table" in svg
+        assert "Child for my_table" in svg
         assert "Processing sales" in svg
 
         # And with a different value
@@ -183,7 +182,7 @@ rows:
             format="svg",
             variables={"model": "orders", "column": "revenue"},
         ).output
-        assert "Child for Orders" in svg_custom
+        assert "Child for orders" in svg_custom
         assert "Processing revenue" in svg_custom
 
     def test_board_import_with_jinja_path(
@@ -329,3 +328,173 @@ rows:
         assert child.title == "Child"
         grandchild = child.layout.items[0].board
         assert grandchild.title == "Grandchild"
+
+
+_CHILD_BOARD = """\
+title: Child
+queries:
+  child_rows:
+    columns: [k, v]
+    values:
+      - [a, 3]
+      - [b, 5]
+charts:
+  child_bars:
+    type: bar
+    query: child_rows
+    x: k
+    y: v
+rows:
+  - child_bars
+"""
+
+_INNER_PAGE = """\
+The inner page has its own prose and its own chart.
+
+```charts
+type: bar
+title: Inner chart
+query:
+  columns: [k, v]
+  values:
+    - [a, 3]
+x: k
+y: v
+```
+"""
+
+
+class TestImportedBoardContent:
+    """An imported file brings its own charts and queries, Markdown pages included."""
+
+    def _compile(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        files: dict[str, str],
+        entry: str,
+    ) -> CompileResult:
+        (tmp_path / "dbt_charts.yml").write_text("")
+        for name, text in files.items():
+            path = tmp_path / "charts" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        project = local_project(root=tmp_path)
+        return compile_file(project.path(f"charts/{entry}").read_board(named=True))
+
+    def test_an_imported_board_brings_its_own_charts(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {"child.yml": _CHILD_BOARD, "parent.yml": "rows:\n  - ./child.yml\n"},
+            "parent.yml",
+        )
+        assert result.errors == []
+        assert result.board is not None
+        (item,) = result.board.layout.items
+        assert item.board is not None
+        assert "child_bars" in item.board.charts
+
+    def test_a_name_both_files_declare_is_a_duplicate(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        parent = _CHILD_BOARD.replace("title: Child", "title: Parent").replace(
+            "rows:\n  - child_bars\n", "rows:\n  - child_bars\n  - ./child.yml\n"
+        )
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {"child.yml": _CHILD_BOARD, "parent.yml": parent},
+            "parent.yml",
+        )
+        assert [e.code for e in result.errors] == ["ERR-DUPLICATE-CHART-NAME"]
+
+    def test_a_board_places_a_markdown_page(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {"inner.md": _INNER_PAGE, "parent.yml": "rows:\n  - ./inner.md\n"},
+            "parent.yml",
+        )
+        assert result.errors == []
+        assert result.board is not None
+        (item,) = result.board.layout.items
+        assert item.board is not None
+        prose, chart = item.board.layout.items
+        assert prose.board is not None
+        assert prose.board.text is not None
+        assert "inner page" in prose.board.text
+        assert chart.type == "chart"
+
+    def test_a_page_fence_names_another_page(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        outer = "Outer prose.\n\n```charts\n./inner.md\n```\n"
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {"inner.md": _INNER_PAGE, "outer.md": outer},
+            "outer.md",
+        )
+        assert result.errors == []
+        assert result.board is not None
+        nested = result.board.layout.items[-1].board
+        assert nested is not None
+        prose, chart = nested.layout.items
+        assert prose.board is not None
+        assert prose.board.text is not None
+        assert "inner page" in prose.board.text
+        assert chart.type == "chart"
+
+    @pytest.mark.parametrize(
+        ("files", "entry"),
+        [
+            ({"a.yml": "rows:\n  - ./a.yml\n"}, "a.yml"),
+            (
+                {"a.yml": "rows:\n  - ./b.yml\n", "b.yml": "rows:\n  - ./a.yml\n"},
+                "a.yml",
+            ),
+            ({"a.md": "Prose.\n\n```charts\n./a.md\n```\n"}, "a.md"),
+        ],
+        ids=["self", "pair", "page"],
+    )
+    def test_a_cycle_is_an_error(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        files: dict[str, str],
+        entry: str,
+    ) -> None:
+        result = self._compile(tmp_path, local_project, files, entry)
+        (error,) = result.errors
+        assert error.code == "ERR-BOARD-IMPORT-CYCLE"
+        assert f"charts/{entry}" in error.message
+
+    def test_a_query_cycle_in_an_imported_file_stops_the_compile(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        child = """\
+queries:
+  first:
+    sql: select * from ({{ queries.second }})
+    source: mem
+  second:
+    sql: select * from ({{ queries.first }})
+    source: mem
+text: The child.
+"""
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\\n  mem:\\n    type: duckdb\\n    path: ':memory:'\\n"
+        )
+        result = self._compile(
+            tmp_path,
+            local_project,
+            {"child.yml": child, "parent.yml": "rows:\n  - ./child.yml\n"},
+            "parent.yml",
+        )
+        (error,) = result.errors
+        assert "Circular query dependency detected: first -> second" in error.message

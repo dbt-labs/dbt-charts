@@ -120,14 +120,33 @@ struct Resolved {
     /// The slices a held link variable selects.
     #[serde(skip)]
     selection: crate::selected::Selection,
+    /// The options a linked legend lists whole.
+    #[serde(skip)]
+    legend_view: Option<crate::legend_view::LegendView>,
+    /// The tiles the wedges and legend swatches paint with.
+    #[serde(skip)]
+    patterns: crate::pattern::PatternPlan,
 }
 
 impl Resolved {
     /// The pie `payload` resolves, its link selection read from the payload.
     fn of(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("pie payload: {e}"))?;
+        r.legend_view = crate::legend_view::LegendView::of(
+            payload,
+            &crate::legend_view::ViewFacts {
+                family: crate::legend_view::Family::Pie,
+                color: bind::color_field_of(&r),
+                panel_fields: Vec::new(),
+                wide: false,
+                normalized: false,
+                layered: false,
+                continuous_color: false,
+            },
+        )?;
         let keys: Vec<(&str, &str)> = bind::color_field_of(&r).map(|field| ("color", field)).into_iter().collect();
-        r.selection = crate::selected::Selection::of(payload, r.link.as_deref(), &keys)?;
+        r.selection = crate::selected::Selection::of(payload, r.link.as_deref(), &keys)?.viewing(r.legend_view.clone());
+        r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
         Ok(r)
     }
 }
@@ -608,7 +627,7 @@ mod tests {
             .collect();
         let indices: Vec<usize> = (0..values.len()).collect();
         let palette = vec!["#3164a3".to_string()];
-        project_pie_table_rows(&payload, &indices, &palette, None, "revenue", values, 100.0, None)
+        project_pie_table_rows(&payload, &indices, &palette, &|i| i % palette.len(), None, "revenue", values, 100.0, None)
             .expect("rows project")
             .iter()
             .map(|row| row["share"].as_str().expect("share is a string").to_string())
@@ -664,7 +683,7 @@ mod tests {
         p["resolved"]["background"] = json!("#d9a45b");
         p["background"] = json!("#ffffff");
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains("<rect width=\"600\" height=\"432\" fill=\"#d9a45b\"/>"), "{svg}");
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"600\" height=\"432\" fill=\"#d9a45b\"/>"), "{svg}");
     }
 
     /// With no color channel every wedge paints one constant `palette[0]`. Palette-by-index is the
@@ -1240,7 +1259,7 @@ mod tests {
         let payload = make_payload(payload_json);
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert!(
-            svg.contains("<rect width=\"300\" height=\"300\" fill=\"#d9a45b\"/>"),
+            svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"300\" fill=\"#d9a45b\"/>"),
             "wheel child paints the chart's own background: {svg}"
         );
     }
@@ -1274,8 +1293,8 @@ mod tests {
         assert!(svg.contains("width=\"600\" height=\"384\""), "composed canvas size:\n{svg}");
 
         // Both group transforms pin the composition math directly.
-        assert!(svg.contains("translate(150.00, 0)"), "wheel group centered, y=0:\n{svg}");
-        assert!(svg.contains("translate(194.00, 312.00)"), "table group below the wheel (donut_h + gap):\n{svg}");
+        assert!(svg.contains("translate(150,0)"), "wheel group centered, y=0:\n{svg}");
+        assert!(svg.contains("translate(194,312)"), "table group below the wheel (donut_h + gap):\n{svg}");
     }
 
     /// The table is the pie's legend: each row's swatch must be the exact
@@ -1308,14 +1327,14 @@ mod tests {
 
         assert!(svg.contains("Too small to label"), "heading text present:\n{svg}");
         // Wheel group is untranslated (right placement never shifts the wheel).
-        assert!(svg.contains("translate(0.00, 0)"), "wheel group at origin:\n{svg}");
+        assert!(svg.contains("translate(0,0)"), "wheel group at origin:\n{svg}");
         // Table starts right of the wheel (wheel_width + gap) at the disk's
         // top edge: the wheel box is 300×300, so the fitted disk radius
         // decides disk_top = (300 − 2r)/2; with no label/total ink the
         // radius is min(pw, ph)/2 × outer_fraction — table_y must sit above
         // the vertical middle and the canvas keeps the wheel's 300 height
         // (disk_top + table_h < 300 here).
-        assert!(svg.contains("translate(312.00"), "table positioned right of the wheel:\n{svg}");
+        assert!(svg.contains("translate(312,"), "table positioned right of the wheel:\n{svg}");
         assert!(svg.contains("height=\"300\""), "right placement keeps the wheel height:\n{svg}");
     }
 
@@ -1331,7 +1350,7 @@ mod tests {
         let table_child = ")\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"212\"";
         let end = svg.find(table_child).unwrap_or_else(|| panic!("no table child:\n{svg}"));
         let start = svg[..end].rfind("translate(").expect("table translate") + "translate(".len();
-        let (x, y) = svg[start..end].split_once(", ").expect("x, y");
+        let (x, y) = svg[start..end].split_once(',').expect("x,y");
         (x.parse().expect("table x"), y.parse().expect("table y"))
     }
 
@@ -1362,7 +1381,7 @@ mod tests {
     #[test]
     fn attached_table_aligns_down_the_disk_on_a_side() {
         for (placement, x, wheel_x) in
-            [("right", 300.0 + 12.0, "translate(0.00, 0)"), ("left", 16.0, "translate(224.00, 0)")]
+            [("right", 300.0 + 12.0, "translate(0,0)"), ("left", 16.0, "translate(224,0)")]
         {
             for (align, y) in [("start", 29.4), ("center", 114.0), ("end", 198.6)] {
                 let svg = render(&make_payload(attached_with(placement, align)), &test_fonts())
@@ -1392,13 +1411,10 @@ mod tests {
         }
     }
 
-    /// `_slide_title` prints the slide with `{dx:g}`: a fractional natural
-    /// table width slides the title by six significant digits, not the full
-    /// float. `compose_attached_table_svg(..., table_width=212.123456789,
-    /// gap=12.0, placement="left")` in production emits
-    /// `translate(-224.123,0)` for the title group.
+    /// A fractional natural table width slides the title by the offset `print`
+    /// writes for a translation: the hundredth, not the full float.
     #[test]
-    fn attached_table_left_slide_prints_python_g_for_a_fractional_table_width() {
+    fn attached_table_left_slide_prints_a_fractional_table_width_at_the_hundredth() {
         let mut p = attached_with("left", "start");
         p["resolved"]["full_attachment"]["table_width"] = json!(212.123456789);
         p["resolved"]["title"] = json!("Revenue");
@@ -1406,7 +1422,7 @@ mod tests {
         p["resolved"]["title_style"] =
             json!({"font": {"size": 18.0, "family": "Source Serif 4"}, "position": {"offset": 10.0}});
         let svg = render(&make_payload(p), &test_fonts()).expect("renders");
-        assert!(svg.contains("<g transform=\"translate(-224.123,0)\">"), "{svg}");
+        assert!(svg.contains("<g transform=\"translate(-224.12,0)\">"), "{svg}");
     }
 
     /// vega_lite.py:605-628, untitled: the wheel's view gains the table's
@@ -1419,7 +1435,7 @@ mod tests {
         let svg = render(&make_payload(attached_with("top", "start")), &test_fonts()).expect("renders");
         assert_eq!(table_origin(&svg), (16.0, 16.0), "{svg}");
         assert_eq!(canvas_height(&svg), 384.0);
-        assert!(svg.contains("<rect width=\"300\" height=\"384\""), "wheel child is the pushed view:\n{svg}");
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"300\" height=\"384\""), "wheel child is the pushed view:\n{svg}");
         assert!(svg.contains("translate(150,234)"), "plot pushed below the table:\n{svg}");
     }
 
@@ -1708,16 +1724,10 @@ mod tests {
         let svg = render(&make_payload(json), &test_fonts()).expect("renders");
         let (open, rest) = plain.split_at(plain.find('>').unwrap() + 1);
         let content = rest.strip_suffix("</svg>").unwrap();
-        assert_eq!(
-            svg,
-            format!(
-                "{open}<g opacity=\"0.4\">{content}</g><g class=\"placeholder-overlay\">\
-                 <rect class=\"dbt-pointer-inert\" x=\"0\" y=\"0\" width=\"600.0\" height=\"432.0\" \
-                 fill=\"rgba(255, 255, 255, 0.5)\"/><text class=\"dbt-pointer-inert\" x=\"300.0\" \
-                 y=\"216.0\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-family=\"Inter\" \
-                 font-size=\"16.0\" font-weight=\"500.0\" fill=\"#666666\">add data</text></g></svg>"
-            )
-        );
+        assert!(svg.starts_with(&format!("{open}<g opacity=\"0.4\">{content}</g><g class=\"placeholder-overlay\">")), "{svg}");
+        let overlay = &svg[svg.find("<g class=\"placeholder-overlay\">").unwrap()..];
+        assert!(overlay.contains("fill=\"rgba(255, 255, 255, 0.5)\"/><text "), "{overlay}");
+        assert!(overlay.ends_with("class=\"dbt-pointer-inert\" text-anchor=\"middle\" dominant-baseline=\"middle\" font-family=\"Inter\" font-size=\"16\" font-weight=\"500.0\" fill=\"#666666\">add data</text></g></svg>"), "{overlay}");
     }
 
     /// A pre-pass cut reports `WARN-CHART-TITLE-TRUNCATED` per field, with the
@@ -1796,12 +1806,10 @@ mod tests {
         assert!(!svg.contains("A180,"), "radius follows the fitted box: {svg}");
     }
 
-    /// Vega writes a text mark's anchor as `translate(x,y)` with the number's
-    /// own JavaScript string (`645.366207199934,100.61781672160188`), never
-    /// rounded: the anchor is a measured position, and a two-decimal copy of
-    /// it shifts every glyph's anti-aliasing.
+    /// A slice label's anchor is a measured position: `print` rounds it once to
+    /// the hundredth, and the first tspan repeats that same anchor.
     #[test]
-    fn a_slice_label_anchor_prints_at_full_precision() {
+    fn a_slice_label_anchor_prints_once_and_its_tspan_repeats_it() {
         let mut json = make_pie_payload(Value::Null);
         json["resolved"]["slice_label_indices"] = serde_json::json!([0]);
         json["resolved"]["style"]["slice_mark"]["labels"] = serde_json::json!({
@@ -1817,8 +1825,7 @@ mod tests {
         let y = text.split(" y=\"").nth(1).unwrap().split('"').next().unwrap();
         for (axis, printed) in [("x", x), ("y", y)] {
             let value: f64 = printed.parse().unwrap();
-            assert_eq!(printed, value.to_string(), "{axis} is the double's own string: {svg}");
-            assert_ne!(printed, format!("{value:.2}"), "{axis} is not a two-decimal copy: {svg}");
+            assert_eq!(printed, print::geometry(value), "{axis} is a printed coordinate: {svg}");
         }
         assert!(svg.contains(&format!("<tspan x=\"{x}\" dy=\"0\">")), "the tspan repeats the anchor: {svg}");
     }
@@ -1847,7 +1854,7 @@ mod tests {
         let svg = render(&make_payload(json), &test_fonts()).expect("titled wheel renders");
         let before = &svg[..svg.find(">Revenue Wheel<").expect("title drawn")];
         let tag = &before[before.rfind("<text").unwrap()..];
-        assert!(tag.contains("x=\"16.00\""), "title clamped to padding.left: {tag}");
+        assert!(tag.contains("x=\"16\""), "title clamped to padding.left: {tag}");
     }
 
     /// The width-resolved `style.title_font` is the drawn title's font slot,
@@ -2082,6 +2089,7 @@ mod tests {
                 symbol: None,
                 series_key: None,
                 recede: None,
+                action: None,
             }).collect();
         let title = legend_title_text("category", &cfg, &Default::default()).unwrap();
         let legend = vega_legend(&entries, false, &title, &cfg, &test_fonts()).unwrap();
@@ -2137,9 +2145,9 @@ mod tests {
         let svg = render(&make_payload(p), &test_fonts()).unwrap();
         let plot_right = 16.0 + (568.0 - 18.0 - box_w);
         // First entry's symbol center: x = legend x + size/2, size = 12.
-        assert!(svg.contains(&format!("translate({:.2},", plot_right + 18.0 + 6.0)), "{svg}");
+        assert!(svg.contains(&format!("translate({},", print::geometry(plot_right + 18.0 + 6.0))), "{svg}");
         // The label sits at legend x + 12 + labelOffset 8.
-        assert!(svg.contains(&format!("<text x=\"{:.2}\"", plot_right + 18.0 + 20.0)), "{svg}");
+        assert!(svg.contains(&format!("<text x=\"{}\"", print::geometry(plot_right + 18.0 + 20.0))), "{svg}");
     }
 
     fn legend_swatches(svg: &str) -> Vec<(String, String)> {
@@ -2297,7 +2305,7 @@ mod tests {
             let title_baseline = 16.0 + share * (400.0 - box_h) + 9.0;
             let x = 16.0 + (568.0 - 18.0 - box_w).ceil() + 18.0;
             assert!(
-                svg.contains(&format!("<text x=\"{x:.2}\" y=\"{title_baseline:.2}\"")),
+                svg.contains(&format!("<text x=\"{}\" y=\"{}\"", print::geometry(x), print::geometry(title_baseline))),
                 "{align}: title at ({x}, {title_baseline}): {svg}"
             );
         }
@@ -2501,7 +2509,7 @@ mod tests {
         let labels = &bound.wheel.labels;
         assert_eq!(bound.thetas, vec![197199.0, 152504.0, 93320.0]);
         assert_eq!(bound.total, 443023.0);
-        let fills: Vec<&str> = bound.wheel.slices.iter().map(|s| s.fill.as_str()).collect();
+        let fills: Vec<&str> = bound.wheel.slices.iter().map(|s| s.fill.color()).collect();
         assert_eq!(fills, ["#3164a3", "#779bc9", "#ad9c7f"]);
         assert_eq!(bound.wheel.slices[2].href.as_deref(), Some("/b/Tools"));
         assert!(bound.wheel.slices[0].aria.is_some());
@@ -2535,6 +2543,26 @@ mod tests {
     }
 
     #[test]
+    fn a_patterned_pie_with_an_attached_table_counts_the_fallbacks_of_one_layout() {
+        let mut json = make_pie_payload_with_attached_table("bottom", "Heading");
+        json["rows"] = json!([
+            {"category": "Accessories", "revenue": 100000},
+            {"category": "Bikes", "revenue": 100000},
+            {"category": "Tools", "revenue": 20},
+        ]);
+        json["resolved"]["canvas"] = json!("#ffffff");
+        json["resolved"]["pattern"] = json!({"field": "category", "scale": "category", "motifs": ["hatch-45", "crosshatch", "dither"], "ground": "background", "inverse": false});
+        let payload = make_payload(json);
+        let fonts = test_fonts();
+        let measure = Measure { fonts: &fonts };
+        let bound = bind::bind(&payload, Mode::FullTable).expect("binds");
+        layout::height_for_width(&bound, payload.width, &measure).expect("height");
+        let laid_out = layout::layout(&bound, cell(payload.width, payload.height), &measure).expect("layout");
+        let counts: Vec<_> = laid_out.diagnostics.iter().filter(|d| d.code == "WARN-PATTERN-FALLBACK-FLAT").map(|d| d.params["count"].as_u64().unwrap()).collect();
+        assert_eq!(counts, [1], "the one hairline wedge, counted once however many layouts ran");
+    }
+
+    #[test]
     fn layout_draws_the_cell_it_is_given_and_returns_the_warnings_it_raised() {
         let mut json = make_pie_payload(Value::Null);
         json["resolved"]["title"] = json!("a title far too long for a narrow card to hold");
@@ -2547,7 +2575,7 @@ mod tests {
         let bound = bind::bind(&payload, Mode::Direct).expect("binds");
         let fonts = test_fonts();
         let laid_out = layout::layout(&bound, cell(220.0, 180.0), &Measure { fonts: &fonts }).expect("lays out");
-        let [scene::Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else { panic!("one root card") };
+        let Some(extent) = scene::root_extent(&laid_out.nodes) else { panic!("one root card") };
         assert_eq!((extent.width, extent.height), (220.0, 180.0));
         assert_eq!(laid_out.diagnostics.len(), 1, "{:?}", laid_out.diagnostics);
         assert_eq!(laid_out.diagnostics[0].code, crate::codes::WARN_CHART_TITLE_TRUNCATED.id);

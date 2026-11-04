@@ -230,7 +230,7 @@ class TestKpiProvenance:
 
         format_native=True routes through format_kpi_parts(native=True) which
         keeps the raw d3 suffix character. The rendered SVG must contain a tspan
-        with "M" (capital, unspaced) -- the rejected native quadrant -- not "mn".
+        with "M" (capital, unspaced) -- the rejected native quadrant -- not "m".
         """
         from ..._engine_render import render_kpi_svg
 
@@ -239,15 +239,17 @@ class TestKpiProvenance:
         resolved = resolve(chart, _KPI_MILLIONS_DATA, chart_style_context=board_ctx)
         assert resolved.format_native is True
         svg = render_kpi_svg(resolved, _KPI_MILLIONS_DATA, board_style=board_rs)
-        # The suffix "M" must appear in a tspan; "mn" must not.
+        # The suffix "M" must appear in a tspan; "m" must not.
         # SVG path data contains literal "M" (moveto) commands, so checking
         # bare "M" in svg is vacuous. The KPI suffix appears in a <tspan> like
         # ">M<" -- check for that pattern to avoid false positives.
         import re
 
         tspan_texts = re.findall(r">([^<]+)<", svg)
-        assert any(t.strip() == "M" for t in tspan_texts) and "mn" not in svg, (
-            f"native KPI SVG must contain raw d3 'M' in a tspan, not 'mn': "
+        assert any(t.strip() == "M" for t in tspan_texts) and not any(
+            t.strip() == "m" for t in tspan_texts
+        ), (
+            f"native KPI SVG must contain raw d3 'M' in a tspan, not 'm': "
             f"snippet={svg[:500]!r}"
         )
 
@@ -364,7 +366,7 @@ class TestHistogramNoValueLabels:
 
         The y-axis is a Count axis whose format provenance comes from the theme
         default (not chart-local authored). label_is_house must be True -- same
-        as bar with no authored format -- so labels render as e.g. '1.2mn' not '1.2M'.
+        as bar with no authored format -- so labels render as e.g. '1.2m' not '1.2M'.
         total_label_is_house stays False (histograms have no stack totals).
         The correct provenance value comes from _bake_cartesian_axes, the same
         source _resolve_bar uses."""

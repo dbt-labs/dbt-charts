@@ -12,10 +12,9 @@ use serde_json::{Map, Value};
 use crate::common::{row_num, row_str, AxisStyle};
 use crate::families::scatter_axis::{authored_day_domain, DateColumn, Indexed, TemporalXAxis};
 use crate::families::subday::SubdaySource;
-use crate::families::temporal::{
-    civil_from_days, complete_ordinal_rows, days_from_civil, floor_to_bucket_start, next_bucket, normalize_labeled_temporal,
-    TimePart, TimeUnit,
-};
+use crate::families::support_table_strip::{first_bucket_of_each_label, Align, Column};
+use crate::families::temporal::{complete_ordinal_rows, floor_to_bucket_start, next_bucket, normalize_labeled_temporal, TimePart, TimeUnit};
+use d3rs::calendar::{civil_from_days, days_from_civil};
 use crate::diagnostic::Diagnostic;
 use crate::time_axis::{TimeAxis, Unreadable};
 use crate::families::x_type::{Grain, XResolution};
@@ -434,7 +433,7 @@ impl TimeX {
         let tooltip_grain = if timed {
             None
         } else {
-            crate::families::temporal::detect_time_unit(&shown_dates.iter().map(String::as_str).collect::<Vec<_>>())
+            crate::families::temporal::detect_time_unit(&axis.dates(shown_dates))
         };
         let own_dates: Vec<&str> = originals.iter().map(String::as_str).chain(layer_x.iter().flat_map(|l| l.dates.iter().map(String::as_str))).collect();
         let timed = SubdaySource::of(axis, own_dates.iter().copied());
@@ -464,7 +463,7 @@ impl TimeX {
     ) -> Result<TemporalXAxis, String> {
         let usable = r.style.label_usable_ratio.ok_or("bar: label_usable_ratio absent (theme required for a date x axis)")?;
         let mut axis = TemporalXAxis::resolve(
-            &DateColumn { ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w, extra_days: &[], folded: matches!(self.law.grain, Grain::Part(_)), time: &self.axis },
+            &DateColumn { edge_pad: 0.0, ladder: &self.ladder, kept: &self.kept, law: self.law, band_layer: false, indexed: self.indexed, bucket_aligned: true, timed: &self.timed, chart_width: svg_w, extra_days: &[], folded: matches!(self.law.grain, Grain::Part(_)), time: &self.axis },
             &self.scale_ax,
             svg_w * usable,
             title_text,
@@ -483,13 +482,12 @@ impl TimeX {
 
     /// The UTC day of a date the chart read, if it did.
     pub(super) fn day_of(&self, key: &str) -> Option<f64> {
-        self.axis.get(key).map(|instant| instant.at)
+        self.axis.at(key)
     }
 
-    /// Whether a bar spans its bucket: production draws it as the clipped group
-    /// the band bar is, whose stroke antialiases twice.
-    pub(super) fn spans_buckets(&self) -> bool {
-        matches!(self.sizing, Sizing::Bucket { .. })
+    /// The date of a date the chart read ([`TimeAxis::date`]).
+    pub(super) fn date_of(&self, key: &str) -> Option<(i32, u8, u8)> {
+        self.axis.date(key)
     }
 
     /// Whether a bar is the clipped group the band bar is, whose stroke antialiases twice: one that keeps
@@ -566,19 +564,44 @@ impl TimeX {
         }
     }
 
+    /// The buckets that keep a support-table column at a plot `pw` wide.
+    pub(super) fn labeled(&self, axis: &TemporalXAxis, pw: f64, fonts: &FontBook) -> Result<Option<Vec<bool>>, String> {
+        let owners: Vec<Option<usize>> = axis.label_cells(&self.days(axis), pw, fonts)?.into_iter().map(|cell| cell.map(|(owner, _, _)| owner)).collect();
+        Ok(first_bucket_of_each_label(&owners))
+    }
+
+    fn days(&self, axis: &TemporalXAxis) -> Vec<Option<f64>> {
+        self.cats.iter().map(|cat| axis.date_day(cat)).collect()
+    }
+
     /// Where a point mark of each category sits at a plot `pw` wide (a layer's point, line vertex): on its instant,
-    /// or at the start of its bucket.
+    /// or at the middle of the bucket its bar spans, so a combo chart's line meets its bars' centers as it does
+    /// on the band scale.
     pub(super) fn anchors(&self, axis: &TemporalXAxis, pw: f64) -> Vec<f64> {
         match self.sizing {
-            Sizing::Bucket { .. } => self.starts(axis, pw),
-            Sizing::Instant { .. } | Sizing::Stepped { .. } => self.centers(axis, pw),
+            Sizing::Bucket { .. } | Sizing::Instant { .. } | Sizing::Stepped { .. } => self.centers(axis, pw),
             Sizing::Band { .. } => self.band_starts(axis, pw),
         }
     }
 
-    /// Every category's center at a plot `pw` wide: where a support-table cell sits.
+    /// Every category's center at a plot `pw` wide.
     pub(super) fn centers(&self, axis: &TemporalXAxis, pw: f64) -> Vec<f64> {
         self.extents(axis, pw).into_iter().map(|(start, span)| start + span / 2.0).collect()
+    }
+
+    /// Where each category's support-table column stands at a plot `pw` wide: in the cell of the axis label naming
+    /// its period, else centered on its bar.
+    pub(super) fn strip_columns(&self, axis: &TemporalXAxis, pw: f64, fonts: &FontBook) -> Result<Vec<Column>, String> {
+        let cells = axis.label_cells(&self.days(axis), pw, fonts)?;
+        Ok(self
+            .centers(axis, pw)
+            .into_iter()
+            .zip(cells)
+            .map(|(center, cell)| match cell {
+                Some((_, x, anchor)) => Column { x, align: Align::of_text_anchor(anchor) },
+                None => Column::centered(center),
+            })
+            .collect())
     }
 
     /// Every category's leading edge at a plot `pw` wide.

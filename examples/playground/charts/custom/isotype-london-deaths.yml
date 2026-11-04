@@ -2,9 +2,7 @@
 # Isotype chart I from "Battle for health" (1944), redrawn with the
 # isotype_rows template. Values are read off the original chart.
 title: Deaths per 100 population in London
-style:
-  frame:
-    width: 1600
+width: 1600
 notes: |
   After chart I of *Battle for health, a primer for social medicine* (Isotype
   Institute, 1944). Each row is a hundred Londoners; each cross is one of them

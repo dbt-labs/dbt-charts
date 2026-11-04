@@ -294,9 +294,8 @@ style:
         board.write_text(
             _LONG_BODY_TEXT
             + """\
+width: 1000
 style:
-  frame:
-    width: 1000
   text:
     column:
       max_number: 2

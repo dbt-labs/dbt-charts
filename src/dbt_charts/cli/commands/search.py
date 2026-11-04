@@ -38,7 +38,12 @@ def search_command(
         typer.echo(format_argument_error("search", exc), err=True)
         raise typer.Exit(2) from exc
     result = search_files(
-        project, kind=args.kind, path=args.path, text=args.text, limit=limit
+        project,
+        kind=args.kind,
+        path=args.path,
+        text=args.text,
+        limit=limit,
+        with_sources=json_output,
     )
 
     if json_output:
@@ -75,5 +80,6 @@ def _print_rich(result: SearchResult) -> None:
         if hit.summary:
             typer.echo(f"           {hit.summary}")
         if isinstance(hit, BoardMatch):
-            for chart_id in hit.matched_charts:
-                typer.echo(f"           chart {chart_id}")
+            for chart in hit.charts:
+                query = f"  query {chart.query}" if chart.query else ""
+                typer.echo(f"           chart {chart.name}{query}")

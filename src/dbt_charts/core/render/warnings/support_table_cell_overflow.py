@@ -1,5 +1,5 @@
 """Detector: WARN_SUPPORT_TABLE_CELL_OVERFLOW — fires when a support_table
-row's cells are wider than their category band, so neighbors collide.
+row's neighboring cells sit closer together than the row padding, so values run together.
 
 Detection rule: ``WarningContext.text_truncations`` contains a record with
 ``surface == "support_table_cell_overflow"``. One ``Diagnostic`` fires per

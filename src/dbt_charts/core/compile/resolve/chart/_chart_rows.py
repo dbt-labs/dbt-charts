@@ -78,16 +78,12 @@ def canonical_key(value: Any) -> str:
     distinct values that canonicalize to the same string are a collision,
     raised by ``partition()`` rather than silently merged into one panel.
 
-    Uses ``pydantic_core.to_json`` rather than ``str()``: a faceted chart's
-    baked axes are replayed from a ``BoardRecording``, whose
-    ``rows_by_query: dict[str, CacheRows]`` is ``Any``-typed, so
-    ``model_dump_json()`` serializes a row's value through this exact
-    runtime-type-inferred serializer (``datetime`` -> ISO-8601 with a ``Z``
-    UTC suffix, ``timedelta`` -> ISO-8601 duration, ``bytes`` -> decoded
-    text, ...) and ``model_validate_json()`` reads it back as that same
-    JSON scalar. Canonicalizing bake and replay through the same serializer
-    — instead of hand-matching format pairs like ``isoformat()`` — is what
-    keeps the two currencies equal by construction rather than by luck.
+    Uses ``pydantic_core.to_json`` rather than ``str()``: it serializes a
+    value by its runtime type (``datetime`` -> ISO-8601 with a ``Z`` UTC suffix,
+    ``timedelta`` -> ISO-8601 duration, ``bytes`` -> decoded text, ...), and a
+    replayed ``BoardRecording`` restores each cell to the type its column
+    declares, so bake and replay canonicalize the same Python value through the
+    same serializer rather than hand-matching format pairs like ``isoformat()``.
     """
     return pydantic_core.to_json(value).decode()
 

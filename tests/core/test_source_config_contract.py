@@ -9,7 +9,6 @@ from dbt_charts.core.compile.models.source import (
     DatabricksSourceConfig,
     DbtProfileSourceConfig,
     DuckDBSourceConfig,
-    HttpSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
     PostgresSourceConfig,
@@ -356,7 +355,7 @@ class TestDatabaseSourceConfigContracts:
 
 
 class TestNonDbSourceConfigForbid:
-    """File/HTTP/dbt_profile configs inherit extra='forbid' from BaseSourceConfig."""
+    """File/dbt_profile configs inherit extra='forbid' from BaseSourceConfig."""
 
     @pytest.mark.parametrize(
         ("config_cls", "required_kwargs"),
@@ -367,7 +366,6 @@ class TestNonDbSourceConfigForbid:
                 {"type": "parquet", "files": {"data": "foo.parquet"}},
             ),
             (JsonSourceConfig, {"type": "json", "files": {"data": "foo.json"}}),
-            (HttpSourceConfig, {"type": "http", "url": "https://example.com"}),
             (DbtProfileSourceConfig, {"type": "dbt_profile", "profile": "my_profile"}),
         ],
     )
@@ -445,21 +443,17 @@ class TestEnvVarResolution:
     def test_file_source_resolves_env_var(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """M5 regression: file/HTTP sources also resolve env_var() syntax.
+        """M5 regression: file sources also resolve env_var() syntax.
 
         Before M5, _resolve_all_env_vars lived only on _DbSourceShim (the DB
-        passthrough base). BaseSourceConfig (file/HTTP) had no resolution —
+        passthrough base). BaseSourceConfig (file) had no resolution —
         consistent behavior now requires all source configs to resolve env_var().
         """
-        from dbt_charts.core.compile.models.source import HttpSourceConfig
-
-        monkeypatch.setenv("API_TOKEN", "Bearer xyz")
-        config = HttpSourceConfig(
-            type="http",
-            url="https://api.example.com",
-            headers={"Authorization": "{{ env_var('API_TOKEN') }}"},
+        monkeypatch.setenv("DATA_FILE", "data/sales.csv")
+        config = CsvSourceConfig(
+            type="csv", files={"sales": "{{ env_var('DATA_FILE') }}"}
         )
-        assert config.headers == {"Authorization": "Bearer xyz"}
+        assert config.files == {"sales": "data/sales.csv"}
 
 
 class TestConnectBudgetDefaults:

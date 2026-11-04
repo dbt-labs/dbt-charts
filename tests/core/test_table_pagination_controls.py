@@ -899,9 +899,9 @@ class TestStaticMultiPagePagination:
                 x=None,
                 y=None,
                 id="static_gap",
+                row_role="kind",
                 style=TableChartStylePatch(
                     pagination={"enabled": True, "page_rows": 5},
-                    row={"role": "kind"},
                 ),
             )
             resolved = resolve(chart, rows, chart_style_context=_BOARD_STYLE)

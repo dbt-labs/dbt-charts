@@ -106,8 +106,12 @@ def _branch_score(err: dict[str, Any]) -> int:
     extra_forbidden → field we actually authored that's forbidden here → 0
     missing         → required field for this branch missing → 1
     other           → some other type mismatch → 2 (noisier)
-    model_type      → a scalar where a mapping was expected → 3 (noisiest: a
-                      branch that parsed the scalar and rejected it says more)
+    model_type, or a union that cannot tag the value, at the branch's own root
+                    → the branch rejected the whole value → 3 (noisiest: a
+                      branch that parsed the value and failed inside says more)
+    string_type of a mapping → the `str` arm of a row item, never the arm the
+                    author meant → 4 (a nested board's real error is in a
+                    mapping arm)
     """
     from dbt_charts.core.diagnostics.registry import CODED_VALIDATION_ERROR
 
@@ -118,7 +122,12 @@ def _branch_score(err: dict[str, Any]) -> int:
         return 0
     if t == "missing":
         return 1
-    if t == "model_type":
+    loc = err["loc"]
+    if t == "string_type" and isinstance(err.get("input"), dict):
+        return 4
+    if t in ("model_type", "union_tag_not_found") and (
+        _find_discriminator_index(loc) == len(loc) - 1
+    ):
         return 3
     return 2
 
@@ -1440,7 +1449,11 @@ def format_validation_errors_structured(
                 "Per-side spacing is `style.margin` or `style.padding`: "
                 "`{top: …, right: …, bottom: …, left: …}`."
             )
-        elif isinstance(input_val, dict) and None in input_val.values():
+        elif (
+            field_path_parts
+            and isinstance(input_val, dict)
+            and None in input_val.values()
+        ):
             empty_key = next(k for k, v in input_val.items() if v is None)
             hint = (
                 f"`{empty_key}:` is empty: indent the lines that follow so they "
@@ -1733,19 +1746,22 @@ _CHART_SHAPE_RECIPES = {
         "rather than layers:, which keeps the shape rotatable"
     ),
     "dumbbell": (
-        "type: bar with y_start for the far end, thinned to a stem with "
-        "style.marks.bar.band_width, plus a layers: scatter at each end "
-        "(color: from style.color.categorical.palette)"
+        "type: bar with y_start for one end and y for the other, thinned to a "
+        "stem with style.marks.bar.band_width (0.03), plus a layers: scatter "
+        "on each end. The y dot wears the stem's legend color, so paint only "
+        "the y_start dot, with layers[].style.marks.point.color"
     ),
     "barbell": (
-        "type: bar with y_start for the far end, thinned to a stem with "
-        "style.marks.bar.band_width, plus a layers: scatter at each end "
-        "(color: from style.color.categorical.palette)"
+        "type: bar with y_start for one end and y for the other, thinned to a "
+        "stem with style.marks.bar.band_width (0.03), plus a layers: scatter "
+        "on each end. The y dot wears the stem's legend color, so paint only "
+        "the y_start dot, with layers[].style.marks.point.color"
     ),
     "connected_dot_plot": (
-        "type: bar with y_start for the far end, thinned to a stem with "
-        "style.marks.bar.band_width, plus a layers: scatter at each end "
-        "(color: from style.color.categorical.palette)"
+        "type: bar with y_start for one end and y for the other, thinned to a "
+        "stem with style.marks.bar.band_width (0.03), plus a layers: scatter "
+        "on each end. The y dot wears the stem's legend color, so paint only "
+        "the y_start dot, with layers[].style.marks.point.color"
     ),
     "ranged_dot": (
         "type: bar with y_start for the low end, drawn as a pale interval "
@@ -1755,16 +1771,22 @@ _CHART_SHAPE_RECIPES = {
     "floating_bar": "type: bar with y_start, so the bar runs from y_start to y instead of from zero",
     "range_bar": "type: bar with y_start, so the bar runs from y_start to y instead of from zero",
     "waterfall": (
-        "type: bar with y_start from a running total the query computes, "
-        "color: on the query's own direction column pinned with board "
-        "category_colors, and style.overlap: full so each step's bar fills "
-        "its band instead of splitting into a grouped slot"
+        "type: bar with y_start and y from a running total the query "
+        "computes over one row per step (SUM(delta) OVER (ORDER BY ord) - "
+        "delta and SUM(delta) OVER (ORDER BY ord), ord unique per step; the "
+        "opening and closing totals are rows starting at 0), color: on the "
+        "query's own direction column pinned with board category_colors, "
+        "style.overlap: full so each step's bar fills its band instead of "
+        "splitting into a grouped slot, and style.orientation: vertical"
     ),
     "bridge_chart": (
-        "type: bar with y_start from a running total the query computes, "
-        "color: on the query's own direction column pinned with board "
-        "category_colors, and style.overlap: full so each step's bar fills "
-        "its band instead of splitting into a grouped slot"
+        "type: bar with y_start and y from a running total the query "
+        "computes over one row per step (SUM(delta) OVER (ORDER BY ord) - "
+        "delta and SUM(delta) OVER (ORDER BY ord), ord unique per step; the "
+        "opening and closing totals are rows starting at 0), color: on the "
+        "query's own direction column pinned with board category_colors, "
+        "style.overlap: full so each step's bar fills its band instead of "
+        "splitting into a grouped slot, and style.orientation: vertical"
     ),
     "candlestick": (
         "type: bar with y_start: low and y: high as a thin wick, plus a "

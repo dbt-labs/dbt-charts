@@ -17,6 +17,7 @@ from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
+    resolve_style,
     resolve_style_and_context,
 )
 from dbt_charts.core.compile.resolve.style.palette import color as resolve_palette_color
@@ -348,35 +349,6 @@ def test_authored_palette_tokens_resolve_to_hex(make_chart) -> None:
     assert "positive.border" not in svg
 
 
-def test_error_card_takes_board_callout_colors_and_negative_tone_for_the_rest(
-    make_chart,
-) -> None:
-    """The runtime error card is a callout with tone: negative — board-authored
-    callout colors apply to it like to any other callout."""
-    rs, ctx = resolve_style_and_context(
-        get_theme_style(), _board({"charts": {"callout": {"background": "#abcdef"}}})
-    )
-    chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
-    executor = MagicMock(spec=Executor, board=SimpleNamespace(links=BoardLinks()))
-    svg, _height = render_chart_item(
-        resolve(
-            chart,
-            [{"value": 1}, {"value": 2}],
-            chart_style_context=ctx,
-        ),
-        executor,
-        variables={},
-        available_width=220,
-        available_height=300,
-        resolved_style=rs,
-        render_cache={},
-    )
-
-    assert "dbt-chart-callout" in svg
-    assert 'fill="#abcdef"' in svg
-    assert f'stroke="{resolve_palette_color("negative.border")}"' in svg
-
-
 # --- Render behavior ---
 
 
@@ -472,8 +444,8 @@ rows:
 # --- Runtime ChartDataError fallback ---
 
 
-def test_chart_data_error_fallback_renders_as_callout_negative_tone(make_chart) -> None:
-    """Runtime ChartDataError fallback must use negative tone (callout card)."""
+def test_chart_data_error_fallback_renders_as_a_quiet_callout_tile(make_chart) -> None:
+    """Runtime ChartDataError fallback is a callout card with no tone color."""
     from dbt_charts.core.compile.config import get_theme_style
 
     chart = make_chart("kpi", x=None, y=None, value="value", label="Broken KPI")
@@ -498,8 +470,8 @@ def test_chart_data_error_fallback_renders_as_callout_negative_tone(make_chart) 
     svg_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", svg)).strip()
     assert "expects exactly 1 row" in svg_text
     assert "dbt-chart-callout" in svg
-    assert resolve_palette_color("negative.bg") in svg
-    assert resolve_palette_color("negative.border") in svg
+    assert resolve_palette_color("negative.bg") not in svg
+    assert resolve_palette_color("negative.border") not in svg
     assert resolve_palette_color("info.bg") not in svg
     assert height > 60
 
@@ -580,27 +552,28 @@ def test_callout_card_without_title_skips_fabricated_heading() -> None:
     assert "quiet_note" not in svg
 
 
-def test_callout_card_wraps_code_badge_in_doc_link() -> None:
+def test_error_tile_links_only_its_closing_line_to_the_code_entry() -> None:
     from dbt_charts.core.diagnostics.registry import build_doc_url
-
-    ctx = resolve_chart_style_context(get_theme_style())
 
     svg = render_callout_card(
         message="Something went wrong.",
         width=300,
-        style=resolved_callout(ctx),
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         placard={
             "code": "ERR-BAR-DUPLICATE-ROWS",
             "code_url": build_doc_url("ERR-BAR-DUPLICATE-ROWS"),
             "hint": None,
-            "doc_url": None,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         chart_id="callout",
     )
 
     doc_url = build_doc_url("ERR-BAR-DUPLICATE-ROWS")
     assert f'<a href="{doc_url}" target="_blank">' in svg
-    assert "ERR-BAR-DUPLICATE-ROWS</text></a>" in svg
+    assert "About this error</text></a>" in svg
+    assert "ERR-BAR-DUPLICATE-ROWS</text></a>" not in svg
 
 
 def test_callout_card_without_code_has_no_doc_link() -> None:
@@ -616,25 +589,26 @@ def test_callout_card_without_code_has_no_doc_link() -> None:
     assert "<a href=" not in svg
 
 
-def test_callout_card_renders_doc_url_as_see_docs_link() -> None:
-    ctx = resolve_chart_style_context(get_theme_style())
+def test_error_tile_closes_on_a_link_labeled_about_this_error() -> None:
     doc_url = "https://docs.dbtcharts.com/reference/errors/#err-test"
 
     svg = render_callout_card(
         message="Something went wrong.",
         width=300,
-        style=resolved_callout(ctx),
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         placard={
             "code": "ERR-TEST",
             "code_url": doc_url,
             "hint": None,
-            "doc_url": doc_url,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         chart_id="callout",
     )
 
     assert f'<a href="{doc_url}" target="_blank">' in svg
-    assert "See the docs</text></a>" in svg
+    assert "About this error</text></a>" in svg
     assert doc_url not in svg.replace(f'<a href="{doc_url}" target="_blank">', "")
 
 
@@ -644,17 +618,17 @@ def test_callout_card_with_code_badge_converts_to_png() -> None:
     from dbt_charts.core.diagnostics.registry import build_doc_url
     from dbt_charts.core.render.converters.png import to_png
 
-    ctx = resolve_chart_style_context(get_theme_style())
-
     svg = render_callout_card(
         message="Something went wrong.",
         width=300,
-        style=resolved_callout(ctx),
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         placard={
             "code": "ERR-BAR-DUPLICATE-ROWS",
             "code_url": build_doc_url("ERR-BAR-DUPLICATE-ROWS"),
             "hint": None,
-            "doc_url": None,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         chart_id="callout",
     )
@@ -758,16 +732,17 @@ def test_runtime_error_callout_underscores_render_as_literal_text() -> None:
     fragments routinely contain underscores and asterisks that Markdown would
     otherwise interpret as italic/bold markers.
     """
-    ctx = resolve_chart_style_context(get_theme_style())
     svg = render_callout_card(
         message="Column _revenue_total_ not found in table *fact_orders*.",
         width=320,
-        style=resolved_callout(ctx),
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         placard={
             "code": "ERR-TEST",
             "code_url": "https://docs.dbtcharts.com/reference/errors/#err-test",
             "hint": None,
-            "doc_url": None,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         chart_id="callout",
     )
@@ -778,30 +753,31 @@ def test_runtime_error_callout_underscores_render_as_literal_text() -> None:
     assert "font-style: italic" not in svg or svg.count("font-style: italic") == 0
 
 
-def test_long_doc_url_renders_as_short_link_label() -> None:
-    """A long doc_url must stay in href, not as visible card text."""
+def test_long_code_url_renders_as_short_link_label() -> None:
+    """A long code_url must stay in href, not as visible card text."""
     import re as _re
 
-    ctx = resolve_chart_style_context(get_theme_style("clarity"))
     width = 280.0
     long_url = "https://docs.example.com/guides/error-reference/column-not-found-in-source-table"
 
     svg = render_callout_card(
         message="Column not found.",
         width=width,
-        style=resolved_callout(ctx),
+        style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         placard={
             "code": "ERR-TEST",
             "code_url": long_url,
             "hint": None,
-            "doc_url": long_url,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         chart_id="callout",
     )
 
     assert f'<a href="{long_url}" target="_blank">' in svg
     text_contents = _re.findall(r"<text[^>]*>([^<]*)</text>", svg)
-    assert "See the docs" in text_contents
+    assert "About this error" in text_contents
     assert long_url not in text_contents
 
 
@@ -1079,3 +1055,33 @@ rows:
 
     rendered = compute_svg_text_fills(svg)
     assert rendered["Visible message"] == style.message.font.color
+
+
+def test_callout_code_paints_in_the_theme_code_font() -> None:
+    """A callout's markdown code takes the theme's code family, the font it is
+    measured in."""
+    base = get_theme_style()
+    code = base.text.code
+    seed = base.model_copy(
+        update={
+            "text": base.text.model_copy(
+                update={
+                    "code": code.model_copy(
+                        update={
+                            "font": code.font.model_copy(
+                                update={"family": "'Fira Code', monospace"}
+                            )
+                        }
+                    )
+                }
+            )
+        }
+    )
+    style = resolved_callout(resolve_chart_style_context(seed))
+    assert "Fira Code" in style.code_family
+
+    svg = render_callout_card(
+        title=None, message="use `x`", width=300, style=style, chart_id="callout"
+    )
+    code_rule = next(line for line in svg.splitlines() if "-code {" in line)
+    assert "Fira Code" in code_rule

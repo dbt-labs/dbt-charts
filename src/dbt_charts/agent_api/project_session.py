@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Self, cast, overload
 # module attribute affect the call site.
 from dbt_charts.agent_api import (
     board_artifact as _board_artifact,
+    board_sql as _board_sql,
     describe as _describe,
     migrate as _migrate,
     profile as _profile,
@@ -19,6 +20,7 @@ from dbt_charts.agent_api import (
 )
 from dbt_charts.agent_api.board_artifact import EmitBoardArtifactResult
 from dbt_charts.agent_api.migrate import MigrateSummary
+from dbt_charts.agent_api.semantics import semantic_diagnostics
 from dbt_charts.agent_api.validate import (
     ValidateResult,
 )
@@ -33,9 +35,6 @@ from dbt_charts.core.execute.adapters.adapter_registry import (
     build_adapter_registry,
 )
 from dbt_charts.core.execute.cache_backend import QueryResultCache
-from dbt_charts.core.execute.file_source_materializer import (
-    resolve_local_file_materializer_factory,
-)
 from dbt_charts.core.inspect.query_validator import (
     QueryDiagnostic,
     validate_query as _core_validate_query,
@@ -72,7 +71,6 @@ class ProjectSession:
     _owns_registry: bool
     _lazy_built: bool
     _read_only: bool
-    _allow_mutating_methods: bool
     _dialect: str
     _duckdb_config: dict[str, Any] | None
     _allow_external_access_in_readonly: bool
@@ -98,7 +96,6 @@ class ProjectSession:
             # short-circuit the build on first access.
             self.__dict__["adapter_registry"] = adapter_registry
         self._read_only = read_only
-        self._allow_mutating_methods = False
         self._dialect = "duckdb"
         self._duckdb_config = None
         self._allow_external_access_in_readonly = False
@@ -117,7 +114,6 @@ class ProjectSession:
         duckdb_config: dict[str, Any] | None = None,
         allow_external_access_in_readonly: bool = False,
         resolver: SourceResolver | None = None,
-        allow_mutating_methods: bool = False,
     ) -> Self:
         """Construct a ProjectSession rooted at *project_dir*.
 
@@ -143,7 +139,6 @@ class ProjectSession:
         session._duckdb_config = duckdb_config
         session._allow_external_access_in_readonly = allow_external_access_in_readonly
         session._resolver = resolver
-        session._allow_mutating_methods = allow_mutating_methods
         return session
 
     @classmethod
@@ -159,7 +154,6 @@ class ProjectSession:
         allow_external_access_in_readonly: bool = False,
         file_materializer: FileSourceMaterializer | None = None,
         extra_adapters_factory: Callable[[], list[BaseAdapter]] | None = None,
-        allow_mutating_methods: bool = False,
     ) -> Self:
         """Construct a ProjectSession from a pre-built Project.
 
@@ -176,10 +170,6 @@ class ProjectSession:
         for this session, so ``close()`` releases its connections. Never set
         this for a registry the caller (or another session) reuses afterward —
         e.g. a warm registry shared across requests must stay caller-owned.
-
-        ``allow_mutating_methods`` lets http sources use POST/PUT/PATCH/DELETE.
-        Off by default so an agent-driven session stays read-only; only the
-        human-invoked CLI commands pass True.
 
         ``extra_adapters_factory`` builds the adapters registered ahead of the
         standard ones (see ``build_adapter_registry``). It is a factory because
@@ -203,7 +193,6 @@ class ProjectSession:
         session._duckdb_config = duckdb_config
         session._allow_external_access_in_readonly = allow_external_access_in_readonly
         session._extra_adapters_factory = extra_adapters_factory
-        session._allow_mutating_methods = allow_mutating_methods
         return session
 
     @classmethod
@@ -251,15 +240,11 @@ class ProjectSession:
         return build_adapter_registry(
             self.project,
             read_only=self._read_only,
-            allow_mutating_methods=self._allow_mutating_methods,
             profile_type=self._dialect,
             duckdb_config=self._duckdb_config,
             allow_external_access_in_readonly=self._allow_external_access_in_readonly,
             resolver=self._resolver,
             file_materializer=self._file_materializer,
-            file_materializer_factory=resolve_local_file_materializer_factory(
-                self.project, self._file_materializer
-            ),
             extra_adapters=(
                 None
                 if self._extra_adapters_factory is None
@@ -292,7 +277,12 @@ class ProjectSession:
         # Cloud-managed sources on every refresh-driven path. Popping the
         # cached keys preserves the instance (and its class) while forcing the
         # next access to re-run each property body.
-        for key in ("sources", "warnings_ignore", "locked_schema_version"):
+        for key in (
+            "sources",
+            "declared_sources",
+            "warnings_ignore",
+            "locked_schema_version",
+        ):
             vars(self.project).pop(key, None)
 
     def close(self) -> None:
@@ -395,28 +385,28 @@ class ProjectSession:
 
         Stateless — requires no adapter or warehouse connection.
         """
-        from dbt_charts.core.compile.normalize.queries import dialect_for_source
+        from dbt_charts.core.compile.sql_guard import dialect_for_source
 
         if dialect is None:
             dialect = dialect_for_source(source, self.project.sources.sources)
+        compile_errors = semantic_diagnostics(self.project, sql, source, dialect)
         if return_suppressed:
-            return _core_validate_query(
+            active, suppressed = _core_validate_query(
                 sql,
                 dialect=dialect,
                 suppress=suppress,
                 return_suppressed=True,
             )
-        return _core_validate_query(
-            sql,
-            dialect=dialect,
-            suppress=suppress,
-        )
+            return [*compile_errors, *active], suppressed
+        return [
+            *compile_errors,
+            *_core_validate_query(sql, dialect=dialect, suppress=suppress),
+        ]
 
-    def describe_paths(self, paths: list[Path]) -> list[_describe.DescribeBoardResult]:
-        return _describe.describe_paths(paths, project=self.project)
-
-    def describe_chart(self, path: Path, chart: str) -> _describe.DescribeBoardResult:
-        return _describe.describe_board(path, project=self.project, chart=chart)
+    def describe_paths(
+        self, paths: list[Path], chart: str | None = None
+    ) -> list[_describe.DescribeBoardResult]:
+        return _describe.describe_paths(paths, project=self.project, chart=chart)
 
     def lookup_board_query_sql(
         self,
@@ -459,6 +449,23 @@ class ProjectSession:
             limit=limit,
             adapter_registry=self.adapter_registry,
             lenient_variables=lenient_variables,
+        )
+
+    def execute_board_sql(
+        self,
+        sql: str,
+        path: Path,
+        variables: dict[str, Any] | None = None,
+        limit: int = _query.MAX_QUERY_LIMIT,
+    ) -> _query.ExecuteQueryResult:
+        return _board_sql.execute_board_sql(
+            sql,
+            path,
+            self.project,
+            self.adapter_registry,
+            self.cache,
+            variables=variables,
+            limit=limit,
         )
 
     def list_sources(self) -> str:
@@ -510,7 +517,6 @@ class ProjectSession:
             project=self.project,
             adapter_registry=self.adapter_registry,
             result_cache=self.cache,
-            file_materializer=self._file_materializer,
             builtin_variables=builtin_variables,
         )
 
@@ -568,7 +574,6 @@ class ProjectSession:
             max_workers=max_workers,
             link_context=link_context,
             standalone=standalone,
-            file_materializer=self._file_materializer,
             compile_result=compile_result,
             **render_options,
         )

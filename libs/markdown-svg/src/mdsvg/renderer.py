@@ -370,9 +370,10 @@ class BlockMetrics:
     box is. ``line_advances`` is one height per line, from the same line
     layout render draws -- so a caller summing a slice of it gets exactly
     what :meth:`render_block_window` draws for that slice, even when an
-    inline image makes one line taller than the rest. An unsplittable block
-    reports a single-element tuple, its whole height, so a packer can treat
-    every block the same way.
+    inline image makes one line taller than the rest. A list reports one
+    height per item, and a slice of it draws those heights plus ``item_gap``
+    between each two. An unsplittable block reports a single-element tuple, its
+    whole height, so a packer can treat every block the same way.
     """
 
     line_advances: tuple[float, ...]
@@ -385,6 +386,26 @@ class BlockMetrics:
     Reported separately so a caller placing this block at the top of a box can
     collapse it -- a heading opening a column should sit at the top, not below
     the space that would separate it from preceding text.
+    """
+    whole_items: bool = False
+    """Each advance is one list item, not one line.
+
+    An item stays whole and any two may part, so the rules a caller applies
+    between lines, widows, orphans and a lone line under a heading among them,
+    do not apply between these.
+    """
+    item_gap: float = 0.0
+    """Space drawn between two items of a window, and in no advance.
+
+    Reported apart for the same reason as ``leading_margin``: an item opening a
+    box sits at its top.
+    """
+    column_lift: float = 0.0
+    """How far a heading rises when it opens a column of body text.
+
+    Its ``leading_margin``, plus the whole body lines that put its first baseline
+    below a paragraph's, so the two share a first baseline and everything under
+    the heading stays on the body-line grid.
     """
 
 
@@ -971,6 +992,20 @@ class SVGRenderer:
                         leading_margin=0.0,
                     )
                 )
+            elif isinstance(block, (UnorderedList, OrderedList)) and block.items:
+                metrics.append(
+                    BlockMetrics(
+                        line_advances=tuple(
+                            self._render_block(self._list_window(block, i, 1), ctx)[1]
+                            for i in range(len(block.items))
+                        ),
+                        space_before=gap,
+                        splittable=True,
+                        keep_with_next=False,
+                        whole_items=True,
+                        item_gap=self.style.list_item_spacing,
+                    )
+                )
             else:
                 _, height = self._render_block(block, ctx)
                 metrics.append(
@@ -980,11 +1015,32 @@ class SVGRenderer:
                         splittable=False,
                         keep_with_next=isinstance(block, Heading),
                         leading_margin=self._heading_margins(block)[0],
+                        column_lift=self._column_lift(block, width),
                     )
                 )
             prev = block
 
         return tuple(metrics)
+
+    def _column_lift(self, block: AnyBlock, width: float) -> float:
+        margin = self._heading_margins(block)[0]
+        if not isinstance(block, Heading):
+            return margin
+        line = self.style.base_font_size * self.style.line_height
+        drop = self.first_baseline([block], width) - self.first_baseline(
+            [Paragraph(spans=block.spans)], width
+        )
+        return margin + round(drop / line) * line
+
+    @staticmethod
+    def _list_window(
+        block: UnorderedList | OrderedList, start: int, count: int
+    ) -> UnorderedList | OrderedList:
+        """The ``count`` items from ``start``, numbered as they are in ``block``."""
+        items = block.items[start : start + count]
+        if isinstance(block, OrderedList):
+            return OrderedList(items=items, start=block.start + start)
+        return UnorderedList(items=items)
 
     def min_content_width(self, blocks: Document) -> float:
         """Narrowest width at which no word is split mid-glyph.
@@ -1003,18 +1059,12 @@ class SVGRenderer:
 
     def _widest_token(
         self,
-        spans: Sequence[Span],
+        runs: Sequence[TextRun],
         font_size: float,
         *,
-        is_header: bool = False,
         font_weight: str | int | None = None,
         is_heading: bool = False,
     ) -> float:
-        runs = (
-            self._build_text_runs(spans, font_size)
-            if not is_header
-            else self._table_cell_runs(TableCell(spans=tuple(spans)), True, 0.0)
-        )
         return max(
             (
                 self._measure_text(
@@ -1026,6 +1076,7 @@ class SVGRenderer:
                     font_weight=font_weight,
                     is_heading=is_heading,
                 )
+                + 2 * self._chip_inset(run)
                 for run in runs
                 for token in run.text.split()
             ),
@@ -1035,11 +1086,12 @@ class SVGRenderer:
     def _block_min_width(self, block: Block) -> float:
         size = self.style.base_font_size
         if isinstance(block, Paragraph):
-            return self._widest_token(block.spans, size)
+            return self._widest_token(self._build_text_runs(block.spans, size), size)
         if isinstance(block, Heading):
+            heading_size = self.style.get_heading_size(block.level)
             return self._widest_token(
-                block.spans,
-                self.style.get_heading_size(block.level),
+                self._build_text_runs(block.spans, heading_size),
+                heading_size,
                 font_weight=self.style.heading_font_weight,
                 is_heading=True,
             )
@@ -1049,7 +1101,9 @@ class SVGRenderer:
                     self.style.list_indent
                     + max(
                         [
-                            self._widest_token(item.spans, size),
+                            self._widest_token(
+                                self._build_text_runs(item.spans, size), size
+                            ),
                             *(self._block_min_width(child) for child in item.children),
                         ]
                     )
@@ -1076,7 +1130,8 @@ class SVGRenderer:
 
         The placement half of the pair. The window is drawn at the top of its
         own coordinate box, so a continuation does not inherit the offset of
-        the lines preceding it. An unsplittable block ignores the window and
+        the lines preceding it. A list's window counts items, and an ordered
+        list keeps its numbering. An unsplittable block ignores the window and
         renders whole -- asking for a slice of something indivisible is a
         caller error the caller can already avoid by reading
         :attr:`BlockMetrics.splittable`.
@@ -1091,6 +1146,10 @@ class SVGRenderer:
                 font_size=self.style.base_font_size,
                 css_class=self._scoped_class("text"),
                 line_window=(start, count),
+            )
+        elif isinstance(block, (UnorderedList, OrderedList)) and count is not None:
+            elements, height = self._render_block(
+                self._list_window(block, start, count), ctx
             )
         else:
             elements, height = self._render_block(block, ctx)
@@ -1235,7 +1294,13 @@ class SVGRenderer:
             for col, cell in enumerate(row.cells):
                 mins[col] = max(
                     mins[col],
-                    self._widest_token(cell.spans, size, is_header=is_header) + padding,
+                    self._widest_token(
+                        self._table_cell_runs(
+                            cell, is_header, 0.0 if is_header else size
+                        ),
+                        size,
+                    )
+                    + padding,
                 )
                 maxs[col] = max(
                     maxs[col],
@@ -1438,6 +1503,9 @@ class SVGRenderer:
 {rules}
   </style>"""
 
+    def _chip_inset(self, run: TextRun) -> float:
+        return self.style.inline_code_padding if run.chip and run.text else 0.0
+
     def _inline_code_size(self, host_font_size: float) -> float:
         """Painted size of an inline-code run sitting in text of `host_font_size`.
 
@@ -1599,8 +1667,8 @@ class SVGRenderer:
             top_px if top_px is not None else font_size * self.style.heading_margin_top
         )
         bottom_px = (
-            self.style.h1_margin_bottom_px
-            if level == 1 and self.style.h1_margin_bottom_px is not None
+            self.style.major_heading_margin_bottom_px
+            if level <= 2 and self.style.major_heading_margin_bottom_px is not None
             else self.style.heading_margin_bottom_px
         )
         margin_bottom = (
@@ -1991,12 +2059,16 @@ class SVGRenderer:
         )
 
     def _blockquote_text(self, para: Paragraph) -> Tuple[Tuple[Span, ...], float]:
+        """A blockquote paragraph's spans as painted: cased, and italic when the
+        blockquote rule paints italic, so they are measured in the italic face."""
         bq_case = self.style.blockquote_font_case
         spans = (
             tuple(replace(s, text=_apply_case(s.text, bq_case)) for s in para.spans)
             if bq_case
             else para.spans
         )
+        if self.style.blockquote_font_style == "italic":
+            spans = tuple(replace(s, italic=True) for s in spans)
         return spans, self.style.blockquote_font_size or self.style.base_font_size
 
     def _render_blockquote(
@@ -2372,10 +2444,10 @@ class SVGRenderer:
         max_width: float,
     ) -> List[TextRun]:
         """Build text runs for a table cell, forcing bold widths for headers."""
-        runs = self._build_text_runs(cell.spans, max_width)
-        if not is_header:
-            return runs
-        return [replace(run, is_bold=True) for run in runs]
+        return [
+            replace(run, chip=False, is_bold=run.is_bold or is_header)
+            for run in self._build_text_runs(cell.spans, max_width)
+        ]
 
     def _measure_table_row_layout(
         self,
@@ -2449,7 +2521,6 @@ class SVGRenderer:
                 None,
                 False,
                 text_attrs,
-                chips=False,
             )
             x += col_width
 
@@ -2782,7 +2853,6 @@ class SVGRenderer:
             font_weight,
             is_heading,
             f'font-size="{format_number(font_size)}" class="{escape_xml(css_class)}"',
-            chips=True,
         )
         return elements, height
 
@@ -2797,7 +2867,6 @@ class SVGRenderer:
         font_weight: str | int | None,
         is_heading: bool,
         text_attrs: str,
-        chips: bool,
     ) -> float:
         """Paint *lines* downward from *top*; return the height they took."""
         line_top = top
@@ -2812,7 +2881,6 @@ class SVGRenderer:
                 font_weight,
                 is_heading,
                 text_attrs,
-                chips,
             )
             line_top += line.height
         return math.fsum(line.height for line in lines)
@@ -2828,12 +2896,11 @@ class SVGRenderer:
         font_weight: str | int | None,
         is_heading: bool,
         text_attrs: str,
-        chips: bool,
     ) -> None:
         """Paint one line's runs on *baseline*, aligned at *anchor_x*.
 
         ``text_attrs`` is the caller's own ``<text>`` attributes between ``y``
-        and ``text-anchor``. ``chips`` draws inline-code background boxes.
+        and ``text-anchor``.
         """
         # Widths are measured on the display text (after case transform)
         # because that's what the font engine advances over.
@@ -2851,6 +2918,7 @@ class SVGRenderer:
                 font_weight=font_weight,
                 is_heading=is_heading,
             )
+            + 2 * self._chip_inset(run)
             for run in runs
         ]
         line_width = sum(widths)
@@ -2862,13 +2930,19 @@ class SVGRenderer:
             left = anchor_x
         self._max_content_width = max(self._max_content_width, left + line_width)
 
-        if chips:
-            self._emit_code_chips(elements, runs, widths, left, baseline, font_size)
+        self._emit_code_chips(elements, runs, widths, left, baseline, font_size)
 
         if all(run.image is None for run in runs):
             content = self._tspan_content(runs, font_size, font_weight)
+            # A trailing chip's right padding has no text after it to carry a
+            # `dx`, so an end or middle anchor is pulled in by it instead.
+            last = next((run for run in reversed(runs) if run.text), None)
+            trailing = self._chip_inset(last) if last is not None else 0.0
+            text_x = anchor_x - {"end": trailing, "middle": trailing / 2}.get(
+                anchor, 0.0
+            )
             elements.append(
-                f'  <text x="{format_number(anchor_x)}" y="{format_number(baseline)}" '
+                f'  <text x="{format_number(text_x)}" y="{format_number(baseline)}" '
                 f'{text_attrs} text-anchor="{escape_xml(anchor)}">{content}</text>'
             )
             return
@@ -2920,7 +2994,7 @@ class SVGRenderer:
         baseline: float,
         font_size: float,
     ) -> None:
-        """Background boxes behind a line's inline-code runs, before its text."""
+        """Background boxes behind a line's chip runs, before its text."""
         chip_padding = self.style.inline_code_padding
         chip_radius = self.style.inline_code_border_radius
         code_font_size = self._inline_code_size(font_size)
@@ -2933,8 +3007,7 @@ class SVGRenderer:
         rx_attr = f' rx="{format_number(chip_radius)}"' if chip_radius else ""
         run_x = left
         for run, rw in zip(runs, widths):
-            if run.is_code and rw > 0:
-                rect_x = run_x - chip_padding
+            if run.chip and run.text:
                 # Place rect top at cap height above the baseline (not the full
                 # em-square), so the chip hugs the glyph's visual body rather
                 # than floating above it.
@@ -2942,8 +3015,8 @@ class SVGRenderer:
                     baseline - _CHIP_CAP_HEIGHT_RATIO * code_font_size - chip_padding
                 )
                 elements.append(
-                    f'  <rect x="{format_number(rect_x)}" y="{format_number(rect_y)}" '
-                    f'width="{format_number(rw + 2 * chip_padding)}" '
+                    f'  <rect x="{format_number(run_x)}" y="{format_number(rect_y)}" '
+                    f'width="{format_number(rw)}" '
                     f'height="{format_number(chip_height)}" '
                     f'fill="{escape_xml(self.style.code_background)}"{rx_attr}/>'
                 )
@@ -2955,11 +3028,20 @@ class SVGRenderer:
         font_size: float,
         font_weight: str | int | None,
     ) -> str:
-        """Join a run of non-image text into <tspan>/<a> inner markup."""
+        """Join a run of non-image text into <tspan>/<a> inner markup.
+
+        A chip's padding is reserved in the line by a ``dx`` on its text and on
+        the text after it.
+        """
         tspan_parts: List[str] = []
+        shift = 0.0
         for run in runs:
             if not run.text:
                 continue
+            inset = self._chip_inset(run)
+            shift += inset
+            dx_attr = f' dx="{format_number(shift)}"' if shift else ""
+            shift = inset
 
             # Case transform must run on raw text BEFORE escaping — uppercasing
             # an escaped string would corrupt entities (&amp; -> &AMP;).
@@ -2994,10 +3076,10 @@ class SVGRenderer:
             if run.is_link and run.url:
                 tspan_parts.append(
                     f'<a href="{escape_svg_text(_safe_href(run.url))}">'
-                    f"<tspan{style_attr}>{escaped}</tspan></a>"
+                    f"<tspan{dx_attr}{style_attr}>{escaped}</tspan></a>"
                 )
-            elif style_parts:
-                tspan_parts.append(f"<tspan{style_attr}>{escaped}</tspan>")
+            elif style_parts or dx_attr:
+                tspan_parts.append(f"<tspan{dx_attr}{style_attr}>{escaped}</tspan>")
             else:
                 tspan_parts.append(escaped)
 
@@ -3012,9 +3094,12 @@ class SVGRenderer:
         return [
             TextRun(
                 text=span.text,
-                is_bold=span.span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC),
-                is_italic=span.span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC),
-                is_code=span.span_type == SpanType.CODE,
+                is_bold=span.bold
+                or span.span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC),
+                is_italic=span.italic
+                or span.span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC),
+                is_code=span.span_type == SpanType.CODE or span.code,
+                chip=span.span_type == SpanType.CODE or span.code,
                 is_link=span.span_type == SpanType.LINK,
                 url=span.url if span.span_type == SpanType.LINK else None,
                 image=(
@@ -3041,6 +3126,21 @@ class SVGRenderer:
         """
         pieces: List[WrapPiece] = []
         separator = ""
+
+        def separator_width(run: TextRun) -> float:
+            if not separator or not pieces:
+                return 0.0
+            painted = _separator_run(pieces[-1].meta, run, separator)
+            return self._measure_text(
+                painted.text,
+                font_size,
+                is_bold=painted.is_bold,
+                is_italic=painted.is_italic,
+                is_mono=painted.is_code,
+                font_weight=font_weight,
+                is_heading=is_heading,
+            )
+
         for run in runs:
             is_bold = run.is_bold
             is_italic = run.is_italic
@@ -3071,7 +3171,7 @@ class SVGRenderer:
                         text=run.text,
                         width=run.image.width,
                         separator=separator,
-                        separator_width=measure(separator) if separator else 0.0,
+                        separator_width=separator_width(run),
                         meta=run,
                         glued=not separator and bool(pieces),
                     )
@@ -3085,13 +3185,18 @@ class SVGRenderer:
             # one. Keep it whole whenever it fits a line on its own; a span too long
             # for any line still falls through to token splitting below, since the
             # alternative is painting past the edge.
-            if run.is_code and run.text.strip() and measure(run.text) <= max_width:
+            inset = self._chip_inset(run)
+            if (
+                run.is_code
+                and run.text.strip()
+                and measure(run.text) + 2 * inset <= max_width
+            ):
                 pieces.append(
                     WrapPiece(
                         text=run.text,
-                        width=measure(run.text),
+                        width=measure(run.text) + 2 * inset,
                         separator=separator,
-                        separator_width=measure(separator) if separator else 0.0,
+                        separator_width=separator_width(run),
                         meta=run,
                         glued=not separator and bool(pieces),
                     )
@@ -3099,21 +3204,23 @@ class SVGRenderer:
                 separator = ""
                 continue
 
+            # Each piece of a split chip reserves its own padding: whichever
+            # pieces share a line, that line's chip never overflows it.
             for token in re.findall(r"\S+|\s+", run.text):
                 if token.isspace():
                     separator = " "
                     continue
-                separator_width = measure(separator) if separator else 0.0
+                token_separator_width = separator_width(run)
                 for chunk_index, chunk in enumerate(
-                    split_token_precise(token, max_width, measure)
+                    split_token_precise(token, max_width - 2 * inset, measure)
                 ):
                     pieces.append(
                         WrapPiece(
                             text=chunk,
-                            width=measure(chunk),
+                            width=measure(chunk) + 2 * inset,
                             separator=separator if chunk_index == 0 else "",
                             separator_width=(
-                                separator_width if chunk_index == 0 else 0.0
+                                token_separator_width if chunk_index == 0 else 0.0
                             ),
                             meta=run,
                             glued=chunk_index == 0 and not separator and bool(pieces),
@@ -3147,12 +3254,13 @@ class SVGRenderer:
                 assert isinstance(run, TextRun)
                 if index > 0 and piece.separator:
                     previous_run = line[index - 1].meta
-                    if isinstance(previous_run, TextRun) and previous_run.same_style(
-                        run
-                    ):
+                    assert isinstance(previous_run, TextRun)
+                    if previous_run.same_style(run):
                         text = f"{piece.separator}{piece.text}"
                     else:
-                        separator_run = TextRun(piece.separator)
+                        separator_run = _separator_run(
+                            previous_run, run, piece.separator
+                        )
                         if line_runs and line_runs[-1].same_style(separator_run):
                             line_runs[-1] = line_runs[-1].append(piece.separator)
                         else:
@@ -3187,6 +3295,8 @@ class TextRun:
     is_bold: bool = False
     is_italic: bool = False
     is_code: bool = False
+    # A code run painted on a background chip; tables paint code without one.
+    chip: bool = False
     is_link: bool = False
     url: Optional[str] = None
     image: Optional[InlineImage] = None
@@ -3214,6 +3324,17 @@ class TextRun:
     def append(self, text: str) -> TextRun:
         """Create a copy with appended text."""
         return self.with_text(self.text + text)
+
+
+def _separator_run(previous: TextRun, run: TextRun, separator: str) -> TextRun:
+    """The run a space between two runs paints in; it is measured as this run."""
+    if previous.same_style(run):
+        return run.with_text(separator)
+    return TextRun(
+        separator,
+        is_bold=previous.is_bold and run.is_bold,
+        is_italic=previous.is_italic and run.is_italic,
+    )
 
 
 @dataclass(frozen=True)

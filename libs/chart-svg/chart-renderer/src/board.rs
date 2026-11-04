@@ -26,7 +26,6 @@ use serde_json::Value;
 use crate::common::{Divider, GappedDivider};
 use crate::conditions::eval_bool_condition;
 use crate::contract;
-use crate::codes::ERR_ENGINE_REFUSED;
 use crate::diagnostic::Diagnostic;
 use crate::prose;
 use crate::sizing::{
@@ -34,7 +33,8 @@ use crate::sizing::{
     calculate_rows_boxes, calculate_tabs_boxes, resolve_active_tab_index, ChartDefaultsDoc,
     ContainerBox, ItemAuthoring, ItemBox, LayoutItemInput,
 };
-use crate::svg::{attr_name, num_full, py_float_str};
+use crate::svg::{attr_name, num_full};
+use d3rs::py_float::float_repr;
 use print::{html_escape, xml_escape_attr};
 use measure::FontBook;
 use crate::title;
@@ -108,6 +108,10 @@ pub struct BoardPayload {
     /// per node, not just at the root — see `BoardDoc`'s own doc comment.
     #[serde(default)]
     pub variable_values: serde_json::Map<String, Value>,
+    /// `board_variables.py::current_overridden_variables` — the names the
+    /// request set, as opposed to defaults merged into `variable_values`.
+    #[serde(default)]
+    pub overridden_variables: Vec<String>,
     /// `board_sweep.py::_variable_datasets` — every visible variable's own
     /// query-backed option rows, by variable name, flat across the WHOLE
     /// board tree (variables are board-global: one namespace document-wide,
@@ -143,6 +147,10 @@ pub struct BoardPayload {
     /// render report sidecar (item a).
     #[serde(skip)]
     pub report: RefCell<Vec<ChartStatusEntry>>,
+    /// How many times each chart id has been placed in the render in flight;
+    /// cleared by `render_board`, so every composition starts at placement 0.
+    #[serde(skip)]
+    pub placements: RefCell<HashMap<String, usize>>,
     /// Each placed pie's mode, decided once (`sizing::PieModes`) and read by the
     /// size stage and the draw alike.
     #[serde(skip)]
@@ -471,6 +479,7 @@ struct TabsStyleDoc {
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
+    rail_max_lines: usize,
 }
 
 #[derive(Deserialize)]
@@ -500,6 +509,7 @@ struct TabsFontDoc {
     family: String,
     size: f64,
     case: String,
+    line_height: f64,
 }
 
 #[derive(Deserialize)]
@@ -1128,12 +1138,12 @@ fn border_rect(width: f64, height: f64, border: &BorderStyleDoc, css_class: &str
             r#"stroke="{}" stroke-width="{}"{} rx="{}"/>"#
         ),
         class_attr,
-        py_float_str(inset),
-        py_float_str(inset),
+        float_repr(inset),
+        float_repr(inset),
         py_max_zero(width - stroke),
         py_max_zero(height - stroke),
         xml_escape_attr(&border.color),
-        py_float_str(stroke),
+        float_repr(stroke),
         crate::common::border_dash_attrs(
             border.dash_array.as_deref(),
             border.line_cap.as_deref(),
@@ -1159,9 +1169,9 @@ fn round_clipped(content: &str, width: f64, height: f64, radius: f64) -> String 
             r#"<g clip-path="url(#{id})">{content}</g>"#
         ),
         id = clip_id,
-        w = py_float_str(width),
-        h = py_float_str(height),
-        r = py_float_str(radius),
+        w = float_repr(width),
+        h = float_repr(height),
+        r = float_repr(radius),
         content = content,
     )
 }
@@ -1183,9 +1193,9 @@ fn shadow_rect(
             r#"<rect class="dbt-card-shadow" width="{}" height="{}" rx="{}" fill="{}" "#,
             r#"style="filter: drop-shadow({}px {}px {}px {})"/>"#
         ),
-        py_float_str(width),
-        py_float_str(height),
-        py_float_str(radius),
+        float_repr(width),
+        float_repr(height),
+        float_repr(radius),
         xml_escape_attr(fill),
         format_g(shadow.dx),
         format_g(shadow.dy),
@@ -1275,6 +1285,7 @@ fn wrap_chart_svg(
     padding: &Padding,
     card: &CardChrome,
     pie_mode: Option<crate::families::pie::Mode>,
+    legend_view: Option<(String, String)>,
 ) -> Result<(String, f64), String> {
     let id = chart_json
         .get("id")
@@ -1371,8 +1382,8 @@ fn wrap_chart_svg(
         format!(r#"data-chart-id="{}""#, xml_escape_attr(id)),
         format!(r#"data-chart-type="{}""#, xml_escape_attr(chart_type)),
         format!(r#"data-chart-title="{}""#, xml_escape_attr(&title_text)),
-        format!(r#"data-chart-width="{}""#, py_float_str(outer_width)),
-        format!(r#"data-chart-height="{}""#, py_float_str(actual_height)),
+        format!(r#"data-chart-width="{}""#, float_repr(outer_width)),
+        format!(r#"data-chart-height="{}""#, float_repr(actual_height)),
         // `rendering.py:713-716`: `group`, not `img` (an `img` role makes
         // every per-mark `aria-label` presentational).
         r#"role="group""#.to_string(),
@@ -1404,6 +1415,12 @@ fn wrap_chart_svg(
     }
     if let Some(canvas) = canvas {
         attrs.push(format!(r#"data-dbt-chart-canvas="{}""#, xml_escape_attr(canvas)));
+    }
+    // The chart's view param and value, for a host that replaces its variable state and for
+    // Reset: a chart that draws no entry or label to change it still holds the view.
+    if let Some((param, value)) = legend_view {
+        attrs.push(format!(r#"data-dbt-legend-view="{}""#, xml_escape_attr(&param)));
+        attrs.push(format!(r#"data-dbt-legend-active="{}""#, xml_escape_attr(&value)));
     }
     // `rendering.py:719-724`: the raw subtitle (callout and KPI carry none),
     // written through `escape_attr` even as element text, never a `<title>`
@@ -1461,6 +1478,24 @@ fn item_visible(
         variable_values,
         "board item visible",
     )
+}
+
+/// `sizing.py::opens_with_text`.
+fn opens_with_text(
+    board: &BoardDoc,
+    variable_values: &serde_json::Map<String, Value>,
+) -> Result<bool, String> {
+    if board.layout.kind != "rows" {
+        return Ok(false);
+    }
+    for item in &board.layout.items {
+        if item_visible(&item.visible, variable_values)? {
+            let filled = |doc: &Value, key: &str| doc.get(key).and_then(Value::as_str).is_some_and(|s| !s.is_empty());
+            return Ok(!item.details_present()
+                && item.board.as_ref().is_some_and(|doc| filled(doc, "text") && !filled(doc, "title")));
+        }
+    }
+    Ok(false)
 }
 
 struct RenderedItem {
@@ -1612,6 +1647,9 @@ fn details_chrome_from_style(style: &StyleDoc) -> DetailsChrome {
 /// per level rather than per tab item.
 #[derive(Clone)]
 struct TabsChrome {
+    /// `resolved_style.frame.card_padding`: the bar sits this far below its
+    /// slot top, like card ink.
+    inset: f64,
     bar_height: f64,
     min_width: f64,
     max_width: f64,
@@ -1626,6 +1664,12 @@ struct TabsChrome {
     active_weight: String,
     inactive_weight: String,
     title_baseline_offset: f64,
+    /// `layout.tabs.rail_max_lines`: lines a rail label wraps to before it
+    /// is cut with an ellipsis.
+    rail_max_lines: usize,
+    /// `sizing.py::tab_line_step`: font size times line height, the
+    /// distance between two baselines of a wrapped label.
+    line_step: f64,
     /// `resolved_style.title.font.color` (active tab) — same literal-`None`
     /// caveat as `DetailsChrome::title_font_color`.
     active_font_color: String,
@@ -1633,9 +1677,124 @@ struct TabsChrome {
     inactive_font_color: String,
 }
 
+/// `layout.tab_position == "left"`: a vertical rail beside the pane. Every
+/// other value is the top bar, as in `sizing.py::tab_content_offset`
+/// (the authored model only admits `top`/`left`).
+fn is_left_rail(layout: &LayoutDoc) -> bool {
+    layout.tab_position.as_deref() == Some("left")
+}
+
+/// `sizing.py::tab_labels`: each tab's label as drawn, its title (or the
+/// numbered default) in the tab case.
+fn tab_labels(layout: &LayoutDoc, tabs: &TabsChrome) -> Result<Vec<String>, String> {
+    let n = layout.items.len();
+    let titles: Vec<String> = if layout.tab_titles.len() == n {
+        layout.tab_titles.clone()
+    } else {
+        (1..=n)
+            .map(|idx| display_text::language::tr("tab.title", None, &[("n", &idx.to_string())]))
+            .collect::<Result<_, _>>()?
+    };
+    titles
+        .iter()
+        .map(|title| display_text::case::apply_case(title, &tabs.font_case))
+        .collect()
+}
+
+/// `sizing.py::tab_label_measurer`: a tab label's width at the active
+/// weight, so a tab does not resize when the selection moves.
+fn tab_label_measurer<'a>(
+    tabs: &'a TabsChrome,
+    fonts: &'a FontBook,
+) -> Result<impl Fn(&str) -> Result<f64, String> + 'a, String> {
+    let weight: f32 = tabs
+        .active_weight
+        .parse()
+        .map_err(|_| format!("layout.tabs.active_weight {:?} is not numeric", tabs.active_weight))?;
+    Ok(move |text: &str| fonts.measure_at_weight(text, &tabs.font_family, tabs.font_size, Some(weight)))
+}
+
+/// `sizing.py::tab_cell_width`: one tab's width, its label plus padding,
+/// clamped to the min/max width. Whole pixels absorb the sub-pixel gap
+/// between the two engines' text measurers.
+fn tab_cell_width(
+    label: &str,
+    tabs: &TabsChrome,
+    measure: &impl Fn(&str) -> Result<f64, String>,
+) -> Result<f64, String> {
+    Ok((measure(label)? + 2.0 * tabs.padding_x)
+        .ceil()
+        .max(tabs.min_width)
+        .min(tabs.max_width))
+}
+
+/// `sizing.py::tab_rail_width`: every rail cell shares the widest cell's width.
+fn tab_rail_width(
+    labels: &[String],
+    tabs: &TabsChrome,
+    measure: &impl Fn(&str) -> Result<f64, String>,
+) -> Result<f64, String> {
+    let mut widest: Option<f64> = None;
+    for label in labels {
+        let width = tab_cell_width(label, tabs, measure)?;
+        widest = Some(widest.map_or(width, |w: f64| if width > w { width } else { w }));
+    }
+    Ok(widest.unwrap_or(0.0))
+}
+
+/// `sizing.py::tab_rail_lines`: a rail label wrapped to `rail_max_lines`,
+/// and whether text was cut.
+fn tab_rail_lines(
+    label: &str,
+    tabs: &TabsChrome,
+    measure: &impl Fn(&str) -> Result<f64, String>,
+) -> Result<(Vec<String>, bool), String> {
+    crate::common::wrap_text_with(
+        measure,
+        label,
+        tabs.max_width - 2.0 * tabs.padding_x,
+        Some(tabs.rail_max_lines),
+        true,
+    )
+}
+
+/// `sizing.py::tab_rail_cell_height`: the bar height plus one line step
+/// per wrapped line.
+fn tab_rail_cell_height(line_count: usize, tabs: &TabsChrome) -> f64 {
+    tabs.bar_height + (line_count as f64 - 1.0) * tabs.line_step
+}
+
+/// `sizing.py::tab_content_offset` plus `tab_rail_extent`: where this
+/// level's tabs pane starts and, for a left rail, the height floor the
+/// rail puts under the layout (`tabs_layout_height`). A non-tabs layout
+/// gets the top-bar offset, which no sizing pass reads.
+fn tabs_pane(layout: &LayoutDoc, style: &StyleDoc, fonts: &FontBook) -> Result<sizing::TabsPane, String> {
+    tabs_pane_for(layout, &tabs_chrome_from_style(style), fonts)
+}
+
+fn tabs_pane_for(layout: &LayoutDoc, tabs: &TabsChrome, fonts: &FontBook) -> Result<sizing::TabsPane, String> {
+    if layout.kind != "tabs" || !is_left_rail(layout) {
+        return Ok(sizing::TabsPane { x: 0.0, y: tabs.inset + tabs.bar_height, min_height: 0.0 });
+    }
+    let measure = tab_label_measurer(tabs, fonts)?;
+    let labels = tab_labels(layout, tabs)?;
+    let rail_width = tab_rail_width(&labels, tabs, &measure)?;
+    // `tab_rail_extent`: the inset plus every cell, summed as CPython's `sum()`.
+    let cells = labels
+        .iter()
+        .map(|label| Ok(tab_rail_cell_height(tab_rail_lines(label, tabs, &measure)?.0.len(), tabs)))
+        .collect::<Result<Vec<f64>, String>>()?;
+    Ok(sizing::TabsPane {
+        x: rail_width + tabs.inset,
+        y: 0.0,
+        min_height: tabs.inset + d3rs::py_float::py_float_sum(&cells),
+    })
+}
+
 fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
     let tabs = &style.layout.tabs;
     TabsChrome {
+        inset: style.frame.card_padding,
         bar_height: tabs.bar_height,
         min_width: tabs.min_width,
         max_width: tabs.max_width,
@@ -1654,6 +1813,8 @@ fn tabs_chrome_from_style(style: &StyleDoc) -> TabsChrome {
         active_weight: tabs.active_weight.clone(),
         inactive_weight: tabs.inactive_weight.clone(),
         title_baseline_offset: tabs.title_baseline_offset,
+        rail_max_lines: tabs.rail_max_lines,
+        line_step: tabs.font.size * tabs.font.line_height,
         active_font_color: style
             .title
             .font
@@ -1679,7 +1840,6 @@ fn render_layout_item(
     payload: &BoardPayload,
     chrome: &RenderChrome,
     fonts: &FontBook,
-    chart_height_overrides: &HashMap<String, f64>,
     fresh_render: &HashSet<String>,
 ) -> Result<Option<RenderedItem>, String> {
     // chart/rendering.py:107-109 evaluates visible before any other work —
@@ -1704,7 +1864,6 @@ fn render_layout_item(
             payload,
             chrome,
             fonts,
-            chart_height_overrides,
         )
         .map(Some);
     }
@@ -1727,7 +1886,6 @@ fn render_layout_item(
                 chrome.root_card_padding,
                 payload,
                 fonts,
-                chart_height_overrides,
                 item.title_shift,
             )
             .map(Some)
@@ -1752,7 +1910,6 @@ fn render_details_item(
     payload: &BoardPayload,
     chrome: &RenderChrome,
     fonts: &FontBook,
-    chart_height_overrides: &HashMap<String, f64>,
 ) -> Result<RenderedItem, String> {
     let details = &chrome.details_style;
     let summary_height = details.summary_height;
@@ -1768,7 +1925,8 @@ fn render_details_item(
     }
 
     let board_json = item.board.as_ref().ok_or("board item missing its resolved board")?;
-    let chrome_height = summary_height + chrome.item_gap + chrome.card_gap;
+    let chrome_height =
+        sizing::details_chrome_height(summary_height, chrome.item_gap, chrome.card_gap);
     let content_height = (item_box.height - chrome_height).max(0.0);
     let nested = render_nested_board(
         board_json,
@@ -1779,9 +1937,8 @@ fn render_details_item(
         chrome.root_card_padding,
         payload,
         fonts,
-        chart_height_overrides,
         // A details section draws its summary bar, not a title, so the row
-        // assigns it no shift (`layout_sizing.py::_title_band_target`).
+        // assigns it no shift (`layout_sizing.py::_title_band_targets`).
         crate::TitleShift::default(),
     )?;
     let content_y = summary_height + details.content_y_offset;
@@ -1791,12 +1948,12 @@ fn render_details_item(
     let actual_height = px(content_y) + nested.height;
     let section_border = format!(
         r#"<rect x="0" y="0" width="{}" height="{}" fill="none" stroke="{}" stroke-width="{}"{} rx="{}"/>"#,
-        py_float_str(width),
-        py_float_str(actual_height),
+        float_repr(width),
+        float_repr(actual_height),
         xml_escape_attr(&details.border_color),
-        py_float_str(details.border_width),
+        float_repr(details.border_width),
         details.border_dash_attrs,
-        py_float_str(details.border_radius),
+        float_repr(details.border_radius),
     );
     let svg = format!(
         "{section_border}{summary_svg}{}",
@@ -1860,23 +2017,23 @@ fn render_details_summary(
     let fill_attr = fill.as_deref().unwrap_or("none");
     let summary_rect = format!(
         r#"<rect x="0" y="0" width="{}" height="{}" fill="{fill_attr}" stroke="{}" stroke-width="{}"{} rx="{}" class="dbt-details-toggle"/>"#,
-        py_float_str(width),
-        py_float_str(details.summary_height),
+        float_repr(width),
+        float_repr(details.summary_height),
         xml_escape_attr(&details.border_color),
-        py_float_str(details.border_width),
+        float_repr(details.border_width),
         details.border_dash_attrs,
-        py_float_str(details.border_radius), fill_attr = xml_escape_attr(fill_attr),
+        float_repr(details.border_radius), fill_attr = xml_escape_attr(fill_attr),
     );
     Ok(format!(
         r#"<a href="{}">{summary_rect}<text x="{}" y="{}" font-size="{}" fill="{}">{arrow}</text><text x="{}" y="{}" font-size="{}" fill="{}" font-weight="500">{}</text></a>"#,
         xml_escape_attr(&href),
-        py_float_str(details.arrow_x),
-        py_float_str(details.summary_height / 2.0 + details.text_baseline_offset),
-        py_float_str(details.arrow_font_size),
+        float_repr(details.arrow_x),
+        float_repr(details.summary_height / 2.0 + details.text_baseline_offset),
+        float_repr(details.arrow_font_size),
         xml_escape_attr(&details.title_font_color),
-        py_float_str(details.label_x),
-        py_float_str(details.summary_height / 2.0 + details.text_baseline_offset),
-        py_float_str(details.font_size),
+        float_repr(details.label_x),
+        float_repr(details.summary_height / 2.0 + details.text_baseline_offset),
+        float_repr(details.font_size),
         xml_escape_attr(&details.title_font_color),
         html_escape(label),
     ))
@@ -1966,10 +2123,8 @@ fn docs_site_url() -> String {
 /// string alone, never the registry, so it applies identically to a real
 /// registered diagnostic's code AND to this composer's own invented
 /// `ERR-ENGINE-REFUSED` code. This is the code badge's own anchor
-/// (`callout.py::render_callout_svg`'s `code_svg`); the separate `doc_url`
-/// parameter on `render_error_card_svg` below is the REGISTRY's own
-/// `doc_url` (equal to this for a real diagnostic, absent for Rust's own
-/// invented one) that feeds the "See the docs" link instead.
+/// (`callout.py::render_callout_svg`'s `code_svg`), the target of the tile's
+/// closing "About this error" link.
 fn build_doc_url(code: &str) -> Result<String, String> {
     let page = if code.starts_with("ERR-") {
         "errors"
@@ -2018,20 +2173,58 @@ fn callout_error_style(payload: &BoardPayload) -> Result<&Value, String> {
         .ok_or_else(|| "board payload missing style.chart_defaults.callout_error".to_string())
 }
 
-/// What differs between the two refusal kinds' placards: `title`/`hint`/
-/// `doc_url` are `None` for a render-time refusal, which carries no
-/// registered diagnostic to source them from, and `Some` — the registered
-/// title/hint/doc_url — for a `chart_error` resolve failure. The code badge's
-/// anchor always resolves via `build_doc_url`, independent of `doc_url`,
-/// matching production's own two separate expressions (coincidentally equal
-/// for a real diagnostic).
+/// `resolved_style.chart_defaults.title_fonts` off the ROOT board's own JSON:
+/// the tier fonts a chart with no title font of its own draws its title in.
+fn root_title_fonts(payload: &BoardPayload) -> Result<&Value, String> {
+    payload
+        .resolved
+        .get("style")
+        .and_then(|s| s.get("chart_defaults"))
+        .and_then(|c| c.get("title_fonts"))
+        .ok_or_else(|| "board payload missing style.chart_defaults.title_fonts".to_string())
+}
+
+/// A failed chart's authored title for its tile: `None` when it has none.
+/// A template is refused as a healthy chart's is (`chart_title_text`): the
+/// engine fills no Jinja, and raw template text is never drawn.
+fn failed_title_text<'a>(title: Option<&'a str>, chart_id: &str) -> Result<Option<&'a str>, String> {
+    match title.filter(|t| !t.is_empty()) {
+        Some(t) if t.contains("{{") || t.contains("{%") => {
+            Err(format!("chart {chart_id} title templating not modeled"))
+        }
+        other => Ok(other),
+    }
+}
+
+/// `(title baseline, tile top)` of a failed chart's tile in its slot: the
+/// title takes the place a healthy chart's title takes, moved by the row's
+/// band; an untitled chart's tile fills the slot.
+fn failed_title_placement(
+    chart_title: Option<&str>,
+    metrics: &crate::title_shift::TitleMetrics,
+    shift: crate::TitleShift,
+) -> (f64, f64) {
+    if chart_title.is_none() {
+        return (0.0, 0.0);
+    }
+    (metrics.ascent + shift.title_dy, metrics.ascent + metrics.tail + shift.body_dy)
+}
+
+/// What differs between the two refusal kinds' placards: `hint` is `None` for
+/// a render-time refusal, which carries no registered diagnostic to source it
+/// from. The link's anchor always resolves via `build_doc_url`.
 struct ErrorCard<'a> {
     chart_id: &'a str,
-    title: Option<&'a str>,
+    /// The chart's own title, kept above the tile in `chart_title_font`.
+    chart_title: Option<&'a str>,
+    /// Where the chart title's first baseline and the tile's top sit in the slot.
+    chart_title_baseline: f64,
+    tile_top: f64,
+    /// The left edge of the chart title and the text block.
+    content_left: f64,
     code: &'a str,
     message: &'a str,
     hint: Option<&'a str>,
-    doc_url: Option<&'a str>,
 }
 
 /// A refused chart's own placard, drawn by the callout family's
@@ -2042,19 +2235,24 @@ fn render_error_card_svg(
     height: f64,
     card: &ErrorCard,
     style: &Value,
+    chart_title_font: &Value,
     fonts_dir: Option<&str>,
     fonts: &FontBook,
 ) -> Result<String, String> {
     let resolved = serde_json::json!({
         "id": card.chart_id,
-        "title": card.title,
+        "title": null,
         "message": card.message,
         "style": style,
         "placard": {
             "code": card.code,
             "code_url": build_doc_url(card.code)?,
             "hint": card.hint,
-            "doc_url": card.doc_url,
+            "content_left": card.content_left,
+            "chart_title": card.chart_title,
+            "chart_title_font": chart_title_font,
+            "chart_title_baseline": card.chart_title_baseline,
+            "tile_top": card.tile_top,
         },
     });
     let placard = crate::Payload {
@@ -2072,10 +2270,12 @@ fn render_error_card_svg(
         datasets: None,
         geometries: None,
         variables: Default::default(),
+        variable_options: Default::default(),
         filter_variables: Default::default(),
         interactive_controls: Default::default(),
         link_context: None,
         measuring: false,
+        placement: 0,
         title_shift: crate::TitleShift::default(),
         is_placeholder: false,
         pie_mode: None,
@@ -2121,8 +2321,8 @@ fn wrap_error_card_svg(
         format!(r#"data-chart-id="{}""#, xml_escape_attr(chart_id)),
         format!(r#"data-chart-type="{}""#, xml_escape_attr(chart_type)),
         format!(r#"data-chart-title="{}""#, xml_escape_attr(chart_id)),
-        format!(r#"data-chart-width="{}""#, py_float_str(outer_width)),
-        format!(r#"data-chart-height="{}""#, py_float_str(dims_height)),
+        format!(r#"data-chart-width="{}""#, float_repr(outer_width)),
+        format!(r#"data-chart-height="{}""#, float_repr(dims_height)),
         // `rendering.py:713-716`: `group`, not `img` (an `img` role makes
         // every per-mark `aria-label` presentational).
         r#"role="group""#.to_string(),
@@ -2189,19 +2389,6 @@ fn render_chart_item(
                 .get("message")
                 .and_then(Value::as_str)
                 .ok_or("chart_error diagnostic missing message")?;
-            // `_callout_error_title(code)`/`REGISTRY.get(code).doc_url` — no
-            // diagnostics registry exists in Rust to source these from, so
-            // `board_sweep.py`'s harness forwards them alongside the rest
-            // of `diagnostic` (HIGH 2); read by name, refuse by name when
-            // absent rather than painting a placard with no title.
-            let title = diagnostic
-                .get("title")
-                .and_then(Value::as_str)
-                .ok_or("chart_error diagnostic missing title")?;
-            let doc_url = diagnostic
-                .get("doc_url")
-                .and_then(Value::as_str)
-                .ok_or("chart_error diagnostic missing doc_url")?;
             // `hint`/`query` are already on `Diagnostic` itself — `str | None`,
             // so absence is a normal, un-forwarded-by-name shape, not a
             // missing seam.
@@ -2228,18 +2415,32 @@ fn render_chart_item(
                 .and_then(Value::as_str)
                 .ok_or("chart_error identity missing chart_type")?;
 
+            let chart_title =
+                failed_title_text(identity.get("title").and_then(Value::as_str), chart_id)?;
+            let title_font = crate::title_shift::tier_font(
+                failure.get("title_fonts").ok_or("chart_error missing title_fonts")?,
+                item_box.width,
+            )?;
+            let (chart_title_baseline, tile_top) = failed_title_placement(
+                chart_title,
+                &crate::title_shift::failed_title_metrics(title_font, card_pad)?,
+                item.title_shift,
+            );
             let card = render_error_card_svg(
                 item_box.width,
                 item_box.height,
                 &ErrorCard {
                     chart_id,
-                    title: Some(title),
+                    chart_title,
+                    chart_title_baseline,
+                    tile_top,
+                    content_left: card_pad,
                     code,
                     message: &display_msg,
                     hint,
-                    doc_url: Some(doc_url),
                 },
                 callout_error_style(payload)?,
+                title_font,
                 payload.fonts_dir.as_deref(),
                 fonts,
             )?;
@@ -2391,6 +2592,7 @@ fn render_chart_item(
         // miss, `_align_cols_heights`), so the probe-wrap law must fire on
         // it again, the same as the sizing probe's own first render.
         variables: payload.variable_values.clone(),
+        variable_options: Default::default(),
         filter_variables: Default::default(),
         title_shift: item.title_shift,
         interactive_controls: Default::default(),
@@ -2400,6 +2602,7 @@ fn render_chart_item(
         board_composed: true,
         authored_height: item.authored_height,
         measuring: fresh_render.contains(chart_id),
+        placement: next_placement(payload, chart_id),
     };
     // Production keeps a chart's sizing-time render while its box still holds
     // that height (a support_table chart is also corrected against an
@@ -2464,24 +2667,50 @@ fn render_chart_item(
             var_deps.sort_unstable();
 
             // Rust carries no message text for a registered code, so the card
-            // names the code and its params; a refusal has no registry entry,
-            // so no doc link beyond the code badge's own anchor.
+            // names the code and its params.
             let message = e.to_string();
-            let doc_url = (e.code != ERR_ENGINE_REFUSED.id)
-                .then(|| build_doc_url(e.code))
-                .transpose()?;
+            // A chart that resolved is banded by its own title geometry, so its
+            // tile draws on those numbers; one with no title slot of its own
+            // takes the board's tier font and sits outside the band.
+            let title_font = match chart_json.pointer("/style/title_font") {
+                Some(font) if font.is_object() => font,
+                _ => crate::title_shift::tier_font(root_title_fonts(payload)?, item_box.width)?,
+            };
+            let title = failed_title_text(title, chart_id)?;
+            // A pie with no sized mode is outside the band (`_title_band_targets`).
+            let banded = if chart_type == "pie" && pie_mode.is_none() {
+                None
+            } else {
+                crate::title_shift::chart_title_metrics(
+                    chart_json,
+                    card_pad,
+                    slot_w,
+                    fonts,
+                    payload.board_style.spark_bar_title.as_ref(),
+                    pie_mode,
+                )?
+            };
+            let metrics = match banded {
+                Some(metrics) => metrics,
+                None => crate::title_shift::failed_title_metrics(title_font, card_pad)?,
+            };
+            let (chart_title_baseline, tile_top) =
+                failed_title_placement(title, &metrics, item.title_shift);
             let card = render_error_card_svg(
                 item_box.width,
                 item_box.height,
                 &ErrorCard {
                     chart_id,
-                    title,
+                    chart_title: title,
+                    chart_title_baseline,
+                    tile_top,
+                    content_left: card_pad,
                     code: e.code,
                     message: &message,
                     hint: None,
-                    doc_url: doc_url.as_deref(),
                 },
                 callout_error_style(payload)?,
+                title_font,
                 payload.fonts_dir.as_deref(),
                 fonts,
             )?;
@@ -2525,6 +2754,7 @@ fn render_chart_item(
             &padding,
             &chrome.card_style,
             pie_mode,
+            crate::legend_view::held_view(chart_id, &payload.variable_values),
         )?;
 
     let svg = match item.notes.as_deref() {
@@ -2543,7 +2773,7 @@ fn render_chart_item(
 /// `layouts.py::_bg_rect(available_width, <accumulated height>, background)`,
 /// gated by each layout arm's `if background:` (layouts.py:143/214/287) — an
 /// empty `background` renders no rect at all, not a rect with empty fill.
-/// Dims are bare Python float interpolation (`py_float_str`), never
+/// Dims are bare Python float interpolation (`float_repr`), never
 /// `format_svg_numeric`.
 fn layout_bg_rect(width: f64, height: f64, fill: &str) -> String {
     if fill.is_empty() {
@@ -2551,8 +2781,8 @@ fn layout_bg_rect(width: f64, height: f64, fill: &str) -> String {
     }
     format!(
         r#"<rect x="0" y="0" width="{}" height="{}" fill="{}" rx="4"/>"#,
-        py_float_str(width),
-        py_float_str(height),
+        float_repr(width),
+        float_repr(height),
         xml_escape_attr(fill)
     )
 }
@@ -2605,16 +2835,12 @@ fn render_rows(
 
     for (item, item_box) in layout.items.iter().zip(boxes) {
         let slot = item_slot_box(item_box, available_width, available_height);
-        // A `rows` layout aligns nothing among its own items, so it hands
-        // no overrides to a child; `fresh_render` carries the ids a parent
-        // cols row realigned inside this nested board.
         let Some(r) = render_layout_item(
             item,
             &slot,
             payload,
             chrome,
             fonts,
-            &HashMap::new(),
             fresh_render,
         )?
         else {
@@ -2641,7 +2867,6 @@ fn render_cols(
     payload: &BoardPayload,
     chrome: &RenderChrome,
     fonts: &FontBook,
-    chart_height_overrides: &HashMap<String, f64>,
     fresh_render: &HashSet<String>,
 ) -> Result<(String, f64), String> {
     if layout.items.is_empty() {
@@ -2658,7 +2883,6 @@ fn render_cols(
             payload,
             chrome,
             fonts,
-            chart_height_overrides,
             fresh_render,
         )?
         else {
@@ -2682,7 +2906,6 @@ fn render_grid(
     payload: &BoardPayload,
     chrome: &RenderChrome,
     fonts: &FontBook,
-    chart_height_overrides: &HashMap<String, f64>,
     fresh_render: &HashSet<String>,
 ) -> Result<(String, f64), String> {
     if layout.items.is_empty() {
@@ -2699,7 +2922,6 @@ fn render_grid(
             payload,
             chrome,
             fonts,
-            chart_height_overrides,
             fresh_render,
         )?
         else {
@@ -2755,21 +2977,8 @@ fn render_tabs_layout(
     if layout.items.is_empty() {
         return Ok((String::new(), 0.0));
     }
-    // `tab_position: "left"` renders differently (`content_y = 0.0`,
-    // `content_height = available_height` — no reserved top strip) but
-    // SIZING never branches on it at all (`_calculate_tabs_dimensions` has
-    // no `tab_position` parameter — a real production asymmetry this port
-    // reproduces rather than patches): a "left" board would already size
-    // wrong in production before this composer ever runs, so refusing here
-    // is the honest response rather than rendering a shape whose boxes are
-    // already known-wrong upstream. No ladder/corpus row authors it.
-    if !matches!(layout.tab_position.as_deref(), None | Some("top")) {
-        return Err(format!(
-            "board layout tab_position not modeled: {:?}",
-            layout.tab_position.as_deref().unwrap_or("top")
-        ));
-    }
     let tabs = &chrome.tabs_style;
+    let left_rail = is_left_rail(layout);
     let active_index = resolve_active_tab_index(
         layout.items.len(),
         layout.tab_variable.as_deref(),
@@ -2777,7 +2986,11 @@ fn render_tabs_layout(
         layout.default_tab,
         &payload.variable_values,
     )?;
-    let content_y = tabs.bar_height;
+    // The bar (or rail) is inset like card ink; the pane starts below the bar
+    // or right of the rail and its gutter.
+    let pane = tabs_pane_for(layout, tabs, fonts)?;
+    let (content_x, content_y) = (pane.x, pane.y);
+    let active_box = &boxes[active_index];
 
     // `card_gap=0.0`/`gap=0.0` — production's own call site (`render_tabs_
     // layout`'s own `render_layout_item` call) forces both explicitly,
@@ -2794,14 +3007,12 @@ fn render_tabs_layout(
         card_style: chrome.card_style.clone(),
     };
     let active_item = &layout.items[active_index];
-    let active_box = &boxes[active_index];
     let rendered = render_layout_item(
         active_item,
         active_box,
         payload,
         &tab_chrome,
         fonts,
-        &HashMap::new(),
         &HashSet::new(),
     )?;
     let (item_svg, actual_item_height) = match &rendered {
@@ -2810,66 +3021,94 @@ fn render_tabs_layout(
     };
 
     let n = layout.items.len();
-    let titles: Vec<String> = if layout.tab_titles.len() == n {
-        layout.tab_titles.clone()
-    } else {
-        (1..=n)
-            .map(|idx| display_text::language::tr("tab.title", None, &[("n", &idx.to_string())]))
-            .collect::<Result<_, _>>()?
-    };
+    let labels = tab_labels(layout, tabs)?;
     let slugs: Vec<String> = if !layout.tab_slugs.is_empty() {
         layout.tab_slugs.clone()
     } else {
         (0..n).map(|idx| format!("tab_{idx}")).collect()
     };
-    // Every label is measured at the active weight so the bar does not shift
-    // when the selection moves.
-    let measure_weight: f32 = tabs
-        .active_weight
-        .parse()
-        .map_err(|_| format!("layout.tabs.active_weight {:?} is not numeric", tabs.active_weight))?;
-    let measure = |text: &str| {
-        fonts.measure_at_weight(text, &tabs.font_family, tabs.font_size, Some(measure_weight))
-    };
+    let measure = tab_label_measurer(tabs, fonts)?;
     let label_room = tabs.max_width - 2.0 * tabs.padding_x;
+    // A rail stacks equal-width cells; a top bar lines content-width cells up.
+    let rail_width = if left_rail { tab_rail_width(&labels, tabs, &measure)? } else { 0.0 };
     let mut tab_bar_parts = Vec::with_capacity(n + 1);
     let mut tab_x = 0.0;
+    let mut tab_y = 0.0;
     let mut active_span = (0.0, 0.0);
-    for (idx, (title, slug)) in titles.iter().zip(&slugs).enumerate() {
+    for (idx, (label, slug)) in labels.iter().zip(&slugs).enumerate() {
         let is_active = idx == active_index;
-        let label = display_text::case::apply_case(title, &tabs.font_case)?;
-        let shown = fit_label(&label, &measure, label_room)?;
-        // Whole pixels absorb the sub-pixel gap between the two engines' text
-        // measurers.
-        let tab_width = (measure(&label)? + 2.0 * tabs.padding_x)
-            .ceil()
-            .max(tabs.min_width)
-            .min(tabs.max_width);
+        // A rail has the height to wrap a long label; a top bar cuts it on one line.
+        let (lines, cut, tab_width, cell_height) = if left_rail {
+            let (lines, cut) = tab_rail_lines(label, tabs, &measure)?;
+            let cell_height = tab_rail_cell_height(lines.len(), tabs);
+            (lines, cut, rail_width, cell_height)
+        } else {
+            let shown = fit_label(label, &measure, label_room)?;
+            let cut = shown != *label;
+            (vec![shown], cut, tab_cell_width(label, tabs, &measure)?, tabs.bar_height)
+        };
         if is_active {
-            active_span = (tab_x, tab_x + tab_width);
+            active_span = if left_rail {
+                (tab_y, tab_y + cell_height)
+            } else {
+                (tab_x, tab_x + tab_width)
+            };
         }
         let weight = if is_active { &tabs.active_weight } else { &tabs.inactive_weight };
         let text_fill = if is_active { &tabs.active_font_color } else { &tabs.inactive_font_color };
-        let tooltip = if shown != label {
-            format!("<title>{}</title>", html_escape(&label))
+        let tooltip = if cut {
+            format!("<title>{}</title>", html_escape(label))
         } else {
             String::new()
         };
         // The boxes fill the whole cell, so it is hit-testable and has an outline to mark.
-        let boxes = selection_boxes(tab_width, tabs.bar_height, &NO_PADDING, None);
+        let boxes = selection_boxes(tab_width, cell_height, &NO_PADDING, None);
+        // A rail's labels share its left edge; a top tab centers its own.
+        let (text_x, anchor) = if left_rail {
+            (tabs.padding_x, "start")
+        } else {
+            (tab_width / 2.0, "middle")
+        };
+        // The lines sit centered on the cell's middle, one line step apart.
+        let n_lines = lines.len() as f64;
+        let baselines: Vec<f64> = (0..lines.len())
+            .map(|i| {
+                cell_height / 2.0
+                    + tabs.title_baseline_offset
+                    + (i as f64 - (n_lines - 1.0) / 2.0) * tabs.line_step
+            })
+            .collect();
+        let first_baseline = *baselines.first().ok_or("a tab label wrapped to no lines")?;
+        let text_body = if lines.len() == 1 {
+            html_escape(&lines[0])
+        } else {
+            lines
+                .iter()
+                .zip(&baselines)
+                .map(|(line, y)| {
+                    format!(
+                        r#"<tspan x="{}" y="{}">{}</tspan>"#,
+                        float_repr(text_x),
+                        float_repr(*y),
+                        html_escape(line)
+                    )
+                })
+                .collect()
+        };
         let tab_svg = format!(
-            r#"{tooltip}{boxes}<text x="{}" y="{}" text-anchor="middle" font-family="{}" font-size="{}" fill="{}" font-weight="{}">{}</text>"#,
-            py_float_str(tab_width / 2.0),
-            py_float_str(tabs.bar_height / 2.0 + tabs.title_baseline_offset),
+            r#"{tooltip}{boxes}<text x="{}" y="{}" text-anchor="{anchor}" font-family="{}" font-size="{}" fill="{}" font-weight="{}">{}</text>"#,
+            float_repr(text_x),
+            float_repr(first_baseline),
             xml_escape_attr(&tabs.font_family),
-            py_float_str(tabs.font_size),
+            float_repr(tabs.font_size),
             xml_escape_attr(text_fill),
             xml_escape_attr(weight),
-            html_escape(&shown),
+            text_body,
         );
+        let ty = if left_rail { float_repr(tab_y) } else { "0".to_string() };
         let mut attrs = format!(
-            r#"role="tab" aria-selected="{is_active}" transform="translate({}, 0)""#,
-            py_float_str(tab_x)
+            r#"role="tab" aria-selected="{is_active}" transform="translate({}, {ty})""#,
+            float_repr(tab_x)
         );
         // A tab label is its pane's title, so it carries that key's own path.
         let source_path = &layout.items[idx].source_path;
@@ -2883,42 +3122,82 @@ fn render_tabs_layout(
             }
             _ => tab_bar_parts.push(format!("<g {attrs}>{tab_svg}</g>")),
         }
-        tab_x += tab_width;
+        if left_rail {
+            tab_y += cell_height;
+        } else {
+            tab_x += tab_width;
+        }
     }
 
+    // `sizing.py::tabs_layout_height`: the pane below its offset, and never
+    // shorter than a left rail.
+    let actual_height = (content_y + actual_item_height).max(pane.min_height);
     let stroke = tabs.border_width;
-    let baseline_y = tabs.bar_height - stroke / 2.0;
-    let top_y = stroke / 2.0;
-    let left = active_span.0 + stroke / 2.0;
-    let right = active_span.1 - stroke / 2.0;
-    let radius = tabs.border_radius.min((right - left) / 2.0).min(baseline_y - top_y);
-    let line_end = available_width.max(tab_x);
-    let f = py_float_str;
+    let f = float_repr;
+    let d = if left_rail {
+        // The active tab is a folder open to the right, joined to a
+        // full-height rule along the rail's right edge.
+        let rule_x = rail_width - stroke / 2.0;
+        let outer_x = stroke / 2.0;
+        let top = active_span.0 + stroke / 2.0;
+        let bottom = active_span.1 - stroke / 2.0;
+        let radius = tabs.border_radius.min((bottom - top) / 2.0).min(rule_x - outer_x);
+        let line_end = (actual_height - tabs.inset).max(tab_y);
+        format!(
+            "M {} 0 V {} H {} A {r} {r} 0 0 0 {} {} V {} A {r} {r} 0 0 0 {} {} H {} V {}",
+            f(rule_x),
+            f(top),
+            f(outer_x + radius),
+            f(outer_x),
+            f(top + radius),
+            f(bottom - radius),
+            f(outer_x + radius),
+            f(bottom),
+            f(rule_x),
+            f(line_end),
+            r = f(radius),
+        )
+    } else {
+        let baseline_y = tabs.bar_height - stroke / 2.0;
+        let top_y = stroke / 2.0;
+        let left = active_span.0 + stroke / 2.0;
+        let right = active_span.1 - stroke / 2.0;
+        let radius = tabs.border_radius.min((right - left) / 2.0).min(baseline_y - top_y);
+        let line_end = available_width.max(tab_x);
+        format!(
+            "M 0 {} H {} V {} A {r} {r} 0 0 1 {} {} H {} A {r} {r} 0 0 1 {} {} V {} H {}",
+            f(baseline_y),
+            f(left),
+            f(top_y + radius),
+            f(left + radius),
+            f(top_y),
+            f(right - radius),
+            f(right),
+            f(top_y + radius),
+            f(baseline_y),
+            f(line_end),
+            r = f(radius),
+        )
+    };
     let rule = format!(
-        r#"<path d="M 0 {} H {} V {} A {r} {r} 0 0 1 {} {} H {} A {r} {r} 0 0 1 {} {} V {} H {}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round"{}/>"#,
-        f(baseline_y),
-        f(left),
-        f(top_y + radius),
-        f(left + radius),
-        f(top_y),
-        f(right - radius),
-        f(right),
-        f(top_y + radius),
-        f(baseline_y),
-        f(line_end),
+        r#"<path d="{d}" fill="none" stroke="{}" stroke-width="{}" stroke-linejoin="round"{}/>"#,
         xml_escape_attr(&tabs.border_color),
         f(stroke),
         tabs.border_dash_attrs,
-        r = f(radius),
     );
-    let tab_bar_svg = format!(r#"<g role="tablist">{rule}{}</g>"#, tab_bar_parts.join(""));
+    let orientation = if left_rail { r#" aria-orientation="vertical""# } else { "" };
+    let tab_bar_svg = translate_group(
+        "0",
+        &num_full(px(tabs.inset)),
+        &format!(r#"<g role="tablist"{orientation}>{rule}{}</g>"#, tab_bar_parts.join("")),
+        "",
+    );
 
     let content_svg = if item_svg.is_empty() {
         String::new()
     } else {
-        translate_group("0", &num_full(px(content_y)), item_svg, "")
+        translate_group(&num_full(px(content_x)), &num_full(px(content_y)), item_svg, "")
     };
-    let actual_height = content_y + actual_item_height;
     let bg_rect = layout_bg_rect(available_width, actual_height, chrome.layout_bg);
     Ok((
         format!("{bg_rect}\n{tab_bar_svg}\n{content_svg}"),
@@ -3012,57 +3291,76 @@ fn footer_attribution_svg(
 /// pass (`size_board`) and every nested-board pass (`nested_board_total_
 /// height`/`render_nested_board`) so the field list lives in one place.
 fn layout_inputs<'a>(
-    items: &'a [ItemDoc],
+    layout: &'a LayoutDoc,
     authorings: &'a [ItemAuthoring],
-    chart_height_overrides: &HashMap<String, f64>,
-) -> Vec<LayoutItemInput<'a>> {
-    items
-        .iter()
-        .zip(authorings)
-        .map(|(item, authoring)| LayoutItemInput {
-            kind: item.kind.as_str(),
-            chart: item.chart.as_ref(),
-            chart_error: item.chart_error.as_ref(),
-            authoring,
-            board: item.board.as_ref(),
-            details_present: item.details_present(),
-            details_variable: item.details_variable.as_deref(),
-            chart_height_override: item
-                .chart
-                .as_ref()
-                .and_then(|c| c.get("id"))
-                .and_then(Value::as_str)
-                .and_then(|id| chart_height_overrides.get(id))
-                .copied(),
+    variable_values: &serde_json::Map<String, Value>,
+) -> Result<Vec<LayoutItemInput<'a>>, String> {
+    Ok(sized_indices(layout, variable_values)?
+        .into_iter()
+        .map(|index| {
+            let item = &layout.items[index];
+            LayoutItemInput {
+                kind: item.kind.as_str(),
+                chart: item.chart.as_ref(),
+                chart_error: item.chart_error.as_ref(),
+                authoring: &authorings[index],
+                board: item.board.as_ref(),
+                details_present: item.details_present(),
+                details_variable: item.details_variable.as_deref(),
+            }
         })
-        .collect()
+        .collect())
+}
+
+/// `sizing.py::active_layout_items`' `visible` half: a hidden item reaches no
+/// sizing pass. A tabs layout picks its pane by index, so it keeps every item.
+fn sized_indices(
+    layout: &LayoutDoc,
+    variable_values: &serde_json::Map<String, Value>,
+) -> Result<Vec<usize>, String> {
+    let mut sized = Vec::with_capacity(layout.items.len());
+    for (index, item) in layout.items.iter().enumerate() {
+        if layout.kind == "tabs" || item_visible(&item.visible, variable_values)? {
+            sized.push(index);
+        }
+    }
+    Ok(sized)
 }
 
 /// `render/sizing.py::calculate_layout_items`'s box-assignment dispatch
 /// (`_apply_layout_dimensions`), shared by the root pass and every nested
 /// board's own layout. `available_height` is the caller's real value for
 /// "cols" and "tabs" (each arm's own doc has the citation for why the real
-/// number matters there); `grid`'s own `f64::INFINITY` narrowing is
-/// unchanged (root's own pre-existing simplification, reused unchanged for
-/// nested rather than fixed fresh here — no evidenced gap forced it yet,
-/// unlike cols/tabs). The second element of the return tuple is the
-/// `chart_id -> forced_height` map `_align_board_charts` computed for this
-/// layout's OWN direct board-item children (empty off a `cols` layout —
-/// `rows`/`grid` never align, matching production: `_align_grid_rows` is
-/// unported, a named, narrower gap — see its own call site).
+/// number matters there), and for "grid", which fills it in a nested board. The
+/// second element of the return tuple is the chart ids this layout's cols row
+/// re-renders.
 fn boxes_for_layout(
     layout: &LayoutDoc,
     inputs: &[LayoutItemInput],
     content_width: f64,
     available_height: f64,
     ctx: &sizing::SizingCtx,
-) -> Result<(Vec<ItemBox>, HashMap<String, f64>, HashSet<String>), String> {
+) -> Result<(Vec<ItemBox>, HashSet<String>), String> {
+    let (sized_boxes, fresh_render) =
+        sized_item_boxes(layout, inputs, content_width, available_height, ctx)?;
+    let mut boxes = vec![ItemBox::default(); layout.items.len()];
+    let sized = sized_indices(layout, ctx.variable_values)?;
+    for (index, item_box) in sized.into_iter().zip(sized_boxes) {
+        boxes[index] = item_box;
+    }
+    Ok((boxes, fresh_render))
+}
+
+fn sized_item_boxes(
+    layout: &LayoutDoc,
+    inputs: &[LayoutItemInput],
+    content_width: f64,
+    available_height: f64,
+    ctx: &sizing::SizingCtx,
+) -> Result<(Vec<ItemBox>, HashSet<String>), String> {
     match layout.kind.as_str() {
-        "rows" => {
-            let boxes = calculate_rows_boxes(inputs, content_width, available_height, ctx)?;
-            let fresh_render = sizing::forced_fresh_renders(inputs, &boxes, ctx)?;
-            Ok((boxes, HashMap::new(), fresh_render))
-        }
+        "rows" => calculate_rows_boxes(inputs, content_width, available_height, ctx)
+            .map(|b| (b, HashSet::new())),
         // `_calculate_cols_dimensions`'s own `row_height = min(max_content_
         // height, available_height)` (unless a specified/authored item
         // height already dominates) DOES read the real `available_height`
@@ -3076,10 +3374,8 @@ fn boxes_for_layout(
         "cols" => calculate_cols_boxes(inputs, content_width, available_height, ctx),
         "grid" => {
             let columns = layout.columns.unwrap_or(sizing::DEFAULT_GRID_COLUMNS);
-            let (boxes, overrides, mut fresh_render) =
-                calculate_grid_boxes(inputs, columns, content_width, f64::INFINITY, ctx)?;
-            fresh_render.extend(sizing::forced_fresh_renders(inputs, &boxes, ctx)?);
-            Ok((boxes, overrides, fresh_render))
+            calculate_grid_boxes(inputs, columns, content_width, available_height, ctx)
+                .map(|b| (b, HashSet::new()))
         }
         // `_calculate_tabs_dimensions`'s own `tab_available = available_
         // height - tab_bar_height` then `min(ch, tab_available)`
@@ -3108,7 +3404,7 @@ fn boxes_for_layout(
             layout.default_tab,
             ctx,
         )
-        .map(|b| (b, HashMap::new(), HashSet::new())),
+        .map(|b| (b, HashSet::new())),
         other => Err(format!("board layout not modeled: {other}")),
     }
 }
@@ -3213,14 +3509,16 @@ fn nested_board_sizing_context(
             0.0
         };
         let variables_h = if !visible_variables.is_empty() {
-            // sizing.py:1930 hands `compute_variable_controls_height` the
-            // bare `content_width` here — unlike the render side
-            // (`render_nested_board` below, sizing.py:1425 equivalent),
-            // sizing never subtracts `card_pad`. A real, if asymmetric,
-            // production behavior — not a bug to "fix" by matching render.
+            // Measured at the width `render_nested_board` draws it.
+            let (band_width, _) = crate::variables::standalone_variables_band(
+                &nested.title,
+                content_width,
+                card_pad,
+                &nested.style.variables,
+            );
             crate::variables::compute_variable_controls_height(
                 &visible_variables,
-                content_width,
+                band_width,
                 &variable_values,
                 &nested.style.variables,
                 fonts_dir,
@@ -3268,6 +3566,7 @@ fn nested_board_sizing_context(
         inline_band_h,
         effective_child_gap,
         !nested.layout.items.is_empty(),
+        opens_with_text(nested, &payload.variable_values)?,
         card_pad,
     );
     let non_layout_height = content_box.non_layout_height + content_box.gap_before_layout;
@@ -3299,22 +3598,12 @@ fn nested_board_total_height(
     if !nested.layout.items.is_empty() {
         let authorings: Vec<ItemAuthoring> =
             nested.layout.items.iter().map(ItemDoc::authoring).collect();
-        let inputs = layout_inputs(&nested.layout.items, &authorings, &HashMap::new());
+        let inputs = layout_inputs(&nested.layout, &authorings, &payload.variable_values)?;
         let nested_height_fn = |b: &Value, w: f64| {
             nested_board_total_height(b, w, card_gap, root_card_padding, payload, fonts)
         };
-        let contribution_fn = |b: &Value, w: f64, rh: f64| {
-            board_chart_target_contribution(b, w, rh, card_gap, root_card_padding, payload, fonts)
-        };
-        let overrides_ctx = BoardRenderCtx {
-            card_gap,
-            root_card_padding,
-            payload,
-            fonts,
-        };
-        let overrides_fn = |b: &Value, w: f64, t: f64, rh: f64| {
-            board_alignment_overrides(b, w, t, rh, &overrides_ctx)
-        };
+        let takes_spare_fn =
+            |b: &Value, alone: bool| board_takes_spare_height(b, alone, payload);
         // `SizingCtx.card_padding` is the ROOT's own, not this nested
         // board's `card_pad` — `layout_sizing.py::_make_data_aware_height_
         // provider`'s render-first Vega vertical-inset closure is built
@@ -3322,6 +3611,7 @@ fn nested_board_total_height(
         // every chart in the tree (see `RenderChrome::root_card_padding`'s
         // own doc for the full citation).
         let ctx = sizing::SizingCtx {
+            fill_height: false,
             gap: child_gap,
             card_gap,
             card_padding: root_card_padding,
@@ -3331,14 +3621,14 @@ fn nested_board_total_height(
             defaults: &payload.chart_defaults,
             board_style: &payload.board_style,
             chart_bg: &nested.style.background,
-            tabs_bar_height: nested.style.layout.tabs.bar_height,
+            tabs_pane: tabs_pane(&nested.layout, &nested.style, fonts)?,
             details_summary_height: nested.style.layout.details.summary_height,
             variable_values: &payload.variable_values,
             fonts_dir: payload.fonts_dir.clone(),
             fonts,
             nested_board_height: &nested_height_fn,
-            board_chart_target_contribution: &contribution_fn,
-            board_alignment_overrides: &overrides_fn,
+            board_takes_spare_height: &takes_spare_fn,
+            board_holds_only_content_sized_charts: &board_holds_only_content_sized_charts,
         };
         // A pure NATURAL (unconstrained) measurement — `_align_board_
         // charts`'s own overrides never apply here, matching production's
@@ -3364,9 +3654,10 @@ fn nested_board_total_height(
             // push past it.
             sizing::measure_cols_layout_height(&inputs, content_width, f64::INFINITY, &ctx)?
         } else {
-            let (boxes, _own_overrides, _own_fresh_render) =
+            let (boxes, _own_fresh_render) =
                 boxes_for_layout(&nested.layout, &inputs, content_width, f64::INFINITY, &ctx)?;
-            calculate_layout_height(nested.layout.kind.as_str(), &boxes, 0.0)
+            // A left rail floors the height (`tabs_layout_height`); 0 otherwise.
+            calculate_layout_height(nested.layout.kind.as_str(), &boxes, ctx.tabs_pane.min_height)
         };
     }
     let ep = effective_padding(&nested.style);
@@ -3375,15 +3666,7 @@ fn nested_board_total_height(
 }
 
 /// Recursively computes a nested board's own inner item boxes, at the
-/// item's own FINAL assigned width, applying `chart_height_overrides` (a
-/// PARENT cols row's own `_align_board_charts` write, empty when this
-/// board sits outside a cols row or does not qualify) to its DIRECT Vega
-/// chart children and threading each further-nested board's OWN
-/// alignment overrides (computed by `boxes_for_layout`, if this board's
-/// own layout is `cols`) down to ITS children in turn — the same numbers
-/// production's frozen `ResolvedBoard.layout.items` carries for a nested
-/// `type: board` item (`_align_board_charts`'s write DOES reach that frozen
-/// tree; see `board_alignment_overrides`'s own citation).
+/// item's own FINAL assigned width.
 /// Exposed for `main.rs`'s `.boxes.json` sidecar only — `render_board`/
 /// `render_nested_board` need the composed SVG, not this JSON shape, and
 /// call `boxes_for_layout` directly.
@@ -3395,7 +3678,6 @@ pub fn nested_board_item_boxes(
     root_card_padding: f64,
     payload: &BoardPayload,
     fonts: &FontBook,
-    chart_height_overrides: &HashMap<String, f64>,
 ) -> Result<Vec<Value>, String> {
     let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
@@ -3404,32 +3686,22 @@ pub fn nested_board_item_boxes(
     }
     let (content_width, non_layout_height, child_gap) =
         nested_board_sizing_context(&nested, width, card_gap, payload)?;
-    // `_calculate_nested_board_layout`'s own `layout_available_height`
-    // (`board_alignment_overrides`'s doc carries the full citation) —
-    // `details_chrome_height` stays 0 for the same reason it does there: a
-    // details item refuses before this composer ever reaches it.
+    // `_calculate_nested_board_layout`'s own `layout_available_height`. The caller
+    // already took a details item's chrome off `available_height`.
     let ep = effective_padding(&nested.style);
     let margin = nested.style.margin.unwrap_or_default();
     let layout_available_height =
         (available_height - ep.vertical() - margin.vertical() - non_layout_height).max(0.0);
     let authorings: Vec<ItemAuthoring> =
         nested.layout.items.iter().map(ItemDoc::authoring).collect();
-    let inputs = layout_inputs(&nested.layout.items, &authorings, chart_height_overrides);
+    let inputs = layout_inputs(&nested.layout, &authorings, &payload.variable_values)?;
     let nested_height_fn = |b: &Value, w: f64| {
         nested_board_total_height(b, w, card_gap, root_card_padding, payload, fonts)
     };
-    let contribution_fn = |b: &Value, w: f64, rh: f64| {
-        board_chart_target_contribution(b, w, rh, card_gap, root_card_padding, payload, fonts)
-    };
-    let overrides_ctx = BoardRenderCtx {
-        card_gap,
-        root_card_padding,
-        payload,
-        fonts,
-    };
-    let overrides_fn =
-        |b: &Value, w: f64, t: f64, rh: f64| board_alignment_overrides(b, w, t, rh, &overrides_ctx);
+    let takes_spare_fn =
+        |b: &Value, alone: bool| board_takes_spare_height(b, alone, payload);
     let ctx = sizing::SizingCtx {
+        fill_height: true,
         gap: child_gap,
         card_gap,
         card_padding: root_card_padding,
@@ -3439,16 +3711,16 @@ pub fn nested_board_item_boxes(
         defaults: &payload.chart_defaults,
         board_style: &payload.board_style,
         chart_bg: &nested.style.background,
-        tabs_bar_height: nested.style.layout.tabs.bar_height,
+        tabs_pane: tabs_pane(&nested.layout, &nested.style, fonts)?,
         details_summary_height: nested.style.layout.details.summary_height,
         variable_values: &payload.variable_values,
         fonts_dir: payload.fonts_dir.clone(),
         fonts,
         nested_board_height: &nested_height_fn,
-        board_chart_target_contribution: &contribution_fn,
-        board_alignment_overrides: &overrides_fn,
+        board_takes_spare_height: &takes_spare_fn,
+        board_holds_only_content_sized_charts: &board_holds_only_content_sized_charts,
     };
-    let (boxes, own_overrides, _own_fresh_render) = boxes_for_layout(
+    let (boxes, _own_fresh_render) = boxes_for_layout(
         &nested.layout,
         &inputs,
         content_width,
@@ -3471,15 +3743,19 @@ pub fn nested_board_item_boxes(
             {
                 zeroed_nested_item_boxes(sub_json)?
             } else {
+                let chrome = if item.details_present() {
+                    sizing::details_chrome_height(ctx.details_summary_height, ctx.gap, ctx.card_gap)
+                } else {
+                    0.0
+                };
                 nested_board_item_boxes(
                     sub_json,
                     b.width,
-                    b.height,
+                    (b.height - chrome).max(0.0),
                     card_gap,
                     root_card_padding,
                     payload,
                     fonts,
-                    &own_overrides,
                 )?
             };
             obj["nested"] = Value::Array(sub_boxes);
@@ -3489,8 +3765,9 @@ pub fn nested_board_item_boxes(
     Ok(out)
 }
 
-/// A COLLAPSED details item's own subtree — the second (alongside an
-/// inactive tab's) shape `_calculate_nested_board_layout` never recurses
+/// A hidden item's subtree (`active_layout_items` never returns it) and a
+/// COLLAPSED details item's: the shapes, alongside an inactive tab's,
+/// `_calculate_nested_board_layout` never recurses
 /// into: `is_item_collapsed_summary(item, variable_values)` short-circuits
 /// its very first line (`if is_item_collapsed_summary(...) or not item.
 /// board: return`), before `nested_board.layout.width`/`content_width`/
@@ -3499,6 +3776,9 @@ pub fn nested_board_item_boxes(
 /// `ResolvedLayoutItem`'s pre-sizing zero default, same as `zeroed_nested_
 /// item_boxes`'s own tabs citation.
 fn item_subtree_untouched(item: &ItemDoc, payload: &BoardPayload) -> Result<bool, String> {
+    if !item_visible(&item.visible, &payload.variable_values)? {
+        return Ok(true);
+    }
     if !item.details_present() {
         return Ok(false);
     }
@@ -3555,224 +3835,64 @@ fn zeroed_nested_item_boxes(nested_json: &Value) -> Result<Vec<Value>, String> {
     Ok(out)
 }
 
-/// `layout_sizing.py::_col_chart_body_target`'s board branch,
-/// bound as `SizingCtx.board_chart_target_contribution`. `row_height` is
-/// the cols row's own already-computed uniform slot height: production's
-/// FIRST sizing pass (`calculate_layout_items`) assigns every item in a
-/// resolved cols row — chart or board — that SAME uniform height before
-/// any alignment ever runs (`calculate_cols_boxes` does the identical
-/// thing here), so `board.layout.content_height`/`item.height` for ANY
-/// board item in that row already equals it by the time `_col_chart_body_
-/// target` reads them — verified against a live Python trace on
-/// `playground/dundersign-commercial-finance` (all three cols siblings —
-/// a KPI+donut board, a single-chart board, and the all-Vega-rows board
-/// that drives the row — report the identical `content_height`/`item.
-/// height`, `574.72`, at the point `_col_chart_body_target` runs, matching
-/// this function's own `row_height` parameter exactly).
-fn board_chart_target_contribution(
+/// `sizing.py::_takes_spare_height`'s board branch, bound as
+/// `SizingCtx.board_takes_spare_height`.
+fn board_takes_spare_height(
     nested_json: &Value,
-    width: f64,
-    row_height: f64,
-    card_gap: f64,
-    root_card_padding: f64,
+    alone: bool,
     payload: &BoardPayload,
-    fonts: &FontBook,
-) -> Result<f64, String> {
+) -> Result<bool, String> {
+    if alone {
+        return Ok(true);
+    }
     let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
-    if is_all_vega_rows_board(&nested) {
-        return Ok(row_height);
-    }
-    // `row_height` stands in for `item.height` here the same way this
-    // function's own doc comment already establishes for the `is_all_
-    // vega_rows_board` branch above — the cols row's first sizing pass
-    // already assigned this nested board that exact uniform height.
-    let sub_boxes = nested_board_item_boxes(
-        nested_json,
-        width,
-        row_height,
-        card_gap,
-        root_card_padding,
-        payload,
-        fonts,
-        &HashMap::new(),
-    )?;
-    let mut max_h = 0.0_f64;
-    for (sub, sub_box) in nested.layout.items.iter().zip(&sub_boxes) {
-        let Some(chart) = &sub.chart else { continue };
-        let Some(chart_type) = chart.get("chart_type").and_then(Value::as_str) else {
-            continue;
-        };
-        if sizing::is_non_aspect_ratio_type(chart_type) {
-            continue;
-        }
-        if let Some(h) = sub_box.get("height").and_then(Value::as_f64) {
-            max_h = max_h.max(h);
+    let drawn = row_shifts::drawn_indices(&nested.layout, payload)?;
+    for &index in &drawn {
+        if item_takes_spare_height(&nested.layout.items[index], drawn.len() == 1, payload)? {
+            return Ok(true);
         }
     }
-    Ok(max_h)
+    Ok(false)
 }
 
-/// `layout_sizing.py::_col_chart_body_target`'s own `is_all_vega_rows`
-/// local: a `rows` layout of more than one item, every one a
-/// Vega chart (`NON_ASPECT_RATIO_TYPES` excluded).
-fn is_all_vega_rows_board(nested: &BoardDoc) -> bool {
-    nested.layout.kind == "rows"
-        && nested.layout.items.len() > 1
-        && nested.layout.items.iter().all(|s| {
-            s.chart.as_ref().is_some_and(|c| {
-                c.get("chart_type")
-                    .and_then(Value::as_str)
-                    .is_some_and(|t| !sizing::is_non_aspect_ratio_type(t))
-            })
-        })
+/// `sizing.py::_holds_only_content_sized_charts`' board branch.
+fn board_holds_only_content_sized_charts(nested_json: &Value) -> Result<bool, String> {
+    let mut chart_types = Vec::new();
+    collect_chart_types(nested_json, &mut chart_types)?;
+    Ok(!chart_types.is_empty() && chart_types.iter().all(|t| sizing::is_content_sized_chart(t)))
 }
 
-/// `layout_sizing.py::_align_board_charts`, bound as
-/// `SizingCtx.board_alignment_overrides`. `row_height` is the cols row's own
-/// uniform slot height (equals `item.height` — see `board_chart_target_
-/// contribution`'s own citation), from which `content_h` is derived the
-/// same way `_calculate_nested_board_layout` derives `board.layout.
-/// content_height` from `item.height` (below) — NOT a direct substitution:
-/// round 3 review found a nested board with its own title/text/variables
-/// band disagrees (`item.height - content_height` = the band's height,
-/// nonzero), which `ladder/nested/10` now pins. Returns the flat `chart_id
-/// -> forced_height` map for every DIRECT Vega chart child the alignment
-/// condition reaches; empty when it does not apply.
-/// The 4 constants every recursive call in `board_alignment_overrides`'s
-/// own tree needs, unchanged at every level — bundled so the function stays
-/// under clippy's `too_many_arguments` threshold without inconsistent
-/// argument order with its sibling functions above (which keep them
-/// positional; only this one recurses on itself enough times, 6 call sites,
-/// to make bundling worth the indirection).
-#[derive(Clone, Copy)]
-struct BoardRenderCtx<'a> {
-    card_gap: f64,
-    root_card_padding: f64,
-    payload: &'a BoardPayload,
-    fonts: &'a FontBook,
-}
-
-fn board_alignment_overrides(
-    nested_json: &Value,
-    width: f64,
-    target_height: f64,
-    row_height: f64,
-    ctx: &BoardRenderCtx,
-) -> Result<HashMap<String, f64>, String> {
-    let BoardRenderCtx {
-        card_gap,
-        root_card_padding,
-        payload,
-        fonts,
-    } = *ctx;
+fn collect_chart_types(nested_json: &Value, out: &mut Vec<String>) -> Result<(), String> {
     let nested: BoardDoc = Deserialize::deserialize(nested_json)
         .map_err(|e| format!("nested board payload deserialize: {e}"))?;
-    let vega_count = nested
-        .layout
-        .items
-        .iter()
-        .filter(|s| {
-            s.chart.as_ref().is_some_and(|c| {
-                c.get("chart_type")
-                    .and_then(Value::as_str)
-                    .is_some_and(|t| !sizing::is_non_aspect_ratio_type(t))
-            })
-        })
-        .count();
-    // A nested `cols` layout keeps nothing of this write: `_align_all_cols_in_tree`
-    // recurses into it after the parent's alignment (`layout_sizing.py:1705-1706`),
-    // recomputes the row's own `_col_chart_body_target` and rewrites every direct
-    // Vega item's height from it (`:1684-1697`). `calculate_cols_boxes` applies
-    // that row alignment, with its own `fresh_render`, when the board is composed.
-    if nested.layout.kind == "cols" || vega_count != 1 {
-        return Ok(HashMap::new());
-    }
-    // `layout_sizing.py::_align_board_charts`'s `content_h = board.layout.content_height`,
-    // set by `_calculate_nested_board_layout`'s `layout_available_height =
-    // item.height - details_chrome_height - effective_padding.vertical -
-    // margin.vertical - non_layout_height`. `row_height` alone stands in
-    // for `item.height` correctly (verified: production's first sizing
-    // pass assigns every cols-row item that exact uniform height — see
-    // `board_chart_target_contribution`'s own citation) but NOT for
-    // `content_height` itself, which additionally subtracts the nested
-    // board's own title/text/variables band — a board with none of those
-    // has `non_layout_height == 0` and the two coincide, which is why the
-    // substitution looked like an identity until a titled nested board
-    // (round 3 review) exposed the gap. `details_chrome_height` stays 0
-    // here for the same reason `render_nested_board` doesn't subtract it:
-    // a details item refuses before this composer ever reaches it.
-    let ep = effective_padding(&nested.style);
-    let margin = nested.style.margin.unwrap_or_default();
-    let (_content_width, non_layout_height, _child_gap) =
-        nested_board_sizing_context(&nested, width, card_gap, payload)?;
-    let content_h = (row_height - ep.vertical() - margin.vertical() - non_layout_height).max(0.0);
-    if content_h <= 0.0 {
-        return Ok(HashMap::new());
-    }
-    let sub_boxes = nested_board_item_boxes(
-        nested_json,
-        width,
-        row_height,
-        card_gap,
-        root_card_padding,
-        payload,
-        fonts,
-        &HashMap::new(),
-    )?;
-    let non_chart_h: f64 = nested
-        .layout
-        .items
-        .iter()
-        .zip(&sub_boxes)
-        .filter(|(s, _)| {
-            !s.chart.as_ref().is_some_and(|c| {
-                c.get("chart_type")
-                    .and_then(Value::as_str)
-                    .is_some_and(|t| !sizing::is_non_aspect_ratio_type(t))
-            })
-        })
-        .filter_map(|(_, b)| b.get("height").and_then(Value::as_f64))
-        .sum();
-    let board_chart_max = (content_h - non_chart_h).max(0.0);
-    let effective = target_height.min(board_chart_max);
-
-    let mut overrides = HashMap::new();
-    for (sub, sub_box) in nested.layout.items.iter().zip(&sub_boxes) {
-        let Some(chart) = &sub.chart else { continue };
-        let Some(chart_type) = chart.get("chart_type").and_then(Value::as_str) else {
-            continue;
-        };
-        if sizing::is_non_aspect_ratio_type(chart_type) {
-            continue;
+    for item in &nested.layout.items {
+        if let Some(chart_type) =
+            sizing::item_chart_type(item.chart.as_ref(), item.chart_error.as_ref())
+        {
+            out.push(chart_type.to_string());
         }
-        let natural = sub_box.get("height").and_then(Value::as_f64);
-        let capped = sizing::effective_alignment_target_for_chart(chart_type, natural, effective);
-        let Some(id) = chart.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        overrides.insert(id.to_string(), capped);
+        if let Some(board_json) = &item.board {
+            collect_chart_types(board_json, out)?;
+        }
     }
+    Ok(())
+}
 
-    // `_align_cols_heights`'s own board-item branch
-    // (`layout_sizing.py:1340-1342`): EVERY
-    // `item.board is not None` child recurses into `_align_board_charts`,
-    // unconditionally on the PARENT's own layout type (Python's loop has
-    // no `if board.layout.type == "cols"` guard — that condition already
-    // gated whether THIS function ran at all, at the top). Round 3 review
-    // MEDIUM: an earlier version of this recursion wrongly re-added that
-    // guard here — no corpus board reaches this second level, so it is
-    // transliterated but unverified beyond one.
-    for (sub, sub_box) in nested.layout.items.iter().zip(&sub_boxes) {
-        let Some(sub_board_json) = sub.board.as_ref() else {
-            continue;
-        };
-        let sub_width = sub_box.get("width").and_then(Value::as_f64).unwrap_or(width);
-        let inner = board_alignment_overrides(sub_board_json, sub_width, effective, effective, ctx)?;
-        overrides.extend(inner);
+fn item_takes_spare_height(
+    item: &ItemDoc,
+    alone: bool,
+    payload: &BoardPayload,
+) -> Result<bool, String> {
+    if item.kind == "board" {
+        if item_subtree_untouched(item, payload)? {
+            return Ok(false);
+        }
+        let json = item.board.as_ref().ok_or("board item missing its resolved board")?;
+        return board_takes_spare_height(json, alone, payload);
     }
-
-    Ok(overrides)
+    let chart_type = sizing::item_chart_type(item.chart.as_ref(), item.chart_error.as_ref());
+    Ok(sizing::chart_takes_spare_height(chart_type, item.authoring().chart_height, alone))
 }
 
 /// Compute every layout item's own box plus the board's own container
@@ -3784,12 +3904,9 @@ fn board_alignment_overrides(
 /// production's numbers back in) — cheap relative to the chart renders
 /// that follow, so the duplication buys a clean public seam rather than a
 /// shared-mutable-state one.
-/// Every root layout item's own box, the board's own container dims, and
-/// the flat `chart_id -> forced_height` map `_align_board_charts`'s cols
-/// alignment produced for the root's own DIRECT children (empty at the
-/// root, which has no incoming overrides of its own).
-pub type SizedBoard =
-    (Vec<ItemBox>, ContainerBox, HashMap<String, f64>, HashSet<String>);
+/// Every root layout item's own box, the board's own container dims, and the
+/// chart ids its cols row re-renders.
+pub type SizedBoard = (Vec<ItemBox>, ContainerBox, HashSet<String>);
 
 pub fn size_board(payload: &BoardPayload, fonts: &FontBook) -> Result<SizedBoard, String> {
     payload.board_style.scoped(|| size_board_in_scope(payload, fonts))
@@ -3808,25 +3925,15 @@ fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<Sized
     // ItemAuthoring must live in its own binding — LayoutItemInput borrows it.
     let authorings: Vec<ItemAuthoring> =
         board.layout.items.iter().map(ItemDoc::authoring).collect();
-    // The root board never sits inside anyone's cols row — no incoming
-    // overrides.
-    let inputs = layout_inputs(&board.layout.items, &authorings, &HashMap::new());
+    let inputs = layout_inputs(&board.layout, &authorings, &payload.variable_values)?;
 
     let content_width = board.layout.content_width;
     let nested_height_fn =
         |b: &Value, w: f64| nested_board_total_height(b, w, card_gap, card_padding, payload, fonts);
-    let contribution_fn = |b: &Value, w: f64, rh: f64| {
-        board_chart_target_contribution(b, w, rh, card_gap, card_padding, payload, fonts)
-    };
-    let overrides_ctx = BoardRenderCtx {
-        card_gap,
-        root_card_padding: card_padding,
-        payload,
-        fonts,
-    };
-    let overrides_fn =
-        |b: &Value, w: f64, t: f64, rh: f64| board_alignment_overrides(b, w, t, rh, &overrides_ctx);
+    let takes_spare_fn =
+        |b: &Value, alone: bool| board_takes_spare_height(b, alone, payload);
     let ctx = sizing::SizingCtx {
+        fill_height: false,
         gap: board.layout.gap,
         card_gap,
         card_padding,
@@ -3836,14 +3943,40 @@ fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<Sized
         defaults: &payload.chart_defaults,
         board_style: &payload.board_style,
         chart_bg: &board.style.background,
-        tabs_bar_height: board.style.layout.tabs.bar_height,
+        tabs_pane: tabs_pane(&board.layout, &board.style, fonts)?,
         details_summary_height: board.style.layout.details.summary_height,
         variable_values: &payload.variable_values,
         fonts_dir: payload.fonts_dir.clone(),
         fonts,
         nested_board_height: &nested_height_fn,
-        board_chart_target_contribution: &contribution_fn,
-        board_alignment_overrides: &overrides_fn,
+        board_takes_spare_height: &takes_spare_fn,
+        board_holds_only_content_sized_charts: &board_holds_only_content_sized_charts,
+    };
+    // `layout_sizing.py::calculate_data_aware_layout`'s `if board.title:`
+    // branch: the board's own container height also carries its title, on
+    // top of the layout-items-only height.
+    let title_band = if board.title.is_empty() {
+        0.0
+    } else {
+        board_title_height(payload, &board, content_width, card_padding)?
+            + board.layout.gap
+            + card_gap
+    };
+    // `calculate_layout_height`'s "rows" arm derives the total from
+    // ALREADY-ASSIGNED boxes — correct in VALUE but a different float
+    // grouping than production's own measure function
+    // (`sizing::measure_rows_layout_height`'s own doc has the full
+    // citation: `playground/time-unit-label-cadence-matrix`'s
+    // container-height `box_diff`, oracle `5784.349999999999` vs the
+    // derived value `5784.35`). Call the true measure function directly so
+    // the board's own reported container height matches production's bits.
+    let rows_height = if board.layout.kind == "rows" {
+        Some(
+            sizing::measure_rows_layout_height(&inputs, content_width, &ctx)?
+                .max(payload.frame_min_height),
+        )
+    } else {
+        None
     };
     // `tabs` here stays `f64::INFINITY` — `ladder/tabs/01`/`02`/`04` DO
     // author `tabs:` as their board's ROOT layout and MATCH today, so this
@@ -3854,44 +3987,44 @@ fn size_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<Sized
     // the root if a board's own container height ever landed on that
     // boundary; no corpus board does yet, so it stays unfixed rather than
     // unfixable.
-    let (boxes, overrides, fresh_render) =
-        boxes_for_layout(&board.layout, &inputs, content_width, f64::INFINITY, &ctx)?;
+    // Production resolves this against the container, which here is sized from the
+    // same boxes, so the port has no number to resolve it with.
+    if board.layout.kind == "grid"
+        && inputs.iter().any(|input| {
+            input.authoring.layout_height.as_deref().is_some_and(|h| h.trim().ends_with('%'))
+        })
+    {
+        return Err(crate::refuse!("a percentage height on a root grid item is not supported"));
+    }
+    // Production assigns a rows board against the container height it just
+    // measured, whose plain running total can land a rounding step under the
+    // compensated `sum()` of the same rows and scale them by that step.
+    let available_height = rows_height.map_or(f64::INFINITY, |height| height + title_band);
+    let (boxes, fresh_render) =
+        boxes_for_layout(&board.layout, &inputs, content_width, available_height, &ctx)?;
 
-    let mut content_height = if board.layout.kind == "rows" {
-        // `calculate_layout_height`'s "rows" arm derives the total from
-        // ALREADY-ASSIGNED boxes — correct in VALUE but a different float
-        // grouping than production's own measure function
-        // (`sizing::measure_rows_layout_height`'s own doc has the full
-        // citation: `playground/time-unit-label-cadence-matrix`'s
-        // container-height `box_diff`, oracle `5784.349999999999` vs the
-        // derived value `5784.35`). Call the true measure function
-        // directly so the board's own reported container height matches
-        // production's bits.
-        sizing::measure_rows_layout_height(&inputs, content_width, &ctx)?
-            .max(payload.frame_min_height)
+    let content_height = if let Some(height) = rows_height {
+        height
     } else if board.layout.kind == "cols" {
         // The row keeps its measured height when alignment moves a
         // small-multiples chart past it (`measure_cols_layout_height`).
         sizing::measure_cols_layout_height(&inputs, content_width, f64::INFINITY, &ctx)?
             .max(payload.frame_min_height)
     } else {
-        calculate_layout_height(board.layout.kind.as_str(), &boxes, payload.frame_min_height)
-    };
-    // `layout_sizing.py::calculate_data_aware_layout`'s `if board.title:`
-    // branch: the board's own container height also carries its title, on
-    // top of the layout-items-only height above.
-    if !board.title.is_empty() {
-        content_height += board_title_height(payload, &board, content_width, card_padding)?
-            + board.layout.gap
-            + card_gap;
-    }
+        // A left rail floors the height (`tabs_layout_height`); 0 otherwise.
+        calculate_layout_height(
+            board.layout.kind.as_str(),
+            &boxes,
+            payload.frame_min_height.max(ctx.tabs_pane.min_height),
+        )
+    } + title_band;
     let container = ContainerBox {
         width: board.width,
         height: content_height,
         content_width,
         content_height,
     };
-    Ok((boxes, container, overrides, fresh_render))
+    Ok((boxes, container, fresh_render))
 }
 
 /// `size_board`'s root `boxes`, as JSON, with a `"nested"` key attached to
@@ -3902,18 +4035,16 @@ pub fn size_board_items_json(
     payload: &BoardPayload,
     fonts: &FontBook,
     boxes: &[ItemBox],
-    chart_height_overrides: &HashMap<String, f64>,
 ) -> Result<Vec<Value>, String> {
     payload
         .board_style
-        .scoped(|| size_board_items_json_in_scope(payload, fonts, boxes, chart_height_overrides))
+        .scoped(|| size_board_items_json_in_scope(payload, fonts, boxes))
 }
 
 fn size_board_items_json_in_scope(
     payload: &BoardPayload,
     fonts: &FontBook,
     boxes: &[ItemBox],
-    chart_height_overrides: &HashMap<String, f64>,
 ) -> Result<Vec<Value>, String> {
     let board: BoardDoc = Deserialize::deserialize(&payload.resolved)
         .map_err(|e| format!("board payload deserialize: {e}"))?;
@@ -3935,15 +4066,23 @@ fn size_board_items_json_in_scope(
             {
                 zeroed_nested_item_boxes(sub_json)?
             } else {
+                let chrome = if item.details_present() {
+                    sizing::details_chrome_height(
+                        board.style.layout.details.summary_height,
+                        board.layout.gap,
+                        card_gap,
+                    )
+                } else {
+                    0.0
+                };
                 nested_board_item_boxes(
                     sub_json,
                     b.width,
-                    b.height,
+                    (b.height - chrome).max(0.0),
                     card_gap,
                     card_padding,
                     payload,
                     fonts,
-                    chart_height_overrides,
                 )?
             };
             obj["nested"] = Value::Array(sub_boxes);
@@ -3988,12 +4127,12 @@ fn board_title_height(
 /// survives into an f-string as the bare `"0"`, never `"0.0"` — unlike Rust's
 /// `f64::max`, which always stays a float. `svg_utils.border_rect` hits this
 /// three times (`width`, `height`, `rx`); this is that exact interpolation,
-/// not `py_float_str` wrapped in a clamp.
+/// not `float_repr` wrapped in a clamp.
 fn py_max_zero(x: f64) -> String {
     if x < 0.0 {
         "0".to_string()
     } else {
-        py_float_str(x)
+        float_repr(x)
     }
 }
 
@@ -4054,7 +4193,6 @@ fn render_nested_board(
     root_card_padding: f64,
     payload: &BoardPayload,
     fonts: &FontBook,
-    chart_height_overrides: &HashMap<String, f64>,
     title_shift: crate::TitleShift,
 ) -> Result<RenderedItem, String> {
     let nested: BoardDoc = Deserialize::deserialize(nested_json)
@@ -4115,6 +4253,7 @@ fn render_nested_board(
             nested.style.title.min_height,
             "",
             &nested_variables_path(source_path),
+            &payload.overridden_variables,
             Some(&payload.variable_datasets),
             &nested.style.variables,
             fonts_dir,
@@ -4204,10 +4343,13 @@ fn render_nested_board(
         )?
     };
 
-    // `boards.py`'s own standalone-band gate: variable controls are inset
-    // by `card_pad` on the left (aligned with chart content); the right
-    // edge stays where it was.
-    let nested_variables_width = (content_width - card_pad).max(0.0);
+    // `boards.py`'s own standalone-band gate.
+    let (nested_band_width, nested_band_align) = crate::variables::standalone_variables_band(
+        &nested.title,
+        content_width,
+        card_pad,
+        &nested.style.variables,
+    );
     let (nested_variables_svg, nested_variables_height) = if !visible_variables.is_empty()
         && payload.variables_overrides_present
         && inline_header_svg.is_empty()
@@ -4226,10 +4368,11 @@ fn render_nested_board(
         )?;
         crate::variables::render_variables_strip_svg(
             &controls,
-            nested_variables_width,
+            nested_band_width,
             &nested.style.variables,
-            "start",
+            nested_band_align,
             &nested_variables_path(source_path),
+            &payload.overridden_variables,
             fonts_dir,
         )?
     } else {
@@ -4255,24 +4398,16 @@ fn render_nested_board(
 
     let authorings: Vec<ItemAuthoring> =
         nested.layout.items.iter().map(ItemDoc::authoring).collect();
-    let inputs = layout_inputs(&nested.layout.items, &authorings, chart_height_overrides);
+    let inputs = layout_inputs(&nested.layout, &authorings, &payload.variable_values)?;
     let nested_height_fn = |b: &Value, w: f64| {
         nested_board_total_height(b, w, card_gap, root_card_padding, payload, fonts)
     };
-    let contribution_fn = |b: &Value, w: f64, rh: f64| {
-        board_chart_target_contribution(b, w, rh, card_gap, root_card_padding, payload, fonts)
-    };
-    let overrides_ctx = BoardRenderCtx {
-        card_gap,
-        root_card_padding,
-        payload,
-        fonts,
-    };
-    let overrides_fn =
-        |b: &Value, w: f64, t: f64, rh: f64| board_alignment_overrides(b, w, t, rh, &overrides_ctx);
+    let takes_spare_fn =
+        |b: &Value, alone: bool| board_takes_spare_height(b, alone, payload);
     // `SizingCtx.card_padding` is the ROOT's own — see `nested_board_total_
     // height`'s identical note and `RenderChrome::root_card_padding`'s doc.
     let ctx = sizing::SizingCtx {
+        fill_height: true,
         gap: child_gap,
         card_gap,
         card_padding: root_card_padding,
@@ -4282,19 +4417,19 @@ fn render_nested_board(
         defaults: &payload.chart_defaults,
         board_style: &payload.board_style,
         chart_bg: &nested.style.background,
-        tabs_bar_height: nested.style.layout.tabs.bar_height,
+        tabs_pane: tabs_pane(&nested.layout, &nested.style, fonts)?,
         details_summary_height: nested.style.layout.details.summary_height,
         variable_values: &payload.variable_values,
         fonts_dir: payload.fonts_dir.clone(),
         fonts,
         nested_board_height: &nested_height_fn,
-        board_chart_target_contribution: &contribution_fn,
-        board_alignment_overrides: &overrides_fn,
+        board_takes_spare_height: &takes_spare_fn,
+        board_holds_only_content_sized_charts: &board_holds_only_content_sized_charts,
     };
     let (layout_content, actual_layout_height) = if nested.layout.items.is_empty() {
         (String::new(), 0.0)
     } else {
-        let (boxes, own_overrides, own_fresh_render) = boxes_for_layout(
+        let (boxes, own_fresh_render) = boxes_for_layout(
             &nested.layout,
             &inputs,
             content_width,
@@ -4331,7 +4466,6 @@ fn render_nested_board(
                 payload,
                 &chrome,
                 fonts,
-                &own_overrides,
                 &own_fresh_render,
             )?,
             "grid" => render_grid(
@@ -4342,7 +4476,6 @@ fn render_nested_board(
                 payload,
                 &chrome,
                 fonts,
-                &own_overrides,
                 &own_fresh_render,
             )?,
             "tabs" => render_tabs_layout(
@@ -4380,6 +4513,7 @@ fn render_nested_board(
         inline_header_height,
         child_gap + card_gap,
         !nested.layout.items.is_empty(),
+        opens_with_text(&nested, &payload.variable_values)?,
         card_pad,
     );
     let x_offset = ep.left;
@@ -4525,10 +4659,10 @@ fn render_nested_board(
     let bg_rect = if !authored_bg.is_empty() {
         format!(
             r#"<rect x="0" y="0" width="{}" height="{}" fill="{}" rx="{}"/>"#,
-            py_float_str(board_width),
-            py_float_str(board_height),
+            float_repr(board_width),
+            float_repr(board_height),
             xml_escape_attr(authored_bg),
-            py_float_str(border_radius)
+            float_repr(border_radius)
         )
     } else {
         String::new()
@@ -4545,10 +4679,10 @@ fn render_nested_board(
 
     let svg = format!(
         "<svg width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">\n{board_group}\n</svg>",
-        py_float_str(total_svg_width),
-        py_float_str(total_svg_height),
-        py_float_str(total_svg_width),
-        py_float_str(total_svg_height)
+        float_repr(total_svg_width),
+        float_repr(total_svg_height),
+        float_repr(total_svg_width),
+        float_repr(total_svg_height)
     );
 
     Ok(RenderedItem {
@@ -4561,7 +4695,18 @@ fn render_nested_board(
 /// face-selection input `--embed-fonts` scans (see `painted_markup`'s own
 /// doc, below, for what it is and is not).
 pub fn render_board(payload: &BoardPayload, fonts: &FontBook) -> Result<(String, String), String> {
+    payload.placements.borrow_mut().clear();
     payload.board_style.scoped(|| render_board_in_scope(payload, fonts))
+}
+
+/// Which placement of its chart the next paint of `chart_id` is: 0 the first time, then 1, 2, ...
+/// A later placement mints its ids in a namespace of its own (`contract::scoped_id`).
+fn next_placement(payload: &BoardPayload, chart_id: &str) -> usize {
+    let mut placements = payload.placements.borrow_mut();
+    let seen = placements.entry(chart_id.to_string()).or_insert(0);
+    let placement = *seen;
+    *seen += 1;
+    placement
 }
 
 fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(String, String), String> {
@@ -4578,10 +4723,10 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         .card_gap
         .ok_or("board card_gap missing (nested board?)")?;
 
-    let (boxes, container, overrides, fresh_render) = size_board(payload, fonts)?;
+    let (boxes, container, fresh_render) = size_board(payload, fonts)?;
     // `layout_sizing.py::calculate_data_aware_layout`: the row title shifts are assigned
     // from the sized boxes, after the sizing renders (which carry none) and before the final one.
-    let sized_items = size_board_items_json(payload, fonts, &boxes, &overrides)?;
+    let sized_items = size_board_items_json(payload, fonts, &boxes)?;
     row_shifts::assign(&mut board, payload, fonts, &sized_items)?;
 
     // Layout bg rect and per-chart card bg both paint `style.background`
@@ -4624,7 +4769,6 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             payload,
             &chrome,
             fonts,
-            &overrides,
             &fresh_render,
         )?,
         "grid" => render_grid(
@@ -4635,7 +4779,6 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             payload,
             &chrome,
             fonts,
-            &overrides,
             &fresh_render,
         )?,
         "tabs" => render_tabs_layout(
@@ -4699,6 +4842,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
             board.style.title.min_height,
             &title::authored_attrs("title", "title"),
             "variables",
+            &payload.overridden_variables,
             Some(&payload.variable_datasets),
             &board.style.variables,
             fonts_dir,
@@ -4784,11 +4928,14 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         )?
     };
 
-    // Variable controls are inset by card_padding on the left (aligned with
-    // chart content); reduce width by the same amount so the right edge is
-    // unchanged. `boards.py`'s own gate: visible variables, a truthy raw
-    // request-level `variables` dict, and no inline band already claiming them.
-    let variables_width = (layout_content_width - card_padding).max(0.0);
+    // `boards.py`'s own gate: visible variables, a truthy raw request-level
+    // `variables` dict, and no inline band already claiming them.
+    let (band_width, band_align) = crate::variables::standalone_variables_band(
+        &board.title,
+        layout_content_width,
+        card_padding,
+        &board.style.variables,
+    );
     let (variables_svg, variables_height) = if !visible_variables.is_empty()
         && payload.variables_overrides_present
         && inline_header_svg.is_empty()
@@ -4807,10 +4954,11 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         )?;
         crate::variables::render_variables_strip_svg(
             &controls,
-            variables_width,
+            band_width,
             &board.style.variables,
-            "start",
+            band_align,
             "variables",
+            &payload.overridden_variables,
             fonts_dir,
         )?
     } else {
@@ -4824,6 +4972,7 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
         inline_header_height,
         effective_gap,
         !board.layout.items.is_empty(),
+        opens_with_text(&board, &payload.variable_values)?,
         card_padding,
     );
 
@@ -4961,8 +5110,8 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
     let bg_rect = match &payload.background {
         Some(fill) => format!(
             r#"<rect x="0" y="0" width="{}" height="{}" fill="{}"/>"#,
-            py_float_str(total_width),
-            py_float_str(total_height),
+            float_repr(total_width),
+            float_repr(total_height),
             xml_escape_attr(fill)
         ),
         None => String::new(),
@@ -5099,8 +5248,8 @@ fn render_board_in_scope(payload: &BoardPayload, fonts: &FontBook) -> Result<(St
 {timestamp_element}
 {footer_element}
 </svg>"#,
-        vb_w = py_float_str(total_width),
-        vb_h = py_float_str(total_height),
+        vb_w = float_repr(total_width),
+        vb_h = float_repr(total_height),
         w = num_full(total_width),
         h = num_full(total_height),
         rendered_at = xml_escape_attr(&payload.render_time_iso),
@@ -5224,7 +5373,7 @@ mod tests {
         let callout_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" class="dbt-chart-callout" width="320.0" height="66.4" viewBox="0 0 320.0 66.4"><rect fill="#e6f4ea"/></svg>"##;
         let padding = Padding { left: 16.0, right: 16.0, top: 16.0, bottom: 16.0 };
         let (boundary, _height) =
-            wrap_chart_svg(&chart_json, "callout", callout_svg, 320.0, &padding, &no_card(), None)
+            wrap_chart_svg(&chart_json, "callout", callout_svg, 320.0, &padding, &no_card(), None, None)
                 .unwrap();
         assert!(!boundary.contains("<svg"), "root svg should be stripped: {boundary}");
         assert!(boundary.contains(r##"fill="#e6f4ea""##), "inner content must survive: {boundary}");
@@ -5239,13 +5388,13 @@ mod tests {
         let padding = Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
         let table = json!({"id": "t", "canvas": "#ffffff", "style": {"table": no_border()}});
         let (wrapped, _) =
-            wrap_chart_svg(&table, "table", table_svg, 200.0, &padding, &no_card(), None).unwrap();
+            wrap_chart_svg(&table, "table", table_svg, 200.0, &padding, &no_card(), None, None).unwrap();
         assert!(wrapped.contains(r#"data-chart-id="t" data-chart-type="table" data-chart-title="#));
         assert!(wrapped.contains(r##"data-dbt-chart-canvas="#ffffff""##));
 
         let callout = json!({"id": "c", "canvas": "#ffffff"});
         let (wrapped, _) =
-            wrap_chart_svg(&callout, "callout", table_svg, 200.0, &padding, &no_card(), None).unwrap();
+            wrap_chart_svg(&callout, "callout", table_svg, 200.0, &padding, &no_card(), None, None).unwrap();
         assert!(wrapped.contains(r#"data-chart-type="callout""#));
         assert!(!wrapped.contains("data-dbt-chart-canvas"));
     }
@@ -5285,7 +5434,7 @@ mod tests {
     }
 
     fn wrap_card(chart: &serde_json::Value, chart_type: &str, card: &CardChrome) -> String {
-        wrap_chart_svg(chart, chart_type, CARD_SVG, 200.0, &ZERO_PADDING, card, None).unwrap().0
+        wrap_chart_svg(chart, chart_type, CARD_SVG, 200.0, &ZERO_PADDING, card, None, None).unwrap().0
     }
 
     #[test]
@@ -5378,7 +5527,7 @@ mod tests {
     #[test]
     fn a_kpi_without_its_resolved_border_is_refused_by_name() {
         let kpi = json!({"id": "k"});
-        let err = wrap_chart_svg(&kpi, "kpi", CARD_SVG, 200.0, &ZERO_PADDING, &no_card(), None)
+        let err = wrap_chart_svg(&kpi, "kpi", CARD_SVG, 200.0, &ZERO_PADDING, &no_card(), None, None)
             .unwrap_err();
         assert!(err.contains("chart \"k\"") && err.contains("style.kpi.border"), "{err}");
     }
@@ -5408,7 +5557,7 @@ mod tests {
         let hostile =
             json!({"dx": 0.0, "dy": 2.0, "blur": 8.0, "color": "red; background:url(//x)"});
         let card = card(square_border(), hostile);
-        let err = wrap_chart_svg(&bar(), "bar", CARD_SVG, 200.0, &ZERO_PADDING, &card, None)
+        let err = wrap_chart_svg(&bar(), "bar", CARD_SVG, 200.0, &ZERO_PADDING, &card, None, None)
             .unwrap_err();
         assert!(err.contains("ERR-CSS-COLOR-INVALID-AT-RENDER"), "{err}");
     }
@@ -5423,7 +5572,7 @@ mod tests {
         let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="90" viewBox="0 0 200 90"><text>t</text></svg>"#;
         let padding = Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
         let wrap = |chart: serde_json::Value, chart_type: &str| {
-            wrap_chart_svg(&chart, chart_type, svg, 200.0, &padding, &no_card(), None).unwrap().0
+            wrap_chart_svg(&chart, chart_type, svg, 200.0, &padding, &no_card(), None, None).unwrap().0
         };
         let subtitled = wrap(
             json!({"id": "t", "canvas": "#fff", "subtitle": "A & \"b\"",
@@ -5555,7 +5704,13 @@ mod error_card_tests {
             "bold_font_weight": "600",
             "title": {"font": font("#900", 14.0), "y_offset": 0.0},
             "message": {"font": font("#333", 12.0), "y_offset": 0.0},
+            "stripe_color": "#e0e0e0",
+            "code_family": "monospace",
         })
+    }
+
+    fn title_font() -> Value {
+        serde_json::json!({"family": "Inter", "color": "#111111", "size": 16.0, "weight": "600"})
     }
 
     fn card_svg(card: &ErrorCard, width: f64, height: f64) -> String {
@@ -5565,100 +5720,78 @@ mod error_card_tests {
             height,
             card,
             &style(),
+            &title_font(),
             Some(&dir),
             &FontBook::empty(),
         )
         .unwrap()
     }
 
-    fn refusal<'a>(title: Option<&'a str>, message: &'a str) -> ErrorCard<'a> {
+    fn refusal(message: &str) -> ErrorCard<'_> {
         ErrorCard {
             chart_id: "c",
-            title,
+            chart_title: None,
+            chart_title_baseline: 0.0,
+            tile_top: 0.0,
+            content_left: 16.0,
             code: "ERR-ENGINE-REFUSED",
             message,
             hint: None,
-            doc_url: None,
         }
     }
 
     #[test]
-    fn card_paints_code_badge_title_and_message_in_a_bordered_box() {
-        let svg = card_svg(&refusal(Some("Revenue trend"), "bar: not supported"), 300.0, 80.0);
+    fn card_paints_code_headline_message_and_the_code_link() {
+        let svg = card_svg(&refusal("bar: not supported"), 300.0, 120.0);
         assert!(svg.starts_with("<svg"));
         assert!(svg.contains("dbt-chart-callout"));
-        assert!(svg.contains("Revenue trend"));
         assert!(svg.contains("bar: not supported"));
-        assert!(svg.contains(r##"fill="#fee2e2""##));
-        assert!(svg.contains(r##"stroke="#c00000""##));
-        assert_eq!(
-            svg.matches("<text").count(),
-            3,
-            "code badge + title line + message line: {svg}"
-        );
-        // The code badge always resolves its own doc anchor via
-        // `build_doc_url`, independent of whether a registry backs it.
+        assert!(svg.contains("<pattern"));
+        // The link's anchor always resolves via `build_doc_url`.
         assert!(svg.contains(
             r#"href="https://docs.dbtcharts.com/reference/errors/#err-engine-refused""#
         ));
+        assert!(svg.find("ERR-ENGINE-REFUSED") < svg.find("bar: not supported"));
+        assert!(svg.find("bar: not supported") < svg.find("About this error"));
     }
 
+    /// The hint paints when present: a `chart_error`'s registered diagnostic
+    /// carries one, an unregistered render-time refusal does not.
     #[test]
-    fn card_omits_the_title_block_when_none() {
-        let svg = card_svg(&refusal(None, "chart type not implemented"), 300.0, 80.0);
-        assert_eq!(
-            svg.matches("<text").count(),
-            2,
-            "code badge + message line only: {svg}"
-        );
-    }
-
-    /// The hint block and the "See the docs" link only paint when their own
-    /// inputs are present — the shape a `chart_error`'s own registered
-    /// diagnostic carries that an unregistered render-time refusal does not.
-    #[test]
-    fn card_paints_hint_and_see_the_docs_link_when_both_present() {
+    fn card_paints_the_hint_when_present() {
         let svg = card_svg(
             &ErrorCard {
-                chart_id: "c",
-                title: Some("Warehouse rejected an unknown column or table reference"),
-                code: "ERR-BINDER-UNKNOWN-COLUMN",
-                message: "Warehouse could not resolve an unknown column or table (query: missing_table)",
                 hint: Some("Check the column name against your model's schema."),
-                doc_url: Some("https://docs.dbtcharts.com/reference/errors/#err-binder-unknown-column"),
+                ..refusal("Warehouse could not resolve an unknown column or table (query: missing_table)")
             },
             700.0,
-            80.0,
+            120.0,
         );
-        assert!(svg.contains(&*quick_xml::escape::escape("Check the column name against your model's schema.")));
-        assert!(svg.contains(r#"font-style="italic""#));
-        assert!(svg.contains("See the docs"));
-        assert!(svg.contains(
-            r#"href="https://docs.dbtcharts.com/reference/errors/#err-binder-unknown-column""#
-        ));
+        assert!(svg.contains(&*quick_xml::escape::escape("Check the column name")));
+        assert!(svg.contains("About this error"));
     }
 
     #[test]
     fn wrap_stamps_chart_identity_at_zero_ink_inset() {
-        let card = card_svg(&refusal(None, "refused"), 200.0, 100.0);
+        let card = card_svg(&refusal("refused"), 200.0, 200.0);
         let (wrapped, height) =
             wrap_error_card_svg("my_chart", "bar", "charts/x.yml", false, "", &[], &card, 200.0)
                 .unwrap();
-        assert_eq!(height, 100.0);
+        assert_eq!(height, 200.0);
         assert!(wrapped.starts_with(r#"<g class="dbt-chart dbt-chart-callout""#));
         assert!(wrapped.contains(r#"data-chart-id="my_chart" data-chart-type="bar""#));
         assert!(wrapped.contains(r#"data-chart-title="my_chart""#));
         // The error card is an `is_error_fallback` wrapper: same role and
         // roledescription, never a description (no subtitle is passed).
         assert!(wrapped.contains(
-            r#"data-chart-height="100.0" role="group" aria-roledescription="chart" aria-label="my_chart""#
+            r#"data-chart-height="200.0" role="group" aria-roledescription="chart" aria-label="my_chart""#
         ));
         assert!(!wrapped.contains("<desc>"));
         assert!(wrapped.contains(r#"data-authored-path="charts/x.yml""#));
         // Zero ink inset: the outer/inner selection boxes are identical, not
         // shrunk by any padding (production's `_ZERO_PADDING` on its own
         // `is_error_fallback` path).
-        assert!(wrapped.contains(r#"class="dbt-box-inner" x="0" y="0" width="200" height="100""#));
+        assert!(wrapped.contains(r#"class="dbt-box-inner" x="0" y="0" width="200" height="200""#));
     }
 }
 
@@ -5730,9 +5863,9 @@ mod nested_box_sidecar_tests {
                 "layout": {
                     "tabs": {
                         "bar_height": 40.0,
-                        "min_width": 96.0, "max_width": 240.0, "padding_x": 16.0,
+                        "min_width": 96.0, "max_width": 240.0, "rail_max_lines": 2, "padding_x": 16.0,
                         "border": {"width": 1.0, "color": "#8A8C8F", "radius": 6.0},
-                        "font": {"family": "Inter", "size": 14.0, "case": "title"},
+                        "font": {"family": "Inter", "size": 14.0, "case": "title", "line_height": 1.25},
                         "active_weight": "600", "inactive_weight": "400",
                         "title_baseline_offset": 5.0
                     },
@@ -5805,9 +5938,9 @@ mod nested_box_sidecar_tests {
         ]));
         let p = payload(resolved);
         let fonts = FontBook::empty();
-        let (boxes, _container, overrides, _fresh_render) =
+        let (boxes, _container, _fresh_render) =
             size_board(&p, &fonts).expect("board sizes");
-        let items = size_board_items_json(&p, &fonts, &boxes, &overrides).expect("sidecar builds");
+        let items = size_board_items_json(&p, &fonts, &boxes).expect("sidecar builds");
 
         assert!(
             items[0].get("nested").is_none(),
@@ -5920,31 +6053,158 @@ mod nested_box_sidecar_tests {
         p
     }
 
-    /// A rail-concat chart alone in a nested board's own `cols` row keeps its
-    /// own natural height beside a taller sibling: the nested row's alignment
-    /// (`layout_sizing.py:1705-1706`) rewrites what the parent row's
-    /// `_align_board_charts` wrote, so nothing is forced and nothing is
-    /// re-rendered (`ladder/nested/12-cols-rail-line`).
+    /// A percentage resolves against the container, and a root grid's container
+    /// is sized from these same boxes, so the shape refuses by name.
     #[test]
-    fn a_rail_chart_in_a_nested_boards_own_cols_row_keeps_its_own_natural() {
+    fn a_percentage_height_on_a_root_grid_item_refuses() {
+        for height in ["50%", "50% "] {
+            let items = serde_json::json!([{
+                "type": "chart",
+                "chart": minimal_kpi_chart("kpi"),
+                "col": 0,
+                "row": 0,
+                "layout_height": height,
+            }]);
+            let mut resolved = minimal_board_json(items);
+            resolved["layout"]["type"] = serde_json::json!("grid");
+            resolved["layout"]["columns"] = serde_json::json!(2);
+            let message = size_board(&payload(resolved), &FontBook::empty())
+                .err()
+                .expect("the shape refuses");
+            assert!(message.contains("percentage height"), "{message}");
+        }
+    }
+
+    /// A hidden item reaches no sizing pass, so its percentage has nothing to
+    /// resolve against and refuses nothing.
+    #[test]
+    fn a_percentage_height_on_a_hidden_root_grid_item_is_not_read() {
+        let mut hidden = hidden_kpi_item("hidden");
+        hidden["layout_height"] = serde_json::json!("50%");
+        let shown = serde_json::json!({
+            "type": "chart",
+            "chart": minimal_kpi_chart("shown"),
+            "col": 0,
+            "row": 0,
+        });
+        let mut resolved = minimal_board_json(serde_json::json!([shown, hidden]));
+        resolved["layout"]["type"] = serde_json::json!("grid");
+        resolved["layout"]["columns"] = serde_json::json!(2);
+        assert!(size_board(&payload(resolved), &FontBook::empty()).is_ok());
+    }
+
+    fn hidden_kpi_item(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "chart",
+            "chart": minimal_kpi_chart(id),
+            "visible": false,
+        })
+    }
+
+    /// A hidden item takes no space: its sibling has the whole row and the
+    /// hidden item keeps its unsized box.
+    #[test]
+    fn a_hidden_item_takes_no_space() {
+        let items = serde_json::json!([
+            {"type": "chart", "chart": minimal_kpi_chart("shown")},
+            hidden_kpi_item("hidden"),
+        ]);
+        let mut resolved = minimal_board_json(items);
+        resolved["layout"]["type"] = serde_json::json!("cols");
+        let content_width = resolved["layout"]["content_width"].as_f64().unwrap();
+        let (boxes, _, _) = size_board(&payload(resolved), &FontBook::empty()).unwrap();
+        assert_eq!(boxes[0].width, content_width);
+        assert_eq!(boxes[1].width, 0.0);
+    }
+
+    /// A chart beside only a hidden item sits alone, so it fills its cell.
+    #[test]
+    fn a_hidden_sibling_leaves_the_chart_alone_in_a_nested_rows_board() {
+        let mut nested = minimal_board_json(serde_json::json!([
+            {"type": "chart", "chart": minimal_kpi_chart("shown")},
+            hidden_kpi_item("hidden"),
+        ]));
+        nested["layout"]["type"] = serde_json::json!("rows");
+        let root = payload(minimal_board_json(serde_json::json!([])));
+        let boxes =
+            nested_board_item_boxes(&nested, 400.0, 600.0, 0.0, 0.0, &root, &FontBook::empty())
+                .unwrap();
+        assert_eq!(boxes[0]["height"], 600.0);
+        assert_eq!(boxes[1]["height"], 0.0);
+    }
+
+    /// A hidden board is never sized, at any depth.
+    #[test]
+    fn a_hidden_board_keeps_its_subtree_unsized() {
+        let mut inner = minimal_board_json(serde_json::json!([{
+            "type": "chart",
+            "chart": minimal_kpi_chart("inner"),
+            "col": 0,
+            "row": 0,
+        }]));
+        inner["layout"]["type"] = serde_json::json!("grid");
+        inner["layout"]["columns"] = serde_json::json!(1);
+        let items = serde_json::json!([
+            {"type": "chart", "chart": minimal_kpi_chart("shown")},
+            {"type": "board", "board": inner, "visible": false},
+        ]);
+        let p = payload(minimal_board_json(items));
+        let fonts = FontBook::empty();
+        let (boxes, _, _) = size_board(&p, &fonts).unwrap();
+        let json = size_board_items_json(&p, &fonts, &boxes).unwrap();
+        assert_eq!(json[1]["nested"][0]["height"], 0.0);
+    }
+
+    /// With everything hidden the layout has nothing to size.
+    #[test]
+    fn a_layout_with_every_item_hidden_sizes_to_nothing() {
+        for (kind, columns) in [("rows", 1), ("cols", 1), ("grid", 2)] {
+            let items = serde_json::json!([hidden_kpi_item("a"), hidden_kpi_item("b")]);
+            let mut resolved = minimal_board_json(items);
+            resolved["layout"]["type"] = serde_json::json!(kind);
+            resolved["layout"]["columns"] = serde_json::json!(columns);
+            let (boxes, _, _) = size_board(&payload(resolved), &FontBook::empty()).unwrap();
+            assert_eq!(boxes.len(), 2, "{kind}");
+            assert_eq!(boxes[1].height, 0.0, "{kind}");
+        }
+    }
+
+    /// A failed table still counts as content-sized, directly or inside a board.
+    #[test]
+    fn a_board_holding_only_a_failed_table_is_content_sized() {
+        let failed = serde_json::json!({
+            "type": "chart",
+            "chart_error": {"identity": {"id": "broken", "chart_type": "table"}},
+        });
+        let nested = minimal_board_json(serde_json::json!([failed]));
+        assert!(board_holds_only_content_sized_charts(&nested).unwrap());
+    }
+
+    /// A rail-concat chart alone in a nested board's own `cols` row fills the
+    /// cell its parent row gave it: `SizingCtx.fill_height` makes the row that
+    /// tall, and the slot render at that height is the chart's only render, so
+    /// the probe-wrap disagreement does not regrow past it
+    /// (`ladder/nested/12-cols-rail-line`).
+    #[test]
+    fn a_rail_chart_in_a_nested_boards_own_cols_row_fills_the_row() {
         let fonts = real_fonts();
         let slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         let p = slope_in_nested_board_beside_tall_sibling(slope, "cols");
         let (svg, _painted) = render_board(&p, &fonts).expect("board renders");
 
         let slope_h = chart_height_attr(&svg, "slope");
+        let sibling_h = chart_height_attr(&svg, "tall_sibling");
         assert!(
-            (slope_h - 295.666_666).abs() < 1e-3,
-            "slope keeps its own natural, not the row's aligned height: {slope_h}: {svg}"
+            (slope_h - sibling_h).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
+            "slope fills the row its sibling sets: slope={slope_h} sibling={sibling_h}: {svg}"
         );
     }
 
-    /// A rail-concat chart alone in a nested `rows` board is forced to the
-    /// parent row's height and then re-rendered there, so the probe-wrap
-    /// disagreement regrows past the aligned height
-    /// (`ladder/nested/14-rows-rail-line`).
+    /// A rail-concat chart alone in a nested `rows` board fills its cell, and the
+    /// slot render at that height is its only render, so the probe-wrap
+    /// disagreement does not regrow past it (`ladder/nested/14-rows-rail-line`).
     #[test]
-    fn a_rail_chart_realigned_inside_a_nested_rows_board_regrows_the_disagreement() {
+    fn a_rail_chart_alone_in_a_nested_rows_board_fills_the_row() {
         let fonts = real_fonts();
         let slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         let p = slope_in_nested_board_beside_tall_sibling(slope, "rows");
@@ -5953,17 +6213,16 @@ mod nested_box_sidecar_tests {
         let slope_h = chart_height_attr(&svg, "slope");
         let sibling_h = chart_height_attr(&svg, "tall_sibling");
         assert!(
-            slope_h - sibling_h >= 12.0,
-            "slope grows past the aligned height by the probe-wrap residual: \
+            (slope_h - sibling_h).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
+            "slope paints at the row height its sibling sets: \
              slope={slope_h} sibling={sibling_h}: {svg}"
         );
     }
 
-    /// A rail-concat chart alone in a nested `grid` board that a parent cols row
-    /// forces is re-rendered there like one in a nested `rows` board, so the
-    /// probe-wrap disagreement regrows past the aligned height.
+    /// A rail-concat chart alone in a nested `grid` board fills its cell the way
+    /// one in a nested `rows` board does.
     #[test]
-    fn a_rail_chart_realigned_inside_a_nested_grid_board_regrows_the_disagreement() {
+    fn a_rail_chart_alone_in_a_nested_grid_board_fills_the_row() {
         let fonts = real_fonts();
         let mut slope: serde_json::Value = serde_json::from_str(SLOPE_RESOLVED_JSON).unwrap();
         slope["legend"]["visible"] = serde_json::json!(true);
@@ -5975,8 +6234,8 @@ mod nested_box_sidecar_tests {
         let slope_h = chart_height_attr(&svg, "slope");
         let sibling_h = chart_height_attr(&svg, "tall_sibling");
         assert!(
-            slope_h - sibling_h >= 12.0,
-            "slope grows past the aligned height by the probe-wrap residual: \
+            (slope_h - sibling_h).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
+            "slope paints at the row height its sibling sets: \
              slope={slope_h} sibling={sibling_h}: {svg}"
         );
     }
@@ -5995,17 +6254,10 @@ mod nested_box_sidecar_tests {
             .expect("a right-axis chart is Shape::Fit, not RailConcat");
     }
 
-    /// `layout_sizing.py::_align_grid_rows` (called from `_align_all_
-    /// cols_in_tree`'s "grid" arm) delegates to `_align_cols_heights` for
-    /// any `(row, height)` group sharing more than one item, the SAME
-    /// fresh-render law the cols-row test above pins — `calculate_grid_
-    /// boxes`'s own `row_groups` loop marks a direct chart in such a
-    /// group the same way `calculate_cols_boxes` does. Two grid items
-    /// sharing `row: 0`, `col: 0`/`1`: `slope` (disagreeing wraps) beside
-    /// a taller sibling — the exact cols-row shape above, reproduced on
-    /// a `grid` layout instead.
+    /// A rail-concat chart beside a taller sibling in a grid row paints at the row
+    /// height, like the cols-row case above: its slot render is its only render.
     #[test]
-    fn a_rail_chart_realigned_in_a_grid_row_group_also_regrows_the_disagreement() {
+    fn a_rail_chart_in_a_grid_row_paints_at_the_row_height() {
         let fonts = real_fonts();
         let mut items = serde_json::json!([
             {
@@ -6039,77 +6291,19 @@ mod nested_box_sidecar_tests {
         let slope_h = chart_height_attr(&svg, "slope");
         let sibling_h = chart_height_attr(&svg, "tall_sibling");
         assert!(
-            slope_h - sibling_h >= 12.0,
-            "slope grows past the grid row's own group height by the \
-             probe-wrap residual: slope={slope_h} sibling={sibling_h}: {svg}"
+            (slope_h - sibling_h).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
+            "slope paints at the row height its sibling sets: \
+             slope={slope_h} sibling={sibling_h}: {svg}"
         );
     }
 
-    /// The id-collision shape. `overrides` (nested-board sizing
-    /// overrides, `board_alignment_overrides`) and `fresh_render` (the
-    /// cols-row fresh-render set) are SEPARATE structures precisely so a
-    /// chart id shared between a DIRECT cols-row item and a chart nested
-    /// inside a SIBLING board item never cross-contaminates: the nested
-    /// board's own internal alignment write for `collide` must not flip
-    /// the DIRECT `collide` item's `measuring` to `true` when its own
-    /// row alignment never needed it. Root cols row: a direct chart
-    /// `collide` (tall enough to BE the row's own chart_target, so its
-    /// own alignment is a no-op) beside a nested board whose own sole
-    /// chart is ALSO named `collide` — production's own real shape
-    /// (`docs/laws-line-area.md`'s own citation: "the corpus places one
-    /// chart in several slots"). A single shared `HashMap<String, f64>`
-    /// for both concepts would report `collide` as needing a fresh
-    /// render purely because the nested board wrote an (unrelated)
-    /// override for it.
+    /// A rail-concat chart aligned past its own natural in a cols row paints at
+    /// the row height: `_fix_slot_heights_in_tree` already rendered it at its
+    /// slot, so `_align_cols_heights` has nothing left to re-render and the
+    /// probe-wrap law never fires on it. `calculate_cols_boxes`' `fresh_render`
+    /// reads that slot natural, not the probe's.
     #[test]
-    fn a_direct_chart_sharing_an_id_with_a_nested_boards_own_chart_does_not_collide() {
-        let fonts = real_fonts();
-        let mut collide_outer = tall_sibling_resolved();
-        collide_outer["id"] = serde_json::json!("collide");
-        let mut collide_inner = collide_outer.clone();
-        collide_inner["min_height"] = serde_json::Value::Null;
-
-        let mut nested_board = minimal_board_json(serde_json::json!([
-            {"type": "chart", "chart": collide_inner},
-        ]));
-        nested_board["layout"]["type"] = serde_json::json!("rows");
-        let items = serde_json::json!([
-            {"type": "chart", "chart": collide_outer, "user_width": "392"},
-            {"type": "board", "board": nested_board, "user_width": "392"},
-        ]);
-        let resolved = minimal_board_json(items);
-        let mut p = payload(resolved);
-        p.chart_datasets =
-            HashMap::from([chart_dataset("collide", "pairs", SLOPE_ROWS_JSON)]);
-
-        let (_boxes, _container, overrides, fresh_render) =
-            size_board(&p, &fonts).expect("board sizes");
-        assert!(
-            overrides.contains_key("collide"),
-            "the nested board's own alignment writes an override for its \
-             own `collide` chart: {overrides:?}"
-        );
-        assert!(
-            !fresh_render.contains("collide"),
-            "the DIRECT `collide` item is already its row's own chart_\
-             target, so it needs no fresh render — a nested board's \
-             unrelated override for the SAME id must not flip it: \
-             fresh_render={fresh_render:?}"
-        );
-    }
-
-    /// The second `Payload::measuring` site (`sizing::calculate_cols_
-    /// boxes`'s own `fresh_render` set) is the thing that makes
-    /// production's own `_align_cols_heights` fresh re-render reproduce
-    /// the rail-concat probe-wrap law on a cols-row chart force-
-    /// realigned away from its own natural. `slope` sits beside a much
-    /// taller sibling here, so its own row height is NOT its own
-    /// 295.667 natural — this pins that the composer paints it a WHOLE
-    /// extra subtitle line (`fontSize(12) + 2` = 14.0) past the row
-    /// height, not the row height verbatim. Mutation-pinned: hardcoding
-    /// `render_chart_item`'s `measuring` to `false` drops the assertion.
-    #[test]
-    fn a_rail_chart_realigned_past_its_own_natural_in_a_cols_row_regrows_the_disagreement() {
+    fn a_rail_chart_aligned_past_its_own_natural_in_a_cols_row_paints_at_the_row_height() {
         let fonts = real_fonts();
         // `slope`'s own wrap disagreement is exact at `payload.width ==
         // 376` AND the ORIGINAL corpus board's own 16px card padding
@@ -6145,20 +6339,9 @@ mod nested_box_sidecar_tests {
 
         let slope_h = chart_height_attr(&svg, "slope");
         let sibling_h = chart_height_attr(&svg, "tall_sibling");
-        // The row aligns both charts to the SAME target height first
-        // (`calculate_cols_boxes`'s own `item_heights`) — `tall_sibling`
-        // paints exactly there (`measuring: false`, no residual of its
-        // own). `slope` is realigned past its own 295.667 natural, so it
-        // gets a fresh, `measuring: true` render at that SAME target —
-        // exactly like production's own `_align_cols_heights` — and its
-        // probe/final title wraps still disagree at this pane width, so
-        // it grows past the row target by the residual
-        // (`fontSize(12) + 2` = 14.0), landing ABOVE `sibling_h`, not
-        // level with it.
         assert!(
-            slope_h - sibling_h >= 12.0,
-            "slope grows past the row height by the probe-wrap residual \
-             (fontSize(12) + 2 = 14.0, modulo ceil rounding): \
+            (slope_h - sibling_h).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
+            "slope paints at the row height its sibling sets: \
              slope={slope_h} sibling={sibling_h}: {svg}"
         );
     }

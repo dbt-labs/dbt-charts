@@ -3,7 +3,7 @@
 Stage: COMPILE
 Purpose: Define Pydantic models for source configurations.
 
-Sources represent "where data comes from" - databases, CSV files, HTTP APIs, etc.
+Sources represent "where data comes from" - databases, CSV files, etc.
 Field names match dbt's profiles.yml exactly where applicable.
 
 Design Principles:
@@ -58,6 +58,7 @@ from typing import (
 from pydantic import (
     AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -208,7 +209,7 @@ def infer_bq_method(
 class BaseSourceConfig(BaseModel):
     """Closed-contract root for all source configurations.
 
-    extra="forbid" — file/HTTP/dbt_profile source configs have defined dbt charts
+    extra="forbid" — file/dbt_profile source configs have defined dbt charts
     contracts; unknown fields are validation errors, not silent pass-throughs.
     Database source configs inherit the same closed contract through
     DatabaseSourceConfig.
@@ -260,7 +261,7 @@ class AttributedSourceConfig(BaseModel):
     Scoped to the dbt-credential-backed warehouse types plus the two dbt-profile
     shapes — the only ones whose queries pass through ``build_adapter`` and so can
     carry labels. Deliberately NOT on the closed-contract root: DuckDB and SQLite
-    execute in-process, and file/HTTP sources are materialized, so a source config
+    execute in-process, and file sources are materialized, so a source config
     that accepted ``attribution:`` there would validate cleanly and then never emit
     it. Same narrowing rationale as ``max_query_duration_seconds`` below.
     """
@@ -292,20 +293,56 @@ class AttributedSourceConfig(BaseModel):
         return value
 
 
+class MetricFlowConfig(BaseModel):
+    """A source's MetricFlow bundle: where it is, and whether a query may bypass it."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str = Field(
+        description="Directory of MetricFlow semantic fragments, relative to the project root."
+    )
+    required: bool = Field(
+        default=False,
+        description="Compile every query through the bundle; one reading any other table fails.",
+    )
+
+
+def _metricflow_shorthand(
+    value: object,  # type-state: object_annotation — validator input: the raw YAML scalar or mapping, narrowed by isinstance below
+) -> object:  # type-state: object_annotation — same boundary as the parameter above
+    """`metricflow: semantics` is `metricflow: {path: semantics}`."""
+    return {"path": value} if isinstance(value, str) else value
+
+
+_METRICFLOW_SHORTHAND = BeforeValidator(
+    _metricflow_shorthand, json_schema_input_type=str | MetricFlowConfig
+)
+MetricFlowInput = Annotated[MetricFlowConfig, _METRICFLOW_SHORTHAND]
+_METRICFLOW = TypeAdapter(MetricFlowInput | None)
+
+
+def declared_metricflow(
+    source: Mapping[str, Any],  # type-state: explicit_any — a raw source entry
+) -> MetricFlowConfig | None:
+    """The bundle a raw source entry declares, in the typed config's one shape;
+    None when it declares none."""
+    return _METRICFLOW.validate_python(source.get("metricflow"))
+
+
 class SemanticSourceConfig(BaseModel):
     """A MetricFlow semantic bundle, for the source families that run SQL on a warehouse.
 
     Queries that read one of the bundle's datasets or constellations compile
-    through MetricFlow before they run. Not on the closed-contract root: file and
-    HTTP sources are materialized, so a bundle on them would validate and never
-    be read.
+    through MetricFlow before they run; a required bundle compiles every query.
+    Not on the closed-contract root: file sources are materialized, so a bundle
+    on them would validate and never be read.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    metricflow: str | None = Field(
+    metricflow: MetricFlowInput | None = Field(
         default=None,
-        description="Directory of MetricFlow semantic fragments, relative to the project root.",
+        description="MetricFlow semantic bundle: its directory, or `path:` with `required:`.",
     )
 
 
@@ -1685,22 +1722,6 @@ class JsonSourceConfig(BaseSourceConfig):
 
 
 # ============================================================================
-# HTTP/API SOURCE CONFIG
-# ============================================================================
-
-
-class HttpSourceConfig(BaseSourceConfig):
-    """HTTP/REST API source configuration."""
-
-    source_category: ClassVar[str] = "api"
-    type: Literal["http"] = Field(description="Source type identifier.")
-    url: str = Field(description="Base URL for HTTP requests.")
-    headers: dict[str, str] | None = Field(
-        default=None, description="Default HTTP headers (e.g. Authorization)."
-    )
-
-
-# ============================================================================
 # DBT PROFILE SOURCE CONFIG
 # ============================================================================
 
@@ -1914,7 +1935,6 @@ SourceConfig = (
     | CsvSourceConfig
     | ParquetSourceConfig
     | JsonSourceConfig
-    | HttpSourceConfig
     | DbtProfileSourceConfig
     | LakeComputeTokenSource
     | LakeComputeApiKeySource
@@ -1970,23 +1990,30 @@ FILE_SOURCE_TYPES: frozenset[str] = frozenset(
 # ============================================================================
 
 
-_RETIRED_LAKECOMPUTE_TYPES = frozenset({"alt", "lake_compute"})
+_RETIRED_SOURCE_TYPES = {
+    "alt": "'alt' is not a source type; dbt v2 spells lake compute 'lakecompute'.",
+    "lake_compute": (
+        "'lake_compute' is not a source type; dbt v2 spells lake compute 'lakecompute'."
+    ),
+    "http": (
+        "`type: http` sources were removed. Load the data into your warehouse "
+        "(for example with a connector) and query it with SQL, or use a "
+        "committed CSV, JSON or Parquet file source."
+    ),
+}
 
 
-def reject_retired_lakecompute_type(source_type: str) -> None:
-    """Refuse dbt v2's retired spellings, which it rejects rather than aliases.
+def reject_retired_source_type(source_type: str) -> None:
+    """Refuse a source type that no longer exists, saying what replaces it.
 
     Checked before dispatch because a validator on the `type` Literal would
     never run: the lookup by type fails first.
 
     Raises:
-        ValueError: *source_type* is `alt` or `lake_compute`.
+        ValueError: *source_type* is a retired spelling or type.
     """
-    if source_type in _RETIRED_LAKECOMPUTE_TYPES:
-        raise ValueError(
-            f"'{source_type}' is not a source type; dbt v2 spells lake compute "
-            "'lakecompute'."
-        )
+    if source_type in _RETIRED_SOURCE_TYPES:
+        raise ValueError(_RETIRED_SOURCE_TYPES[source_type])
 
 
 def parse_source_config(
@@ -2033,7 +2060,7 @@ def parse_source_config(
         raise ValueError(
             f"Source configuration 'type' must be a string; got {source_type!r}."
         )
-    reject_retired_lakecompute_type(source_type)
+    reject_retired_source_type(source_type)
     if source_type not in _SOURCE_ADAPTERS:
         raise ValueError(
             f"Unknown source type: '{source_type}'. "
@@ -2051,11 +2078,6 @@ def is_database_source(config: ResolvedSourceConfig) -> bool:
 def is_file_source(config: ResolvedSourceConfig) -> bool:
     """True if config is a file-based source (source_category == 'file')."""
     return type(config).source_category == "file"
-
-
-def is_api_source(config: ResolvedSourceConfig) -> bool:
-    """True if config is an HTTP/API source (source_category == 'api')."""
-    return type(config).source_category == "api"
 
 
 def source_cache_layer(

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A query reference used as a CTE body or given a second alias now reports the exact edit, and a nested board's error names the bad key.
+time: 2026-10-30T07:08:35.138953-07:00

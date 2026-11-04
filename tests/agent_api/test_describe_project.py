@@ -178,7 +178,9 @@ board:
 
 # Events
 
-{{ chart ev }}
+```charts
+ev
+```
 """
 
 _CALLOUT = """\

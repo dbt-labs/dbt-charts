@@ -41,13 +41,15 @@
   display: flex;
 }
 
-{# A table's header menu: the sort rows, then a searchable value checklist. #}
+{# A table's header menu: the sort rows, then folding filter sections (a date #}
+{# column's calendar, a searchable value checklist). #}
 .dbt-table-menu {
   flex-direction: column;
   padding: 4px 0;
   min-width: 200px;
   max-width: 320px;
   max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
 
 {# Sort rows are buttons, so they take focus and Enter/Space like any menu item. #}
@@ -66,13 +68,51 @@
   outline-offset: -2px;
 }
 
-.dbt-table-menu-filter {
+.dbt-table-menu-section {
   border-top: 1px solid var(--dbt-system-input-border, #ced4da);
   margin-top: 4px;
-  padding: 8px 0 0;
 }
 
-.dbt-table-menu-search {
+.dbt-table-menu-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.dbt-table-menu-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dbt-table-menu-section > summary::before {
+  content: '▸';
+  width: 10px;
+  color: var(--dbt-system-muted, #6c757d);
+}
+
+.dbt-table-menu-section[open] > summary::before {
+  content: '▾';
+}
+
+.dbt-table-menu-section > summary:focus-visible {
+  outline: 2px solid var(--dbt-system-accent, #667eea);
+  outline-offset: -2px;
+}
+
+.dbt-table-menu-filter {
+  padding: 0 0 4px;
+}
+
+.dbt-table-menu .dbt-calendar-area {
+  padding: 0 12px 10px;
+}
+
+.dbt-table-menu-search,
+.dbt-select-search {
   box-sizing: border-box;
   width: calc(100% - 20px);
   margin: 0 10px 4px;
@@ -83,6 +123,26 @@
   background: transparent;
   border: 1px solid var(--dbt-system-input-border, #ced4da);
   border-radius: 6px;
+}
+
+.dbt-table-menu-bulk {
+  display: flex;
+  gap: 12px;
+  margin: 2px 10px 4px;
+}
+
+.dbt-table-menu-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dbt-system-accent, #667eea);
+  cursor: pointer;
+}
+
+.dbt-table-menu-link:hover {
+  text-decoration: underline;
 }
 
 .dbt-table-menu-values {
@@ -99,11 +159,105 @@
 }
 
 .dbt-select-popover {
+  box-sizing: border-box;
   flex-direction: column;
+  min-width: 140px;
+}
+
+.dbt-select-list {
   padding: 4px 0;
   max-height: 280px;
   overflow-y: auto;
-  min-width: 140px;
+}
+
+.dbt-select-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin: 10px 10px 4px;
+}
+
+.dbt-select-bar .dbt-select-search {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+}
+
+{# Three bars, shortest last — drawn, not a glyph, so no font decides it. #}
+.dbt-select-sort {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--dbt-system-muted, #6c757d);
+  background:
+    linear-gradient(currentColor, currentColor) 8px 8px / 12px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) 8px 13px / 8px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) 8px 18px / 4px 2px no-repeat;
+}
+
+.dbt-select-sort:hover,
+.dbt-select-sort[aria-expanded="true"] {
+  background-color: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+.dbt-select-sort.dbt-select-sorted {
+  color: var(--dbt-system-accent, #667eea);
+}
+
+.dbt-select-sort-menu {
+  flex: none;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--dbt-system-input-border, #ced4da);
+}
+
+{# Block, not the inline-block a button is: sized to its content, the card
+   would otherwise lay the items side by side and take their combined width. #}
+.dbt-select-sort-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  color: var(--dbt-system-text, #333333);
+  cursor: pointer;
+}
+
+.dbt-select-sort-menu button:hover {
+  background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+.dbt-select-sort-menu button[aria-checked="true"] {
+  color: var(--dbt-system-accent, #667eea);
+  font-weight: 600;
+}
+
+{# The footer toggle: set off below the list, the way back to every row as #}
+{# plain as the way in. #}
+.dbt-select-only {
+  flex: none;
+  width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  border-top: 1px solid var(--dbt-system-input-border, #ced4da);
+  background: var(--dbt-popover-rail-bg, #fafafa);
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  color: var(--dbt-system-accent, #667eea);
+  cursor: pointer;
+}
+
+.dbt-select-only:hover {
+  text-decoration: underline;
 }
 
 .dbt-select-option {
@@ -116,6 +270,36 @@
 
 .dbt-select-option:hover {
   background: color-mix(in srgb, var(--dbt-system-muted, #6c757d) 12%, transparent);
+}
+
+{# A counted row: the label takes the width the count leaves, ending in an
+   ellipsis when that is not enough, and the count keeps its figures lined up
+   down the column. Flex, not a float: a menu sized to its content counts both
+   items, and a float beside a block it does not. #}
+.dbt-select-counted {
+  display: flex;
+}
+
+.dbt-select-counted[hidden] {
+  display: none;
+}
+
+.dbt-select-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dbt-select-count {
+  flex: none;
+  margin-left: 24px;
+  color: var(--dbt-system-muted, #6c757d);
+  font-variant-numeric: tabular-nums;
+}
+
+.dbt-select-option[aria-selected="true"] .dbt-select-count {
+  color: inherit;
 }
 
 {# The unset row is the way out, not a member: it reads as a different kind
@@ -438,6 +622,14 @@
     cursor: pointer;
 }
 
+{# An armed legend entry or direct label, and the clear control, show the pointer over
+   the text cursor `.dbt-chart text` gives the text itself. #}
+.dbt-chart text[data-dbt-armed],
+.dbt-chart [data-dbt-armed] text,
+.dbt-chart text[data-dbt-clear-var] {
+    cursor: pointer;
+}
+
 .dbt-chart text::selection {
     background: rgba(102, 126, 234, 0.25);
 }
@@ -478,10 +670,36 @@
     opacity: 1;
 }
 
+{# The reset item is drawn hidden for the same reason. Bound, it takes the
+   fields' border so it reads as a button before it is hovered; disabled, it
+   dims like a gated-off control. #}
+.dbt-interactive [data-dbt-reset] {
+    opacity: 1;
+    cursor: pointer;
+}
+
+.dbt-interactive [data-dbt-reset] rect {
+    stroke: var(--dbt-variable-field-border);
+    stroke-width: 1;
+}
+
+.dbt-interactive [data-dbt-reset][data-dbt-enabled="false"] {
+    opacity: 0.55;
+}
+
+.dbt-interactive [data-dbt-reset]:focus {
+    outline: none;
+}
+
+.dbt-interactive [data-dbt-reset]:not([data-dbt-enabled="false"]):is(:hover, :focus-visible) rect {
+    stroke: var(--dbt-system-accent, #667eea);
+}
+
 {# A gated-off control gets no handlers and no tab stop, so it must not offer a
    pointer either — the cursor would undercut the dimming and promise a click
    that does nothing. #}
-.dbt-interactive [data-dbt-variable][data-dbt-enabled="false"] {
+.dbt-interactive [data-dbt-variable][data-dbt-enabled="false"],
+.dbt-interactive [data-dbt-reset][data-dbt-enabled="false"] {
     cursor: not-allowed;
 }
 

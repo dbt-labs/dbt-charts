@@ -23,8 +23,10 @@ from dbt_charts.agent_api.files import (
     ReadFileArgs,
     WriteFileArgs,
 )
+from dbt_charts.agent_api.find_queries import FindQueriesArgs
 from dbt_charts.agent_api.query import ExecuteQueryArgs
 from dbt_charts.agent_api.search import SearchFilesArgs
+from dbt_charts.agent_api.semantics import DescribeSemanticsArgs
 from dbt_charts.agent_api.skills import GetSkillArgs, ListSkillsArgs
 
 
@@ -39,8 +41,8 @@ def _annotations(
     connector directory requires a title plus a read-only or destructive hint.
 
     ``execute_sql`` counts as read-only: its SQL runs under a read-only guard.
-    ``open_world`` marks tools that run a board's http sources, which can reach
-    arbitrary URLs (GET only under a read-only session).
+    ``open_world`` marks tools that run author SQL, which the local MCP session
+    lets DuckDB point at arbitrary URLs and files.
     """
     return {
         "title": title,
@@ -155,6 +157,7 @@ def _render_board_tool() -> dict[str, Any]:
 
 RENDER_BOARD = _render_board_tool()
 EXECUTE_SQL = _ai_tool("execute_sql", ExecuteQueryArgs, "Run query", open_world=True)
+FIND_QUERIES = _ai_tool("find_queries", FindQueriesArgs, "Find queries")
 SEARCH_FILES = _ai_tool("search_files", SearchFilesArgs, "Search files")
 
 LIST_DIAGNOSTIC_CODES = _ai_tool(
@@ -165,6 +168,9 @@ GET_DIAGNOSTIC_CODE = _ai_tool(
 )
 
 DESCRIBE_BOARD = _ai_tool("describe_board", DescribeBoardArgs, "Describe board")
+DESCRIBE_SEMANTICS = _ai_tool(
+    "describe_semantics", DescribeSemanticsArgs, "Describe semantics"
+)
 
 LIST_SKILLS = _ai_tool("list_skills", ListSkillsArgs, "List skills")
 
@@ -177,8 +183,10 @@ DELETE_FILE = _ai_tool("delete_file", DeleteFileArgs, "Delete file", **_WRITES)
 ALL_TOOLS: list[dict[str, Any]] = [
     RENDER_BOARD,
     EXECUTE_SQL,
+    FIND_QUERIES,
     SEARCH_FILES,
     DESCRIBE_BOARD,
+    DESCRIBE_SEMANTICS,
     LIST_SKILLS,
     GET_SKILL,
     LIST_DIAGNOSTIC_CODES,
@@ -247,4 +255,12 @@ SUGGEST_BOARD_PLACEMENT = _ai_tool(
     read_only=False,
 )
 
-AGENT_TOOLS: list[dict[str, Any]] = [*ALL_TOOLS, *FILE_TOOLS, APPLY_PATCH]
+# `describe_semantics` is left out: Cloud classifies every in-process agent tool by
+# what authorizes it, and a bundle's names are not gated on the caller's access
+# to the source's connection.
+# find_queries is MCP-only: the in-process agent's hosts keep a cache with no listing.
+AGENT_TOOLS: list[dict[str, Any]] = [
+    *(t for t in ALL_TOOLS if t not in (DESCRIBE_SEMANTICS, FIND_QUERIES)),
+    *FILE_TOOLS,
+    APPLY_PATCH,
+]

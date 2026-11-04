@@ -77,7 +77,8 @@ Reports use fewer charts than dashboards. Each must be referenced in the narrati
 
 ## Writing Content
 
-Use `text:` blocks in YAML for narrative text (Markdown).
+Use `text:` blocks in YAML for narrative text (Markdown). Never put one `text:` row
+right after another; continue the Markdown in the same block.
 
 **Opening each section:**
 - State the finding first
@@ -114,25 +115,26 @@ charts:
     y: revenue
 
 rows:
-  - text: |
-      ## Executive Summary
+  - title: Executive Summary
+    text: |
       Q3 revenue declined 12% quarter-over-quarter, driven primarily
       by the loss of three enterprise accounts in the West region.
       **Recommendation: Prioritize retention program for accounts >$100K ARR.**
 
-  - text: |
-      ## Revenue Trend
+  - title: Revenue Trend
+    text: |
       Monthly revenue peaked in June and has declined each month since.
   - trend
 
-  - text: |
-      ## Conclusions
+  - title: Conclusions
+    text: |
       1. Launch retention program for enterprise accounts by end of month
       2. Investigate West region account manager capacity
 ```
 
 Key differences from dashboard YAML:
 - Heavy `text:` blocks with narrative
+- A new section is a row with its own `title:`, not a `##` opening its `text:`; text that isn't a new section stays in the block above
 - Fewer charts (3-6), more text
 - No `variables:` — reports present a specific analysis
 - Top-level flow follows the narrative arc

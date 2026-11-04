@@ -2,7 +2,8 @@
 
 import math
 import re
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
+from copy import deepcopy
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
@@ -216,11 +217,11 @@ def is_year_shaped(samples: list[Any]) -> bool:
 
     Value-only heuristic (no column-name signal): an ``int`` in
     ``[1700, 2100]``, a ``str`` matching ``^\\d{4}$`` in that range, or an
-    integral ``Decimal`` (``v == v.to_integral_value()``) in range — warehouses
-    (BigQuery NUMERIC, Snowflake NUMBER) return year integers as ``Decimal``.
-    A non-integral ``Decimal`` (e.g. ``2024.5``) is not a year. ``bool`` and
-    ``float`` are excluded — bool is never a year, and float years don't occur
-    in practice. Empty input is not year-shaped. Shared by compile-time bar
+    integral ``Decimal`` or ``float`` (``2024.0``) in range — warehouses
+    return year integers as ``Decimal`` (BigQuery NUMERIC, Snowflake NUMBER) or
+    ``float`` (a DOUBLE column), and the render engine reads both as a year.
+    A non-integral number (e.g. ``2024.5``) is not a year, nor is ``bool``.
+    Empty input is not year-shaped. Shared by compile-time bar
     orientation/axis inference and render-time time-unit detection so both
     agree on what counts as a year.
     """
@@ -234,6 +235,9 @@ def is_year_shaped(samples: list[Any]) -> bool:
                 return False
         elif isinstance(v, Decimal):
             if v != v.to_integral_value() or not (_YEAR_MIN <= v <= _YEAR_MAX):
+                return False
+        elif isinstance(v, float):
+            if not (v.is_integer() and _YEAR_MIN <= v <= _YEAR_MAX):
                 return False
         elif isinstance(v, str) and _YEAR_STRING_PATTERN.match(v):
             if not (_YEAR_MIN <= int(v) <= _YEAR_MAX):
@@ -777,3 +781,28 @@ def layered_endpoint_rail_fires(
     legend-only).
     """
     return shape_ok and bool(layer_is_colorless) and all(layer_is_colorless)
+
+
+def deep_merge_dict(
+    base: Mapping[str, Any],  # type-state: explicit_any — untyped YAML
+    overlay: Mapping[str, Any],  # type-state: explicit_any — untyped YAML
+) -> dict[str, Any]:  # type-state: explicit_any — untyped YAML
+    """Recursively merge *overlay* onto *base*, returning a new dict.
+
+    The plain-dict counterpart to ``merge_patches``/``merge_onto_base`` — for
+    config sections and Vega-Lite config dicts, which have no BaseModel shape
+    to dispatch on. Rebuilds only the branches touched by the overlay; overlay
+    leaves are deep-copied so later mutation cannot bleed back into reusable
+    defaults.
+    """
+    result = dict(base)
+    for key, value in overlay.items():
+        if (
+            key in result
+            and isinstance(result[key], Mapping)
+            and isinstance(value, Mapping)
+        ):
+            result[key] = deep_merge_dict(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result

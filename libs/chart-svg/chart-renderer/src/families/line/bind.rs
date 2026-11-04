@@ -83,8 +83,121 @@ pub fn bind(payload: &Payload, draw_areas: bool) -> Result<Bound<'_>, Diagnostic
     if let Some(filled) = fill_calendar_buckets(&r, &prepared, draw_areas)? {
         prepared = Cow::Owned(filled);
     }
-    let x = x_axis(&r, &prepared, &overlays, draw_areas)?;
+    let mut x = x_axis(&r, &prepared, &overlays, draw_areas)?;
+    if let Some(order) = &r.connect {
+        let payload = prepared.to_mut();
+        order_rows(&r.id, order, &mut payload.rows)?;
+        x.domain = key_revisits(&r, &overlays, payload)?;
+    }
+    r.legend_view = crate::legend_view::LegendView::of(
+        &prepared,
+        &crate::legend_view::ViewFacts {
+            family: crate::legend_view::Family::Line,
+            color: r.color.as_deref(),
+            panel_fields: r.panel_axes.iter().map(|axis| axis.field.as_str()).collect(),
+            wide: !r.wide_measures.is_empty(),
+            normalized: r.stack.as_deref() == Some("normalize"),
+            layered: !overlays.is_empty() || r.support_table.is_some(),
+            continuous_color: r.numeric_color.is_some(),
+        },
+    )?;
+    // The value axis fits what a legend view draws; resolve baked its bounds and ladder off every row.
+    if let Some(narrowed) = r.legend_view.clone().and_then(|view| view.narrowed(&prepared, r.color.as_deref().expect("a legend view needs a color field"))) {
+        if narrowed.refits_axes() {
+            let shown: Vec<f64> = narrowed.payload.rows.iter().filter_map(|row| crate::common::row_num(row, &r.y)).collect();
+            if r.stack.is_some() {
+                crate::legend_view::unbake(&mut r.style.axis_y, true);
+            } else {
+                crate::legend_view::refit(&mut r.style.axis_y, &shown, true);
+            }
+        }
+        r.unviewed = r.legend_view.as_ref().map(|view| view.unviewed(payload));
+        r.whole_rows = Some(narrowed.whole);
+        prepared = Cow::Owned(narrowed.payload);
+    }
     Ok(Bound { payload: prepared, r, overlays, draw_areas, wide_series: wide.series, wide_labels: wide.labels, x })
+}
+
+/// A `connect:` cell: the order column holds all numbers, or all text (ISO dates sort as text).
+enum OrderKey {
+    Number(f64),
+    Text(String),
+}
+
+/// `connect: <column>` draws the path in that column's ascending order. The sort is stable, so
+/// rows that tie keep the order the query returned them in.
+fn order_rows(id: &str, order: &str, rows: &mut Vec<serde_json::Map<String, Value>>) -> Result<(), Diagnostic> {
+    let mut keyed = Vec::with_capacity(rows.len());
+    for (i, row) in rows.drain(..).enumerate() {
+        let key = match row.get(order) {
+            None | Some(Value::Null) => return Err(format!("line {id:?}: connect column {order:?} is empty in row {}", i + 1).into()),
+            Some(Value::String(s)) => OrderKey::Text(s.clone()),
+            Some(other) => match other.as_f64() {
+                Some(n) => OrderKey::Number(n),
+                None => return Err(format!("line {id:?}: connect column {order:?} holds {other} in row {}; it takes numbers or text", i + 1).into()),
+            },
+        };
+        keyed.push((key, row));
+    }
+    if keyed.windows(2).any(|w| matches!((&w[0].0, &w[1].0), (OrderKey::Number(_), OrderKey::Text(_)) | (OrderKey::Text(_), OrderKey::Number(_)))) {
+        return Err(format!("line {id:?}: connect column {order:?} mixes numbers and text").into());
+    }
+    keyed.sort_by(|(a, _), (b, _)| match (a, b) {
+        (OrderKey::Number(a), OrderKey::Number(b)) => a.total_cmp(b),
+        (OrderKey::Text(a), OrderKey::Text(b)) => a.cmp(b),
+        (OrderKey::Number(_), OrderKey::Text(_)) => std::cmp::Ordering::Less,
+        (OrderKey::Text(_), OrderKey::Number(_)) => std::cmp::Ordering::Greater,
+    });
+    rows.extend(keyed.into_iter().map(|(_, row)| row));
+    Ok(())
+}
+
+/// The marker a revisited x carries after its value: `3\u{1}1` is the second time a series is at
+/// x = 3. Only a numeric x is keyed (`key_revisits` checks), so no real value contains it. It never
+/// leaves layout; [`x_number`] reads the value back.
+const REVISIT: char = '\u{1}';
+
+/// The x value a key stands for, as the reader sees it.
+pub(super) fn x_text(key: &str) -> &str {
+    key.split(REVISIT).next().unwrap_or(key)
+}
+
+/// The number an x key stands for: its value, a revisit's marker dropped.
+pub(crate) fn x_number(key: &str) -> Option<f64> {
+    x_text(key).parse().ok()
+}
+
+/// `connect:` draws one mark per row, so a series that comes back to an x must not share a join
+/// key with its earlier visit. Each later visit's x is rewritten to `x`+marker+n in `payload`; the
+/// returned domain is the keys in row order.
+fn key_revisits(r: &LineResolved, overlays: &[OverlayLayer], payload: &mut Payload) -> Result<Vec<String>, Diagnostic> {
+    if r.multiples.is_some() || !overlays.is_empty() {
+        return Err(format!("line {:?}: connect does not combine with layers or multiples", r.id).into());
+    }
+    let mut visits: HashMap<(String, String), usize> = HashMap::new();
+    let mut domain = Vec::new();
+    let mut seen = HashSet::new();
+    for (i, row) in payload.rows.iter_mut().enumerate() {
+        let x = match row.get(&r.x) {
+            None | Some(Value::Null) => return Err(format!("line {:?}: connect needs an x on every row; row {} has none", r.id, i + 1).into()),
+            Some(v) => crate::common::cell_str(Some(v)),
+        };
+        if x.parse::<f64>().is_err() {
+            return Err(format!("line {:?}: connect needs a quantitative x, but row {} has {x:?}", r.id, i + 1).into());
+        }
+        let series = r.color.as_deref().map(|c| row_str(row, c)).unwrap_or_default();
+        let visit = visits.entry((x.clone(), series)).or_default();
+        let key = if *visit == 0 { x } else { format!("{x}{REVISIT}{visit}") };
+        *visit += 1;
+        if seen.insert(key.clone()) {
+            domain.push(key.clone());
+        }
+        // Links and labels read the cell as the query wrote it, not the join key.
+        if let Some(raw) = row.insert(r.x.clone(), Value::String(key)) {
+            row.insert(crate::common::RAW_X.to_string(), raw);
+        }
+    }
+    Ok(domain)
 }
 
 /// The x law over the chart's rows, and each distinct x value parsed once.
@@ -205,6 +318,7 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
         return Ok(None);
     };
     let fiscal = r.style.axis_x.fiscal_year_start_month;
+    let axis = crate::time_axis::TimeAxis::over(payload.rows.iter().filter_map(|row| row.get(&r.x).and_then(Value::as_str)));
     let mut changed = false;
     let rows: Vec<_> = payload
         .rows
@@ -214,7 +328,8 @@ fn rekey_to_enclosing_buckets(r: &LineResolved, payload: &Payload, draw_areas: b
             let start = row
                 .get(&r.x)
                 .and_then(Value::as_str)
-                .and_then(|text| crate::families::temporal::off_anchor_bucket_start(text, tu, fiscal));
+                .and_then(|text| axis.date(text))
+                .and_then(|date| crate::families::temporal::off_anchor_bucket_start(date, tu, fiscal));
             if let Some(start) = start {
                 if let Some(raw) = row.insert(r.x.clone(), Value::String(start)) {
                     row.insert(crate::common::RAW_X.to_string(), raw);

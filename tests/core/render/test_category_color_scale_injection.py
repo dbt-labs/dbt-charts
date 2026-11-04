@@ -856,7 +856,7 @@ class TestAttachedTableSwatchMatchesWedge:
         data = executor.execute_query(chart.query_name, {})
         svg = _pie_svg(_SWATCH_MATCH_BOARD, "d")
         swatches = re.findall(
-            r'<rect width="14" height="14" rx="3" fill="([^"]+)"/></g>'
+            r'<rect x="0" y="0" width="14" height="14" rx="3" fill="([^"]+)"/></g>'
             r'<text [^>]*data-col="1">[^<]*</text><text [^>]*data-col="2">([^<]*)</text>',
             svg,
         )

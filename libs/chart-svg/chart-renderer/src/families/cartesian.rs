@@ -7,7 +7,8 @@
 
 use crate::codes;
 use crate::diagnostic::Diagnostic;
-use scene::{Attrs, Chars, Escape, Node, TextBlock};
+use d3rs::scale::Band;
+use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -33,58 +34,15 @@ pub struct BandScale {
 
 #[derive(Clone)]
 enum Bands {
-    Uniform(BandGeometry),
+    Uniform(Band),
     /// Bands that sit where their data does (a time axis): one leading edge and one point-mark position per
     /// domain entry, no shared width.
     Anchored { starts: Vec<f64>, anchors: Vec<f64> },
 }
 
-/// d3's band layout for `n` bands over a pixel range: the one place the
-/// step, bandwidth and first band's leading edge are derived.
-#[derive(Clone, Copy)]
-pub struct BandGeometry {
-    step: f64,
-    bandwidth: f64,
-    /// Pixel position of the first band's leading edge.
-    origin: f64,
-}
-
-impl BandGeometry {
-    /// `n` bands over `[range_start, range_end]` with d3-style padding fractions.
-    pub fn new(n: usize, range_start: f64, range_end: f64, padding_inner: f64, padding_outer: f64) -> Self {
-        let n = n as f64;
-        let range_w = range_end - range_start;
-        // Denominator: n − paddingInner + 2·paddingOuter, at least 1 to avoid /0.
-        let denom = (n - padding_inner + 2.0 * padding_outer).max(1.0);
-        let step = if n == 0.0 { 0.0 } else { range_w / denom };
-        BandGeometry {
-            step,
-            bandwidth: step * (1.0 - padding_inner),
-            // d3 centers the bands in what the step leaves (`align` 0.5): `step * paddingOuter` unless the
-            // denominator was clamped to 1.
-            origin: range_start + (range_w - step * (n - padding_inner)) * 0.5,
-        }
-    }
-
-    /// Distance between the leading edges of two neighboring bands.
-    pub fn step(&self) -> f64 {
-        self.step
-    }
-
-    /// Pixel position `frac` of the way across band `i` (`0` leading, `1` trailing).
-    pub fn edge(&self, i: usize, frac: f64) -> f64 {
-        self.origin + self.step * i as f64 + self.bandwidth * frac
-    }
-
-    /// Bandwidth: the pixel extent available to a mark within its band.
-    pub fn bandwidth(&self) -> f64 {
-        self.bandwidth
-    }
-
-    /// The d3 `(paddingInner, paddingOuter)` fractions of a geometry over a range that starts at 0.
-    pub fn paddings(&self) -> (f64, f64) {
-        (1.0 - self.bandwidth / self.step, self.origin / self.step)
-    }
+/// Pixel position `frac` of the way across band `i` (`0` leading, `1` trailing).
+pub fn band_edge(band: &Band, i: usize, frac: f64) -> f64 {
+    band.position(i) + band.bandwidth * frac
 }
 
 impl BandScale {
@@ -96,7 +54,7 @@ impl BandScale {
         padding_inner: f64,
         padding_outer: f64,
     ) -> Self {
-        let geometry = Bands::Uniform(BandGeometry::new(domain.len(), range_start, range_end, padding_inner, padding_outer));
+        let geometry = Bands::Uniform(Band::new(domain.len(), [range_start, range_end], padding_inner, padding_outer, 0.5, false));
         BandScale { domain, geometry }
     }
 
@@ -121,7 +79,7 @@ impl BandScale {
     /// Leading-edge pixel position of band `at`.
     pub fn position_at(&self, at: usize) -> f64 {
         match &self.geometry {
-            Bands::Uniform(g) => g.edge(at, 0.0),
+            Bands::Uniform(g) => g.position(at),
             Bands::Anchored { starts, .. } => starts[at],
         }
     }
@@ -131,7 +89,7 @@ impl BandScale {
     pub fn center(&self, value: &str) -> Option<f64> {
         let at = self.domain.iter().position(|d| d == value)?;
         Some(match &self.geometry {
-            Bands::Uniform(g) => g.edge(at, 0.5),
+            Bands::Uniform(g) => band_edge(g, at, 0.5),
             Bands::Anchored { anchors, .. } => anchors[at],
         })
     }
@@ -141,74 +99,10 @@ impl BandScale {
     /// Equals `step × (1 − padding_inner)`. An anchored scale has none, its bands own their extents.
     pub fn bandwidth(&self) -> f64 {
         match &self.geometry {
-            Bands::Uniform(g) => g.bandwidth(),
+            Bands::Uniform(g) => g.bandwidth,
             Bands::Anchored { .. } => unreachable!("an anchored band scale has no shared bandwidth"),
         }
     }
-}
-
-/// VL "point" scale: n evenly-spaced points across the range, no padding.
-///
-/// step = (range_end − range_start) / (n − 1), position[i] = range_start + step × i.
-/// Matches VL's point scale with paddingOuter = 0 (default).
-pub struct PointScale {
-    domain: Vec<String>,
-    step: f64,
-    range_start: f64,
-}
-
-impl PointScale {
-    pub fn new(domain: Vec<String>, range_start: f64, range_end: f64) -> Self {
-        let n = domain.len();
-        let step = if n <= 1 {
-            0.0
-        } else {
-            (range_end - range_start) / (n - 1) as f64
-        };
-        PointScale { domain, step, range_start }
-    }
-
-    /// Pixel position of the point for `value`, or `None` if not in domain.
-    pub fn position(&self, value: &str) -> Option<f64> {
-        self.domain
-            .iter()
-            .position(|d| d == value)
-            .map(|i| self.range_start + self.step * i as f64)
-    }
-
-    /// Pixel position by integer index.
-    pub fn position_at(&self, i: usize) -> f64 {
-        self.range_start + self.step * i as f64
-    }
-
-}
-
-/// Extend a continuous domain to round tick-step boundaries (d3 nice()).
-///
-/// Applied when axis_y.position == "left" to match VL's domain extension.
-/// Uses the same step-snapping candidates as d3-scale: {1, 2, 5, 10} × 10^k.
-pub fn d3_nice_domain(lo: f64, hi: f64, count: usize) -> (f64, f64) {
-    let span = hi - lo;
-    if span == 0.0 || count < 2 {
-        return (lo, hi);
-    }
-    let step_estimate = span / count as f64;
-    let power = step_estimate.log10().floor() as i32;
-    let mag = 10f64.powi(power);
-    let factor = step_estimate / mag;
-    // d3 thresholds: sqrt(2) ≈ 1.414, sqrt(10) ≈ 3.162, sqrt(50) ≈ 7.071
-    let step = if factor < 2f64.sqrt() {
-        mag
-    } else if factor < 10f64.sqrt() {
-        2.0 * mag
-    } else if factor < 50f64.sqrt() {
-        5.0 * mag
-    } else {
-        10.0 * mag
-    };
-    let nice_min = (lo / step).floor() * step;
-    let nice_max = (hi / step).ceil() * step;
-    (nice_min, nice_max)
 }
 
 /// An authored `scale.continuous.domain` pair as Vega draws it. The pair
@@ -258,6 +152,59 @@ pub fn ladder_within_domain(ticks: &[f64], a: f64, b: f64) -> Vec<f64> {
     ticks.iter().copied().filter(|&tv| tv >= lo - eps && tv <= hi + eps).collect()
 }
 
+/// An end tick closer than this fraction of the domain span to a neighboring tick
+/// is dropped: the two labels would collide.
+const END_TICK_MIN_GAP: f64 = 0.08;
+
+/// The ticks an authored domain `(a, b)` draws: the scale's own ticks plus a tick at
+/// each authored end that is not already one, so a `[20, 1]` rank axis shows both 1
+/// and 20. An end within `END_TICK_MIN_GAP` of the span from a neighboring tick stays
+/// unlabeled. The result runs in the domain's direction (d3 hands a descending
+/// domain's ticks back reversed).
+pub fn with_authored_end_ticks(ticks: Vec<f64>, a: f64, b: f64) -> Vec<f64> {
+    let span = (b - a).abs();
+    let eps = span * 1e-9;
+    let mut out = ticks;
+    for end in [a, b] {
+        let gap = out.iter().map(|t| (t - end).abs()).fold(f64::INFINITY, f64::min);
+        if gap > eps && gap >= span * END_TICK_MIN_GAP {
+            out.push(end);
+        }
+    }
+    out.sort_by(|x, y| if a <= b { x.total_cmp(y) } else { y.total_cmp(x) });
+    out
+}
+
+#[cfg(test)]
+mod end_tick_tests {
+    use super::*;
+
+    #[test]
+    fn a_rank_domain_gains_its_missing_end() {
+        assert_eq!(with_authored_end_ticks(vec![20.0, 15.0, 10.0, 5.0], 20.0, 1.0), [20.0, 15.0, 10.0, 5.0, 1.0]);
+    }
+
+    #[test]
+    fn an_end_that_is_already_a_tick_is_not_repeated() {
+        assert_eq!(with_authored_end_ticks(vec![0.0, 1000.0, 2000.0, 3000.0, 4000.0], 0.0, 4000.0), [0.0, 1000.0, 2000.0, 3000.0, 4000.0]);
+    }
+
+    #[test]
+    fn an_end_crowding_a_neighbor_stays_unlabeled() {
+        // 490 sits 10 from the 500 tick, 0.3% of the span: a collision, so no tick.
+        assert_eq!(with_authored_end_ticks(vec![500.0, 1000.0, 4000.0], 490.0, 4000.0), [500.0, 1000.0, 4000.0]);
+        // 20 from 3 is far enough on a span of 19.
+        assert_eq!(with_authored_end_ticks(vec![5.0], 1.0, 20.0), [1.0, 5.0, 20.0]);
+    }
+
+    #[test]
+    fn the_minimum_spacing_is_a_fraction_of_the_span() {
+        // Span 100: an end 8 away from its neighbor is the closest that still gets a tick.
+        assert_eq!(with_authored_end_ticks(vec![8.0, 50.0, 100.0], 0.0, 100.0), [0.0, 8.0, 50.0, 100.0]);
+        assert_eq!(with_authored_end_ticks(vec![7.9, 50.0, 100.0], 0.0, 100.0), [7.9, 50.0, 100.0]);
+    }
+}
+
 #[cfg(test)]
 mod ladder_within_domain_tests {
     use super::*;
@@ -273,336 +220,6 @@ mod ladder_within_domain_tests {
     fn a_descending_pair_filters_the_same_rungs_in_ladder_order() {
         let ladder = [1000.0, 500.0, 0.0, -500.0];
         assert_eq!(ladder_within_domain(&ladder, 1000.0, -150.0), [1000.0, 500.0, 0.0]);
-    }
-}
-
-/// Linear scale: maps a continuous f64 domain to a pixel range.
-///
-/// The mapping is a straight affine transform — no clamping is applied here.
-/// Callers that want to clip out-of-domain values must do so themselves.
-pub struct LinearScale {
-    pub domain_min: f64,
-    pub domain_max: f64,
-    pub range_start: f64,
-    pub range_end: f64,
-}
-
-impl LinearScale {
-    pub fn new(domain_min: f64, domain_max: f64, range_start: f64, range_end: f64) -> Self {
-        LinearScale { domain_min, domain_max, range_start, range_end }
-    }
-
-    /// Map a domain value to a pixel position.
-    ///
-    /// G1: d3's own `interpolateNumber` is `a·(1−t) + b·t`, not
-    /// `a + t·(b−a)` — the two are mathematically identical but round
-    /// differently in floating point, and at an exact half-pixel tie that
-    /// difference decides which whole pixel `tickRound` snaps a grid rule
-    /// to (`line_endpoint_labels_legend_bottom`: domain [6000, 28000] on a
-    /// 231px range puts 15000 at 136.49999999999997 under d3's order,
-    /// 136.5 under the other — a one-pixel gridline drift at the tie).
-    pub fn position(&self, value: f64) -> f64 {
-        let span = self.domain_max - self.domain_min;
-        // d3-scale `continuous.js` `normalize`: a zero-extent domain maps
-        // every value to `constant(0.5)`, the midpoint of the range.
-        let t = if span == 0.0 { 0.5 } else { (value - self.domain_min) / span };
-        self.range_start * (1.0 - t) + self.range_end * t
-    }
-}
-
-/// A value's fraction down a linear value axis from its `y_max` end, the
-/// ratio [`LinearScale::position`] scales by the range. A zero-extent domain
-/// puts every value at the midpoint (d3-scale `normalize`).
-pub fn linear_frac_from_top(y_min: f64, y_max: f64, value: f64) -> f64 {
-    let span = y_max - y_min;
-    if span == 0.0 { 0.5 } else { (y_max - value) / span }
-}
-
-#[cfg(test)]
-mod linear_scale_tests {
-    use super::*;
-
-    #[test]
-    fn position_matches_d3_s_interpolatenumber_order_at_a_half_pixel_tie() {
-        // Oracle: `series-label-placement/line_endpoint_labels_legend_bottom`
-        // — the reference rule sits a hair under the half-pixel tie.
-        let scale = LinearScale::new(6000.0, 28000.0, 231.0, 0.0);
-        assert_eq!(scale.position(15000.0), 136.49999999999997);
-    }
-
-    /// The fraction down the axis shares `normalize`'s zero-extent case.
-    #[test]
-    fn a_zero_extent_domain_puts_every_value_half_way_down() {
-        assert_eq!(linear_frac_from_top(0.0, 0.0, 0.0), 0.5);
-        assert_eq!(linear_frac_from_top(5.0, 5.0, 9.0), 0.5);
-        assert_eq!(linear_frac_from_top(0.0, 10.0, 10.0), 0.0);
-        assert_eq!(linear_frac_from_top(0.0, 10.0, 0.0), 1.0);
-    }
-
-    /// d3-scale `continuous.js` `normalize`: a zero-extent domain maps every
-    /// value to the range midpoint.
-    #[test]
-    fn a_zero_extent_domain_maps_to_the_range_midpoint() {
-        let scale = LinearScale::new(0.0, 0.0, 399.0, 0.0);
-        assert_eq!(scale.position(0.0), 199.5);
-        assert_eq!(scale.position(7.0), 199.5);
-    }
-}
-
-/// Log scale (base 10): maps a positive continuous domain to a pixel range.
-///
-/// d3-scale's `scaleLog` interpolates on the domain's natural log, not the
-/// raw value — `t = (ln(value) − ln(domain_min)) / (ln(domain_max) −
-/// ln(domain_min))`, then the SAME `interpolateNumber` term order
-/// `LinearScale::position` uses (G1). The domain must be strictly positive;
-/// callers refuse non-positive data before constructing one. The one zero floor
-/// is an area layer's fill baseline joining the shared domain (see `position`).
-pub struct LogScale {
-    pub domain_min: f64,
-    pub domain_max: f64,
-    pub range_start: f64,
-    pub range_end: f64,
-}
-
-impl LogScale {
-    pub fn new(domain_min: f64, domain_max: f64, range_start: f64, range_end: f64) -> Self {
-        LogScale { domain_min, domain_max, range_start, range_end }
-    }
-
-    pub fn position(&self, value: f64) -> f64 {
-        // A zero floor makes every position `-Infinity / -Infinity`; Vega
-        // emits that NaN as 0.
-        if self.domain_min == 0.0 {
-            return 0.0;
-        }
-        let span = self.domain_max.ln() - self.domain_min.ln();
-        // d3's `normalize` maps a zero span to the range midpoint.
-        if span == 0.0 {
-            return (self.range_start + self.range_end) / 2.0;
-        }
-        let t = (value.ln() - self.domain_min.ln()) / span;
-        self.range_start * (1.0 - t) + self.range_end * t
-    }
-}
-
-/// Either continuous measure scale, sharing one `position()` call site —
-/// callers that draw the same marks/gridlines/labels regardless of scale
-/// type build whichever variant the axis calls for once, then place every
-/// value through it unchanged.
-pub enum MeasureScale {
-    Linear(LinearScale),
-    Log(LogScale),
-}
-
-impl MeasureScale {
-    pub fn position(&self, value: f64) -> f64 {
-        match self {
-            MeasureScale::Linear(s) => s.position(value),
-            MeasureScale::Log(s) => s.position(value),
-        }
-    }
-}
-
-/// d3-scale `log.js`'s `logp(base)`: the base's logarithm, exact for e, 10, 2.
-fn log_in_base(base: f64, x: f64) -> f64 {
-    if base == std::f64::consts::E {
-        x.ln()
-    } else if base == 10.0 {
-        x.log10()
-    } else if base == 2.0 {
-        x.log2()
-    } else {
-        x.ln() / base.ln()
-    }
-}
-
-/// d3-scale `log.js`'s `powp(base)`: `base^x`, decimal-exact for 10 (`+("1e" + x)`).
-fn pow_in_base(base: f64, x: f64) -> f64 {
-    if base == std::f64::consts::E {
-        x.exp()
-    } else if base == 10.0 {
-        10f64.powi(x as i32)
-    } else {
-        base.powf(x)
-    }
-}
-
-/// d3-scale log `nice()`: floor/ceil the domain ends to powers of `base`
-/// (`pows(floor(logs(x)))` / `pows(ceil(logs(x)))`, `log.js`'s `nice()`).
-/// Callers must have already rejected non-positive `lo`/`hi` — this has no
-/// defined answer for either.
-pub fn log_nice_domain(base: f64, lo: f64, hi: f64) -> (f64, f64) {
-    let exp_hi = log_in_base(base, hi).ceil();
-    // `pows(floor(logs(0)))` is `pow(-Infinity)`: a zero floor stays zero.
-    let lo = if lo == 0.0 { 0.0 } else { pow_in_base(base, log_in_base(base, lo).floor()) };
-    (lo, pow_in_base(base, exp_hi))
-}
-
-/// [`log_nice_domain`] over a pair that may be descending: d3's `nice` swaps a
-/// reversed domain around the same rounding.
-pub fn log_nice_pair(base: f64, (lo, hi): (f64, f64)) -> (f64, f64) {
-    let (floor, ceil) = log_nice_domain(base, lo.min(hi), lo.max(hi));
-    if lo <= hi { (floor, ceil) } else { (ceil, floor) }
-}
-
-/// d3-scale log `ticks(count)` over the domain `[lo, hi]` (`lo < hi`).
-///
-/// Two branches of `log.js`'s `ticks()`, keyed on the decade span
-/// `logs(hi) − logs(lo)` against `count` (and an integer base):
-/// - integer base, span `< count` (few decades): every `1×..(base−1)×` multiple
-///   of each whole decade `floor(logs(lo))..=ceil(logs(hi))` inside `[lo, hi]`;
-///   a result with fewer than `count / 2` ticks falls back to a plain linear
-///   `ticks()` over the domain.
-/// - otherwise (many decades, or a fractional base): d3-array `ticks(i, j,
-///   min(j−i, count))` on the EXPONENTS, mapped back through `base^x`.
-pub fn log_ticks(base: f64, lo: f64, hi: f64, count: usize) -> Vec<f64> {
-    // `logs(0)` is `-Infinity`, so d3-array's tick step over it is empty.
-    if lo == 0.0 {
-        return Vec::new();
-    }
-    let (i, j) = (log_in_base(base, lo), log_in_base(base, hi));
-    if base % 1.0 == 0.0 && j - i < count as f64 {
-        let mut z = Vec::new();
-        for r in (i.floor() as i32)..=(j.ceil() as i32) {
-            for k in 1..base as i32 {
-                let k = f64::from(k);
-                let t = if r < 0 { k / pow_in_base(base, f64::from(-r)) } else { k * pow_in_base(base, f64::from(r)) };
-                if t < lo {
-                    continue;
-                }
-                if t > hi {
-                    break;
-                }
-                z.push(t);
-            }
-        }
-        if z.len() * 2 < count {
-            return d3rs::ticks::d3_ticks(lo, hi, count);
-        }
-        z
-    } else {
-        d3rs::ticks::d3_ticks_fractional(i, j, (j - i).min(count as f64))
-            .into_iter()
-            .map(|e| pow_in_base(base, e))
-            .collect()
-    }
-}
-
-/// Vega `tickLog`'s minor-mantissa visibility rule: the mask a caller applies
-/// when NO explicit axis format overrides it (an authored format string always
-/// wins over it; see `log_ticks`' caller in `line.rs` for why that path isn't
-/// ported here).
-///
-/// `k = max(1, base * count / scale_ticks)`, `scale_ticks` being how many ticks
-/// the scale itself would draw (an axis with authored `values` still reads the
-/// scale's own); a tick is visible when its mantissa (`d / base^round(log(d) /
-/// log(base))`, corrected by × `base` when that leaves a sub-1 mantissa past
-/// the `base − 0.5` rounding boundary) is `<= k`.
-pub fn log_tick_mantissa_visible(base: f64, ticks: &[f64], scale_ticks: usize, count: usize) -> Vec<bool> {
-    let k = (base * count as f64 / scale_ticks as f64).max(1.0);
-    ticks
-        .iter()
-        .map(|&d| {
-            let r = (d.ln() / base.ln()).round();
-            let mut i = d / base.powf(r);
-            if i * base < base - 0.5 {
-                i *= base;
-            }
-            i <= k
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod log_scale_tests {
-    use super::*;
-
-    #[test]
-    fn position_matches_linear_scale_s_interpolatenumber_order_on_the_log_domain() {
-        // t = (ln(v) - ln(lo)) / (ln(hi) - ln(lo)); same G1 term order as
-        // LinearScale — verified against a hand-computed midpoint.
-        let scale = LogScale::new(1.0, 100.0, 200.0, 0.0);
-        // ln(10) is exactly halfway between ln(1)=0 and ln(100), so 10
-        // lands at the range midpoint.
-        assert!((scale.position(10.0) - 100.0).abs() < 1e-9);
-        assert_eq!(scale.position(1.0), 200.0);
-        assert_eq!(scale.position(100.0), 0.0);
-    }
-
-    #[test]
-    fn nice_domain_floors_and_ceils_to_base_10_powers() {
-        // Oracle: probe on `charts/axis-scales_0`'s own data extent
-        // (990000000..7795000000) niced to [1e8, 1e10] by vl-convert.
-        assert_eq!(log_nice_domain(10.0, 990_000_000.0, 7_795_000_000.0), (1e8, 1e10));
-    }
-
-    #[test]
-    fn ticks_fill_decade_multiples_when_span_is_short() {
-        // Oracle: vl_convert scenegraph over [1e8, 1e10] (2 decades, count
-        // 10) — 9 multiples per decade for the first two decades, 1 for the
-        // partial third (only 1e10 itself lies inside the closed domain).
-        let ticks = log_ticks(10.0, 1e8, 1e10, 10);
-        assert_eq!(ticks.len(), 19);
-        assert_eq!(ticks[0], 1e8);
-        assert_eq!(ticks[8], 9e8);
-        assert_eq!(ticks[9], 1e9);
-        assert_eq!(ticks[17], 9e9);
-        assert_eq!(ticks[18], 1e10);
-    }
-
-    #[test]
-    fn nice_domain_floors_and_ceils_to_powers_of_the_base() {
-        assert_eq!(log_nice_domain(2.0, 100.0, 170.0), (64.0, 256.0));
-        assert_eq!(log_nice_domain(5.0, 100.0, 170.0), (25.0, 625.0));
-        assert_eq!(log_nice_pair(2.0, (170.0, 100.0)), (256.0, 64.0));
-    }
-
-    #[test]
-    fn a_base_two_domain_of_few_powers_falls_back_to_the_linear_ladder() {
-        // Oracle: vl_convert over a base-2 log axis on [64, 256] draws 80..240
-        // by 20 (the powers alone are fewer than count / 2).
-        let ticks = log_ticks(2.0, 64.0, 256.0, 10);
-        assert_eq!(ticks, vec![80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0, 220.0, 240.0]);
-    }
-
-    #[test]
-    fn a_fractional_base_ticks_on_the_exponents() {
-        // Oracle: vl_convert over a base-2.5 axis niced to [2.5^5, 2.5^6] labels
-        // only those two powers.
-        let ticks = log_ticks(2.5, 97.65625, 244.140625, 10);
-        assert_eq!(ticks.len(), 2);
-        assert!((ticks[0] - 97.65625).abs() < 1e-9 && (ticks[1] - 244.140625).abs() < 1e-9, "{ticks:?}");
-    }
-
-    #[test]
-    fn mantissa_visibility_reads_the_scale_s_own_tick_count_for_authored_values() {
-        // Authored `values` [50, 100, 200] under a scale that would draw 19 ticks:
-        // k = 10 * 10 / 19 = 5.26, so all three mantissas (5, 1, 2) stay labeled.
-        assert_eq!(log_tick_mantissa_visible(10.0, &[50.0, 100.0, 200.0], 19, 10), vec![true; 3]);
-        // The function itself only reads the ladder; an axis with authored values skips it (`noSkip`).
-    }
-
-    #[test]
-    fn ticks_use_coarse_exponent_steps_when_decades_exceed_count() {
-        // Oracle: vl_convert scenegraph over [1, 1e12] (12 decades > count
-        // 10) — one tick per decade exponent, per d3-array's own ticks().
-        let ticks = log_ticks(10.0, 1.0, 1e12, 10);
-        assert_eq!(ticks, vec![1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12]);
-    }
-
-    #[test]
-    fn mantissa_visible_blanks_minors_past_the_count_derived_threshold() {
-        // Oracle: vl_convert scenegraph over [1e8, 1e10] at the default
-        // count 10 — k = 10*10/19 ≈ 5.263, so mantissas 1..5 stay labeled
-        // (100M..500M, 1G..5G, 10G) and 6..9 blank.
-        let ticks = log_ticks(10.0, 1e8, 1e10, 10);
-        let visible = log_tick_mantissa_visible(10.0, &ticks, ticks.len(), 10);
-        let expected = [
-            true, true, true, true, true, false, false, false, false, // 1e8..9e8
-            true, true, true, true, true, false, false, false, false, // 1e9..9e9
-            true, // 1e10
-        ];
-        assert_eq!(visible, expected);
     }
 }
 
@@ -881,22 +498,32 @@ pub(crate) fn rail_reserved_lines(plans: &HashMap<String, RailPlan>) -> Vec<Stri
 /// One rail label as one text mark: a wrapped label's lines are `<tspan>`s that step a line
 /// height down from the first (`attrs` place it), and a label cut with an ellipsis carries its
 /// full text in a hover `<title>`.
-pub(crate) fn rail_label_node(attrs: Attrs, plan: &RailPlan, line_height: f64) -> Node {
-    lines_label_node(attrs, plan.lines(), plan.cut_full_text(), "0", line_height)
+pub(crate) fn rail_label_node(at: (f64, f64), attrs: Attrs, plan: &RailPlan, line_height: f64) -> Node {
+    lines_label_node(Role::Label, at, attrs, plan.lines(), plan.cut_full_text(), 0.0, line_height)
 }
 
 /// A label of one or more lines as one text mark: each line after the first is a `<tspan>` at `x`,
 /// a line height below the one before, and a cut label carries its `full` text in a hover `<title>`.
-pub(crate) fn lines_label_node(attrs: Attrs, lines: &[String], full: Option<&str>, x: &str, line_height: f64) -> Node {
-    match lines {
-        [line] => crate::families::legend::text_revealing_full_name(attrs, line, full),
+pub(crate) fn lines_label_node(role: Role, at: (f64, f64), attrs: Attrs, lines: &[String], full: Option<&str>, x: f64, line_height: f64) -> Node {
+    // A line an expression returned as several (`measure::LINE_SEP`) is several here too.
+    let lines: Vec<&str> = lines.iter().flat_map(|line| line.split(measure::LINE_SEP)).collect();
+    match lines.as_slice() {
+        [line] => crate::families::legend::text_revealing_full_name(role, at, attrs, line, full),
         lines => {
-            let run = |attrs: Attrs, line: &str| Node::Tspan(TextBlock { attrs, text: Chars::new(line, Escape::Attr) });
-            let step = Attrs::new().set("x", x).set("dy", line_height.to_string());
-            let mut children: Vec<Node> =
-                lines.iter().enumerate().map(|(i, line)| run(if i == 0 { Attrs::new() } else { step.clone() }, line)).collect();
-            children.extend(full.map(|full| Node::Title(Chars::new(full, Escape::Attr))));
-            Node::TextRuns { attrs, children }
+            let mut runs: Vec<Run> = lines
+                .iter()
+                .enumerate()
+                .map(|(i, line)| Run::Tspan {
+                    x: (i > 0).then_some(x),
+                    y: None,
+                    dx: None,
+                    dy: (i > 0).then_some(line_height),
+                    attrs: Attrs::new(),
+                    runs: vec![Run::Chars(Chars::new(*line, Escape::Attr))],
+                })
+                .collect();
+            runs.extend(full.map(|full| Run::Title(Chars::new(full, Escape::Attr))));
+            Node::new(role, attrs, Shape::Text { at, bounds: None, runs })
         }
     }
 }
@@ -1495,21 +1122,6 @@ mod rail_weight_tests {
 }
 
 #[cfg(test)]
-mod band_geometry_tests {
-    use super::*;
-
-    #[test]
-    fn a_denominator_clamped_to_one_centers_the_bands_like_d3() {
-        // One band with 0.1 inner padding: `1 - 0.1 + 0` < 1, so d3 divides by 1 and centers the 0.9-wide band.
-        let g = BandGeometry::new(1, 0.0, 100.0, 0.1, 0.0);
-        assert_eq!((g.step(), g.bandwidth(), g.edge(0, 0.0)), (100.0, 90.0, 5.0));
-        // Unclamped, the leading edge is `step * paddingOuter`.
-        let g = BandGeometry::new(4, 0.0, 100.0, 0.2, 0.1);
-        assert!((g.edge(0, 0.0) - g.step() * 0.1).abs() < 1e-12);
-    }
-}
-
-#[cfg(test)]
 mod lines_label_tests {
     use super::*;
 
@@ -1518,11 +1130,11 @@ mod lines_label_tests {
     #[test]
     fn a_two_line_rail_label_steps_a_line_height_from_the_given_baseline() {
         let lines = ["105 Region 03".to_string(), "Growth Segment".to_string()];
-        let node = lines_label_node(Attrs::new().set("y", "10"), &lines, None, "0", 15.4);
+        let node = lines_label_node(Role::Label, (0.0, 10.0), Attrs::new(), &lines, None, 0.0, 15.4);
         let svg = print::print(&[node]);
         assert_eq!(
             svg,
-            "<text y=\"10\"><tspan>105 Region 03</tspan><tspan x=\"0\" dy=\"15.4\">Growth Segment</tspan></text>"
+            "<text x=\"0\" y=\"10\"><tspan>105 Region 03</tspan><tspan x=\"0\" dy=\"15.4\">Growth Segment</tspan></text>"
         );
     }
 }

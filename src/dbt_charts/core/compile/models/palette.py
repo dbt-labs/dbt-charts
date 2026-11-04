@@ -17,10 +17,10 @@ the models it feeds are still importing; the resolver imports the models.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict, get_args
 
 import yaml
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -29,6 +29,26 @@ if TYPE_CHECKING:
 
 # Alias values: hex color string, another alias name, or 1-indexed slot ref (int).
 PaletteAliasValue = str | int
+
+# The renderer's pattern vocabulary (chart-renderer/data/pattern_motifs.json);
+# a parity test pins them.
+PatternMotif = Literal[
+    "hatch-45",
+    "hatch-135",
+    "bluenoise-dots",
+    "dash-field",
+    "bendday-hex",
+    "worms-fine",
+    "crosshatch",
+    "pebbles-fine",
+    "dots-brick",
+    "grid",
+    "hatch-0",
+    "hatch-90",
+    "dither",
+]
+PatternRamp = Literal["hatch-crosshatch", "hatch-dots", "dots"]
+PatternPaletteKind = Literal["categorical", "sequential", "diverging"]
 
 
 class Palette(BaseModel):
@@ -39,11 +59,44 @@ class Palette(BaseModel):
     colors: list[str] | None = None
     aliases: dict[str, PaletteAliasValue] | None = None
     description: str | None = None
+    # Pattern palettes: a categorical one lists motifs, a sequential or diverging
+    # one names a ramp.
+    kind: PatternPaletteKind | None = None
+    motifs: tuple[PatternMotif, ...] | None = None
+    ramp: PatternRamp | None = None
+    steps: Annotated[int, Field(ge=3, le=9)] | None = None
     # Authoring-aid / metadata fields; declared explicitly so extra="forbid"
     # doesn't reject them.
     family: str | None = None
     design_notes: str | None = None
     r8_validation: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _pattern_shape(self) -> Palette:
+        if self.kind is None:
+            if (
+                self.motifs is not None
+                or self.ramp is not None
+                or self.steps is not None
+            ):
+                raise ValueError(
+                    f"palette '{self.name}' names motifs or a ramp without a pattern kind."
+                )
+        else:
+            if self.colors is not None:
+                raise ValueError(f"pattern palette '{self.name}' draws no colors.")
+            if self.kind == "categorical":
+                if not self.motifs or self.ramp is not None or self.steps is not None:
+                    raise ValueError(
+                        f"categorical pattern palette '{self.name}' needs `motifs:` "
+                        "and no `ramp:` or `steps:`."
+                    )
+            elif self.ramp is None or self.steps is None or self.motifs is not None:
+                raise ValueError(
+                    f"{self.kind} pattern palette '{self.name}' needs `ramp:` and "
+                    "`steps:` (3-9) and no `motifs:`."
+                )
+        return self
 
     @model_validator(mode="after")
     def _numeric_aliases_stay_outside_the_ladder(self) -> Palette:
@@ -60,7 +113,9 @@ class Palette(BaseModel):
         return self
 
 
-PaletteFamily = Literal["sequential", "diverging", "categorical", "scaffold", "tone"]
+PaletteFamily = Literal[
+    "sequential", "diverging", "categorical", "scaffold", "tone", "pattern"
+]
 PALETTE_FAMILIES: tuple[PaletteFamily, ...] = get_args(PaletteFamily)
 
 # Known perceptual anti-patterns, refused outright.

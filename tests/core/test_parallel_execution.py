@@ -169,6 +169,7 @@ class TestExecuteQueriesParallel:
         mock_execute, call_log = _slow_adapter_execute(delay=0.1)
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.side_effect = mock_execute
 
         executor = Executor(result.board, adapter_registry=mock_registry)
@@ -195,6 +196,7 @@ class TestExecuteQueriesParallel:
         assert result.success, result.errors
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
         )
@@ -228,6 +230,7 @@ class TestExecuteQueriesParallel:
             )
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.side_effect = flaky_execute
 
         executor = Executor(result.board, adapter_registry=mock_registry)
@@ -251,6 +254,7 @@ class TestExecuteQueriesParallel:
             variable_defaults={},
         )
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         executor = Executor(board, adapter_registry=mock_registry)
 
         from dbt_charts.core.execute.parallel import execute_queries_parallel
@@ -268,6 +272,7 @@ class TestExecutorCacheThreadSafety:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
         )
@@ -386,6 +391,7 @@ class TestStoredPreExecutionErrors:
             )
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.side_effect = counting_execute
 
         executor = Executor(result.board, adapter_registry=mock_registry)
@@ -431,6 +437,7 @@ class TestCacheHitPartitioning:
         assert result.success, result.errors
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
         )
@@ -479,6 +486,7 @@ class TestCacheHitPartitioning:
         assert result.success, result.errors
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
         )
@@ -517,6 +525,7 @@ class TestIsCached:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
         )
@@ -548,6 +557,7 @@ class TestIsCached:
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
         )

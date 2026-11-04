@@ -22,7 +22,7 @@ text: |
   |-----|--------------|
   | `source` | Column read from the chart's query output |
   | `aggregate` | `sum`, `avg`, `min`, `max`, `median`, `count`, `count_distinct` — required when more than one row maps to a given x |
-  | `format` | Standard d3-format spec (`$.2s`, `,d`, `.1%`, …) |
+  | `format` | Optional: the compact `number` by default (a row reading the chart's measure takes the y-axis format). Name a unit to change it (`currency`, `percent`, …); full-digit formats print compact, the way a legend does |
   | `label` | Optional row label; rendered at the y-axis tick column (right gutter on standard charts, left gutter on charts with `axis_y.position: left`) |
 
 queries:
@@ -90,13 +90,11 @@ charts:
     y: revenue
     support_table:
       - source: revenue
-        format: currency_whole
+        format: currency
         label: Revenue
       - source: units
-        format: ",d"
         label: Units
       - source: orders
-        format: ",d"
         label: Orders
     style:
       axis_y:
@@ -116,14 +114,13 @@ charts:
     color: category
     support_table:
       - per_series: revenue
-        format: currency_whole
+        format: currency
       - aggregate: sum
         source: revenue
-        format: currency_whole
+        format: currency
         label: Total
       - aggregate: sum
         source: units
-        format: ",d"
         label: Units
     style:
       axis_y:
@@ -142,13 +139,12 @@ charts:
     y: revenue
     support_table:
       - source: revenue
-        format: currency_whole
+        format: currency
         label: Revenue
       - source: avg_order_revenue
-        format: currency_whole
+        format: currency
         label: Avg/order
       - source: orders
-        format: ",d"
         label: Orders
     style:
       axis_y:
@@ -163,10 +159,10 @@ charts:
     color: category
     support_table:
       - per_series: revenue
-        format: currency_whole
+        format: currency
       - aggregate: sum
         source: revenue
-        format: currency_whole
+        format: currency
         label: Total
     style:
       axis_y:
@@ -185,11 +181,10 @@ charts:
     support_table:
       - aggregate: sum
         source: revenue
-        format: currency_whole
+        format: currency
         label: Total $
       - aggregate: sum
         source: units
-        format: ",d"
         label: Units
     style:
       axis_y:
@@ -208,13 +203,12 @@ charts:
     y: revenue
     support_table:
       - source: revenue
-        format: currency_whole
+        format: currency
         label: Revenue
       - source: units
-        format: ",d"
         label: Units
       - source: avg_order_revenue
-        format: currency_whole
+        format: currency
         label: Avg/order
     style:
       axis_y:
@@ -231,15 +225,14 @@ charts:
     support_table:
       - aggregate: sum
         source: revenue
-        format: currency_whole
+        format: currency
         label: Total
       - aggregate: max
         source: revenue
-        format: currency_whole
+        format: currency
         label: Top cat
       - aggregate: sum
         source: units
-        format: ",d"
         label: Units
     style:
       axis_y:
@@ -254,7 +247,7 @@ charts:
     title: Declare-once formats (currency_compact and percent)
     notes: |
       Exercises the declare-once anchoring for both format families:
-      `currency_compact` strips the `$` and `mn` suffix from repeated cells,
+      `currency_compact` strips the `$` and `m` suffix from repeated cells,
       keeping them only on the first painted cell. `percent` keeps the `%`
       on the first cell only.
 

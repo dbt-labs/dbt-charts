@@ -57,6 +57,9 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_CACHE_FILE_UNAVAILABLE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
+    CacheEntry,
+    CacheUser,
+    CacheVariables,
     TruncatedReason,
 )
 from dbt_charts.core.execute.cache_keys import stored_query_hash
@@ -72,15 +75,32 @@ logger = logging.getLogger(__name__)
 # one-row write already exceeds at any threshold this small.
 _CHECKPOINT_WAL_BYTES = 64_000
 
+# One (board, query) use, bound to two parameters.
+_USER = "struct_pack(board := ?, query := ?)"
+# `used_by` with {user} appended once; the existing row's column on an upsert.
+_APPEND_USER = (
+    "CASE WHEN list_contains(used_by, {user}) THEN used_by "
+    "ELSE list_append(used_by, {user}) END"
+)
+
 _OUTCOME_COLUMNS = {
     "source_hash": "TEXT NOT NULL",
     "query_hash": "TEXT NOT NULL",
     "variables_hash": "TEXT NOT NULL",
     "board_slug": "TEXT NOT NULL",
     "query_name": "TEXT NOT NULL",
+    # Every board that wrote or read this key, in first-use order; board_slug
+    # and query_name name the last writer.
+    "used_by": "STRUCT(board VARCHAR, query VARCHAR)[] NOT NULL",
+    # The variable values the key's variables_hash was computed from.
+    "variables": "TEXT NOT NULL",
     "written_at_utc": "TIMESTAMP",
     "truncated_reason": "TEXT",
     "payload": "BLOB",
+    # The rows slot's shape, kept beside the payload so a listing never
+    # decompresses one.
+    "row_count": "INTEGER",
+    "columns": "TEXT",
     "error_class": "TEXT",
     "error_message": "TEXT",
     "error_code": "TEXT",
@@ -304,6 +324,9 @@ class _DuckDBResultCacheBase:
         board_slug: str,
         query_name: str,
         truncated_reason: TruncatedReason | None,
+        row_count: int,
+        columns: list[str],
+        variables: CacheVariables,
     ) -> None:
         """Record a successful run, clearing the error slot in the same statement.
 
@@ -317,19 +340,25 @@ class _DuckDBResultCacheBase:
         """
         query_hash = stored_query_hash(query_hash)
         conn.execute(
-            """
+            f"""
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
-                 written_at_utc, truncated_reason, payload,
+                 used_by, variables,
+                 written_at_utc, truncated_reason, payload, row_count, columns,
                  error_class, error_message, error_code, error_fields,
                  traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)
+            VALUES (?, ?, ?, ?, ?, [{_USER}], ?, ?, ?, ?, ?, ?,
+                    NULL, NULL, NULL, NULL, NULL, NULL)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
+                used_by = {_APPEND_USER.format(user="excluded.used_by[1]")},
+                variables = excluded.variables,
                 written_at_utc = excluded.written_at_utc,
                 truncated_reason = excluded.truncated_reason,
                 payload = excluded.payload,
+                row_count = excluded.row_count,
+                columns = excluded.columns,
                 error_class = NULL,
                 error_message = NULL,
                 error_code = NULL,
@@ -343,11 +372,79 @@ class _DuckDBResultCacheBase:
                 variables_hash,
                 board_slug,
                 query_name,
+                board_slug,
+                query_name,
+                json.dumps(variables, sort_keys=True, default=str),
                 _utc_wall_clock(),
                 truncated_reason,
                 payload,
+                row_count,
+                json.dumps(columns),
             ],
         )
+
+    def note_use(
+        self,
+        source_hash: str,
+        query_hash: str,
+        variables_hash: str,
+        board_slug: str,
+        query_name: str,
+    ) -> None:
+        """Name this use on the key's ``used_by``. A use already named matches no
+        row, so a read never grows the file: DuckDB keeps a rewritten row's old
+        version until the table is rebuilt."""
+        user = _USER
+        with self._connection() as conn:
+            conn.execute(
+                f"UPDATE _query_outcomes SET used_by = list_append(used_by, {user}) "
+                "WHERE source_hash = ? AND query_hash = ? AND variables_hash = ? "
+                f"AND NOT list_contains(used_by, {user})",
+                [
+                    board_slug,
+                    query_name,
+                    source_hash,
+                    stored_query_hash(query_hash),
+                    variables_hash,
+                    board_slug,
+                    query_name,
+                ],
+            )
+
+    def _read_entries(self, conn: duckdb.DuckDBPyConnection) -> list[CacheEntry]:
+        """Every rows slot, newest first: one per key, so a query computed under
+        several variable values lists once per value."""
+        rows = conn.execute(
+            """
+            SELECT source_hash, query_hash, variables_hash, used_by, variables,
+                   columns, row_count, written_at_utc, truncated_reason
+            FROM _query_outcomes
+            WHERE payload IS NOT NULL
+            ORDER BY written_at_utc DESC, board_slug, query_name
+            """
+        ).fetchall()
+        return [
+            CacheEntry(
+                key=(source_hash, query_hash, variables_hash),
+                used_by=[CacheUser(**u) for u in used_by],
+                variables=json.loads(variables),
+                columns=json.loads(columns),
+                row_count=row_count,
+                written_at=written_at_utc.replace(tzinfo=UTC),
+                truncated_reason=truncated_reason,
+            )
+            for (
+                source_hash,
+                query_hash,
+                variables_hash,
+                used_by,
+                variables,
+                columns,
+                row_count,
+                written_at_utc,
+                truncated_reason,
+            ) in rows
+        ]
 
     def _write_error_slot(
         self,
@@ -358,6 +455,7 @@ class _DuckDBResultCacheBase:
         exception: Exception,
         board_slug: str,
         query_name: str,
+        variables: CacheVariables,
     ) -> None:
         """Record an error, leaving any rows slot untouched.
 
@@ -367,15 +465,17 @@ class _DuckDBResultCacheBase:
         """
         query_hash = stored_query_hash(query_hash)
         conn.execute(
-            """
+            f"""
             INSERT INTO _query_outcomes
                 (source_hash, query_hash, variables_hash, board_slug, query_name,
+                 used_by, variables,
                  error_class, error_message, error_code, error_fields,
                  traceback, error_written_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, [{_USER}], ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (source_hash, query_hash, variables_hash) DO UPDATE SET
                 board_slug = excluded.board_slug,
                 query_name = excluded.query_name,
+                used_by = {_APPEND_USER.format(user="excluded.used_by[1]")},
                 error_class = excluded.error_class,
                 error_message = excluded.error_message,
                 error_code = excluded.error_code,
@@ -389,6 +489,9 @@ class _DuckDBResultCacheBase:
                 variables_hash,
                 board_slug,
                 query_name,
+                board_slug,
+                query_name,
+                json.dumps(variables, sort_keys=True, default=str),
                 type(exception).__name__,
                 str(exception),
                 exception.code.code
@@ -471,22 +574,32 @@ class _DuckDBResultCacheBase:
     def _ensure_schema(self, conn: duckdb.DuckDBPyConnection) -> None:
         """Create the outcome table, first dropping any superseded layout.
 
-        A file whose `_query_outcomes` columns differ from the ones this
-        version writes came from another version. CREATE TABLE IF NOT EXISTS
+        A file whose `_query_outcomes` columns, by name or type, differ from
+        the ones this version writes came from another version. CREATE TABLE IF NOT EXISTS
         would keep those columns and the first read or write would fail, so the
         cache's tables are dropped instead — the outcome table, and the
         per-key `_r_<hash>` result tables and `_query_failures` that earlier
         layouts kept beside it. It is a disposable cache: each dropped key
         re-warms on its next request.
         """
-        columns = {
-            name
-            for (name,) in conn.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = '_query_outcomes'"
-            ).fetchall()
-        }
-        if columns != set(_OUTCOME_COLUMNS):
+
+        def layout(table: str) -> set[tuple[str, str]]:
+            return set(
+                conn.execute(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_name = ?",
+                    [table],
+                ).fetchall()
+            )
+
+        # The expected layout as DuckDB itself spells it, so a column whose type
+        # changed under the same name counts as drift too.
+        probe_defs = ", ".join(f"{n} {t}" for n, t in _OUTCOME_COLUMNS.items())
+        conn.execute(f"CREATE TEMP TABLE _layout_probe ({probe_defs})")
+        expected = layout("_layout_probe")
+        conn.execute("DROP TABLE _layout_probe")
+        present = layout("_query_outcomes")
+        if present and present != expected:
             superseded = conn.execute(
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_type = 'BASE TABLE' AND ("

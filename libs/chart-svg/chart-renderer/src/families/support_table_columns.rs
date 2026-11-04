@@ -20,11 +20,10 @@ use serde_json::Value;
 use crate::common::{slug_to_display, TAB_FONT};
 use crate::diagnostic::Diagnostic;
 use crate::families::support_table_strip::{
-    build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, validate_against_data,
-    CellAria, ComposedCell, DecimalPad, EntryLines, SupportTableConfig, SupportTableStyle,
+    build_cells, divider_line, entry_lines, label_font_resolved, link_cells, row_height, trailing_unit,
+    validate_against_data, CellAria, ComposedCell, EntryLines, SupportTableConfig, SupportTableStyle,
 };
-use crate::svg::{py_float_str};
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 use measure::FontBook;
 use crate::vega_fit::{self, Bounds};
 
@@ -66,10 +65,11 @@ pub struct Column {
     pub header_ink: Option<String>,
     /// The series a `per_series:` column prints; `None` on every other column.
     pub series: Option<String>,
-    /// The entry's hung-suffix width (`_hung_suffix_width`): the cells' digits
-    /// share an edge this far inside the header's, and the anchor cell
-    /// (`ComposedCell::hang` carries the same width) hangs its suffix out to
-    /// it. 0 when the entry has no trailing affix to hang.
+    /// The column's unit width: the widest of the entry's hung suffix
+    /// (`_hung_suffix_width`) and any unit a cell carries itself. The cells' digits
+    /// share an edge this far inside the header's, and each cell hangs what follows
+    /// its last digit (`ComposedCell::hang`) out toward it. 0 when no cell carries a
+    /// unit.
     pub hung_w: f64,
     /// One cell per category, `x` the band center along the category axis.
     /// A grouped bar's single per_series column holds one cell per
@@ -126,8 +126,8 @@ pub fn warn_block_share(chart_id: &str, block_width: f64, plot_width: f64, share
 /// `_entry_column_widths`. `centers[i]` is category `domain[i]`'s band center
 /// along the category axis. `anchored` and `series_order` carry the same
 /// meaning as `build_rows_composed`'s; `series_ink` is `None` when the style
-/// authors one uniform cell ink. The numeral hang is always `"left"` on the
-/// column path (`_entry_numerals(..., "left")`). `sub_offsets` is set for a
+/// authors one uniform cell ink. Every cell, the anchor included, ends at its
+/// column's right edge. `sub_offsets` is set for a
 /// grouped bar: its `per_series` entry paints ONE column, a cell per series
 /// on that series' sub-band, `sub_offsets[i]` past the category's band center.
 #[allow(clippy::too_many_arguments)]
@@ -168,13 +168,11 @@ pub fn build_block(
     let header_measure = measure::stand_in_family(label_family);
     let pad = 2.0 * style.row.padding.horizontal;
 
-    let decimals = DecimalPad::new(fonts, style)?;
     let mut columns: Vec<Column> = Vec::new();
     for (entry_index, entry) in config.entries.iter().enumerate() {
-        // `axis_on_right = true, vertical = true`: the hang is always "left"
-        // and the magnitude suffix speaks the column register.
+        // `vertical = true`: the magnitude suffix speaks the column register.
         let EntryLines { spec, lines, numerals, nums } =
-            entry_lines(entry, rows, cat_field, domain, anchored, true, true, color_field, series_order, &decimals, chart_id, entry_index)?;
+            entry_lines(entry, rows, cat_field, domain, anchored, true, true, color_field, series_order, chart_id, entry_index)?;
         if entry.per_series.is_some() && series_ink.is_some_and(|ink| ink.len() != series_order.len()) {
             return Err("support_table: internal error — series_ink/series_order length mismatch".into());
         }
@@ -199,25 +197,26 @@ pub fn build_block(
             vec![label_of(&entry.label, &entry.source)?]
         };
 
-        // The widest cell any of the entry's columns could paint. A column has
-        // no free gutter for an anchor's affix to overhang, so every cell is
-        // measured as if it were the anchor (`conservative=True`).
-        let mut value_w = 0.0_f64;
+        // The widest digits and the widest unit any of the entry's columns could
+        // paint, apart: the digits share one edge and the units hang past it, so
+        // `999` beside `1k` needs `999` plus `k`. A column has no free gutter for an
+        // anchor's affix to overhang, so every cell is measured as if it were the
+        // anchor (`conservative=True`).
+        let mut digits_w = 0.0_f64;
+        let mut unit_w = 0.0_f64;
         match (&numerals, spec) {
             (Some(n), Some(_)) => {
-                let painted: Vec<String> = nums
-                    .iter()
-                    .filter(|v| v.is_finite())
-                    .map(|&v| n.cell_text(v, true))
-                    .collect::<Result<_, _>>()?;
-                for text in &painted {
-                    value_w = value_w.max(fonts.measure(text, numeral_family, font_size)?);
+                for &v in nums.iter().filter(|v| v.is_finite()) {
+                    let text = n.cell_text(v, true)?;
+                    let unit = fonts.measure(trailing_unit(&text), numeral_family, font_size)?;
+                    digits_w = digits_w.max(fonts.measure(&text, numeral_family, font_size)? - unit);
+                    unit_w = unit_w.max(unit);
                 }
             }
             _ => {
                 // `_entry_cell_widths` measures `str(float)` though the cell paints the bare JSON number.
                 for &v in nums.iter().filter(|v| v.is_finite()) {
-                    value_w = value_w.max(fonts.measure(&py_float_str(v), numeral_family, font_size)?);
+                    digits_w = digits_w.max(fonts.measure(&d3rs::py_float::float_repr(v), numeral_family, font_size)?);
                 }
             }
         }
@@ -231,7 +230,7 @@ pub fn build_block(
         for h in &headers {
             header_w = header_w.max(fonts.measure(h, header_measure, label_size)?);
         }
-        let width = value_w.max(header_w) + pad;
+        let width = (digits_w + unit_w.max(hung_w)).max(header_w) + pad;
 
         if let (true, Some(offsets)) = (single_column, sub_offsets) {
             let mut cells = Vec::new();
@@ -257,7 +256,7 @@ pub fn build_block(
                 ink: None,
                 header_ink: entry.ink.clone(),
                 series: None,
-                hung_w,
+                hung_w: cells.iter().map(|c| c.hang).fold(hung_w, f64::max),
                 cells,
                 cell_series,
                 copies: 1,
@@ -276,7 +275,7 @@ pub fn build_block(
                 ink: series_ink.filter(|_| entry.per_series.is_some()).map(|ink| ink[i].clone()),
                 header_ink: entry.ink.clone(),
                 series: entry.per_series.as_ref().map(|_| series_order[i].clone()),
-                hung_w,
+                hung_w: cells.iter().map(|c| c.hang).fold(hung_w, f64::max),
                 cells,
                 cell_series: Vec::new(),
                 copies: if entry.per_series.is_some() { 1 } else { config.cell_copies() },
@@ -296,7 +295,7 @@ pub fn build_block(
 
 impl Column {
     /// A cell's right edge for a column whose header sits at `edge`: the digits
-    /// share `edge - hung_w` and the anchor's suffix hangs out to `edge`
+    /// share `edge - hung_w` and the cell's unit hangs past them
     /// (`_column_cell_layers`, `_hung_anchor_layers`).
     fn cell_x(&self, edge: f64, cell: &ComposedCell) -> f64 {
         edge - self.hung_w + cell.hang
@@ -349,7 +348,7 @@ impl ColumnBlock {
 
     /// The ink the block adds to Vega's autosize-pad view bounds, in plot
     /// coordinates: each header at `-row_height/2` and each cell on its band,
-    /// right-aligned at its column's edge (`cell_x`).
+    /// right-aligned at its column's edge.
     ///
     /// `y_scale` is `plot_h / h` for the height the cells were centered
     /// against: a band center is linear in the plot height, so a fit that
@@ -392,18 +391,7 @@ impl ColumnBlock {
         let mut out = Vec::new();
         for (i, (col, edge)) in self.columns.iter().zip(self.right_edges(plot_w)).enumerate() {
             let x = origin_x + edge;
-            let header = Node::text(
-                Attrs::new()
-                    .set("x", format!("{x:.2}"))
-                    .set("y", format!("{header_y:.2}"))
-                    .set("text-anchor", "end")
-                    .vega("font-family", label_family)
-                    .set("font-size", label_size.to_string())
-                    .quick_some("font-style", style.label.font.style.as_deref())
-                    .set("font-weight", label_weight.clone())
-                    .set("fill", col.header_ink.as_deref().unwrap_or(label_ink)),
-                col.header.as_str(),
-            );
+            let header = Node::text(Role::Label, (x, header_y), Attrs::new().set("text-anchor", "end").vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", style.label.font.style.as_deref()).set("font-weight", label_weight.clone()).set("fill", col.header_ink.as_deref().unwrap_or(label_ink)), col.header.as_str());
             out.push(crate::contract::mark_group("text", "strip", vec![crate::href::linked(undefined, header)])?);
             let mut cells = Vec::new();
             for (k, cell) in col.cells.iter().enumerate() {
@@ -413,12 +401,12 @@ impl ColumnBlock {
                 let anchor = link_open.and_then(|open| open.anchor(cell.href.as_deref()));
                 for _ in 0..col.copies {
                     let text = Node::text(
+                        Role::Label,
+                        (cell_x, y),
                         crate::contract::cell_label_attrs(&cell.aria)?
-                            .set("x", format!("{cell_x:.2}"))
-                            .set("y", format!("{y:.2}"))
                             .set("text-anchor", "end")
                             .vega("font-family", paint.as_str())
-                            .set("font-size", font_size.to_string())
+                            .num("font-size", font_size)
                             .quick_some("font-style", style.font.style.as_deref())
                             .set("font-weight", cell_weight.clone())
                             .set("fill", ink),
@@ -565,6 +553,30 @@ mod tests {
         assert_eq!(block.columns[0].width, cell_w + 12.0);
     }
 
+    /// A column is a digits column and a unit column: `999` and `1k` share one digit
+    /// edge with the `k` past it, so the column holds `999` plus `k`, wider than
+    /// either cell's whole text.
+    #[test]
+    fn a_column_holds_its_widest_digits_and_its_widest_unit() {
+        let fonts = test_fonts();
+        let rows: Vec<serde_json::Map<String, Value>> = [("A", 999.0), ("B", 1000.0), ("C", 5.0)]
+            .iter()
+            .map(|(c, u)| serde_json::from_value(serde_json::json!({"cat": c, "units": u})).unwrap())
+            .collect();
+        let block = block_over(
+            &rows,
+            serde_json::json!([{"source": "units", "format": {"spec": ".3~s", "raw": "number"}, "label": "U"}]),
+            false,
+        )
+        .unwrap();
+        let col = &block.columns[0];
+        assert_eq!(col.cells.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["999", "1k", "5"]);
+        let digits = fonts.measure("999", TAB_FONT, 11.0).unwrap();
+        let unit = fonts.measure("k", TAB_FONT, 11.0).unwrap();
+        assert_eq!(col.hung_w, unit);
+        assert_eq!(col.width, digits + unit + 12.0);
+    }
+
     /// 26F: a header wider than every value sizes its own column.
     #[test]
     fn a_long_header_widens_its_column_past_the_values() {
@@ -664,19 +676,19 @@ mod tests {
         assert_eq!((b.x1, b.x2), (want.x1, want.x2));
     }
 
-    /// `_hung_suffix_width` reads the numerals, not an anchor cell: a column
-    /// whose entry declares a suffix insets its digits even when it paints
-    /// no anchor.
+    /// A column is a table column: a percent column whose every cell carries its own
+    /// `%` hangs each one, and its digits share the edge one `%` inside the header's.
     #[test]
-    fn an_unanchored_percent_column_hangs_nothing() {
+    fn an_unanchored_percent_column_hangs_every_cells_own_unit() {
         let block = block_over(
             &ratio_rows(),
             serde_json::json!([{"source": "units", "format": {"spec": ".0%", "raw": "percent_whole"}, "label": "U"}]),
             false,
         )
         .unwrap();
-        assert_eq!(block.columns[0].hung_w, 0.0);
-        assert!(block.columns[0].cells.iter().all(|c| c.hang == 0.0));
+        let col = &block.columns[0];
+        assert!(col.hung_w > 0.0);
+        assert!(col.cells.iter().all(|c| c.text.ends_with('%') && c.hang == col.hung_w), "{:?}", col.cells);
     }
 
     /// A column speaks the analytic register while its magnitude suffix
@@ -750,27 +762,20 @@ mod tests {
         assert_eq!(block.columns[1].ink.as_deref(), Some("#222222"));
     }
 
-    /// A trim fixed-point spec pads each cell to the width of its untrimmed
-    /// form (`decimal_pad_table_for`), so `60` reserves `60.00`.
+    /// A trim fixed-point spec paints each cell trimmed (`60`, not `60.00`): a
+    /// column is plain right-aligned text with no decimal pad.
     #[test]
-    fn a_trim_fixed_point_spec_pads_cells_to_the_untrimmed_width() {
-        let fonts = test_fonts();
+    fn a_trim_fixed_point_spec_paints_trimmed_cells_with_no_pad() {
         let block = block_of(serde_json::json!([{"source": "units", "format": ",.2~f", "label": "U"}]), false)
             .unwrap();
-        for (cell, untrimmed) in block.columns[0].cells.iter().zip(["5.00", "60.00", "7.00"]) {
-            let w = fonts.measure(&cell.text, TAB_FONT, 11.0).unwrap();
-            let want = fonts.measure(untrimmed, TAB_FONT, 11.0).unwrap();
-            assert!((w - want).abs() < 0.6, "{:?} measures {w}, {untrimmed} measures {want}", cell.text);
-        }
-        assert!(block.columns[0].cells[1].text.starts_with("60"));
-        assert_ne!(block.columns[0].cells[1].text, "60");
+        let texts: Vec<&str> = block.columns[0].cells.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["5", "60", "7"]);
     }
 
     /// An SI row whose cells share one unit but print different fractional
-    /// depths (`15k`, `3.5k`) aligns on the deepest (`_unscaled_decimal_pad`).
+    /// depths (`15k`, `3.5k`) prints each as is: no pad spaces.
     #[test]
-    fn an_si_row_with_mixed_fractional_depths_pads_to_the_deepest() {
-        let fonts = test_fonts();
+    fn an_si_row_with_mixed_fractional_depths_prints_each_cell_as_is() {
         let rows: Vec<serde_json::Map<String, Value>> = [("A", 15000.0), ("B", 5000.0), ("C", 3500.0)]
             .iter()
             .map(|(c, r)| serde_json::from_value(serde_json::json!({"cat": c, "revenue": r})).unwrap())
@@ -781,12 +786,8 @@ mod tests {
             false,
         )
         .unwrap();
-        let cells = &block.columns[0].cells;
-        assert!(cells[2].text.starts_with("3.5k"), "{:?}", cells[2].text);
-        assert_ne!(cells[0].text, "15k");
-        let deepest = fonts.measure(&cells[2].text, TAB_FONT, 11.0).unwrap();
-        let shallow = fonts.measure(&cells[0].text, TAB_FONT, 11.0).unwrap();
-        assert!((deepest - shallow).abs() > 1.0, "15k and 3.5k are different glyph runs");
+        let texts: Vec<&str> = block.columns[0].cells.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["15k", "5k", "3.5k"]);
     }
 
     /// Cells that print different units (`1.2M`, `30`) share no decimal
@@ -879,8 +880,9 @@ mod tests {
         .unwrap();
         let x = 100.0 + block.right_edges(400.0)[0] + 6.0;
         let want = format!(
-            "<line x1=\"{x:.2}\" y1=\"50.00\" x2=\"{x:.2}\" y2=\"350.00\" \
-             stroke=\"#8A8C8F\" stroke-width=\"1\"/>"
+            "<line x1=\"{x}\" y1=\"50\" x2=\"{x}\" y2=\"350\" \
+             stroke=\"#8A8C8F\" stroke-width=\"1\"/>",
+            x = print::geometry(x)
         );
         assert!(out.contains(&want), "{want}\n{out}");
         assert_eq!(out.matches("<line").count(), 1, "none after the last column");

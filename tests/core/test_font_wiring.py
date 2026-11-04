@@ -435,7 +435,7 @@ class TestProseHeadingsUseTitleStack:
         # for this text — not every width does (a small per-word width delta
         # often still fits the same wrap points), so this one is checked, not
         # assumed.
-        width = 250.0
+        width = 320.0
 
         def render_height(title_family: str) -> float:
             patch = StylePatch.model_validate(

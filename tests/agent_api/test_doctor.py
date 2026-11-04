@@ -273,16 +273,6 @@ def test_database_type_without_a_dbt_adapter_runs_natively(
     assert report.success is True
 
 
-def test_http_source_needs_no_adapter(tmp_path: Path) -> None:
-    root = _project(
-        tmp_path, {"api": {"type": "http", "url": "https://example.com"}}, dbt=False
-    )
-
-    (adapter,) = _checks(run_doctor(root, False), "adapter")
-
-    assert (adapter.source, adapter.status) == ("api", "skip")
-
-
 def test_file_source_needs_no_adapter_or_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

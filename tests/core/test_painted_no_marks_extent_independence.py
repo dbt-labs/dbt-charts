@@ -55,6 +55,7 @@ def _render_blank(rows: list[dict[str, Any]]) -> list[str]:
         truncated_reason=None,
     )
     adapter_registry = Mock()
+    adapter_registry.project_file_sources.return_value = {}
     adapter_registry.execute.return_value = query_result
     executor = Executor(
         result.board,

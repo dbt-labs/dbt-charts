@@ -131,7 +131,10 @@ _ENCODINGS = {
     "donut": "    theta: n\n    color: month\n",
 }
 _SHORT_TITLE = "Revenue"
-_LONG_TITLE = "A chart title of ordinary length that fits a normal dashboard card"
+_LONG_TITLE = (
+    "A chart title of ordinary length that fits a normal dashboard card"
+    " and then some more words"
+)
 
 
 def _compile_lone_chart(

@@ -168,14 +168,14 @@ def _pin_companions(
 
 def _resolved_series_label(
     chart_style_context: ChartStyleContext,
-    primary: _HasColor | None,
+    eff_palette: list[str],
     width: float,
     canvas: str,
 ) -> ResolvedSeriesLabelStyle:
     """Bake series-label typography + dark-companion ink at compile time.
 
     The render layer is barred from compile.palette, so the dark-companion
-    ink for the chart's effective palette is resolved here (full palette; the
+    ink for ``eff_palette`` (the chart's effective palette) is resolved here (full palette; the
     renderer slices ``[:n_series]``). ``canvas`` is the chart's own effective,
     already-opaque ink canvas -- the caller's own
     ``chart_local_style_context.ink_canvas`` (chart_context.py recomputes it
@@ -185,7 +185,6 @@ def _resolved_series_label(
     are required post-cascade.
     """
     font = chart_style_context.series_label.font
-    eff_palette = _effective_palette(chart_style_context, primary)
     compact = width_tier(width) in ("tiny", "narrow")
     font_size = font.compact_size if compact else settled(font.size)
     return ResolvedSeriesLabelStyle(

@@ -46,6 +46,16 @@ EXTRA_PROBES: dict[str, str] = {
     "streamlit": (
         "from dbt_charts.integrations.streamlit import st_board\nprint('ok')\n"
     ),
+    "markdown": (
+        "import markdown\n"
+        "html = markdown.markdown(\n"
+        "    '```charts\\ntype: bar\\nquery:\\n  columns: [a, b]\\n'\n"
+        "    '  values:\\n    - [x, 1]\\nx: a\\ny: b\\n```\\n',\n"
+        "    extensions=['dbt_charts.integrations.markdown'],\n"
+        ")\n"
+        "assert 'dbt-charts-embed' in html\n"
+        "print('ok')\n"
+    ),
 }
 
 # Declared extras deliberately not probed here, and why. Every entry needs a

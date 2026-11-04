@@ -397,7 +397,8 @@ def desugar_theme(
 
     Sugar at *parse* time, which is downstream of schema migration — so
     ``theme:`` is a key the migration recognizer sees like any other, not a
-    spelling of ``extends:`` that it can look through.
+    spelling of ``extends:`` that it can look through. The currency check ahead
+    of migration validates through this sugar, so ``theme:`` alone never migrates.
 
     Declared on the model's own ``Annotated`` input wrapper (``AuthoredBoardInput``,
     below; ``BoardPatchInput`` in ``patch.py``). Both wrappers share this one
@@ -619,7 +620,7 @@ class AuthoredBoard(ConstrainedModel):
         dict[str, QueryOrRef] | None, Merge(Strategy.BY_KEY), Content()
     ] = Field(
         default_factory=dict,
-        description="Named result sets the charts draw from (SQL, CSV, HTTP, and more).",
+        description="Named result sets the charts draw from.",
     )
     charts: Annotated[
         dict[str, ChartOrRef] | None, Merge(Strategy.BY_KEY), Content()
@@ -703,9 +704,10 @@ class AuthoredBoard(ConstrainedModel):
     width: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,
         description="Width when nested (e.g., '50%', '400px', or an integer in pixels). "
-        "On the root board there is no parent to place it into, so it instead sets "
-        "the board's own width (equivalent to 'style.frame.width'); percentages "
-        "are rejected there since there's nothing to size relative to.",
+        "On the root board there is no parent to place it into, so it is the "
+        "board's own exact width in pixels, even past style.frame.max_width; "
+        "percentages are rejected there since there's nothing to size relative to. "
+        "Unset, the root board hugs its content up to style.frame.max_width.",
     )
     height: Annotated[str | int | None, Merge(Strategy.OVERRIDE)] = Field(
         default=None,

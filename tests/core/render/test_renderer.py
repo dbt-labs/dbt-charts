@@ -47,6 +47,7 @@ def _make_executor(board, query_registry, rows):
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry
@@ -290,6 +291,7 @@ def _make_per_query_executor(board, query_registry, rows_by_query):
         return ok
 
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.side_effect = _execute
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry
@@ -585,7 +587,7 @@ def test_a_preset_reaches_text_as_dates_and_the_control_as_its_id(
 ) -> None:
     now = utc_now()
     svg = _render_with_duckdb(tmp_path, local_project, _BOARD, variables, lambda: now)
-    start, _ = resolve_daterange_preset_iso(preset, BoardClock(now.date(), 1, 1))
+    start, _ = resolve_daterange_preset_iso(preset, BoardClock(now.date(), 1, 1, "UTC"))
 
     assert f"From {start}" in svg
     assert "recent" in svg

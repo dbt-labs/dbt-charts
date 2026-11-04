@@ -117,7 +117,6 @@ class ConnectionError(ExecutionError):
 
     Raised when:
     - Database connection fails
-    - HTTP endpoint unreachable
     - File not found
 
     Example:

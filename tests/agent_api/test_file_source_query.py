@@ -105,14 +105,13 @@ def test_execute_query_glob_schema_mismatch_names_the_offending_files(
 def test_registry_with_no_materializer_still_refuses(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """The seam is opt-in, not a silent local default: a caller that builds and
-    injects its own AdapterRegistry (bypassing ProjectSession's own lazy build,
-    which is where the local factory fallback lives) gets no free materializer.
+    """A hand-built AdapterRegistry with no materializer wired refuses; only
+    ``build_adapter_registry`` supplies the local default.
     """
-    from dbt_charts.core.execute.adapters import build_adapter_registry
+    from dbt_charts.core.execute.adapters import AdapterRegistry
 
     project = _csv_project(tmp_path, local_project)
-    registry = build_adapter_registry(project)
+    registry = AdapterRegistry(project=project, project_sources=project.sources)
 
     with ProjectSession.from_project(project, adapter_registry=registry) as session:
         result = session.execute_query("SELECT * FROM orders", source="marts")

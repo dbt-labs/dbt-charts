@@ -237,7 +237,7 @@ depends_on = ["dbt_charts.core.fonts"]   # one strict measurer/cache shared by c
 [[modules]]
 path = "dbt_charts.core.text"
 layer = "core"
-depends_on = ["dbt_charts.core.utils"]   # case.py uses slug_to_text; no compile/render/execute deps
+depends_on = ["dbt_charts.core.utils", "dbt_charts.core.numeric"]   # case.py uses slug_to_text; numeral_scale.py reads ladder_step; no compile/render/execute deps
 
 [[modules]]
 path = "dbt_charts.core.utils"

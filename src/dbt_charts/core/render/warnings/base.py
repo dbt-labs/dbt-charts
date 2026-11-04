@@ -11,8 +11,6 @@ WarningContext carries everything detectors need:
     typed overlay layers that carry their own `query:`. Sparse — only
     charts with a layer query distinct from the base chart's appear.
   - table_overflows: chart id → the table's slot overflow captured at render.
-  - table_crampings: chart id → the table's width cramping (columns under
-    their demand, headers wrapped) captured at render. Sparse.
   - authored_chart_heights: chart id → the nearest ancestor's literal
     authored layout height, in px.
   - text_truncations: chart id → list of TextTruncation records captured
@@ -91,7 +89,6 @@ from dbt_charts.core.render.chart.plot_width_floor_record import (
 )
 from dbt_charts.core.render.chart.series_label_truncation import SeriesLabelTruncation
 from dbt_charts.core.render.chart.table_overflow import (
-    TableCramping,
     TableOverflow,
 )
 from dbt_charts.core.render.chart.table_page_squeeze import TablePageSqueeze
@@ -119,9 +116,6 @@ class WarningContext(BaseModel):
     # chart id → the table's slot overflow at render time (tables only; sparse —
     # captured from the real SVG render, so empty for non-SVG formats).
     table_overflows: dict[str, TableOverflow] = {}
-    # chart id → the table's slot cramping at render time (tables only; sparse —
-    # only tables the renderer had to degrade appear, and only on SVG renders).
-    table_crampings: dict[str, TableCramping] = {}
     # chart id → authored-left-aligned numeric columns whose rendered values
     # are not all the same width (tables only; sparse — see
     # render/chart/table_align.py's module docstring for the two-outcome split

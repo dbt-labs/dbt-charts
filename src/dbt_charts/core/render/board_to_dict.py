@@ -120,6 +120,7 @@ CHART_FIELDS = (
     # Pivot-table channels (authored as field-name lists).
     "rows",
     "values",
+    "row_role",
     "total",
     "projection",
     "latitude",
@@ -127,6 +128,7 @@ CHART_FIELDS = (
     "collapse",
     "basemap",
     "sort",
+    "connect",
     "multiples",
     "support_table",
     "spanners",

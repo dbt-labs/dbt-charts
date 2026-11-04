@@ -56,7 +56,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, Protocol, TypeAlias, get_args, runtime_checkable
+from typing import (
+    Any,
+    Literal,
+    NamedTuple,
+    Protocol,
+    TypeAlias,
+    get_args,
+    runtime_checkable,
+)
+
+from dbt_charts.core.column_types import ColumnType
 
 # Shared with executor.TruncationInfo.reason — the set of causes a cached
 # rows entry can carry. Defined here (not imported from executor) because
@@ -67,6 +77,19 @@ TruncatedReason: TypeAlias = Literal["max_rows", "max_result_bytes"]
 # Values are dynamically typed (SQL/JSON), so the leaf is Any by nature. Defined
 # once here and reused by the cache backends and the composition engine.
 CacheRows: TypeAlias = list[dict[str, Any]]
+# The variable values a cache entry was computed under; SQL-typed like its rows.
+CacheVariables: TypeAlias = dict[str, Any]  # type-state: explicit_any — as CacheRows
+
+
+@dataclass(frozen=True)
+class ResultRows:
+    """A query result as the cache stores it: rows plus the declared type of
+    each column. The schema travels with the rows so a hit returns what the
+    miss that wrote it did, and so cells are restored by declaration, never by
+    reading their values."""
+
+    rows: CacheRows
+    schema: dict[str, ColumnType]
 
 
 def _require_aware(value: datetime, field: str) -> None:
@@ -96,6 +119,8 @@ class CacheHit:
     """
 
     rows: CacheRows
+    # The schema ``put()`` stored with these rows, unchanged.
+    schema: dict[str, ColumnType]
     # Timezone-aware UTC, from every backend. Both compare it against a bound
     # and callers take min() across a render's hits — one naive value in the set
     # makes that a TypeError, and one mislabeled value makes it silently wrong.
@@ -146,6 +171,74 @@ class CachedQueryFailure(Exception):
         # Calling it here restores the message for str(), repr(), and logging.
         Exception.__init__(self, self.error_message)
         _require_aware(self.failed_at, "CachedQueryFailure.failed_at")
+
+
+class CacheUser(NamedTuple):
+    """One board's use of a cache entry: the board and the name it calls the query."""
+
+    board: str
+    query: str
+
+
+@dataclass(frozen=True)
+class CacheEntry:
+    """One key's cached rows, as a listing shows it: enough to
+    decide whether the rows are worth reading, without reading them."""
+
+    # (source_hash, query_hash, variables_hash): what ``get()`` takes to read
+    # the rows a listing decided are worth reading.
+    key: tuple[str, str, str]
+    # Every board that wrote or read the entry, in first-use order.
+    used_by: list[CacheUser]
+    # The variable values the entry was computed under.
+    variables: CacheVariables
+    columns: list[str]
+    row_count: int
+    # Timezone-aware UTC, same contract as CacheHit.written_at.
+    written_at: datetime
+    truncated_reason: TruncatedReason | None
+
+    def __post_init__(self) -> None:
+        _require_aware(self.written_at, "CacheEntry.written_at")
+
+
+@runtime_checkable
+class BrowsableResultCache(Protocol):
+    """A result cache that can be listed by board and query, not only probed
+    by key. The local DuckDB cache is one; a host whose store cannot be
+    enumerated cheaply simply does not implement it, and a surface that
+    needs it reports so instead of pretending the cache is empty."""
+
+    def entries(self) -> list[CacheEntry]:
+        """Every key holding rows, newest first: a query computed under several
+        variable values appears once per value. Error-only entries are not listed."""
+        ...
+
+    def read(self, key: tuple[str, str, str]) -> CacheHit | None:
+        """The rows under a listed entry's ``key``, decoded; None when the entry
+        is gone. Takes the key as ``entries()`` reports it, so a listing can
+        hand over the rows it decided are worth reading without re-deriving
+        the lookup form ``get()`` takes."""
+        ...
+
+    def listed_key(self, key: tuple[str, str, str]) -> tuple[str, str, str]:
+        """*key* as ``get()`` takes it (``compute_cache_key``'s form), in the
+        form ``entries()`` reports, so a listing can tell which entries a
+        query's current definition reads."""
+        ...
+
+    def note_use(
+        self,
+        source_hash: str,
+        query_hash: str,
+        variables_hash: str,
+        board_slug: str,
+        query_name: str,
+    ) -> None:
+        """Name *board_slug*'s use of this key under *query_name* after it was
+        served the rows: a listing then shows every board an entry answers for.
+        A use already named writes nothing."""
+        ...
 
 
 # What one ``get()`` can find: the rows a run produced, or the error it raised.
@@ -199,26 +292,16 @@ class QueryResultCache(Protocol):
         that also wants "data as of <time>" (the executor, for board-chrome)
         never needs a second round trip.
 
-        **Type fidelity is part of the contract, scoped to uniformly-typed
-        columns.** ``int``/``bool``/``str``/``float`` always stay themselves.
-        A column whose every non-None value across the whole rowset shares
-        one of ``date``, ``datetime`` (naive stays naive, aware stays aware),
-        or ``Decimal`` must round-trip exactly — not a stringified or
-        float-coerced stand-in — even through a backend whose storage is
-        lossy on its own (e.g. JSON, which has no date/datetime/Decimal
-        type, or DuckDB's fixed-precision DECIMAL): such a backend must carry
-        enough metadata alongside the rows to restore the original type on
-        read. ``PostgresResultCache`` and ``TrivialDuckDBCache`` both store
-        rows as JSON with a per-column type tag beside them. A column that
-        mixes types — including
-        mixing ``date`` and ``datetime`` in the same column — is NOT
-        promised exact fidelity: its values pass through in whatever form
-        the backend's own storage naturally holds (e.g. an ISO string),
-        never guessed back into a type from their shape. Restoration
-        failure on a value a backend's own tag claims to be able to restore
-        (a corrupted entry, or code-version skew) must be treated as a
-        miss — ``get()`` never raises and never returns partially-restored
-        rows.
+        **Type fidelity is part of the contract.** Each cell comes back as the
+        Python value its column's declared type names — a ``Decimal``, ``date``,
+        naive ``datetime``, UTC-aware ``datetime``, ``time`` or ``bytes``, at any
+        depth inside a ``list`` or ``struct`` — even through a backend whose
+        storage is lossy on its own (JSON has none of them). Backends store the
+        schema beside the rows and restore by ``result_codec.decode_result``;
+        nothing is guessed from a value's shape. ``put()`` raises when a cell
+        does not match its column's type. Restoration failure on read (a
+        corrupted entry, or code-version skew) must be treated as a miss —
+        ``get()`` never raises and never returns partially-restored rows.
 
         **Column order is part of the contract too.** Each row mapping must
         come back with its keys in the order ``put()`` stored them: a query
@@ -227,17 +310,14 @@ class QueryResultCache(Protocol):
         storage does not preserve mapping key order — Postgres ``jsonb`` sorts
         object keys, and most key-value stores promise nothing — must either
         store in a form that does, or record the column list alongside the rows
-        and rebuild each row from it on read, the same way the type map above is
+        and rebuild each row from it on read, the same way the schema is
         carried. ``TrivialDuckDBCache`` stores each row as a JSON object, which
         keeps its key order, so rows that do not share a key set come back with
         their own keys.
 
         Callers of ``get()`` (the executor's incremental-tail watermark
-        computation, in particular) trust this and do not guess a value's
-        real type from its shape; a backend that violates it — including a
-        mixed-typed key column, whose values are not promised to be
-        comparable — produces a type disagreement the executor's merge step
-        raises on, rather than a silently wrong result.
+        computation, in particular) trust this and do not guess a value's real
+        type from its shape.
         """
         ...
 
@@ -246,12 +326,13 @@ class QueryResultCache(Protocol):
         source_hash: str,
         query_hash: str,
         variables_hash: str,
-        outcome: CacheRows | Exception,
+        outcome: ResultRows | Exception,
         *,
         board_slug: str,
         query_name: str,
         source_name: str = "",
         truncated_reason: TruncatedReason | None = None,
+        variables: CacheVariables | None = None,
     ) -> None:
         """Record *outcome* in its own slot, leaving the other one alone.
 
@@ -264,7 +345,9 @@ class QueryResultCache(Protocol):
         board_slug and query_name are recorded as metadata, not key components.
         truncated_reason travels with the rows so a later warm ``get()`` can
         reconstruct the same truncation warning a fresh execution would —
-        ignored when *outcome* is an Exception.
+        ignored when *outcome* is an Exception. ``variables`` is the values
+        ``variables_hash`` was computed from, for a listing to show; None when
+        the writer resolved none (a key-only write).
 
         """
         ...

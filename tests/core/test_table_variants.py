@@ -102,8 +102,6 @@ def _style_with(**overrides):
             rule_color = value
         elif key == "symbol_mode":
             table_updates["symbol_mode"] = value
-        elif key == "row_role":
-            row_updates["role"] = value
         else:
             table_updates[key] = value
 
@@ -253,15 +251,8 @@ class TestBIVariant:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         es = self._bi_style()
-        tc = es.table
-        es = dataclasses.replace(
-            es,
-            table=tc.model_copy(
-                update={"row": tc.row.model_copy(update={"role": "row_role"})}
-            ),
-        )
         data = [
             {"Name": "Alice", "Score": 95, "row_role": "value"},
             {"Name": "Bob", "Score": 87, "row_role": "value"},
@@ -369,15 +360,8 @@ class TestClassicVariant:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         es = self._classic_style()
-        tc = es.table
-        es = dataclasses.replace(
-            es,
-            table=tc.model_copy(
-                update={"row": tc.row.model_copy(update={"role": "row_role"})}
-            ),
-        )
         data = [
             {"Name": "Alice", "Score": 95, "row_role": "value"},
             {"Name": "Total", "Score": 95, "row_role": "total"},
@@ -399,15 +383,8 @@ class TestClassicVariant:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         es = self._classic_style()
-        tc = es.table
-        es = dataclasses.replace(
-            es,
-            table=tc.model_copy(
-                update={"row": tc.row.model_copy(update={"role": "row_role"})}
-            ),
-        )
         data = [
             {"Name": "Alice", "Score": 95, "row_role": "value"},
             {"Name": "Total", "Score": 95, "row_role": "total"},

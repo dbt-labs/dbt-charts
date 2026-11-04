@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 
 
@@ -55,3 +57,19 @@ def test_manifest_project_returns_dbt_project_when_external(tmp_path: Path) -> N
     project = FilesystemProject(tmp_path, dbt_root=external)
 
     assert project.manifest_project() is project.dbt_project
+
+
+def test_symlinked_package_stays_read_only(tmp_path: Path) -> None:
+    pkg = tmp_path / "pkg_src"
+    (pkg / "charts").mkdir(parents=True)
+    (pkg / "charts" / "x.yml").write_text("title: X\n")
+    host = tmp_path / "host"
+    (host / "dbt_packages").mkdir(parents=True)
+    (host / "dbt_packages" / "pkg").symlink_to(pkg, target_is_directory=True)
+    project = FilesystemProject(host)
+
+    with pytest.raises(ValueError, match="escapes the project root"):
+        project.write_text("dbt_packages/pkg/charts/x.yml", "title: Y\n")
+    with pytest.raises(ValueError, match="escapes the project root"):
+        project.delete_text("dbt_packages/pkg/charts/x.yml")
+    assert (pkg / "charts" / "x.yml").read_text() == "title: X\n"

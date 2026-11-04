@@ -231,14 +231,14 @@ pub fn register_utc(name: &str, lo_ms: f64, hi_ms: f64, span: Span) {
     register(name, ScaleSpec { kind: Kind::Utc, domain: vec![Val::Date(lo_ms), Val::Date(hi_ms)], span });
 }
 
-/// Registers the continuous scale `bend` names over `[lo, hi]`.
-pub fn register_bent(name: &str, bend: crate::vega_fit::Bend, lo: f64, hi: f64, span: Span) {
-    use crate::vega_fit::Bend;
-    let kind = match bend {
-        Bend::Linear => Kind::Linear,
-        Bend::Log => Kind::Log,
-        Bend::Pow(exponent) => Kind::Pow(exponent),
-        Bend::Symlog(constant) => Kind::Symlog(constant),
+/// Registers the continuous scale `transform` names over `[lo, hi]`.
+pub fn register_continuous(name: &str, transform: d3rs::scale::Transform, lo: f64, hi: f64, span: Span) {
+    use d3rs::scale::Transform;
+    let kind = match transform {
+        Transform::Identity => Kind::Linear,
+        Transform::Log { .. } => Kind::Log,
+        Transform::Pow(exponent) => Kind::Pow(exponent),
+        Transform::Symlog(constant) => Kind::Symlog(constant),
     };
     register(name, ScaleSpec { kind, domain: vec![Val::Num(lo), Val::Num(hi)], span });
 }

@@ -60,7 +60,7 @@ def _render(width: float, sink_open: bool) -> dict[str, TableOverflow]:
         return sink
 
 
-def test_cramped_table_records_overflow() -> None:
+def test_overflowing_table_records_overflow() -> None:
     """Given far less width than the columns need, the table overflows its slot."""
     sink = _render(width=220, sink_open=True)
     assert "orgs" in sink

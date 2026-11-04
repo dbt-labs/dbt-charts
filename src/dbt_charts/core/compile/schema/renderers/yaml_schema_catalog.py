@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import cached_property
 from types import NoneType
-from typing import Literal, Protocol, TypeAlias
+from typing import Final, Literal, Protocol, TypeAlias
 
 from importlib_resources import files
 
@@ -297,17 +297,24 @@ def structural_schema_bytes(schema: JsonObject) -> bytes:
     return canonical_schema_bytes(_strip_descriptions(schema))
 
 
+PACKAGE_SCHEMA_DIR: Final[_SchemaResource] = (
+    files("dbt_charts") / "data" / "schemas" / "yaml"
+)
+
+
 def load_yaml_schema_catalog() -> YamlSchemaCatalog:
     """Load the package's immutable dbt charts YAML schemas."""
-    return load_yaml_schema_catalog_from(
-        files("dbt_charts") / "data" / "schemas" / "yaml"
-    )
+    return load_yaml_schema_catalog_from(PACKAGE_SCHEMA_DIR)
 
 
-def load_yaml_schema_catalog_from(
+def load_yaml_schema_manifest(
     directory: _SchemaResource,
-) -> YamlSchemaCatalog:
-    """Load and verify a catalog directory; intended for package data and tests."""
+) -> tuple[YamlSchemaEntry, ...]:
+    """The manifest's verified version chain, oldest first, without any schema.
+
+    A caller that needs only versions reads this instead of the catalog, which
+    always generates the live schema from the models.
+    """
     manifest: JsonValue = json.loads(
         directory.joinpath("manifest.json").read_text(encoding="utf-8")
     )
@@ -354,20 +361,26 @@ def load_yaml_schema_catalog_from(
                 f"dbt charts YAML schema manifest {label} {entry.version} must "
                 f"be numerically newer than {previous_entry_version}."
             )
+        if entry.predecessor != previous_entry_version:
+            raise ValueError(
+                f"dbt charts YAML schema {entry.version} has predecessor "
+                f"{entry.predecessor!r}, expected {previous_entry_version!r}."
+            )
         previous_version_key = version_key
         previous_entry_version = entry.version
+    return entries
 
+
+def load_yaml_schema_catalog_from(
+    directory: _SchemaResource,
+) -> YamlSchemaCatalog:
+    """Load and verify a catalog directory; intended for package data and tests."""
+    entries = load_yaml_schema_manifest(directory)
     current_schema = compute_current_schema()
     schemas: dict[str, JsonObject] = {}
     warning_codes: dict[str, frozenset[str]] = {}
-    predecessor: str | Literal[None] = None
     previous_date: date | Literal[None] = None
     for entry in entries:
-        if entry.predecessor != predecessor:
-            raise ValueError(
-                f"dbt charts YAML schema {entry.version} has predecessor "
-                f"{entry.predecessor!r}, expected {predecessor!r}."
-            )
         if entry.status == "DEV":
             if (
                 entry.released_at is not None
@@ -412,7 +425,6 @@ def load_yaml_schema_catalog_from(
                     json.loads(warnings_file.read_text(encoding="utf-8"))
                 )
             previous_date = entry.released_at
-        predecessor = entry.version
 
     return YamlSchemaCatalog(
         tuple(reversed(entries)),

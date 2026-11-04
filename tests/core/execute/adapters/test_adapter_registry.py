@@ -240,6 +240,7 @@ class TestSourceAwareRouting:
         dbt_adapter = MagicMock(spec=DbtAdapter)
         dbt_adapter.supported_types = {"sql"}
         dbt_adapter.dbt_project_path = tmp_path
+        dbt_adapter.target_name = None
         dbt_adapter.can_execute = lambda q, sc: sc is None and has_dbt_jinja(q.sql)
         dbt_adapter.execute = MagicMock(
             return_value=MagicMock(data=[], error=None, is_success=True)
@@ -359,7 +360,7 @@ class TestSourceAwareRouting:
         """No adapter at all claims the query's type: the message says the
         type itself is unregistered, distinct from the type-registered/
         source-unsupported case above."""
-        from dbt_charts.core.compile.models.query.normalized import HttpQuery
+        from dbt_charts.core.compile.models.query.normalized import ValuesQuery
 
         registry = AdapterRegistry(project=local_project(tmp_path))
         registry.register(
@@ -370,11 +371,11 @@ class TestSourceAwareRouting:
             )
         )
 
-        result = registry.execute(HttpQuery(url="https://example.com/"))
+        result = registry.execute(ValuesQuery(rows=[{"a": 1}]))
 
         assert not result.is_success
         error = str(result.error or "").lower()
-        assert "http" in error
+        assert "values" in error
         assert "no adapter registered" in error
 
     def test_duckdb_routes_to_duckdb_adapter_not_sql_adapter(

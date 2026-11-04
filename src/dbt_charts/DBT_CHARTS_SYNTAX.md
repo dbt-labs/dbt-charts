@@ -106,7 +106,7 @@ rows:
 - `title`, `notes`, `tags`
 - `source` / `sources` — default and named data connections
 - `variables` — interactive filter controls
-- `queries` — named SQL / CSV / HTTP / dbt / inline queries
+- `queries`: named SQL, values, or schema queries
 - `charts` — named chart definitions
 - Exactly one of `rows`, `cols`, `grid`, `tabs` (or `text:` for a text-only board)
 - `theme`, `style`, `id`, `width`, `height` — presentation
@@ -254,7 +254,9 @@ Top-level fields:
 
 `board:` as a top-level key is rejected. Put board properties (title, rows, queries, …) directly at the YAML root.
 
-A markdown board (a `.md` file under `charts/`) is a document: its prose flows in one column (`style.text.column.max_number: 1`) unless its frontmatter `board:` block, a `meta.yml`, or an `extends:` template sets another value. YAML boards flow into as many columns as the width allows.
+A markdown board (a `.md` file under `charts/`) is a document: its prose flows in one column (`style.text.column.max_number: 1`) unless its frontmatter `board:` block, a `meta.yml`, or an `extends:` template sets another value. YAML boards flow into as many columns as the width allows. A markdown file with no frontmatter `board:` key is a plain document: `{{ }}`, `{% %}` and `{# #}` in its prose print as written; with a `board:` key the body is a template.
+
+A ` ```charts ` fence in a markdown board places one `rows:` item in the prose: a chart, a whole board, the name of a chart from the frontmatter `board:` block, or a board file path. Query and chart names are shared across the file: each is declared once, and any fence can use a query another fence defines.
 
 ### Caching
 
@@ -503,7 +505,7 @@ Then in a board: `source: warehouse` at the root (default for every `sql` query)
 
 **Inside a dbt project, `sources:` is optional.** When `dbt_project.yml` sits at the project root and `dbt_charts.yml` declares no `sources:` (or does not exist), dbt charts adds one source named after the project's `profile:`, as if you had written `<profile>: {type: dbt_profile}`. Every SQL query that names no `source:` (query, board root, or `meta.yml`) runs against it. Declaring any `sources:` turns it off, and sourceless SQL is then an `ERR-SOURCE-NOT-NAMED` error; so is sourceless SQL outside a dbt project, or in a `dbt_project.yml` with no `profile:` (a dbt package).
 
-Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`.
+Types: `dbt_profile`, `postgres`, `snowflake`, `bigquery`, `redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`.
 
 **Local-only types.** `duckdb` and `sqlite` read a file on the machine running `dct`. dbt charts Cloud connects only to `bigquery`, `postgresql` (Cloud's spelling of `postgres`), `redshift`, and `snowflake` — it never reads a `.duckdb` file from a repo, committed or not. For Cloud, load the tables into one of those warehouses, or export each table to a Parquet/CSV/JSON file committed in the repo and register it once under `sources:` (`type: csv | json | parquet`, a `files:` map, paths relative to the project root); every query then references the source by name, and it renders identically locally and on Cloud with no connection step. A board that is the only reader of one file can skip the registry and point at it inline: `source: <path>` resolves against the board's own directory or the project root, whichever exists (`source: ../data/orders.parquet` from `charts/`, or `source: data/orders.parquet` from any board depth). Both existing at once is a compile error naming both.
 
@@ -516,7 +518,6 @@ source: my_profile             # Optional: default source for every query below
 
 variables:
   region:
-    input: select
     options:
       static: [US, EU, APAC]
 
@@ -538,16 +539,6 @@ queries:
     sql: SELECT region, target FROM targets
     source: local_files
 
-  # HTTP / REST API — self-contained; no source: field (nothing to look up by name)
-  customers:
-    type: http
-    url: https://api.example.com/customers
-    method: GET                  # GET | POST | PUT | DELETE | PATCH
-    headers: { Authorization: "Bearer {{ api_token }}" }  # api_token: a board variable
-    params: { status: active }
-    body: { ... }
-    json_path: $.data
-
   # Inline file source — a single colocated CSV/JSON/Parquet, no registry entry
   targets_inline:
     type: sql
@@ -565,7 +556,7 @@ queries:
       score: number_full
 ```
 
-Query types (`type:` literals): `sql`, `http`, `values`, `schema`.
+Query types (`type:` literals): `sql`, `values`, `schema`.
 
 `type: schema` is a schema-metadata query — it returns metadata rather than
 table rows. Its fields form a strict prefix ladder (each level requires every
@@ -590,19 +581,18 @@ Common fields (all query types):
 |-------|-------------|
 | `notes` | Metadata sentence about the query, for AI search and context. Never drawn on the board. |
 | `formats` | `column: format name` map: how each column prints on every chart, table and KPI that shows it. A name is an engine format (`currency`, `percent`, `integer`, `year`, …) or a `style.formats` key; a d3 spec is rejected (`ERR-QUERY-FORMAT-SPEC`). Beats board-level slot formats; loses to a chart's own slot `format:` (KPI `value.format`, table column `format`, `axis_*.labels.format`). A key the query does not return is `ERR-QUERY-FORMAT-COLUMN-MISSING` |
-| `source` | Source name (from `dbt_charts.yml`'s `sources:` registry), or an inline file path (`./data/x.csv`) for a single colocated CSV/JSON/Parquet. An inline connection dict (`{type: postgres, ...}`) is rejected — reference a named source instead. Not accepted on `http` queries. |
+| `source` | Source name (from `dbt_charts.yml`'s `sources:` registry), or an inline file path (`./data/x.csv`) for a single colocated CSV/JSON/Parquet. An inline connection dict (`{type: postgres, ...}`) is rejected: reference a named source instead. |
 | `cache` | Result-cache override for this query — `5m`, `forever`, `true`, `false` — refines the board/source/project policy (see [Caching](#caching)) |
 | `ignore` | Diagnostic codes to suppress (e.g. `["WARN-REAGGREGATION"]`) |
 
-SQL fields: `sql`, `setup_sql`, `target` (dbt target name, defaults to `dev`).
-HTTP fields: `url`, `method`, `headers`, `params`, `body`, `json_path`, `limit`.
+SQL fields: `sql`, `setup_sql`.
 dbt-model fields: `model`, `columns`.
 Inline-values fields: `columns`, `values` (or `rows` for record-shape).
 Schema fields: `schema`, `table`, `column`, `fields` (project result rows to exactly these keys, in this order).
 
 Connection source types (named in the project root `dbt_charts.yml`'s `sources:`
 registry — never inline in a board): `postgres`, `snowflake`, `bigquery`,
-`redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `http`, `dbt_profile`.
+`redshift`, `trino`, `duckdb`, `sqlite`, `csv`, `json`, `parquet`, `dbt_profile`.
 CSV/JSON/Parquet may instead be referenced inline as a `source:` file path
 without a registry entry — see the example above.
 
@@ -762,10 +752,10 @@ resolve to the same recipe, and the same error names the recipe if you guess a `
 | slope | type: line with a two-category x and color: on the series column (year-shaped x values resolve to a continuous temporal scale, which fills in the span between the pair) |
 | bump | type: line on a rank column with color: on the series column (the data is entity x period x rank, so without it the rows collide on the period key) and a descending style.axis_y.scale.continuous.domain (e.g. [6, 1]) so rank 1 is on top |
 | dot plot, cleveland dot plot | type: scatter with a categorical x and a measure y; for several dots per category use long-format rows with color: on the series column rather than layers:, which keeps the shape rotatable |
-| dumbbell, barbell, connected dot plot | type: bar with y_start for the far end, thinned to a stem with style.marks.bar.band_width, plus a layers: scatter at each end (color: from style.color.categorical.palette) |
+| dumbbell, barbell, connected dot plot | type: bar with y_start for one end and y for the other, thinned to a stem with style.marks.bar.band_width (0.03), plus a layers: scatter on each end. The y dot wears the stem's legend color, so paint only the y_start dot, with layers[].style.marks.point.color |
 | ranged dot | type: bar with y_start for the low end, drawn as a pale interval (color: from style.color.categorical.palette), plus a layers: scatter on the point estimate |
 | floating bar, range bar | type: bar with y_start, so the bar runs from y_start to y instead of from zero |
-| waterfall, bridge chart | type: bar with y_start from a running total the query computes, color: on the query's own direction column pinned with board category_colors, and style.overlap: full so each step's bar fills its band instead of splitting into a grouped slot |
+| waterfall, bridge chart | type: bar with y_start and y from a running total the query computes over one row per step (SUM(delta) OVER (ORDER BY ord) - delta and SUM(delta) OVER (ORDER BY ord), ord unique per step; the opening and closing totals are rows starting at 0), color: on the query's own direction column pinned with board category_colors, style.overlap: full so each step's bar fills its band instead of splitting into a grouped slot, and style.orientation: vertical |
 | candlestick, ohlc, stock chart | type: bar with y_start: low and y: high as a thin wick, plus a layers: bar with y_start: open and y: close as the body. Same-color convention: color: on the query's session column on both the base bar and the body layer, with style.marks.bar.border.width: 0 to drop the knockout outline and border.radius: 0 for square candles. Ink-outline convention: no color: on the base bar (an ink palette slot), color: on the body layer alone, and style.marks.bar.border in ink |
 | gantt | type: bar with a date y and a date y_start, style.orientation: horizontal so time runs left to right, keeping the query's row order rather than the usual value-descending default |
 
@@ -804,7 +794,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `longitude` | string | Longitude field (point/bubble map) |
 | `background` | string \| object | Background channel — color, `{value}`, `{field, scale/when}`, or map layer |
 | `sort` | object | `{by, order}` — categorical sort. Horizontal bar charts default to value-descending order when omitted. |
-| `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `links.auto: true` (table column links are unaffected) |
+| `link` | string \| false | Click-through URL template for drill-down links; `false` suppresses the chart's automatic link when the board sets `links.auto: true` (table column links are unaffected). A board link is the target board's slug (`/orders?id={{ id }}`); validation warns about a link to a board that does not exist |
 | `multiples` | object | Partition into small multiples: `{rows, columns, scale}` — cartesian charts (`bar`/`line`/`area`/`scatter`/`heatmap`) only (see [Small multiples](#small-multiples-multiples)) |
 | `warnings_ignore` | list[string] | Render-warning codes to suppress for this chart only (e.g. `[WARN-AXIS-TITLE-TRUNCATED]`; unknown codes are rejected — every code is listed at https://docs.dbtcharts.com/reference/warnings/) |
 | `layers` | list | Overlay layers on cartesian charts (`bar`/`line`/`area`/`scatter`) — see [Combo charts](#combo-charts-barlinearea-with-layers) |
@@ -812,6 +802,7 @@ All chart types accept the channels and style fields below — but each type rej
 | `conditional_formatting` | object | Discrete style rules by column — `table`/`kpi` only (see [Conditional formatting](#conditional-formatting)) |
 | `support_table` | list | Attached mini-table on bar/line/area charts, above the plot by default (including those with `layers:`) — see [Composition](#composition) |
 | `spanners` | list | Flat `table` only: `[{label, columns: [...]}]` — a label centered over a run of adjacent columns in an extra header row. Columns must be adjacent in query order and in at most one spanner; not combinable with `rows`/`columns`/`values` pivot channels |
+| `row_role` | string | `table` only: the query column whose value (`total`, `summary`, anything else is a plain row) marks each row's role. The column is never drawn; a name that is not a query column is an error. Styled by `style.row.roles` |
 | `height` | int \| float | Exact pixel height. Wins over `aspect_ratio` and theme defaults. Bypasses `min_height`/`max_height`. Not valid on `kpi`, `table`, `callout`, `spark_bar`, `custom`. |
 | `style.aspect_ratio` | float | Chart shape: `height = width / aspect_ratio`. Theme default is `1.5`. Not valid on `kpi`, `table`, `callout`, `spark_bar`. |
 | `style.min_height` | float | Height floor for this chart only; overrides `style.charts.min_height`. Ignored when `height` is set. |
@@ -894,7 +885,7 @@ on axes, value labels and tooltips as well as in a KPI or table:
 
 #### Currency and other affixes
 
-`regional:` (board root, cascaded by `charts/meta.yml`, not by themes) sets how a board writes numbers, and the board's one currency: every money format and every `$` spec prints it. `locale.number` is a d3-format locale name (`fr-FR`, `de-CH`, ...), default `en-US`, or a full d3 locale definition (`decimal`, `thousands`, `grouping`, `currency: [prefix, suffix]`, optional `percent`, `minus`, and `analytic`/`narrative`: the extra-short and abbreviated thousand, million, billion, trillion suffixes, printed as written, default en-US's K/M/B/T and `["k", "mn", "bn", "trn"]`): separators, signs, magnitude suffixes (a named locale brings its own, `de-DE`: `M` analytic, `Mio.` narrative), and the currency template every `$` spec prints, the money names (`currency`, `currency_whole`, `currency_full`) included. `locale.time` is a d3-time-format locale name (`de-DE`, `fr-FR`, `ja-JP`, ...), default `en-US`, or a full definition (`date_time`, `date`, `time`, `periods`, `days`, `short_days`, `months`, `short_months`, `week_start`): it names every month, weekday and AM/PM on the board (`de-DE`: `Mrz`) and sets the first day of a date picker's week (`de-DE`: Monday). The two locales are independent, so set both. `currency` is an ISO 4217 code (USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) whose symbol replaces the locale's own at the locale's placement (`de-DE` + `USD`: `1.234,50 $`); unset, the locale's own currency prints. Repeated values keep the locale's side; a value that declares the currency once (anchored table column, support_table row, axis tick) leads with it (`€1,2 M`). `JPY` has no decimals. `language` (en, de, fr, es, it, pt, nl, sv, da, nb, fi, pl, cs, ru, uk, tr, ja, zh, ko) picks the words dbt Charts generates; unset, it is the language of `locale.time` (`de-DE` is `de`), or `en` when that locale has no catalog or is a full definition. A nested board takes its root's `regional:` (`ERR-REGIONAL-NESTED-MISMATCH` otherwise).
+`regional:` (board root, cascaded by `charts/meta.yml`, not by themes) sets how a board writes numbers, and the board's one currency: every money format and every `$` spec prints it. `locale.number` is a d3-format locale name (`fr-FR`, `de-CH`, ...), default `en-US`, or a full d3 locale definition (`decimal`, `thousands`, `grouping`, `currency: [prefix, suffix]`, optional `percent`, `minus`, and `analytic`/`narrative`: the extra-short and abbreviated thousand, million, billion, trillion suffixes, printed as written, default en-US's K/M/B/T and `["k", "m", "bn", "trn"]`): separators, signs, magnitude suffixes (a named locale brings its own, `de-DE`: `M` analytic, `Mio.` narrative), and the currency template every `$` spec prints, the money names (`currency`, `currency_whole`, `currency_full`) included. `locale.time` is a d3-time-format locale name (`de-DE`, `fr-FR`, `ja-JP`, ...), default `en-US`, or a full definition (`date_time`, `date`, `time`, `periods`, `days`, `short_days`, `months`, `short_months`, `week_start`): it names every month, weekday and AM/PM on the board (`de-DE`: `Mrz`) and sets the first day of a date picker's week (`de-DE`: Monday). The two locales are independent, so set both. `currency` is an ISO 4217 code (USD, EUR, GBP, JPY, CAD, AUD, CHF, SEK, NOK, DKK, INR, CNY, BRL, MXN) whose symbol replaces the locale's own at the locale's placement (`de-DE` + `USD`: `1.234,50 $`); unset, the locale's own currency prints. Repeated values keep the locale's side; a value that declares the currency once (anchored table column, support_table row, axis tick) leads with it (`€1,2 M`). `JPY` has no decimals. `language` (en, de, fr, es, it, pt, nl, sv, da, nb, fi, pl, cs, ru, uk, tr, ja, zh, ko) picks the words dbt Charts generates; unset, it is the language of `locale.time` (`de-DE` is `de`), or `en` when that locale has no catalog or is a full definition. A nested board takes its root's `regional:` (`ERR-REGIONAL-NESTED-MISMATCH` otherwise).
 
 ```yaml
 regional:
@@ -981,6 +972,7 @@ type: line
 x: date
 y: revenue
 color: segment         # Optional: one line per segment
+connect: year          # Optional: numeric x only. Connect points in this column's order, not left to right (connected scatter)
 
 # area — same encoding as line; filled below
 type: area
@@ -1218,9 +1210,16 @@ Template context: `rows` (list of row dicts, raw values), `columns`, `channels`
 `style` (the merged style tree; `style.palettes.<role>` is a list of hex colors,
 or an alias dict for tone roles such as `info`), `math` (`sin`, `cos`, `tan`,
 `asin`, `acos`, `atan2`, `sqrt`, `log`, `exp`, `floor`, `ceil`, `pi`, `tau`),
-`variables` (the board's variable values), `d3` (`scale_linear` and `scale_sqrt`, callable, with `nice`, `ticks`,
+`variables` (the board's variable values), `d3` (`scale_linear`, `scale_sqrt`, `scale_log`, `scale_pow` and `scale_symlog`, callable, with `nice`, `ticks`,
 `tick_format`, `invert` and `domain`/`range`; `scale_band`, callable, with
-`bandwidth()` and `step()`; and `line`, `area`, `arc`, `pie`; d3's names in
+`bandwidth()` and `step()`; `scale_point`, callable, with `step()`; `scale_utc(domain, range)` over two instants (ms or ISO text), callable, with `nice`, `ticks`, `tick_format`, `invert` and `domain`/`range`; `time_format(spec)` and `time_parse(spec)` through the board's time locale; `line`, `area`, `arc`, `pie`; `sankey(links, ...)` returning `{nodes, links}`
+with `sankey_link_horizontal(link)`; `stack(series, order, offset)` returning `{series, index}`; `symbol(type, size)`; `format(spec)` as a function;
+`interpolate_rgb(a, b)` and `interpolate_hcl(a, b)` returning a function of `t`; the categorical
+`scheme_category10`, `scheme_set1`, ... lists; the d3-geo projections
+`geo_mercator`, `geo_orthographic`, `geo_albers_usa`, ... (callable on `[lon, lat]`,
+with `invert`, each setting a method that returns a new projection, and
+`fit_size`/`fit_extent`/`fit_width`/`fit_height`) and `geo_path(projection)`, callable on a
+GeoJSON mapping or its text, with `area`, `bounds`, `centroid`, `measure`; d3's names in
 snake_case), filter
 `format` (a d3-format spec, or `format(column=channels.y)` for the format the board resolved for that column, numbers only), and the helpers `text_width(text, size, weight)`, `color_for(value, column=None)` (board
 pin for that column's value, else the categorical palette in first-call order),

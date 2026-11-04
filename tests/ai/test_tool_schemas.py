@@ -12,6 +12,7 @@ from dbt_charts.ai.tool_schemas import (
     DELETE_FILE,
     EXECUTE_SQL,
     FILE_TOOLS,
+    FIND_QUERIES,
     MOVE_FILE,
     RENDER_BOARD,
     SEARCH_FILES,
@@ -142,6 +143,12 @@ class TestSuggestBoardPlacement:
         assert SUGGEST_BOARD_PLACEMENT not in FILE_TOOLS
 
 
+class TestFindQueriesTool:
+    def test_served_over_mcp_only(self) -> None:
+        assert FIND_QUERIES in ALL_TOOLS
+        assert FIND_QUERIES not in AGENT_TOOLS
+
+
 class TestMoveDeleteFileTools:
     """move_file/delete_file are chat-only (FILE_TOOLS), same precedent as
     read/write/edit — never MCP-visible (ALL_TOOLS)."""
@@ -232,7 +239,7 @@ class TestToStrictJsonSchema:
 
 
 _WRITE_TOOLS = {"write_file", "apply_patch", "move_file", "delete_file"}
-# Boards can declare http sources, so these reach arbitrary URLs (GET only).
+# They run author SQL, which the local session lets DuckDB point at arbitrary URLs.
 _OPEN_WORLD_TOOLS = {"render_board", "execute_sql"}
 
 

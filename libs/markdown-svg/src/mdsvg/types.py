@@ -31,6 +31,13 @@ class Span:
     # authoring shorthand ImageBlock already supports for a standalone image.
     width: Optional[float] = None
     height: Optional[float] = None
+    # LINK spans only: the label is inline code (``[`file.yml`](path)``), drawn
+    # as a code chip that links.
+    code: bool = False
+    # Emphasis a span inherits rather than declares by its type: code inside
+    # emphasis, or every span of an italic blockquote.
+    bold: bool = False
+    italic: bool = False
 
     def __post_init__(self) -> None:
         """Validate span configuration."""

@@ -16,6 +16,7 @@
 
 use crate::js_sort::js_sort;
 use crate::sankey::Align;
+use scene::{PathCommand, PathData};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopSide {
@@ -412,18 +413,16 @@ impl Graph {
     /// `circularAreaLink` for a loop — the centerline route offset by `hw`
     /// on both sides, keeping the engine's nested corner radii — and
     /// `sankey::ribbon_area` otherwise.
-    pub fn link_area(&self, l: usize, hw: f64, num: impl Fn(f64) -> String) -> String {
+    pub fn link_area(&self, l: usize, hw: f64) -> PathData {
         let k = &self.links[l];
         let Some(p) = &k.circular_path else {
             let (sx, tx) = (self.nodes[k.source].x1, self.nodes[k.target].x0);
-            return crate::sankey::ribbon_area(sx, k.y0, tx, k.y1, hw, num);
+            return crate::sankey::ribbon_area(sx, k.y0, tx, k.y1, hw);
         };
         let s = if k.circular_link_type == Some(LoopSide::Bottom) { 1.0 } else { -1.0 };
-        let sweep = if s == 1.0 { 1 } else { 0 };
-        let pt = |x: f64, y: f64| format!("{},{}", num(x), num(y));
-        let turn = |rx: f64, ry: f64, cw: i32, x: f64, y: f64| {
-            format!("A{},{} 0 0 {cw} {}", num(rx), num(ry), pt(x, y))
-        };
+        let sweep = s == 1.0;
+        let line = |x: f64, y: f64| PathCommand::L(x, y);
+        let turn = |rx: f64, ry: f64, clockwise: bool, x: f64, y: f64| PathCommand::A { rx, ry, rot: 0.0, large: false, sweep: clockwise, x, y };
         let (sx, sy, tx, ty) = (p.source_x, p.source_y, p.target_x, p.target_y);
         let (ri, li, rf, lf) = (p.right_inner_extent, p.left_inner_extent, p.right_full_extent, p.left_full_extent);
         let (vf, vr, vl) = (p.vertical_full_extent, p.vertical_right_inner_extent, p.vertical_left_inner_extent);
@@ -433,26 +432,29 @@ impl Graph {
             p.left_large_arc_radius,
             p.left_small_arc_radius,
         );
-        [
-            format!("M{}L{}", pt(sx, sy - s * hw), pt(ri, sy - s * hw)),
+        PathData(vec![
+            PathCommand::M(sx, sy - s * hw),
+            line(ri, sy - s * hw),
             turn(rr + hw, rs + hw, sweep, rf + hw, sy + s * rs),
-            format!("L{}", pt(rf + hw, vr)),
+            line(rf + hw, vr),
             turn(rr + hw, rr + hw, sweep, ri, vf + s * hw),
-            format!("L{}", pt(li, vf + s * hw)),
+            line(li, vf + s * hw),
             turn(lr + hw, lr + hw, sweep, lf - hw, vl),
-            format!("L{}", pt(lf - hw, ty + s * ls)),
+            line(lf - hw, ty + s * ls),
             turn(lr + hw, ls + hw, sweep, li, ty - s * hw),
-            format!("L{}L{}L{}", pt(tx, ty - s * hw), pt(tx, ty + s * hw), pt(li, ty + s * hw)),
-            turn(lr - hw, ls - hw, 1 - sweep, lf + hw, ty + s * ls),
-            format!("L{}", pt(lf + hw, vl)),
-            turn(lr - hw, lr - hw, 1 - sweep, li, vf - s * hw),
-            format!("L{}", pt(ri, vf - s * hw)),
-            turn(rr - hw, rr - hw, 1 - sweep, rf - hw, vr),
-            format!("L{}", pt(rf - hw, sy + s * rs)),
-            turn(rr - hw, rs - hw, 1 - sweep, ri, sy + s * hw),
-            format!("L{}Z", pt(sx, sy + s * hw)),
-        ]
-        .concat()
+            line(tx, ty - s * hw),
+            line(tx, ty + s * hw),
+            line(li, ty + s * hw),
+            turn(lr - hw, ls - hw, !sweep, lf + hw, ty + s * ls),
+            line(lf + hw, vl),
+            turn(lr - hw, lr - hw, !sweep, li, vf - s * hw),
+            line(ri, vf - s * hw),
+            turn(rr - hw, rr - hw, !sweep, rf - hw, vr),
+            line(rf - hw, sy + s * rs),
+            turn(rr - hw, rs - hw, !sweep, ri, sy + s * hw),
+            line(sx, sy + s * hw),
+            PathCommand::Z,
+        ])
     }
 }
 

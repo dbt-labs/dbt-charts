@@ -236,7 +236,7 @@ def handle_adapter_error(operation: str, error: Exception) -> QueryResult:
     template, not this function's operation-prefixed wrapping.
 
     Args:
-        operation: Description of the operation that failed (e.g., "SQL execution", "HTTP request")
+        operation: Description of the operation that failed (e.g., "SQL execution", "schema inspection")
         error: The exception that occurred
 
     Returns:
@@ -472,7 +472,7 @@ class BaseAdapter(ABC):
     """Base interface for query adapters.
 
     All adapters must implement this interface to execute queries
-    against different backends (SQL, HTTP, CSV, etc.).
+    against different backends (warehouses, files, etc.).
 
     The unified interface pattern uses:
     - `supported_types`: Property returning set of query types this adapter handles
@@ -503,7 +503,7 @@ class BaseAdapter(ABC):
         """Query types this adapter can execute.
 
         Returns:
-            Set of query type strings (e.g., {"sql"}, {"csv", "http"})
+            Set of query type strings (e.g., {"sql"}, {"csv", "values"})
 
         Example:
             >>> adapter.supported_types

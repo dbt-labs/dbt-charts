@@ -31,6 +31,12 @@ _BOARD = (
 )
 
 
+_VALUES_BOARD = _BOARD.replace(
+    "  my_query: SELECT id, revenue FROM orders\n",
+    "  my_query:\n    columns: [id, revenue]\n    values:\n      - [1, 2.5]\n",
+)
+
+
 def _project(tmp_path: Path, board_yml: str = _BOARD) -> Path:
     db_path = tmp_path / "test.duckdb"
     conn = duckdb.connect(str(db_path))
@@ -118,14 +124,11 @@ def test_json_output_carries_warehouse_findings(tmp_path):
 def test_strict_fails_on_an_unchecked_query(tmp_path):
     """--strict means "everything was actually checked" — unchecked is a failure.
 
-    An http source has no dry run, so the query is reported unchecked. Plain
+    A values query carries no SQL to dry-run, so it is reported unchecked. Plain
     --warehouse exits 0 (nothing is wrong, it is just unknown); --strict, whose
     contract is warnings-are-errors, exits 1.
     """
-    board = _project(tmp_path)
-    (tmp_path / "dbt_charts.yml").write_text(
-        "sources:\n  testdb:\n    type: http\n    url: https://example.invalid/data\n"
-    )
+    board = _project(tmp_path, _VALUES_BOARD)
     assert _run(tmp_path, str(board), "--warehouse").exit_code == 0
     strict = _run(tmp_path, str(board), "--warehouse", "--strict")
     assert strict.exit_code == 1
@@ -142,10 +145,7 @@ def test_json_and_strict_together_fail_on_an_unchecked_query(tmp_path):
     natural CI invocation (parse JSON, gate the build) passing green while
     every query went unchecked.
     """
-    board = _project(tmp_path)
-    (tmp_path / "dbt_charts.yml").write_text(
-        "sources:\n  testdb:\n    type: http\n    url: https://example.invalid/data\n"
-    )
+    board = _project(tmp_path, _VALUES_BOARD)
     without_strict = _run(tmp_path, str(board), "--warehouse", "--json")
     assert without_strict.exit_code == 0
 

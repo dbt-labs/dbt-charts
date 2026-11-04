@@ -1439,8 +1439,8 @@ def test_the_charts_level_annotations_path_is_rejected() -> None:
         StylePatch.model_validate({"charts": {"annotations": _rule_style("#111111")}})
 
 
-@pytest.mark.parametrize("year", [str, Decimal])
-def test_a_string_or_decimal_year_x_resolves_like_a_date(year: type) -> None:
+@pytest.mark.parametrize("year", [str, Decimal, float])
+def test_a_string_decimal_or_float_year_x_resolves_like_a_date(year: type) -> None:
     rows = [
         {"year": year(2018 + i), "revenue": float(r)}
         for i, r in enumerate([1, 3, 2, 5, 4, 6])
@@ -1455,6 +1455,12 @@ def test_a_string_or_decimal_year_x_resolves_like_a_date(year: type) -> None:
     ).annotations
     assert trend.trend is not None
     assert _value(note.x) == "2023-01-01"
+
+
+def test_a_float_literal_on_a_year_axis_is_that_year() -> None:
+    rows = [{"year": 2018 + i, "revenue": float(i)} for i in range(6)]
+    rule = _line([{"type": "rule", "x": 2021.0}], rows=rows, x="year").annotations[0]
+    assert _value(rule.x) == "2021-01-01"
 
 
 def test_a_non_finite_x_is_not_plotted_so_aggregates_and_fits_skip_it() -> None:

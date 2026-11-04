@@ -116,11 +116,11 @@ def test_a_very_long_warehouse_error_is_cut_to_the_budget_with_a_marker() -> Non
 
 
 def test_an_oversized_echoed_sql_is_cut_before_the_error_text() -> None:
-    message = "Query 'q' uses variable 'v' (input: text). Pass a binding for it."
+    message = "Warehouse rejected the query."
     failed = {
         "success": False,
         "errors": [message],
-        "error_code": "ERR-VARIABLE-UNBOUND",
+        "error_code": "ERR-WAREHOUSE-RUNTIME",
         "sql": "select 1 -- " + "x" * 60_000,
     }
 

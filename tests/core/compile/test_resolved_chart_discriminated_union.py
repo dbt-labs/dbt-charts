@@ -74,12 +74,14 @@ def _default_resolved_table_style() -> ResolvedTableStyle:
 
 
 def _default_callout_style() -> ResolvedCalloutStyle:
-    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
-    from dbt_charts.core.compile.resolve.style.board import resolve_style
+    from dbt_charts.core.compile.resolve.style.board import (
+        build_resolved_callout_chart,
+    )
 
-    return resolve_style(
-        get_theme_style(get_default_theme_name())
-    ).chart_defaults.callout_error
+    charts = _default_charts()
+    return build_resolved_callout_chart(
+        charts.callout, charts.bold_font_weight, charts.code_family, charts.callout.tone
+    )
 
 
 def _default_charts():

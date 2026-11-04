@@ -995,7 +995,7 @@ ERR_RESULT_COLUMN_TYPE = REGISTRY.register(
         doc=(
             "Fired when a result column's type cannot be declared: the source "
             "reports a type dbt Charts has no mapping for, or an inline literal "
-            "(a values query or an HTTP response) mixes kinds in one column or "
+            "(a values query) mixes kinds in one column or "
             "holds nothing to read a type from. Types come from the source's own "
             "declaration, never from guessing at cell values, so the column has "
             "to be cast in the query or made uniform in the literal."
@@ -1441,6 +1441,45 @@ ERR_BOARD_FILE_UNREADABLE = REGISTRY.register(
     )
 )
 
+ERR_CACHE_SQL_FAILED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CACHE-SQL-FAILED",
+        domain="execute",
+        title="SQL over cached rows failed",
+        message_template="The in-process engine rejected the SQL: {detail}",
+        doc=(
+            "Fired by `execute_sql` with a `board` when SQL over cached query "
+            "rows fails in the isolated DuckDB engine: a column the cached "
+            "query does not have, or a function DuckDB lacks. The only tables "
+            "are the queries the SQL names with `.cache`."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_CACHE_NOT_ATTACHED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-CACHE-NOT-ATTACHED",
+        domain="execute",
+        title="SQL reads cached rows but no result cache is attached",
+        message_template=(
+            "This dbt Charts server runs with no query-result cache (DCT_CACHE_PATH "
+            "attaches one), so `{{{{ queries.{query}.cache }}}}` has no rows to read. "
+            "`{{{{ queries.{query} }}}}` runs the board's query fresh."
+        ),
+        doc=(
+            "Fired by `execute_sql` with a `board` when the SQL reads a query's "
+            "cached rows through `.cache` and the server was started without a "
+            "result cache, as `dct mcp serve` is unless `DCT_CACHE_PATH` is set."
+        ),
+        summary=(
+            "Fired when board-mode SQL reads a query's cached rows on a server "
+            "started without a result cache."
+        ),
+        docs_topic="queries",
+    )
+)
+
 ERR_BOARD_QUERY_NOT_FOUND = REGISTRY.register(
     ErrorCode(
         code="ERR-BOARD-QUERY-NOT-FOUND",
@@ -1456,25 +1495,6 @@ ERR_BOARD_QUERY_NOT_FOUND = REGISTRY.register(
             "where a chart references the missing query."
         ),
         docs_topic="queries",
-    )
-)
-
-ERR_VARIABLE_UNBOUND = REGISTRY.register(
-    ErrorCode(
-        code="ERR-VARIABLE-UNBOUND",
-        domain="execute",
-        title="Query uses a variable with no value",
-        message_template=(
-            "Query {query_name!r} uses variable {variable!r} (input: {input}), "
-            "which the board declares without a default. Pass a binding for it, "
-            '{{"name": "{variable}", "value": ...}}, where the value is {value_hint}.'
-        ),
-        doc=(
-            "Fired when a named-query run uses a variable the board declares "
-            "without a default and the caller supplied no binding. Pass a value "
-            "for each variable named."
-        ),
-        docs_topic="variables",
     )
 )
 
@@ -1544,6 +1564,26 @@ ERR_VARIABLE_VALUE_NOT_IN_OPTIONS = REGISTRY.register(
             "the listed options."
         ),
         summary="Fired when a choice variable is set to a value outside its options.",
+        docs_topic="variables",
+    )
+)
+
+ERR_VARIABLE_VALUE_INVALID = REGISTRY.register(
+    ErrorCode(
+        code="ERR-VARIABLE-VALUE-INVALID",
+        domain="execute",
+        title="Variable value does not match the variable's input type",
+        message_template="Variable {variable!r}: {problem}",
+        doc=(
+            "Fired when a value given for a variable (`--var`, a URL parameter, "
+            "an API or MCP `variables` binding) cannot be read as the variable's "
+            "declared input: a multiselect that is not a JSON list, a date that "
+            "is not YYYY-MM-DD, a number that is not numeric, a daterange that "
+            "is not `[start, end]` or a preset. The message names the variable "
+            "and the value. Pass a value of the declared type; `[]` or an empty "
+            "value selects everything for a multiselect."
+        ),
+        summary="Fired when a variable value cannot be read as its declared input type.",
         docs_topic="variables",
     )
 )
@@ -1664,6 +1704,64 @@ ERR_METRICFLOW_BUNDLE_INVALID = REGISTRY.register(
             "name). The path is relative to the project root. Fix the fragment, "
             "or in a dbt project run `dbt parse` so the dbt-metricflow-sql plugin "
             "rewrites `target/metricflow/`."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_METRICFLOW_NO_BUNDLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-METRICFLOW-NO-BUNDLE",
+        domain="execute",
+        title="Source has no MetricFlow bundle to describe",
+        message_template="Source {source!r} {reason}",
+        doc=(
+            "Fired by `dct semantics` and the `describe_semantics` tool when the "
+            "named source is not declared in the project's sources, or declares "
+            "no `metricflow:` directory. Name a source from `dct describe` that "
+            "declares one."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_METRICFLOW_UNKNOWN_OBJECT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-METRICFLOW-UNKNOWN-OBJECT",
+        domain="execute",
+        title="MetricFlow bundle declares no object of that name",
+        message_template=(
+            "{name!r} is not a dataset, entity, constellation or page of bundle "
+            "{bundle!r}{hint}"
+        ),
+        doc=(
+            "Fired by `dct semantics SOURCE NAME` and the `describe_semantics` "
+            "tool's `name` when the bundle declares no dataset, entity, "
+            "constellation or page of that name. The message names the declared ones it "
+            "nearly matches; the overview (no name) lists them all."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_METRICFLOW_OUTSIDE_BUNDLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-METRICFLOW-OUTSIDE-BUNDLE",
+        domain="execute",
+        title="Query reads a table outside the required MetricFlow bundle",
+        message_template=(
+            "This source requires its MetricFlow bundle {bundle!r}, and the query "
+            "reads {tables}, which the bundle does not declare. Every query on "
+            "this source must read only the bundle's datasets and constellations; "
+            "`dct semantics` lists them."
+        ),
+        doc=(
+            "Fired when a source declares `metricflow:` with `required: true` and "
+            "a query names a table the bundle does not declare: a warehouse table, "
+            "a dbt relation, or a dataset spelled with a catalog. The query never "
+            "reaches the warehouse. Rewrite it over the bundle's datasets and "
+            "constellations, or declare the table as a dataset; a source whose "
+            "bundle is optional runs such a query as written instead."
         ),
         docs_topic="queries",
     )

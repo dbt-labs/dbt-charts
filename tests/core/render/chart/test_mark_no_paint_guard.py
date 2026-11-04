@@ -35,7 +35,6 @@ from dbt_charts.core.compile.resolve.style.board import (
 )
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.render.chart.mark_extents import (
     all_marks_degenerate,
     mark_extents,
@@ -70,7 +69,6 @@ def _link_examples_board_chart(chart_id: str) -> tuple[Chart, Executor]:
             allow_external_access_in_readonly=True,
             duckdb_config={"enable_external_access": True},
         ),
-        file_materializer=FileSourceMaterializer(project),
     )
     return board.charts[chart_id], executor
 
@@ -156,9 +154,7 @@ def test_guard_fires_and_routes_through_the_error_card() -> None:
 
 
 _NARROW_COLS_BOARD = """
-style:
-  frame:
-    width: 700
+width: 700
 queries:
   q:
     type: values

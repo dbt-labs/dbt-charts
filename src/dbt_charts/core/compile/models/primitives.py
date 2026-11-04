@@ -57,9 +57,15 @@ from dbt_charts.core.compile.models.markers import (
     Palette,
     Strategy,
 )
-from dbt_charts.core.compile.models.palette import PaletteFamily
+from dbt_charts.core.compile.models.palette import (
+    PaletteFamily,
+    PatternMotif,
+    PatternRamp,
+)
 from dbt_charts.core.compile.models.schema_names import (
+    PATTERN_GROUND_KEYWORDS,
     VEGA_SCHEME_NAMES,
+    PatternPaletteName,
     ScalePaletteName,
     StopsPaletteName,
 )
@@ -124,6 +130,9 @@ ToneLiteral = Literal["positive", "negative", "warning", "info"]
 # How much of a pie its box lets it draw: slice labels and a legend, labels on
 # the big slices beside a table of the small ones, or a wheel over a full table.
 PieMode = Literal["direct", "hybrid", "full_table"]
+
+# The card-width ladder a chart title's size and family follow.
+WidthTier = Literal["tiny", "narrow", "medium", "wide"]
 
 # HTML rendering tier for board body text (`html_policy` field). Ordered from
 # most to least restrictive — declaration order is the canonical ordering, so
@@ -350,7 +359,7 @@ class FormatConfig(BaseModel):
     )
     notation: Notation | None = Field(
         default=None,
-        description="Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1mn).",
+        description="Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1m).",
     )
     sign_placement: SignPlacement | None = Field(
         default=None,
@@ -428,7 +437,7 @@ class NumberLocale(BaseModel):
         default=magnitude_words("en-US")[1],
         description=(
             "The abbreviated thousand, million, billion and trillion "
-            'suffixes on every value (en-US: `["k", "mn", "bn", "trn"]`).'
+            'suffixes on every value (en-US: `["k", "m", "bn", "trn"]`).'
         ),
     )
 
@@ -567,6 +576,17 @@ class Regional(BaseModel):
             "resolve on, the zone of the data-freshness stamp, and the zone a "
             "query timestamp carrying a zone or offset prints, buckets and "
             "ticks in."
+        ),
+    )
+
+    fiscal_year_start_month: int = Field(
+        default=1,
+        ge=1,
+        le=12,
+        description=(
+            "Calendar month (1=Jan..12=Dec) the board's fiscal year opens in: "
+            "the anchor of the `fiscal_` daterange presets (`this_fiscal_quarter`). "
+            "Chart axes keep their own `fiscal_year_start_month`."
         ),
     )
 
@@ -1702,3 +1722,69 @@ class ColorStyle(StaticGradientColorStyle):
         default=None,
         description="Palettes used when color encodes distinct categories, or a lone series.",
     )
+
+
+PatternScale = Literal["category", "sequential", "diverging"]
+
+
+class PatternStyle(BaseModel):
+    """`style.pattern`: how a chart's `pattern:` channel paints its fills."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # None is the unset sentinel: the pattern then takes the theme's single-series color.
+    color: Annotated[str | None, Color()] = Field(
+        default=None,
+        description="Color of the pattern marks, a color or palette token. Default is the theme's single-series color. Not allowed with a `color:` channel, which draws each series' pattern in its own hue.",
+    )
+    ground: Annotated[str, Color(keywords=PATTERN_GROUND_KEYWORDS)] = Field(
+        description="What the pattern is drawn on: `background` (default), `tint` (a pale tint of the pattern color, drawn with a darker shade of it), a color, or the name of a color palette, whose nth color is the nth series' ground.",
+    )
+    inverse: bool = Field(description="Swap the pattern's ink and ground.")
+    # None is the unset sentinel: the pattern palette's own step count applies.
+    steps: int | None = Field(
+        default=None,
+        ge=3,
+        le=9,
+        description="Number of ramp steps, 3 to 9, overriding the pattern palette's own count. Only for a quantitative field; a category scale has no steps.",
+    )
+    # None is the unset sentinel: the field's kind picks the pattern role.
+    palette: PatternPaletteName | None = Field(
+        default=None,
+        description="A pattern palette name or a pattern role (`pattern_category`, `pattern_sequential`, `pattern_diverging`). Default follows the field: a discrete field takes `pattern_category`, a quantitative one `pattern_sequential`.",
+    )
+
+
+class ResolvedPattern(BaseModel):
+    """A chart's pattern encoding, final: the field, its scale, and the ink rules."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    field: str = Field(description="Column the patterns encode.")
+    scale: PatternScale = Field(
+        description="`category` maps each value to a motif; `sequential` and `diverging` bin the value onto a ramp."
+    )
+    motifs: tuple[PatternMotif, ...] | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="Motif per category slot (wraps like the color palette); None on a ramp scale.",
+    )
+    ramp: PatternRamp | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="Ramp name; None on the category scale.",
+    )
+    steps: int | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="Number of ramp steps; None on the category scale.",
+    )
+    color: str | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="Color of the pattern marks; None draws each series' pattern in its hue.",
+    )
+    ground: str | tuple[str, ...] = Field(
+        description="`background`, `tint`, a color, or one ground color per series slot."
+    )
+    inverse: bool = Field(description="Whether ink and ground are swapped.")

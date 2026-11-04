@@ -308,6 +308,59 @@ class TestPlanner:
         assert set(scale.slots) == {"North"}
         assert color_at(scale, "North", _PALETTE) == "#111111"
 
+    def test_seeded_values_take_the_first_slots_in_their_order(self) -> None:
+        """A linked variable's options own slots before any value the data holds."""
+        plan = plan_category_colors(
+            [{"region": ("APAC",)}, {"region": ("APAC",)}],
+            authored={},
+            palette=_PALETTE,
+            seeded={"region": ("EMEA", "AMER", "APAC")},
+        )
+        assert list(plan["region"].slots.items()) == [
+            ("EMEA", 0),
+            ("AMER", 1),
+            ("APAC", 2),
+        ]
+
+    def test_seeding_alone_never_binds_a_single_chart_field(self) -> None:
+        plan = plan_category_colors(
+            [{"region": ("APAC",)}],
+            authored={},
+            palette=_PALETTE,
+            seeded={"region": ("EMEA", "APAC")},
+        )
+        assert "region" not in plan
+
+    def test_options_past_the_palette_are_not_seeded_unpinned(self) -> None:
+        """Seeding is an enhancement: more options than swatches seats what the data holds."""
+        options = tuple(f"r{i}" for i in range(len(_PALETTE) + 2))
+        plan = plan_category_colors(
+            [{"region": ("r1", "r0")}, {"region": ("r1",)}],
+            authored={},
+            palette=_PALETTE,
+            seeded={"region": options},
+        )
+        assert list(plan["region"].slots.items()) == [("r1", 0), ("r0", 1)]
+
+    def test_options_past_the_palette_never_raise_for_a_pinned_field(self) -> None:
+        options = tuple(f"r{i}" for i in range(len(_PALETTE) + 2))
+        plan = plan_category_colors(
+            [{"region": ("r1", "r0")}],
+            authored={"region": _binding(r1="#aa0000")},
+            palette=_PALETTE,
+            seeded={"region": options},
+        )
+        assert list(plan["region"].slots) == ["r1", "r0"]
+
+    def test_seeded_values_follow_the_authored_pins(self) -> None:
+        plan = plan_category_colors(
+            [{"region": ("APAC",)}],
+            authored={"region": _binding(APAC="#aa0000")},
+            palette=_PALETTE,
+            seeded={"region": ("EMEA", "APAC")},
+        )
+        assert list(plan["region"].slots) == ["APAC", "EMEA"]
+
     def test_authored_order_leads_and_new_values_append(self) -> None:
         plan = plan_category_colors(
             [{"category": ("Outdoor", "Electronics")}, {"category": ("Tools",)}],

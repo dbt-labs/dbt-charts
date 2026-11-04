@@ -282,10 +282,16 @@ rows:
 # ── table column header ──────────────────────────────────────────────────────
 
 
-def test_table_column_header_truncated_fires_warning(tmp_path, local_project) -> None:
-    """Table with a column header too long for its slot → WARN_TABLE_TEXT_TRUNCATED."""
+def test_table_column_header_too_long_is_extra_wrap_not_truncation(
+    tmp_path, local_project
+) -> None:
+    """A header that needs over two lines in its slot is WARN_TABLE_HEADER_EXTRA_WRAP; the
+    cut is that warning's, so WARN_TABLE_TEXT_TRUNCATED (cells) stays quiet."""
     from dbt_charts.core.board import render_dashboard
-    from dbt_charts.core.diagnostics import WARN_TABLE_TEXT_TRUNCATED
+    from dbt_charts.core.diagnostics import (
+        WARN_TABLE_HEADER_EXTRA_WRAP,
+        WARN_TABLE_TEXT_TRUNCATED,
+    )
     from dbt_charts.core.project import InMemoryBoard
 
     project = local_project(tmp_path)
@@ -315,12 +321,11 @@ rows:
         result_cache=None,
     )
     codes = {w.code for w in result.warnings}
-    assert WARN_TABLE_TEXT_TRUNCATED.code in codes, (
-        f"Expected WARN_TABLE_TEXT_TRUNCATED; got: {codes}"
+    assert codes == {WARN_TABLE_HEADER_EXTRA_WRAP.code}, codes
+    warn = next(
+        w for w in result.warnings if w.code == WARN_TABLE_HEADER_EXTRA_WRAP.code
     )
-    warn = next(w for w in result.warnings if w.code == WARN_TABLE_TEXT_TRUNCATED.code)
-    assert warn.path == "charts.t"
-    assert [r.path for r in warn.related] == [f"charts.t.style.columns.{long_col}"]
+    assert warn.path == f"charts.t.style.columns.{long_col}"
 
     # A short header must NOT fire.
     clean_board = InMemoryBoard(
@@ -346,7 +351,9 @@ rows:
         project=project,
         result_cache=None,
     )
-    assert WARN_TABLE_TEXT_TRUNCATED.code not in {w.code for w in clean.warnings}
+    clean_codes = {w.code for w in clean.warnings}
+    assert WARN_TABLE_HEADER_EXTRA_WRAP.code not in clean_codes
+    assert WARN_TABLE_TEXT_TRUNCATED.code not in clean_codes
 
 
 # ── callout ──────────────────────────────────────────────────────────────────

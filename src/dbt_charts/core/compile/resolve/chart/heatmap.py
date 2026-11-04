@@ -38,11 +38,14 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _cartesian_kwargs,
     _color_column_format,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
     _effective_requested_alias_palette,
+    _effective_single_series_fill,
 )
+from dbt_charts.core.compile.resolve.chart._pattern import resolve_pattern
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
@@ -83,6 +86,15 @@ def _resolve_heatmap(
 ) -> ResolvedHeatmapChart:
     validate_wide_measure_labels(normalized)
     data = dataset.all_rows()
+    if normalized.pattern is not None and _is_temporal(normalized.pattern, data):
+        raise ValueError(
+            f"chart.pattern ({normalized.pattern!r}) names a date column, which has "
+            "no pattern scale: pattern a discrete or numeric column."
+        )
+    # A pattern with no `color:` is the cells' value: the same column, drawn in one color.
+    authored_color = normalized.color
+    if normalized.pattern is not None and authored_color is None:
+        normalized = normalized.model_copy(update={"color": normalized.pattern})
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
@@ -104,7 +116,7 @@ def _resolve_heatmap(
         temporal_band_axes=frozenset(temporal_axes),
     )
     primary = plan.primary
-    heatmap = merge_unset(chart_style_context.heatmap, primary)
+    heatmap = merge_unset(board_family_style(chart_style_context, normalized), primary)
     channels = plan.channels
     ay_merged = plan.axes.y.style
     # Heatmap's color channel is always a gradient (a continuous scale over
@@ -178,7 +190,19 @@ def _resolve_heatmap(
     )
     reject_native(style_tail["tooltip_format"], "style.tooltip.format")
     _tf = resolve_title_font(chart_local_style_context, width)
+    pattern = resolve_pattern(
+        normalized.pattern,
+        authored_color,
+        data,
+        chart_style_context,
+        heatmap.pattern,
+        _effective_single_series_fill(
+            chart_style_context, primary, rhythm_slot=normalized.rhythm_slot
+        ),
+        primary,
+    )
     return ResolvedHeatmapChart(
+        pattern=pattern,
         **_base_kwargs(
             normalized,
             chart_style_context,

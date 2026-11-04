@@ -1,0 +1,3 @@
+from sqlglot import exp
+
+def entity_name(datatype: exp.DataType | None) -> exp.Table | None: ...

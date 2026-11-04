@@ -5,6 +5,7 @@
 //! depends on the host time zone refuses by name.
 
 use crate::time_locale::active_time_locale;
+use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, is_leap_year, weekday};
 
 /// glibc's C-locale `%h`, which `portable_strftime` leaves to the host
 /// (`_NAME_DIRECTIVES` holds only `a A b B p`).
@@ -71,40 +72,6 @@ impl Moment {
     }
 }
 
-fn is_leap(year: u32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-fn days_in_month(year: u32, month: u32) -> u32 {
-    match month {
-        2 if is_leap(year) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
-
-/// Days from 0001-01-01 (`date.toordinal() - 1`) to the given calendar day.
-fn days_from_epoch(year: u32, month: u32, day: u32) -> i64 {
-    let y = i64::from(year - 1);
-    let before_month: u32 = (1..month).map(|m| days_in_month(year, m)).sum();
-    y * 365 + y / 4 - y / 100 + y / 400 + i64::from(before_month + day - 1)
-}
-
-/// The inverse of `days_from_epoch` (proleptic Gregorian, civil-from-days).
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 306; // shift the epoch to 0000-03-01
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
-}
-
 impl Moment {
     /// A naive date at midnight (`date.strftime` sees zeros for every time field).
     pub(super) fn midnight(year: u32, month: u32, day: u32) -> Self {
@@ -118,7 +85,7 @@ impl Moment {
     /// The UTC instant `ms` milliseconds after the Unix epoch.
     pub(super) fn from_epoch_millis(ms: i64) -> Result<Self, String> {
         let days = ms.div_euclid(86_400_000);
-        let (year, month, day) = civil_from_days(days + days_from_epoch(1970, 1, 1));
+        let (year, month, day) = civil_from_days(days);
         let year = u32::try_from(year).ok().filter(|&y| y >= 1).ok_or_else(|| format!("instant {ms} ms is before year 1"))?;
         let seconds = ms.rem_euclid(86_400_000) / 1000;
         Ok(Moment {
@@ -127,7 +94,7 @@ impl Moment {
             second: (seconds % 60) as u32,
             micro: (ms.rem_euclid(1000) * 1000) as u32,
             utc: true,
-            ..Moment::midnight(year, month, day)
+            ..Moment::midnight(year, month.into(), day.into())
         })
     }
 
@@ -138,8 +105,7 @@ impl Moment {
 
     /// Milliseconds since 1970-01-01T00:00:00Z; a naive moment reads as UTC.
     fn epoch_millis(self) -> i64 {
-        let days = days_from_epoch(self.year, self.month, self.day)
-            - days_from_epoch(1970, 1, 1);
+        let days = days_from_civil(self.year as i32, self.month as u8, self.day as u8);
         let seconds = days * 86_400
             + i64::from(self.hour * 3600 + self.minute * 60 + self.second);
         seconds * 1000 + i64::from(self.micro / 1000)
@@ -147,14 +113,14 @@ impl Moment {
 
     fn day_of_year(self) -> u32 {
         (1..self.month)
-            .map(|m| days_in_month(self.year, m))
+            .map(|m| days_in_month(self.year as i32, m))
             .sum::<u32>()
             + self.day
     }
 
     /// Monday = 0; 0001-01-01 is a Monday.
     fn weekday(self) -> usize {
-        days_from_epoch(self.year, self.month, self.day).rem_euclid(7) as usize
+        weekday(self.year as i32, self.month as u8, self.day as u8) as usize
     }
 
     fn hour12(self) -> u32 {
@@ -175,7 +141,7 @@ impl Moment {
                 ..self
             }
             .weekday();
-            if jan1 == 3 || (is_leap(y) && jan1 == 2) {
+            if jan1 == 3 || (is_leap_year(y as i32) && jan1 == 2) {
                 53
             } else {
                 52
@@ -238,7 +204,7 @@ pub(super) fn parse_temporal(value: &str) -> Result<Option<Moment>, TemporalErro
     let year: u32 = value[0..4].parse().map_err(|_| TemporalError::Unported("year".into()))?;
     let month: u32 = value[5..7].parse().map_err(|_| TemporalError::Unported("month".into()))?;
     let day: u32 = value[8..10].parse().map_err(|_| TemporalError::Unported("day".into()))?;
-    if year == 0 || !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+    if year == 0 || !(1..=12).contains(&month) || day == 0 || day > days_in_month(year as i32, month) {
         return Ok(None);
     }
     let date = Moment::midnight(year, month, day);
@@ -280,7 +246,7 @@ pub(super) fn parse_temporal(value: &str) -> Result<Option<Moment>, TemporalErro
         ..date
     };
     if let Some(offset) = time.offset_minutes {
-        let minutes = days_from_epoch(year, month, day) * 1440
+        let minutes = days_from_civil(year as i32, month as u8, day as u8) * 1440
             + i64::from(time.hour * 60 + time.minute)
             - i64::from(offset);
         let (y, m, d) = civil_from_days(minutes.div_euclid(1440));
@@ -293,8 +259,8 @@ pub(super) fn parse_temporal(value: &str) -> Result<Option<Moment>, TemporalErro
         let of_day = minutes.rem_euclid(1440) as u32;
         moment = Moment {
             year: y as u32,
-            month: m,
-            day: d,
+            month: m.into(),
+            day: d.into(),
             hour: of_day / 60,
             minute: of_day % 60,
             utc: crate::time_zone::is_aware(value),
@@ -578,9 +544,10 @@ fn wall_strftime(m: Moment, zone: Option<&Zone>, spec: &str) -> Result<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_locale::{de_de, en_us, with_time_locale, TimeLocale};
+    use crate::time_locale::{de_de, en_us, with_time_locale};
+    use d3rs::time_format::Locale;
 
-    fn in_locale(locale: &TimeLocale, m: Moment, spec: &str) -> Result<String, String> {
+    fn in_locale(locale: &Locale, m: Moment, spec: &str) -> Result<String, String> {
         with_time_locale(locale, || strftime(m, spec))
     }
 
@@ -730,21 +697,6 @@ mod tests {
         assert_eq!(moment("2024-01-01").weekday(), 0);
         assert_eq!(moment("0001-01-01").weekday(), 0);
         assert_eq!(moment("2000-01-09").weekday(), 6);
-    }
-
-    #[test]
-    fn civil_from_days_inverts_days_from_epoch() {
-        for (y, m, d) in [
-            (1, 1, 1),
-            (4, 2, 29),
-            (1900, 3, 1),
-            (2000, 2, 29),
-            (2024, 12, 31),
-            (9999, 12, 31),
-        ] {
-            let (cy, cm, cd) = civil_from_days(days_from_epoch(y, m, d));
-            assert_eq!((cy, cm, cd), (i64::from(y), m, d));
-        }
     }
 
     #[test]

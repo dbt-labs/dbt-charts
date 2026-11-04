@@ -39,6 +39,11 @@ branch there would report a broken query valid.
 result schema — so those rows are ``columns_checked=False`` and the caller
 reports the chart-column check as unavailable rather than pretending it ran.
 
+A query authored with a ``dialect:`` other than its source's is translated first,
+through the path execution uses (``AdapterRegistry.translate_query``), and the
+mechanism then checks the translated text. A translation failure is ``invalid``:
+execution would fail the same way.
+
 A first EXPLAIN tier was cut from PR #7266: its guard inferred fault from
 warehouse errors and kept producing false-invalids. The tier exists again only
 because the guard was rebuilt the other way round — see the next paragraph.
@@ -86,7 +91,6 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_RUNTIME,
 )
 from dbt_charts.core.diagnostics.execution import UnparseableSqlError
-from dbt_charts.core.execute.sql_translate import dialect_differs
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
@@ -177,6 +181,7 @@ def warehouse_check(
     Raises:
         DbtChartsError: the query's source cannot be resolved.
     """
+    from dbt_charts.core.execute.adapters.base import QueryResult
     from dbt_charts.core.execute.executor import (
         CACHE_REF_JINJA_RE,
         merge_board_variables,
@@ -207,18 +212,15 @@ def warehouse_check(
     with board_clock(clock):
         variables = merge_board_variables(board, {}, clock)
 
-        # EXPLAIN-wrapping and dry runs send the SQL untranslated.
-        if query.dialect is not None and (
-            source_config is None or dialect_differs(query.dialect, source_config)
-        ):
+        if query.dialect is not None and source_config is None:
             return WarehouseCheck(
                 status="unchecked",
                 adapter_type="none",
-                mechanism="dialect",
+                mechanism="no-source",
                 columns_checked=False,
                 reason=(
-                    f"its SQL is written in {query.dialect} and translated when it "
-                    "runs, so the warehouse check would send the untranslated text"
+                    f"its SQL is written in {query.dialect} and no source resolved "
+                    "to say which warehouse to translate it for"
                 ),
             )
 
@@ -234,6 +236,22 @@ def warehouse_check(
         # Resolution only ever rewrites `sql`/`setup_sql` on a copy of what it got.
         assert is_sql_query(resolved)
         query = resolved
+
+        # A `dialect:` query is translated when it runs. The mechanisms below wrap
+        # or dry-run the SQL as given, so they must be handed the translated text.
+        if query.dialect is not None and source_config is not None:
+            translated = adapter_registry.translate_query(
+                query, board=board, variables=variables, source_config=source_config
+            )
+            if isinstance(translated, QueryResult):
+                assert translated.error is not None
+                return _failure(
+                    str(translated.error),
+                    rejected=True,
+                    adapter_type=source_config.type,
+                    mechanism="translation",
+                )
+            query = translated
 
         # None usually means a source-less *non*-SQL query (source-less SQL raises
         # ERR-SOURCE-NOT-NAMED) — but a SqlQuery can land here too: an authored
@@ -287,8 +305,6 @@ def warehouse_check(
             # execution, so it establishes the same scope the registry does and
             # `_check_bigquery` reads it back.
             scope = {"query": query_name, "board": board.id}
-            if query.target:
-                scope["target"] = query.target
             with attribute(
                 scope,
                 source_config.attribution
@@ -367,6 +383,7 @@ def warehouse_check(
                 board=board,
                 adapter_registry=adapter_registry,
                 variables=variables,
+                source_config=source_config,
             )
         # The remaining adapters are unchecked because dbt charts implements no
         # non-executing check for them — a claim about us, not the warehouse
@@ -505,6 +522,7 @@ def _check_via_wrap(
     board: Board,
     adapter_registry: AdapterRegistry,
     variables: VariableValues,
+    source_config: ResolvedSourceConfig | None,
 ) -> WarehouseCheck:
     """Run a keyword-wrapped statement through the real execute path.
 
@@ -528,6 +546,7 @@ def _check_via_wrap(
         query.model_copy(update={"sql": wrapped_sql, "limit": None}),
         variables=variables,
         board=board,
+        source_config=source_config,
     )
     if result.error:
         return _failure(

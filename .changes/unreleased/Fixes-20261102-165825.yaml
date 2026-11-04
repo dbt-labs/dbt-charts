@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`dct import looker` and `dct import sigma` write the bundle when a page image or one tile''s SQL fails, naming each failure in the outline instead of failing.'
+time: 2026-11-02T16:58:25.678332-08:00

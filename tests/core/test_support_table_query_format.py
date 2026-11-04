@@ -1,9 +1,9 @@
-"""A support_table row reading a column prints with that column's query format."""
+"""A support_table row reading a column prints with that column's query format,
+in compact digits."""
 
 from __future__ import annotations
 
 from dbt_charts.core.compile.config import get_theme_style
-from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
     ChartSupportTableAggregate,
@@ -40,11 +40,6 @@ def test_source_entry_follows_the_query_format() -> None:
     fmt = resolved.support_table.entries[0].format
     assert fmt is not None
     assert "$" in fmt.spec
-
-
-def _integer_spec() -> str:
-    _, ctx = resolve_style_and_context(get_theme_style(), None)
-    return resolve_format_parts("integer", ctx.formats).spec
 
 
 def _resolved_entries(
@@ -84,20 +79,21 @@ def test_aggregate_entry_follows_the_query_format() -> None:
         ]
     )
     assert total is not None
-    assert total.spec == _integer_spec()
+    assert total.raw == "number", "the column's whole digits print compact"
     assert share is not None
     assert "%" in share.spec
 
 
 def test_count_aggregate_ignores_the_source_column_format() -> None:
-    """A count reads rows, not the column's unit."""
+    """A count reads rows, not the column's unit: it prints the engine's number."""
     (count,) = _resolved_entries(
         [ChartSupportTableAggregate(aggregate="count", source="share")]
     )
-    assert count is None
+    assert count is not None
+    assert count.raw == "number"
 
 
 def test_per_series_entry_follows_the_query_format() -> None:
     (per_series,) = _resolved_entries([ChartSupportTablePerSeries(per_series="n")])
     assert per_series is not None
-    assert per_series.spec == _integer_spec()
+    assert per_series.raw == "number", "the column's whole digits print compact"

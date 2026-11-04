@@ -1,0 +1,3 @@
+kind: Fixes
+body: A line chart with a wide reversed y domain such as [20, 1] no longer draws a phantom 0 tick outside the authored domain, and both authored ends are ticked.
+time: 2026-10-28T17:58:32.917761-07:00

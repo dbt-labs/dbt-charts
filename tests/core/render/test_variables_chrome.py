@@ -16,10 +16,15 @@ from types import SimpleNamespace
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.variable.authored import Variable, VariableOptions
+from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.template.daterange import BoardClock, board_clock
-from dbt_charts.core.render.board_variables import daterange_presets
+from dbt_charts.core.render.board_variables import (
+    daterange_presets,
+    overridden_variables,
+)
 from dbt_charts.core.render.controls import controls_stylesheet, interactive_controls
 from dbt_charts.core.render.variables_layout import lay_out_variables
 from dbt_charts.core.render.variables_resolve import (
@@ -56,7 +61,7 @@ class _NoQueries:
 
 
 _TODAY = datetime.date(2026, 10, 20)
-_CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1)
+_CLOCK = BoardClock(_TODAY, fiscal_start_month=1, week_start=1, time_zone="UTC")
 
 
 def _strip(
@@ -748,6 +753,71 @@ def test_a_control_with_no_options_publishes_none() -> None:
     assert _groups(svg)[0].get("data-dbt-options") is None
 
 
+class _OptionRows:
+    """A render-pass executor answering one options query with fixed rows."""
+
+    cache_hit_ats: list = []
+    rendered_at = PINNED_RENDER_TIME
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self.rows = rows
+
+    def execute_query(self, name: str, variables: object) -> list[dict[str, object]]:
+        return self.rows
+
+
+def _team_filter() -> dict[str, Variable]:
+    return {
+        "team": Variable(
+            input="multiselect", options=VariableOptions(query="_var_options_team")
+        )
+    }
+
+
+def test_column_bound_options_publish_their_counts_beside_them() -> None:
+    """Each value's row count travels aligned with the values, as the number a
+    count sort compares and the text the menu draws in the board's format."""
+    rows = [
+        {"team": "Menon", OPTION_COUNT_COLUMN: 3608},
+        {"team": "Bose", OPTION_COUNT_COLUMN: 2745},
+    ]
+    with interactive_controls(True):
+        svg, _ = _strip(_team_filter(), executor=_OptionRows(rows))
+
+    group = _groups(svg)[0]
+    formats = _rs().chart_defaults.formats
+    assert json.loads(group.get("data-dbt-options")) == ["Menon", "Bose"]
+    assert json.loads(group.get("data-dbt-option-counts")) == [
+        [3608, format_value(3608, "integer", formats)],
+        [2745, format_value(2745, "integer", formats)],
+    ]
+
+
+def test_options_with_no_count_column_publish_no_counts() -> None:
+    """An authored options query and a static list carry no count, and the menu
+    must not be handed one to draw or sort by."""
+    with interactive_controls(True):
+        queried, _ = _strip(_team_filter(), executor=_OptionRows([{"team": "Bose"}]))
+        static, _ = _strip(
+            {
+                "team": Variable(
+                    input="multiselect", options=VariableOptions(static=["a"])
+                )
+            }
+        )
+
+    assert _groups(queried)[0].get("data-dbt-option-counts") is None
+    assert _groups(static)[0].get("data-dbt-option-counts") is None
+
+
+def test_an_artifact_render_does_not_carry_the_option_counts() -> None:
+    """Counts are part of the option list a static export leaves out."""
+    rows = [{"team": "Bose", OPTION_COUNT_COLUMN: 3}]
+    svg, _ = _strip(_team_filter(), executor=_OptionRows(rows))
+
+    assert _groups(svg)[0].get("data-dbt-option-counts") is None
+
+
 def test_a_control_publishes_the_committed_value_not_its_display_form() -> None:
     """`All` and `Yes` are labels; a host committing them would filter on a word."""
     unset, _ = _strip({"region": Variable(input="select")})
@@ -814,7 +884,9 @@ def test_a_variables_own_menu_replaces_the_style_default() -> None:
                     ),
                 )
             },
-            clock=BoardClock(_TODAY, fiscal_start_month=7, week_start=1),
+            clock=BoardClock(
+                _TODAY, fiscal_start_month=7, week_start=1, time_zone="UTC"
+            ),
         )
     groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
     flat = [p for group in groups for p in group]
@@ -831,6 +903,39 @@ def test_a_variables_own_menu_replaces_the_style_default() -> None:
     ]
     # A divider falls between the rolling presets and the calendar-anchored ones.
     assert [len(group) for group in groups] == [1, 3]
+
+
+def test_last_and_before_publish_generated_labels_and_an_open_lower_bound() -> None:
+    with interactive_controls(True):
+        svg, _ = _strip(
+            {
+                "span": Variable(
+                    input="daterange",
+                    presets=(
+                        "last_12_months",
+                        "before_previous_4_fiscal_quarters",
+                    ),
+                )
+            },
+            clock=BoardClock(
+                _TODAY, fiscal_start_month=7, week_start=1, time_zone="UTC"
+            ),
+        )
+    groups = json.loads(_groups(svg)[0].get("data-dbt-presets"))
+
+    assert [len(group) for group in groups] == [1, 1]
+    assert [(p["id"], p["label"], p["range"]) for g in groups for p in g] == [
+        (
+            "last_12_months",
+            "Last 12 months",
+            ["2025-11-01", "2026-10-20"],
+        ),
+        (
+            "before_previous_4_fiscal_quarters",
+            "Before previous 4 fiscal quarters",
+            ["", "2025-09-30"],
+        ),
+    ]
 
 
 def test_a_committed_preset_outside_the_menu_is_published_for_the_popover() -> None:
@@ -1338,3 +1443,69 @@ def test_only_a_live_calendar_publishes_the_time_locale() -> None:
     assert _groups(svg)[0].get("data-dbt-time-locale") is None
     svg, _ = _strip({"when": Variable(input="date")})
     assert _groups(svg)[0].get("data-dbt-time-locale") is None
+
+
+def _reset_groups(svg: str) -> list[ET.Element]:
+    root = ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{svg}</svg>")
+    return [g for g in root.iter() if g.get("data-dbt-reset")]
+
+
+def test_two_controls_draw_a_hidden_reset_outside_the_variable_groups() -> None:
+    svg, _ = _strip({"a": Variable(input="text"), "b": Variable(input="text")})
+
+    (reset,) = _reset_groups(svg)
+    assert reset.get("opacity") == "0"
+    assert [e.text for e in reset.iter() if e.tag.endswith("text")] == ["Reset"]
+    assert not any(reset in list(g.iter()) for g in _groups(svg))
+
+
+def test_the_reset_is_drawn_in_an_interactive_render_too() -> None:
+    defs = {"a": Variable(input="text"), "b": Variable(input="text")}
+    with interactive_controls(True):
+        live, _ = _strip(defs)
+
+    assert len(_reset_groups(live)) == 1
+
+
+def test_a_single_control_draws_no_reset() -> None:
+    svg, _ = _strip({"a": Variable(input="text")})
+
+    assert _reset_groups(svg) == []
+
+
+def test_the_stylesheet_reveals_the_reset_on_bind() -> None:
+    assert ".dbt-interactive [data-dbt-reset]" in controls_stylesheet()
+
+
+def test_the_reset_is_disabled_while_every_filter_is_at_its_default() -> None:
+    svg, _ = _strip({"a": Variable(input="text"), "b": Variable(input="text")})
+
+    (reset,) = _reset_groups(svg)
+    assert reset.get("data-dbt-enabled") == "false"
+
+
+def test_a_filter_the_caller_set_enables_the_reset() -> None:
+    defs = {"a": Variable(input="text"), "b": Variable(input="text")}
+    with overridden_variables(frozenset({"b"})):
+        svg, _ = _strip(defs)
+
+    (reset,) = _reset_groups(svg)
+    assert reset.get("data-dbt-enabled") is None
+
+
+def test_a_chart_view_the_caller_set_enables_the_reset() -> None:
+    defs = {"a": Variable(input="text"), "b": Variable(input="text")}
+    with overridden_variables(frozenset({"_dct_legend_sales"})):
+        svg, _ = _strip(defs)
+
+    (reset,) = _reset_groups(svg)
+    assert reset.get("data-dbt-enabled") is None
+
+
+def test_a_set_variable_outside_the_strip_leaves_its_reset_disabled() -> None:
+    defs = {"a": Variable(input="text"), "b": Variable(input="text")}
+    with overridden_variables(frozenset({"elsewhere"})):
+        svg, _ = _strip(defs)
+
+    (reset,) = _reset_groups(svg)
+    assert reset.get("data-dbt-enabled") == "false"

@@ -10,13 +10,10 @@
 # the top-accounts table). Everything else lives in thirds or quarters.
 
 title: Anatomy of a Signature
+width: 1440
 notes: How Dundersign's documents move from sent to signed
 theme: vivid
 source: dundersign_db
-
-style:
-  frame:
-    width: 1440
 
 variables:
   date_range:

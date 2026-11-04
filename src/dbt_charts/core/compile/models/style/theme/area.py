@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, ConfigDict, Field
 
 from dbt_charts.core.compile.models.markers import InheritSlot, SkipInheritSlots
+from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
     _CartesianChartStyle,
@@ -133,6 +134,9 @@ class AreaChartStyle(
     )
     endpoint_labels: EndpointLabelsConfig = Field(
         description="Series names printed on the bands instead of in a legend."
+    )
+    pattern: PatternStyle = Field(
+        description="How the `pattern:` channel paints fills."
     )
     marks: Annotated[
         AreaChartMarksStyle, InheritSlot(from_path="Style.charts.marks")

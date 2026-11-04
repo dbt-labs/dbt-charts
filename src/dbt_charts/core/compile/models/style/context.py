@@ -31,6 +31,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 
+from dbt_charts.core.colors import CanvasTone, canvas_tone
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     FormatTable,
@@ -55,7 +56,7 @@ from dbt_charts.core.compile.models.style.authored import (
 from dbt_charts.core.compile.models.style.resolved._base import (
     ResolvedLegendStyle,
 )
-from dbt_charts.core.compile.models.style.resolved.callout import ResolvedCalloutStyle
+from dbt_charts.core.compile.models.style.resolved.callout import ResolvedErrorTileStyle
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
     AxisXStyle,
@@ -219,11 +220,13 @@ class ChartStyleContext:
     # chart-local patch (possibly a different tone) merges onto this, and
     # only then does the tone fill the ``by_tone`` colors.
     callout: CalloutChartStyle
-    # Runtime chart-error fallback card style — same family, tone forced to
-    # "negative" regardless of the theme's chosen callout default.
-    callout_error: ResolvedCalloutStyle
+    # Runtime chart-error fallback tile: the callout's structure in the theme's
+    # panel, ink and stripe roles; its inherited `tone` paints nothing.
+    callout_error: ResolvedErrorTileStyle
     # CSS weight of the theme's one bold token (text.bold.weight).
     bold_font_weight: str
+    # The theme's code font family (text.code.font.family).
+    code_family: str
 
     # --- Board/board chrome carried for the VL config mapper ---
     tooltip: TooltipStyle
@@ -308,6 +311,11 @@ class ChartStyleContext:
     # the honest "no board binding" state: a data-free resolve, or a board
     # whose categorical fields never meet the two-chart threshold.
     category_colors: tuple[CategoryColorScale, ...] = ()
+
+    @property
+    def canvas_tone(self) -> CanvasTone:
+        """Light or dark: the tone of this chart's own canvas (`ink_canvas`)."""
+        return canvas_tone(self.ink_canvas)
 
 
 __all__ = ["ChartStyleContext"]

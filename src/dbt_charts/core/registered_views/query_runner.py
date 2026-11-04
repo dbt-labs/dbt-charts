@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.normalize.queries import normalize_query
 from dbt_charts.core.compile.template.query_result import QueryResult
-from dbt_charts.core.execute.cache_backend import CacheHit
+from dbt_charts.core.execute.cache_backend import CacheHit, ResultRows
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
@@ -245,7 +245,7 @@ def run_registry_queries(
         if cache is not None and cache_key is not None:
             cache.put(
                 *cache_key,
-                result.data,
+                ResultRows(result.data, result.schema),
                 board_slug=view.name,
                 query_name=query_name,
             )

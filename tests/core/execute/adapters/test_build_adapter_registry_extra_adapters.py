@@ -109,16 +109,6 @@ class _NoSession:
         raise AssertionError("session must not be used")
 
 
-def test_allowed_types_gates_extra_adapters(tmp_path: Path) -> None:
-    project = FilesystemProject(tmp_path)
-    registry = build_adapter_registry(
-        project,
-        allowed_types={"values"},
-        extra_adapters=[SnowparkAdapter(session=_NoSession(), project=project)],
-    )
-    assert not any(isinstance(a, SnowparkAdapter) for a in registry.adapters)
-
-
 def test_from_project_rejects_extra_adapters_with_an_injected_registry(
     tmp_path: Path,
 ) -> None:

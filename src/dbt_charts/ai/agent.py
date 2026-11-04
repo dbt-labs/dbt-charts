@@ -119,23 +119,42 @@ def schema_exploration_guidance(adapter_registry: AdapterRegistry) -> str:
     return _SCHEMA_EXPLORATION_GUIDANCE.format(hints="\n".join(hints))
 
 
-def build_sources_context(adapter_registry: AdapterRegistry) -> str:
+_NO_QUERY_ACCESS_GUIDANCE = """Sources marked "no query access" are ones this \
+user may not query: `execute_sql` and `render_board(yaml_content=...)` on them \
+are refused. Answer from existing boards instead — find them with \
+`search_files`, show them with `render_board(path=...)`. If the question needs \
+data no existing board shows, say so plainly: the user needs query access from \
+an admin of their organization."""
+
+
+def build_sources_context(
+    adapter_registry: AdapterRegistry, no_query_access: frozenset[str] = frozenset()
+) -> str:
     """List configured data sources + exploration guidance, from config only.
 
     The system prompt deliberately embeds no warehouse schema — on large
     warehouses a schema dump exceeds the model context window, and agents
     retrieve schema better through their own scoped metadata queries.
+
+    Core has no principal; a host that authorizes callers passes the source
+    names its caller may not query as *no_query_access*.
     """
     sources = adapter_registry.list_sql_sources()
     if not sources:
         return ""
-    lines = [f"- {s['name']} ({s['type']})" for s in sources]
-    return (
+    lines = [
+        f"- {s['name']} ({s['type']})"
+        + (" — no query access" if s["name"] in no_query_access else "")
+        for s in sources
+    ]
+    parts = [
         "## Data sources (use these exact names in `source:` and queries)\n\n"
         + "\n".join(lines)
-        + "\n\n"
-        + schema_exploration_guidance(adapter_registry)
-    )
+    ]
+    if no_query_access & {s["name"] for s in sources}:
+        parts.append(_NO_QUERY_ACCESS_GUIDANCE)
+    parts.append(schema_exploration_guidance(adapter_registry))
+    return "\n\n".join(parts)
 
 
 _TOOL_GUIDANCE = """## Tool Use

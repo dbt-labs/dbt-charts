@@ -554,33 +554,6 @@ rows:
 class TestQueryTypesExtended:
     """Extended tests for different query types."""
 
-    def test_http_query_type(self):
-        """Test HTTP query type."""
-        yaml_content = """
-title: HTTP Test
-queries:
-  api_data:
-    type: http
-    url: https://api.example.com/data
-    method: GET
-    headers:
-      Authorization: Bearer token123
-charts:
-  c:
-    query: api_data
-    type: table
-rows:
-  - c
-"""
-        result = compile(yaml_content)
-
-        assert result.success
-        query = result.board.queries["api_data"]
-        assert query.query_type == "http"
-        assert query.url == "https://api.example.com/data"
-        assert query.method == "GET"
-        assert query.headers == {"Authorization": "Bearer token123"}
-
     def test_sql_query_rejects_limit(self):
         """limit: is not an authored sql-query field — write LIMIT in the SQL."""
         yaml_content = """

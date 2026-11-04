@@ -65,7 +65,7 @@ def test_record_board_captures_rows_by_query(tmp_path: Path) -> None:
 
     recording = record_board(resolved, executor, variables)
 
-    assert recording.rows_by_query["channel_mix"] == [
+    assert recording.results_by_query["channel_mix"].rows == [
         {"month": "2026-01-01", "signups": 90},
         {"month": "2026-02-01", "signups": 105},
     ]
@@ -158,6 +158,7 @@ def _tie_flipping_registry() -> Mock:
         return ok
 
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.side_effect = _execute
     return registry
 
@@ -191,7 +192,7 @@ def test_record_board_records_the_rows_resolve_saw_even_with_cache_off() -> None
     pie = resolved.charts["industry_pie"]
     assert isinstance(pie, ResolvedPieChart)
     assert (
-        pie_presentation_fingerprint(recording.rows_by_query["industry_counts"])
+        pie_presentation_fingerprint(recording.results_by_query["industry_counts"].rows)
         == pie.presentation_fingerprint
     )
     assert registry.execute.call_count == 1
@@ -202,7 +203,7 @@ def test_board_recording_rejects_unknown_fields() -> None:
         BoardRecording(
             recorded_at=datetime.now(UTC),
             variables={},
-            rows_by_query={},
+            results_by_query={},
             provenance={},
             extra_field="nope",  # type: ignore[call-arg]
         )

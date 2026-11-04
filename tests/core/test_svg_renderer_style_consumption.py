@@ -234,7 +234,7 @@ class TestKpiRendererStyleConsumption:
             height=200,
             board_style=_rs(),
         )
-        assert 'font-size="72.0"' in svg
+        assert 'font-size="72"' in svg
 
     def test_kpi_uses_style_value_font_weight(self):
         kpi_style = _make_kpi_style(value_font_weight="600")

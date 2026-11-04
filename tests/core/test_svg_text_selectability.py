@@ -19,3 +19,17 @@ def test_chart_text_selection_highlight_present() -> None:
     styles = controls_stylesheet()
     assert ".dbt-chart text::selection" in styles
     assert "background:" in styles
+
+
+def test_clickable_chart_text_shows_the_pointer_over_the_text_cursor() -> None:
+    # `.dbt-chart text` sets cursor: text on the text element itself, so a pointer set on the
+    # chart never reaches it; an armed item, the text inside an armed legend entry, and the
+    # clear control each need their own rule.
+    styles = controls_stylesheet()
+    for selector in (
+        ".dbt-chart text[data-dbt-armed]",
+        ".dbt-chart [data-dbt-armed] text",
+        ".dbt-chart text[data-dbt-clear-var]",
+    ):
+        start = styles.index(selector)
+        assert "cursor: pointer" in styles[start : styles.index("}", start)], selector

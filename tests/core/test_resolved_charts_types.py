@@ -57,7 +57,7 @@ def test_width_preferences_are_named_by_their_layout_contract():
     }
     distinctive = theme.model_copy(
         update={
-            "frame": theme.frame.model_copy(update={"width": 1237.0}),
+            "frame": theme.frame.model_copy(update={"max_width": 1237.0}),
             "charts": theme.charts.model_copy(update=widths),
         }
     )
@@ -65,7 +65,7 @@ def test_width_preferences_are_named_by_their_layout_contract():
 
     context = resolve_chart_style_context(distinctive)
 
-    assert resolved_style.frame.width == 1237.0
+    assert resolved_style.frame.max_width == 1237.0
     assert context.preferred_width == 611.0
     assert context.kpi.preferred_width == 311.0
     assert context.spark_bar.preferred_width == 211.0

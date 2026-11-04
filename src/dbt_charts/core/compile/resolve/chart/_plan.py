@@ -13,10 +13,16 @@ only shares what every family assembles identically.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, TypedDict
 
 from dbt_charts.core.compile.models.chart.authored import MultiplesConfig
+from dbt_charts.core.compile.models.chart.normalized import (
+    AreaChart,
+    BarChart,
+    LineChart,
+    ScatterChart,
+)
 from dbt_charts.core.compile.models.chart.resolved import ResolvedStyleChannel
 from dbt_charts.core.compile.models.primitives import ResolvedFormat
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -29,6 +35,10 @@ from dbt_charts.core.compile.resolve.chart._axes import (
     _edge_or_none,
     _extract_axis_overrides,
 )
+from dbt_charts.core.compile.resolve.chart._axis_color import (
+    bake_axis_color,
+    base_axis_ink,
+)
 from dbt_charts.core.compile.resolve.chart._channels import (
     _channels_for,
     _column_numeric_values,
@@ -40,6 +50,8 @@ from dbt_charts.core.compile.resolve.chart._domain import (
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _cartesian_style_tail,
+    _effective_single_series_fill,
+    _HasColor,
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.style.axis_cascade import (
@@ -47,6 +59,7 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
     build_resolved_axis,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import CartesianFamilyChart
+from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 
 __all__ = [
     "CartesianPlan",
@@ -177,9 +190,75 @@ def plan_cartesian(
         y=y,
         temporal_band_axes=temporal_band_axes,
     )
+    if baked.y.style.color is not None:
+        baked = replace(
+            baked,
+            y=replace(
+                baked.y,
+                style=bake_axis_color(
+                    baked.y.style,
+                    axis_overrides.y,
+                    _series_axis_ink(
+                        normalized, chart_type, chart_style_context, primary
+                    ),
+                    chart_style_context,
+                    normalized.id,
+                ),
+            ),
+        )
     return CartesianPlan(
         primary=primary, channels=channels, axes=baked, axis_overrides=axis_overrides
     )
+
+
+def _series_axis_ink(
+    normalized: CartesianFamilyChart,
+    chart_type: str,
+    chart_style_context: ChartStyleContext,
+    primary: _HasColor | None,
+) -> tuple[str | None, str]:
+    """The one ink the chart's own y axis holds, with why there is none if not."""
+    if not isinstance(normalized, (LineChart, BarChart, AreaChart, ScatterChart)):
+        return base_axis_ink(chart_type, False, False, False, "")
+    return base_axis_ink(
+        chart_type,
+        normalized.color is not None,
+        isinstance(normalized.y, list),
+        bool(normalized.layers)
+        and not any(
+            layer.axis_y is not None and layer.axis_y.position is not None
+            for layer in normalized.layers
+        ),
+        _authored_base_ink(normalized, chart_style_context)
+        or _effective_single_series_fill(
+            chart_style_context,
+            primary,
+            rhythm_slot=normalized.rhythm_slot,
+            has_layers=bool(normalized.layers),
+        ),
+    )
+
+
+def _authored_base_ink(
+    normalized: LineChart | BarChart | AreaChart | ScatterChart,
+    chart_style_context: ChartStyleContext,
+) -> str | None:
+    """The series color the chart's own marks author: a line's stroke, a
+    scatter's point. An area's fill and a bar's come from the palette."""
+    if isinstance(normalized, LineChart):
+        patch = _with_color_tokens(normalized.style, chart_style_context)
+        stroke = merge_unset(
+            chart_style_context.line.marks.line,
+            patch.marks.line if patch is not None and patch.marks else None,
+        ).stroke
+        return None if stroke is None else stroke.color
+    if isinstance(normalized, ScatterChart):
+        patch = _with_color_tokens(normalized.style, chart_style_context)
+        return merge_unset(
+            chart_style_context.scatter.marks.point,
+            patch.marks.point if patch is not None and patch.marks else None,
+        ).color
+    return None
 
 
 def build_cartesian_axes(

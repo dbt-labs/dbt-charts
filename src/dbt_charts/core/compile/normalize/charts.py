@@ -379,6 +379,7 @@ def normalize_chart(
                 chart_id=chart_id,
                 stack=authored_style.stack if authored_style is not None else None,
                 y_start=authored.y_start,
+                pattern=authored.pattern,
                 tooltip=authored.tooltip if authored.tooltip is not None else [],
                 layers=authored.layers if authored.layers is not None else [],
                 annotations=authored.annotations
@@ -400,6 +401,7 @@ def normalize_chart(
                 type="line",
                 chart_id=chart_id,
                 tooltip=authored.tooltip if authored.tooltip is not None else [],
+                connect=authored.connect,
                 layers=authored.layers if authored.layers is not None else [],
                 annotations=authored.annotations
                 if authored.annotations is not None
@@ -419,6 +421,7 @@ def normalize_chart(
                 authored_style,
                 type="area",
                 chart_id=chart_id,
+                pattern=authored.pattern,
                 tooltip=authored.tooltip if authored.tooltip is not None else [],
                 stack=authored_style.stack if authored_style is not None else None,
                 layers=authored.layers if authored.layers is not None else [],
@@ -461,6 +464,7 @@ def normalize_chart(
                 authored,
                 authored_style,
                 type="heatmap",
+                pattern=authored.pattern,
                 query_registry=query_registry,
                 default_source=default_source,
                 sources=sources,
@@ -481,6 +485,7 @@ def normalize_chart(
                 field_labels=authored.field_labels,
                 tooltip=authored.tooltip if authored.tooltip is not None else [],
                 color=authored.color,
+                pattern=authored.pattern,
                 total=authored.total,
                 height=authored.height,
                 width=authored.width,
@@ -512,6 +517,7 @@ def normalize_chart(
                 rows=authored.rows,
                 columns=authored.columns,
                 values=authored.values,
+                row_role=authored.row_role,
                 spanners=authored.spanners,
                 style=authored_style,
             )
@@ -857,6 +863,7 @@ _FIELD_CHANNEL_KEYS: frozenset[str] = frozenset(
         "y",
         "y_start",
         "color",
+        "pattern",
         "theta",
         "size",
         "shape",

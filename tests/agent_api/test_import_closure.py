@@ -10,6 +10,7 @@ import pytest
 from dbt_charts.agent_api.import_closure import board_import_closure
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.errors import CompilationError
+from dbt_charts.core.compile.import_refs import ImportRefs
 
 
 @pytest.fixture
@@ -259,3 +260,37 @@ class TestErrorCases:
         path = project.path("charts/a.yml")
         with pytest.raises(CompilationError, match="cycle"):
             board_import_closure(path)
+
+
+class TestProjectImportRefs:
+    def test_walk_asks_the_project_for_refs(
+        self, project: FilesystemProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_board(project, "charts/_b.yml", "title: B\n")
+        write_board(project, "charts/a.yml", "rows:\n  - _b.yml\n")
+        asked: list[str] = []
+        real = type(project).import_refs
+
+        def spy(self: FilesystemProject, relpath: str) -> ImportRefs:
+            asked.append(relpath)
+            return real(self, relpath)
+
+        monkeypatch.setattr(type(project), "import_refs", spy)
+        result = board_import_closure(project.path("charts/a.yml"))
+        assert [p.relpath for p in result] == ["charts/a.yml", "charts/_b.yml"]
+        assert asked == ["charts/a.yml", "charts/_b.yml"]
+
+    def test_refs_override_replaces_the_file_read(
+        self, project: FilesystemProject, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        write_board(project, "charts/_b.yml", "title: B\n")
+        write_board(project, "charts/a.yml", "title: A\n")
+
+        def stored(self: FilesystemProject, relpath: str) -> ImportRefs:
+            if relpath == "charts/a.yml":
+                return ImportRefs(imports=(("_b.yml", "file"),))
+            return ImportRefs()
+
+        monkeypatch.setattr(type(project), "import_refs", stored)
+        result = board_import_closure(project.path("charts/a.yml"))
+        assert [p.relpath for p in result] == ["charts/a.yml", "charts/_b.yml"]

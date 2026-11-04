@@ -637,8 +637,8 @@ pub fn sub_unit_engine_spec(fallback: &str) -> &'static str {
 pub const SUB_UNIT_NUMBER_SPEC: &str = ",.2~f";
 
 /// `PREDEFINED_SUB_UNIT_FALLBACK`: the plain-digit sibling of a predefined SI
-/// member, which never prints an SI prefix below 1 (d3's milli collides
-/// case-only with the house million grammar).
+/// member, which never prints an SI prefix below 1 (d3's milli `m` is
+/// spelled exactly like the en-US narrative million).
 pub fn sub_unit_fallback(raw: &str) -> Option<&'static str> {
     PREDEFINED_SUB_UNIT_FALLBACK.iter().find(|(name, _)| *name == raw).map(|(_, sibling)| *sibling)
 }

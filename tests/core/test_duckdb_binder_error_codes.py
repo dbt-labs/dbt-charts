@@ -126,6 +126,43 @@ class TestDuckDBBinderErrorCodes:
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
+    def test_a_runtime_error_gets_no_reference_advice(self) -> None:
+        """A shape that merely resembles a reference, failing for another reason."""
+        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter._execute(
+                _make_query(
+                    "WITH a AS ((SELECT 1 AS n)), "
+                    "b AS (SELECT * FROM (SELECT 2 AS n) AS t) "
+                    "SELECT CAST('z' AS INT) AS v FROM a, b"
+                )
+            )
+            assert result.error is not None
+            assert "is not a CTE body" not in str(result.error)
+        finally:
+            adapter.close()
+
+    def test_reference_used_as_a_cte_body_names_the_fix_without_a_doubled_period(
+        self,
+    ) -> None:
+        """`WITH q AS ({{ queries.q }})` resolves to a parenthesized `(...) AS q`
+        that sqlglot accepts and DuckDB rejects, so the advice comes from the
+        adapter, not the static guard."""
+        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter._execute(
+                _make_query(
+                    "WITH q AS ((SELECT 'x' AS a, 1 AS v) AS q) SELECT a, v FROM q"
+                )
+            )
+            assert result.error is not None
+            message = str(result.error)
+            assert "is not a CTE body" in message
+            assert "write `FROM {{ queries.q }}`" in message
+            assert ".." not in message
+        finally:
+            adapter.close()
+
     def test_unparseable_sql_error_keeps_its_own_code_and_fields(self) -> None:
         """UnparseableSqlError raised by validate_select_only *inside* the
         same try _classify_duckdb_error classifies must keep ERR-UNPARSEABLE-
@@ -218,6 +255,7 @@ rows:
 
         # Mock the registry to return a pre-classified QueryResult.
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = QueryResult(
             data=[],
             error=QueryError(

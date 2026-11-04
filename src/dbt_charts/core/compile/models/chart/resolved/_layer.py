@@ -100,6 +100,7 @@ class LayeredResolvedChart(Protocol):
 @dataclass(frozen=True)
 class ResolvedLayerAxisYLabels:
     format: ResolvedFormat | None = None
+    font_color: str | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ class ResolvedLayerAxisY:
     labels: ResolvedLayerAxisYLabels | None = None
     tick_label: ResolvedTickLabel | None = None
     tooltip_format: ResolvedFormat | None = None
+    title_color: str | None = None
 
 
 @dataclass(frozen=True)

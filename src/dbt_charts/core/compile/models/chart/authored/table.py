@@ -89,6 +89,19 @@ class TableChart(_SharedChartFields, _ConditionalFormattingField):
             ),
         ),
     ]
+    row_role: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Query column whose value marks each row's role: `total`, "
+                "`summary`, or anything else for a plain body row. The column "
+                "is never drawn. Totals and summaries pin to the bottom, stay "
+                "out of row numbers and the page count, and take "
+                "`style.row.roles`."
+            ),
+        ),
+    ]
 
     spanners: Annotated[
         list[TableSpanner] | None,

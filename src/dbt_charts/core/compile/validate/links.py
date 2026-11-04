@@ -92,23 +92,31 @@ def _check_link(link: str, field_path: str, exempt_from_anchoring: bool) -> None
         )
 
 
+def iter_board_links(board: Board) -> Iterator[tuple[str, str, bool]]:
+    """Yield (field_path, link, exempt_from_anchoring) per authored link."""
+    yield from _iter_board_links(board, set())
+
+
 def validate_board_links(board: Board) -> None:
     """Walk a normalized Board tree, validating every authored link's scheme."""
-    _validate_board_links(board, set())
+    for field_path, link, exempt in iter_board_links(board):
+        _check_link(link, field_path, exempt)
 
 
-def _validate_board_links(board: Board, validated: set[int]) -> None:
+def _iter_board_links(
+    board: Board, validated: set[int]
+) -> Iterator[tuple[str, str, bool]]:
     # Nested boards first — normalization hoists a nested board's charts into
     # every ancestor's `charts` registry by reference (see
     # `validate/formats.py`'s `_validate_board` for the same shape), so
     # `validated` is shared across the recursion to walk each chart once.
     for item in board.layout.items:
         if item.type == "board" and item.board is not None:
-            _validate_board_links(item.board, validated)
+            yield from _iter_board_links(item.board, validated)
 
     if board.authored_style is not None:
         for field_path, link, owner in _iter_url_slots(board.authored_style, "style"):
-            _check_link(link, field_path, owner is TableColumnConfig)
+            yield field_path, link, owner is TableColumnConfig
 
     for chart_id, chart in board.charts.items():
         if id(chart) in validated:
@@ -117,4 +125,4 @@ def _validate_board_links(board: Board, validated: set[int]) -> None:
         table_link_path = f"charts.{chart_id}.link" if chart.type == "table" else None
         for field_path, link, owner in _iter_url_slots(chart, f"charts.{chart_id}"):
             exempt = owner is TableColumnConfig or field_path == table_link_path
-            _check_link(link, field_path, exempt)
+            yield field_path, link, exempt

@@ -87,7 +87,7 @@ _FIELDS = {
         "font-family",
         "Georgia, 'Noto Emoji', serif",
     ),
-    "size": (31, "font-size", "31.0"),
+    "size": (31, "font-size", "31"),
     "weight": (800, "font-weight", "800"),
     "style": ("italic", "font-style", "italic"),
     "decoration": ("underline", "text-decoration", "underline"),
@@ -152,7 +152,7 @@ def test_case_reaches_a_text_value() -> None:
 
 def test_chart_font_reaches_every_slot_it_does_not_set() -> None:
     svg = _render(_kpi({"font": {"size": 20}}))
-    assert _attr(_tspan(svg, "0.12"), "font-size") == "20.0"
+    assert _attr(_tspan(svg, "0.12"), "font-size") == "20"
 
 
 def test_conditional_formatting_beats_value_slot_colors() -> None:

@@ -12,7 +12,7 @@ use crate::families::{span, support_table_strip};
 use crate::vega_fit;
 
 use measure::FontBook;
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathData, Role};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -60,6 +60,7 @@ pub(super) struct LayerMark<'a> {
     pub(super) from: f64,
     pub(super) to: f64,
     pub(super) row: &'a serde_json::Map<String, Value>,
+    pub(super) datum: usize,
 }
 
 /// The description of a ranged bar layer's mark over a base with no block of its own
@@ -118,7 +119,8 @@ pub(super) fn horizontal_bar_layer_marks<'a>(
     if let Some(start) = bl.y_start.as_deref() {
         return Ok(rows
             .iter()
-            .filter_map(|row| {
+            .enumerate()
+            .filter_map(|(datum, row)| {
                 let (value, from) = (row_num(row, &bl.y)?, row_num(row, start)?);
                 Some(LayerMark {
                     cat: row_str(row, x_field),
@@ -127,22 +129,24 @@ pub(super) fn horizontal_bar_layer_marks<'a>(
                     from,
                     to: value,
                     row,
+                    datum,
                 })
             })
             .collect());
     }
     let Some(color_field) = bl.color.as_deref() else {
         // A row with no value draws no mark and takes no place in the stack.
-        let valued = || rows.iter().filter(|row| row_num(row, &bl.y).is_some());
+        let valued = || rows.iter().enumerate().filter(|(_, row)| row_num(row, &bl.y).is_some());
         return Ok(valued()
-            .zip(row_order_stack(valued(), x_field, &bl.y, &crate::families::layers::never_nan))
-            .map(|(row, (cat, from, to))| LayerMark {
+            .zip(row_order_stack(valued().map(|(_, row)| row), x_field, &bl.y, &crate::families::layers::never_nan))
+            .map(|((datum, row), (cat, from, to))| LayerMark {
                 cat,
                 series: None,
                 value: row_num(row, &bl.y).expect("filtered to valued rows"),
                 from,
                 to,
                 row,
+                datum,
             })
             .collect());
     };
@@ -168,7 +172,7 @@ pub(super) fn horizontal_bar_layer_marks<'a>(
                 let Some((from, to)) = spans[index] else { continue };
                 let row = &rows[index];
                 let value = row_num(row, &bl.y).expect("a stacked row has its value");
-                marks.push(LayerMark { cat: cat.clone(), series: series.clone(), value, from, to, row });
+                marks.push(LayerMark { cat: cat.clone(), series: series.clone(), value, from, to, row, datum: index });
             }
         }
     }
@@ -215,13 +219,33 @@ pub(super) fn capped_thickness(size: f64, max_size: Option<f64>) -> f64 {
     max_size.map_or(size, |max| size.min(max))
 }
 
-/// Where a support-table cell sits on each category at a plot `pw` wide: the bar's center on a time axis
-/// (its instant, or its bucket's middle), else the band's.
-pub(super) fn strip_centers(band: &BandScale, cat_domain: &[String], time: Option<(&TimeX, &TemporalXAxis)>, pw: f64) -> Vec<f64> {
-    match time {
-        Some((t, axis)) => t.centers(axis, pw),
-        None => cat_domain.iter().filter_map(|c| band.position(c).map(|x| x + band.bandwidth() / 2.0)).collect(),
+/// Where each category's support-table column stands at a plot `pw` wide: in the cell of the axis label naming its
+/// period. A time axis reads it off its labels; a band axis whose labels center on a coarser period
+/// (`period_centers`, each category's period center in band coordinates) centers it there; any other band label
+/// stands on its bar.
+pub(super) fn strip_columns(
+    band: &BandScale,
+    cat_domain: &[String],
+    time: Option<(&TimeX, &TemporalXAxis)>,
+    period_centers: Option<&[Option<f64>]>,
+    pw: f64,
+    fonts: &FontBook,
+) -> Result<Vec<support_table_strip::Column>, String> {
+    if let Some((t, axis)) = time {
+        return t.strip_columns(axis, pw, fonts);
     }
+    let mut columns = Vec::with_capacity(cat_domain.len());
+    for (i, cat) in cat_domain.iter().enumerate() {
+        let x = match period_centers.and_then(|centers| centers[i]) {
+            Some(at) => super::axes::bucket_x(band, cat_domain, at).ok_or("bar: an interval label sits off the band")?,
+            None => match band.position(cat) {
+                Some(left) => left + band.bandwidth() / 2.0,
+                None => continue,
+            },
+        };
+        columns.push(support_table_strip::Column::centered(x));
+    }
+    Ok(columns)
 }
 
 /// Port of `bar_sort_op` (`core/utils.py`): `Sum` only for a stacked bar
@@ -239,7 +263,10 @@ pub(super) fn strip_cell_aria(
 ) -> Result<support_table_strip::CellAria, String> {
     let x_text = |cat: &String| -> Result<String, String> {
         match time {
-            Some(t) => crate::families::temporal::default_time_unit_text(cat, t.grain),
+            Some(t) => t
+                .date_of(cat)
+                .ok_or_else(|| format!("unparsed date {cat:?}"))
+                .and_then(|date| crate::families::temporal::default_time_unit_text(date, t.grain)),
             None => Ok(cat.clone()),
         }
     };
@@ -304,10 +331,10 @@ pub(super) fn unity_rule(r: &BarResolved, rows: &[serde_json::Map<String, Value>
 
 /// The measure axis's baseline rules over the bars, one `.role-mark` group each, layers
 /// `first_layer..`: the zero rule, then the 100% rule when `positions` carries it. `line(pos)`
-/// builds the rule's `<line>` attributes at `pos`. Every reference rule is hidden from screen
+/// builds the rule's `<line>` at `pos` with the attributes it is given. Every reference rule is hidden from screen
 /// readers (`full_rule_at`'s `aria: false`): Vega-Lite would read the zero rule back as `NaN` and
 /// a unity rule as a bare `1`.
-pub(super) fn baseline_rule_layers(first_layer: usize, positions: &[f64], line: impl Fn(f64) -> Attrs) -> Result<Vec<Node>, String> {
+pub(super) fn baseline_rule_layers(first_layer: usize, positions: &[f64], line: impl Fn(f64, Attrs) -> Node) -> Result<Vec<Node>, String> {
     positions
         .iter()
         .enumerate()
@@ -317,7 +344,7 @@ pub(super) fn baseline_rule_layers(first_layer: usize, positions: &[f64], line: 
                 &format!("layer_{}_marks", first_layer + i),
                 crate::contract::ItemRole::RuleMark,
                 Reads::Hidden,
-                |aria| Node::Line(line(pos).extend(aria)),
+                |aria| line(pos, aria),
             )
         })
         .collect()
@@ -328,11 +355,13 @@ pub(super) fn baseline_rule_layers(first_layer: usize, positions: &[f64], line: 
 /// its value. Vega draws a rect past the plot unclipped, so an unclipped layer
 /// keeps its ends on the plot (a zoomed floor puts the 0 baseline below it)
 /// where a clipped one paints them where the scale puts them (square, the clip
-/// dropping the radius) and the clip trims the rest. `at` is the rect's `(left, width)`.
+/// dropping the radius) and the clip trims the rest. `at` is the rect's `(left, width)`; `layer` is
+/// the layer's index among the chart's marks (0 is the base).
 /// The stroke antialiases twice only under a corner radius, whose clipped group
 /// repaints it; any other bar compiles to one plain path.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn layer_bar(
+    layer: usize,
     position: &dyn Fn(f64) -> f64,
     plot_h: f64,
     clipped: bool,
@@ -355,7 +384,8 @@ pub(crate) fn layer_bar(
     let radius = if clipped { 0.0 } else { border.radius.unwrap_or(0.0) };
     let href = link.map(|link| link.href(mark.row)).transpose()?;
     bar_passes(
-        false, at.0, top, at.1, h, fill, bl.bar_mark.opacity, border.color.as_deref().unwrap_or("none"), border.width.unwrap_or(0.0),
+        layer_mark(layer, bl, mark.row, mark.datum),
+        false, at.0, top, at.1, h, fill, None, bl.bar_mark.opacity, border.color.as_deref().unwrap_or("none"), border.width.unwrap_or(0.0),
         radius, ends, radius > 0.0, None, aria, link.and_then(|link| link.open.anchor(href.as_deref())),
     )
 }
@@ -396,6 +426,7 @@ pub(crate) fn layer_bar_labels(
                 text,
                 href: link.map(|link| link.href(mark.row)).transpose()?,
                 recede: None,
+                ink: None,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -484,6 +515,32 @@ pub(super) fn link_hrefs(
         .zip(rows)
         .map(|(key, row)| Ok((key, link.href(row)?)))
         .collect()
+}
+
+/// Each row's index by the `(category, series)` key its bar is drawn under, the first row for a key
+/// several rows share.
+pub(super) fn datum_by_key(
+    rows: &[serde_json::Map<String, Value>],
+    (cat_field, color_field): (&str, Option<&str>),
+    tiered: bool,
+) -> HashMap<(String, String), usize> {
+    let mut first = HashMap::new();
+    for (row, key) in row_keys(rows, cat_field, color_field, tiered).into_iter().enumerate() {
+        first.entry(key).or_insert(row);
+    }
+    first
+}
+
+/// The role of a base-layer bar drawn under `key`: the series it names (none on a single series)
+/// and the row it draws.
+pub(super) fn base_mark(datum_of: &HashMap<(String, String), usize>, key: &(String, String)) -> Role {
+    Role::Mark { layer: 0, series: Some(key.1.clone()).filter(|series| !series.is_empty()), datum: Some(*datum_of.get(key).expect("a drawn bar's key is one of the rows' keys")) }
+}
+
+/// The role of a bar layer's rect for the row at `datum` among the layer's rows; `layer` counts the
+/// chart's marks (0 is the base).
+pub(crate) fn layer_mark(layer: usize, bl: &OverlayBarLayer, row: &serde_json::Map<String, Value>, datum: usize) -> Role {
+    Role::Mark { layer, series: bl.color.as_deref().map(|field| row_str(row, field)), datum: Some(datum) }
 }
 
 /// Which end of a bar takes the corner radius. A bar grows away from its
@@ -619,22 +676,19 @@ pub(super) fn sign_layers<T>(bars: Vec<T>, value: impl Fn(&T) -> f64, radius: Op
 
 /// A rectangle with all four corners rounded — a ranged bar's outline, for
 /// either orientation.
-pub(super) fn all_corners_path(x: f64, y: f64, w: f64, h: f64, r: f64) -> String {
+pub(super) fn all_corners_path(x: f64, y: f64, w: f64, h: f64, r: f64) -> PathData {
     let (x2, y2) = (x + w, y + h);
-    format!(
-        "M {:.2},{y:.2} H {:.2} A {r:.2},{r:.2} 0 0,1 {x2:.2},{:.2} V {:.2} \
-         A {r:.2},{r:.2} 0 0,1 {:.2},{y2:.2} H {:.2} A {r:.2},{r:.2} 0 0,1 {x:.2},{:.2} \
-         V {:.2} A {r:.2},{r:.2} 0 0,1 {:.2},{y:.2} Z",
-        x + r,
-        x2 - r,
-        y + r,
-        y2 - r,
-        x2 - r,
-        x + r,
-        y2 - r,
-        y + r,
-        x + r,
-    )
+    PathData::new()
+        .move_to(x + r, y)
+        .line_to(x2 - r, y)
+        .arc_to(r, true, x2, y + r)
+        .line_to(x2, y2 - r)
+        .arc_to(r, true, x2 - r, y2)
+        .line_to(x + r, y2)
+        .arc_to(r, true, x, y2 - r)
+        .line_to(x, y + r)
+        .arc_to(r, true, x + r, y)
+        .close()
 }
 
 /// The panel's `BarHoverBandFeature` layer, `None` where production declares
@@ -670,24 +724,33 @@ pub(super) fn hover_band_for(r: &BarResolved, rows: &[serde_json::Map<String, Va
 /// path, so it passes `double_stroke: false`: a second pass over-brightens every edge at the
 /// fractional positions a linear scale produces.
 ///
+/// A patterned bar strokes once: the second pass only matches a reference raster solid bars have, and
+/// as a node of its own it would stay bright when the hover recedes the bar.
+///
+/// `ink`, a patterned bar's outline color, rides on the filled shape as `data-dbt-ink`: the hover
+/// runtime reads it for the tooltip key and rings, since a stacked segment's own `stroke` is the
+/// gap between neighbors.
+///
 /// `aria_label`, when `Some`, wraps the datum in Vega's own `.role-mark` group and stamps the
 /// label on the FIRST drawn element only — the second (stroke-only) pass is a pure antialiasing
 /// overlay of the same datum, never a second mark.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bar_passes(
+    mark: Role,
     horizontal: bool,
     x: f64,
     y: f64,
     w: f64,
     h: f64,
     fill: &str,
+    ink: Option<&str>,
     fill_opacity: Option<f64>,
     stroke: &str,
     stroke_w: f64,
     r: f64,
     ends: Rounded,
     double_stroke: bool,
-    clip_ns: Option<&str>,
+    clip: Option<&str>,
     aria_label: Option<&str>,
     href: Option<crate::href::Anchor<'_>>,
 ) -> Result<Vec<Node>, String> {
@@ -703,11 +766,11 @@ pub(super) fn bar_passes(
         None => attrs,
     };
     let stroke_attrs = |attrs: Attrs| {
-        if stroked { attrs.set("stroke", stroke).set("stroke-width", stroke_w.to_string()) } else { attrs }
+        if stroked { attrs.set("stroke", stroke).num("stroke-width", stroke_w) } else { attrs }
     };
     // `bar_passes`'s doc: only `cornerRadiusEnd`'s clipped group strokes twice.
-    let fill_attrs = |attrs: Attrs| attrs.set("fill", fill).quick_some("fill-opacity", fill_opacity.map(|o| o.to_string()));
-    let stroke_repeat = double_stroke && stroked && !matches!(ends, Rounded::Both | Rounded::Fall);
+    let fill_attrs = |attrs: Attrs| attrs.set("fill", fill).num_some("fill-opacity", fill_opacity).quick_some("data-dbt-ink", ink);
+    let stroke_repeat = double_stroke && stroked && ink.is_none() && !matches!(ends, Rounded::Both | Rounded::Fall);
     let label_attrs = crate::contract::aria_attrs(aria_label, crate::contract::ItemRole::Bar)?;
     let grouped = |nodes: Vec<Node>| -> Result<Vec<Node>, String> {
         match aria_label {
@@ -718,23 +781,17 @@ pub(super) fn bar_passes(
     if r <= 0.0 {
         // A zero-width rect paints nothing; Vega's path of the same box still
         // strokes its edge (a step layer over grouped bars zeroes the columns).
-        let shape = |attrs: Attrs| {
+        let shape = |role: Role, attrs: Attrs| {
             if w == 0.0 && !horizontal {
-                Node::Path(Attrs::new().set("d", format!("M{x:.2},{y:.2}h0v{h:.2}h0Z")).extend(attrs))
+                let edge = PathData::new().move_to(x, y).line_to(x, y).line_to(x, y + h).line_to(x, y + h).close();
+                Node::path(role, edge, attrs)
             } else {
-                Node::Rect(
-                    Attrs::new()
-                        .set("x", format!("{x:.2}"))
-                        .set("y", format!("{y:.2}"))
-                        .set("width", format!("{w:.2}"))
-                        .set("height", format!("{h:.2}"))
-                        .extend(attrs),
-                )
+                Node::rect(role, (x, y, w, h), attrs)
             }
         };
-        let mut nodes = vec![crate::href::linked(href, shape(stroke_attrs(fill_attrs(Attrs::new())).extend(label_attrs)))];
+        let mut nodes = vec![crate::href::linked(href, shape(mark, stroke_attrs(fill_attrs(Attrs::new())).extend(label_attrs)))];
         if stroke_repeat {
-            nodes.push(shape(overlay(stroke_attrs(Attrs::new().set("fill", "none")))));
+        nodes.push(shape(Role::Chrome, overlay(stroke_attrs(Attrs::new().set("fill", "none")))));
         }
         return grouped(nodes);
     }
@@ -745,23 +802,23 @@ pub(super) fn bar_passes(
         all_corners_path(x, y, w, h, r)
     } else if horizontal {
         if ends == Rounded::Positive {
-            format!(
-                "M {x:.2},{y:.2} H {:.2} A {r:.2},{r:.2} 0 0,1 {x2:.2},{:.2} \
-                 V {:.2} A {r:.2},{r:.2} 0 0,1 {:.2},{y2:.2} H {x:.2} Z",
-                x2 - r,
-                y + r,
-                y2 - r,
-                x2 - r,
-            )
+            PathData::new()
+                .move_to(x, y)
+                .line_to(x2 - r, y)
+                .arc_to(r, true, x2, y + r)
+                .line_to(x2, y2 - r)
+                .arc_to(r, true, x2 - r, y2)
+                .line_to(x, y2)
+                .close()
         } else {
-            format!(
-                "M {x:.2},{:.2} A {r:.2},{r:.2} 0 0,1 {:.2},{y:.2} \
-                 H {x2:.2} V {y2:.2} H {:.2} A {r:.2},{r:.2} 0 0,1 {x:.2},{:.2} Z",
-                y + r,
-                x + r,
-                x + r,
-                y2 - r,
-            )
+            PathData::new()
+                .move_to(x, y + r)
+                .arc_to(r, true, x + r, y)
+                .line_to(x2, y)
+                .line_to(x2, y2)
+                .line_to(x + r, y2)
+                .arc_to(r, true, x, y2 - r)
+                .close()
         }
     } else if matches!(ends, Rounded::Negative | Rounded::Fall) {
         // Rounded bottom corners; square top. Path: start at top-left, down
@@ -771,44 +828,45 @@ pub(super) fn bar_passes(
         // convex rounded corner needs the opposite winding once the near/far
         // ends swap (probed: `1 0 0,1` renders a REFLEX corner when
         // mirrored this way).
-        format!(
-            "M {x:.2},{y:.2} V {:.2} A {r:.2},{r:.2} 0 0,0 {:.2},{y2:.2} \
-             H {:.2} A {r:.2},{r:.2} 0 0,0 {x2:.2},{:.2} V {y:.2} Z",
-            y2 - r,     // bottom of left arc
-            x + r,      // end of bottom-left arc (x coord)
-            x2 - r,     // start of bottom-right arc (x coord)
-            y2 - r,     // end of bottom-right arc (y coord)
-        )
+        PathData::new()
+            .move_to(x, y)
+            .line_to(x, y2 - r)
+            .arc_to(r, false, x + r, y2)
+            .line_to(x2 - r, y2)
+            .arc_to(r, false, x2, y2 - r)
+            .line_to(x2, y)
+            .close()
     } else {
         // Rounded top corners; square bottom corners.
         // Path: start at bottom-left, go up left edge, arc top-left, cross top, arc top-right,
         // go down right edge, close at bottom-right.
-        format!(
-            "M {x:.2},{y2:.2} V {:.2} A {r:.2},{r:.2} 0 0,1 {:.2},{y:.2} \
-             H {:.2} A {r:.2},{r:.2} 0 0,1 {x2:.2},{:.2} V {y2:.2} Z",
-            y + r,      // top of left arc
-            x + r,      // end of top-left arc (x coord)
-            x2 - r,     // start of top-right arc (x coord)
-            y + r,      // end of top-right arc (y coord)
-        )
+        PathData::new()
+            .move_to(x, y2)
+            .line_to(x, y + r)
+            .arc_to(r, true, x + r, y)
+            .line_to(x2 - r, y)
+            .arc_to(r, true, x2, y + r)
+            .line_to(x2, y2)
+            .close()
     };
     // The compiled group clips the rect's own stroke to the rounded shape and strokes the outline on top, so
     // an overlapping neighbor's edge is crossed by the outline alone.
-    let clip = clip_ns.filter(|_| stroke_repeat).map(|ns| format!("bar-{x:.2}-{y:.2}-{w:.2}-{h:.2}-{ns}"));
-    let filled = stroke_attrs(fill_attrs(Attrs::new().set("d", d.as_str())));
-    let filled = match &clip {
+    let clip = clip.filter(|_| stroke_repeat);
+    let filled = stroke_attrs(fill_attrs(Attrs::new()));
+    let filled = match clip {
         Some(id) => filled.set("clip-path", format!("url(#{id})")),
         None => filled,
     };
-    let mut nodes = vec![crate::href::linked(href, Node::Path(filled.extend(label_attrs)))];
+    let mut nodes = vec![crate::href::linked(href, Node::path(mark, d.clone(), filled.extend(label_attrs)))];
     if stroke_repeat {
-        if let Some(id) = &clip {
-            nodes.push(Node::ClipPath {
-                attrs: Attrs::new().set("id", id.as_str()),
-                children: vec![Node::Path(Attrs::new().set("d", d.as_str()))],
-            });
+        if let Some(id) = clip {
+            nodes.push(Node::new(
+                Role::Chrome,
+                Attrs::new().set("id", id),
+                scene::Shape::ClipPath(vec![Node::path(Role::Chrome, d.clone(), Attrs::new())]),
+            ));
         }
-        nodes.push(Node::Path(overlay(stroke_attrs(Attrs::new().set("d", d.as_str()).set("fill", "none")))));
+        nodes.push(Node::path(Role::Chrome, d, overlay(stroke_attrs(Attrs::new().set("fill", "none")))));
     }
     grouped(nodes)
 }
@@ -849,6 +907,14 @@ pub(super) struct ColumnSplit {
     pub(super) lead: usize,
     pub(super) width_steps: f64,
     pub(super) layered: bool,
+    /// Patterned columns on the chart's own ground close the gaps between them: they share one ink edge.
+    pub(super) touching: bool,
+}
+
+/// The width of each of `n` bars that touch and fill the extent of `n` bars `width` wide, a `step`
+/// apart: the same footprint with the gaps taken up by the bars.
+pub(super) fn touching_width(n: usize, step: f64, width: f64) -> f64 {
+    ((n as f64 - 1.0) * step + width) / n as f64
 }
 
 /// Where a vertical bar chart's columns sit inside one category band. An
@@ -893,7 +959,7 @@ impl BandColumns {
         // An authored ceiling makes the width explicit, so it centers on the
         // sub-band instead of resolving the shorthand against the outer band.
         let pad = if max_size.is_some() { (step - width) / 2.0 } else { (1.0 - split.width_steps) / 2.0 * pad_band_w };
-        Self { step, lead: split.lead, width, pad, anchor: step / 2.0, split: true, coincident: false }
+        Self { step, lead: split.lead, width, pad, anchor: step / 2.0, split: true, coincident: false }.touched(split)
     }
 
     /// The grouped columns of a time axis under value labels: Vega-Lite sizes them against the offset scale
@@ -901,7 +967,7 @@ impl BandColumns {
     pub(super) fn left_aligned(band_w: f64, split: &ColumnSplit) -> Self {
         let step = support_table_strip::sub_band_step(band_w, split.n_series + split.lead, false);
         let width = (split.width_steps * step).max(MIN_COLUMN_WIDTH);
-        Self { step, lead: split.lead, width, pad: 0.0, anchor: step / 2.0, split: true, coincident: false }
+        Self { step, lead: split.lead, width, pad: 0.0, anchor: step / 2.0, split: true, coincident: false }.touched(split)
     }
 
     /// The grouped columns of a point-dated time axis under value labels: every series' column is `width` wide
@@ -936,7 +1002,7 @@ impl BandColumns {
     pub(super) fn offset_bucket(reference: f64, split: &ColumnSplit) -> Self {
         let step = 0.8 * reference / (split.n_series + split.lead) as f64;
         let width = split.width_steps * step;
-        Self { step, lead: split.lead, width, pad: 0.1 * reference + (step - width) / 2.0, anchor: step / 2.0, split: true, coincident: false }
+        Self { step, lead: split.lead, width, pad: 0.1 * reference + (step - width) / 2.0, anchor: step / 2.0, split: true, coincident: false }.touched(split)
     }
 
     /// The columns of a grouped base whose xOffset a step layer turned into a
@@ -945,6 +1011,16 @@ impl BandColumns {
     pub(super) fn point_slots(band_w: f64, n_series: usize) -> Self {
         let step = band_w / (n_series as f64 + 1.0);
         Self { step, lead: 0, width: 0.0, pad: 0.0, anchor: step / 2.0, split: true, coincident: false }
+    }
+
+    /// These columns closed up to touch: each as wide as the spacing, the group keeping its footprint
+    /// and its first column's edge. A split with overlap or no gap to close is left as it is.
+    fn touched(self, split: &ColumnSplit) -> Self {
+        if !split.touching || split.lead != 0 || self.width >= self.step {
+            return self;
+        }
+        let width = touching_width(split.n_series, self.step, self.width);
+        Self { step: width, width, anchor: self.pad + width / 2.0, ..self }
     }
 
     /// Where a value label of series `slot` centers.

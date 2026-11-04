@@ -58,7 +58,7 @@ impl RowShift {
 }
 
 /// `sizing.py:1223` `active_layout_items`: the items a layout draws.
-fn drawn_indices(layout: &LayoutDoc, payload: &BoardPayload) -> Result<Vec<usize>, String> {
+pub(super) fn drawn_indices(layout: &LayoutDoc, payload: &BoardPayload) -> Result<Vec<usize>, String> {
     let active = active_tab_index(layout, payload)?;
     let mut drawn = Vec::new();
     for (index, item) in layout.items.iter().enumerate() {
@@ -104,24 +104,6 @@ impl Walk<'_> {
         for &index in &drawn {
             self.drawn.push((child_path(path, index), layout.items[index].title_shift));
         }
-        if layout.kind == "cols" {
-            let mut targets = Vec::with_capacity(drawn.len());
-            for &index in &drawn {
-                let item_box = boxes.get(index).ok_or("title band: item boxes shorter than the layout")?;
-                targets.push(self.band_target(
-                    &layout.items[index],
-                    item_box,
-                    card_pad,
-                    child_path(path, index),
-                )?);
-            }
-            let metrics: Vec<_> = targets.iter().map(|t| t.as_ref().map(|t| t.metrics)).collect();
-            for (target, shift) in targets.iter().zip(row_title_shifts(&metrics)) {
-                if let Some(target) = target {
-                    self.derived.insert(target.path.clone(), shift);
-                }
-            }
-        }
         for &index in &drawn {
             let item = &layout.items[index];
             // A collapsed details section is never sized or drawn.
@@ -137,23 +119,42 @@ impl Walk<'_> {
                 &child_path(path, index),
             )?;
         }
+        // After the inner rows: a row an untitled `cols` wraps shares this band, so
+        // this row's shift is the one that stands.
+        if layout.kind == "cols" {
+            let mut targets = Vec::with_capacity(drawn.len());
+            for &index in &drawn {
+                let item_box = boxes.get(index).ok_or("title band: item boxes shorter than the layout")?;
+                targets.extend(self.band_targets(
+                    &layout.items[index],
+                    item_box,
+                    card_pad,
+                    child_path(path, index),
+                )?);
+            }
+            let metrics: Vec<_> = targets.iter().map(|t| Some(t.metrics)).collect();
+            for (target, shift) in targets.iter().zip(row_title_shifts(&metrics)) {
+                self.derived.insert(target.path.clone(), shift);
+            }
+        }
         Ok(())
     }
 
-    /// `layout_sizing.py::_title_band_target`: the layout item that draws a
-    /// cols cell's title, with its title geometry. An untitled board that only wraps
-    /// a stack (the way a `width:` is authored) draws its first item's title, so
-    /// that item is the one to shift. `None`: the cell has no title this row can align.
-    fn band_target(
+    /// `layout_sizing.py::_title_band_targets`: the layout items that draw a cols
+    /// cell's titles, with their title geometry. An untitled board that only wraps a
+    /// stack (the way a `width:` is authored) draws its first item's title, and an
+    /// untitled board that only wraps a `cols` draws one title per item, so those are
+    /// the items to shift. Empty: the cell has no title this row can align.
+    fn band_targets(
         &self,
         item: &ItemDoc,
         item_box: &Value,
         card_pad: f64,
         path: Vec<usize>,
-    ) -> Result<Option<Target>, String> {
+    ) -> Result<Vec<Target>, String> {
         // A details section draws its summary bar at its top edge, not a title.
         if item.details_variable.as_deref().is_some_and(|v| !v.is_empty()) {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let width = item_box["width"].as_f64().ok_or("title band: item box carries no width")?;
         if let Some(chart) = &item.chart {
@@ -173,7 +174,7 @@ impl Walk<'_> {
                     self.fonts,
                 )? {
                     crate::sizing::PieDecision::Mode(mode) => Some(mode),
-                    crate::sizing::PieDecision::Undecidable(_) => return Ok(None),
+                    crate::sizing::PieDecision::Undecidable(_) => return Ok(Vec::new()),
                 }
             } else {
                 None
@@ -186,11 +187,24 @@ impl Walk<'_> {
                 self.payload.board_style.spark_bar_title.as_ref(),
                 pie_mode,
             )?;
-            return Ok(metrics.map(|metrics| Target { path, metrics }));
+            return Ok(metrics.map(|metrics| Target { path, metrics }).into_iter().collect());
         }
-        // A `chart_error` item resolved no chart (`_require_resolved` returns None).
+        // A `chart_error` item resolved no chart (`_require_resolved` returns
+        // None) but still draws its authored title above its error tile, in
+        // the font its card width gives a chart, so the band covers it.
+        if let Some(failure) = &item.chart_error {
+            let identity = failure.get("identity").ok_or("chart_error missing identity")?;
+            let chart_id = identity["id"].as_str().ok_or("chart_error identity missing id")?;
+            if super::failed_title_text(identity["title"].as_str(), chart_id)?.is_none() {
+                return Ok(Vec::new());
+            }
+            let fonts = failure.get("title_fonts").ok_or("chart_error missing title_fonts")?;
+            let font = crate::title_shift::tier_font(fonts, width)?;
+            let metrics = crate::title_shift::failed_title_metrics(font, card_pad)?;
+            return Ok(vec![Target { path, metrics }]);
+        }
         if item.kind != "board" {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let nested = parse_nested(item)?;
         let style = &nested.style;
@@ -219,30 +233,39 @@ impl Walk<'_> {
                     nested.html_policy == "trusted-raw",
                     style.title.font.case.as_deref(),
                 )?;
-                return Ok(baseline.map(|baseline| Target {
-                    path,
-                    metrics: TitleMetrics { ascent: wrapper_top + nested_pad + baseline, tail: 0.0 },
+                return Ok(baseline
+                    .map(|baseline| Target {
+                        path,
+                        metrics: TitleMetrics { ascent: wrapper_top + nested_pad + baseline, tail: 0.0 },
+                    })
+                    .into_iter()
+                    .collect());
+            }
+            if !nested.text.is_empty()
+                || !visible_variables.is_empty()
+                || !matches!(nested.layout.kind.as_str(), "rows" | "cols")
+            {
+                return Ok(Vec::new());
+            }
+            let drawn = drawn_indices(&nested.layout, self.payload)?;
+            let wrapped = if nested.layout.kind == "cols" { &drawn[..] } else { &drawn[..drawn.len().min(1)] };
+            let mut targets = Vec::new();
+            for &index in wrapped {
+                let inner_box = nested_boxes(item_box)?
+                    .get(index)
+                    .ok_or("title band: nested boxes shorter than the layout")?;
+                let inner = self.band_targets(
+                    &nested.layout.items[index],
+                    inner_box,
+                    nested_pad,
+                    child_path(&path, index),
+                )?;
+                targets.extend(inner.into_iter().map(|t| Target {
+                    path: t.path,
+                    metrics: TitleMetrics { ascent: t.metrics.ascent + wrapper_top, tail: t.metrics.tail },
                 }));
             }
-            if !nested.text.is_empty() || !visible_variables.is_empty() || nested.layout.kind != "rows" {
-                return Ok(None);
-            }
-            let Some(&first) = drawn_indices(&nested.layout, self.payload)?.first() else {
-                return Ok(None);
-            };
-            let inner_box = nested_boxes(item_box)?
-                .get(first)
-                .ok_or("title band: nested boxes shorter than the layout")?;
-            let inner = self.band_target(
-                &nested.layout.items[first],
-                inner_box,
-                nested_pad,
-                child_path(&path, first),
-            )?;
-            return Ok(inner.map(|t| Target {
-                path: t.path,
-                metrics: TitleMetrics { ascent: t.metrics.ascent + wrapper_top, tail: t.metrics.tail },
-            }));
+            return Ok(targets);
         }
         let content_width = nested_content_width(&nested, width);
         let child_gap = nested_child_gap(&nested);
@@ -261,7 +284,7 @@ impl Walk<'_> {
             &self.payload.variable_values,
             fonts_dir,
         )? {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let title_style = nested
             .title_style
@@ -301,13 +324,13 @@ impl Walk<'_> {
         } else {
             0.0
         };
-        Ok(Some(Target {
+        Ok(vec![Target {
             path,
             metrics: TitleMetrics {
                 ascent: wrapper_top + nested_pad + baseline,
                 tail: block - baseline + gap_below,
             },
-        }))
+        }])
     }
 }
 

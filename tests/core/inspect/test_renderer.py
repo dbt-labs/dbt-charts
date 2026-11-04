@@ -6,6 +6,7 @@ caller's job, not the renderer's.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
@@ -65,7 +66,10 @@ def test_render_inspect_dashboard_with_no_configured_source_surfaces_error(
         project=project,
         adapter_registry=registry,
     )
-    assert "No source profiles are configured" in html
+    # The tile wraps its message across lines: compare the words, not the markup.
+    assert "No source profiles are configured" in " ".join(
+        re.findall(r"(?<=>)([^<]+)(?=<)", html)
+    )
 
 
 def test_render_inspect_dashboard_standalone_embeds_fonts_instead_of_urls(

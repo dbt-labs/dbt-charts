@@ -26,3 +26,8 @@ RenderFormat = Literal[
     "yaml",
     "data",
 ]
+
+# What `dct render` writes: a board render, or a markdown page with each chart
+# fence swapped for an SVG file and an image link (`md`). A page is not a board
+# render, so the engine never sees `md`.
+RenderOutputFormat = Literal[RenderFormat, "md"]

@@ -41,10 +41,10 @@ class _CountingMaterializer(FileSourceMaterializer):
         self.run_calls = 0
 
     def materialize_and_run(  # type: ignore[override]
-        self, source: Any, sql: str, variables: dict[str, Any], source_name: str
+        self, *args: Any, **kwargs: Any
     ) -> list[dict[str, Any]]:
         self.run_calls += 1
-        return super().materialize_and_run(source, sql, variables, source_name)
+        return super().materialize_and_run(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -682,12 +682,12 @@ class TestExecutorGlobCacheKey:
         assert board is not None
         return board
 
-    def _registry(self, project: Any) -> Any:
+    def _registry(self, project: Any, **file_source: Any) -> Any:
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
 
-        return build_adapter_registry(project)
+        return build_adapter_registry(project, **file_source)
 
     def test_cold_glob_render_returns_all_matched_rows(self, tmp_path: Path) -> None:
         """Glob source on cold render returns rows from all matched files."""
@@ -702,10 +702,9 @@ class TestExecutorGlobCacheKey:
         mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
-            adapter_registry=self._registry(project),
+            adapter_registry=self._registry(project, file_materializer=mat),
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
-            file_materializer=mat,
         )
 
         rows = ex.execute_query("q")
@@ -727,10 +726,9 @@ class TestExecutorGlobCacheKey:
         mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
-            adapter_registry=self._registry(project),
+            adapter_registry=self._registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat1,
         )
         ex1.execute_query("q")
         assert mat1.run_calls == 1
@@ -738,10 +736,9 @@ class TestExecutorGlobCacheKey:
         mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
-            adapter_registry=self._registry(project),
+            adapter_registry=self._registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat2,
         )
         ex2.execute_query("q")
         # Warm render: result cache hit, materializer never called.
@@ -760,10 +757,9 @@ class TestExecutorGlobCacheKey:
         mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
-            adapter_registry=self._registry(project),
+            adapter_registry=self._registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat1,
         )
         rows1 = ex1.execute_query("q")
         assert [r["id"] for r in rows1] == [1]
@@ -776,10 +772,9 @@ class TestExecutorGlobCacheKey:
         mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
-            adapter_registry=self._registry(project),
+            adapter_registry=self._registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat2,
         )
         rows2 = ex2.execute_query("q")
         # New file added → cache key changed → materializer ran again.
@@ -836,13 +831,11 @@ class TestExecutorGlobErrorCodes:
         from dbt_charts.core.diagnostics.codes_execute import ERR_GLOB_EMPTY
 
         project, board, registry = self._setup(tmp_path, {})
-        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=registry,
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
-            file_materializer=mat,
         )
 
         with pytest.raises(QueryError) as exc_info:
@@ -861,13 +854,11 @@ class TestExecutorGlobErrorCodes:
             f"data/{i:04d}/report.json": f'[{{"id": {i}}}]' for i in range(cap + 1)
         }
         project, board, registry = self._setup(tmp_path, files)
-        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=registry,
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
-            file_materializer=mat,
         )
 
         with pytest.raises(QueryError) as exc_info:
@@ -889,13 +880,11 @@ class TestExecutorGlobErrorCodes:
             "data/b/report.json": '[{"id": 2, "extra": "oops"}]',
         }
         project, board, registry = self._setup(tmp_path, files)
-        mat = FileSourceMaterializer(project)
         ex = Executor(
             board,
             adapter_registry=registry,
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
-            file_materializer=mat,
         )
 
         with pytest.raises(QueryError) as exc_info:

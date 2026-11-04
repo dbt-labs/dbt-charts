@@ -11,8 +11,7 @@ from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.chart.normalized._base import _BaseChartFields
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
-from dbt_charts.core.compile.normalize.queries import dialect_for_source
-from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.sql_guard import dialect_for_source, sqlglot_dialect
 from dbt_charts.core.dbt_ref_check import named_source_target_path
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja

@@ -19,6 +19,7 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
 )
+from dbt_charts.core.compile.models.style.theme.marks import label_anchors
 from dbt_charts.core.compile.resolve.chart._annotations import (
     NO_ANNOTATIONS,
     annotation_chart,
@@ -42,6 +43,7 @@ from dbt_charts.core.compile.resolve.chart._channels import (
 )
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     ChartDataset,
+    ChartRows,
     LayerDatasets,
 )
 from dbt_charts.core.compile.resolve.chart._domain import (
@@ -110,6 +112,10 @@ from dbt_charts.core.constants.marks import (
     STROKE_FALLBACK_WIDTH,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_LINE_CONNECT_ALONE,
+    ERR_LINE_CONNECT_COLUMN_NOT_FOUND,
+    ERR_LINE_CONNECT_NEEDS_NUMERIC_X,
+    ERR_LINE_CONNECT_NULL,
     ERR_LINE_Y_NOT_NUMERIC,
 )
 from dbt_charts.core.utils import (
@@ -120,6 +126,31 @@ from dbt_charts.core.utils import (
 __all__ = [
     "_resolve_line",
 ]
+
+
+def _check_connect(
+    normalized: LineChart, connect: str, x_ch_type: str, rows: ChartRows
+) -> None:
+    """Refuse a ``connect:`` the renderer could not order every point by."""
+    chart_id = normalized.id
+    if normalized.layers or normalized.multiples is not None:
+        raise CompilationError.from_code(ERR_LINE_CONNECT_ALONE, chart_id=chart_id)
+    if x_ch_type != "quantitative":
+        raise CompilationError.from_code(
+            ERR_LINE_CONNECT_NEEDS_NUMERIC_X, chart_id=chart_id, x_field=normalized.x
+        )
+    for index, row in enumerate(rows, start=1):
+        if connect not in row:
+            raise CompilationError.from_code(
+                ERR_LINE_CONNECT_COLUMN_NOT_FOUND,
+                chart_id=chart_id,
+                field=connect,
+                available=sorted(row.keys()),
+            )
+        if row[connect] is None:
+            raise CompilationError.from_code(
+                ERR_LINE_CONNECT_NULL, chart_id=chart_id, field=connect, row=index
+            )
 
 
 def _resolve_line(
@@ -157,6 +188,8 @@ def _resolve_line(
             y_field=_line_bad_y,
             hint=_line_y_hint,
         )
+    if normalized.connect is not None:
+        _check_connect(normalized, normalized.connect, x_ch_type, data)
     _check_bar_layer_spans(normalized, data, datasets, None)
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
@@ -451,15 +484,12 @@ def _resolve_line(
         tooltip_format_values,
     )
     line_stroke = resolved_line_mark.stroke.width
-    # `visible: last` labels one point per series. Dots the engine added (or an
-    # authored size of 0) give way to the labeled endpoint's own dot; an
-    # authored size keeps every dot. Decided here, before bake_point_companions,
-    # which leaves a set size alone.
+    # Decided here, before bake_point_companions, which leaves a set size alone.
     effective_labels = (
         resolved_line_labels if resolved_line_labels.visible else resolved_point_labels
     )
-    endpoint_only = (
-        effective_labels.visible == "last"
+    anchored_only = (
+        bool(label_anchors(effective_labels.visible))
         and line_stroke > 0
         and not line.marks.point.size
     )
@@ -467,9 +497,9 @@ def _resolve_line(
         ResolvedPointMarkStyle,
         line.marks.point,
         labels=resolved_point_labels,
-        endpoint_only=endpoint_only,
+        anchored_only=anchored_only,
         **(
-            {"size": (POINT_DIAMETER_RATIO * line_stroke) ** 2} if endpoint_only else {}
+            {"size": (POINT_DIAMETER_RATIO * line_stroke) ** 2} if anchored_only else {}
         ),
     )
     # Point companions track the effective line stroke — the derivation lives
@@ -540,10 +570,11 @@ def _resolve_line(
         x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="line",
+        connect=normalized.connect,
         style=ResolvedLineStyle(
             series_label=_resolved_series_label(
                 chart_style_context,
-                primary,
+                _effective_palette(chart_style_context, primary),
                 width,
                 chart_local_style_context.ink_canvas,
             ),

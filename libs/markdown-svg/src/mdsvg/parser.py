@@ -31,6 +31,13 @@ from .utils import normalize_whitespace, split_lines
 _IMAGE_SIZE_ATTRS = r"(?:\{\s*((?:(?i:width|height)\s*=\s*\d+(?:\.\d+)?\s*)+)\})"
 
 
+_EMPHASIS = {
+    "bold_italic": SpanType.BOLD_ITALIC,
+    "bold": SpanType.BOLD,
+    "italic": SpanType.ITALIC,
+}
+
+
 class MarkdownParser:
     """
     Parser that converts Markdown text to an AST.
@@ -607,6 +614,34 @@ class MarkdownParser:
             cells.append(TableCell(align=align))
         return cells
 
+    def _link_spans(self, label: str, url: str, title: Optional[str]) -> List[Span]:
+        """The LINK spans of a link *label*: each inline-code run in it is its own
+        span with ``code`` set, so the backticks never reach the page."""
+        # split() with INLINE_CODE's one group alternates text and code runs.
+        return [
+            Span(
+                text=run,
+                span_type=SpanType.LINK,
+                url=url,
+                title=title,
+                code=index % 2 == 1,
+            )
+            for index, run in enumerate(self.INLINE_CODE.split(label))
+            if run
+        ]
+
+    def _emphasis_spans(self, inner: str, span_type: SpanType) -> List[Span]:
+        """The spans of emphasized text: each code run in it is emphasized code."""
+        bold = span_type in (SpanType.BOLD, SpanType.BOLD_ITALIC)
+        italic = span_type in (SpanType.ITALIC, SpanType.BOLD_ITALIC)
+        return [
+            Span(text=run, span_type=SpanType.CODE, bold=bold, italic=italic)
+            if index % 2 == 1
+            else Span(text=run, span_type=span_type)
+            for index, run in enumerate(self.INLINE_CODE.split(inner))
+            if run
+        ]
+
     def _parse_inline(self, text: str) -> List[Span]:
         """
         Parse inline formatting in text.
@@ -710,21 +745,11 @@ class MarkdownParser:
                     if earliest_match.lastindex and earliest_match.lastindex >= 3
                     else None
                 )
-                spans.append(
-                    Span(text=link_text, span_type=SpanType.LINK, url=url, title=title)
-                )
+                spans.extend(self._link_spans(link_text, url, title))
 
-            elif match_type == "bold_italic":
+            elif match_type in _EMPHASIS:
                 inner = earliest_match.group(1) or earliest_match.group(2)
-                spans.append(Span(text=inner, span_type=SpanType.BOLD_ITALIC))
-
-            elif match_type == "bold":
-                inner = earliest_match.group(1) or earliest_match.group(2)
-                spans.append(Span(text=inner, span_type=SpanType.BOLD))
-
-            elif match_type == "italic":
-                inner = earliest_match.group(1) or earliest_match.group(2)
-                spans.append(Span(text=inner, span_type=SpanType.ITALIC))
+                spans.extend(self._emphasis_spans(inner, _EMPHASIS[match_type]))
 
             # Continue with rest of text
             remaining = remaining[earliest_match.end() :]

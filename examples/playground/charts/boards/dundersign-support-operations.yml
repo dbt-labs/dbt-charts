@@ -1,5 +1,6 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Support operations
+width: 1440
 notes: |
   Triage board for the support lead. Above-the-fold answers: what's in the
   queue right now, how old is it, are we keeping up with intake, and which
@@ -9,10 +10,6 @@ notes: |
 
 theme: stark
 source: dundersign_db
-
-style:
-  frame:
-    width: 1440
 
 variables:
   date_range:

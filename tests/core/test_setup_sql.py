@@ -313,6 +313,7 @@ def _mock_adapter_registry():
         return result
 
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.side_effect = capture
     return registry, executed
 
@@ -343,8 +344,10 @@ class TestSetupSqlCacheKey:
             source="s",
         )
 
-        executor._cache_outcome("q", query_a, [{"val": 2}], {})
-        executor._cache_outcome("q", query_b, [{"val": 3}], {})
+        key_a = executor._cache_key("q", query_a, {}, lambda: None)
+        key_b = executor._cache_key("q", query_b, {}, lambda: None)
+        executor._cache_outcome("q", query_a, [{"val": 2}], {}, key_a)
+        executor._cache_outcome("q", query_b, [{"val": 3}], {}, key_b)
 
         # _cache_outcome calls cache.put(source_hash, query_hash, vars_hash, outcome, ...)
         first_hash = result_cache.put.call_args_list[0].args[1]

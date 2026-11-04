@@ -10,6 +10,7 @@ from dbt_charts.core.compile.models.markers import (
     InheritSlot,
     SkipInheritSlots,
 )
+from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _RadialChartStyle,
 )
@@ -47,6 +48,9 @@ class PieChartStyle(_RadialChartStyle):
 
     aspect_ratio: float = Field(
         description="Aspect ratio (width/height) of the pie chart viewport."
+    )
+    pattern: PatternStyle = Field(
+        description="How the `pattern:` channel paints fills."
     )
     marks: Annotated[
         PieChartMarksStyle, InheritSlot(from_path="Style.charts.marks")

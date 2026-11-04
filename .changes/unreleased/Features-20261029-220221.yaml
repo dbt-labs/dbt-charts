@@ -1,0 +1,5 @@
+kind: Features
+body: Hover tooltips on stacked and grouped charts list up to 100 series (was 20); `style.charts.tooltip.max_rows` and `group_limit` set the cutoffs.
+time: 2026-10-29T22:02:21.141934-05:00
+custom:
+    DbtChartsIssue: "77"

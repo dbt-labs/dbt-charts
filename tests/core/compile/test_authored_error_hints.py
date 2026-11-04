@@ -70,7 +70,10 @@ def test_chart_warnings_ignore_names_the_query_scoped_home() -> None:
         "y": "b",
         "warnings_ignore": ["WARN-REAGGREGATION"],
     }
-    with pytest.raises(ValidationError, match=r"queries\.<name>\.ignore"):
+    # The code renders bare, so the hint reads as the YAML to write.
+    with pytest.raises(
+        ValidationError, match=r"queries\.<name>\.ignore: \[WARN-REAGGREGATION\]"
+    ):
         AuthoredBoard.model_validate(_board(charts={"c": chart}))
 
 

@@ -34,6 +34,10 @@ class ResolvedTableChart(_SharedResolvedChartFields):
         default=None,
         description="Pivot measure fields.",
     )
+    row_role: str | None = Field(
+        default=None,
+        description="Query column carrying each row's role (total, summary).",
+    )
     spanners: list[TableSpanner] | None = Field(
         default=None,
         description="Authored column spanners.",

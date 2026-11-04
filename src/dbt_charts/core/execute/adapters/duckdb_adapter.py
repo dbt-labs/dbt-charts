@@ -52,6 +52,7 @@ from dbt_charts.core.compile.models.source import (
     SourceOptionScalar,
 )
 from dbt_charts.core.compile.sql_guard import (
+    reference_alias_advice,
     validate_select_only,
     validate_setup_sql,
 )
@@ -171,7 +172,7 @@ def _classify_duckdb_error(
     exc: Exception,
     operation: str = "DuckDB SQL execution",
     *,
-    column_advice: str | None = None,
+    advice: str | None = None,  # type-state: optional — no fix to suggest
 ) -> QueryResult:
     """Map a DuckDB exception to a typed ERR-* QueryResult.
 
@@ -203,8 +204,8 @@ def _classify_duckdb_error(
         return interrupted()
     code = duckdb_error_code(exc)
     detail = str(exc)
-    if column_advice is not None:
-        detail = f"{detail}\n{column_advice}"
+    if advice is not None:
+        detail = f"{detail}\n{advice.rstrip('.')}"
     return QueryResult(data=[], error=QueryError.from_code(code, detail=detail))
 
 
@@ -837,11 +838,15 @@ class DuckDBAdapter(BaseAdapter):
             )
 
         except Exception as e:  # noqa: BLE001
-            column_advice = None
+            import duckdb
+
+            advice = None
             if duckdb_error_code(e) is ERR_BINDER_UNKNOWN_COLUMN:
                 with self._executing(conn):
-                    column_advice = duckdb_unknown_column_advice(conn, sql, str(e))
-            return _classify_duckdb_error(e, column_advice=column_advice)
+                    advice = duckdb_unknown_column_advice(conn, sql, str(e))
+            elif isinstance(e, duckdb.ParserException):
+                advice = reference_alias_advice(sql)
+            return _classify_duckdb_error(e, advice=advice)
 
     def _get_duckdb_connection_for_query(
         self, source_config: dict[str, Any] | None = None

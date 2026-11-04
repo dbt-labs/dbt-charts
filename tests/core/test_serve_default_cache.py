@@ -23,6 +23,8 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result
+
 _SH = compute_source_hash("test_source")
 _QH = compute_query_hash("SELECT 1")
 _VH = compute_variables_hash({})
@@ -33,7 +35,7 @@ def _put(cache: TrivialDuckDBCache, rows: list[dict] | None = None) -> None:
         _SH,
         _QH,
         _VH,
-        rows if rows is not None else [{"v": 1}],
+        rows_result(rows if rows is not None else [{"v": 1}]),
         board_slug="f",
         query_name="q",
     )

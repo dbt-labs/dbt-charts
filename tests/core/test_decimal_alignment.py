@@ -210,6 +210,7 @@ class TestDecimalPadTableFor:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
@@ -428,8 +429,10 @@ class TestResolveBakeDecision:
         """An SI ladder with mixed fractional depth in its scaled values must
         get a non-empty decimal_pad_table.
 
-        (0, 1M, 1.5M, 2M) at mega tier: step=1M so tier=mega (exponent=6).
-        Scaled at mega: 0, 1, 1.5, 2 -- frac_depths {0, 1} (mixed).
+        (0, 1M, 2M, 3.5M): the finest gap is 1M so tier=mega (exponent=6).
+        Scaled at mega: 0, 1, 2, 3.5 -- frac_depths {0, 1} (mixed).
+        (A (0, 1M, 1.5M, 2M) ladder now compacts at kilo, all whole numbers,
+        since the step is its finest gap, 0.5M.)
         The gate fires and bakes a non-empty pad table.
 
         Deleting the gate (the ``if len(frac_depths) > 1:`` block in scale.py)
@@ -438,10 +441,8 @@ class TestResolveBakeDecision:
         from dbt_charts.core.compile.resolve.style.scale import _build_ruler
         from dbt_charts.core.fonts import DBT_SANS_TABULAR_FONT_FAMILY
 
-        # Non-uniform spacing: first step = 1M (sets tier=mega), later steps = 0.5M.
-        # Scaled at mega: 0, 1, 1.5, 2 -- mixed fractional depth {0, 1}.
         ruler = _build_ruler(
-            tick_values=(0.0, 1_000_000.0, 1_500_000.0, 2_000_000.0),
+            tick_values=(0.0, 1_000_000.0, 2_000_000.0, 3_500_000.0),
             si_format=".2~s",
             label_expr=None,
             column_forming=True,
@@ -508,6 +509,7 @@ class TestDecimalPadForEdgeCases:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=uniform_rows,  # type: ignore[arg-type]
@@ -543,6 +545,7 @@ class TestDecimalPadForEdgeCases:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=mixed_rows,  # type: ignore[arg-type]
@@ -582,6 +585,7 @@ class TestDecimalPadForEdgeCases:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=mixed_rows,  # type: ignore[arg-type]

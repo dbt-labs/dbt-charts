@@ -88,8 +88,8 @@ def relations_read_by(queries: dict[str, AnyQuery]) -> BoardRelations:
                 undetermined.append(query_name)
             else:
                 found.update(parsed)
-        # The remaining members, HttpQuery and ValuesQuery, reach no warehouse
-        # and contribute nothing. An `assert_never` else-branch would say so
+        # The remaining member, ValuesQuery, reaches no warehouse and
+        # contributes nothing. An `assert_never` else-branch would say so
         # structurally, but AnyQuery is closed today, so pyright rejects the
         # narrowing it needs as unnecessary.
 

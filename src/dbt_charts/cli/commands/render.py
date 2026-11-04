@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from dbt_charts.agent_api import Diagnostic, RenderFormat
+from dbt_charts.agent_api import Diagnostic, RenderFormat, RenderOutputFormat
 from dbt_charts.agent_api._paths import (
     ignore_code_diagnostics,
     render_crash_diagnostic,
@@ -26,9 +26,10 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 
 if TYPE_CHECKING:
     from dbt_charts.agent_api.boards import BoardRenderResult
+    from dbt_charts.agent_api.markdown import MarkdownWithImages
 
 # Maps common file extensions to render formats for format inference.
-_EXT_TO_FORMAT: dict[str, RenderFormat] = {
+_EXT_TO_FORMAT: dict[str, RenderOutputFormat] = {
     "svg": "svg",
     "html": "html",
     "htm": "html",
@@ -38,10 +39,12 @@ _EXT_TO_FORMAT: dict[str, RenderFormat] = {
     "txt": "text",
     "yaml": "yaml",
     "yml": "yaml",
+    "md": "md",
+    "markdown": "md",
 }
 
 
-def infer_format_from_extension(output: str) -> RenderFormat | None:
+def infer_format_from_extension(output: str) -> RenderOutputFormat | None:
     """Infer render format from output file extension. Returns None for unknown extensions."""
     return _EXT_TO_FORMAT.get(Path(output).suffix.lstrip(".").lower())
 
@@ -210,7 +213,7 @@ def _emit_result(
 def render_command(
     board_path: Path,
     output: str | None = None,
-    format: RenderFormat = "svg",
+    format: RenderOutputFormat = "svg",
     variables: dict[str, str] | None = None,
     use_cache: bool = True,
     cache_path: Path | None = None,
@@ -236,7 +239,8 @@ def render_command(
                default is stdout. Use "-" to force stdout. Ignored for terminal
                format (always prints to stdout).
         format: Output format (svg, html, png, pdf, thumbnail, terminal, json,
-                text, text-data, yaml, data)
+                text, text-data, yaml, data, or md: the markdown page with each
+                `charts` fence as an SVG file beside it and an image link)
         project: The resolved dbt charts project (injected by @with_project)
         variables: Variable values to pass to the render (key=value pairs)
         use_cache: Whether to use cached query results. False (--no-cache) skips
@@ -274,9 +278,7 @@ def render_command(
         ) as cache,
         # from_project, not open(): the cache resolution above already needs the
         # project, and open() would build a second one from the same path.
-        ProjectSession.from_project(
-            project, cache=cache, allow_mutating_methods=True
-        ) as project_session,
+        ProjectSession.from_project(project, cache=cache) as project_session,
     ):
         # Boards-first path resolution lives at the agent_api boundary
         # (resolve_board_or_error) so the command stays thin; a missing board
@@ -285,6 +287,27 @@ def render_command(
         resolved = resolve_board_or_error(ctx.scoped_path, project_session.project)
         if isinstance(resolved, Diagnostic):
             raise RenderFailed([resolved], [])
+        if format == "md":
+            from dbt_charts.agent_api.markdown import render_markdown_with_images
+
+            page_path = _output_path(output, output_dir, f"{ctx.board_file.stem}.md")
+            page = render_markdown_with_images(
+                project_session,
+                resolved,
+                page_path.stem,
+                variables=variables,
+                ignore_codes=ignore_codes,
+                max_workers=max_workers,
+                allow_chart_errors=not fail_on_chart_errors,
+            )
+            return _write_markdown_page(
+                page,
+                page_path,
+                source_label=str(board_path),
+                no_warnings=no_warnings,
+                print0=print0,
+                diagnostics_json=diagnostics_json,
+            )
         result = project_session.render_board(
             board=resolved,
             chart=chart,
@@ -380,9 +403,7 @@ def render_command_from_yaml(
         ) as cache,
         # from_project, not open(): the cache resolution above already needs the
         # project, and open() would build a second one from the same path.
-        ProjectSession.from_project(
-            project, cache=cache, allow_mutating_methods=True
-        ) as project_session,
+        ProjectSession.from_project(project, cache=cache) as project_session,
     ):
         # stdin content has no on-disk location — a pathless in-memory board,
         # no meta.yml cascade.
@@ -455,15 +476,9 @@ def _write_output(
     is_binary = format in ("png", "pdf")
     output_extension = ".thumb.svg" if format == "thumbnail" else f".{format}"
 
-    if output:
-        output_path = Path(output)
-        if not output_path.is_absolute():
-            output_path = output_dir / output_path
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-    else:
-        renders_dir = output_dir / "renders"
-        renders_dir.mkdir(exist_ok=True)
-        output_path = renders_dir / f"{default_output_stem}{output_extension}"
+    output_path = _output_path(
+        output, output_dir, f"{default_output_stem}{output_extension}"
+    )
 
     if is_binary:
         content_bytes = (
@@ -489,10 +504,52 @@ def _write_output(
     return str(output_path)
 
 
+def _output_path(output: str | None, output_dir: Path, default_name: str) -> Path:
+    """*output* resolved against *output_dir*, else ``renders/<default_name>``; its
+    folder is created."""
+    if output:
+        output_path = Path(output)
+        if not output_path.is_absolute():
+            output_path = output_dir / output_path
+    else:
+        output_path = output_dir / "renders" / default_name
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    return output_path
+
+
+def _write_markdown_page(
+    page: MarkdownWithImages,
+    page_path: Path,
+    source_label: str,
+    no_warnings: bool,
+    print0: bool,
+    diagnostics_json: bool,
+) -> str:
+    """Write the page and its SVGs, or raise RenderFailed with its errors."""
+    if page.errors:
+        raise RenderFailed(page.errors, page.warnings)
+    if diagnostics_json:
+        if page.warnings:
+            emit_diagnostics_jsonl(page.warnings)
+    elif not no_warnings:
+        _print_warnings(page.warnings)
+    page_path.write_text(page.markdown, encoding="utf-8")
+    for name, svg in page.images.items():
+        (page_path.parent / name).write_text(svg, encoding="utf-8")
+    print(
+        f"Rendered {source_label} to {page_path} (md format, "
+        f"{len(page.images)} chart image(s))",
+        file=sys.stderr,
+    )
+    sys.stdout.write(str(page_path) + ("\0" if print0 else "\n"))
+    sys.stdout.flush()
+    return str(page_path)
+
+
 def render_commands(
     board_paths: list[Path],
     output: str | None = None,
-    format: RenderFormat = "svg",
+    format: RenderOutputFormat = "svg",
     project_dir: Path | None = None,
     dbt_project_dir: Path | None = None,
     variables: dict[str, str] | None = None,

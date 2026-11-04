@@ -58,13 +58,16 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.markers import AUTO
+from dbt_charts.core.compile.models.primitives import WidthTier
 from dbt_charts.core.compile.models.style.theme.board import TitleStyle
 from dbt_charts.core.compile.resolve.style.inherit_resolver import settled
+from dbt_charts.core.diagnostics.base import DbtChartsError
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.models.chart.normalized import Chart
     from dbt_charts.core.compile.models.primitives import ResolvedFontStyle
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
@@ -107,9 +110,6 @@ _TINY_MAX: float = 7.5 * _COLUMN_UNIT  # 352.5px — below a third
 _NARROW_MAX: float = 11.5 * _COLUMN_UNIT  # 540.5px — below a half
 _WIDE_MIN: float = 23.5 * _COLUMN_UNIT  # 1104.5px — essentially full width
 # 540.5px to < 1104.5px → medium
-
-
-WidthTier: TypeAlias = Literal["tiny", "narrow", "medium", "wide"]
 
 
 def _coerce_weight(raw: str | float | int) -> int | str:
@@ -249,6 +249,49 @@ def chart_title_spec(
     else:
         family = settled(font.family)
     return font_size, weight, family
+
+
+def title_fonts_by_tier(
+    chart_style_context: ChartStyleContext,
+) -> dict[WidthTier, ResolvedFontStyle]:
+    """The chart title font of every card-width tier, for a title drawn with no chart.
+
+    A tier's font does not depend on the width inside it, so one width per tier
+    (its lower bound) stands for all of them.
+    """
+    lower_bounds: dict[WidthTier, float] = {
+        "tiny": 0.0,
+        "narrow": _TINY_MAX,
+        "medium": _NARROW_MAX,
+        "wide": _WIDE_MIN,
+    }
+    return {
+        tier: resolve_title_font(chart_style_context, width)
+        for tier, width in lower_bounds.items()
+    }
+
+
+def own_title_fonts(
+    chart_style_context: ChartStyleContext, chart: Chart
+) -> dict[WidthTier, ResolvedFontStyle]:
+    """The tier fonts a chart's title takes, its own ``style.title.font`` merged.
+
+    A callout or KPI has no chart title: its ``style.title`` is its own text
+    element, which does not merge into the chart title cascade, so it takes the
+    board's tier fonts. A chart whose own style does not merge is the failure
+    being reported and takes them too.
+    """
+    if chart.type in ("callout", "kpi"):
+        return title_fonts_by_tier(chart_style_context)
+    from dbt_charts.core.compile.resolve.style.chart_context import (  # noqa: PLC0415
+        build_chart_style_context,
+    )
+
+    try:
+        local = build_chart_style_context(chart_style_context, chart)
+    except (DbtChartsError, ValueError):
+        local = chart_style_context
+    return title_fonts_by_tier(local)
 
 
 def concrete_title_style(chart_style_context: ChartStyleContext) -> TitleStyle:

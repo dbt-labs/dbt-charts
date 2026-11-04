@@ -20,6 +20,9 @@ class LineChart(_CartesianChartFields, _TooltipFields):
     style: LineChartStylePatch | None = Field(
         default=None, description="Chart-local style overrides."
     )
+    connect: str | None = Field(
+        default=None, description="Column whose order the line follows, instead of x."
+    )
     layers: list[CartesianLayer] = Field(
         default_factory=list, description="Typed overlay layers on this chart."
     )

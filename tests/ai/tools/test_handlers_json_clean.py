@@ -29,6 +29,10 @@ from dbt_charts.ai.tools import TOOL_HANDLERS
 # Covered by the E2E lane against fixture projects with real data.
 _WAREHOUSE_ONLY: frozenset[str] = frozenset({"execute_sql"})
 
+# Fails on any project without a MetricFlow bundle (there is no graceful empty
+# answer); `test_describe_semantics_tool.py` checks its JSON against a bundle.
+_NEEDS_BUNDLE: frozenset[str] = frozenset({"describe_semantics"})
+
 
 def _handler_args() -> dict[str, dict[str, Any]]:
     """Args picked to exercise a graceful path that returns a Pydantic-modeled
@@ -37,6 +41,7 @@ def _handler_args() -> dict[str, dict[str, Any]]:
     """
     return {
         "render_board": {"path": "nonexistent.yml"},
+        "find_queries": {"text": "anything"},
         "search_files": {"text": "anything"},
         "describe_board": {"path": "nonexistent.yml"},
         "read_file": {"path": "nonexistent.yml"},
@@ -58,7 +63,7 @@ def _handler_args() -> dict[str, dict[str, Any]]:
 def _tested_tools() -> list[Any]:
     rows: list[Any] = []
     for name in TOOL_HANDLERS:
-        if name in _WAREHOUSE_ONLY:
+        if name in _WAREHOUSE_ONLY | _NEEDS_BUNDLE:
             continue
         rows.append(pytest.param(name, id=name))
     return rows
@@ -75,5 +80,7 @@ def test_handler_returns_json_clean_dict(
 
 def test_handler_args_cover_every_non_warehouse_tool() -> None:
     """Adding a new tool to TOOL_HANDLERS forces a parametrize row."""
-    expected = {name for name in TOOL_HANDLERS if name not in _WAREHOUSE_ONLY}
+    expected = {
+        name for name in TOOL_HANDLERS if name not in _WAREHOUSE_ONLY | _NEEDS_BUNDLE
+    }
     assert set(_handler_args()) == expected

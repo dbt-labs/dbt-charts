@@ -5,7 +5,7 @@
 use crate::common::{distinct_values, row_num};
 use crate::diagnostic::Diagnostic;
 use crate::layout::{IntrinsicWidth, Layout, Rect};
-use crate::{Payload, codes};
+use crate::{Padding, Payload, codes};
 
 use measure::{FontBook, Measure};
 use scene::Node;
@@ -36,10 +36,20 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     if bound.r.multiples.is_some() {
         return Err("bar: layout draws one plot; a multiples chart is composed by render".into());
     }
-    let payload: Cow<Payload> = if (cell.width, cell.height) == (bound.payload.width, bound.payload.height) {
+    let Some(unviewed) = &bound.r.unviewed else { return laid_out(bound, cell, measure, None) };
+    let whole = super::bind::bind(unviewed)?;
+    let whole_box = laid_out(&whole, cell, measure, None)?.data_box;
+    crate::legend_view::pin_plot_box(whole_box, bound.payload.padding, |padding| {
+        laid_out(bound, cell, measure, Some(padding)).map(|laid| (laid.data_box, laid))
+    })
+}
+
+/// `bound` laid out in `cell`, its card padded by `padding` when given.
+fn laid_out(bound: &Bound, cell: Rect, measure: &Measure, padding: Option<Padding>) -> Result<Layout, Diagnostic> {
+    let payload: Cow<Payload> = if padding.is_none() && (cell.width, cell.height) == (bound.payload.width, bound.payload.height) {
         Cow::Borrowed(&*bound.payload)
     } else {
-        Cow::Owned(Payload { width: cell.width, height: cell.height, ..Payload::clone(&bound.payload) })
+        Cow::Owned(Payload { width: cell.width, height: cell.height, padding: padding.or(bound.payload.padding), ..Payload::clone(&bound.payload) })
     };
     let (drawn, diagnostics) = crate::diagnostic::collect(|| draw(bound, &payload, measure.fonts));
     // A layout that fails has no `Layout` to carry what it found: those WARNs reach the sink, as

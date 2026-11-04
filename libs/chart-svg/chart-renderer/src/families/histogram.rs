@@ -6,20 +6,14 @@
 //! compute bin edges itself: the x encoding is `{"field": chart.x, "bin":
 //! true, ...}` — a bare VL `bin: true`, no `maxbins`/`step`/`extent`
 //! authored — so Vega-Lite's own `normalizeBin` fills `{maxbins:
-//! autoMaxBins("x")}` (10, `vega-lite/src/bin.ts`) and the actual binning
-//! (extent over the raw field, then `vega-statistics`'s `bin()` step
-//! selection, then `vega-transforms`'s `Bin` per-row assignment) runs
-//! inside Vega at render time (via vl-convert), never in Python.
+//! autoMaxBins("x")}` (10, `vega-lite/src/bin.ts`), which Vega bins at render
+//! time (via vl-convert), never in Python. The engine bins with d3-array's
+//! `bin()` instead ([`d3rs::bin`], decided with the move off Vega), asking it
+//! for [`MAXBINS`] thresholds: d3 niced the extent and ticks it, so the
+//! bin count lands near that target rather than at most it.
 //! `ResolvedBarChart.style.histogram.bin_maxbins` (theme default 20) is
 //! genuinely dead: grep confirms no resolve/emit site ever reads it — the
 //! emitted spec always says bare `bin: true`.
-//!
-//! [`vega_bin_step`] ports `vega-statistics::bin()` + `vega-transforms::Bin`'s
-//! `_bins` exactly, verified against the vendored `vega`/`vega-lite`
-//! sources (not re-derived from Vega-Lite's public docs) — this is the
-//! "Python's numbers are the oracle" case turned inside out: there IS no
-//! Python number, so the port targets Vega's own published algorithm
-//! instead of guessing at one.
 //!
 //! [`render`] binds, lays out and prints one chart: quantitative binned x (Vega's own
 //! `point`-less linear scale over the bin extent), count-aggregate y whose
@@ -74,7 +68,7 @@
 //!   VL for a *measure* axis, and `_emit_histogram` sets its own `tickCount`
 //!   expression on an axis with no baked ladder (`emitters/bar.py:516-519`):
 //!   `max(1, min(ceil(height / 40), domain('y')[1]))`, so the ladder is
-//!   `cartesian::unbaked_ticks(0, d3_nice_domain(0, max_count, 10).1,
+//!   `cartesian::unbaked_ticks(0, d3_nice(0, max_count, 10).1,
 //!   max(1, min(ceil(plot_h / 40), domain_max)))` — a count-2 domain ticks at
 //!   count 2, not 10.
 //! - bar geometry: VL's rect positioning for a binned field with a `{band:
@@ -110,7 +104,7 @@
 //!   Review round 2 caught this arm's own labels and rotated title missing
 //!   that shift (`charts/more-types_1`'s 0.0056 CLOSE) — every label
 //!   coordinate here now adds it, and the rotated "#" title's
-//!   `label_edge_x` (fed to `emit_axis_title_rotated`) is the label
+//!   `label_edge_x` (fed to `axis_title_rotated`) is the label
 //!   anchor's own INNER edge (`y_label_x`, which now carries the shift)
 //!   minus the gutter width, the same `0.5 - pad - tick - gutter` shape
 //!   `line.rs`'s `Shape::RailConcat` left-axis title already uses.
@@ -133,6 +127,7 @@ pub mod layout;
 use serde::Deserialize;
 
 use crate::common::{AxisStyle, Font, TitleStyle};
+use d3rs::bin::{vega_constant_extent, Thresholds};
 use crate::diagnostic::{warn, Diagnostic};
 use crate::layout::Rect;
 use measure::{FontBook, Measure};
@@ -216,67 +211,11 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     Ok(print(&laid_out.nodes))
 }
 
-/// One Vega `bin()` computation: `start`/`stop`/`step` for a field's
-/// `[min, max]` extent. Ports `vega-statistics/src/bin.js` verbatim for the
-/// params VL's `bin: true` actually passes (`base: 10`, `divide: [5, 2]`,
-/// `nice: true`, no `step`/`steps`/`minstep`/`anchor` authored) — the
-/// `steps`/explicit-`step` branches are dead for this caller and refused by
-/// name rather than carried as unreachable code.
-fn vega_bin_step(min: f64, max: f64, maxbins: f64) -> (f64, f64, f64) {
-    let base = 10.0_f64;
-    let logb = base.ln();
-    let divide = [5.0_f64, 2.0];
-    // `_.span || (max - min) || Math.abs(min) || 1` — JS falsy-chain: fall
-    // through only when the previous term is exactly 0.
-    let span = if max - min != 0.0 {
-        max - min
-    } else if min != 0.0 {
-        min.abs()
-    } else {
-        1.0
-    };
+/// The thresholds a histogram asks d3's `bin()` for: Vega-Lite's `autoMaxBins("x")`, which a bare
+/// `bin: true` takes.
+const MAXBINS: f64 = 10.0;
 
-    let level = (maxbins.ln() / logb).ceil();
-    let mut step = base.powf((span.ln() / logb).round() - level).max(0.0);
-    while (span / step).ceil() > maxbins {
-        step *= base;
-    }
-    for d in divide {
-        let v = step / d;
-        if v >= 0.0 && span / v <= maxbins {
-            step = v;
-        }
-    }
-
-    // nice: true (VL's default, and `bin: true` never sets it false) —
-    // floor `min` to a step multiple (with the same float-error epsilon
-    // bias vega-statistics uses) and ceil `max`.
-    let precision = if step.ln() >= 0.0 {
-        0.0
-    } else {
-        (-step.ln() / logb).trunc() + 1.0
-    };
-    let eps = base.powf(-precision - 1.0);
-    let niced_min_candidate = (min / step + eps).floor() * step;
-    let niced_min = if min < niced_min_candidate {
-        niced_min_candidate - step
-    } else {
-        niced_min_candidate
-    };
-    let niced_max = (max / step).ceil() * step;
-
-    let start = niced_min;
-    let stop = if niced_max == niced_min {
-        niced_min + step
-    } else {
-        niced_max
-    };
-    (start, stop, step)
-}
-
-/// A single bin: `[start, end)`, half-open except the last bin, which is
-/// closed (matches Vega's own `v > stop ? +Infinity` / clamp-to-`stop-step`
-/// assignment — the last bin absorbs a value exactly at `stop`).
+/// A single bin: `[start, end)`, half-open except the last bin, which is closed.
 pub struct Bin {
     pub start: f64,
     pub end: f64,
@@ -293,73 +232,40 @@ impl Bin {
     }
 }
 
-/// `vega-transforms::Bin`'s `_bins` (start/stop/step, re-niced stop) plus
-/// its per-row assignment closure, then a count aggregate per bin —
-/// production's `{"aggregate": "count"}` y encoding. Empty bins between the
-/// first and last populated one ARE included (a real histogram draws a
-/// zero-height gap, not a collapsed axis) — Vega ticks every `step` from
-/// `start` to `stop` regardless of occupancy.
-///
-/// `maxbins` is always 10 (VL's `autoMaxBins` default for the x channel —
-/// see the module doc's dead-`bin_maxbins` note); a caller never has a
-/// board-authored value to pass, so this takes no `maxbins` parameter.
-pub fn histogram_bins(values: &[f64]) -> Result<Vec<Bin>, String> {
-    let rows: Vec<(f64, Option<usize>)> = values.iter().map(|&v| (v, Some(0))).collect();
-    histogram_bins_by(&rows, 1, &[])
-}
-
-/// [`histogram_bins`] over `(value, series index)` rows: each bin counts its
-/// rows per series. A row with no series (a color Vega-Lite's invalid filter
-/// drops) still sets the extent the bins span, but is counted nowhere.
-pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize, hrefs: &[Option<String>]) -> Result<Vec<Bin>, String> {
-    let finite: Vec<(usize, (f64, Option<usize>))> = values.iter().copied().enumerate().filter(|(_, (v, _))| v.is_finite()).collect();
-    if finite.is_empty() {
-        return Ok(Vec::new());
-    }
-    let min = finite.iter().map(|(_, (v, _))| *v).fold(f64::INFINITY, f64::min);
-    let max = finite.iter().map(|(_, (v, _))| *v).fold(f64::NEG_INFINITY, f64::max);
-    let (raw_start, raw_stop, step) = vega_bin_step(min, max, 10.0);
-    // `_bins`'s own stop re-nice: `start + ceil((bins.stop - start) / step) * step`
-    // — belt-and-braces against the float error `vega_bin_step`'s own nice
-    // pass can leave (vega/vega#830's "convoluted math for better floating
-    // point agreement").
-    let stop = raw_start + ((raw_stop - raw_start) / step).ceil() * step;
-    let start = raw_start;
-
-    const EPSILON: f64 = 1e-14;
-    let n_bins = ((stop - start) / step).round().max(1.0) as usize;
-    let mut bins: Vec<Bin> = (0..n_bins)
-        .map(|i| Bin {
-            start: start + step * i as f64,
-            end: start + step * (i as f64 + 1.0),
-            counts: vec![0; series],
-            hrefs: vec![Vec::new(); series],
-        })
-        .collect();
-    for &(row, (v, series_idx)) in &finite {
-        let Some(series_idx) = series_idx else { continue };
-        // Vega's own clamp: outside [start, stop] would be ±Infinity (no
-        // row is dropped from the domain the bin: true spec computed this
-        // extent FROM, so every value is in range by construction).
-        let clamped = v.max(start).min(stop - step);
-        let idx = (EPSILON + (clamped - start) / step).floor();
-        let idx = idx.clamp(0.0, (n_bins - 1) as f64) as usize;
-        bins[idx].counts[series_idx] += 1;
-        if let Some(href) = hrefs.get(row).and_then(Option::as_deref) {
-            let groups = &mut bins[idx].hrefs[series_idx];
-            match groups.iter_mut().find(|(group, _)| group == href) {
-                Some((_, n)) => *n += 1,
-                None => groups.push((href.to_string(), 1)),
+/// [`d3rs::bin::bin`] over `(value, series index)` rows, each bin counting its rows per series. d3 keeps the
+/// empty bins between the first and last populated one (a real histogram draws a zero-height gap, not a
+/// collapsed axis). A column of one repeated value bins over the extent vega-statistics gives a constant
+/// ([`vega_constant_extent`]). A non-finite value is no number to d3: it sets no extent and lands in no bin. A row with
+/// no series (a color Vega-Lite's invalid filter drops) still sets the extent the bins span, but is counted
+/// nowhere.
+pub fn histogram_bins_by(values: &[(f64, Option<usize>)], series: usize, hrefs: &[Option<String>]) -> Vec<Bin> {
+    let xs: Vec<f64> = values.iter().map(|&(v, _)| if v.is_finite() { v } else { f64::NAN }).collect();
+    let Some(first) = xs.iter().copied().find(|v| !v.is_nan()) else { return Vec::new() };
+    // d3's extent of a repeated value is zero wide, with no bin to draw; Vega widens it to one step.
+    let domain = xs.iter().all(|v| v.is_nan() || *v == first).then(|| vega_constant_extent(first, MAXBINS));
+    d3rs::bin::bin(&xs, Thresholds::Count(MAXBINS), domain)
+        .into_iter()
+        .map(|d3_bin| {
+            let mut bin = Bin { start: d3_bin.x0, end: d3_bin.x1, counts: vec![0; series], hrefs: vec![Vec::new(); series] };
+            for row in d3_bin.members {
+                let Some(series_idx) = values[row].1 else { continue };
+                bin.counts[series_idx] += 1;
+                if let Some(href) = hrefs.get(row).and_then(Option::as_deref) {
+                    let groups = &mut bin.hrefs[series_idx];
+                    match groups.iter_mut().find(|(group, _)| group == href) {
+                        Some((_, n)) => *n += 1,
+                        None => groups.push((href.to_string(), 1)),
+                    }
+                }
             }
-        }
-    }
-    Ok(bins)
+            bin
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::families::cartesian::d3_nice_domain;
 
     /// Renders in the en-US time vocabulary the fixtures' dates are drawn in; the
     /// engine entry point scopes the board's own.
@@ -368,46 +274,15 @@ mod tests {
         super::render(payload, fonts)
     }
 
-    /// vega-statistics/test/bin-test.js's own first case: extent [0, 100],
-    /// maxbins 10 -> step 10, start 0, stop 100 (already step-aligned, no
-    /// nice adjustment needed).
-    #[test]
-    fn bin_step_matches_the_vega_statistics_fixture() {
-        let (start, stop, step) = vega_bin_step(0.0, 100.0, 10.0);
-        assert_eq!((start, stop, step), (0.0, 100.0, 10.0));
-    }
-
-    /// A span that needs nicing: [3, 97] at maxbins 10 picks step 10 (span
-    /// 94 / 10 bins ~= 9.4, rounds to the nearest power-of-base/divide
-    /// candidate) and nices the domain out to [0, 100].
-    #[test]
-    fn bin_step_nices_a_ragged_extent() {
-        let (start, stop, step) = vega_bin_step(3.0, 97.0, 10.0);
-        assert_eq!(step, 10.0);
-        assert_eq!(start, 0.0);
-        assert_eq!(stop, 100.0);
-    }
-
-    /// Three more cases lifted verbatim from
-    /// `vega-statistics/test/bin-test.js` — pinned directly against the
-    /// oracle's own fixtures, not just re-derived from the ported algorithm.
-    #[test]
-    fn bin_step_matches_further_vega_statistics_fixtures() {
-        let (start, stop, step) = vega_bin_step(1.3, 10.2, 10.0);
-        assert_eq!((start, stop, step), (1.0, 11.0, 1.0));
-
-        let (start, stop, step) = vega_bin_step(99.2258064516129, 2307.451612903226, 30.0);
-        assert_eq!((start, stop, step), (0.0, 2400.0, 100.0));
-
-        // Zero-span, min == 0: exercises the `span` fallback's final "else
-        // 1.0" arm (both `max - min` and `min.abs()` are 0).
-        let (start, stop, step) = vega_bin_step(0.0, 0.0, 10.0);
-        assert_eq!((start, stop, step), (0.0, 0.1, 0.1));
+    /// The bins of `values`, all in series 0.
+    fn histogram_bins(values: &[f64]) -> Vec<Bin> {
+        let rows: Vec<(f64, Option<usize>)> = values.iter().map(|&v| (v, Some(0))).collect();
+        histogram_bins_by(&rows, 1, &[])
     }
 
     #[test]
     fn ten_bins_span_start_to_stop_with_no_gaps() {
-        let bins = histogram_bins(&[3.0, 97.0]).unwrap();
+        let bins = histogram_bins(&[3.0, 97.0]);
         assert_eq!(bins.first().unwrap().start, 0.0);
         assert_eq!(bins.last().unwrap().end, 100.0);
         for w in bins.windows(2) {
@@ -418,24 +293,41 @@ mod tests {
     #[test]
     fn every_row_lands_in_exactly_one_bin() {
         let values = [1.0, 5.0, 5.0, 9.0, 42.0, 99.0, 100.0];
-        let bins = histogram_bins(&values).unwrap();
+        let bins = histogram_bins(&values);
         let total: usize = bins.iter().map(Bin::count).sum();
         assert_eq!(total, values.len());
-        // The max value (100, == stop) lands in the LAST bin, not dropped.
-        assert!(bins.last().unwrap().count() >= 1);
+    }
+
+    /// d3's `bin()` gives a maximum that sits on the niced upper edge a bin past it, one tick wide, so it is not
+    /// the closed end of the last tick bin.
+    #[test]
+    fn a_maximum_on_the_niced_edge_gets_a_bin_of_its_own() {
+        let bins = histogram_bins(&[0.0, 100.0]);
+        assert_eq!(bins.len(), 11);
+        let last = bins.last().unwrap();
+        assert_eq!((last.start, last.end, last.count()), (100.0, 110.0, 1));
     }
 
     #[test]
     fn empty_input_refuses() {
-        assert!(histogram_bins(&[]).unwrap().is_empty());
+        assert!(histogram_bins(&[]).is_empty());
+    }
+
+    /// A repeated value has no extent for d3 to bin, so it takes the extent vega-statistics gives a constant (one
+    /// step past it); every row is in the first bin.
+    #[test]
+    fn a_single_repeated_value_bins_over_the_extent_vega_gives_a_constant() {
+        let bins = histogram_bins(&[5.0, 5.0, 5.0]);
+        assert_eq!((bins.first().unwrap().start, bins.last().unwrap().end), (5.0, 5.5));
+        assert_eq!(bins[0].count(), 3);
+        assert_eq!(bins.iter().map(Bin::count).sum::<usize>(), 3);
     }
 
     #[test]
-    fn a_single_repeated_value_still_bins() {
-        // span == 0 -> vega-statistics's own `span = min.abs() || 1` branch.
-        let bins = histogram_bins(&[5.0, 5.0, 5.0]).unwrap();
-        let total: usize = bins.iter().map(Bin::count).sum();
-        assert_eq!(total, 3);
+    fn a_column_of_one_repeated_value_draws_one_bar() {
+        let rows = serde_json::json!([{"amount": 5.0}, {"amount": 5.0}]);
+        let svg = render_ok(minimal_valid_json(None, None, None), rows);
+        assert_eq!(svg.matches("aria-roledescription=\"bar\"").count(), 1, "{svg}");
     }
 
     #[test]
@@ -469,7 +361,7 @@ mod tests {
             232.0, 686.0, 280.0, 481.0, 435.0, 525.0, 680.0, 640.0, 577.0, 643.0, 605.0, 362.0,
             342.0, 397.0, 610.0, 445.0, 1014.0, 320.0, 258.0, 669.0, 813.0, 611.0, 684.0,
         ];
-        let bins = histogram_bins(&values).expect("bins");
+        let bins = histogram_bins(&values);
         let non_empty = bins.iter().filter(|b| b.count() > 0).count();
         assert!(non_empty < bins.len(), "fixture must leave a real gap");
 
@@ -506,10 +398,10 @@ mod tests {
         // X tick "200" — its own tick mark already rounds+0.5 to 56.500; the
         // label's un-rounded scale position (56.300, before this fix) must
         // still pick up the same group +0.5.
-        assert!(svg.contains("x=\"56.800\" y=\"381.500\""), "x label crisp shift: {svg}");
+        assert!(svg.contains("x=\"56.8\" y=\"381.5\""), "x label crisp shift: {svg}");
         // Y tick "0" — its label anchor (before this fix: -12.000, 363.000)
         // must pick up +0.5 in both directions too.
-        assert!(svg.contains("x=\"-11.500\" y=\"363.500\""), "y label crisp shift: {svg}");
+        assert!(svg.contains("x=\"-11.5\" y=\"363.5\""), "y label crisp shift: {svg}");
         // The rotated title's outer-edge derivation (`0.5 - y_tick_eff -
         // y_label_pad - y_gutter`) plus this same label crisp shift moves it
         // from the pre-fix -23.58 to -25.08 — the exact combined correction
@@ -629,12 +521,12 @@ mod tests {
         let base = svg.find("Bucket: B").expect("series B segment");
         let top = svg.find("Bucket: A").expect("series A segment");
         assert!(base < top, "the most frequent series is the base: {svg}");
-        assert!(svg.contains("height=\"270.0000\" fill=\"#3164a3\""), "B: slot 0, square, y 90..360: {svg}");
-        assert!(svg.contains("V 2.0000 A 2.0000,2.0000") && svg.contains("fill=\"#779bc9\""), "A: slot 1, rounded top: {svg}");
+        assert!(svg.contains("height=\"270\" fill=\"#3164a3\""), "B: slot 0, square, y 90..360: {svg}");
+        assert!(svg.contains("A2,2,0,0,1,") && svg.contains("fill=\"#779bc9\""), "A: slot 1, rounded top: {svg}");
         assert_eq!(svg.matches("aria-roledescription=\"bar\"").count(), 3, "{svg}");
     }
 
-    /// A bin 4.68px wide takes a quarter of its width, not the authored
+    /// A bin 4.05px wide takes a quarter of its width, not the authored
     /// radius: the corner never reads as a dome.
     #[test]
     fn a_thin_bin_rounds_to_a_quarter_of_its_width() {
@@ -643,8 +535,8 @@ mod tests {
         resolved["style"]["mark"]["border"]["radius"] = serde_json::json!(2.0);
         resolved["style"]["mark"]["band_width"] = serde_json::json!(0.08);
         let svg = render_ok(resolved, rows);
-        assert!(svg.contains("A 1.1700,1.1700"), "{svg}");
-        assert!(!svg.contains("A 2.0000,2.0000"), "{svg}");
+        assert!(svg.contains("A1.01,1.01,0,0,1,"), "{svg}");
+        assert!(!svg.contains("A2,2,0,0,1,"), "{svg}");
     }
 
     /// Tied counts rank by name; a board color scale never reaches a histogram.
@@ -675,9 +567,10 @@ mod tests {
         no_palette["palette"] = serde_json::json!([]);
         let svg = render_ok(no_palette, rows);
         assert!(svg.contains(r##"fill="#4c78a8""##) && svg.contains(r##"fill="#f58518""##), "{svg}");
-        // 200 rows of A under one of B: B's top segment is under a pixel tall.
+        // 200 rows of A under one of B: B's top segment is under a pixel tall. A row at 9 gives the bins an extent.
         let mut tall: Vec<serde_json::Value> = (0..200).map(|_| serde_json::json!({"amount": 1.0, "bucket": "A"})).collect();
         tall.push(serde_json::json!({"amount": 1.0, "bucket": "B"}));
+        tall.push(serde_json::json!({"amount": 9.0, "bucket": "A"}));
         let mut rounded = minimal_valid_json(Some("bucket"), None, None);
         rounded["style"]["mark"]["border"]["radius"] = serde_json::json!(2.0);
         let svg = render_ok(rounded, serde_json::Value::Array(tall));
@@ -825,7 +718,7 @@ mod tests {
         let dir = format!("{manifest}/../../../src/dbt_charts/core/render/fonts");
         let fonts = FontBook::load_dir(&dir).expect("test fonts load");
         let svg = render(&payload, &fonts).expect("renders");
-        assert!(svg.contains("<rect width=\"600\" height=\"400\" fill=\"#d9a45b\"/>"), "{svg}");
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"600\" height=\"400\" fill=\"#d9a45b\"/>"), "{svg}");
     }
 
     #[test]
@@ -850,7 +743,7 @@ mod tests {
     #[test]
     fn a_nice_count_domain_tops_out_whole() {
         for max_count in 1..=5000 {
-            let top = d3_nice_domain(0.0, f64::from(max_count), 10).1;
+            let top = d3rs::ticks::d3_nice(0.0, f64::from(max_count), 10).1;
             assert_eq!(top, top.trunc(), "max count {max_count}");
         }
     }
@@ -916,7 +809,7 @@ mod tests {
     #[test]
     fn a_steep_label_angle_flips_its_baseline_on_a_right_axis() {
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
-        for (position, shift) in [(None, "rotate(90) translate(0,9)"), (Some("right"), "rotate(90) translate(0,-2)")] {
+        for (position, shift) in [(None, "rotate(90)\" x=\"0\" y=\"9\""), (Some("right"), "rotate(90)\" x=\"0\" y=\"-2\"")] {
             let mut resolved = minimal_valid_json(None, None, position);
             resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(90.0);
             let svg = render_ok(resolved, rows.clone());
@@ -1005,22 +898,22 @@ mod tests {
     #[test]
     fn right_axis_own_side_align_with_authored_domain_anchors_end_at_the_measured_label_padding() {
         let svg = own_side_fixture("right", 805.04, [0.0, 20.0]);
-        assert!(svg.contains("translate(18.000,50.000)"), "plot origin: {svg}");
+        assert!(svg.contains("translate(18,50)"), "plot origin: {svg}");
         assert!(
-            svg.contains("<line x1=\"0.5\" y1=\"266.500\" x2=\"732.540\" y2=\"266.500\""),
+            svg.contains("<line x1=\"0.5\" y1=\"266.5\" x2=\"732.54\" y2=\"266.5\""),
             "plot is 732.04 wide (production's gridline runs -732.04 from the axis group): {svg}"
         );
         assert!(
-            svg.contains("<text x=\"750.188\" y=\"345.500\" text-anchor=\"end\""),
+            svg.contains("<text x=\"750.19\" y=\"345.5\" text-anchor=\"end\""),
             "label end-anchored at plot_w + 0.5 + labelPadding: {svg}"
         );
         assert!(
-            svg.contains("<text x=\"750.188\" y=\"3.500\" text-anchor=\"end\""),
+            svg.contains("<text x=\"750.19\" y=\"3.5\" text-anchor=\"end\""),
             "top label shares the anchor: {svg}"
         );
         assert!(
-            svg.contains("<text x=\"762.19\" y=\"171.50\"")
-                && svg.contains("rotate(90 762.19 171.50)"),
+            svg.contains("x=\"762.19\" y=\"171.5\"")
+                && svg.contains("rotate(90 762.19 171.5)"),
             "title sits title.padding + nudge past the label anchor: {svg}"
         );
     }
@@ -1034,18 +927,18 @@ mod tests {
     #[test]
     fn left_axis_own_side_align_with_authored_domain_anchors_start_at_the_measured_label_padding() {
         let svg = own_side_fixture("left", 787.84, [0.0, 20.0]);
-        assert!(svg.contains("translate(55.000,50.000)"), "plot origin: {svg}");
+        assert!(svg.contains("translate(55,50)"), "plot origin: {svg}");
         assert!(
-            svg.contains("<line x1=\"0.5\" y1=\"266.500\" x2=\"715.340\" y2=\"266.500\""),
+            svg.contains("<line x1=\"0.5\" y1=\"266.5\" x2=\"715.34\" y2=\"266.5\""),
             "plot is 714.84 wide (production's gridline runs 714.84 from the axis group): {svg}"
         );
         assert!(
-            svg.contains("<text x=\"-17.148\" y=\"345.500\" text-anchor=\"start\""),
+            svg.contains("<text x=\"-17.15\" y=\"345.5\" text-anchor=\"start\""),
             "label start-anchored at 0.5 - labelPadding: {svg}"
         );
         assert!(
-            svg.contains("<text x=\"-29.15\" y=\"171.50\"")
-                && svg.contains("rotate(-90 -29.15 171.50)"),
+            svg.contains("x=\"-29.15\" y=\"171.5\"")
+                && svg.contains("rotate(-90 -29.15 171.5)"),
             "title sits title.padding + nudge past the label anchor: {svg}"
         );
     }
@@ -1173,12 +1066,16 @@ mod tests {
             let mut resolved = minimal_valid_json(None, None, position);
             resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(45.0);
             let svg = render_ok(resolved, rows);
-            assert!(svg.contains("rotate(45) translate(0,3)"), "{position:?}: {svg}");
+            assert!(svg.contains("rotate(45)\" x=\"0\" y=\"3\""), "{position:?}: {svg}");
         }
         let rows = serde_json::json!([{"amount": 1.0}, {"amount": 2.0}]);
         let mut resolved = minimal_valid_json(None, None, None);
         resolved["style"]["axis_y"]["labels"]["angle"] = serde_json::json!(135.0);
-        assert!(render_ok(resolved, rows).contains("text-anchor=\"start\" transform=\"translate("));
+        let svg = render_ok(resolved, rows);
+        assert!(
+            svg.split("<text ").any(|t| t.contains("rotate(135)") && t.split('>').next().unwrap().contains("text-anchor=\"start\"")),
+            "{svg}"
+        );
     }
 
     #[test]
@@ -1222,19 +1119,19 @@ mod tests {
 
         // Plot negotiates to 563 wide with a 2.0px free left edge — the
         // group's own translate.
-        assert!(svg.contains("translate(2.000,6.000)"), "free left edge: {svg}");
+        assert!(svg.contains("translate(2,6)"), "free left edge: {svg}");
 
         // Tick marks: outward from the plot's right edge (563 -> 569),
         // never inward toward the plot.
         assert!(
-            svg.contains("x1=\"563.000\" y1=\"360.500\" x2=\"569.000\" y2=\"360.500\""),
+            svg.contains("x1=\"563\" y1=\"360.5\" x2=\"569\" y2=\"360.5\""),
             "tick points outward from plot edge: {svg}"
         );
 
         // Labels: anchor "start", x = plot_w(563) + tick_eff(6) +
         // label_pad(6) + 0.5 = 575.5 — no VALUE_AXIS_BREATHING_ROOM term.
         assert!(
-            svg.contains("<text x=\"575.500\" y=\"363.500\" text-anchor=\"start\""),
+            svg.contains("<text x=\"575.5\" y=\"363.5\" text-anchor=\"start\""),
             "label anchors start at plot_w+tick_eff+label_pad+0.5, no breathing room: {svg}"
         );
 
@@ -1243,10 +1140,10 @@ mod tests {
         // title.padding(0.0) + rotated_axis_title_nudge(11px) (2.0) = 589.08,
         // rotated +90 (sign 1.0, the opposite of the left axis's -90).
         assert!(
-            svg.contains(">#</text>") && svg.contains("x=\"589.08\" y=\"180.50\""),
+            svg.contains(">#</text>") && svg.contains("x=\"589.08\" y=\"180.5\""),
             "title past the widest label, rotated +90: {svg}"
         );
-        assert!(svg.contains("rotate(90 589.08 180.50)"), "right-axis title rotates +90: {svg}");
+        assert!(svg.contains("rotate(90 589.08 180.5)"), "right-axis title rotates +90: {svg}");
     }
     // ── The family contract ──────────────────────────────────────────────
 
@@ -1320,7 +1217,7 @@ mod tests {
         assert!(sunk.is_empty(), "{sunk:?}");
         let codes: Vec<_> = laid.diagnostics.iter().map(|d| d.code).collect();
         assert_eq!(codes, ["WARN-CHART-TITLE-TRUNCATED", "WARN-AXIS-TITLE-TRUNCATED"]);
-        let [scene::Node::Svg { extent, .. }] = laid.nodes.as_slice() else { panic!("one root") };
+        let Some(extent) = scene::root_extent(&laid.nodes) else { panic!("one root") };
         assert_eq!((extent.width, extent.height), (420.0, 260.0));
         let data = laid.data_box;
         assert!(data.x >= 0.0 && data.y >= 0.0 && data.x + data.width <= 420.0 && data.y + data.height <= 260.0);

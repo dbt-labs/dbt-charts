@@ -377,9 +377,9 @@ class TestComposedQueryWithTemplatedReference:
             "wrapper", templated_ref_board_path, project=local_project(tmp_path)
         )
         assert lr.success is True, lr.errors
-        # Parameterized, not merely absent: "{{" not in lr.sql alone can't tell
-        # a rendered placeholder apart from a vanished template.
-        assert "$1 AS n" in lr.sql
+        # The value itself, not merely an absent template: "{{" not in lr.sql alone
+        # can't tell a rendered variable apart from a vanished one.
+        assert "3 AS n" in lr.sql
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,3 @@
+kind: Fixes
+body: A multiselect filter keeps one width as values are ticked, showing the count and the first value.
+time: 2026-11-02T17:20:19.376213-08:00

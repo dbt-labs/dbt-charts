@@ -72,6 +72,8 @@ from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import (
     board_variables,
     daterange_presets,
+    overridden_variables,
+    variable_options,
 )
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.chart.annotation_nothing_drawn import (
@@ -108,9 +110,7 @@ from dbt_charts.core.render.chart.table_align import (
     collect_table_numeric_align_lefts,
 )
 from dbt_charts.core.render.chart.table_overflow import (
-    TableCramping,
     TableOverflow,
-    collect_table_crampings,
     collect_table_overflows,
 )
 from dbt_charts.core.render.chart.table_page_squeeze import (
@@ -153,7 +153,10 @@ from dbt_charts.core.render.sizing import resolve_active_tab_index
 from dbt_charts.core.render.svg_utils import strip_pagination_chrome
 from dbt_charts.core.render.tab_scope import scope_tabs
 from dbt_charts.core.render.thumbnail import cartoonize
-from dbt_charts.core.render.variables_resolve import resolve_option_values
+from dbt_charts.core.render.variables_resolve import (
+    linked_variable_options,
+    resolve_option_values,
+)
 from dbt_charts.core.render.warnings import (
     WarningContext,
     registry as _warnings_registry,
@@ -313,7 +316,6 @@ def _collect_render_warnings(
     executor: Executor,
     variables: VariableValues,
     table_overflows: dict[str, TableOverflow],
-    table_crampings: dict[str, TableCramping],
     table_numeric_align_lefts: dict[str, list[str]],
     table_align_no_visible_effects: dict[str, list[str]],
     text_truncations: dict[str, list[TextTruncation]],
@@ -486,7 +488,6 @@ def _collect_render_warnings(
         layer_results=layer_results,
         geometry_warnings=geometry_warnings,
         table_overflows=table_overflows,
-        table_crampings=table_crampings,
         table_numeric_align_lefts=table_numeric_align_lefts,
         table_align_no_visible_effects=table_align_no_visible_effects,
         static_paginations=static_paginations,
@@ -558,16 +559,20 @@ def _render_variables(
     return normalize_render_values(merged_variables, variable_registry, clock)
 
 
-def _prefetch_query_names(board: Board, variables: VariableValues) -> frozenset[str]:
+def _prefetch_query_names(
+    board: Board, executor: Executor, variables: VariableValues
+) -> frozenset[str]:
     """Queries of the hidden tabs whose cache policy asks to be prefetched.
 
     ``prefetch`` is resolved per query at compile time, so a query is warmed
-    only when its own policy has caching on and ``prefetch`` set.
+    only when its own policy has caching on and ``prefetch`` set. Names resolve
+    through the executor: a nested board's own ``queries:`` are not keys of
+    ``board.queries``.
     """
     hidden = collect_all_query_names(board) - collect_all_query_names(
         scope_tabs(board, variables)
     )
-    return frozenset(name for name in hidden if board.queries[name].cache.prefetch)
+    return frozenset(name for name in hidden if executor.get_query(name).cache.prefetch)
 
 
 def prefetch_tab_queries(
@@ -596,7 +601,7 @@ def prefetch_tab_queries(
     )
     misses = {
         name
-        for name in _prefetch_query_names(board, merged)
+        for name in _prefetch_query_names(board, executor, merged)
         if not executor.is_cached(name, merged)
     }
     outcomes = execute_queries_parallel(
@@ -635,6 +640,7 @@ def render(
             language=board.regional.resolved_language,
         ),
         daterange_presets(presets),
+        overridden_variables(frozenset(overrides)),
         board_clock(board.clock(executor.rendered_at)),
     ):
         return _render(
@@ -770,7 +776,9 @@ def _render(
     whole_board = board
     if format not in _EVERY_TAB_FORMATS:
         try:
-            prefetch_query_names = _prefetch_query_names(board, merged_variables)
+            prefetch_query_names = _prefetch_query_names(
+                board, executor, merged_variables
+            )
             board = scope_tabs(board, merged_variables)
         except DbtChartsError as e:
             return RenderResult(
@@ -910,14 +918,17 @@ def _render(
         board_variables(merged_variables),
     ):
         try:
-            resolved_board, render_cache = build_resolved_board(
-                board,
-                executor,
-                merged_variables,
-                render_first=True,
-                authored_slot_heights=authored_chart_heights,
-                hug_board=whole_board,
-            )
+            with variable_options(
+                linked_variable_options(board, executor, merged_variables)
+            ):
+                resolved_board, render_cache = build_resolved_board(
+                    board,
+                    executor,
+                    merged_variables,
+                    render_first=True,
+                    authored_slot_heights=authored_chart_heights,
+                    hug_board=whole_board,
+                )
         except DbtChartsError as e:
             _reset_contexts()
             return RenderResult(
@@ -959,7 +970,6 @@ def _render(
 
     def _finalize_warnings(
         table_overflows: dict[str, TableOverflow],
-        table_crampings: dict[str, TableCramping],
         table_numeric_align_lefts: dict[str, list[str]],
         table_align_no_visible_effects: dict[str, list[str]],
         text_truncations: dict[str, list[TextTruncation]],
@@ -978,7 +988,6 @@ def _render(
             executor,
             merged_variables,
             table_overflows,
-            table_crampings,
             table_numeric_align_lefts,
             table_align_no_visible_effects,
             text_truncations,
@@ -1033,7 +1042,6 @@ def _render(
     # Declared before the try: the except arm records board_error and falls
     # through, so these are read below even when the `with` never bound them.
     _table_overflows: dict[str, TableOverflow] = {}
-    _table_crampings: dict[str, TableCramping] = {}
     _table_numeric_align_lefts: dict[str, list[str]] = {}
     _table_align_no_visible_effects: dict[str, list[str]] = {}
     _text_truncations: dict[str, list[TextTruncation]] = {}
@@ -1075,7 +1083,6 @@ def _render(
         embed_fonts = format in ("html", "svg") and bool(options.get("standalone"))
         with (
             collect_table_overflows() as _table_overflows,
-            collect_table_crampings() as _table_crampings,
             collect_table_numeric_align_lefts() as _table_numeric_align_lefts,
             collect_table_align_no_visible_effects() as _table_align_no_visible_effects,
             collect_text_truncations() as _text_truncations,
@@ -1116,12 +1123,12 @@ def _render(
         # Render failed before a table could rasterize: finalize with an empty
         # capture so detector warnings still surface alongside the board error.
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     except Exception as e:  # noqa: BLE001 — any crash is this board's ERR-INTERNAL, not a server error
         board_error = RenderError.from_unexpected(e).to_diagnostic()
         render_warnings, suppressed_warnings = _finalize_warnings(
-            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
+            {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, []
         )
     finally:
         _reset_contexts()
@@ -1144,7 +1151,6 @@ def _render(
         }
         render_warnings, suppressed_warnings = _finalize_warnings(
             _table_overflows,
-            _table_crampings,
             _table_numeric_align_lefts,
             _table_align_no_visible_effects,
             {**_sizing_truncations, **_text_truncations},

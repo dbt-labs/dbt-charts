@@ -805,6 +805,10 @@ def expand_palette_refs(
             # the table it is itself part of.
             if isinstance(node, Style) and name in _RESOLUTION_CONTEXT_FIELDS:
                 continue
+            # `style.pattern.palette` names a pattern palette, which
+            # `resolve_pattern` resolves; it is no color source.
+            if name == "pattern":
+                continue
             child_path = f"{path}.{name}" if path else name
             if name in _PALETTE_FIELDS and isinstance(value, str):
                 new_value = _resolve_palette_leaf(

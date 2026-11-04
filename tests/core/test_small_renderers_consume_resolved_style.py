@@ -104,8 +104,9 @@ class TestRenderTabsLayout:
             render_cache={},
             painted_canvas=None,
         )
-        # Tab bar is 999px; item height is 100px → total = 999 + 100 = 1099
-        assert height == pytest.approx(1099.0), (
+        # Card-padding inset + 999px bar + 100px item.
+        expected = rs.frame.card_padding + 999.0 + 100.0
+        assert height == pytest.approx(expected), (
             f"Expected bar height 999 to affect total, got {height}"
         )
 

@@ -32,7 +32,10 @@
 
 use crate::constants::axis::{EDGE_LABEL_MIN_GAP_RATIO, LABEL_GAP_SPACES, LABEL_GAP_SPACES_NUMERIC, SPARSE_CEILING_PX};
 use super::table_dates::{strftime, Moment};
-use crate::time_axis::{date_text_day, parse_iso_date};
+use crate::time_axis::Dates;
+use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month, weekday, MS_PER_DAY};
+use d3rs::time::{Interval, Unit};
+use jiff::tz::TimeZone;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -320,7 +323,7 @@ fn clock_hour(day: f64) -> u32 {
 /// authored calendar grain's single row); an authored format repaints each
 /// band's first date.
 pub fn part_band_texts(
-    values: &[String],
+    values: &Dates,
     axis_part: TimePart,
     labels_time_unit: Option<&str>,
     authored: Option<AuthoredTimeFormat>,
@@ -339,8 +342,8 @@ pub fn part_band_texts(
         }
     };
     let mut bands: Vec<(String, (i32, u8, u8))> = Vec::new();
-    for value in values {
-        let day = date_text_day(value).ok_or_else(|| format!("x value {value:?} is not an ISO date"))?;
+    for (value, day) in values.text.iter().zip(&values.day) {
+        let day = day.ok_or_else(|| format!("x value {value:?} is not an ISO date"))?;
         let date = civil_from_days(day.floor() as i64);
         let label = vocabulary(date, clock_hour(day))?;
         if !bands.iter().any(|(seen, _)| *seen == label) {
@@ -390,7 +393,7 @@ pub fn time_part_ticks(
     // Vega asks d3 for ten ticks when no `tickCount` reaches the axis.
     let count = authored.or_else(|| part.default_tick_count(plot_w)).unwrap_or(10);
     let count = part.min_step_days().map_or(count, |step| count.min(min_step_ticks(hi - lo, step)));
-    utc_instants(lo, hi, count)
+    zone_instants(lo, hi, count, None)?
         .into_iter()
         .map(|at| Ok(PartTick { at, frac: (at - lo) / (hi - lo), text: text(at)? }))
         .collect()
@@ -427,15 +430,17 @@ impl LabelUnit {
     pub fn raw_measure_text(
         self,
         band: &str,
+        date: Option<(i32, u8, u8)>,
+        day: Option<f64>,
         authored: Option<AuthoredTimeFormat>,
     ) -> Result<String, String> {
         let LabelUnit::Raw(part) = self else {
             return Err("raw_measure_text on a calendar label unit".into());
         };
-        let Some((y, m, d)) = parse_iso_date(band) else { return Ok(band.to_string()) };
+        let Some((y, m, d)) = date else { return Ok(band.to_string()) };
         match (authored, part) {
             (Some(format), _) => Ok(format.text(y, m, d)),
-            (None, Some(part)) => Ok(part.text(y, m, d, date_text_day(band).map_or(0, clock_hour))),
+            (None, Some(part)) => Ok(part.text(y, m, d, day.map_or(0, clock_hour))),
             (None, None) => Ok(band.to_string()),
         }
     }
@@ -469,28 +474,9 @@ pub fn parse_authored_time_unit(s: &str) -> Option<TimeUnit> {
     }
 }
 
-/// Day-of-week (0=Mon..6=Sun) using Zeller's formula for the Gregorian calendar.
-pub(crate) fn weekday(year: i32, month: u8, day: u8) -> u8 {
-    let mut y = year;
-    let mut m = month as i32;
-    if m < 3 {
-        m += 12;
-        y -= 1;
-    }
-    let k = y % 100;
-    let j = y / 100;
-    // `day + ... - 2*j` can be negative (e.g. any Sunday in 1900-2000, where
-    // `j == 19`), and Rust's `%` keeps the dividend's sign, not Python's —
-    // `rem_euclid` matches the always-non-negative modulus Zeller's formula
-    // assumes.
-    let h = (day as i32 + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 - 2 * j).rem_euclid(7);
-    // h: 0=Sat, 1=Sun, 2=Mon…6=Fri  → convert to 0=Mon..6=Sun
-    ((h + 5).rem_euclid(7)) as u8
-}
-
 // ── Time-unit detection ───────────────────────────────────────────────────────
 
-/// Detect the calendar bucketing grain from a slice of ISO date strings.
+/// Detect the calendar bucketing grain from the dates of a domain.
 ///
 /// Mirrors Python `detect_time_unit`:
 /// * All Jan-1 → `Year`
@@ -501,12 +487,9 @@ pub(crate) fn weekday(year: i32, month: u8, day: u8) -> u8 {
 ///   that grain
 /// * Otherwise → `YearMonthDate`
 ///
-/// Returns `None` if fewer than 2 distinct parseable values.
-pub fn detect_time_unit(strs: &[&str]) -> Option<TimeUnit> {
-    let mut dates: Vec<(i32, u8, u8)> = strs
-        .iter()
-        .filter_map(|s| parse_iso_date(s))
-        .collect();
+/// Returns `None` if fewer than 2 distinct dates.
+pub fn detect_time_unit(values: &Dates) -> Option<TimeUnit> {
+    let mut dates = values.civils();
     // Deduplicate
     dates.sort_unstable();
     dates.dedup();
@@ -663,9 +646,9 @@ impl VegaType {
 
 /// Whether any row's `field` is a labeled bucket (`2024-Q1`) that production rewrites to its ISO start.
 pub(crate) fn has_labeled_bucket(rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> bool {
-    rows.iter().any(|row| {
-        row.get(field).and_then(serde_json::Value::as_str).is_some_and(|text| parse_iso_date(text).is_none() && parse_bucket_string(text).is_some())
-    })
+    let texts: Vec<String> = rows.iter().filter_map(|row| row.get(field).and_then(serde_json::Value::as_str)).map(str::to_string).collect();
+    let dates = Dates::read(&texts);
+    texts.iter().zip(&dates.date).any(|(text, date)| date.is_none() && parse_bucket_string(text).is_some())
 }
 
 pub fn infer_vega_type(rows: &[serde_json::Map<String, serde_json::Value>], field: &str) -> VegaType {
@@ -915,9 +898,7 @@ fn iso_weeks_in_year(year: i32) -> u32 {
 /// `year`. `None` when the regex-admitted week (`01`-`53`) does not exist
 /// in this particular year (`iso_weeks_in_year`), matching production's
 /// own `_week_to_iso`/`_parse_bucket_string` (`try/except ValueError` →
-/// `None`). Reuses this module's own `days_from_civil`/`civil_from_days`
-/// (Howard Hinnant's civil-calendar arithmetic, defined further down for
-/// the tick-label emitters) rather than a second copy.
+/// `None`).
 fn iso_week_monday(year: i32, week: u32) -> Option<(i32, u32, u32)> {
     if week < 1 || week > iso_weeks_in_year(year) {
         return None;
@@ -926,25 +907,6 @@ fn iso_week_monday(year: i32, week: u32) -> Option<(i32, u32, u32)> {
     let week1_monday = days_from_civil(year, 1, 4) - i64::from(jan4_weekday);
     let (y, m, d) = civil_from_days(week1_monday + (i64::from(week) - 1) * 7);
     Some((y, u32::from(m), u32::from(d)))
-}
-
-pub(crate) fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-}
-
-pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if is_leap_year(year) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 0,
-    }
 }
 
 const QUARTER_FIRST_MONTH: [u32; 4] = [1, 4, 7, 10];
@@ -1711,7 +1673,7 @@ pub fn resolve_label_visibility(
 /// type_inference.py), which the bar family reads to restore its tick marks;
 /// a `year_step` above 1 (every 5th/10th year) is the same fact at `year` grain.
 pub fn resolve_temporal_labels(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     authored_label_tu: Option<TimeUnit>,
     plot_width: f64,
@@ -1723,7 +1685,7 @@ pub fn resolve_temporal_labels(
     authored: Option<AuthoredTimeFormat>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<(Vec<TemporalLabel>, TimeUnit, i32), String> {
-    let dates = parse_domain_dates(domain);
+    let dates = domain.civils();
     let (format_tu, visibility_tu, year_step) = resolve_label_visibility(
         &dates,
         data_tu,
@@ -1821,7 +1783,7 @@ pub fn datum_label(grain: Option<TimeUnit>, day: i64) -> Result<String, String> 
         Some(TimeUnit::YearMonth) => fmt("%b %Y"),
         Some(TimeUnit::YearWeek) => fmt("W%U %Y"),
         Some(TimeUnit::YearMonthDate) => fmt("%b %d, %Y"),
-        None => d3_multi_format(y, m, d),
+        None => multi_format_at(day as f64),
     }
 }
 
@@ -1829,7 +1791,7 @@ pub fn datum_label(grain: Option<TimeUnit>, day: i64) -> Result<String, String> 
 /// the ladder's own text. An ordinal calendar axis reads the raw band instead ([`rewrite_with_expr`]).
 pub fn speak_labels(
     labels: Vec<TemporalLabel>,
-    domain: &[String],
+    domain: &Dates,
     expr: &crate::labels_expr::Expr,
     grain: Option<TimeUnit>,
     ordinal: bool,
@@ -1838,8 +1800,8 @@ pub fn speak_labels(
     labels
         .into_iter()
         .map(|l| {
-            let date = &domain[l.domain_idx];
-            let (y, m, d) = parse_iso_date(date).ok_or_else(|| format!("line: x value {date:?} is not an ISO date"))?;
+            let date = &domain.text[l.domain_idx];
+            let (y, m, d) = domain.date[l.domain_idx].ok_or_else(|| format!("line: x value {date:?} is not an ISO date"))?;
             let day = days_from_civil(y, m, d);
             let (value, label) = if ordinal {
                 (Val::string(date.clone()).map_err(|e| describe(&e, &format!("{date:?}")))?, date.clone())
@@ -1927,7 +1889,7 @@ pub struct OrdinalDateLabels {
 
 #[allow(clippy::too_many_arguments)]
 pub fn ordinal_date_labels(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     unit: LabelUnit,
     labels_cfg: &crate::common::AxisLabels,
@@ -1951,8 +1913,10 @@ pub fn ordinal_date_labels(
                 let ratio = usable_ratio.ok_or("label_usable_ratio absent (theme required for overlap)")?;
                 let gap = measure(" ")?;
                 let widths = domain
+                    .text
                     .iter()
-                    .map(|band| unit.raw_measure_text(band, authored).and_then(|t| measure(&t).map(|w| w + gap)))
+                    .enumerate()
+                    .map(|(i, band)| unit.raw_measure_text(band, domain.date[i], domain.day[i], authored).and_then(|t| measure(&t).map(|w| w + gap)))
                     .collect::<Result<Vec<_>, _>>()?;
                 let layout = generic_layout(
                     &widths,
@@ -1965,6 +1929,7 @@ pub fn ordinal_date_labels(
                 (angle, parity) = (Some(layout.angle), layout.parity);
             }
             let labels = domain
+                .text
                 .iter()
                 .enumerate()
                 .map(|(domain_idx, band)| TemporalLabel { domain_idx, row1: band.clone(), row2: String::new() })
@@ -2005,12 +1970,12 @@ pub fn ordinal_date_labels(
                 .map(|domain_idx| TemporalLabel { domain_idx, row1: String::new(), row2: String::new() })
                 .collect(),
         };
-        labels = rewrite_with_expr(labels, domain, expr, expr_bands)?;
+        labels = rewrite_with_expr(labels, &domain.text, expr, expr_bands)?;
     }
     // An authored `labels.values` blanks the label of every band outside the set.
     if let Some(values) = &labels_cfg.values {
         let listed: Vec<f64> = values.iter().filter_map(|v| v.as_str().and_then(iso_format_day)).collect();
-        labels.retain(|l| date_text_day(&domain[l.domain_idx]).is_none_or(|day| listed.iter().any(|d| (d - day).abs() < 1e-9)));
+        labels.retain(|l| domain.day[l.domain_idx].is_none_or(|day| listed.iter().any(|d| (d - day).abs() < 1e-9)));
     }
     Ok(OrdinalDateLabels { labels, ticks_restored, angle, parity, visibility_tu, year_step })
 }
@@ -2204,7 +2169,7 @@ pub struct VerticalTemporalLabels {
 /// an authored time format paints one row everywhere.
 /// `plot_height` is the chart height times `label_usable_ratio`.
 pub fn resolve_vertical_temporal_labels(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     plot_height: f64,
     fiscal_start: u8,
@@ -2213,7 +2178,7 @@ pub fn resolve_vertical_temporal_labels(
     min_gap: f64,
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<VerticalTemporalLabels, String> {
-    let dates = parse_domain_dates(domain);
+    let dates = domain.civils();
     let band = plot_height / dates.len() as f64;
     let (visibility_tu, year_step, fits) = walk_label_cadence_ladder(
         &dates,
@@ -2639,7 +2604,7 @@ pub fn none_tick_labels(
 /// measures/tests the widths whatever the vocabulary, "none" included.
 #[allow(clippy::too_many_arguments)]
 fn resolve_none_layout(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     fiscal_start: u8,
     usable_width: f64,
@@ -2651,11 +2616,7 @@ fn resolve_none_layout(
     part: Option<TimePart>,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<(Vec<TemporalLabel>, GenericLayout), String> {
-    let dated: Vec<(usize, (i32, u8, u8))> = domain
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
-        .collect();
+    let dated = domain.dated();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
     let openers = openers_at(&dates, data_tu, data_tu, 1, fiscal_start);
     // Production's fit decision measures the author's format, else the RAW domain
@@ -2670,7 +2631,7 @@ fn resolve_none_layout(
     let mut labels = Vec::with_capacity(openers.len());
     for &p in &openers {
         let (domain_idx, (y, m, d)) = dated[p];
-        widths.push(measure(&LabelUnit::Raw(part).raw_measure_text(&domain[domain_idx], authored)?)? + gap);
+        widths.push(measure(&LabelUnit::Raw(part).raw_measure_text(&domain.text[domain_idx], domain.date[domain_idx], domain.day[domain_idx], authored)?)? + gap);
         labels.push(TemporalLabel { domain_idx, row1: none_label_text(y, m, d, data_tu, authored)?, row2: String::new() });
     }
     let gl = generic_layout(&widths, usable_width, skip, tilt, tilt_increments, font_size)?;
@@ -2701,7 +2662,7 @@ fn pinned_label_text(
 /// `_pinned_angle_block_height` over a bucketed temporal axis: the widest
 /// label across every band, measured bare, rotated by the author's `angle`.
 pub fn pinned_block_height(
-    domain: &[String],
+    domain: &Dates,
     format_tu: TimeUnit,
     authored: Option<AuthoredTimeFormat>,
     angle: f64,
@@ -2709,7 +2670,7 @@ pub fn pinned_block_height(
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<f64, String> {
     let mut widest = 0.0_f64;
-    for date in parse_domain_dates(domain) {
+    for date in domain.civils() {
         widest = widest.max(measure(&pinned_label_text(date, format_tu, authored)?)?);
     }
     Ok(crate::vega_fit::label_block_height(widest, font_size, angle))
@@ -2766,7 +2727,7 @@ impl ResolvedVegaLabels {
 /// cannot).
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_vega_x_labels(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     authored_label_tu_str: Option<&str>,
     usable_width: f64,
@@ -2806,7 +2767,7 @@ pub fn resolve_vega_x_labels(
             }),
             Some(angle) => {
                 let mut widest = 0.0_f64;
-                for value in domain {
+                for value in &domain.text {
                     widest = widest.max(measure(value)?);
                 }
                 Ok(ResolvedVegaLabels {
@@ -2840,7 +2801,7 @@ pub fn resolve_vega_x_labels(
             year_step: 1,
         });
     }
-    let dates = parse_domain_dates(domain);
+    let dates = domain.civils();
     let layout = resolve_vega_label_layout(
         &dates,
         data_tu,
@@ -2947,7 +2908,7 @@ impl TemporalLabel {
 /// interval `visibility_tu` may have stepped to. `year_step` keeps only the
 /// years divisible by it (1 keeps every year).
 pub fn build_temporal_labels(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     format_tu: TimeUnit,
     visibility_tu: TimeUnit,
@@ -2955,15 +2916,10 @@ pub fn build_temporal_labels(
     fiscal_start: u8,
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<TemporalLabel>, String> {
-    // Keep each parsed date's real position in `domain` — unparseable entries
-    // are dropped (as `parse_domain_dates` does), but `TemporalLabel.domain_idx`
-    // must still name the original domain slot, not a position in the
-    // filtered-down date list.
-    let dated: Vec<(usize, (i32, u8, u8))> = domain
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
-        .collect();
+    // Keep each date's real position in `domain` — entries that name no date
+    // are dropped, but `TemporalLabel.domain_idx` must still name the original
+    // domain slot, not a position in the filtered-down date list.
+    let dated = domain.dated();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
     let openers = openers_at(&dates, data_tu, visibility_tu, year_step, fiscal_start);
     label_openers(&dated, &dates, &openers, format_tu, fiscal_start, authored)
@@ -2973,16 +2929,12 @@ pub fn build_temporal_labels(
 /// tick that speaks, whatever the opener rule would say of it (production
 /// keeps `values` at the full bucket list until the labels thin).
 pub fn build_all_temporal_labels(
-    domain: &[String],
+    domain: &Dates,
     format_tu: TimeUnit,
     fiscal_start: u8,
     authored: Option<AuthoredTimeFormat>,
 ) -> Result<Vec<TemporalLabel>, String> {
-    let dated: Vec<(usize, (i32, u8, u8))> = domain
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, s)| parse_iso_date(s).map(|d| (idx, d)))
-        .collect();
+    let dated = domain.dated();
     let dates: Vec<(i32, u8, u8)> = dated.iter().map(|&(_, d)| d).collect();
     let all: Vec<usize> = (0..dated.len()).collect();
     label_openers(&dated, &dates, &all, format_tu, fiscal_start, authored)
@@ -3119,38 +3071,6 @@ fn format_label(
     })
 }
 
-/// The civil dates of the distinct ISO date strings of a ladder, the ones that are not dates left out.
-fn parse_domain_dates(domain: &[String]) -> Vec<(i32, u8, u8)> {
-    domain.iter().filter_map(|s| parse_iso_date(s)).collect()
-}
-
-/// Days since the civil epoch 1970-01-01 (Howard Hinnant's `days_from_civil`).
-/// The utc-scale position fraction `(d[i] − d[0]) / (d[n−1] − d[0])` computed
-/// on day numbers equals vega's millisecond fraction exactly for the
-/// date-grained buckets `TimeUnit` models.
-pub fn days_from_civil(y: i32, m: u8, d: u8) -> i64 {
-    let y = i64::from(y) - i64::from(m <= 2);
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (i64::from(m) + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-/// Inverse of `days_from_civil` (Hinnant's `civil_from_days`).
-pub fn civil_from_days(z: i64) -> (i32, u8, u8) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u8;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
-    ((y + i64::from(m <= 2)) as i32, m, d)
-}
 
 /// Start of the bucket enclosing `date` (`_floor_to_bucket_start`): year
 /// and quarter floor to their fiscal-anchored period, month to its first
@@ -3176,11 +3096,10 @@ pub(crate) fn floor_to_bucket_start(date: (i32, u8, u8), tu: TimeUnit, fiscal_st
 /// yearly date is keyed by the bucket that contains it. `None` for a date on its
 /// bucket's start, an unparseable value, and a week (its start is wherever the
 /// data's own first week puts it).
-pub fn off_anchor_bucket_start(text: &str, tu: TimeUnit, fiscal_start: u8) -> Option<String> {
+pub fn off_anchor_bucket_start(date: (i32, u8, u8), tu: TimeUnit, fiscal_start: u8) -> Option<String> {
     if tu == TimeUnit::YearWeek {
         return None;
     }
-    let date = parse_iso_date(text)?;
     let start = floor_to_bucket_start(date, tu, fiscal_start);
     (start != date).then(|| format!("{:04}-{:02}-{:02}", start.0, start.1, start.2))
 }
@@ -3278,22 +3197,22 @@ fn enumerate_continuous_span(dates: &[(i32, u8, u8)], tu: TimeUnit, fiscal_start
 /// the missing ones synthesized as date-only ISO strings, in
 /// chronological order. Entries that don't parse are dropped, as
 /// production's key lookup never matches them to a bucket.
-pub fn complete_buckets(domain: &[String], tu: TimeUnit, fiscal_start: u8) -> Vec<String> {
-    let mut by_date: Vec<((i32, u8, u8), &String)> =
-        domain.iter().filter_map(|s| parse_iso_date(s).map(|d| (d, s))).collect();
-    by_date.sort();
-    let Some(&(min, _)) = by_date.first() else { return Vec::new() };
-    let max = by_date.last().map(|&(d, _)| d).unwrap();
-    let mut out = Vec::new();
+pub fn complete_buckets(domain: &Dates, tu: TimeUnit, fiscal_start: u8) -> Dates {
+    let mut by_date: Vec<((i32, u8, u8), &String, usize)> =
+        domain.dated().into_iter().map(|(i, date)| (date, &domain.text[i], i)).collect();
+    by_date.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    let mut out = Dates::default();
+    let Some(&(min, ..)) = by_date.first() else { return out };
+    let max = by_date.last().map(|&(d, ..)| d).unwrap();
     let mut cursor = floor_to_bucket_start(min, tu, fiscal_start);
     let mut present = by_date.iter().peekable();
     while cursor <= max {
         let mut matched = false;
-        while let Some(&&(d, s)) = present.peek() {
+        while let Some(&&(d, _, i)) = present.peek() {
             if d < cursor {
                 present.next();
             } else if d == cursor {
-                out.push(s.clone());
+                out.push_from(domain, i);
                 present.next();
                 matched = true;
             } else {
@@ -3302,7 +3221,7 @@ pub fn complete_buckets(domain: &[String], tu: TimeUnit, fiscal_start: u8) -> Ve
         }
         if !matched {
             let (y, m, d) = cursor;
-            out.push(format!("{y:04}-{m:02}-{d:02}"));
+            out.push(format!("{y:04}-{m:02}-{d:02}"), Some(days_from_civil(y, m, d) as f64));
         }
         cursor = next_bucket(cursor, tu);
     }
@@ -3447,15 +3366,15 @@ pub fn complete_ordinal_rows(
     Ok(out)
 }
 
-/// Per-index utc-scale position fractions for a temporal domain: parsed
-/// day-number offsets normalized over the domain EXTENT — Vega's utc domain
+/// Per-index utc-scale position fractions for a temporal domain: the
+/// days normalized over the domain EXTENT — Vega's utc domain
 /// is a min/max field aggregate (`domain: {fields: [...]}` in the compiled
 /// specs), order-independent, so an unsorted or ragged multi-series union
 /// still maps every value inside [0, 1]. `None` when any entry fails to
 /// parse or the extent is degenerate.
-pub fn utc_position_fractions(domain: &[String]) -> Option<Vec<f64>> {
+pub fn utc_position_fractions(domain: &Dates) -> Option<Vec<f64>> {
     let extent = utc_domain_extent(domain)?;
-    domain.iter().map(|s| utc_fraction_at(s, extent)).collect()
+    domain.day.iter().map(|day| day.map(|day| frac_of(day, extent))).collect()
 }
 
 /// `(min, max)` of a UTC domain in days-since-epoch — [`utc_position_fractions`]'s
@@ -3465,8 +3384,8 @@ pub fn utc_position_fractions(domain: &[String]) -> Option<Vec<f64>> {
 /// extent, not their own). `None` on the same guards as
 /// `utc_position_fractions` (fewer than 2 entries, a parse failure, or a
 /// degenerate span).
-pub fn utc_domain_extent(domain: &[String]) -> Option<(f64, f64)> {
-    let days: Vec<f64> = domain.iter().map(|s| date_text_day(s)).collect::<Option<_>>()?;
+pub fn utc_domain_extent(domain: &Dates) -> Option<(f64, f64)> {
+    let days: Vec<f64> = domain.day.iter().copied().collect::<Option<_>>()?;
     extent_of(&days)
 }
 
@@ -3489,32 +3408,16 @@ pub fn frac_of(day: f64, extent: (f64, f64)) -> f64 {
     (day - extent.0) / (extent.1 - extent.0)
 }
 
-/// Position fraction of `date` within an `extent` from [`utc_domain_extent`].
-pub fn utc_fraction_at(date: &str, extent: (f64, f64)) -> Option<f64> {
-    date_text_day(date).map(|day| frac_of(day, extent))
-}
-
-/// Floors an ISO date to its containing week's Sunday — d3's
-/// `utcSunday.floor`, the transform Vega-Lite's `utcyearweek` timeUnit
-/// applies to every value under that encoding (both the scale domain and
-/// each mark's own position). Production keeps the RAW (unfloored) dates
-/// for its opener `values` (`label_opener_values`,
-/// `time_unit_detect.py:1376`), so a weekly axis's ticks/labels sit off
-/// their own vertex by the data's weekday offset from Sunday.
-pub fn week_floor(date: &str) -> Option<String> {
-    time_unit_floor(date, TimeUnit::YearWeek)
-}
-
 /// How Vega-Lite's default description prints an x value: through its `timeUnit`'s format (`%Y W%U` for a week,
 /// `%b %Y` for a month, `%Y Q%q` for a quarter, `%Y` for a year), a bare date or timestamp as `%b %d, %Y`. The
 /// text a facet panel's or a support-table cell's mark carries in place of the structured tooltip.
-pub fn default_time_unit_text(date: &str, unit: Option<TimeUnit>) -> Result<String, String> {
-    let unparsed = || format!("unparsed date {date:?}");
+pub fn default_time_unit_text((y, m, d): (i32, u8, u8), unit: Option<TimeUnit>) -> Result<String, String> {
+    let day = days_from_civil(y, m, d);
     let bucket = match unit {
-        Some(TimeUnit::YearWeek) => week_floor(date).ok_or_else(unparsed)?,
-        _ => date.to_string(),
+        Some(TimeUnit::YearWeek) => floor_day(day, TimeUnit::YearWeek),
+        _ => day,
     };
-    let (y, m, d) = parse_iso_date(&bucket).ok_or_else(unparsed)?;
+    let (y, m, d) = civil_from_days(bucket);
     let year = u32::try_from(y).map_err(|_| format!("year {y} out of range"))?;
     let moment = super::table_dates::Moment::midnight(year, u32::from(m), u32::from(d));
     super::table_dates::strftime(moment, unit.map_or("%b %d, %Y", time_unit_specifier))
@@ -3533,16 +3436,16 @@ pub fn time_unit_specifier(unit: TimeUnit) -> &'static str {
 
 /// The instant Vega-Lite's `timeUnit` transform puts a row at: its date
 /// floored to the enclosing bucket of the encoding's grain — a Sunday for
-/// `yearweek` ([`week_floor`]), the 1st of the month, of the calendar quarter
+/// `yearweek` (d3's `utcSunday.floor`), the 1st of the month, of the calendar quarter
 /// or of the year for the coarser grains (`utcyearmonth` and friends floor
 /// to the CALENDAR bucket whatever the fiscal start), the day itself for
 /// `yearmonthdate`. A column grained by position already sits on bucket
 /// starts; one grained by cadence ([`detect_cadence`]) does not, and its
 /// marks, gridlines and scale domain all sit on the floored dates.
-pub fn time_unit_floor(date: &str, tu: TimeUnit) -> Option<String> {
-    let (y, m, d) = parse_iso_date(date)?;
-    let (fy, fm, fd) = civil_from_days(floor_day(days_from_civil(y, m, d), tu));
-    Some(format!("{fy:04}-{fm:02}-{fd:02}"))
+pub fn time_unit_floor((y, m, d): (i32, u8, u8), tu: TimeUnit) -> (String, f64) {
+    let floored = floor_day(days_from_civil(y, m, d), tu);
+    let (fy, fm, fd) = civil_from_days(floored);
+    (format!("{fy:04}-{fm:02}-{fd:02}"), floored as f64)
 }
 
 /// [`time_unit_floor`] on a day number: the day the enclosing bucket of `tu` starts.
@@ -3576,7 +3479,7 @@ pub fn floor_day(day: i64, tu: TimeUnit) -> i64 {
 pub struct BareTick {
     /// The tick's instant, in days since the epoch.
     pub day: f64,
-    /// Position as a fraction of the scale domain ([`utc_fraction_at`]).
+    /// Position as a fraction of the scale domain ([`frac_of`]).
     pub frac: f64,
     /// The tick's label under d3's multi-scale UTC format, or the clock vocabulary of a sub-day axis.
     pub text: String,
@@ -3601,91 +3504,32 @@ impl BareTick {
     }
 }
 
-const MS_PER_DAY: f64 = 864e5;
-const MS_PER_YEAR: f64 = 31536e6;
-
-/// d3-time's `tickIntervals` durations in ms (v3.1.0, read out of the vega
-/// source vl-convert bundles): 1/5/15/30 s, 1/5/15/30 min, 1/3/6/12 h,
-/// 1/2 day, 1 week, 1/3 month, 1 year. The sub-day rungs are listed because
-/// `utcTickInterval`'s bisect compares the entries on BOTH sides of its
-/// target — selecting one refuses, since the day is this module's finest
-/// grain.
-const D3_TICK_INTERVAL_MS: [f64; 18] = [
-    1e3, 5e3, 15e3, 30e3, 6e4, 3e5, 9e5, 18e5, 36e5, 108e5, 216e5, 432e5, 864e5, 1728e5, 6048e5,
-    2592e6, 7776e6, 31536e6,
-];
-
 /// A d3-time calendar interval with its `every(step)` filter, in the units
-/// this module models: the one the count-driven ladder (`utcTickInterval`)
-/// picks, or the one an authored `ticks.time_unit` + `step` names. Each
-/// variant's filter is d3's own: a field-based interval keeps the instants
-/// whose field value divides the step, so `Day(2)` restarts at the 1st of
-/// each month and `Month(3)` is Jan/Apr/Jul/Oct — not a running stride
-/// (d3-time `src/interval.js` `every`, `src/day.js` `utcDay` field
-/// `getUTCDate() - 1`, `src/month.js` `utcMonth` field `getUTCMonth()`,
-/// `src/year.js` `utcYear.every`). A week has no field, so `Week(step)`
-/// counts Sundays from the epoch's first one (`interval.count(0, date) %
-/// step`, 1969-12-28).
+/// this module models: the one an authored `ticks.time_unit` + `step` names
+/// or the default cadence of a grain. Each variant's filter is d3's own: a
+/// field-based interval keeps the instants whose field value divides the
+/// step, so `Day(2)` restarts at the 1st of each month and `Month(3)` is
+/// Jan/Apr/Jul/Oct — not a running stride (d3-time `src/interval.js` `every`).
+/// A week has no field, so `Week(step)` counts weeks from the epoch's first
+/// one (`interval.count(0, date) % step`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UtcTickInterval {
     Day(i64),
-    /// d3's `unixDay`, the day rung of `utcTicks`: its `every(step)` keeps the
-    /// days whose epoch day number divides the step (no calendar field).
-    EpochDay(i64),
     Week(i64),
     Month(i64),
     Year(i64),
 }
 
-/// d3-time `utcTickInterval(start, stop, count)`: bisect the ladder on the
-/// target span, then keep whichever neighbor is the smaller stretch of it.
-fn utc_tick_interval(lo: f64, hi: f64, count: usize) -> Option<UtcTickInterval> {
-    let rung = utc_tick_rung(lo, hi, count);
-    if rung == D3_TICK_INTERVAL_MS.len() {
-        let lo_years = lo * MS_PER_DAY / MS_PER_YEAR;
-        let hi_years = hi * MS_PER_DAY / MS_PER_YEAR;
-        // `utcYear.every(k)` floors k and returns a null interval — no
-        // ticks at all — for anything below 1. That cannot arise here: this
-        // rung is only reached when `target >= 31536e6`, i.e. the span is
-        // already at least `count` years, so `tickStep`'s own
-        // `(hi - lo) / count` is >= 1 and its 10^n·{1,2,5} result with it.
-        return Some(UtcTickInterval::Year(
-            d3rs::ticks::d3_tick_step(lo_years, hi_years, count).floor() as i64,
-        ));
+impl UtcTickInterval {
+    /// The d3-time unit and its step; a week starts on `week_start` (0 = Sunday).
+    fn unit_step(self, week_start: u8) -> (Unit, i64) {
+        match self {
+            Self::Day(step) => (Unit::Day, step),
+            Self::Week(step) => (Unit::Week(week_start), step),
+            Self::Month(step) => (Unit::Month, step),
+            Self::Year(step) => (Unit::Year, step),
+        }
     }
-    match rung {
-        12 => Some(UtcTickInterval::Day(1)),
-        13 => Some(UtcTickInterval::Day(2)),
-        14 => Some(UtcTickInterval::Week(1)),
-        15 => Some(UtcTickInterval::Month(1)),
-        16 => Some(UtcTickInterval::Month(3)),
-        17 => Some(UtcTickInterval::Year(1)),
-        // A second, minute or hour rung: [`clock_instants`].
-        _ => None,
-    }
-}
-
-/// The rung of [`D3_TICK_INTERVAL_MS`] `utcTickInterval` picks (its length
-/// when the span wants years): bisect on the target span, then keep whichever
-/// neighbor is the smaller stretch of it.
-fn utc_tick_rung(lo: f64, hi: f64, count: usize) -> usize {
-    let target = (hi - lo) * MS_PER_DAY / count.max(1) as f64;
-    let i = D3_TICK_INTERVAL_MS.partition_point(|&d| d <= target);
-    if i == D3_TICK_INTERVAL_MS.len() {
-        return i;
-    }
-    if i > 0 && target / D3_TICK_INTERVAL_MS[i - 1] < D3_TICK_INTERVAL_MS[i] / target { i - 1 } else { i }
-}
-
-/// d3-time's ticks of the local time scale (`timeTicks`, which under `TZ=UTC` differs from `utcTicks` only in
-/// the day rung's calendar-field filter) for `count` ticks, in fractional days, every aligned instant of
-/// `[lo, hi]`. A second, minute or hour interval keeps the instants whose UTC field divides its step (d3-time
-/// `second`, `minute` and `hour` `every`), a span finer than the ladder the milliseconds `tickStep` divides.
-pub fn utc_instants(lo: f64, hi: f64, count: usize) -> Vec<f64> {
-    clock_instants(lo, hi, count).unwrap_or_else(|| {
-        let interval = utc_tick_interval(lo, hi, count).expect("a rung that is not a clock one is a calendar one");
-        day_instants(interval, lo, hi)
-    })
 }
 
 /// The zone a time axis over instants ticks in: the board zone when the axis's values are `aware` (each carries
@@ -3696,15 +3540,24 @@ pub fn ladder_zone(aware: bool) -> Option<jiff::tz::TimeZone> {
     (aware && zone != jiff::tz::TimeZone::UTC).then_some(zone)
 }
 
+/// The zone and week start a [`ladder_zone`] ticks with: the board's week start in a zone, Sunday's in UTC.
+fn ladder_clock(zone: Option<&TimeZone>) -> (TimeZone, u8) {
+    match zone {
+        Some(zone) => (zone.clone(), crate::time_locale::active_week_start()),
+        None => (TimeZone::UTC, 0),
+    }
+}
+
 fn ms_of(day: f64) -> i64 {
     (day * MS_PER_DAY).round() as i64
 }
 
-/// [`utc_instants`] in a [`ladder_zone`]: d3-time's local ladder (`timeTicks`, [`d3rs::time::ticks`]), whose day,
-/// week, month and year rungs fall on the zone's midnights across its transitions.
-pub fn zone_instants(lo: f64, hi: f64, count: usize, zone: Option<&jiff::tz::TimeZone>) -> Result<Vec<f64>, String> {
-    let Some(zone) = zone else { return Ok(utc_instants(lo, hi, count)) };
-    let ms = d3rs::time::ticks(ms_of(lo), ms_of(hi), count, zone, crate::time_locale::active_week_start())?;
+/// d3-time's ticks of a time scale (`timeTicks`, [`d3rs::time::ticks`]) for `count` ticks, in fractional days,
+/// every aligned instant of `[lo, hi]`: the day, week, month and year rungs fall on the zone's midnights across its
+/// transitions, and a span finer than the ladder ticks the milliseconds `tickStep` divides.
+pub fn zone_instants(lo: f64, hi: f64, count: usize, zone: Option<&TimeZone>) -> Result<Vec<f64>, String> {
+    let (zone, week_start) = ladder_clock(zone);
+    let ms = d3rs::time::ticks(ms_of(lo), ms_of(hi), count, &zone, week_start)?;
     Ok(last_of_each_second(&ms))
 }
 
@@ -3715,151 +3568,28 @@ fn last_of_each_second(ms: &[i64]) -> Vec<f64> {
     kept.map(|(_, &at)| at as f64 / MS_PER_DAY).collect()
 }
 
-/// Every tick of an authored `interval` inside `[lo, hi]`, as instants: [`day_instants`] in UTC, else the
-/// interval's local twin in the [`ladder_zone`]. d3-time has no local epoch day, so that arm steps local days.
-pub fn interval_instants(interval: UtcTickInterval, lo: f64, hi: f64, zone: Option<&jiff::tz::TimeZone>) -> Result<Vec<f64>, String> {
-    use d3rs::time::Unit;
-    let Some(zone) = zone else { return Ok(day_instants(interval, lo, hi)) };
-    let (unit, step) = match interval {
-        UtcTickInterval::Day(step) | UtcTickInterval::EpochDay(step) => (Unit::Day, step),
-        UtcTickInterval::Week(step) => (Unit::Week(crate::time_locale::active_week_start()), step),
-        UtcTickInterval::Month(step) => (Unit::Month, step),
-        UtcTickInterval::Year(step) => (Unit::Year, step),
-    };
-    let interval = d3rs::time::Interval::every(unit, step as f64, zone).expect("a tick interval steps at least 1");
-    Ok(interval.range(ms_of(lo), ms_of(hi) + 1)?.into_iter().map(|at| at as f64 / MS_PER_DAY).collect())
+/// Every boundary of `unit.every(step)` in `zone` inside `[lo, hi]` (fractional days), as instants in days: d3's
+/// `interval.range(lo, hi + 1ms)`. The ends are rounded to whole milliseconds once, as d3's dates are, so a tick on
+/// an end is never lost to float division.
+pub(crate) fn every_instants(unit: Unit, step: i64, zone: &TimeZone, lo: f64, hi: f64) -> Result<Vec<f64>, String> {
+    let interval = Interval::every(unit, step as f64, zone).expect("a tick interval steps at least 1");
+    // d3 keeps stepping dates JavaScript holds to year 275760; the calendar here ends at year 9999.
+    let range = interval.range(ms_of(lo), ms_of(hi) + 1).map_err(|why| {
+        crate::refuse!("a tick step of {step} {unit:?} reaching past the year 9999 the calendar holds is not supported: {why}")
+    })?;
+    Ok(range.into_iter().map(|at| at as f64 / MS_PER_DAY).collect())
 }
 
-/// Every day tick of `interval` inside `[lo, hi]`, as instants.
-fn day_instants(interval: UtcTickInterval, lo: f64, hi: f64) -> Vec<f64> {
-    utc_tick_days(interval, lo.floor() as i64, hi.ceil() as i64).into_iter().map(|day| day as f64).filter(|&day| lo <= day && day <= hi).collect()
-}
-
-/// The instants of a second, minute, hour or millisecond rung; `None` for a calendar one.
-fn clock_instants(lo: f64, hi: f64, count: usize) -> Option<Vec<f64>> {
-    const SECOND: i64 = 1_000;
-    const STEPS: [(i64, i64, i64); 12] = [
-        (SECOND, 60, 1),
-        (SECOND, 60, 5),
-        (SECOND, 60, 15),
-        (SECOND, 60, 30),
-        (60 * SECOND, 60, 1),
-        (60 * SECOND, 60, 5),
-        (60 * SECOND, 60, 15),
-        (60 * SECOND, 60, 30),
-        (3_600 * SECOND, 24, 1),
-        (3_600 * SECOND, 24, 3),
-        (3_600 * SECOND, 24, 6),
-        (3_600 * SECOND, 24, 12),
-    ];
-    // Below the ladder's first rung d3 ticks the milliseconds that divide `tickStep` (`millisecond.every`).
-    if (hi - lo) * MS_PER_DAY / (count.max(1) as f64) < D3_TICK_INTERVAL_MS[0] {
-        let step = d3rs::ticks::d3_tick_step(lo * MS_PER_DAY, hi * MS_PER_DAY, count).max(1.0).floor() as i64;
-        return Some(last_of_each_second(&clock_ticks_ms(lo, hi, step, 1, 1)));
-    }
-    let rung = utc_tick_rung(lo, hi, count);
-    let &(unit_ms, parent, step) = STEPS.get(rung)?;
-    Some(clock_instants_at(lo, hi, unit_ms, parent, step))
-}
-
-/// Every instant of `[lo, hi]` (fractional days) that sits on a multiple of `unit_ms` whose field, the count
-/// within its `parent` (seconds in a minute, hours in a day), divides `step`: d3-time's `interval.every(step)`.
-/// The ends are rounded to whole milliseconds once, as d3's dates are, so a tick on an end is never lost to
-/// float division.
-pub(crate) fn clock_instants_at(lo: f64, hi: f64, unit_ms: i64, parent: i64, step: i64) -> Vec<f64> {
-    clock_ticks_ms(lo, hi, unit_ms, parent, step).into_iter().map(|at| at as f64 / MS_PER_DAY).collect()
-}
-
-fn clock_ticks_ms(lo: f64, hi: f64, unit_ms: i64, parent: i64, step: i64) -> Vec<i64> {
-    let (lo_ms, hi_ms) = ((lo * MS_PER_DAY).round() as i64, (hi * MS_PER_DAY).round() as i64);
-    let (first, last) = ((-(-lo_ms).div_euclid(unit_ms)), hi_ms.div_euclid(unit_ms));
-    (first..=last).filter(|n| n.rem_euclid(parent) % step == 0).map(|n| n * unit_ms).collect()
-}
-
-/// `interval.range(start, +stop + 1)` in day numbers — every aligned instant
-/// in `[lo, hi]`, the end included (d3 asks for one millisecond past `stop`).
-fn utc_tick_days(interval: UtcTickInterval, lo: i64, hi: i64) -> Vec<i64> {
-    let mut out = Vec::new();
-    match interval {
-        UtcTickInterval::Day(step) => {
-            for day in lo..=hi {
-                let (_, _, d) = civil_from_days(day);
-                if i64::from(d - 1) % step == 0 {
-                    out.push(day);
-                }
-            }
-        }
-        UtcTickInterval::EpochDay(step) => out.extend((lo..=hi).filter(|day| day.rem_euclid(step) == 0)),
-        UtcTickInterval::Week(step) => {
-            for day in lo..=hi {
-                let (y, m, d) = civil_from_days(day);
-                // Day -4 is 1969-12-28, the Sunday d3's `count(0, date)`
-                // floors the epoch to.
-                if weekday(y, m, d) == 6 && (day + 4).div_euclid(7) % step == 0 {
-                    out.push(day);
-                }
-            }
-        }
-        UtcTickInterval::Month(step) => {
-            let (y0, m0, _) = civil_from_days(lo);
-            let (mut y, mut m) = (y0, m0);
-            loop {
-                let day = days_from_civil(y, m, 1);
-                if day > hi {
-                    break;
-                }
-                if day >= lo && i64::from(m - 1) % step == 0 {
-                    out.push(day);
-                }
-                m += 1;
-                if m > 12 {
-                    m = 1;
-                    y += 1;
-                }
-            }
-        }
-        UtcTickInterval::Year(step) => {
-            let (y0, _, _) = civil_from_days(lo);
-            let (y1, _, _) = civil_from_days(hi);
-            for y in y0..=y1 {
-                let day = days_from_civil(y, 1, 1);
-                if day >= lo && day <= hi && i64::from(y) % step == 0 {
-                    out.push(day);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// The board time locale's full month name (`%B`).
-fn month_full(m: u8) -> Result<String, String> {
-    Ok(crate::time_locale::active_time_locale()?.months[(m - 1) as usize].clone())
+/// Every tick of an authored `interval` inside `[lo, hi]`, as instants: in the [`ladder_zone`], or in UTC.
+pub fn interval_instants(interval: UtcTickInterval, lo: f64, hi: f64, zone: Option<&TimeZone>) -> Result<Vec<f64>, String> {
+    let (zone, week_start) = ladder_clock(zone);
+    let (unit, step) = interval.unit_step(week_start);
+    every_instants(unit, step, &zone, lo, hi)
 }
 
 /// The board time locale's short weekday (`%a`) for a Monday-first index.
 fn weekday_abbr(monday_first: usize) -> Result<String, String> {
     Ok(crate::time_locale::active_time_locale()?.short_days[(monday_first + 1) % 7].clone())
-}
-
-/// d3's multi-scale UTC format — the tick's own finest non-zero unit picks
-/// the specifier. From d3-scale's `calendar` (the bundled vega source:
-/// `second<t ? ".%L" : minute<t ? ":%S" : hour<t ? "%I:%M" : day<t ? "%I %p"
-/// : month<t ? (week<t ? "%a %d" : "%b %d") : year<t ? "%B" : "%Y"`), whose
-/// day-grained tail is all this module can reach: a year start takes `%Y`,
-/// any other month start `%B`, a Sunday `%b %d`, any other day `%a %d`.
-pub(crate) fn d3_multi_format(y: i32, m: u8, d: u8) -> Result<String, String> {
-    Ok(if d != 1 {
-        if weekday(y, m, d) == 6 {
-            format!("{} {d:02}", month_abbr(m)?)
-        } else {
-            format!("{} {d:02}", weekday_abbr(weekday(y, m, d) as usize)?)
-        }
-    } else if m != 1 {
-        month_full(m)?
-    } else {
-        format!("{y:04}")
-    })
 }
 
 /// Production's `_TEMPORAL_TICK_INTERVAL` (`type_inference.py:132-138`): the
@@ -3925,8 +3655,8 @@ pub fn native_tick_interval(label_tu: TimeUnit) -> UtcTickInterval {
 /// Every tick of `interval` inside `extent`, in day numbers — the end
 /// included, the same `interval.range(start, stop + 1)` d3 runs for any
 /// scale's ticks.
-pub fn interval_tick_days(extent: (i64, i64), interval: UtcTickInterval) -> Vec<i64> {
-    utc_tick_days(interval, extent.0, extent.1)
+pub fn interval_tick_days(extent: (i64, i64), interval: UtcTickInterval) -> Result<Vec<i64>, String> {
+    Ok(interval_instants(interval, extent.0 as f64, extent.1 as f64, None)?.into_iter().map(|day| day as i64).collect())
 }
 
 /// Production's `opens_label_period` gate (`time_unit_detect.py:1870-1912`)
@@ -3981,7 +3711,7 @@ fn opens_label_period(
 /// thinning the ladder resolved at `year` cadence (1 keeps every year).
 pub fn interval_tick_labels(
     tick_days: &[i64],
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     format_tu: TimeUnit,
     visibility_tu: TimeUnit,
@@ -4242,14 +3972,14 @@ pub struct BandIntervals {
 }
 
 pub fn band_interval_axis(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     periods: LabelPeriods,
     plot_w: f64,
     fiscal_start: u8,
     measure: &mut dyn FnMut(&str) -> Result<f64, String>,
 ) -> Result<Option<BandIntervals>, String> {
-    let dates = parse_domain_dates(domain);
+    let dates = domain.civils();
     let starts: Vec<f64> = dates.iter().map(|&(y, m, d)| days_from_civil(y, m, d) as f64).collect();
     if dates.len() != domain.len() || !starts.windows(2).all(|w| w[0] < w[1]) || starts.is_empty() {
         return Ok(None);
@@ -4291,12 +4021,12 @@ fn sunday_week_of_year(y: i32, m: u8, d: u8) -> u8 {
 /// domain's whole span, stepped at the data grain, that opens a
 /// `visibility_tu` period — or the first bucket when none does.
 fn first_span_opener(
-    domain: &[String],
+    domain: &Dates,
     data_tu: TimeUnit,
     visibility_tu: TimeUnit,
     fiscal_start: u8,
 ) -> Option<(i32, u8, u8)> {
-    let dates = parse_domain_dates(domain);
+    let dates = domain.civils();
     let (lo, hi) = (dates.iter().min()?, dates.iter().max()?);
     let mut bucket = floor_to_bucket_start(*lo, data_tu, fiscal_start);
     let first = bucket;
@@ -4338,25 +4068,21 @@ pub enum AuthoredTickCadence {
 impl AuthoredTickCadence {
     /// The ticks of the cadence on a bucketed axis, as instants in days: the scale is UTC and Vega-Lite gives the
     /// axis the grain's `tickMinStep`, so a number `tickCount` is capped at `floor(span / minStep) + 1`
-    /// (vega-scale `tickCount`), the ladder's 2-day rung strides epoch days ([`UtcTickInterval::EpochDay`]) and
+    /// (vega-scale `tickCount`), the ladder's 2-day rung strides epoch days (`utcTicks`) and
     /// a span of a couple of days ticks the hours.
-    pub fn bucketed_ticks(self, grain: TimeUnit, extent: (f64, f64)) -> Vec<f64> {
+    pub fn bucketed_ticks(self, grain: TimeUnit, extent: (f64, f64)) -> Result<Vec<f64>, String> {
         let (lo, hi) = extent;
         match self {
-            Self::Interval(interval) => day_instants(interval, lo, hi),
+            Self::Interval(interval) => interval_instants(interval, lo, hi, None),
             Self::Count(count) | Self::UncappedCount(count) => {
                 let capped = match self {
                     Self::Count(_) => count.min(min_step_ticks(hi - lo, tick_min_step_days(grain))),
                     _ => count,
                 };
                 if capped == 0 {
-                    return Vec::new();
+                    return Ok(Vec::new());
                 }
-                match utc_tick_interval(lo, hi, capped) {
-                    Some(UtcTickInterval::Day(2)) => day_instants(UtcTickInterval::EpochDay(2), lo, hi),
-                    Some(interval) => day_instants(interval, lo, hi),
-                    None => clock_instants(lo, hi, capped).expect("a rung that is not a calendar one is a clock one"),
-                }
+                Ok(last_of_each_second(&d3rs::time::utc_ticks(ms_of(lo), ms_of(hi), capped)?))
             }
         }
     }
@@ -4440,7 +4166,7 @@ pub fn bare_temporal_ticks(
     let zone = ladder_zone(aware);
     let zone = zone.as_ref();
     let instants: Vec<f64> = match (subday.and_then(|plan| plan.ladder), authored) {
-        (Some(step), _) => step.instants(lo, hi),
+        (Some(step), _) => step.instants(lo, hi)?,
         (None, Some(AuthoredTickCadence::Interval(interval))) => interval_instants(interval, lo, hi, zone)?,
         (None, Some(AuthoredTickCadence::Count(0))) => Vec::new(),
         (None, Some(AuthoredTickCadence::Count(count) | AuthoredTickCadence::UncappedCount(count))) => zone_instants(lo, hi, count, zone)?,
@@ -4473,12 +4199,11 @@ pub fn keeps_dropped_grain_ladder(
 /// The ticks of a continuous axis whose calendar grain was dropped for the scaffold budget: the curated
 /// ladder's labels (`resolved`, laid out over `ladder`, the span's buckets) at their dates, in place of d3's
 /// multi-scale text. A steep tilt folds each label's context row inline, as on a grained axis.
-pub fn ladder_bare_ticks(domain: (f64, f64), ladder: &[String], resolved: &ResolvedVegaLabels) -> Result<Vec<BareTick>, String> {
+pub fn ladder_bare_ticks(domain: (f64, f64), ladder: &Dates, resolved: &ResolvedVegaLabels) -> Result<Vec<BareTick>, String> {
     let (lo, hi) = domain;
     let mut ticks = Vec::new();
     for tl in fold_steep(resolved.labels.clone(), Some(resolved.angle), resolved.format_tu) {
-        let date = &ladder[tl.domain_idx];
-        let day = date_text_day(date).expect("a ladder bucket is an ISO date");
+        let day = ladder.day[tl.domain_idx].expect("a ladder bucket is an ISO date");
         let frac = if hi == lo { 0.5 } else { (day - lo) / (hi - lo) };
         // `ladder[0]` is `enumerate_continuous_span`'s floored opener, which can sit
         // before the real domain minimum when the data starts mid-bucket (a board's
@@ -4499,23 +4224,7 @@ pub fn ladder_bare_ticks(domain: (f64, f64), ladder: &[String], resolved: &Resol
 /// d3's multi-scale format of a tick instant (`d3-scale`'s `calendar`): the finest unit the tick is not whole in
 /// picks the specifier.
 pub(crate) fn multi_format_at(at: f64) -> Result<String, String> {
-    let ms = (at * MS_PER_DAY).round() as i64;
-    let clock = ms.rem_euclid(864_00_000);
-    let (y, m, d) = civil_from_days(ms.div_euclid(864_00_000));
-    if clock == 0 {
-        return d3_multi_format(y, m, d);
-    }
-    if clock % 1000 != 0 {
-        return Ok(format!(".{:03}", clock % 1000));
-    }
-    let spec = if clock % 60_000 != 0 {
-        ":%S"
-    } else if clock % 3_600_000 != 0 {
-        "%I:%M"
-    } else {
-        "%I %p"
-    };
-    strftime(clock_moment(at)?, spec)
+    d3rs::time_format::multi_format((at * MS_PER_DAY).round(), 0.0, &*crate::time_locale::active_time_locale()?)
 }
 
 /// `strftime` of an instant in milliseconds since the epoch (UTC), to the second.
@@ -4529,13 +4238,13 @@ pub fn format_ms(ms: f64, spec: &str) -> Result<String, String> {
 /// A date as `datetime.fromisoformat` reads it, in days: the extended form
 /// [`date_text_day`] reads, the basic `YYYYMMDD`, or an ISO week date.
 pub fn iso_format_day(text: &str) -> Option<f64> {
-    if let Some(day) = date_text_day(text) {
+    if let Some(day) = crate::time_axis::date_text_day(text) {
         return Some(day);
     }
     let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit()).then(|| s.parse::<i64>().ok()).flatten();
     if text.len() == 8 && text.bytes().all(|b| b.is_ascii_digit()) {
         let (y, m, d) = (digits(&text[..4])?, digits(&text[4..6])?, digits(&text[6..])?);
-        return parse_iso_date(&format!("{y:04}-{m:02}-{d:02}")).map(|(y, m, d)| days_from_civil(y, m, d) as f64);
+        return crate::time_axis::parse_iso_date(&format!("{y:04}-{m:02}-{d:02}")).map(|(y, m, d)| days_from_civil(y, m, d) as f64);
     }
     let rest = text.replace('-', "");
     let (year, week, day) = (digits(rest.get(..4)?)?, digits(rest.get(5..7)?)?, rest.get(7..8).map_or(Some(1), digits)?);
@@ -4583,33 +4292,17 @@ pub fn temporal_label_half_width(
 
 #[cfg(test)]
 mod tests {
-    /// One reading of a date cell for every family: clock as the day's fraction
-    /// (V8's millisecond precision), an offset applied, any other shape unread.
-    #[test]
-    fn a_date_text_is_its_day_with_the_clock_as_the_fraction() {
-        let jan_first = 19723.0;
-        assert_eq!(date_text_day("2024-01-01"), Some(jan_first));
-        assert_eq!(date_text_day("2024-01"), Some(jan_first));
-        assert_eq!(date_text_day("2024-01-01T12:00:00"), Some(jan_first + 0.5));
-        assert_eq!(date_text_day("2024-01-01 06:00"), Some(jan_first + 0.25));
-        assert_eq!(date_text_day("2024-01-01T12:00:00Z"), Some(jan_first + 0.5));
-        assert_eq!(date_text_day("2024-01-01T12:00:00+06:00"), Some(jan_first + 0.25));
-        assert_eq!(date_text_day("2024-01-01T12:00:00-06:00"), Some(jan_first + 0.75));
-        assert_eq!(date_text_day("2024-01-01T12:00:00.5"), Some(jan_first + 0.5 + 0.5 / 86_400.0));
-        assert_eq!(date_text_day("2024-01-01T12:00:00Z05:00"), None);
-        assert_eq!(date_text_day("2024-01-01T12:00:00."), None);
-        // Every clock and offset `datetime.fromisoformat` takes, as `x_type::parse_date` does.
-        assert_eq!(date_text_day("2024-01-01T12"), Some(jan_first + 0.5));
-        assert_eq!(date_text_day("2024-01-01T120000"), Some(jan_first + 0.5));
-        assert_eq!(date_text_day("2024-01-01 00:00:00+05"), Some(jan_first - 5.0 / 24.0));
-        assert_eq!(date_text_day("2024-01-01T12:00:00+0600"), Some(jan_first + 0.25));
-        assert_eq!(date_text_day("2024-01-01T12:00:00.123456"), Some(jan_first + 0.5 + 0.123 / 86_400.0));
-        for unread in ["soon", "2024-01-01T", "2024/01/05", "2024-01-01T24:00:00", "2024-01-01T1:00", "2024-01-01T12:00:00+6", "2024-01-01T12:00:00.x", "2024-01-01T12:00:00Zulu"] {
-            assert_eq!(date_text_day(unread), None, "{unread}");
-        }
+    use super::*;
+    use crate::time_axis::testing::{day, dates as on_axis};
+
+    /// The Sunday a date's week starts on, as a date.
+    fn week_floor(date: &str) -> Option<String> {
+        Some(time_unit_floor(on_axis(&[date]).date[0].unwrap(), TimeUnit::YearWeek).0)
     }
 
-    use super::*;
+    fn utc_fraction_at(date: &str, extent: (f64, f64)) -> Option<f64> {
+        Some(frac_of(day(date), extent))
+    }
 
     // ── `_BUCKET_FAMILIES` / `parse_bucket_string` ─────────────────────────
 
@@ -4677,17 +4370,6 @@ mod tests {
         // 2023 has 52 ISO weeks (`p(2023) != 4`, `p(2022) != 3`).
         assert_eq!(parse_bucket_string("2023-W53"), None);
         assert_eq!(parse_bucket_string("Week 53 2023"), None);
-    }
-
-    #[test]
-    fn weekday_stays_in_range_on_a_pre_1970_sunday() {
-        // 1900-03-04 is a Sunday (verified against Python's `date.
-        // weekday()`). Rust's `%` keeps the dividend's sign, so the
-        // un-rem_euclid'd formula computed `h == -1` here (`j == 19`
-        // drives `- 2*j` negative enough that the whole sum is negative),
-        // and `(h + 5) % 7` on a still-negative `h` cast to `255u8`
-        // instead of `6` (Sunday, 0=Mon..6=Sun).
-        assert_eq!(weekday(1900, 3, 4), 6);
     }
 
     #[test]
@@ -4773,7 +4455,7 @@ mod tests {
     fn detect_year() {
         let dates = ["2022-01-01", "2023-01-01", "2024-01-01"];
         assert_eq!(
-            detect_time_unit(&dates),
+            detect_time_unit(&on_axis(&dates)),
             Some(TimeUnit::Year)
         );
     }
@@ -4781,7 +4463,7 @@ mod tests {
     #[test]
     fn detect_yearquarter() {
         let dates = ["2024-01-01", "2024-04-01", "2024-07-01", "2024-10-01"];
-        assert_eq!(detect_time_unit(&dates), Some(TimeUnit::YearQuarter));
+        assert_eq!(detect_time_unit(&on_axis(&dates)), Some(TimeUnit::YearQuarter));
     }
 
     // ── x_values_are_temporal_candidates ─────────────────────────────────
@@ -4914,7 +4596,7 @@ mod tests {
         // 12 monthly data points
         let dates: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
         let refs: Vec<&str> = dates.iter().map(String::as_str).collect();
-        assert_eq!(detect_time_unit(&refs), Some(TimeUnit::YearMonth));
+        assert_eq!(detect_time_unit(&on_axis(&refs)), Some(TimeUnit::YearMonth));
     }
 
     #[test]
@@ -4924,24 +4606,24 @@ mod tests {
             "2024-01-01", "2024-01-08", "2024-01-15", "2024-01-22",
             "2024-01-29", "2024-02-05", "2024-02-12", "2024-02-19",
         ];
-        assert_eq!(detect_time_unit(&dates), Some(TimeUnit::YearWeek));
+        assert_eq!(detect_time_unit(&on_axis(&dates)), Some(TimeUnit::YearWeek));
     }
 
     #[test]
     fn weekly_rung_reads_exact_gaps_and_the_true_median() {
         // Gaps [14, 14]: the median is 14, so the column is weekly.
         assert_eq!(
-            detect_time_unit(&["2024-02-19", "2024-03-04", "2024-03-18"]),
+            detect_time_unit(&on_axis(&["2024-02-19", "2024-03-04", "2024-03-18"])),
             Some(TimeUnit::YearWeek),
         );
         // Gaps [7, 21]: an even count averages the two middle gaps to 14,
         // where picking the upper one would read 21.
         assert_eq!(
-            detect_time_unit(&["2024-01-01", "2024-01-08", "2024-01-29"]),
+            detect_time_unit(&on_axis(&["2024-01-01", "2024-01-08", "2024-01-29"])),
             Some(TimeUnit::YearWeek),
         );
         // Gaps [28, 28]: the same weekday at a four-week cadence is not weekly.
-        assert_eq!(detect_time_unit(&["2024-01-01", "2024-01-29", "2024-02-26"]), None);
+        assert_eq!(detect_time_unit(&on_axis(&["2024-01-01", "2024-01-29", "2024-02-26"])), None);
     }
 
     #[test]
@@ -4951,7 +4633,7 @@ mod tests {
             "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04",
             "2024-01-05", "2024-01-06", "2024-01-07",
         ];
-        assert_eq!(detect_time_unit(&dates), Some(TimeUnit::YearMonthDate));
+        assert_eq!(detect_time_unit(&on_axis(&dates)), Some(TimeUnit::YearMonthDate));
     }
 
     /// Every row of this table is `time_unit_detect.detect_time_unit`'s own
@@ -5042,7 +4724,7 @@ mod tests {
             ),
         ];
         for (name, dates, expected) in cases {
-            assert_eq!(detect_time_unit(dates), expected, "{name}: {dates:?}");
+            assert_eq!(detect_time_unit(&on_axis(dates)), expected, "{name}: {dates:?}");
         }
     }
 
@@ -5058,40 +4740,16 @@ mod tests {
             })
             .collect();
         let refs: Vec<&str> = dates.iter().map(String::as_str).collect();
-        assert_eq!(detect_time_unit(&refs), None);
+        assert_eq!(detect_time_unit(&on_axis(&refs)), None);
     }
 
-    // ── parse_iso_date ─────────────────────────────────────────────────────
-
+    /// A Tokyo board's month start at local midnight detects as that month, though its UTC instant falls on the
+    /// last day of the month before.
     #[test]
-    fn parse_full_date() {
-        assert_eq!(parse_iso_date("2024-03-15"), Some((2024, 3, 15)));
-    }
-
-    #[test]
-    fn parse_yearmonth() {
-        assert_eq!(parse_iso_date("2024-03"), Some((2024, 3, 1)));
-    }
-
-    #[test]
-    fn parse_year_only() {
-        assert_eq!(parse_iso_date("2024"), Some((2024, 1, 1)));
-    }
-
-    #[test]
-    fn parse_invalid() {
-        assert_eq!(parse_iso_date("not-a-date"), None);
-        assert_eq!(parse_iso_date("Jan"), None);
-        assert_eq!(parse_iso_date("2025-01-06X00:00:00"), None);
-        assert_eq!(parse_iso_date("2025-1-06 00:00:00"), None);
-    }
-
-    #[test]
-    fn parse_datetime_takes_date_part() {
-        // Production's _ISO_DATETIME_RE accepts "YYYY-MM-DD" followed by "T"
-        // or " " (time_unit_detect.py); grain detection uses the date part.
-        assert_eq!(parse_iso_date("2025-01-06 00:00:00"), Some((2025, 1, 6)));
-        assert_eq!(parse_iso_date("2025-01-06T12:30:00"), Some((2025, 1, 6)));
+    fn a_month_start_on_the_board_clock_detects_as_its_month() {
+        let _tokyo = crate::time_zone::zone_scope("Asia/Tokyo");
+        let keys = ["2024-01-01", "2024-01-31T15:00:00Z", "2024-03-01"];
+        assert_eq!(detect_time_unit(&on_axis(&keys)), Some(TimeUnit::YearMonth));
     }
 
     // ── label formatting ───────────────────────────────────────────────────
@@ -5223,7 +4881,7 @@ mod tests {
             })
             .collect();
         let labels = build_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
@@ -5252,37 +4910,9 @@ mod tests {
     }
 
     fn iso_range(start: (i32, u8, u8), step_days: i64, count: usize) -> Vec<String> {
-        // Simple proleptic-Gregorian day stepper, good enough for test fixtures.
-        fn from_days_approx(mut y: i32, mut m: u8, mut d: u8, mut delta: i64) -> (i32, u8, u8) {
-            // Walk day-by-day — test-only, count is small (≤365).
-            while delta > 0 {
-                d += 1;
-                let dim = match m {
-                    1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-                    4 | 6 | 9 | 11 => 30,
-                    _ => {
-                        if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
-                            29
-                        } else {
-                            28
-                        }
-                    }
-                };
-                if d > dim {
-                    d = 1;
-                    m += 1;
-                    if m > 12 {
-                        m = 1;
-                        y += 1;
-                    }
-                }
-                delta -= 1;
-            }
-            (y, m, d)
-        }
         (0..count)
             .map(|i| {
-                let (y, m, d) = from_days_approx(start.0, start.1, start.2, i as i64 * step_days);
+                let (y, m, d) = civil_from_days(days_from_civil(start.0, start.1, start.2) + i as i64 * step_days);
                 format!("{y:04}-{m:02}-{d:02}")
             })
             .collect()
@@ -5296,7 +4926,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 6), 7, 52);
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearWeek,
             None,
             1128.0,
@@ -5329,7 +4959,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 1), 1, 90);
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             None,
             460.0,
@@ -5349,7 +4979,7 @@ mod tests {
         assert_eq!(month_context, vec!["Jan'25", "Feb", "Mar"]);
         // Every labeled tick is a Monday — day-of-week cadence, not daily.
         for label in &labels {
-            let (y, m, d) = parse_iso_date(&domain[label.domain_idx]).unwrap();
+            let (y, m, d) = on_axis(&domain).civil(label.domain_idx).unwrap();
             assert_eq!(weekday(y, m, d), 0, "{label:?} at {y}-{m}-{d} is not a Monday");
         }
     }
@@ -5361,7 +4991,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
             1200.0,
@@ -5395,7 +5025,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1u8..=12).map(|m| format!("2024-{m:02}-01")).collect();
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
             12.0 * 22.0, // band = 22px: row1-only clears (21 <= 22), folded doesn't (24.5 > 22)
@@ -5431,7 +5061,7 @@ mod tests {
             domain.push(format!("2025-{m:02}-01"));
         }
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
             12.0 * 27.0, // band = 27px: row1 pair clears (21), year-row pair does not (28)
@@ -5459,7 +5089,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 6), 7, 130);
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearWeek,
             None,
             460.0,
@@ -5486,7 +5116,7 @@ mod tests {
         // format used as-is, no visibility thinning needed.
         let domain = iso_range((2025, 1, 6), 7, 52);
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearWeek,
             Some(TimeUnit::YearWeek),
             5200.0,
@@ -5515,7 +5145,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 1), 1, 90);
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             Some(TimeUnit::YearMonthDate),
             460.0,
@@ -5549,7 +5179,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 1, 20), 1, 6);
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             None,
             1200.0,
@@ -5575,7 +5205,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 2, 19), 1, 150);
         let (labels, (format_tu, visibility_tu)) = {
-            let dates = parse_domain_dates(&domain);
+            let dates = on_axis(&domain).civils();
             let tus = resolve_label_visibility(
                 &dates,
                 TimeUnit::YearMonthDate,
@@ -5590,13 +5220,13 @@ mod tests {
                 &mut char_measure,
             )
             .unwrap();
-            (build_temporal_labels(&domain, TimeUnit::YearMonthDate, tus.0, tus.1, tus.2, 1, None).unwrap(), (tus.0, tus.1))
+            (build_temporal_labels(&on_axis(&domain), TimeUnit::YearMonthDate, tus.0, tus.1, tus.2, 1, None).unwrap(), (tus.0, tus.1))
         };
         assert_eq!((format_tu, visibility_tu), (TimeUnit::YearWeek, TimeUnit::YearWeek));
         assert_eq!(labels[0].row1, "24");
         assert_eq!(labels[0].row2, "Feb'25");
         for label in &labels {
-            let (y, m, d) = parse_iso_date(&domain[label.domain_idx]).unwrap();
+            let (y, m, d) = on_axis(&domain).civil(label.domain_idx).unwrap();
             assert_eq!(weekday(y, m, d), 0, "{label:?} at {y}-{m}-{d} is not a Monday");
         }
     }
@@ -5609,7 +5239,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2026, 3, 2), 1, 20);
         let (labels, visibility_tu, year_step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             None,
             580.0,
@@ -5633,7 +5263,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2025, 2, 19), 1, 150);
         let (labels, visibility_tu, year_step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             None,
             900.0,
@@ -5663,7 +5293,7 @@ mod tests {
         gapped.remove(10);
         let resolve = |domain: &[String]| {
             let (labels, visibility_tu, year_step) = resolve_temporal_labels(
-                domain,
+                &on_axis(domain),
                 TimeUnit::YearMonthDate,
                 None,
                 900.0,
@@ -5697,7 +5327,7 @@ mod tests {
             .collect();
         let visibility = |continuous_temporal: bool| {
             resolve_temporal_labels(
-                &domain,
+                &on_axis(&domain),
                 TimeUnit::YearMonth,
                 None,
                 480.0,
@@ -5739,7 +5369,7 @@ mod tests {
             })
             .collect();
         let (labels, _vt, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
             28.2 * 16.0,
@@ -5785,12 +5415,12 @@ mod tests {
             "2026-02-01".to_string(),
             "2026-03-01".to_string(),
         ];
-        let fr = utc_position_fractions(&dom).unwrap();
+        let fr = utc_position_fractions(&on_axis(&dom)).unwrap();
         assert_eq!(fr[0], 0.0);
         assert!((fr[1] - 31.0 / 59.0).abs() < 1e-12, "{fr:?}");
         assert_eq!(fr[2], 1.0);
         // Unparseable domain → None (callers keep point fractions).
-        assert!(utc_position_fractions(&["a".into(), "b".into()]).is_none());
+        assert!(utc_position_fractions(&on_axis(&["a", "b"])).is_none());
         // Unordered domain (ragged multi-series union): the extent is a
         // min/max aggregate like Vega's, so every fraction stays in [0, 1].
         let unordered = vec![
@@ -5798,12 +5428,9 @@ mod tests {
             "2026-01-01".to_string(),
             "2026-03-01".to_string(),
         ];
-        let fr = utc_position_fractions(&unordered).unwrap();
+        let fr = utc_position_fractions(&on_axis(&unordered)).unwrap();
         assert!((fr[0] - 31.0 / 59.0).abs() < 1e-12, "{fr:?}");
         assert_eq!((fr[1], fr[2]), (0.0, 1.0));
-        // Leap-century arithmetic: days_from_civil epoch identity.
-        assert_eq!(days_from_civil(1970, 1, 1), 0);
-        assert_eq!(days_from_civil(2026, 1, 1), 20454);
     }
 
     // ── week_floor / utc_domain_extent / utc_fraction_at (L9) ────────────────
@@ -5818,7 +5445,6 @@ mod tests {
         assert_eq!(week_floor("2025-09-07").as_deref(), Some("2025-09-07"));
         // Saturday floors back six days.
         assert_eq!(week_floor("2025-09-13").as_deref(), Some("2025-09-07"));
-        assert_eq!(week_floor("not-a-date"), None);
     }
 
     #[test]
@@ -5830,9 +5456,9 @@ mod tests {
         let raw = vec!["2025-09-08".to_string(), "2025-09-22".to_string()];
         let floored: Vec<String> = raw.iter().map(|d| week_floor(d).unwrap()).collect();
         assert_eq!(floored, vec!["2025-09-07", "2025-09-21"]);
-        let vertex_fracs = utc_position_fractions(&floored).unwrap();
+        let vertex_fracs = utc_position_fractions(&on_axis(&floored)).unwrap();
         assert_eq!(vertex_fracs, vec![0.0, 1.0]);
-        let extent = utc_domain_extent(&floored).unwrap();
+        let extent = utc_domain_extent(&on_axis(&floored)).unwrap();
         let label_frac0 = utc_fraction_at(&raw[0], extent).unwrap();
         // Monday sits 1 of 14 floored days after the Sunday domain start —
         // NOT at the vertex's own 0.0.
@@ -5855,18 +5481,19 @@ mod tests {
         let _la = crate::time_zone::zone_scope("America/Los_Angeles");
         let hours = los_angeles_hours();
         let days: std::collections::BTreeSet<String> =
-            hours.iter().map(|h| time_unit_floor(h, TimeUnit::YearMonthDate).unwrap()).collect();
+            on_axis(&hours).date.iter().map(|date| time_unit_floor(date.unwrap(), TimeUnit::YearMonthDate).0).collect();
         assert_eq!(days.into_iter().collect::<Vec<_>>(), ["2024-03-09", "2024-03-10", "2024-03-11"]);
-        assert_eq!(parse_iso_date("2024-03-10T07:30:00Z"), Some((2024, 3, 9)), "23:30 PST is still the 9th");
-        assert_eq!(parse_iso_date("2024-03-10T07:30:00"), Some((2024, 3, 10)), "a naive clock is read as written");
-        assert_eq!(complete_buckets(&hours, TimeUnit::YearMonthDate, 1).len(), 71, "every row is kept, no day synthesized");
+        assert_eq!(on_axis(&["2024-03-10T07:30:00Z"]).civil(0), Some((2024, 3, 9)), "23:30 PST is still the 9th");
+        assert_eq!(on_axis(&["2024-03-10T07:30:00"]).civil(0), Some((2024, 3, 10)), "a naive clock is read as written");
+        assert_eq!(complete_buckets(&on_axis(&hours), TimeUnit::YearMonthDate, 1).len(), 71, "every row is kept, no day synthesized");
     }
 
     #[test]
     fn utc_board_buckets_an_offset_instant_on_its_utc_day() {
-        assert_eq!(parse_iso_date("2024-01-01T23:00:00-05:00"), Some((2024, 1, 2)));
-        assert_eq!(time_unit_floor("2024-01-01T23:00:00-05:00", TimeUnit::YearMonth).as_deref(), Some("2024-01-01"));
-        assert_eq!(utc_instants(19_000.0, 19_100.0, 10), zone_instants(19_000.0, 19_100.0, 10, ladder_zone(true).as_ref()).unwrap());
+        let offset = on_axis(&["2024-01-01T23:00:00-05:00"]);
+        assert_eq!(offset.civil(0), Some((2024, 1, 2)));
+        assert_eq!(time_unit_floor(offset.date[0].unwrap(), TimeUnit::YearMonth).0, "2024-01-01");
+        assert_eq!(zone_instants(19_000.0, 19_100.0, 10, None).unwrap(), zone_instants(19_000.0, 19_100.0, 10, ladder_zone(true).as_ref()).unwrap());
     }
 
     #[test]
@@ -5919,30 +5546,29 @@ mod tests {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         // Weeks keep the data's own anchor weekday and string form.
         let weeks = complete_buckets(
-            &s(&["2025-01-20T00:00:00", "2025-01-06T00:00:00", "2025-02-10T00:00:00"]),
+            &on_axis(&s(&["2025-01-20T00:00:00", "2025-01-06T00:00:00", "2025-02-10T00:00:00"])),
             TimeUnit::YearWeek,
             1,
         );
         assert_eq!(
-            weeks,
+            weeks.text,
             s(&["2025-01-06T00:00:00", "2025-01-13", "2025-01-20T00:00:00", "2025-01-27", "2025-02-03", "2025-02-10T00:00:00"])
         );
         // Quarters floor to the fiscal anchor: April-start year, data from June.
-        let quarters = complete_buckets(&s(&["2025-06-01", "2025-10-01"]), TimeUnit::YearQuarter, 4);
-        assert_eq!(quarters, s(&["2025-04-01", "2025-07-01", "2025-10-01"]));
+        let quarters = complete_buckets(&on_axis(&s(&["2025-06-01", "2025-10-01"])), TimeUnit::YearQuarter, 4);
+        assert_eq!(quarters.text, s(&["2025-04-01", "2025-07-01", "2025-10-01"]));
         // A yearly grain floors to the fiscal anchor (a February start puts the
         // first Jan-1 date in the previous February) and steps a year at a time
         // from there, keeping the anchor's month.
         assert_eq!(
-            complete_buckets(&s(&["2024-01-01", "2025-01-01"]), TimeUnit::Year, 2),
+            complete_buckets(&on_axis(&s(&["2024-01-01", "2025-01-01"])), TimeUnit::Year, 2).text,
             s(&["2023-02-01", "2024-02-01"])
         );
         // Months across a year end.
         assert_eq!(
-            complete_buckets(&s(&["2024-11-01", "2025-02-01"]), TimeUnit::YearMonth, 1),
+            complete_buckets(&on_axis(&s(&["2024-11-01", "2025-02-01"])), TimeUnit::YearMonth, 1).text,
             s(&["2024-11-01", "2024-12-01", "2025-01-01", "2025-02-01"])
         );
-        assert_eq!(civil_from_days(days_from_civil(2024, 2, 29) + 1), (2024, 3, 1));
     }
 
     #[test]
@@ -5970,7 +5596,7 @@ mod tests {
     #[test]
     fn vega_continuous_daily_axis_takes_the_monday_rung_before_month_openers() {
         let _locale = crate::time_locale::en_us_scope();
-        let dates = parse_domain_dates(&iso_range((2025, 2, 19), 1, 150));
+        let dates = on_axis(&iso_range((2025, 2, 19), 1, 150)).civils();
         let layout = resolve_vega_label_layout(
             &dates,
             TimeUnit::YearMonthDate,
@@ -5998,7 +5624,7 @@ mod tests {
     #[test]
     fn a_bucket_aligned_continuous_weekly_axis_keeps_its_week_vocabulary_when_it_fits() {
         let _locale = crate::time_locale::en_us_scope();
-        let dates = parse_domain_dates(&iso_range((2024, 1, 1), 7, 14));
+        let dates = on_axis(&iso_range((2024, 1, 1), 7, 14)).civils();
         let layout = |bucket_aligned: bool| {
             resolve_vega_label_layout(
                 &dates,
@@ -6027,14 +5653,14 @@ mod tests {
     #[test]
     fn the_default_description_names_a_date_through_its_time_unit_format() {
         let _locale = crate::time_locale::en_us_scope();
-        let text = |unit| default_time_unit_text("2024-01-01", unit).unwrap();
+        let text = |unit| default_time_unit_text(on_axis(&["2024-01-01"]).date[0].unwrap(), unit).unwrap();
         assert_eq!(text(Some(TimeUnit::Year)), "2024");
         assert_eq!(text(Some(TimeUnit::YearQuarter)), "2024 Q1");
         assert_eq!(text(Some(TimeUnit::YearMonth)), "Jan 2024");
         assert_eq!(text(Some(TimeUnit::YearWeek)), "2023 W53", "the Sunday the week floors to");
         assert_eq!(text(Some(TimeUnit::YearMonthDate)), "Jan 01, 2024");
         assert_eq!(text(None), "Jan 01, 2024");
-        assert_eq!(default_time_unit_text("2024-01-01T10:30:00", None).unwrap(), "Jan 01, 2024");
+        assert_eq!(default_time_unit_text(on_axis(&["2024-01-01T10:30:00"]).date[0].unwrap(), None).unwrap(), "Jan 01, 2024");
     }
 
     /// Without `continuous_temporal` the same domain goes native-misfit to the
@@ -6042,7 +5668,7 @@ mod tests {
     #[test]
     fn vega_daily_axis_that_is_not_continuous_keeps_month_openers() {
         let _locale = crate::time_locale::en_us_scope();
-        let dates = parse_domain_dates(&iso_range((2025, 2, 19), 1, 150));
+        let dates = on_axis(&iso_range((2025, 2, 19), 1, 150)).civils();
         let layout = resolve_vega_label_layout(
             &dates,
             TimeUnit::YearMonthDate,
@@ -6074,7 +5700,7 @@ mod tests {
     #[test]
     fn vega_continuous_daily_axis_inside_one_month_tilts_the_monday_rung() {
         let _locale = crate::time_locale::en_us_scope();
-        let dates = parse_domain_dates(&iso_range((2025, 1, 1), 1, 30));
+        let dates = on_axis(&iso_range((2025, 1, 1), 1, 30)).civils();
         let layout = resolve_vega_label_layout(
             &dates,
             TimeUnit::YearMonthDate,
@@ -6108,7 +5734,7 @@ mod tests {
         gapped.remove(10);
         let layout = |domain: &[String]| {
             let layout = resolve_vega_label_layout(
-                &parse_domain_dates(domain),
+                &on_axis(domain).civils(),
                 TimeUnit::YearMonthDate,
                 TimeUnit::YearMonthDate,
                 true,
@@ -6137,12 +5763,13 @@ mod tests {
     #[test]
     fn vega_continuous_monthly_axis_measures_the_gap_between_rows() {
         let _locale = crate::time_locale::en_us_scope();
-        let dates = parse_domain_dates(
+        let dates = on_axis(
             &["2022-01-01", "2022-02-01", "2022-03-01", "2022-04-01", "2022-05-01", "2022-06-01", "2023-12-01"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),
-        );
+        )
+        .civils();
         let visibility = |continuous_temporal: bool| {
             resolve_vega_label_layout(
                 &dates,
@@ -6278,13 +5905,13 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1990..=2025).map(|y| format!("{y}-01-01")).collect();
         let (labels, visibility_tu, step) = resolve_temporal_labels(
-            &domain, TimeUnit::Year, None, 300.0, false, true, false, 1, true, None, &mut char_measure,
+            &on_axis(&domain), TimeUnit::Year, None, 300.0, false, true, false, 1, true, None, &mut char_measure,
         )
         .unwrap();
         assert_eq!((visibility_tu, step), (TimeUnit::Year, 5));
         let texts: Vec<&str> = labels.iter().map(|l| l.row1.as_str()).collect();
         assert_eq!(texts, ["1990", "1995", "2000", "2005", "2010", "2015", "2020", "2025"]);
-        let vertical = resolve_vertical_temporal_labels(&domain, TimeUnit::Year, 300.0, 1, true, 11.0, 4.0, None).unwrap();
+        let vertical = resolve_vertical_temporal_labels(&on_axis(&domain), TimeUnit::Year, 300.0, 1, true, 11.0, 4.0, None).unwrap();
         assert!(vertical.fits);
         assert!(vertical.labels.iter().all(|l| l.row1.parse::<i32>().unwrap() % 5 == 0));
     }
@@ -6296,10 +5923,10 @@ mod tests {
     fn authored_year_interval_ticks_honor_the_year_step() {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1991..=2025).map(|y| format!("{y}-01-01")).collect();
-        let extent = utc_domain_extent(&domain).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Year(1));
+        let extent = utc_domain_extent(&on_axis(&domain)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Year(1)).unwrap();
         let texts = |step| -> Vec<String> {
-            interval_tick_labels(&ticks, &domain, TimeUnit::Year, TimeUnit::Year, TimeUnit::Year, step, 1, None)
+            interval_tick_labels(&ticks, &on_axis(&domain), TimeUnit::Year, TimeUnit::Year, TimeUnit::Year, step, 1, None)
                 .unwrap()
                 .into_iter()
                 .map(|l| l.row1)
@@ -6318,7 +5945,7 @@ mod tests {
     fn daily_generic_layout_parities_then_tilts_to_ninety() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2024, 1, 1), 1, 30);
-        let dates = parse_domain_dates(&domain);
+        let dates = on_axis(&domain).civils();
         let layout = resolve_vega_label_layout(
             &dates,
             TimeUnit::YearMonthDate,
@@ -6349,7 +5976,7 @@ mod tests {
     fn daily_native_labels_that_fit_flat_stay_flat() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2024, 1, 1), 1, 5);
-        let dates = parse_domain_dates(&domain);
+        let dates = on_axis(&domain).civils();
         let layout = resolve_vega_label_layout(
             &dates,
             TimeUnit::YearMonthDate,
@@ -6385,7 +6012,7 @@ mod tests {
     fn authored_native_grain_enters_the_bucketed_ladder_at_its_own_grain() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = iso_range((2024, 1, 1), 7, 52); // 52 weekly Mondays
-        let dates = parse_domain_dates(&domain);
+        let dates = on_axis(&domain).civils();
         let layout = resolve_vega_label_layout(
             &dates,
             TimeUnit::YearWeek,
@@ -6458,8 +6085,8 @@ mod tests {
                 format!("{:04}-{:02}-03", 2025 + total / 12, total % 12 + 1)
             })
             .collect();
-        let ladder = complete_buckets(&rows, TimeUnit::YearMonth, 1);
-        assert_eq!(ladder[0], "2025-08-01", "the floored opener sits before the real data minimum");
+        let ladder = complete_buckets(&on_axis(&rows), TimeUnit::YearMonth, 1);
+        assert_eq!(ladder.text[0], "2025-08-01", "the floored opener sits before the real data minimum");
         let resolved = resolve_vega_x_labels(
             &ladder, TimeUnit::YearMonth, None, 1000.0, true, false, true, 1, true, true, Some(&TILT_LADDER),
             11.0, None, None, &mut char_measure,
@@ -6485,7 +6112,7 @@ mod tests {
         let domain: Vec<String> = (1..=12).map(|m| format!("2024-{m:02}-01")).collect();
         let resolve = |tu: &str| {
             resolve_vega_x_labels(
-                &domain, TimeUnit::YearMonth, Some(tu), 1000.0, true, false, false, 1, true, true, Some(&TILT_LADDER),
+                &on_axis(&domain), TimeUnit::YearMonth, Some(tu), 1000.0, true, false, false, 1, true, true, Some(&TILT_LADDER),
                 11.0, None, None, &mut char_measure,
             )
             .expect("resolves")
@@ -6583,7 +6210,7 @@ mod tests {
             ("2020-01-15", "2075-06-29", 120.0, &["2040", "2060"]),
         ];
         for &(lo, hi, plot_w, want) in cases {
-            let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
+            let extent = utc_domain_extent(&on_axis(&[lo.to_string(), hi.to_string()])).unwrap();
             let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), plot_w, None, None, None, false).expect("ticks");
             let got: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
             assert_eq!(got, want, "{lo}..{hi} at {plot_w}px");
@@ -6631,7 +6258,7 @@ mod tests {
             ("2024-01-07", "2025-06-23", 12, months),
         ];
         for &(lo, hi, count, want) in cases {
-            let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
+            let extent = utc_domain_extent(&on_axis(&[lo.to_string(), hi.to_string()])).unwrap();
             for plot_w in [120.0, 4000.0] {
                 let ticks = bare_temporal_ticks(
                     (extent.0 as f64, extent.1 as f64),
@@ -6652,14 +6279,14 @@ mod tests {
         for count in [0.0, -3.0] {
             assert_eq!(authored_tick_count(count), 0);
         }
-        let extent = utc_domain_extent(&["2022-03-17".to_string(), "2024-12-19".to_string()]).unwrap();
+        let extent = utc_domain_extent(&on_axis(&["2022-03-17".to_string(), "2024-12-19".to_string()])).unwrap();
         let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, Some(AuthoredTickCadence::Count(0)), None, None, false).expect("ticks");
         assert!(ticks.is_empty());
-        assert!(AuthoredTickCadence::Count(0).bucketed_ticks(TimeUnit::YearMonth, (0.0, 90.0)).is_empty());
+        assert!(AuthoredTickCadence::Count(0).bucketed_ticks(TimeUnit::YearMonth, (0.0, 90.0)).unwrap().is_empty());
     }
 
     fn authored_tick_texts(lo: &str, hi: &str, unit: &str, step: Option<f64>) -> Vec<String> {
-        let extent = utc_domain_extent(&[lo.to_string(), hi.to_string()]).unwrap();
+        let extent = utc_domain_extent(&on_axis(&[lo.to_string(), hi.to_string()])).unwrap();
         let authored = Some(authored_tick_interval(unit, step).expect("modeled interval"));
         let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None, None, false).expect("ticks");
         ticks.into_iter().map(|t| t.text).collect()
@@ -6672,10 +6299,20 @@ mod tests {
     /// `vl_convert.vegalite_to_svg` (axis `tickCount: {interval, step}`).
     #[test]
     fn an_authored_year_step_ticks_only_the_years_it_divides() {
+        let _locale = crate::time_locale::en_us_scope();
         assert_eq!(
             authored_tick_texts("2006-01-01", "2025-01-01", "year", Some(5.0)),
             ["2010", "2015", "2020", "2025"]
         );
+    }
+
+    #[test]
+    fn an_authored_step_past_year_9999_is_refused_by_name() {
+        let _locale = crate::time_locale::en_us_scope();
+        let extent = utc_domain_extent(&on_axis(&["2024-01-01".to_string(), "2025-01-01".to_string()])).unwrap();
+        let authored = Some(authored_tick_interval("year", Some(20_000.0)).expect("modeled interval"));
+        let err = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, authored, None, None, false).unwrap_err();
+        assert!(err.contains("a tick step of 20000 Year reaching past the year 9999 the calendar holds is not supported"), "{err}");
     }
 
     #[test]
@@ -6775,11 +6412,11 @@ mod tests {
             (0..46).map(|i| civil_iso(days_from_civil(2024, 1, 1) + 7 * i)).collect();
         let floored: Vec<String> =
             mondays.iter().map(|d| week_floor(d).expect("a date")).collect();
-        let extent = utc_domain_extent(&floored).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Month(1));
+        let extent = utc_domain_extent(&on_axis(&floored)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Month(1)).unwrap();
         let labels = interval_tick_labels(
             &ticks,
-            &mondays,
+            &on_axis(&mondays),
             TimeUnit::YearWeek,
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
@@ -6805,11 +6442,11 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let months: Vec<String> =
             (0..24).map(|i| format!("{}-{:02}-01", 2024 + i / 12, i % 12 + 1)).collect();
-        let extent = utc_domain_extent(&months).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
+        let extent = utc_domain_extent(&on_axis(&months)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1)).unwrap();
         let labels = interval_tick_labels(
             &ticks,
-            &months,
+            &on_axis(&months),
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
             TimeUnit::YearQuarter,
@@ -6833,11 +6470,11 @@ mod tests {
         let mut dates = vec!["2024-02-01", "2024-03-01", "2024-04-01", "2024-05-01"];
         dates.extend(["2024-12-01", "2025-01-01", "2025-06-01", "2025-12-01"]);
         let domain = domain_of(&dates);
-        let extent = utc_domain_extent(&domain).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Month(1));
+        let extent = utc_domain_extent(&on_axis(&domain)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Month(1)).unwrap();
         let labels = interval_tick_labels(
             &ticks,
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             TimeUnit::YearQuarter,
             TimeUnit::YearQuarter,
@@ -6873,11 +6510,11 @@ mod tests {
             (0..20).map(|i| civil_iso(days_from_civil(2024, 4, 1) + 7 * i)).collect();
         let floored: Vec<String> =
             mondays.iter().map(|d| week_floor(d).expect("a date")).collect();
-        let extent = utc_domain_extent(&floored).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
+        let extent = utc_domain_extent(&on_axis(&floored)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1)).unwrap();
         let labels = interval_tick_labels(
             &ticks,
-            &mondays,
+            &on_axis(&mondays),
             TimeUnit::YearWeek,
             TimeUnit::YearMonth,
             TimeUnit::YearMonth,
@@ -6911,11 +6548,11 @@ mod tests {
             (0..4).map(|i| civil_iso(days_from_civil(2024, 3, 18) + 7 * i)).collect();
         let floored: Vec<String> =
             mondays.iter().map(|d| week_floor(d).expect("a date")).collect();
-        let extent = utc_domain_extent(&floored).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1));
+        let extent = utc_domain_extent(&on_axis(&floored)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Week(1)).unwrap();
         assert_eq!(ticks.len(), 4);
         let labels = interval_tick_labels(
-            &ticks, &mondays, TimeUnit::YearWeek, TimeUnit::YearWeek, TimeUnit::YearWeek, 1, 1, None,
+            &ticks, &on_axis(&mondays), TimeUnit::YearWeek, TimeUnit::YearWeek, TimeUnit::YearWeek, 1, 1, None,
         )
         .expect("labels");
         assert_eq!(
@@ -6930,11 +6567,11 @@ mod tests {
     fn interval_ticks_in_the_day_vocabulary_read_the_tick_date() {
         let _locale = crate::time_locale::en_us_scope();
         let days = domain_of(&["2024-03-30", "2024-04-02"]);
-        let extent = utc_domain_extent(&days).unwrap();
-        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Day(1));
+        let extent = utc_domain_extent(&on_axis(&days)).unwrap();
+        let ticks = interval_tick_days((extent.0 as i64, extent.1 as i64), UtcTickInterval::Day(1)).unwrap();
         let labels = interval_tick_labels(
             &ticks,
-            &days,
+            &on_axis(&days),
             TimeUnit::YearMonthDate,
             TimeUnit::YearMonthDate,
             TimeUnit::YearMonthDate,
@@ -6992,7 +6629,7 @@ mod tests {
     #[test]
     fn hourly_ticks_keep_both_ends_of_a_span_that_float_division_would_clip() {
         let day = days_from_civil(2024, 1, 3) as f64;
-        let ticks = clock_instants_at(day + 10.0 / 24.0, day + 20.0 / 24.0, 3_600_000, 24, 1);
+        let ticks = every_instants(Unit::Hour, 1, &TimeZone::UTC, day + 10.0 / 24.0, day + 20.0 / 24.0).unwrap();
         assert_eq!(ticks.len(), 11, "{ticks:?}");
     }
 
@@ -7000,9 +6637,26 @@ mod tests {
     /// last of them, so a one-second domain keeps its final tenth and the second itself.
     #[test]
     fn ticks_within_one_second_collapse_to_the_last_of_each_second() {
+        let _locale = crate::time_locale::en_us_scope();
         let lo = days_from_civil(2024, 3, 5) as f64 + (10.0 * 3600.0 + 3.0 * 60.0 + 10.0) / 86_400.0;
         let ticks = bare_temporal_ticks((lo, lo + 1.005 / 86_400.0), 460.0, None, None, None, false).expect("ticks");
         assert_eq!(ticks.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(), [".900", ":11"]);
+    }
+
+    /// d3's multi-scale format names a day, a Sunday and a month start by the weekday and month names of the board's
+    /// `regional.locale.time`, not English.
+    #[test]
+    fn a_multi_format_label_prints_the_boards_month_and_day_names() {
+        crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || {
+            let day = |d: u8| days_from_civil(2024, 3, d) as f64;
+            assert_eq!(multi_format_at(day(6)).unwrap(), "Mi 06", "a Wednesday");
+            assert_eq!(multi_format_at(day(10)).unwrap(), "Mrz 10", "a Sunday");
+            assert_eq!(multi_format_at(day(1)).unwrap(), "März", "a month start");
+            let extent = utc_domain_extent(&on_axis(&["2024-03-04".to_string(), "2024-03-10".to_string()])).unwrap();
+            let ticks = bare_temporal_ticks((extent.0 as f64, extent.1 as f64), 600.0, None, None, None, false).unwrap();
+            let texts: Vec<&str> = ticks.iter().map(|t| t.text.as_str()).collect();
+            assert_eq!(texts.iter().filter(|t| **t != "12 PM").copied().collect::<Vec<_>>(), ["Mo 04", "Di 05", "Mi 06", "Do 07", "Fr 08", "Sa 09", "Mrz 10"]);
+        });
     }
 
     // ── AuthoredTimeFormat ──────────────────────────────────────────────────
@@ -7060,7 +6714,7 @@ mod tests {
     fn an_aware_axis_prints_its_ticks_on_the_board_zone_clock() {
         let _locale = crate::time_locale::en_us_scope();
         let _zone = crate::time_zone::zone_scope("America/New_York");
-        let (lo, hi) = (date_text_day("2024-03-10T05:00:00Z").unwrap(), date_text_day("2024-03-10T09:00:00Z").unwrap());
+        let (lo, hi) = (day("2024-03-10T05:00:00Z"), day("2024-03-10T09:00:00Z"));
         let texts = |aware: bool| -> Vec<String> {
             bare_temporal_ticks((lo, hi), 600.0, None, None, None, aware).expect("ticks").into_iter().map(|t| t.text).collect()
         };
@@ -7123,16 +6777,16 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let format = AuthoredTimeFormat::parse("bar", Some("%b %Y")).unwrap();
         let none = LabelUnit::Raw(None);
-        assert_eq!(none.raw_measure_text("2024-03-05", format).unwrap(), "Mar 2024");
-        assert_eq!(none.raw_measure_text("2024-03-05", None).unwrap(), "2024-03-05");
-        let part = |p| LabelUnit::Raw(Some(p)).raw_measure_text("2024-03-05", None).unwrap();
+        assert_eq!(none.raw_measure_text("2024-03-05", on_axis(&["2024-03-05"]).date[0], on_axis(&["2024-03-05"]).day[0], format).unwrap(), "Mar 2024");
+        assert_eq!(none.raw_measure_text("2024-03-05", on_axis(&["2024-03-05"]).date[0], on_axis(&["2024-03-05"]).day[0], None).unwrap(), "2024-03-05");
+        let part = |p| LabelUnit::Raw(Some(p)).raw_measure_text("2024-03-05", on_axis(&["2024-03-05"]).date[0], on_axis(&["2024-03-05"]).day[0], None).unwrap();
         assert_eq!(part(TimePart::MonthOfYear), "Mar");
         assert_eq!(part(TimePart::DayOfWeek), "Tue");
         assert_eq!(part(TimePart::DayOfMonth), "5");
         assert_eq!(part(TimePart::DayOfYear), "65");
         assert_eq!(part(TimePart::HourOfDay), "0");
-        assert_eq!(LabelUnit::Raw(None).raw_measure_text("Core", format).unwrap(), "Core");
-        assert!(LabelUnit::Calendar(TimeUnit::Year).raw_measure_text("2024-03-05", None).is_err());
+        assert_eq!(LabelUnit::Raw(None).raw_measure_text("Core", on_axis(&["Core"]).date[0], on_axis(&["Core"]).day[0], format).unwrap(), "Core");
+        assert!(LabelUnit::Calendar(TimeUnit::Year).raw_measure_text("2024-03-05", on_axis(&["2024-03-05"]).date[0], on_axis(&["2024-03-05"]).day[0], None).is_err());
     }
 
     /// `labels.time_unit: none` measures the author's format, not the raw band:
@@ -7145,7 +6799,7 @@ mod tests {
         let layout = |authored| {
             let mut measure = |s: &str| Ok(s.len() as f64 * 6.0);
             resolve_vega_x_labels(
-                &domain, TimeUnit::YearMonth, Some("none"), 300.0, false, false, true, 1, true, false, None, 11.0, authored, None,
+                &on_axis(&domain), TimeUnit::YearMonth, Some("none"), 300.0, false, false, true, 1, true, false, None, 11.0, authored, None,
                 &mut measure,
             )
             .unwrap()
@@ -7165,7 +6819,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
         let (labels, vis, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
             400.0,
@@ -7191,7 +6845,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
         let (labels, vis, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonth,
             None,
             400.0,
@@ -7215,7 +6869,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = month_domain(2022, 36);
         let (labels, vis, _step) = resolve_temporal_labels(
-            &domain, TimeUnit::YearMonth, None, 400.0, false, true, false, 1, false, authored("%b %Y"),
+            &on_axis(&domain), TimeUnit::YearMonth, None, 400.0, false, true, false, 1, false, authored("%b %Y"),
             &mut char_measure,
         )
         .unwrap();
@@ -7231,7 +6885,7 @@ mod tests {
     fn an_authored_format_on_daily_data_enters_the_ladder_at_the_day_grain() {
         let domain = iso_range((2024, 1, 1), 1, 45);
         let (labels, vis, _step) = resolve_temporal_labels(
-            &domain,
+            &on_axis(&domain),
             TimeUnit::YearMonthDate,
             None,
             900.0,
@@ -7265,7 +6919,7 @@ mod tests {
     fn a_vertical_ladder_steps_from_months_to_quarter_openers() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = months(24);
-        let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 272.0, 1, true, 11.0, 16.0, None).unwrap();
+        let out = resolve_vertical_temporal_labels(&on_axis(&domain), TimeUnit::YearMonth, 272.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(out.fits);
         assert_eq!(first_rows(&out.labels), ["Jan", "Apr", "Jul", "Oct", "Jan", "Apr", "Jul", "Oct"]);
         assert_eq!(out.labels[0].row2, "2024");
@@ -7278,10 +6932,10 @@ mod tests {
     #[test]
     fn a_vertical_ladder_ends_at_years_and_reports_a_collision() {
         let domain = months(37);
-        let years = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 260.0, 1, true, 11.0, 16.0, None).unwrap();
+        let years = resolve_vertical_temporal_labels(&on_axis(&domain), TimeUnit::YearMonth, 260.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(years.fits);
         assert_eq!(first_rows(&years.labels), ["2024", "2025", "2026", "2027"]);
-        let tight = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 20.0, 1, true, 11.0, 16.0, None).unwrap();
+        let tight = resolve_vertical_temporal_labels(&on_axis(&domain), TimeUnit::YearMonth, 20.0, 1, true, 11.0, 16.0, None).unwrap();
         assert!(!tight.fits);
     }
 
@@ -7290,7 +6944,7 @@ mod tests {
     fn a_vertical_ladder_without_skip_keeps_every_label() {
         let _locale = crate::time_locale::en_us_scope();
         let domain = months(24);
-        let out = resolve_vertical_temporal_labels(&domain, TimeUnit::YearMonth, 100.0, 1, false, 11.0, 16.0, None).unwrap();
+        let out = resolve_vertical_temporal_labels(&on_axis(&domain), TimeUnit::YearMonth, 100.0, 1, false, 11.0, 16.0, None).unwrap();
         assert!(!out.fits);
         assert_eq!(out.labels.len(), 24);
     }
@@ -7350,9 +7004,9 @@ mod tests {
     #[test]
     fn a_bucketed_count_is_capped_by_the_grain_min_step_and_strides_epoch_days() {
         let lo = days_from_civil(2024, 1, 1) as f64;
-        let monthly = AuthoredTickCadence::Count(12).bucketed_ticks(TimeUnit::YearMonth, (lo, lo + 152.0));
+        let monthly = AuthoredTickCadence::Count(12).bucketed_ticks(TimeUnit::YearMonth, (lo, lo + 152.0)).unwrap();
         assert_eq!(monthly, [lo, lo + 31.0, lo + 60.0, lo + 91.0, lo + 121.0, lo + 152.0]);
-        let daily = AuthoredTickCadence::Count(5).bucketed_ticks(TimeUnit::YearMonthDate, (lo, lo + 9.0));
+        let daily = AuthoredTickCadence::Count(5).bucketed_ticks(TimeUnit::YearMonthDate, (lo, lo + 9.0)).unwrap();
         assert_eq!(daily, [lo + 1.0, lo + 3.0, lo + 5.0, lo + 7.0, lo + 9.0]);
     }
 
@@ -7360,7 +7014,7 @@ mod tests {
     #[test]
     fn a_short_bucketed_span_ticks_its_half_days() {
         let lo = days_from_civil(2024, 3, 5) as f64;
-        let ticks = AuthoredTickCadence::Count(5).bucketed_ticks(TimeUnit::YearMonthDate, (lo, lo + 2.0));
+        let ticks = AuthoredTickCadence::Count(5).bucketed_ticks(TimeUnit::YearMonthDate, (lo, lo + 2.0)).unwrap();
         assert_eq!(ticks, [lo, lo + 0.5, lo + 1.0, lo + 1.5, lo + 2.0]);
     }
 
@@ -7369,10 +7023,10 @@ mod tests {
     #[test]
     fn a_part_axis_measures_one_text_per_band() {
         let dates: Vec<String> = ["2023-01-15", "2024-02-15", "2024-03-02"].map(String::from).to_vec();
-        let texts = part_band_texts(&dates, TimePart::DayOfMonth, None, None).unwrap();
+        let texts = part_band_texts(&on_axis(&dates), TimePart::DayOfMonth, None, None).unwrap();
         assert_eq!(texts, ["15", "2"]);
         let authored = AuthoredTimeFormat::parse("scatter", Some("%d.%m.%Y")).unwrap();
-        assert_eq!(part_band_texts(&dates, TimePart::DayOfMonth, None, authored).unwrap(), ["15.01.2023", "02.03.2024"]);
+        assert_eq!(part_band_texts(&on_axis(&dates), TimePart::DayOfMonth, None, authored).unwrap(), ["15.01.2023", "02.03.2024"]);
     }
 
     /// Under `labels.time_unit: none` every tick speaks in Vega-Lite's own
@@ -7419,10 +7073,10 @@ mod tests {
     /// a date on a start, and a week (anchored by the data), are left alone.
     #[test]
     fn a_date_off_its_bucket_start_is_keyed_by_the_enclosing_bucket() {
-        assert_eq!(off_anchor_bucket_start("2024-01-31", TimeUnit::YearMonth, 1).as_deref(), Some("2024-01-01"));
-        assert_eq!(off_anchor_bucket_start("2024-01-01", TimeUnit::Year, 4).as_deref(), Some("2023-04-01"));
-        assert_eq!(off_anchor_bucket_start("2024-04-01", TimeUnit::Year, 4), None);
-        assert_eq!(off_anchor_bucket_start("2024-01-31", TimeUnit::YearWeek, 1), None);
+        assert_eq!(off_anchor_bucket_start(on_axis(&["2024-01-31"]).date[0].unwrap(), TimeUnit::YearMonth, 1).as_deref(), Some("2024-01-01"));
+        assert_eq!(off_anchor_bucket_start(on_axis(&["2024-01-01"]).date[0].unwrap(), TimeUnit::Year, 4).as_deref(), Some("2023-04-01"));
+        assert_eq!(off_anchor_bucket_start(on_axis(&["2024-04-01"]).date[0].unwrap(), TimeUnit::Year, 4), None);
+        assert_eq!(off_anchor_bucket_start(on_axis(&["2024-01-31"]).date[0].unwrap(), TimeUnit::YearWeek, 1), None);
     }
 
     /// A bool series field is ordered like the ints Python reads it as: false,
@@ -7441,6 +7095,7 @@ mod tests {
 #[cfg(test)]
 mod speak_tests {
     use super::*;
+    use crate::time_axis::testing::dates as on_axis;
     use crate::labels_expr::Expr;
 
     fn label(domain_idx: usize, row1: &str) -> TemporalLabel {
@@ -7452,7 +7107,7 @@ mod speak_tests {
         let _locale = crate::time_locale::en_us_scope();
         let domain = vec!["2000-01-01".to_string(), "2000-02-01".to_string()];
         let expr = Expr::parse("datum.label + timeFormat(datum.value, '/%m')").unwrap();
-        let spoken = speak_labels(vec![label(1, "Feb")], &domain, &expr, Some(TimeUnit::Year), false).unwrap();
+        let spoken = speak_labels(vec![label(1, "Feb")], &on_axis(&domain), &expr, Some(TimeUnit::Year), false).unwrap();
         assert_eq!((spoken[0].row1.as_str(), spoken[0].row2.as_str()), ("2000/02", ""));
     }
 
@@ -7460,9 +7115,9 @@ mod speak_tests {
     fn an_ordinal_axis_reads_the_raw_band_and_a_throwing_expression_errors() {
         let domain = vec!["2000-01-01".to_string()];
         let upper = Expr::parse("datum.value + '!'").unwrap();
-        assert_eq!(speak_labels(vec![label(0, "x")], &domain, &upper, None, true).unwrap()[0].row1, "2000-01-01!");
+        assert_eq!(speak_labels(vec![label(0, "x")], &on_axis(&domain), &upper, None, true).unwrap()[0].row1, "2000-01-01!");
         let slice = Expr::parse("slice(datum.value, 2)").unwrap();
-        assert!(speak_labels(vec![label(0, "x")], &domain, &slice, None, false).is_err());
+        assert!(speak_labels(vec![label(0, "x")], &on_axis(&domain), &slice, None, false).is_err());
     }
 
     #[test]
@@ -7524,7 +7179,7 @@ mod interval_axis_tests {
     fn a_gap_in_a_band_domain_labels_no_collapsed_month() {
         let _locale = crate::time_locale::en_us_scope();
         let domain: Vec<String> = (1..=31).map(|d| format!("2026-01-{d:02}")).chain((1..=30).map(|d| format!("2026-04-{d:02}"))).collect();
-        let iv = band_interval_axis(&domain, TimeUnit::YearMonthDate, LabelPeriods::unthinned(TimeUnit::YearMonth, TimeUnit::YearMonth), 600.0, 1, &mut |t| {
+        let iv = band_interval_axis(&crate::time_axis::testing::dates(&domain), TimeUnit::YearMonthDate, LabelPeriods::unthinned(TimeUnit::YearMonth, TimeUnit::YearMonth), 600.0, 1, &mut |t| {
             Ok(t.chars().count() as f64 * CHAR_PX)
         })
         .expect("band intervals")

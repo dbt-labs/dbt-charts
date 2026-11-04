@@ -1,0 +1,22 @@
+{
+  "q": {
+    "calls": [
+      {
+        "params": [],
+        "sql": "CREATE TEMP VIEW big AS SELECT * FROM t WHERE amount > 6"
+      },
+      {
+        "params": [],
+        "sql": "SELECT id FROM big ORDER BY id"
+      }
+    ],
+    "rows": [
+      {
+        "id": 1
+      },
+      {
+        "id": 2
+      }
+    ]
+  }
+}

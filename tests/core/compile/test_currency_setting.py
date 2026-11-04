@@ -92,6 +92,7 @@ def test_meta_and_board_regional_merge_field_by_field() -> None:
         "currency": "EUR",
         "language": None,
         "time_zone": None,
+        "fiscal_year_start_month": None,
     }
 
 
@@ -416,7 +417,7 @@ def test_a_ruler_axis_that_repeats_its_unit_trails_the_magnitude() -> None:
 
 
 @pytest.mark.parametrize(("locale", "symbol"), [("en-US", "$"), ("de-DE", "€")])
-def test_a_left_axis_support_table_repeats_the_currency(
+def test_a_left_axis_support_table_declares_the_currency_once(
     locale: str, symbol: str
 ) -> None:
     chart = (
@@ -425,12 +426,13 @@ def test_a_left_axis_support_table_repeats_the_currency(
         "      - source: v\n        format: currency_whole\n        label: V\n"
     )
     board = _PLACEMENT_BOARD.format(chart=chart).replace("de-DE", locale)
+    svg = render_board_to_svg(board)
+    strip = svg.split('class="mark-text role-mark strip"', 1)[1].split("</g>", 1)[0]
     cells = [
-        re.sub(r"<[^>]+>", "", c)
-        for c in re.findall(r"<text[^>]*>(.*?)</text>", render_board_to_svg(board))
-        if re.search(r"\d{3}[,.]\d{3}", c)
+        re.sub(r"<[^>]+>", "", c) for c in re.findall(r"<text[^>]*>(.*?)</text>", strip)
     ]
-    assert len(cells) == 3 and all(symbol in c for c in cells), cells
+    assert len(cells) == 3, cells
+    assert [symbol in c for c in cells] == [True, False, False], cells
 
 
 def _nested(inner_regional: str) -> str:
@@ -501,21 +503,15 @@ def test_a_comma_decimal_locale_pads_trimmed_digits_on_their_decimal_mark() -> N
     assert "1.234,5" in strip and "2,75" in strip, strip
 
 
-@pytest.mark.parametrize(
-    ("name", "expected"),
-    [
-        ("currency_whole", rf"[\d.]+{_NBSP}€"),
-        ("currency", rf"[\d,]+{_NBSP}Mio\.{_NBSP}€"),
-    ],
-)
-def test_a_support_strip_that_repeats_follows_the_locale(
-    name: str, expected: str
-) -> None:
+@pytest.mark.parametrize("name", ["currency_whole", "currency"])
+def test_a_support_strip_that_repeats_follows_the_locale(name: str) -> None:
+    """A strip compacts `currency_whole` like `currency`, keeping its `repeat`."""
     cells = _placement_cells(
         "    query: q\n    type: bar\n    x: m\n    y: v\n    support_table:\n"
         f"      - source: v\n        format:\n          spec: {name}\n"
         "          repeat: every\n        label: V\n"
     )
+    expected = rf"[\d,]+{_NBSP}Mio\.{_NBSP}€"
     assert len(cells) == 3 and all(re.fullmatch(expected, c) for c in cells), cells
 
 

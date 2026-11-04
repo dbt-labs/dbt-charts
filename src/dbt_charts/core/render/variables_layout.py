@@ -15,6 +15,8 @@ a select showing ``All`` versus ``Latin America and the Caribbean`` — is sized
 from the text it will actually draw. A control the theme fixes (`text`,
 `number`, `checkbox`, `slider`, `daterange`) keeps its theme width, so
 ``variables.input.widths.*`` stays load-bearing rather than silently orphaned.
+A multiselect holds the text width whatever is ticked, and its text gives way
+instead: a field that grew with each tick moved every control beside it.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from typing import TYPE_CHECKING, Literal
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.format_d3 import board_word
+from mdsvg.fonts import truncate_text_precise
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -37,7 +40,8 @@ class InputTraits:
     """What the strip needs to know about one input kind, in one row.
 
     ``sizing`` is where the field's width comes from: ``content`` measures the
-    text it will draw, the rest name a theme width or a shape that has its own.
+    text it will draw, ``summary`` holds the theme's text width and cuts the text
+    to fit, the rest name a theme width or a shape that has its own.
     ``ornament`` is the glyph the chrome draws inside the field's right edge.
     ``unset`` is which "no value" affordance the control offers, and whose label
     vocabulary it reads. ``bounds`` is whether ``min``/``max``/``step`` reach the
@@ -49,7 +53,9 @@ class InputTraits:
     them disagree.
     """
 
-    sizing: Literal["content", "text", "number", "daterange", "checkbox", "slider"]
+    sizing: Literal[
+        "content", "summary", "text", "number", "daterange", "checkbox", "slider"
+    ]
     ornament: Literal["arrow", "calendar", "none"]
     unset: Literal["chooser", "range", "date", "none"]
     bounds: Literal["slider", "authored", "none"]
@@ -72,7 +78,7 @@ class InputTraits:
 _INPUT_TRAITS: dict[VariableInputType, InputTraits] = {
     "auto": InputTraits("text", "none", "none", "none"),
     "select": InputTraits("content", "arrow", "chooser", "none"),
-    "multiselect": InputTraits("content", "arrow", "chooser", "none"),
+    "multiselect": InputTraits("summary", "arrow", "chooser", "none"),
     "radio": InputTraits("content", "arrow", "chooser", "none"),
     "date": InputTraits("content", "calendar", "date", "none"),
     "datepicker": InputTraits("content", "calendar", "date", "none"),
@@ -98,6 +104,9 @@ def traits_of(input_type: VariableInputType) -> InputTraits:
 # fit test asks the same question of the same numbers and has to answer it the
 # same way — two epsilons kept in sync by comment is one epsilon that drifts.
 WRAP_EPSILON = 0.5
+
+# A lone filter is reset by clearing it; the item earns its room from two up.
+MIN_CONTROLS_FOR_RESET = 2
 
 
 @dataclass(frozen=True)
@@ -137,12 +146,27 @@ class ControlBox:
 
 
 @dataclass(frozen=True)
+class ResetBox:
+    """The reset item's placed geometry, in board user units."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+@dataclass(frozen=True)
 class VariablesLayout:
-    """Every control's box plus the band that contains them."""
+    """Every control's box plus the band that contains them.
+
+    ``reset`` is kept out of ``boxes``: hosts bind controls by index into it, and
+    the reset item is not a control.
+    """
 
     boxes: tuple[ControlBox, ...]
     height: float
     rows: int
+    reset: ResetBox | None
 
 
 def lay_out_variables(
@@ -151,10 +175,11 @@ def lay_out_variables(
     """Place each control into rows no wider than ``width``.
 
     Returns boxes in the order given — document order is what a host binds
-    against, so it is not reordered to pack rows more tightly.
+    against, so it is not reordered to pack rows more tightly. Two or more
+    controls also reserve a reset item after the last one.
     """
     if not specs:
-        return VariablesLayout(boxes=(), height=0.0, rows=0)
+        return VariablesLayout(boxes=(), height=0.0, rows=0, reset=None)
 
     gap = float(variables_style.gap)
     row_height = float(variables_style.container_height)
@@ -190,7 +215,7 @@ def lay_out_variables(
                 name=spec.name,
                 input=spec.input,
                 label=spec.label,
-                value=spec.value,
+                value=_drawn_value(spec, variables_style, float(font_size)),
                 x=x,
                 y=row * (row_height + gap),
                 width=control_width,
@@ -200,11 +225,27 @@ def lay_out_variables(
         )
         x += control_width + gap
 
+    reset = None
+    if len(specs) >= MIN_CONTROLS_FOR_RESET:
+        padding = variables_style.input.padding
+        reset_width = (
+            _text_width(board_word("controls.reset"), float(font_size))
+            + float(padding.left)
+            + float(padding.right)
+        )
+        if x + reset_width > available + WRAP_EPSILON:
+            row += 1
+            x = 0.0
+        reset = ResetBox(
+            x=x, y=row * (row_height + gap), width=reset_width, height=row_height
+        )
+
     rows = row + 1
     return VariablesLayout(
         boxes=tuple(boxes),
         height=rows * row_height + (rows - 1) * gap,
         rows=rows,
+        reset=reset,
     )
 
 
@@ -260,6 +301,8 @@ def _input_width(
 
     if sizing == "checkbox":
         return float(widths.checkbox)
+    if sizing == "summary":
+        return float(widths.text)
     if sizing == "slider":
         # The track is fixed; the value beside it is what varies.
         return (
@@ -287,6 +330,31 @@ def _input_width(
     if sizing == "daterange":
         return max(float(widths.daterange), boxed)
     return max(float(widths.text), boxed)
+
+
+def _drawn_value(
+    spec: ControlSpec, variables_style: VariablesStyle, font_size: float
+) -> str:
+    """The text a field draws: a ``summary`` field's cut to its text slot."""
+    if traits_of(spec.input).sizing != "summary":
+        return spec.value
+    padding = variables_style.input.padding
+    slot = (
+        float(variables_style.input.widths.text)
+        - float(padding.left)
+        - float(padding.right)
+    )
+    # The engine's `truncate_label_with` cuts the same way, so both renders draw
+    # the same text. They differ only when not even "…" fits, a slot no theme
+    # text width leaves.
+    return truncate_text_precise(
+        spec.value,
+        slot,
+        font_size,
+        get_font_measurer(),
+        ellipsis=True,
+        normalize_whitespace=False,
+    )
 
 
 def _text_width(text: str, font_size: float) -> float:

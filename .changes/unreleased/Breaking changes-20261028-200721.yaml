@@ -1,0 +1,3 @@
+kind: Breaking changes
+body: '`type: http` queries and `http` sources are removed; load that data into your warehouse, or use a committed CSV, JSON or Parquet file source instead.'
+time: 2026-10-28T20:07:21.470742-07:00

@@ -36,7 +36,6 @@ import dataclasses
 import types
 import typing
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from copy import deepcopy
 from functools import cache
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, TypeAlias, TypeVar, overload
@@ -74,30 +73,6 @@ if TYPE_CHECKING:
 
 P = TypeVar("P", bound=BaseModel)
 _Leaf: TypeAlias = Any  # type-state: explicit_any — an authored leaf of any type
-
-
-def deep_merge_dict(
-    base: Mapping[str, Any], overlay: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Recursively merge *overlay* onto *base*, returning a new dict.
-
-    The plain-dict counterpart to ``merge_patches``/``merge_onto_base`` — for
-    config sections and Vega-Lite config dicts, which have no BaseModel shape
-    to dispatch on. Rebuilds only the branches touched by the overlay; overlay
-    leaves are deep-copied so later mutation cannot bleed back into reusable
-    defaults.
-    """
-    result = dict(base)
-    for key, value in overlay.items():
-        if (
-            key in result
-            and isinstance(result[key], Mapping)
-            and isinstance(value, Mapping)
-        ):
-            result[key] = deep_merge_dict(result[key], value)
-        else:
-            result[key] = deepcopy(value)
-    return result
 
 
 def merge_marker(field: FieldInfo) -> Merge | None:
@@ -571,7 +546,6 @@ def _fragment_from_yaml(
 
     from dbt_charts.core.compile.models.board.patch import (
         BOARD_PATCH_ADAPTER,
-        BoardPatch,
     )
     from dbt_charts.core.compile.parse.parser import load_yaml_text
 
@@ -585,7 +559,7 @@ def _fragment_from_yaml(
     if written_in is not None:
         from dbt_charts.core.compile.migrations import prepare_board_mapping
 
-        data = prepare_board_mapping(data, model=BoardPatch)
+        data = prepare_board_mapping(data, patch=True)
         anchor_images(data, written_in)
     try:
         return BOARD_PATCH_ADAPTER.validate_python(data, context=AUTHORED_INPUT)
@@ -829,8 +803,14 @@ def resolve_built_in_theme(name: str) -> BaseModel:
 
     Themes are package data read via importlib.resources, with names-only
     extends chains, so the ctx has no project (``board_dir``/``boards_root`` are
-    None) — only the theme-name set.
+    None) — only the theme-name set. The fold runs once per process; patches
+    are mutable, so each caller gets its own copy.
     """
+    return _folded_built_in_theme(name).model_copy(deep=True)
+
+
+@cache
+def _folded_built_in_theme(name: str) -> BaseModel:
     from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
     node = BOARD_PATCH_ADAPTER.validate_python({"extends": name})
@@ -986,7 +966,6 @@ def merge_metas(
     from dbt_charts.core.compile.models.board.patch import (
         BOARD_PATCH_ADAPTER,
         EMPTY_PATCH,
-        BoardPatch,
     )
     from dbt_charts.core.compile.parse.meta import find_meta_files, load_meta_file
 
@@ -1020,7 +999,7 @@ def merge_metas(
 
         with migration_notice_file(meta_path.relpath):
             try:
-                meta_mapping = prepare_board_mapping(meta_data, model=BoardPatch)
+                meta_mapping = prepare_board_mapping(meta_data, patch=True)
                 anchor_images(meta_mapping, meta_path.parent)
                 fragment = BOARD_PATCH_ADAPTER.validate_python(
                     meta_mapping, context=AUTHORED_INPUT

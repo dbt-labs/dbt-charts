@@ -100,7 +100,7 @@ def literal_schema(
     """Column types of inline rows, whose literal is its own declaration.
 
     The one place types are read off values, for the sources with no schema
-    to declare them: a values query's YAML, an HTTP response's JSON, SQLite's
+    to declare them: a values query's YAML, a JSON file, SQLite's
     untyped expressions. Columns default to the keys of all rows, in first-seen
     order. A column that
     mixes kinds is rejected; integers and floats together are numbers and read

@@ -35,7 +35,7 @@ class TestRowTypingRendering:
             {"company": "Average", "revenue": 1500, "row_role": "summary"},
         ]
 
-    def _style_with_row_rule(self, row_role="row_role"):
+    def _style_with_row_rule(self):
 
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
@@ -44,7 +44,6 @@ class TestRowTypingRendering:
                 "divider": tc.row.divider.model_copy(
                     update={"visible": True, "width": 0.5}
                 ),
-                "role": row_role,
                 "roles": tc.row.roles.model_copy(
                     update={
                         "summary": tc.row.roles.summary.model_copy(
@@ -78,7 +77,7 @@ class TestRowTypingRendering:
         """
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         _custom_ctx = self._style_with_row_rule()
         chart = resolve(chart, self._data_with_total(), chart_style_context=_custom_ctx)
         svg = render_table_svg(
@@ -102,7 +101,7 @@ class TestRowTypingRendering:
         """
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         _custom_ctx = self._style_with_row_rule()
         chart = resolve(
             chart, self._data_with_summary(), chart_style_context=_custom_ctx
@@ -124,7 +123,7 @@ class TestRowTypingRendering:
         """Summary rows render with font-weight 500 (medium) by default."""
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         _custom_ctx = self._style_with_row_rule()
         chart = resolve(chart, self._data_with_total(), chart_style_context=_custom_ctx)
         svg = render_table_svg(
@@ -159,12 +158,11 @@ class TestRowTypingRendering:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
         new_row = tc.row.model_copy(
             update={
-                "role": "row_role",
                 "roles": tc.row.roles.model_copy(
                     update={
                         "summary": tc.row.roles.summary.model_copy(
@@ -221,7 +219,7 @@ class TestAnchorsMode:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         chart.style = TableChartStylePatch(
             columns={
                 "company": TableColumnConfig(),
@@ -232,13 +230,7 @@ class TestAnchorsMode:
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
         es = dataclasses.replace(
-            es,
-            table=tc.model_copy(
-                update={
-                    "symbol_mode": "anchors",
-                    "row": tc.row.model_copy(update={"role": "row_role"}),
-                }
-            ),
+            es, table=tc.model_copy(update={"symbol_mode": "anchors"})
         )
         data = [
             {"company": "Apex", "revenue": 24730000, "row_role": "value"},
@@ -387,7 +379,7 @@ class TestAllSymbolsMode:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="row_role")
         chart.style = TableChartStylePatch(
             columns={
                 "company": TableColumnConfig(),
@@ -397,15 +389,7 @@ class TestAllSymbolsMode:
 
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
-        es = dataclasses.replace(
-            es,
-            table=tc.model_copy(
-                update={
-                    "symbol_mode": "all",
-                    "row": tc.row.model_copy(update={"role": "row_role"}),
-                }
-            ),
-        )
+        es = dataclasses.replace(es, table=tc.model_copy(update={"symbol_mode": "all"}))
         data = [
             {"company": "Apex", "revenue": 24_730_000, "row_role": "value"},
             {"company": "Bright", "revenue": 8_460_000, "row_role": "value"},
@@ -481,7 +465,7 @@ class TestScaleDomainExcludesTotalRows:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="_df_row_role")
         chart.style = TableChartStylePatch(
             columns={
                 "product": TableColumnConfig(),
@@ -503,13 +487,6 @@ class TestScaleDomainExcludesTotalRows:
             {"product": "Total", "revenue": 100, "_df_row_role": "total"},
         ]
         es = resolve_chart_style_context(get_theme_style())
-        tc = es.table
-        es = dataclasses.replace(
-            es,
-            table=tc.model_copy(
-                update={"row": tc.row.model_copy(update={"role": "_df_row_role"})}
-            ),
-        )
 
         chart = resolve(chart, data, chart_style_context=es)
         svg = render_table_svg(

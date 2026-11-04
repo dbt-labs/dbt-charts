@@ -135,7 +135,7 @@ pub(super) fn build_cat_domain(
 /// max, so a rung the nice admits comes back.
 pub(super) fn niced_rail_domain(ax_y: &AxisStyle, domain_max: f64) -> (f64, Vec<f64>) {
     let max = if ax_y.scale.get("nice").and_then(Value::as_bool) != Some(false) {
-        crate::families::cartesian::d3_nice_domain(0.0, domain_max, 10).1
+        d3rs::ticks::d3_nice(0.0, domain_max, 10).1
     } else {
         domain_max
     };
@@ -249,7 +249,7 @@ pub(super) fn nice_shared_scale(ax_y: &AxisStyle, floor: f64, max: f64) -> (f64,
 /// Every drawing loop of
 /// both arms (single-series, grouped by sign sub-layer, and stacked
 /// cumulative) draws from the zero rule, so a negative `domain_min` reaches
-/// their `LinearScale` as the rule's own position (see
+/// their `Continuous` as the rule's own position (see
 /// `render_horizontal`/`render_vertical_panel`).
 pub(super) fn value_domain_and_ticks(
     rows: &[serde_json::Map<String, Value>],
@@ -379,12 +379,12 @@ pub(super) fn value_domain_and_ticks(
                 .fold(f64::INFINITY, f64::min)
         });
     let (nice_floor, domain_max) = if let (true, Some(floor)) = (nice, fitted_floor) {
-        crate::families::cartesian::d3_nice_domain(floor, domain_max, 10)
+        d3rs::ticks::d3_nice(floor, domain_max, 10)
     } else if nice && stack_floor < 0.0 {
-        let (lo, hi) = crate::families::cartesian::d3_nice_domain(stack_floor, domain_max, 10);
+        let (lo, hi) = d3rs::ticks::d3_nice(stack_floor, domain_max, 10);
         (lo, hi)
     } else if nice {
-        (stack_floor, crate::families::cartesian::d3_nice_domain(0.0, domain_max, 10).1)
+        (stack_floor, d3rs::ticks::d3_nice(0.0, domain_max, 10).1)
     } else {
         (stack_floor, domain_max)
     };
@@ -483,7 +483,7 @@ pub(super) fn value_domain_and_ticks(
     // with the top (`configureDomain`, `vega.js:21556-21559`): the baked ladder
     // is then filtered by the niced pair.
     let (domain_min, domain_max, ticks) = if nice && vertical && stack == "none" && !unbaked && domain_min < 0.0 {
-        let (nice_min, nice_max) = crate::families::cartesian::d3_nice_domain(domain_min, un_niced_max, 10);
+        let (nice_min, nice_max) = d3rs::ticks::d3_nice(domain_min, un_niced_max, 10);
         let eps = nice_max.abs() * 1e-9;
         let ladder = ax_y.tick_values.iter().copied().filter(|&tv| tv <= nice_max + eps).collect();
         (nice_min, nice_max, ladder)
@@ -547,17 +547,10 @@ pub(super) fn collapsed_authored_domain(ax_y: &AxisStyle, rows: &[serde_json::Ma
 }
 
 /// The `(lowest, highest)` end a layer's per-category zero stack reaches
-/// (`stackZero`: positives pile up from 0, negatives down from it).
+/// (positives pile up from 0, negatives down from it).
 pub(super) fn stack_reach(rows: &[serde_json::Map<String, Value>], cat_field: &str, val_field: &str) -> (f64, f64) {
-    let mut piles: HashMap<(String, bool), f64> = HashMap::new();
-    for row in rows {
-        if let Some(v) = row_num(row, val_field) {
-            *piles.entry((row_str(row, cat_field), v < 0.0)).or_insert(0.0) += v;
-        }
-    }
-    piles.into_iter().fold((0.0, 0.0), |(lo, hi), ((_, negative), sum)| {
-        if negative { (lo.min(sum), hi) } else { (lo, hi.max(sum)) }
-    })
+    let piles = crate::common::zero_piles(rows.iter().filter_map(|row| Some((row_str(row, cat_field), row_num(row, val_field)?))));
+    piles.into_iter().fold((0.0, 0.0), |(lo, hi), (start, end)| (lo.min(start), hi.max(end)))
 }
 
 /// Port of `_stacked_midpoints` (features/endpoint_labels.py), default
@@ -567,21 +560,31 @@ pub(super) fn stack_reach(rows: &[serde_json::Map<String, Value>], cat_field: &s
 /// a series stacks on whichever series precede it in that same column — so
 /// every anchor column is snapshotted independently. A series with no value
 /// anywhere anchors zero-height at the domain's last column (its label must
-/// still appear: the rail replaces the legend). Normalize divides by the
-/// anchor column's OWN total, the share VL renders for that column.
+/// still appear: the rail replaces the legend). The anchor is the middle of
+/// the series' span in `stack_spans`, a share under normalize.
 pub(super) fn stacked_rail_anchors(
     cat_domain: &[String],
     stack_order: &[String],
     data_map: &HashMap<(String, String), f64>,
     normalize: bool,
     // The tallest total of a `center` stack, which floats every category to its middle.
-    center_max: Option<f64>,
+    center: Option<&CenterStack>,
 ) -> Result<Vec<(String, f64)>, String> {
     // A negative measure under endpoint labels is refused ahead of the render
     // (`ERR_ENDPOINT_LABELS_NEGATIVE_STACK`), so every anchor here is non-negative.
     if cat_domain.is_empty() {
         return Ok(Vec::new());
     }
+    // A series with no datum in a column stacks as a zero there.
+    let filled: HashMap<(String, String), f64> = cat_domain
+        .iter()
+        .flat_map(|cat| stack_order.iter().map(move |series| (cat.clone(), series.clone())))
+        .map(|key| {
+            let value = data_map.get(&key).copied().unwrap_or(0.0);
+            (key, value)
+        })
+        .collect();
+    let spans = stack_spans(cat_domain, stack_order, &filled, normalize, center)?;
     Ok(stack_order
         .iter()
         .map(|series| {
@@ -589,29 +592,8 @@ pub(super) fn stacked_rail_anchors(
                 .iter()
                 .rposition(|c| data_map.contains_key(&(c.clone(), series.clone())))
                 .unwrap_or(cat_domain.len() - 1);
-            let cat = &cat_domain[anchor];
-            let value_of = |s2: &String| {
-                data_map.get(&(cat.clone(), s2.clone())).copied().unwrap_or(0.0)
-            };
-            let total: f64 = stack_order.iter().map(value_of).sum();
-            let mut cum = 0.0_f64;
-            let mut own = 0.0_f64;
-            for s2 in stack_order {
-                let v = value_of(s2);
-                if s2 == series {
-                    own = v;
-                    break;
-                }
-                cum += v;
-            }
-            let mut mid = cum + own / 2.0;
-            if let Some(max) = center_max {
-                mid += crate::common::center_offset(max, total);
-            }
-            if normalize && total > 0.0 {
-                mid /= total;
-            }
-            (series.clone(), mid)
+            let span = spans[&(cat_domain[anchor].clone(), series.clone())];
+            (series.clone(), crate::common::rail_anchor([span.start, span.end]))
         })
         .collect())
 }
@@ -664,6 +646,26 @@ pub(super) fn category_totals(
     totals
 }
 
+impl BarResolved {
+    /// resolve's `stacked_domain_max` over `rows`: the tallest positive pile across the panels'
+    /// categories, widened to the annotations' base-axis values, with the axis headroom applied
+    /// (`bar.py`, `stacked_totals_max` and `apply_headroom`). `None` when no pile is positive:
+    /// resolve then bakes no domain top and the scale fits itself.
+    pub(super) fn stacked_domain_top(&self, rows: &[serde_json::Map<String, Value>]) -> Option<f64> {
+        let mut piles: HashMap<Vec<String>, f64> = HashMap::new();
+        for row in rows {
+            let (Some(x), Some(y)) = (row.get(&self.x).filter(|x| !x.is_null()), row_num(row, &self.y)) else { continue };
+            let mut key: Vec<String> = self.panel_axes.iter().map(|axis| row_str(row, &axis.field)).collect();
+            key.push(crate::common::cell_str(Some(x)));
+            *piles.entry(key).or_insert(0.0) += y.max(0.0);
+        }
+        let tallest = piles.values().copied().reduce(f64::max)?;
+        let top = crate::annotation::widen_y((tallest, tallest), &self.annotations, crate::annotation::YAxis::Base, None, false).1;
+        let headroom = self.style.axis_y.scale.get("headroom").and_then(Value::as_f64).unwrap_or(0.0);
+        (top > 0.0).then(|| if headroom != 0.0 { top * (1.0 + headroom) } else { top })
+    }
+}
+
 /// `_stacked_y_domain`'s `y_domain_max` for a `zero`/`center` stack: the
 /// tallest category total, with no headroom and no nice. The one value the
 /// domain pin, the rail midpoints and the centered segments all read.
@@ -671,8 +673,8 @@ pub(super) fn tallest_total(totals: &HashMap<String, f64>) -> f64 {
     totals.values().copied().fold(0.0, f64::max)
 }
 
-/// Vega's `center` stack (`stackCenter`): each category's pile of `|v|` floats to
-/// the middle of the tallest. A chart holding both signs with a corner radius
+/// The `center` stack (`common::centered`): each category's pile of `|v|` floats to
+/// the middle of the tallest, which is all this carries. A chart holding both signs with a corner radius
 /// splits into a `>= 0` and a `< 0` layer (`_layers.py::emit_bar_layer`); each
 /// layer is a stack of its own, so each centers on its own tallest pile. A
 /// `middle` value label is no bar layer: its stack covers both signs at once.
@@ -703,14 +705,15 @@ impl CenterStack {
     ) -> Self {
         let mut stack = Self { tallest: [0.0; 2], split };
         for rows in groups {
-            let mut piles: HashMap<(String, usize), f64> = HashMap::new();
+            let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
             for row in rows {
                 if let Some(v) = row_num(row, val_field) {
-                    *piles.entry((row_str(row, cat_field), stack.layer(v))).or_insert(0.0) += v.abs();
+                    columns.entry(row_str(row, cat_field)).or_default().push(v);
                 }
             }
-            for ((_, layer), pile) in piles {
-                stack.tallest[layer] = stack.tallest[layer].max(pile);
+            for layer in 0..2 {
+                let piles = columns.values().map(|column| column.iter().copied().filter(|&v| stack.layer(v) == layer));
+                stack.tallest[layer] = stack.tallest[layer].max(crate::common::tallest_pile(piles));
             }
         }
         stack
@@ -729,18 +732,17 @@ pub(super) fn stack_label_spans(
     cat_domain: &[String],
     stack_order: &[String],
     data_map: &HashMap<(String, String), f64>,
-    totals: &HashMap<String, f64>,
-) -> Option<SegmentSpans> {
-    let labels = r.style.mark.labels.as_ref().filter(|l| l.visible)?;
+) -> Result<Option<SegmentSpans>, String> {
+    let Some(labels) = r.style.mark.labels.as_ref().filter(|l| l.visible) else { return Ok(None) };
     let middle = label_position(labels, true) == "middle";
     let order = if stack_order.is_empty() { &[String::new()][..] } else { stack_order };
     match r.stack.as_str() {
         "center" => {
             let centered = middle.then_some(label_stack).flatten();
-            Some(stack_spans(cat_domain, order, data_map, false, totals, centered))
+            stack_spans(cat_domain, order, data_map, false, centered).map(Some)
         }
-        "normalize" if !middle => Some(stack_spans(cat_domain, order, data_map, false, totals, None)),
-        _ => None,
+        "normalize" if !middle => stack_spans(cat_domain, order, data_map, false, None).map(Some),
+        _ => Ok(None),
     }
 }
 
@@ -1019,6 +1021,8 @@ pub(super) fn build_chart_domains(
     wide_measures: &[String],
     wide_series: &[String],
     chart_palette_unset: bool,
+    // The options of the variable a linked legend lists whole: the series, whether or not rows hold them.
+    options: Option<&[String]>,
 ) -> Result<BarChartState, String> {
     let is_grouped = color_field.is_some();
     let is_stacked = is_grouped && stack != "none";
@@ -1027,6 +1031,8 @@ pub(super) fn build_chart_domains(
     let cat_domain = build_cat_domain(cat_rows, cat_field, val_field, order)?;
     let color_domain = if !wide_measures.is_empty() {
         wide_series.to_vec()
+    } else if let Some(options) = options {
+        options.to_vec()
     } else {
         color_field.map_or_else(Vec::new, |cf| color_domain_of(rows, cf))
     };
@@ -1044,8 +1050,10 @@ pub(super) fn build_chart_domains(
     // Palette slots: alphabetical color domain when color is 1:1 with the
     // category (see color_1to1_with_cat), baseline-first stack order otherwise.
     // A chart with no palette of its own sets no color domain: Vega-Lite's default sorts it.
+    // A linked legend's series are its options, so a series keeps its color whatever rows are left.
     let palette_domain = if is_stacked
-        && (chart_palette_unset
+        && (options.is_some()
+            || chart_palette_unset
             || color_one_to_one.unwrap_or_else(|| {
                 color_1to1_with_cat(rows, cat_field, color_field.expect("is_stacked implies color"))
             }))
@@ -1083,62 +1091,47 @@ pub(super) struct SegmentSpan {
 
 pub(super) type SegmentSpans = HashMap<(String, String), SegmentSpan>;
 
-/// Every stacked segment's `[start, end]` (`stack` transform: a share under
+/// Every stacked segment's `[start, end]` (`grammar_stack`: a share under
 /// `normalize`, floated by `center`), one per `(category, series)` with a
-/// datum. A row Vega has no datum for draws nothing and owns no span.
+/// datum. A row with no datum draws nothing and owns no span.
 pub(super) fn stack_spans(
     cat_domain: &[String],
     stack_order: &[String],
     data_map: &HashMap<(String, String), f64>,
     normalize: bool,
-    totals: &HashMap<String, f64>,
     center: Option<&CenterStack>,
-) -> SegmentSpans {
+) -> Result<SegmentSpans, String> {
+    let values: Vec<Vec<f64>> = stack_order
+        .iter()
+        .map(|series| {
+            cat_domain
+                .iter()
+                .map(|cat| data_map.get(&(cat.clone(), series.clone())).copied().unwrap_or(f64::NAN))
+                .collect()
+        })
+        .collect();
+    // A centered stack split by sign is one stack per sign layer, each floated on its own tallest pile.
+    let layers: Vec<Vec<Vec<[f64; 2]>>> = match center {
+        Some(center) => (0..=usize::from(center.split))
+            .map(|layer| {
+                let kept: Vec<Vec<f64>> = values
+                    .iter()
+                    .map(|series| series.iter().map(|&v| if center.layer(v) == layer { v } else { f64::NAN }).collect())
+                    .collect();
+                crate::common::centered(&kept, center.tallest[layer])
+            })
+            .collect(),
+        None => vec![crate::common::grammar_stack(if normalize { "normalize" } else { "zero" }, &values)?],
+    };
     let mut spans = SegmentSpans::new();
-    for cat in cat_domain {
-        // A synthesized calendar bucket has no rows, so no total: production's
-        // null-measure column draws nothing there.
-        if normalize && !totals.contains_key(cat) {
-            continue;
-        }
-        let values = || stack_order.iter().filter_map(|series| data_map.get(&(cat.clone(), series.clone())).copied());
-        // Under `normalize` production draws a mixed-sign column as two layers (`datum.v >= 0`, `< 0`), each
-        // stacked up from the zero rule over its own sum of magnitudes.
-        let (pos_total, neg_total) = if normalize {
-            values().fold((0.0_f64, 0.0_f64), |(pos, neg), v| if v < 0.0 { (pos, neg - v) } else { (pos + v, neg) })
-        } else {
-            (0.0, 0.0)
-        };
-        let mut piles = [0.0_f64; 2];
-        if let Some(center) = center {
-            for layer in 0..2 {
-                let pile = crate::common::abs_total(values().filter(|&v| center.layer(v) == layer));
-                piles[layer] = crate::common::center_offset(center.tallest[layer], pile);
-            }
-        }
-        let mut sums = crate::common::StackZero::new(0.0);
-        let mut shares = [0.0_f64; 2];
-        for series in stack_order {
-            let Some(&raw_val) = data_map.get(&(cat.clone(), series.clone())) else { continue };
-            let (start, end) = match center {
-                Some(center) => {
-                    let layer = center.layer(raw_val);
-                    let start = piles[layer];
-                    piles[layer] += raw_val.abs();
-                    (start, piles[layer])
-                }
-                None if normalize => {
-                    let (layer, total) = if raw_val < 0.0 { (1, neg_total) } else { (0, pos_total) };
-                    let start = shares[layer];
-                    shares[layer] += raw_val.abs() / total;
-                    (start, shares[layer])
-                }
-                None => sums.push(raw_val),
-            };
+    for (si, series) in stack_order.iter().enumerate() {
+        for (ci, cat) in cat_domain.iter().enumerate() {
+            let Some(&value) = data_map.get(&(cat.clone(), series.clone())) else { continue };
+            let [start, end] = layers[center.map_or(0, |center| center.layer(value))][si][ci];
             spans.insert((cat.clone(), series.clone()), SegmentSpan { slot: None, start, end });
         }
     }
-    spans
+    Ok(spans)
 }
 
 /// Every painted grouped bar's span, at its series slot: `[0, value]`, or a

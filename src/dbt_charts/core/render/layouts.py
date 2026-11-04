@@ -29,7 +29,6 @@ See: plans/archive/VEGA_SVG_BATCH_CONVERSION_ANALYSIS.md
 """
 
 import html
-import math
 from collections.abc import Callable
 
 from dbt_charts.core.compile.models.board.normalized import (
@@ -41,14 +40,25 @@ from dbt_charts.core.compile.models.board.resolved import ResolvedLayoutItem
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
-from dbt_charts.core.font_measure import get_weighted_font_measurer
 from dbt_charts.core.render.board_variables import (
     committed_text,
     current_daterange_presets,
 )
 from dbt_charts.core.render.chart.rendering import render_layout_item
 from dbt_charts.core.render.layout_sizing import RenderCache
-from dbt_charts.core.render.sizing import resolve_active_tab_index
+from dbt_charts.core.render.sizing import (
+    resolve_active_tab_index,
+    tab_cell_width,
+    tab_content_offset,
+    tab_font,
+    tab_label_measurer,
+    tab_labels,
+    tab_line_step,
+    tab_rail_cell_height,
+    tab_rail_lines,
+    tab_rail_width,
+    tabs_layout_height,
+)
 from dbt_charts.core.render.svg_utils import (
     authored_attrs,
     border_dash_attrs,
@@ -58,8 +68,6 @@ from dbt_charts.core.render.svg_utils import (
     selection_boxes,
     translate_group,
 )
-from dbt_charts.core.text.case import apply_case
-from dbt_charts.core.text.format_d3 import board_word
 
 __all__ = [
     "is_details_expanded",
@@ -376,7 +384,8 @@ def render_tabs_layout(
         tab_slugs: URL-safe slugs for tabs (used in URL params)
         tab_variable: Variable name for tab selection (URL param name)
         active_tab: Index of active tab (0-based)
-        tab_position: Position of tabs ("top" or "left")
+        tab_position: Position of tabs: "top" (a bar above the pane) or
+            "left" (a vertical rail beside it)
         background: Optional background color
 
     Returns:
@@ -391,24 +400,24 @@ def render_tabs_layout(
 
     tabs_config = resolved_style.layout.tabs
     tab_bar_height = tabs_config.bar_height
-    tab_case = tabs_config.font.case
-    if tab_case is None:
-        raise ValueError("layout.tabs.font.case must be resolved")
+    left_rail = tab_position == "left"
+
+    # The bar (or rail) is inset like card ink; the pane starts below the bar
+    # or right of the rail and its gutter.
+    bar_inset = float(resolved_style.frame.card_padding)
+    content_x, content_y = tab_content_offset(
+        tab_position, tab_titles, len(items), resolved_style
+    )
 
     # Render only active tab
-    content_height = (
-        available_height - tab_bar_height if tab_position == "top" else available_height
-    )
-    content_y = tab_bar_height if tab_position == "top" else 0.0
-
     active_item = items[active_tab]
     item_svg, actual_item_height = render_layout_item(
         active_item,
         executor,
         variables,
         card_gap=0.0,
-        available_width=available_width,
-        available_height=content_height,
+        available_width=available_width - content_x,
+        available_height=available_height - content_y,
         resolved_style=resolved_style,
         render_cache=render_cache,
         source_path=active_item.source_path,
@@ -416,59 +425,74 @@ def render_tabs_layout(
         painted_canvas=painted_canvas,
     )
 
-    # Compute tab titles once - use provided titles or generate defaults
-    titles = (
-        tab_titles
-        if tab_titles and len(tab_titles) == len(items)
-        else [board_word("tab.title", n=str(idx + 1)) for idx in range(len(items))]
-    )
+    labels = tab_labels(tab_titles, len(items), resolved_style)
     slugs = tab_slugs or [f"tab_{idx}" for idx in range(len(items))]
 
-    # Every label is measured at the active weight so the bar does not shift
-    # when the selection moves.
-    family = tabs_config.font.family
-    if family is None:
-        raise ValueError("layout.tabs.font.family must be resolved")
-    size = tabs_config.font.size
-    if size is None:
-        raise ValueError("layout.tabs.font.size must be resolved")
-    measure = get_weighted_font_measurer(family, tabs_config.active_weight).measure
+    family, size, _, _ = tab_font(resolved_style)
+    line_step = tab_line_step(resolved_style)
+    measure = tab_label_measurer(resolved_style)
     label_room = tabs_config.max_width - 2 * tabs_config.padding_x
+    # A rail stacks equal-width cells; a top bar lines content-width cells up.
+    rail_width = tab_rail_width(labels, resolved_style) if left_rail else 0.0
     tab_bar_parts: list[str] = []
     tab_x = 0.0
+    tab_y = 0.0
     active_span = (0.0, 0.0)
-    for idx, (title, slug) in enumerate(zip(titles, slugs, strict=True)):
+    for idx, (label, slug) in enumerate(zip(labels, slugs, strict=True)):
         is_active = idx == active_tab
-        label = apply_case(title, tab_case)
-        shown = _fit_label(label, measure, size, label_room)
-        # Whole pixels absorb the sub-pixel gap between the two engines' text
-        # measurers.
-        tab_width = min(
-            max(
-                float(math.ceil(measure(label, size) + 2 * tabs_config.padding_x)),
-                tabs_config.min_width,
-            ),
-            tabs_config.max_width,
-        )
+        # A rail has the height to wrap a long label; a top bar cuts it on one line.
+        if left_rail:
+            lines, cut = tab_rail_lines(label, resolved_style)
+            tab_width = rail_width
+            cell_height = tab_rail_cell_height(len(lines), resolved_style)
+        else:
+            shown = _fit_label(
+                label, lambda text, _size: measure(text), size, label_room
+            )
+            lines, cut = [shown], shown != label
+            tab_width = tab_cell_width(label, resolved_style)
+            cell_height = tab_bar_height
         if is_active:
-            active_span = (tab_x, tab_x + tab_width)
+            active_span = (
+                (tab_y, tab_y + cell_height)
+                if left_rail
+                else (tab_x, tab_x + tab_width)
+            )
         weight = tabs_config.active_weight if is_active else tabs_config.inactive_weight
         ink = (
             resolved_style.title.font.color
             if is_active
             else resolved_style.variables.font.color
         )
-        tooltip = f"<title>{html.escape(label)}</title>" if shown != label else ""
+        tooltip = f"<title>{html.escape(label)}</title>" if cut else ""
         # The boxes fill the whole cell, so it is hit-testable and has an outline to mark.
-        boxes = selection_boxes(tab_width, tab_bar_height, _NO_PADDING)
+        boxes = selection_boxes(tab_width, cell_height, _NO_PADDING)
+        # A rail's labels share its left edge; a top tab centers its own.
+        text_x, anchor = (
+            (tabs_config.padding_x, "start") if left_rail else (tab_width / 2, "middle")
+        )
+        # The lines sit centered on the cell's middle, one line step apart.
+        baselines = [
+            cell_height / 2
+            + tabs_config.title_baseline_offset
+            + (i - (len(lines) - 1) / 2) * line_step
+            for i in range(len(lines))
+        ]
+        if len(lines) == 1:
+            text_body = html.escape(lines[0])
+        else:
+            text_body = "".join(
+                f'<tspan x="{escape_attr(text_x)}" y="{escape_attr(y)}">{html.escape(line)}</tspan>'
+                for line, y in zip(lines, baselines, strict=True)
+            )
         tab_svg = (
-            f'{tooltip}{boxes}<text x="{escape_attr(tab_width / 2)}" y="{escape_attr(tab_bar_height / 2 + tabs_config.title_baseline_offset)}" '
-            f'text-anchor="middle" font-family="{escape_attr(family)}" font-size="{escape_attr(size)}" fill="{escape_attr(ink)}" '
-            f'font-weight="{escape_attr(weight)}">{html.escape(shown)}</text>'
+            f'{tooltip}{boxes}<text x="{escape_attr(text_x)}" y="{escape_attr(baselines[0])}" '
+            f'text-anchor="{escape_attr(anchor)}" font-family="{escape_attr(family)}" font-size="{escape_attr(size)}" fill="{escape_attr(ink)}" '
+            f'font-weight="{escape_attr(weight)}">{text_body}</text>'
         )
         attrs = (
             f'role="tab" aria-selected="{"true" if is_active else "false"}" '
-            f'transform="translate({escape_attr(tab_x)}, 0)"'
+            f'transform="translate({escape_attr(tab_x)}, {escape_attr(tab_y if left_rail else 0)})"'
         )
         # A tab label is its pane's title, so it carries that key's own path.
         source_path = items[idx].source_path
@@ -481,33 +505,66 @@ def render_tabs_layout(
             )
         else:
             tab_bar_parts.append(f"<g {attrs}>{tab_svg}</g>")
-        tab_x += tab_width
+        if left_rail:
+            tab_y += cell_height
+        else:
+            tab_x += tab_width
 
+    actual_height = tabs_layout_height(
+        tab_position,
+        tab_titles,
+        len(items),
+        content_y,
+        actual_item_height,
+        resolved_style,
+    )
     border = tabs_config.border
     stroke = border.width
-    baseline_y = tab_bar_height - stroke / 2
-    top_y = stroke / 2
-    left = active_span[0] + stroke / 2
-    right = active_span[1] - stroke / 2
-    radius = min(border.radius, (right - left) / 2, baseline_y - top_y)
-    line_end = max(available_width, tab_x)
+    if left_rail:
+        # The active tab is a folder open to the right, joined to a full-height
+        # rule along the rail's right edge.
+        rule_x = rail_width - stroke / 2
+        outer_x = stroke / 2
+        top = active_span[0] + stroke / 2
+        bottom = active_span[1] - stroke / 2
+        radius = min(border.radius, (bottom - top) / 2, rule_x - outer_x)
+        line_end = max(actual_height - bar_inset, tab_y)
+        d = (
+            f"M {escape_attr(rule_x)} 0 V {escape_attr(top)} H {escape_attr(outer_x + radius)} "
+            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 0 {escape_attr(outer_x)} {escape_attr(top + radius)} "
+            f"V {escape_attr(bottom - radius)} "
+            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 0 {escape_attr(outer_x + radius)} {escape_attr(bottom)} "
+            f"H {escape_attr(rule_x)} V {escape_attr(line_end)}"
+        )
+    else:
+        baseline_y = tab_bar_height - stroke / 2
+        top_y = stroke / 2
+        left = active_span[0] + stroke / 2
+        right = active_span[1] - stroke / 2
+        radius = min(border.radius, (right - left) / 2, baseline_y - top_y)
+        line_end = max(available_width, tab_x)
+        d = (
+            f"M 0 {escape_attr(baseline_y)} H {escape_attr(left)} V {escape_attr(top_y + radius)} "
+            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(left + radius)} {escape_attr(top_y)} "
+            f"H {escape_attr(right - radius)} "
+            f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(right)} {escape_attr(top_y + radius)} "
+            f"V {escape_attr(baseline_y)} H {escape_attr(line_end)}"
+        )
     rule = (
-        f'<path d="M 0 {escape_attr(baseline_y)} H {escape_attr(left)} V {escape_attr(top_y + radius)} '
-        f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(left + radius)} {escape_attr(top_y)} "
-        f"H {escape_attr(right - radius)} "
-        f"A {escape_attr(radius)} {escape_attr(radius)} 0 0 1 {escape_attr(right)} {escape_attr(top_y + radius)} "
-        f'V {escape_attr(baseline_y)} H {escape_attr(line_end)}" '
+        f'<path d="{escape_attr(d)}" '
         f'fill="none" stroke="{escape_attr(border.color)}" stroke-width="{escape_attr(stroke)}" '
         f'stroke-linejoin="round"{border_dash_attrs(border)}/>'
     )
     tab_bar_parts.insert(0, rule)
-    tab_bar_svg = f'<g role="tablist">{"".join(tab_bar_parts)}</g>'
+    orientation = ' aria-orientation="vertical"' if left_rail else ""
+    tab_bar_svg = translate_group(
+        0, px(bar_inset), f'<g role="tablist"{orientation}>{"".join(tab_bar_parts)}</g>'
+    )
 
     content_svg = ""
     if item_svg:
-        content_svg = translate_group(0, px(content_y), item_svg)
+        content_svg = translate_group(px(content_x), px(content_y), item_svg)
 
-    actual_height = content_y + actual_item_height
     bg_rect = ""
     if background:
         bg_rect = _bg_rect(available_width, actual_height, background)

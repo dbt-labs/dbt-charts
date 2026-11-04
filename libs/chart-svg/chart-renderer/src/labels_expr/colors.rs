@@ -1,7 +1,8 @@
 //! d3-color's `rgb`, `hsl`, `lab` and `hcl` as Vega's expression functions expose them: parsing, conversion
 //! between the four spaces, and the `rgb(...)` text a color prints as.
 
-use super::val::{is_js_space, num_to_str};
+use super::val::num_to_str;
+use d3rs::js_math::is_js_space;
 use regex::Regex;
 use std::sync::OnceLock;
 

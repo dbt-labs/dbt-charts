@@ -37,6 +37,7 @@ from dbt_charts.core.compile.models.style.theme import (
     AxisYStyle,
     BarLabelsStyle,
 )
+from dbt_charts.core.compile.models.style.theme.marks import label_anchors
 from dbt_charts.core.compile.resolve.chart._annotations import (
     NO_ANNOTATIONS,
     annotation_chart,
@@ -91,6 +92,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -107,6 +109,11 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_requested_alias_palette,
     _effective_single_series_fill,
     _resolved_series_label,
+)
+from dbt_charts.core.compile.resolve.chart._pattern import (
+    inked_palette,
+    pattern_series,
+    resolve_pattern,
 )
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
@@ -148,7 +155,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_ANNOTATION_INVALID,
     ERR_BAR_LOG_SCALE_NOT_SUPPORTED,
     ERR_BAR_Y_NOT_NUMERIC,
-    ERR_LABELS_LAST_UNSUPPORTED,
+    ERR_LABELS_ANCHOR_UNSUPPORTED,
 )
 from dbt_charts.core.font_measure import get_font_measurer
 from dbt_charts.core.text.category_label import category_label_text
@@ -641,6 +648,8 @@ def _resolve_bar(
     rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedBarChart:
+    authored_color = normalized.color
+    normalized = pattern_series(normalized, normalized.x, normalized.y)
     data = dataset.all_rows()
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
@@ -820,9 +829,21 @@ def _resolve_bar(
     # Hoisted above the ResolvedBarStyle construction below (its only other
     # use) so the horizontal collision disqualifier can measure the same
     # font the rail actually paints with, without resolving it twice.
+    pattern = resolve_pattern(
+        normalized.pattern,
+        authored_color,
+        data,
+        chart_style_context,
+        bar.pattern,
+        single_series_fill,
+        primary,
+    )
+    eff_palette = inked_palette(
+        _effective_palette(chart_style_context, primary), pattern
+    )
     series_label = _resolved_series_label(
         chart_style_context,
-        primary,
+        eff_palette,
         width,
         chart_local_style_context.ink_canvas,
     )
@@ -1225,7 +1246,7 @@ def _resolve_bar(
         chart_style_context,
         channels,
         bar.legend,
-        _effective_palette(chart_style_context, primary),
+        eff_palette,
         requested_alias_palette=_effective_requested_alias_palette(
             chart_style_context, primary
         ),
@@ -1263,13 +1284,39 @@ def _resolve_bar(
         chart_style_context.formats,
         tooltip_format_values,
     )
-    if bar.marks.bar.labels.visible == "last" and x_ch_type != "temporal":
+    if x_ch_type != "temporal" and label_anchors(bar.marks.bar.labels.visible) & {
+        "first",
+        "last",
+    }:
         raise CompilationError.from_code(
-            ERR_LABELS_LAST_UNSUPPORTED,
+            ERR_LABELS_ANCHOR_UNSUPPORTED,
             chart_id=normalized.id,
             field_path=f"charts.{normalized.id}.style.marks.bar.labels.visible",
             where="a bar chart whose category axis is not a time axis",
         )
+    # A grouped bar has no one bar to anchor; a stacked bar's anchors print stack
+    # totals, which only a zero stack without other total text can carry.
+    if (
+        label_anchors(bar.marks.bar.labels.visible)
+        and normalized.color is not None
+        and normalized.color != normalized.x
+    ):
+        where = None
+        if not is_stacked:
+            where = "a grouped bar chart"
+        elif resolved_stack != "zero":
+            where = f"a `stack: {resolved_stack}` bar chart"
+        elif bar.marks.bar.total_label.visible:
+            where = "a stacked bar chart whose total_label is visible"
+        elif bar.marks.bar.labels.field is not None:
+            where = "a stacked bar chart whose labels name a field"
+        if where is not None:
+            raise CompilationError.from_code(
+                ERR_LABELS_ANCHOR_UNSUPPORTED,
+                chart_id=normalized.id,
+                field_path=f"charts.{normalized.id}.style.marks.bar.labels.visible",
+                where=where,
+            )
     resolved_labels, label_is_house = _label_format_fallback(
         bar.marks.bar.labels,
         ResolvedBarLabels,
@@ -1318,6 +1365,7 @@ def _resolve_bar(
         x_date_range=x_date_range,
         wide_measures=wide_measures,
         chart_type="bar",
+        pattern=pattern,
         y_start=normalized.y_start,
         measure_type=measure_type,
         span_date_format=(
@@ -1404,7 +1452,7 @@ def _resolve_histogram(
         temporal_band_axes=frozenset(),
     )
     primary = plan.primary
-    hist = merge_unset(chart_style_context.histogram, primary)
+    hist = merge_unset(board_family_style(chart_style_context, normalized), primary)
     channels = plan.channels
     ay_merged = plan.axes.y.style
     ay_merged = _bake_ay_position_left(ay_merged)
@@ -1491,7 +1539,7 @@ def _resolve_histogram(
         style=ResolvedBarStyle(
             series_label=_resolved_series_label(
                 chart_style_context,
-                primary,
+                _effective_palette(chart_style_context, primary),
                 width,
                 chart_local_style_context.ink_canvas,
             ),

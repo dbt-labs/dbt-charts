@@ -45,13 +45,19 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _bound_scales,
     _shared_kwargs,
-    donut_over_pie,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_palette,
     _effective_requested_alias_palette,
+    _effective_single_series_fill,
     _pin_companions,
     _with_color_tokens,
+)
+from dbt_charts.core.compile.resolve.chart._pattern import (
+    inked_palette,
+    pattern_series,
+    resolve_pattern,
 )
 from dbt_charts.core.compile.resolve.chart._table import (
     _EMPTY_TABLE_COLUMN_LINKS,
@@ -126,16 +132,14 @@ def _resolve_pie(
     display_text: ChartDisplayText = None,
     title_font: ResolvedFontStyle | EllipsisType = ...,
 ) -> ResolvedPieChart:
+    authored_color = normalized.color
+    normalized = pattern_series(normalized)
     validate_theta_values(normalized.id, normalized.theta, data)
     chart_local_style_context = build_chart_style_context(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    board_pie = (
-        donut_over_pie(chart_style_context)
-        if normalized.is_donut
-        else chart_style_context.pie
-    )
+    board_pie = board_family_style(chart_style_context, normalized)
     pie = merge_unset(board_pie, primary)
     # The center total and every slice tooltip vote on one set (theta values
     # plus their sum) so they never disagree about the same sub-$1 value --
@@ -145,7 +149,18 @@ def _resolve_pie(
     channels = _channels_for(normalized, data)
     # `pie` is the family merged over its board tier, so the chart's own
     # color.categorical beats the board family's, which beats the global palette.
-    eff_palette = _effective_palette(chart_style_context, pie)
+    pattern = resolve_pattern(
+        normalized.pattern,
+        authored_color,
+        data,
+        chart_style_context,
+        pie.pattern,
+        _effective_single_series_fill(
+            chart_style_context, primary, rhythm_slot=normalized.rhythm_slot
+        ),
+        primary,
+    )
+    eff_palette = inked_palette(_effective_palette(chart_style_context, pie), pattern)
     if not eff_palette:
         raise ChartDataError(
             f"Pie chart {normalized.id!r} needs a resolved palette.",
@@ -413,6 +428,7 @@ def _resolve_pie(
         else title_font
     )
     return ResolvedPieChart(
+        pattern=pattern,
         **_base_kwargs(
             normalized,
             chart_style_context,

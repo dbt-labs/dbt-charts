@@ -4,12 +4,13 @@
 
 use crate::common::{AxisStyle, format_y_label};
 use crate::families::axis_caption::AxisCaption;
-use crate::families::cartesian::{BandScale, LinearScale};
+use crate::families::cartesian::{BandScale};
+use d3rs::scale::Continuous;
 use crate::families::temporal::{AuthoredTimeFormat, LabelUnit, TemporalLabel, TimeUnit};
 use crate::vega_fit;
 
 use measure::FontBook;
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 
 use super::BarResolved;
 
@@ -64,18 +65,20 @@ pub(crate) fn format_tick_labels(
     ax_y: &AxisStyle,
     normalize: bool,
     scale: &'static str,
+    fonts: &measure::FontBook,
 ) -> Result<Vec<String>, String> {
     if normalize {
         return tick_values.iter().map(|&tv| crate::common::normalize_percent_label(tv)).collect();
     }
+    let labeling = ax_y.labeling(tick_values, fonts)?;
     tick_values
         .iter()
         .enumerate()
         .map(|(i, &tv)| {
             let label = format_y_label(
                 tv,
-                ax_y.ruler.as_ref(),
-                ax_y.tick_label.as_ref(),
+                labeling.ruler.as_ref(),
+                labeling.tick_label.as_ref(),
                 ax_y.labels.format.as_ref(),
                 i,
                 tick_values.len(),
@@ -129,13 +132,13 @@ impl HorizontalValueAxis {
     /// The labels drawn at `plot_w`: each tick's range position, its text and its anchor
     /// (Vega's own `flush` never sees the +0.5 crispness delta).
     pub(super) fn drawn(&self, plot_w: f64) -> Vec<(f64, &str, &str, &'static str)> {
-        let linear = LinearScale::new(self.domain.0, self.domain.1, 0.0, plot_w);
+        let linear = Continuous::linear([self.domain.0, self.domain.1], [0.0, plot_w]);
         self.ticks
             .iter()
             .zip(&self.labels)
             .enumerate()
             .filter_map(|(i, (&tv, label))| {
-                let x = linear.position(tv);
+                let x = linear.scale(tv);
                 let hidden = x + 0.5 < -1.0 || x + 0.5 > plot_w + 1.0 || self.visible.as_ref().is_some_and(|v| !v[i]);
                 let anchor = match flush_edge(x, plot_w, self.flush_threshold) {
                     Some(true) => "start",
@@ -174,18 +177,7 @@ impl HorizontalValueAxis {
             .drawn(plot_w)
             .into_iter()
             .map(|(x, _, label, anchor)| {
-                Node::text(
-                    Attrs::new()
-                        .set("x", format!("{:.2}", plot_left + x + delta))
-                        .set("y", format!("{label_y:.2}"))
-                        .set("text-anchor", anchor)
-                        .vega("font-family", self.family.as_str())
-                        .set("font-size", self.font_size.to_string())
-                        .quick_some("font-style", self.style.as_deref())
-                        .set("font-weight", self.weight.as_str())
-                        .set("fill", self.color.as_str()),
-                    label,
-                )
+                crate::text::label(Role::Axis, (plot_left + x + delta, label_y), Attrs::new().set("text-anchor", anchor).vega("font-family", self.family.as_str()).num("font-size", self.font_size).quick_some("font-style", self.style.as_deref()).set("font-weight", self.weight.as_str()).set("fill", self.color.as_str()), label)
             })
             .collect();
         items.extend(crate::common::axis_title_bottom(
@@ -243,7 +235,7 @@ pub(super) fn cadence_ratio(r: &BarResolved) -> Result<f64, String> {
 /// no label and so gets no tick.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bar_temporal_labels(
-    domain: &[String],
+    domain: &crate::time_axis::Dates,
     data_tu: TimeUnit,
     unit: LabelUnit,
     ax_x: &AxisStyle,
@@ -392,8 +384,8 @@ impl ContinuousXAxis {
         let mut items: Vec<Node> = Vec::new();
         if x_ticks_visible {
             let end_y = plot_bottom + x_axis_drop + sign * x_tick_len;
-            let xs = x_ticks.iter().map(|&tv| x_pos(tv).round() + 0.5);
-            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y), 3)?);
+            let xs = x_ticks.iter().map(|&tv| crate::common::tick_round(x_pos(tv)));
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y))?);
         }
         let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
         let x_label_weight = ax_x.labels.font.weight_str();
@@ -406,18 +398,7 @@ impl ContinuousXAxis {
             } else {
                 "middle"
             };
-            items.push(Node::text(
-                Attrs::new()
-                    .set("x", format!("{pos:.3}"))
-                    .set("y", format!("{x_label_y:.3}"))
-                    .set("text-anchor", anchor)
-                    .vega("font-family", x_family)
-                    .set("font-size", x_font_size.to_string())
-                    .quick_some("font-style", ax_x.labels.font.style.as_deref())
-                    .set("font-weight", x_label_weight.as_str())
-                    .set("fill", x_label_color),
-                lbl.as_str(),
-            ));
+            items.push(crate::text::label(Role::Axis, (pos, x_label_y), Attrs::new().set("text-anchor", anchor).vega("font-family", x_family).num("font-size", x_font_size).quick_some("font-style", ax_x.labels.font.style.as_deref()).set("font-weight", x_label_weight.as_str()).set("fill", x_label_color), lbl.as_str()));
         }
         items.extend(crate::common::axis_title_flat(
             x_title_text, &ax_x.title, plot_left + plot_w / 2.0, x_label_y, x_font_size, self.title_key, self.edge,
@@ -429,8 +410,8 @@ impl ContinuousXAxis {
 impl BandXAxis {
     /// How far a rotated label column reaches below the plot rect, before the
     /// axis group's crisp half pixel (layout bounds are translated by the axis
-    /// position alone): a rotated `<text>` carries no `y` attribute, so the
-    /// facet composer cannot read this off the painted footer.
+    /// position alone): a rotated `<text>`'s `y` is its baseline shift in the
+    /// rotated frame, so the facet composer cannot read this off the painted footer.
     pub(crate) fn rotated_footer_reach(&self) -> Option<f64> {
         self.cat_title_reach.map(|reach| self.ax_off_x + self.x_tick_len + self.cat_pad + reach)
     }
@@ -501,23 +482,11 @@ impl BandXAxis {
             };
             let xs = tick_xs.into_iter().map(|x| plot_left + band_tick_snap(x));
             let end_y = group_y + sign * x_tick_len;
-            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y), 2)?);
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y))?);
         }
         let hidden_at = |k: usize| !parity_shown.get(k).copied().unwrap_or(true);
         let label = |x: f64, y: f64, hidden: bool, text: &str| {
-            Node::text(
-                Attrs::new()
-                    .set("x", format!("{x:.2}"))
-                    .set("y", format!("{y:.2}"))
-                    .set("text-anchor", "middle")
-                    .vega("font-family", cat_family)
-                    .set("font-size", cat_font_size.to_string())
-                    .quick_some("font-style", ax_x.labels.font.style.as_deref())
-                    .set("font-weight", cat_weight.as_str())
-                    .set("fill", cat_color)
-                    .set_if(hidden, "opacity", "0"),
-                text,
-            )
+            crate::text::label(Role::Axis, (x, y), Attrs::new().set("text-anchor", "middle").vega("font-family", cat_family).num("font-size", cat_font_size).quick_some("font-style", ax_x.labels.font.style.as_deref()).set("font-weight", cat_weight.as_str()).set("fill", cat_color).set_if(hidden, "opacity", "0"), text)
         };
         if let Some(tlabels) = temporal_labels.filter(|_| cat_angle == 0.0 && ax_x.labels.visible != Some(false)) {
             let placed: Vec<(usize, f64, &TemporalLabel)> = match &self.interval {
@@ -540,7 +509,7 @@ impl BandXAxis {
             // Vega draws no label marks for `labels: false`.
         } else if cat_angle != 0.0 {
             // Vega's SVG text transform for a rotated item: translate to the
-            // anchor, rotate, then the baseline shift.
+            // anchor and rotate; the text sits at the baseline shift (`y`) in that frame.
             let dy = measure::baseline_shift(cat_baseline, cat_font_size);
             let text_anchor = match cat_align {
                 "left" => "start",
@@ -556,7 +525,7 @@ impl BandXAxis {
                 let label_x = plot_left + band_x + band.bandwidth() / 2.0;
                 items.push(crate::families::heatmap::rotated_label(
                     (label_x, anchor_y, cat_angle, dy),
-                    &crate::families::heatmap::LabelFace { places: 2, anchor: text_anchor, family: cat_family, size: cat_font_size, weight: &cat_weight, style: ax_x.labels.font.style.as_deref(), fill: cat_color },
+                    &crate::families::heatmap::LabelFace { anchor: text_anchor, family: cat_family, size: cat_font_size, weight: &cat_weight, style: ax_x.labels.font.style.as_deref(), fill: cat_color },
                     (row1, row2),
                     hidden_at(k),
                 ));

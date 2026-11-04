@@ -79,6 +79,7 @@ class TestResolveSharedScaleForTableColumn:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -133,6 +134,7 @@ class TestResolveSharedScaleForTableColumn:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)],
@@ -199,14 +201,30 @@ class TestResolveSharedScaleForTableColumn:
         assert scale is not None
         assert _d3_parse(scale.digit_spec).type == "f"
 
-    def test_repeat_mode_when_column_has_outgrown_its_tier(self) -> None:
-        # Extreme scaled value >= 4 integer digits at its own tier triggers
-        # REPEAT (mirrors _mode_for_scaled_extreme's ladder contract).
+    def test_column_that_outgrew_its_majority_tier_resolves_no_shared_scale(
+        self,
+    ) -> None:
+        # Scaled to the majority tier, the extreme reaches 4 integer digits
+        # ("1,234 M"): one declared magnitude no longer fits the column, so
+        # each row picks its own suffix instead.
         scale = self._resolve(
             [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
         )
-        assert scale is not None
-        assert scale.mode is SuffixMode.REPEAT
+        assert scale is None
+
+    def test_thousands_majority_with_millions_leaders_resolves_no_shared_scale(
+        self,
+    ) -> None:
+        # A leaderboard money column: most rows in the thousands, the top rows
+        # in the millions. Sharing "K" would print the leaders as "2,658.97 K".
+        scale = self._resolve(
+            [
+                {"amount": v}
+                for v in (2_658_969.0, 2_431_825.0, 631_289.0, 776_965.0, 14_769.0)
+            ],
+            fmt="currency",
+        )
+        assert scale is None
 
     def test_value_far_below_the_shared_tier_refuses_the_whole_bake(self) -> None:
         # 500 has no SI tier of its own at all (below even thousands) --
@@ -239,6 +257,7 @@ class TestFormatKpiPartsSharedScale:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -269,25 +288,6 @@ class TestFormatKpiPartsSharedScale:
         assert anchor_num == "3.5"
         assert other_num == "4.2"
 
-    def test_repeat_mode_shows_suffix_on_every_nonzero_row(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
-        scale = self._resolved_scale(rows)
-        assert scale.mode is SuffixMode.REPEAT
-        _, anchor_num, anchor_suffix = format_kpi_parts(
-            3_500_000, ".3~s", shared_scale=scale, is_anchor=True
-        )
-        _, other_num, other_suffix = format_kpi_parts(
-            4_200_000, ".3~s", shared_scale=scale, is_anchor=False
-        )
-        # REPEAT speaks the narrative register ("mn"), not analytic ("M").
-        assert anchor_suffix.strip() == "mn"
-        assert other_suffix.strip() == "mn"
-        # Precision comes from the column's smallest value (3.5M, 1 integer
-        # digit -> 2 decimals for 3 sig figs), not the largest (1234M, which
-        # would truncate every other row to 0 decimals).
-        assert anchor_num == "3.5"
-        assert other_num == "4.2"
-
     def test_authored_notation_overrides_the_mode_derived_register(self) -> None:
         from dbt_charts.core.compile.models.primitives import FormatConfig
 
@@ -299,30 +299,16 @@ class TestFormatKpiPartsSharedScale:
             shared_scale=scale,
             is_anchor=True,
         )
-        assert suffix.strip() == "mn"
+        assert suffix.strip() == "m"
 
     def test_zero_never_carries_a_suffix(self) -> None:
-        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
-        scale = self._resolved_scale(rows)  # REPEAT mode
+        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 12_000_000.0)]
+        scale = self._resolved_scale(rows)
         _, number_str, suffix = format_kpi_parts(
             0, ".3~s", shared_scale=scale, is_anchor=False
         )
         assert suffix == ""
         assert number_str == "0"
-
-    def test_scaled_value_never_reformats_through_the_original_si_spec(self) -> None:
-        # A REPEAT-mode value >= 1000 at its own tier: re-entering it through
-        # the column's original `~s` spec would pick a *second* SI suffix
-        # ("1k") on top of the shared one -- the double-suffix bug
-        # ruler_digit_format's own docstring warns about. digit_spec is
-        # always fixed-point, so this must render plain grouped digits.
-        rows = [{"amount": v} for v in (3_500_000.0, 4_200_000.0, 1_234_000_000.0)]
-        scale = self._resolved_scale(rows)  # REPEAT mode, exponent 6
-        _, number_str, _ = format_kpi_parts(
-            1_234_000_000, ".3~s", shared_scale=scale, is_anchor=False
-        )
-        assert number_str == "1,234"
-        assert "k" not in number_str.lower() and "m" not in number_str.lower()
 
     def test_no_shared_scale_matches_todays_pinned_output(self) -> None:
         # Pinned against an independent expectation (not a second call with
@@ -387,7 +373,7 @@ class TestSharedScaleAnchorsRender:
         assert "4.2" in svg
         assert ">12" in svg
 
-    def test_repeat_mode_shared_scale_keeps_suffix_on_every_row(
+    def test_unformatted_column_that_outgrew_its_tier_falls_back_to_exact_digits(
         self, make_chart
     ) -> None:
         from dbt_charts.core.compile.resolve import resolve
@@ -396,7 +382,6 @@ class TestSharedScaleAnchorsRender:
         from .test_table_variants import _BOARD_STYLE, _style_with
 
         chart = make_chart("table", x=None, y=None)
-        # Extreme scaled value >= 4 integer digits at its own tier -> REPEAT.
         data = [
             {"revenue": 3_500_000.0},
             {"revenue": 4_200_000.0},
@@ -406,13 +391,10 @@ class TestSharedScaleAnchorsRender:
         chart = resolve(chart, data, chart_style_context=custom_ctx)
         svg = render_table_svg(chart, data, width=400, board_style=_BOARD_STYLE)
 
-        # REPEAT mode speaks the narrative register ("mn"), not analytic
-        # ("M") -- SharedScale.register follows mode: a suffix stated on
-        # every row is value-attached and reads narrative.
-        assert svg.count(">mn</tspan>") == 3, (
-            "Every non-zero row should keep its magnitude suffix under a "
-            f"REPEAT-mode shared_scale; got: {svg}"
-        )
+        # No shared "m" scale: an unformatted column whose rows would print
+        # mixed units falls back to exact digits.
+        assert ">m</tspan>" not in svg
+        assert ">1,234,000,000<" in svg
 
     def test_symbol_mode_all_keeps_suffix_on_every_row_even_in_anchor_mode(
         self, make_chart
@@ -485,6 +467,7 @@ class TestSubTierPrecisionAndRefusal:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -611,6 +594,7 @@ class TestPadTableCappedAtObservedDepth:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -649,6 +633,7 @@ class TestPadTableCappedAtObservedDepth:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -680,6 +665,7 @@ class TestSizingFunctionsRegression:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -712,6 +698,7 @@ class TestAllowSharedScaleGate:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -758,6 +745,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -783,6 +771,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -806,6 +795,7 @@ class TestDecimalPadFallbackWhenNoSharedScaleTier:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -828,6 +818,7 @@ def test_column_alias_to_a_preset_keeps_its_sub_unit_pad() -> None:
         resolved = _with_resolved_scale_stops(
             {"amount": TableColumnConfig(format=fmt)},
             text_color=None,
+            canvas_tone="light",
             formats=formats,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=rows,
@@ -861,6 +852,7 @@ class TestUnformattedColumnThatDoesNotCompact:
         resolved = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[{"amount": v} for v in values],

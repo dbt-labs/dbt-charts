@@ -4,31 +4,33 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Collection, Iterator
-from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from dbt_charts.agent_api.boards import board_declaring_keys
+from dbt_charts.agent_api.board_index import (
+    BoardEntry,
+    BoardIndex,
+    open_board_index,
+    read_board,
+)
 from dbt_charts.agent_api.paging import (
     DEFAULT_PAGE_LIMIT,
     MAX_PAGE_LIMIT,
     cursor_offset,
     paginate,
 )
-from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.normalize.queries import dialect_for_source
 from dbt_charts.core.diagnostics import Diagnostic
-from dbt_charts.core.diagnostics.execution import ExecutionError
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.parse.board_text import BoardText
+    from dbt_charts.core.compile.config import ProjectSourcesConfig
 
 from dbt_charts.core.project import (
     ALL_FILES_GLOB,
     CHARTS_SUBDIR,
     PROJECT_CONFIG_NAME,
+    BoardLabel,
     Project,
     assert_relpath,
     board_roots,
@@ -56,13 +58,13 @@ _KIND_GLOBS: dict[str, tuple[str, ...]] = {
     "all": (ALL_FILES_GLOB,),
 }
 
-# Maintainer paths that must not appear in agent-facing search summaries.
-_INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
-
-
 # A host's access model: the subset of these project-relative files its caller
 # may see.
 PathVisibility = Callable[[list[str]], Collection[str]]
+
+
+# Maintainer paths that must not appear in agent-facing search summaries.
+_INTERNAL_REF_RE = re.compile(r"\s*;?\s*see\s+ai_notes/\S+", re.IGNORECASE)
 
 
 def _agent_safe_summary(notes: str) -> str:
@@ -70,7 +72,7 @@ def _agent_safe_summary(notes: str) -> str:
     return _INTERNAL_REF_RE.sub("", notes).strip()
 
 
-def _brief(notes: str) -> str:
+def brief(notes: str) -> str:
     """Notes as a hit prints them: maintainer references gone, one short run."""
     notes = _agent_safe_summary(notes)
     if len(notes) <= MAX_SUMMARY_CHARS:
@@ -79,7 +81,7 @@ def _brief(notes: str) -> str:
 
 
 class SearchFilesArgs(BaseModel):
-    """Search the project's files: its boards by default, or its folder defaults (`meta.yml`), dbt models, and config. `kind` picks what is searched: `boards` (the default; YAML and markdown boards), `meta` (every `meta.yml`, the folder defaults and themes), `models` (the dbt project's `.sql` and `.yml` model files, where a table's columns are described), `config` (`dbt_charts.yml` and `dbt_project.yml`), or `all` (every file). For `boards`, `text` is a keyword query and omitting it lists every board you can access; a keyword search returns ranked hits with a match score, the reasons it matched, and `matched_charts`, the ids of the charts whose id or title matched, and a listing is unscored, in path order. Each board hit is compact: title, notes, and two path forms named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...) and describe_board, and file_path (relative to the project root) for read_file. Reuse the matching field's value unchanged; do not convert between the two. A board hit carries no chart list, query names or SQL: call describe_board on the board for those. For every other kind, `text` is a case-insensitive substring and the result is the matching lines (`file_path`, `line`, `text`); omit it to list the files. `path` is a glob over project-relative paths (`*` within a folder, `**` across folders) that narrows any kind. All results page with `cursor`/`next`. Use to find existing boards and reuse validated query patterns before creating new ones, and to read a project's conventions with read_file."""
+    """Search the project's files: its boards by default, or its folder defaults (`meta.yml`), dbt models, and config. `kind` picks what is searched: `boards` (the default; YAML and markdown boards), `meta` (every `meta.yml`, the folder defaults and themes), `models` (the dbt project's `.sql` and `.yml` model files, where a table's columns are described), `config` (`dbt_charts.yml` and `dbt_project.yml`), or `all` (every file). For `boards`, `text` is a keyword query and omitting it lists every board you can access; a keyword search returns ranked hits with a match score, the reasons it matched, `matched_charts`, the ids of the charts whose id or title matched, and `charts`, those same charts with the query each reads, and a listing is unscored, in path order. Each board hit is compact: title, notes, and two path forms named for the coordinate system they resolve in: board_path (relative to charts/; a package board's carries a `<pkg>/` namespace prefix) for render_board(path=board_path, chart=<chart id>, ...) and describe_board, and file_path (relative to the project root) for read_file. Reuse the matching field's value unchanged; do not convert between the two. A board hit carries no full chart list or SQL: call describe_board on the board for those. For every other kind, `text` is a case-insensitive substring and the result is the matching lines (`file_path`, `line`, `text`); omit it to list the files. `path` is a glob over project-relative paths (`*` within a folder, `**` across folders) that narrows any kind. All results page with `cursor`/`next`. Use to find existing boards and reuse validated query patterns before creating new ones, and to read a project's conventions with read_file."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -169,6 +171,19 @@ class BoardListing(BaseModel):
     )
 
 
+class ChartMatch(BaseModel):
+    """A chart a keyword matched, and the query behind it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    query: str | None = Field(
+        default=None,
+        description="The board query this chart reads; absent when the chart "
+        "reads none or its own text does not name one.",
+    )
+
+
 class BoardMatch(BoardListing):
     """A keyword hit: a listing entry plus why it ranked."""
 
@@ -179,6 +194,9 @@ class BoardMatch(BoardListing):
             "Ids of the charts whose id or title matched the query, in board "
             "order. Empty when the board matched on other fields."
         )
+    )
+    charts: list[ChartMatch] = Field(
+        description="The charts in `matched_charts`, each with the query it reads."
     )
 
 
@@ -219,6 +237,10 @@ class SourceEntry(BaseModel):
 
 
 def source_entries(config: ProjectSourcesConfig) -> list[SourceEntry]:
+    # Deferred: naming a dialect reads the execution config, and `dct search`
+    # prints no sources.
+    from dbt_charts.core.compile.sql_guard import dialect_for_source
+
     entries: list[SourceEntry] = []
     for name in sorted(config.sources):
         dialect = dialect_for_source(name, config.sources)
@@ -241,7 +263,8 @@ class SearchResult(BaseModel):
     results: list[BoardMatch | BoardListing | FileHit | FileEntry]
     sources: list[SourceEntry] | None = Field(
         description="The sources this project's SQL may name, for execute_sql; "
-        "null when the project's `sources:` failed to load (the reason is in errors)."
+        "null when the project's `sources:` failed to load (the reason is in errors) "
+        "or the caller did not ask for them."
     )
     next: str | None = Field(
         default=None,
@@ -258,24 +281,26 @@ def search_files(
     tags: list[str] | None = None,
     limit: int = DEFAULT_PAGE_LIMIT,
     cursor: str | None = None,
+    with_sources: bool = True,
 ) -> SearchResult:
     """Search a project's boards, or its meta/model/config/other files.
 
     See ``SearchFilesArgs`` for what each ``kind`` searches. Pages of ``limit``
     (default ``DEFAULT_PAGE_LIMIT``, max ``MAX_PAGE_LIMIT``) resume at
     ``cursor``. Hosts with a per-principal access model (Cloud) must not
-    truncate before filtering — see ``search_file_hits``.
+    truncate before filtering — see ``search_file_hits``. ``with_sources``
+    False leaves ``sources`` null for a caller that prints none.
     """
     limit = max(0, min(limit, MAX_PAGE_LIMIT))
     errors: list[Diagnostic] = []
-    sources: list[SourceEntry] | None
-    try:
-        sources = source_entries(project.sources)
-    except CompilationError as e:
-        # Searching never needed the sources, and `kind: config` is how an
-        # agent finds the broken file, so report it rather than fail.
-        errors.append(e.to_diagnostic(file=PROJECT_CONFIG_NAME))
-        sources = None
+    sources: list[SourceEntry] | None = None
+    if with_sources:
+        try:
+            sources = source_entries(project.declared_sources)
+        except CompilationError as e:
+            # Searching never needed the sources, and `kind: config` is how an
+            # agent finds the broken file, so report it rather than fail.
+            errors.append(e.to_diagnostic(file=PROJECT_CONFIG_NAME))
     if limit == 0:
         return SearchResult(success=True, errors=errors, results=[], sources=sources)
     hits = search_file_hits(project, kind=kind, path=path, text=text, tags=tags)
@@ -358,7 +383,9 @@ def search_boards_hits(
     best (boards named for a query word first, then by words mentioned) are
     read, parsed and scored. A query broad enough to name more boards than
     that ranks only that slice. A ``tags`` filter narrows the candidates before
-    that cut, reading each board's tags from ``board_labels``.
+    that cut, reading each board's tags from ``board_labels``. A filesystem
+    project answers both labels and parses from its ``BoardIndex``, reparsing
+    only the boards edited since the last search.
 
     This layer has no principal concept (agent_api thin-wrapper rule), so it
     cannot itself decide which hits a caller may see. A host with access
@@ -375,12 +402,12 @@ def search_boards_hits(
     required_tags = {t.lower() for t in tags or []}
 
     if not query_stripped:
-        labels = project.board_labels()
+        labels = _board_labels(project, open_board_index(project))
         kept = _keep_visible([label.file_path for label in labels], visible)
         return [
             BoardListing(
                 title=label.title,
-                summary=_brief(label.notes),
+                summary=brief(label.notes),
                 board_path=label.board_path,
                 file_path=label.file_path,
             )
@@ -399,12 +426,17 @@ def search_boards_hits(
                     score,
                     BoardMatch(
                         title=entry["title"],
-                        summary=_brief(entry["notes"]),
+                        summary=brief(entry["notes"]),
                         board_path=entry["board_path"],
                         file_path=entry["file_path"],
                         match_score=round(score, 2),
                         match_reasons=reasons,
                         matched_charts=matched_charts,
+                        charts=[
+                            ChartMatch(name=chart["id"], query=chart["query"])
+                            for chart in entry["charts"]
+                            if chart["id"] in matched_charts
+                        ],
                     ),
                 )
             )
@@ -417,28 +449,30 @@ def _keep_visible(paths: list[str], visible: PathVisibility | None) -> set[str]:
     return set(paths) if visible is None else set(visible(paths))
 
 
+def _board_labels(project: Project, index: BoardIndex | None) -> list[BoardLabel]:
+    return project.board_labels() if index is None else index.labels
+
+
 def _parse_candidates(
     project: Project,
     query_tokens: list[str],
     required_tags: set[str],
     visible: PathVisibility | None,
-) -> Iterator[dict[str, Any]]:
+) -> Iterator[BoardEntry]:
     """Index entries for the best-matching board files.
 
     The best ``MAX_PARSED_CANDIDATES`` by (words in the title or slug, words
     mentioned, lines mentioning them) are parsed. Tags narrow the files first,
     from ``board_labels``, which holds them without a read.
     """
-    # Deferred: importing the compiler here would load it for every CLI start.
-    from dbt_charts.core.compile.parse.board_text import parse_board_text
-
     board_files = sorted(
         _keep_visible(
             [pf.relpath for pf in project.iter_boards() if not pf.is_meta], visible
         )
     )
     roots = board_roots(project)
-    labels = {label.file_path: label for label in project.board_labels()}
+    index = open_board_index(project)
+    labels = {label.file_path: label for label in _board_labels(project, index)}
 
     # word -> {board file -> lines mentioning it}; a file named for a word is
     # present with zero lines.
@@ -485,71 +519,13 @@ def _parse_candidates(
     )[:MAX_PARSED_CANDIDATES]
 
     for relpath in [*candidates, *package_boards]:
-        pf = project.path(relpath)
-        try:
-            content = pf.read_text()
-        except (OSError, UnicodeDecodeError, ExecutionError):
-            continue  # not readable as text: nothing to score
-        slug = board_slug(relpath)
-        text = parse_board_text(slug, content, is_markdown=pf.is_markdown)
-        entry = _index_entry_from_content(
-            board_path=f"{slug}{PurePosixPath(relpath).suffix}",
-            file_path=relpath,
-            text=text,
+        entry = (
+            read_board(project.path(relpath))[1]
+            if index is None
+            else index.entries.get(relpath)
         )
         if entry is not None:
             yield entry
-
-
-def _index_entry_from_content(
-    board_path: str, file_path: str, text: BoardText
-) -> dict[str, Any] | None:
-    content = text.board
-    if not any(key in content for key in board_declaring_keys()):
-        return None
-
-    queries = content.get("queries", {})
-    charts = content.get("charts", {})
-
-    sql_snippets: list[str] = []
-    query_names: list[str] = []
-    if isinstance(queries, dict):
-        for qname, qdef in queries.items():
-            query_names.append(qname)
-            if isinstance(qdef, dict) and qdef.get("sql"):
-                sql_snippets.append(qdef["sql"])
-
-    chart_entries: list[dict[str, str]] = []
-    if isinstance(charts, dict):
-        for raw_chart_id, chart_def in charts.items():
-            # YAML mapping keys need not be strings (`2024:` parses as int).
-            chart_id = str(raw_chart_id)
-            # Search reads raw, possibly-invalid YAML: only a string title is
-            # usable here.
-            chart_title = (
-                chart_def.get("title") if isinstance(chart_def, dict) else None
-            )
-            chart_entries.append(
-                {
-                    "id": chart_id,
-                    "title": (
-                        chart_title
-                        if isinstance(chart_title, str) and chart_title
-                        else chart_id
-                    ),
-                }
-            )
-
-    return {
-        "board_path": board_path,
-        "file_path": file_path,
-        "title": text.title,
-        "notes": _agent_safe_summary(text.notes),
-        "tags": set(text.tags),
-        "query_names": query_names,
-        "charts": chart_entries,
-        "sql_snippets": sql_snippets,
-    }
 
 
 def _tokenize(text: str) -> set[str]:
@@ -557,7 +533,7 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _score_entry(
-    entry: dict[str, Any], query_tokens: list[str]
+    entry: BoardEntry, query_tokens: list[str]
 ) -> tuple[float, list[str], list[str]]:
     """Return (score, match reasons, ids of the charts that matched)."""
     score = 0.0
@@ -565,7 +541,7 @@ def _score_entry(
     matched: set[str] = set()
 
     title_tokens = _tokenize(entry["title"])
-    notes_tokens = _tokenize(entry["notes"])
+    notes_tokens = _tokenize(_agent_safe_summary(entry["notes"]))
     tag_set = entry["tags"]
     query_name_tokens = _tokenize(" ".join(entry["query_names"]))
     sql_tokens = _tokenize(" ".join(entry["sql_snippets"]))

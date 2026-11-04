@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-# tach-ignore(agent_api->cli: runtime host-type guard in resolve_board_or_error / _relpath_for_fs_location, and direct construction in compile_editor_buffer; the local-filesystem check needs a non-cli signal on Project — deferred)
-from dbt_charts.cli.filesystem_project import FilesystemProject
+# tach-ignore(agent_api->cli: runtime host-type guard in resolve_board_or_error / _relpath_for_fs_location, and direct construction in compile_editor_buffer; the local-filesystem check needs a non-cli signal on Project — deferred; and symlinked_package_path in build_board_render_context, the local: package carve-out)
+from dbt_charts.cli.filesystem_project import (
+    FilesystemProject,
+    symlinked_package_path,
+)
 from dbt_charts.core.diagnostics import (
     ERR_FILE_NOT_FOUND,
     ERR_INTERNAL,
@@ -31,7 +34,6 @@ from dbt_charts.core.project import (
     assert_relpath,
     board_relpath_candidates,
     board_roots,
-    posix_relpath,
 )
 from dbt_charts.core.project_roots import (
     DCT_ROOT_MARKERS as DCT_ROOT_MARKERS,
@@ -423,15 +425,8 @@ def _relpath_for_fs_location(path: Path, project: Project) -> str | None:
         raise ValueError(
             "absolute or '..'-relative board paths need a local filesystem project"
         )
-    root = project.root
-    resolved = path.resolve()
     try:
-        return posix_relpath(resolved, root)
-    except ValueError:
-        pass
-    normalized = Path(os.path.normpath(path.absolute()))
-    try:
-        return posix_relpath(normalized, root)
+        return project.path_for_fspath(path).relpath
     except ValueError:
         return None
 
@@ -483,7 +478,7 @@ def resolve_board_or_error(path: Path, project: Project) -> BoardFile | Diagnost
         ).to_diagnostic(file=resolved.relpath)
     if (
         isinstance(project, FilesystemProject)
-        and not (project.root / resolved.relpath).is_file()
+        and not project.data_path(resolved.relpath).is_file()
     ):
         # A directory (or other non-file) resolves + exists on disk but read_board
         # would raise past the structured envelope. This is a filesystem-only
@@ -491,7 +486,7 @@ def resolve_board_or_error(path: Path, project: Project) -> BoardFile | Diagnost
         return DbtChartsError.from_code(
             ERR_INTERNAL, message=f"Not a file: {resolved.relpath}"
         ).to_diagnostic(file=resolved.relpath)
-    return resolved.read_board()
+    return resolved.read_board(named=True)
 
 
 @dataclass(frozen=True)
@@ -520,21 +515,27 @@ def build_board_render_context(
     (e.g. via ``resolve_project_dir(raw_dir)`` at the CLI boundary).
     """
     if board_path.is_absolute():
-        board_file = board_path.resolve()
+        candidate = board_path
     elif ".." in board_path.parts:
-        board_file = (Path.cwd() / board_path).resolve()
+        candidate = Path.cwd() / board_path
     else:
-        board_file = (project_dir / board_path).resolve()
+        candidate = project_dir / board_path
 
     project_root = project_dir
 
+    board_file = candidate.resolve()
     try:
         scoped_path: Path = board_file.relative_to(project_root)
     except ValueError:
-        raise ValueError(
-            f"Board file {board_file} is outside project_dir {project_root}. "
-            f"Pass an explicit --project-dir that contains the board file."
-        ) from None
+        # A `local:` package is a symlink outside the root; keep its logical path.
+        logical = symlinked_package_path(project_root, candidate)
+        if logical is None:
+            raise ValueError(
+                f"Board file {board_file} is outside project_dir {project_root}. "
+                f"Pass an explicit --project-dir that contains the board file."
+            ) from None
+        board_file = logical
+        scoped_path = board_file.relative_to(project_root)
 
     return BoardRenderContext(
         board_file=board_file,

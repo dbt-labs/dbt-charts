@@ -135,3 +135,35 @@ def test_missing_type_with_a_type_like_key_names_the_rename() -> None:
     error = _error("    kind: bar\n    query: q\n    x: a\n    y: v")
 
     assert "Rename `kind:` to `type:`" in error.message
+
+
+_NESTED_BOARD = """\
+title: T
+queries:
+  q:
+    type: values
+    rows:
+      - a: x
+        v: 1
+charts:
+  c:
+    type: bar
+    query: q
+    x: a
+    y: v
+rows:
+  - title: Inner
+    variables:
+      region:
+        options: [a, b]
+    rows:
+      - c
+"""
+
+
+def test_nested_board_error_names_the_bad_key_not_a_string_expectation() -> None:
+    (error,) = compile_board(_NESTED_BOARD, file="b.yml").errors
+
+    text = _text(error)
+    assert "valid string" not in text
+    assert "variables.region.options" in text

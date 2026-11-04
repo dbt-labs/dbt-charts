@@ -79,7 +79,7 @@ fn js_length(v: f64) -> String {
     } else if v.is_infinite() {
         if v > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
     } else {
-        crate::families::color_scale::js_number_string(v + 0.0)
+        d3rs::js_math::js_number_string(v + 0.0)
     }
 }
 

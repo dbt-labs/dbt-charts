@@ -439,11 +439,11 @@ rows:
 """
 
 
-class TestQueryBoardUnboundVariables:
-    """A variable declared without ``default:`` has nothing to bind unless the
-    caller passes it; the error must say so instead of a raw Jinja failure."""
+class TestQueryBoardVariables:
+    """A named query runs on the values the board renders with, so an agent reading
+    its rows sees what the chart drew."""
 
-    def test_error_names_the_variable_its_input_and_what_to_pass(
+    def test_an_unset_date_range_covers_every_date(
         self,
         tmp_path: Path,
         registry: AdapterRegistry,
@@ -456,16 +456,60 @@ class TestQueryBoardUnboundVariables:
             "by_day", path, local_project(tmp_path), adapter_registry=registry
         )
 
-        assert result.success is False
-        [error] = result.errors
-        assert "Undefined variable" not in error
-        assert "'date_range'" in error
-        assert "daterange" in error
-        assert "default" in error
-        assert '["2024-01-01", "2024-01-31"]' in error
-        assert result.sql is not None
+        assert result.success is True, result.errors
+        assert result.data == [{"n": 1}]
 
-    def test_passing_the_value_the_error_asks_for_runs_the_query(
+    def test_an_unset_multiselect_covers_every_option(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, MULTISELECT_BOARD)
+        result = query_board(
+            "picked", path, local_project(tmp_path), adapter_registry=registry
+        )
+
+        assert result.success is True, result.errors
+        assert result.data == [{"n": 2}]
+
+    def test_an_unset_variable_outside_a_filter_binds_as_it_renders(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        board = """
+source: db
+variables:
+  region:
+    input: text
+queries:
+  region_rows:
+    sql: |
+      select count(*) as n
+      from (values ('EU')) as t(region)
+      where region = {{ region }}
+charts:
+  c:
+    query: region_rows
+    type: table
+rows:
+  - c
+"""
+        path = _write_board(tmp_path, board)
+        result = query_board(
+            "region_rows", path, local_project(tmp_path), adapter_registry=registry
+        )
+
+        assert result.success is True, result.errors
+        assert result.data == [{"n": 0}]
+
+    def test_a_bound_value_narrows_the_rows(
         self,
         tmp_path: Path,
         registry: AdapterRegistry,
@@ -478,12 +522,12 @@ class TestQueryBoardUnboundVariables:
             "by_day",
             path,
             local_project(tmp_path),
-            vars={"date_range": '["2024-01-01", "2024-01-31"]'},
+            vars={"date_range": '["2024-02-01", "2024-02-29"]'},
             adapter_registry=registry,
         )
 
         assert result.success is True
-        assert result.data == [{"n": 1}]
+        assert result.data == [{"n": 0}]
 
     def test_a_declared_default_still_binds(
         self,
@@ -868,24 +912,6 @@ class TestVariableBinding:
         assert result.errors == []
         assert result.data == [{"n": selected}]
 
-    def test_an_unbound_multiselect_asks_for_a_list(
-        self,
-        tmp_path: Path,
-        registry: AdapterRegistry,
-        local_project: Callable[..., FilesystemProject],
-    ) -> None:
-        from dbt_charts.agent_api.query import query_board
-
-        path = _write_board(tmp_path, MULTISELECT_BOARD)
-
-        result = query_board(
-            "picked", path, local_project(tmp_path), adapter_registry=registry
-        )
-
-        (error,) = result.errors
-        assert "list of strings" in error
-        assert "plain value" not in error
-
     def test_variables_to_dict_empty_returns_empty(self) -> None:
         from dbt_charts.agent_api.query import variables_to_dict
 
@@ -934,3 +960,133 @@ class TestVariableBinding:
         assert args.sql is None
         assert args.query == "revenue"
         assert args.variables is not None and args.variables[0].value == 2024
+
+
+class TestExecuteQueryArgsForms:
+    @pytest.mark.parametrize(
+        "args",
+        [
+            {"sql": "select 1"},
+            {"sql": "select 1", "source": "db"},
+            {"sql": "select 1", "board": "rev.yml"},
+            {
+                "sql": "select 1",
+                "board": "rev.yml",
+                "variables": [{"name": "region", "value": "EU"}],
+            },
+            {"board": "rev.yml", "query": "arr"},
+        ],
+    )
+    def test_accepted_forms(self, args: dict[str, object]) -> None:
+        from dbt_charts.agent_api.query import ExecuteQueryArgs
+
+        ExecuteQueryArgs.model_validate(args)
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            {},
+            {"board": "rev.yml"},
+            {"query": "arr"},
+            {"sql": "select 1", "query": "arr"},
+            {"sql": "select 1", "board": "rev.yml", "query": "arr"},
+            {"sql": "select 1", "board": "rev.yml", "source": "db"},
+            {"sql": "select 1", "board": "rev.yml", "lenient_variables": True},
+            {"board": "rev.yml", "query": "arr", "source": "db"},
+        ],
+    )
+    def test_rejected_forms(self, args: dict[str, object]) -> None:
+        from pydantic import ValidationError
+
+        from dbt_charts.agent_api.query import ExecuteQueryArgs
+
+        with pytest.raises(ValidationError):
+            ExecuteQueryArgs.model_validate(args)
+
+
+NESTED_BOARD = """
+source: db
+queries:
+  root_q:
+    sql: "select 1 as a"
+tabs:
+  items:
+    - title: One
+      rows:
+        - queries:
+            nested_q:
+              sql: "select {{ n }} as n"
+          variables:
+            n:
+              input: number
+              default: 5
+          charts:
+            c:
+              query: nested_q
+              type: table
+          rows: [c]
+"""
+
+
+class TestQueryBoardNestedQueries:
+    def test_nested_query_runs_with_its_own_variable(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, NESTED_BOARD)
+        project = local_project(tmp_path)
+        default = query_board("nested_q", path, project, adapter_registry=registry)
+        bound = query_board(
+            "nested_q", path, project, vars={"n": 9}, adapter_registry=registry
+        )
+        assert default.success is True, default.errors
+        assert default.data == [{"n": 5}]
+        assert bound.data == [{"n": 9}]
+
+    def test_root_query_unchanged_and_unknown_lists_all_names(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        path = _write_board(tmp_path, NESTED_BOARD)
+        project = local_project(tmp_path)
+        root = query_board("root_q", path, project, adapter_registry=registry)
+        missing = query_board("nested", path, project, adapter_registry=registry)
+        assert root.data == [{"a": 1}]
+        assert missing.success is False
+        assert missing.available_queries == ["nested_q", "root_q"]
+
+    def test_duplicate_name_in_two_nested_boards_is_an_error(
+        self,
+        tmp_path: Path,
+        registry: AdapterRegistry,
+        local_project: Callable[..., FilesystemProject],
+    ) -> None:
+        from dbt_charts.agent_api.query import query_board
+
+        board = """
+source: db
+rows:
+  - queries:
+      dup:
+        sql: "select 1 as a"
+    rows: []
+  - queries:
+      dup:
+        sql: "select 2 as a"
+    rows: []
+"""
+        path = _write_board(tmp_path, board)
+        result = query_board(
+            "dup", path, local_project(tmp_path), adapter_registry=registry
+        )
+        assert result.success is False
+        assert any("Duplicate query name 'dup'" in e for e in result.errors)
+        assert result.error_code == "ERR-DUPLICATE-QUERY-NAME"

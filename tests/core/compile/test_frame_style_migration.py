@@ -1,7 +1,8 @@
 """Migration coverage for the 0.4.0 -> 0.5.0 style.board: -> style.frame:
 rename (dbt_charts.core.compile.migrations.versions.v0_5_0), the rebrand
 wave's authored-grammar rename that accompanies the board->board model
-rename.
+rename. A walk to the live grammar then moves `style.frame.width` to the root
+`width:` (v0_11_0).
 """
 
 from __future__ import annotations
@@ -70,7 +71,8 @@ def test_style_board_key_migrates_to_frame_in_memory(
 
     migrated = _migrate(raw, catalog)
 
-    assert migrated["style"] == {"frame": {"width": 960, "min_height": 400}}
+    assert migrated["style"] == {"frame": {"min_height": 400}}
+    assert migrated["width"] == 960
     AuthoredBoard.model_validate(migrated)
 
 
@@ -101,7 +103,8 @@ def test_style_board_key_yaml_text_round_trip_preserves_comments(
 
     assert "# keep this comment" in migrated
     doc = load_yaml_mapping(migrated)
-    assert doc["style"] == {"frame": {"width": 960, "min_height": 400}}
+    assert doc["style"] == {"frame": {"min_height": 400}}
+    assert doc["width"] == 960
     AuthoredBoard.model_validate(doc)
 
 
@@ -132,7 +135,8 @@ def test_style_board_and_interactive_legend_migrate_together(
 
     migrated = _migrate(raw, catalog)
 
-    assert migrated["style"] == {"frame": {"width": 960, "min_height": 400}}
+    assert migrated["style"] == {"frame": {"min_height": 400}}
+    assert migrated["width"] == 960
     legend = migrated["charts"]["revenue"]["style"]["legend"]
     assert "interactive_legend" not in legend
     assert legend["visible"] is True

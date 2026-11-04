@@ -1,0 +1,18 @@
+{
+  "q": {
+    "calls": [
+      {
+        "params": [
+          "N'orth"
+        ],
+        "sql": "SELECT id, amount FROM t WHERE region = ? ORDER BY id"
+      }
+    ],
+    "rows": [
+      {
+        "amount": 5.0,
+        "id": 3
+      }
+    ]
+  }
+}

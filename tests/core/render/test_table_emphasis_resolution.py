@@ -886,6 +886,7 @@ class TestWithResolvedScaleStops:
         result = _with_resolved_scale_stops(
             columns,
             text_color="#ffffff",
+            canvas_tone="dark",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
@@ -900,7 +901,12 @@ class TestWithResolvedScaleStops:
         bg = result["val"].scale.background
         assert isinstance(bg, ResolvedNamedPaletteScaleTargetConfig)
         expected = tuple(
-            resolve_palette("dbt-seq-blue", surface="table", text_color="#ffffff")
+            resolve_palette(
+                "dbt-seq-blue",
+                surface="table",
+                text_color="#ffffff",
+                canvas_tone="dark",
+            )
         )
         assert bg.resolved_stops == expected
 
@@ -928,6 +934,7 @@ class TestWithResolvedScaleStops:
         result = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
@@ -959,6 +966,7 @@ class TestWithResolvedScaleStops:
         result = _with_resolved_scale_stops(
             columns,
             text_color=None,
+            canvas_tone="light",
             formats=None,
             font_family=DBT_SANS_TABULAR_FONT_FAMILY,
             rows=[],
@@ -984,6 +992,7 @@ class TestWithResolvedScaleStops:
             _with_resolved_scale_stops(
                 None,
                 text_color=None,
+                canvas_tone="light",
                 formats=None,
                 font_family=DBT_SANS_TABULAR_FONT_FAMILY,
                 rows=[],

@@ -63,6 +63,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"id": 1}]
@@ -100,6 +101,7 @@ rows:
 
         # Create mock adapter registry
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"id": 1}]
@@ -144,6 +146,7 @@ rows:
 
         # Create mock adapter registry
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
@@ -184,6 +187,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"date": "2024-01", "amount": 100}]
@@ -226,6 +230,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"value": 1}]
@@ -269,6 +274,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"value": 1}]
@@ -339,6 +345,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.is_success = False
         mock_result.error = QueryError("Table not found")
@@ -381,6 +388,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = []
@@ -435,6 +443,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.is_success = True
         mock_result.data = [{"id": 1}]
@@ -454,7 +463,8 @@ rows:
         # policy: freshness is per-reader, and the slot is warmed from the
         # shared persistent entry, so keying it on content alone would let one
         # query's policy answer a same-SQL sibling's read.
-        assert executor._cache == {_memo_key(query, content_key): [{"id": 1}]}
+        assert list(executor._cache) == [_memo_key(query, content_key)]
+        assert executor._cache[_memo_key(query, content_key)].rows == [{"id": 1}]
         # The persistent key stays content-only — a ttl edit must not
         # cold-start the stored entry.
         assert len(content_key) == 3
@@ -501,6 +511,7 @@ rows:
             return mock_result
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.side_effect = execute_side_effect
 
         executor = Executor(
@@ -544,6 +555,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"id": 1}]
@@ -596,6 +608,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.success = True
         mock_result.data = [{"id": 1}]
@@ -662,6 +675,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.is_success = True
         mock_result.data = [{"name": "Alice", "flag": 1}]
@@ -707,6 +721,7 @@ rows:
         assert result.query_registry is not None
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
         mock_result.is_success = True
         mock_result.data = [{"sum": 1000}]
@@ -747,6 +762,7 @@ rows:
         )
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         executor = Executor(board, adapter_registry=mock_registry)
 
         with pytest.raises(Exception, match="[Cc]ircular"):
@@ -795,6 +811,7 @@ rows:
             return ok
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.side_effect = _execute
 
         executor = Executor(
@@ -826,6 +843,7 @@ rows:
             return ok
 
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.side_effect = _execute
 
         executor = Executor(

@@ -49,6 +49,7 @@ from dbt_charts.core.compile.models.style.theme.category_colors import (
 from dbt_charts.core.compile.models.style.theme.line import LineChartStyle
 from dbt_charts.core.compile.models.style.theme.scatter import ScatterChartStyle
 from dbt_charts.core.compile.resolve.chart._axes import _series_display_name
+from dbt_charts.core.compile.resolve.chart._axis_color import layer_axis_color
 from dbt_charts.core.compile.resolve.chart._channels import _column_numeric_values
 from dbt_charts.core.compile.resolve.chart._chart_rows import (
     CartesianChart,
@@ -86,6 +87,7 @@ from dbt_charts.core.compile.resolve.style.inherit_resolver import merge_unset
 from dbt_charts.core.constants.marks import STROKE_FALLBACK_WIDTH
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_LAYER_AXIS_STYLE_WITHOUT_POSITION,
     ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
     ERR_LAYERS_AMBIGUOUS_Y_DOMAIN,
 )
@@ -291,7 +293,10 @@ def _resolve_one_layer(
             _layer_rows(layer, data, base_query_name, datasets), layer.y
         )
 
-    authored_axis_y = layer.axis_y if layer.axis_y is not None else LayerAxisYStyle()
+    authored_axis_y = _with_color_tokens(
+        layer.axis_y if layer.axis_y is not None else LayerAxisYStyle(),
+        chart_style_context,
+    )
     axis_format: ResolvedFormat | None = None
     tick_label: ResolvedTickLabel | None = None
     tooltip_format: ResolvedFormat | None = None
@@ -336,19 +341,26 @@ def _resolve_one_layer(
         )
         if voted.spec != axis_format.spec:
             tooltip_format = voted
+    grid, text_color = layer_axis_color(
+        authored_axis_y,
+        layer_ink,
+        chart_style_context,
+        f"charts.{chart_id}.layers[{index}]",
+    )
     axis_y = ResolvedLayerAxisY(
         position=authored_axis_y.position,
         title=authored_axis_y.title,
         scale=authored_axis_y.scale,
         ticks=authored_axis_y.ticks,
-        grid=authored_axis_y.grid,
+        grid=grid,
         labels=(
-            ResolvedLayerAxisYLabels(format=axis_format)
-            if axis_format is not None
+            ResolvedLayerAxisYLabels(format=axis_format, font_color=text_color)
+            if axis_format is not None or text_color is not None
             else None
         ),
         tick_label=tick_label,
         tooltip_format=tooltip_format,
+        title_color=text_color,
     )
     query_name = layer.query if layer.query is not None else base_query_name
     layer_style = _with_color_tokens(layer.style, chart_style_context)
@@ -633,6 +645,17 @@ def _resolve_layer_list(
                 raise CompilationError.from_code(
                     ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION,
                     field_path=f"charts.{chart_id}.layers[{index}].axis_y.title",
+                )
+            if layer.axis_y is not None and (
+                layer.axis_y.color is not None
+                or (
+                    layer.axis_y.grid is not None
+                    and layer.axis_y.grid.model_fields_set - {"visible"}
+                )
+            ):
+                raise CompilationError.from_code(
+                    ERR_LAYER_AXIS_STYLE_WITHOUT_POSITION,
+                    field_path=f"charts.{chart_id}.layers[{index}].axis_y",
                 )
     return tuple(
         _resolve_one_layer(

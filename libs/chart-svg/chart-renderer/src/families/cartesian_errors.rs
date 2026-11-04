@@ -145,6 +145,7 @@ struct Facts {
     orientation: Option<String>,
     stack: Option<String>,
     y_start: Option<String>,
+    connect: Option<String>,
     sort: Option<Sort>,
     multiples: Option<Multiples>,
     support_table: Option<Value>,
@@ -349,7 +350,8 @@ fn plot_key_fields(facts: &Facts, rows: &[Row]) -> Vec<String> {
 /// `validation.py::validate_preaggregated_data`, for one panel's rows.
 fn duplicate_rows(facts: &Facts, rows: &[Row]) -> Result<(), Diagnostic> {
     let fields = plot_key_fields(facts, rows);
-    if fields.is_empty() {
+    // `connect:` draws one vertex per row, so a shared x is a revisit, not a duplicate.
+    if fields.is_empty() || facts.connect.is_some() {
         return Ok(());
     }
     // Counter semantics: keys in first-seen order, each previewed by its first row.

@@ -41,9 +41,7 @@ or start with the [docs](https://docs.dbtcharts.com/).
 title: Dundersign scorecard
 source: db
 
-style:
-  frame:
-    width: 1440
+width: 1440
 
 variables:
   lead_source:
@@ -217,7 +215,7 @@ rows:
 
 ## Getting started
 
-> **Beta.** dbt Charts is pre-1.0. Requires Python 3.11 to 3.13.
+> **Beta.** dbt Charts is pre-1.0. Requires Python 3.11 to 3.14.
 
 ### With an agent
 

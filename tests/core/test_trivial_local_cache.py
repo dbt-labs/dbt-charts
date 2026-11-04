@@ -12,13 +12,15 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result
+
 _SH = compute_source_hash("test_source")
 _QH = compute_query_hash("SELECT 1")
 _VH = compute_variables_hash({})
 
 
 def _put(cache: TrivialDuckDBCache, data: list[dict]) -> None:
-    cache.put(_SH, _QH, _VH, data, board_slug="board_a", query_name="q1")
+    cache.put(_SH, _QH, _VH, rows_result(data), board_slug="board_a", query_name="q1")
 
 
 class TestReplaceOnWrite:
@@ -96,7 +98,7 @@ class TestTruncatedReasonPersists:
                 _SH,
                 _QH,
                 _VH,
-                [{"v": 1}],
+                rows_result([{"v": 1}]),
                 board_slug="board_a",
                 query_name="q1",
                 truncated_reason="max_rows",
@@ -138,7 +140,7 @@ class TestTruncatedReasonPersists:
                 _SH,
                 _QH,
                 _VH,
-                [{"v": 1}],
+                rows_result([{"v": 1}]),
                 board_slug="board_a",
                 query_name="q1",
                 truncated_reason="max_rows",
@@ -147,7 +149,7 @@ class TestTruncatedReasonPersists:
                 _SH,
                 _QH,
                 _VH,
-                [{"v": 2}],
+                rows_result([{"v": 2}]),
                 board_slug="board_a",
                 query_name="q1",
                 truncated_reason=None,

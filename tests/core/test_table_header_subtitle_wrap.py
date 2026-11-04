@@ -248,7 +248,6 @@ class TestSizerAgreesWithRenderer:
         from unittest.mock import MagicMock
 
         from dbt_charts.core.execute.executor import Executor
-        from dbt_charts.core.render.board_variables import root_board_width
         from dbt_charts.core.render.layout_sizing import _get_table_height_from_data
 
         chart = _chart(make_chart)
@@ -256,16 +255,15 @@ class TestSizerAgreesWithRenderer:
         executor.execute_chart.return_value = [_NARROW_ROW]
 
         resolved = resolve(chart, [_NARROW_ROW], chart_style_context=_BOARD_CTX)
-        with root_board_width(_WIDTH):
-            estimated = _get_table_height_from_data(
-                chart,
-                resolved,
-                executor,
-                {},
-                card_padding=float(_BOARD_STYLE.frame.card_padding),
-                board_style=_BOARD_STYLE,
-                width=_WIDTH,
-            )
+        estimated = _get_table_height_from_data(
+            chart,
+            resolved,
+            executor,
+            {},
+            card_padding=float(_BOARD_STYLE.frame.card_padding),
+            board_style=_BOARD_STYLE,
+            width=_WIDTH,
+        )
         # The sizer measures inside the card padding; paint at the same width.
         svg = render_table_svg(
             resolved,

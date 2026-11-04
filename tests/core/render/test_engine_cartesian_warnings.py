@@ -37,7 +37,7 @@ from dbt_charts.core.render.chart.x_domain_paint_order import (
 )
 from dbt_charts.core.render.engine import _render_payload, build_chart_payload
 
-from .test_engine import _BOARD_CTX, _BOARD_RS, _BOARD_WIDTH, _native
+from .test_engine import _BOARD_CTX, _BOARD_RS, _native
 
 
 @dataclass
@@ -186,7 +186,6 @@ def test_layer_x_values_the_base_does_not_order_land_in_the_paint_order_sink() -
         height=320.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=_BOARD_WIDTH,
         variables={},
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
@@ -220,7 +219,7 @@ def _strip_bar() -> dict[str, Any]:
 
 def test_support_table_cells_wider_than_their_band_land_in_the_text_sink() -> None:
     with _sinks() as sinks:
-        _native(_strip_bar(), _STRIP_ROWS, width=600.0, height=400.0)
+        _native(_strip_bar(), _STRIP_ROWS, width=300.0, height=400.0)
     [truncation] = sinks.truncations["c1"]
     assert (truncation.surface, truncation.authored_field) == (
         "support_table_cell_overflow",

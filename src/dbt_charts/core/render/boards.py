@@ -48,7 +48,7 @@ from dbt_charts.core.font_measure import (
 from dbt_charts.core.render.board_variables import (
     board_data_provider,
     board_variables,
-    root_board_width,
+    variable_options,
 )
 from dbt_charts.core.render.chart_interactivity import (
     hover_runtime_attributes,
@@ -70,7 +70,10 @@ from dbt_charts.core.render.svg_utils import (
     render_title,
     translate_group,
 )
-from dbt_charts.core.render.variables_resolve import resolve_controls
+from dbt_charts.core.render.variables_resolve import (
+    linked_variable_options,
+    resolve_controls,
+)
 from dbt_charts.core.render.variables_strip import (
     StripAlign,
     render_variables_strip_svg,
@@ -661,6 +664,7 @@ def _build_board_content_items(
     variables_height: float,
     layout_content: str,
     layout_content_height: float,
+    opens_with_text: bool,
     card_padding: float,
     content_width: float,
     inline_header_svg: str = "",
@@ -709,6 +713,7 @@ def _build_board_content_items(
         inline_band_height=inline_header_height,
         gap=gap,
         has_layout_items=bool(layout_content),
+        opens_with_text=opens_with_text,
         card_padding=card_padding,
     )
 
@@ -1275,17 +1280,19 @@ def _render_board_svg(
     # Render variable controls for root-level variables only (skip when merged into title band).
     variables_svg = ""
     variables_height = 0.0
-    # Variable controls are inset by card_pad on the left (aligned with chart
-    # content); reduce width by the same amount so the right edge is unchanged.
-    variables_width = max(layout_content_width - card_pad, 0.0)
     if board.visible_variables and variables and not inline_header_svg:
+        from dbt_charts.core.render.sizing import standalone_variables_band
+
+        band_width, band_align = standalone_variables_band(
+            board.title, layout_content_width, card_pad, resolved_style.variables
+        )
         variables_svg, variables_height = _render_variables_band(
             board.visible_variables,
             variables,
-            variables_width,
+            band_width,
             executor,
             resolved_style,
-            "start",
+            band_align,
             variables_path="variables",
         )
 
@@ -1293,7 +1300,10 @@ def _render_board_svg(
     # compute_board_content_box is the single owner of the gap arithmetic:
     # title→text uses 0 gap (heading_margin_bottom_px IS the rhythm);
     # all other adjacent pairs use effective_gap.
-    from dbt_charts.core.render.sizing import compute_board_content_box
+    from dbt_charts.core.render.sizing import (
+        compute_board_content_box,
+        opens_with_text,
+    )
 
     content_box = compute_board_content_box(
         title_height=title_height,
@@ -1302,6 +1312,7 @@ def _render_board_svg(
         inline_band_height=inline_header_height,
         gap=effective_gap,
         has_layout_items=bool(board.layout.items),
+        opens_with_text=opens_with_text(board, variables),
         card_padding=card_pad,
     )
     layout_content_height -= (
@@ -1322,8 +1333,8 @@ def _render_board_svg(
     # rather than at each caller.
     with (
         board_variables(variables),
+        variable_options(linked_variable_options(board, executor, variables)),
         board_data_provider(executor),
-        root_board_width(board.width),
     ):
         layout_content, actual_layout_height = _render_layout(
             board,
@@ -1354,6 +1365,7 @@ def _render_board_svg(
         variables_height=variables_height,
         layout_content=layout_content,
         layout_content_height=actual_layout_height,
+        opens_with_text=opens_with_text(board, variables),
         card_padding=card_pad,
         content_width=prose_width,
         inline_header_svg=inline_header_svg,
@@ -1367,7 +1379,7 @@ def _render_board_svg(
     # width is already padding-inclusive (sizing sets layout.width = container
     # width and derives content width as container - 2 * frame.margin), so the
     # first arm normally wins and the second only guards the degenerate
-    # frame.width < 2 * frame.margin case, where content width clamps to 0.
+    # container width < 2 * frame.margin case, where content width clamps to 0.
     # height is content-only (layout.height is layout + title, no page padding),
     # so the second arm is what adds vertical padding at all and normally wins.
     total_width = max(width, layout_content_width + (2 * page_padding))
@@ -1669,17 +1681,19 @@ def render_nested_board(
     # layer for hosts that mount one.
     nested_variables_svg = ""
     nested_variables_height = 0.0
-    # Variable controls are inset by card_pad on the left (aligned with chart
-    # content); reduce width by the same amount so the right edge is unchanged.
-    nested_variables_width = max(layout_content_width - card_pad, 0.0)
     if board.visible_variables and variables and not inline_header_svg:
+        from dbt_charts.core.render.sizing import standalone_variables_band
+
+        band_width, band_align = standalone_variables_band(
+            board.title, layout_content_width, card_pad, resolved_style.variables
+        )
         nested_variables_svg, nested_variables_height = _render_variables_band(
             board.visible_variables,
             variables,
-            nested_variables_width,
+            band_width,
             executor,
             resolved_style,
-            "start",
+            band_align,
             variables_path=_nested_variables_path(source_path),
         )
 
@@ -1712,6 +1726,8 @@ def render_nested_board(
     # Combine title, text, variables, and layout into positioned groups.
     # Use actual_layout_height (from rendered content) so Vega charts that render
     # taller than their pre-computed slot expand the board rather than being clipped.
+    from dbt_charts.core.render.sizing import opens_with_text
+
     inner_items, inner_items_height = _build_board_content_items(
         x_offset=ep.left,
         y_offset=ep.top,
@@ -1725,6 +1741,7 @@ def render_nested_board(
         variables_height=nested_variables_height,
         layout_content=layout_content,
         layout_content_height=actual_layout_height,
+        opens_with_text=opens_with_text(board, variables),
         card_padding=card_pad,
         content_width=prose_width,
         inline_header_svg=inline_header_svg,

@@ -48,7 +48,6 @@ from dbt_charts.core.compile.models.primitives import VariableDependencies
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredQuery,
     QueryDialect,
-    RestMethod,
 )
 from dbt_charts.core.diagnostics.execution import SqlErrorPosition
 
@@ -194,9 +193,6 @@ class SqlQuery(Query):
         sql: SQL query string (may contain Jinja templates)
         source: Registry source name for the database connection
 
-    Optional Fields:
-        target: dbt target name (defaults to 'dev' if not specified)
-
     Example:
         >>> query = SqlQuery(
         ...     sql="SELECT * FROM users WHERE id = {{ user_id }}",
@@ -229,10 +225,6 @@ class SqlQuery(Query):
         default=None,
         description="Source name for the database connection.",
     )
-    target: str | None = Field(
-        default=None,
-        description="dbt target name (defaults to 'dev' if not specified).",
-    )
     dialect: QueryDialect | None = Field(
         default=None,
         description="Warehouse dialect the SQL is written in. Translated to the source's dialect when they differ.",
@@ -257,64 +249,6 @@ class SqlQuery(Query):
         """Return truncated SQL for description."""
         sql_preview = self.sql[:50] if len(self.sql) > 50 else self.sql
         return f"SQL: {sql_preview}..."
-
-
-class HttpQuery(Query):
-    """Query data from an HTTP API.
-
-    Fetches data from REST API endpoints. Supports various HTTP methods,
-    headers, query parameters, and request bodies.
-
-    Required Fields:
-        url: Full URL of the API endpoint
-
-    Optional Fields:
-        method: HTTP method (default: GET)
-        headers: Request headers
-        params: Query parameters
-        body: Request body (for POST/PUT/PATCH)
-        json_path: JSONPath expression to extract data from response
-
-    Example:
-        >>> query = HttpQuery(
-        ...     url="https://api.example.com/predict",
-        ...     method="POST",
-        ...     body={"input": "data"}
-        ... )
-        >>> query.query_type  # "http"
-        >>> query.source_description  # "HTTP: POST https://api.example.com/predict"
-    """
-
-    query_type: Literal["http"] = Field(
-        default="http",
-        description="Discriminator key identifying this as an HTTP query.",
-    )
-    url: str = Field(
-        description="Full URL of the HTTP endpoint.",
-    )
-    method: RestMethod = Field(
-        default="GET",
-        description="HTTP method (GET, POST, PUT, DELETE, PATCH). Default: GET.",
-    )
-    headers: dict[str, str] | None = Field(
-        default=None, description="Request headers (merged with source-level headers)."
-    )
-    params: dict[str, Any] | None = Field(
-        default=None, description="URL query parameters."
-    )
-    body: dict[str, Any] | str | None = Field(
-        default=None,
-        description="Request body for POST/PUT/PATCH (dict or JSON string).",
-    )
-    json_path: str | None = Field(
-        default=None,
-        description="JSONPath expression to extract tabular data from the response.",
-    )
-
-    @property
-    def source_description(self) -> str:
-        """Return method and URL for description."""
-        return f"HTTP: {self.method} {self.url}"
 
 
 class ValuesQuery(Query):
@@ -538,7 +472,7 @@ class SchemaQuery(Query, ConstrainedModel):
 # property), so Pydantic can dispatch validation/serialization by exact type
 # match instead of trying every union member in turn.
 AnyQuery = Annotated[
-    SqlQuery | HttpQuery | ValuesQuery | SchemaQuery,
+    SqlQuery | ValuesQuery | SchemaQuery,
     Discriminator("query_type"),
 ]
 
@@ -582,26 +516,6 @@ def is_sql_query(query: AnyQuery) -> TypeGuard[SqlQuery]:
         ...     print(query.sql)
     """
     return query.query_type == "sql"
-
-
-def is_http_query(query: AnyQuery) -> TypeGuard[HttpQuery]:
-    """Type guard for HTTP queries.
-
-    Use this for type-safe narrowing in conditional blocks.
-    After this check, the type checker knows the query is HttpQuery.
-
-    Args:
-        query: Any compiled query
-
-    Returns:
-        True if query is a HttpQuery
-
-    Example:
-        >>> if is_http_query(query):
-        ...     # Type checker knows query.url exists
-        ...     print(query.url)
-    """
-    return query.query_type == "http"
 
 
 def is_values_query(query: AnyQuery) -> TypeGuard[ValuesQuery]:

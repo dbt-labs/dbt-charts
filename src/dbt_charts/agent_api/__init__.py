@@ -105,6 +105,14 @@ if TYPE_CHECKING:
         query_board as query_board,
     )
     from dbt_charts.agent_api.schema_hints import SchemaHints as SchemaHints
+    from dbt_charts.agent_api.semantics import (
+        SemanticBundle as SemanticBundle,
+        SemanticObject as SemanticObject,
+        SemanticOverview as SemanticOverview,
+        SemanticPage as SemanticPage,
+        SemanticSearchResult as SemanticSearchResult,
+        describe_semantics as describe_semantics,
+    )
     from dbt_charts.agent_api.sigma import (
         SigmaWorkbook as SigmaWorkbook,
         import_sigma as import_sigma,
@@ -135,6 +143,7 @@ if TYPE_CHECKING:
         extract_ref_calls as extract_ref_calls,
     )
     from dbt_charts.core.diagnostics import Diagnostic as Diagnostic
+    from dbt_charts.core.diagnostics.base import DbtChartsError as DbtChartsError
     from dbt_charts.core.execute.cache_backend import (
         QueryResultCache as QueryResultCache,
     )
@@ -155,12 +164,16 @@ if TYPE_CHECKING:
     )
     from dbt_charts.core.render.board_links import LinkContext as LinkContext
     from dbt_charts.core.render.errors import RenderError as RenderError
+    from dbt_charts.core.render_format import (
+        RenderOutputFormat as RenderOutputFormat,
+    )
 
 __all__ = [
     "compile",
     "CompileResult",
     "DescribeBoardArgs",
     "DescribeBoardResult",
+    "DbtChartsError",
     "Diagnostic",
     "DoctorCheck",
     "DoctorReport",
@@ -182,7 +195,13 @@ __all__ = [
     "BoardRenderResult",
     "RenderError",
     "RenderFormat",
+    "RenderOutputFormat",
     "SchemaHints",
+    "SemanticBundle",
+    "SemanticObject",
+    "SemanticOverview",
+    "SemanticPage",
+    "SemanticSearchResult",
     "ValidateResult",
     # Execution extension seams
     "AllowlistedSourceResolver",
@@ -196,6 +215,7 @@ __all__ = [
     "build_design",
     "build_design_target",
     "describe_board",
+    "describe_semantics",
     "design_target",
     "get_fonts_dir",
     "init_project",
@@ -286,6 +306,12 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "QueryBoardResult": ("dbt_charts.agent_api.query", "QueryBoardResult"),
     "query_board": ("dbt_charts.agent_api.query", "query_board"),
     "SchemaHints": ("dbt_charts.agent_api.schema_hints", "SchemaHints"),
+    "SemanticBundle": ("dbt_charts.agent_api.semantics", "SemanticBundle"),
+    "SemanticObject": ("dbt_charts.agent_api.semantics", "SemanticObject"),
+    "SemanticOverview": ("dbt_charts.agent_api.semantics", "SemanticOverview"),
+    "SemanticPage": ("dbt_charts.agent_api.semantics", "SemanticPage"),
+    "SemanticSearchResult": ("dbt_charts.agent_api.semantics", "SemanticSearchResult"),
+    "describe_semantics": ("dbt_charts.agent_api.semantics", "describe_semantics"),
     "ValidateResult": ("dbt_charts.agent_api.validate", "ValidateResult"),
     "QueryDiagnostic": ("dbt_charts.agent_api.validate_query", "QueryDiagnostic"),
     "QueryRefCalls": ("dbt_charts.core.dbt_ref_check", "QueryRefCalls"),
@@ -297,7 +323,9 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "ProjectSourcesConfig": ("dbt_charts.core.compile.config", "ProjectSourcesConfig"),
     "BoardRenderResult": ("dbt_charts.core.board", "BoardRenderResult"),
     "RenderFormat": ("dbt_charts.core.render_format", "RenderFormat"),
+    "RenderOutputFormat": ("dbt_charts.core.render_format", "RenderOutputFormat"),
     "render_dashboard": ("dbt_charts.core.board", "render_dashboard"),
+    "DbtChartsError": ("dbt_charts.core.diagnostics.base", "DbtChartsError"),
     "Diagnostic": ("dbt_charts.core.diagnostics", "Diagnostic"),
     "QueryResultCache": ("dbt_charts.core.execute.cache_backend", "QueryResultCache"),
     "WarehouseObserver": (

@@ -56,6 +56,7 @@ from importlib_resources import files
 
 from dbt_charts.core.colors import (
     VARIANT_WORDS,
+    CanvasTone,
     InvalidColorError,
     Variant,
     composite_over,
@@ -67,7 +68,6 @@ from dbt_charts.core.colors import (
     is_sanitizable_color,
     oklch_to_hex,
     parse_css_color,
-    relative_luminance,
     rgb01_to_hex,
     wcag_contrast,
 )
@@ -120,6 +120,11 @@ class ToneAsPaletteError(ValueError):
     of ``color()``."""
 
 
+class PatternAsPaletteError(ValueError):
+    """Raised when a pattern palette name is passed to ``palette()``: it draws
+    fills, not color stops."""
+
+
 # ============================================================================
 # Module state
 # ============================================================================
@@ -139,20 +144,6 @@ _spine_cache: dict[str, Palette] = {}
 WCAG_TABLE_BODY = "#222222"
 # WCAG AA minimum contrast ratio for normal text.
 _WCAG_TABLE_MIN = 4.5
-
-
-# A table cell's body text is either clearly dark (light theme) or clearly
-# light (dark theme); this threshold sits safely in the gap between the two.
-_DARK_CANVAS_TEXT_LUMA = 0.5
-
-
-def _is_dark_canvas_text(text_color: str) -> bool:
-    """True when the table body text is light — i.e. it sits on a dark canvas.
-
-    The dark-canvas signal for the table palette swap, read from the same
-    relative luminance the WCAG carve already computes — no ResolvedStyle flag.
-    """
-    return relative_luminance(text_color) >= _DARK_CANVAS_TEXT_LUMA
 
 
 def _interpolate_oklch_at_t(
@@ -577,6 +568,7 @@ def palette(
     steps: int | None = None,
     reverse: bool = False,
     text_color: str = WCAG_TABLE_BODY,
+    canvas_tone: CanvasTone = "light",
 ) -> list[str]:
     """Resolve a palette name to a list of sRGB hex stops.
 
@@ -586,7 +578,10 @@ def palette(
 
     ``text_color`` applies only to ``surface="table"``: the carve keeps stops
     that hold that body-text color (defaults to the dark ink). It has no effect
-    on chart-fill (``surface`` default) resolution.
+    on chart-fill (``surface`` default) resolution. ``canvas_tone`` is the
+    tone of the canvas the table sits on (defaults to the light canvas that
+    dark ink implies); a dark tone swaps a pinned sequential or diverging
+    palette to its ``-dark`` twin.
 
     A trailing variant segment (``vivid-10.dark``, ``vivid-10:4.pale``) is
     split off before anything else and applied to every resolved stop last,
@@ -631,20 +626,24 @@ def palette(
             "not palette()."
         )
 
+    if family == "pattern":
+        raise PatternAsPaletteError(
+            f"'{name}' is a pattern palette: it names fill patterns, not color "
+            "stops. Set it as `style.pattern.palette`."
+        )
+
     if family in ("categorical", "scaffold"):
         stops = _resolve_discrete(name, family, surface, steps, reverse)
     else:
-        # Dark-canvas table swap: on a dark canvas (light cell text) a pinned
-        # sequential/diverging table palette resolves to its <name>-dark twin, so the
-        # carve has a dark neutral that holds the light text — otherwise the light
-        # palette's near-white neutral fails WCAG and the whole chart drops out.
-        # Mirrors the categorical light/dark <name>-dark convention; the trigger is
-        # the text_color already threaded here, so no dark-canvas flag is needed.
-        # Light themes (dark text) never trigger; scoped to surface="table".
+        # Dark-canvas table swap: on a dark canvas a pinned sequential/diverging
+        # table palette resolves to its <name>-dark twin, so the carve has a dark
+        # neutral that holds the light text — otherwise the light palette's
+        # near-white neutral fails WCAG and the whole chart drops out. Mirrors the
+        # categorical light/dark <name>-dark convention; scoped to surface="table".
         if (
             surface == "table"
             and not name.endswith("-dark")
-            and _is_dark_canvas_text(text_color)
+            and canvas_tone == "dark"
             and _has_continuous_dark_companion(name)
         ):
             name = f"{name}-dark"
@@ -1486,3 +1485,23 @@ def tone_colors(name: str) -> dict[str, str]:
     aliases = _load_spine(name).aliases
     assert aliases is not None, f"tone palette {name!r} declares no aliases"
     return {alias: color(f"{name}.{alias}") for alias in aliases}
+
+
+def pattern_palette(name: str, roles: Mapping[str, str]) -> Palette:
+    """The pattern palette ``name`` names: a theme pattern role (``roles`` is the
+    theme's ``palettes:`` map) or a pattern palette file.
+
+    Raises:
+        UnknownPaletteError: ``name`` is neither, or names a non-pattern palette.
+    """
+    resolved = roles.get(
+        name, name
+    )  # type-state: silent_fallback — a name that is no role is a palette file name
+    spine = _load_spine_raw(resolved)
+    if spine.kind is None:
+        raise UnknownPaletteError(
+            f"'{resolved}' is a color palette, not a pattern palette; "
+            "`style.pattern.palette` takes one of: "
+            f"{', '.join(list_palettes('pattern'))}."
+        )
+    return spine

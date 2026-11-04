@@ -17,18 +17,17 @@ from dbt_charts.core.compile import (
     CsvSourceConfig,
     DatabricksSourceConfig,
     DuckDBSourceConfig,
-    HttpSourceConfig,
     PostgresSourceConfig,
     SnowflakeSourceConfig,
     TrinoSourceConfig,
     compile,
-    is_api_source,
     is_database_source,
     is_file_source,
     parse_source_config,
 )
 from dbt_charts.core.compile.config import (
     ProjectSourcesConfig,
+    load_declared_sources,
     load_project_sources,
     validate_project_config_data,
 )
@@ -81,14 +80,6 @@ class TestSourceTypes:
             (
                 {"type": "csv", "files": {"sales": "data/sales.csv"}},
                 CsvSourceConfig,
-            ),
-            (
-                {
-                    "type": "http",
-                    "url": "https://api.example.com",
-                    "headers": {"Authorization": "Bearer token"},
-                },
-                HttpSourceConfig,
             ),
         ],
     )
@@ -431,18 +422,12 @@ class TestSourceTypeGuards:
     def test_is_file_source(self):
         """Test file source detection."""
         csv = CsvSourceConfig(type="csv", files={"data": "data.csv"})
-        http = HttpSourceConfig(type="http", url="https://api.example.com")
+        postgres = PostgresSourceConfig(
+            type="postgres", host="localhost", dbname="test", user="u", password="p"
+        )
 
         assert is_file_source(csv) is True
-        assert is_file_source(http) is False
-
-    def test_is_api_source(self):
-        """Test API source detection."""
-        http = HttpSourceConfig(type="http", url="https://api.example.com")
-        csv = CsvSourceConfig(type="csv", files={"data": "data.csv"})
-
-        assert is_api_source(http) is True
-        assert is_api_source(csv) is False
+        assert is_file_source(postgres) is False
 
 
 class TestSourceShorthand:
@@ -851,31 +836,6 @@ rows:
 
         assert not result.success
         assert any("source" in str(e).lower() for e in result.errors)
-
-    def test_http_query_without_url_fails(self):
-        """HTTP query without url raises a compile error."""
-        yaml_content = """
-title: Test Dashboard
-
-queries:
-  api:
-    type: http
-    method: GET
-
-charts:
-  chart:
-    query: api
-    type: table
-
-rows:
-  - chart
-"""
-        result = compile(yaml_content)
-
-        assert not result.success
-        assert any(
-            "url" in str(e).lower() or "source" in str(e).lower() for e in result.errors
-        )
 
 
 class TestNamedSourceResolution:
@@ -1357,9 +1317,9 @@ rows:
         result = compile(yaml_content)
         assert result.success, f"Compilation failed: {result.errors}"
 
-    def test_default_source_injection_skips_http_and_schema_queries(self) -> None:
+    def test_default_source_injection_skips_values_and_schema_queries(self) -> None:
         """A board-level default source only injects into SQL-shaped queries
-        (sql) — http and schema queries have no connection
+        (sql) — values and schema queries have no connection
         source to inject into and must be unaffected.
         """
         yaml_content = """
@@ -1367,15 +1327,16 @@ title: Test
 source: warehouse
 
 queries:
-  api:
-    type: http
-    url: https://example.com/data
+  inline:
+    type: values
+    rows:
+      - a: 1
   probe:
     type: schema
 
 charts:
   c:
-    query: api
+    query: inline
     type: table
 
 rows:
@@ -2261,3 +2222,155 @@ def test_unknown_source_suggests_the_data_file_with_that_stem(
     assert "./cars.csv, ./data/other.csv" in message
     assert "Did you mean the database file `cars.duckdb`?" in message
     assert "sources:\n  cars:\n    type: duckdb\n    path: cars.duckdb" in message
+
+
+class TestLoadDeclaredSources:
+    """The registry a verb that never connects reads: authored, not rendered."""
+
+    @staticmethod
+    def _project(tmp_path: Path, config: str) -> FilesystemProject:
+        (tmp_path / "dbt_charts.yml").write_text(config)
+        return FilesystemProject(tmp_path)
+
+    def test_leaves_out_what_needs_the_environment(self, tmp_path: Path) -> None:
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    type: bigquery
+    project: "{{ env_var('DCT_TEST_NEVER_SET') }}"
+    dataset: analytics
+    cache:
+      ttl: "{{ env_var('DCT_TEST_NEVER_SET', '1h') }}"
+""",
+        )
+        assert load_declared_sources(project).sources["warehouse"] == {
+            "type": "bigquery",
+            "dataset": "analytics",
+        }
+
+    def test_renders_what_a_static_check_depends_on(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DCT_TEST_TARGET_PATH", "custom_target")
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    type: "{{ 'dbt_profile' }}"
+    target_path: "{{ env_var('DCT_TEST_TARGET_PATH') }}"
+""",
+        )
+        assert load_declared_sources(project).sources["warehouse"] == {
+            "type": "dbt_profile",
+            "target_path": "custom_target",
+        }
+
+    def test_an_unset_target_path_fails_instead_of_guessing(
+        self, tmp_path: Path
+    ) -> None:
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    type: dbt_profile
+    target_path: "{{ env_var('DCT_TEST_NEVER_SET') }}"
+""",
+        )
+        with pytest.raises(CompilationError, match="DCT_TEST_NEVER_SET"):
+            load_declared_sources(project)
+
+    def test_a_templated_entry_still_needs_a_known_type(self, tmp_path: Path) -> None:
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    type: not_a_warehouse
+    project: "{{ env_var('DCT_TEST_NEVER_SET') }}"
+""",
+        )
+        with pytest.raises(CompilationError, match="not_a_warehouse"):
+            load_declared_sources(project)
+
+    @pytest.mark.parametrize("source_type", ["[a]", "{a: 1}", "5"])
+    def test_a_templated_entry_with_a_malformed_type_is_reported(
+        self, tmp_path: Path, source_type: str
+    ) -> None:
+        project = self._project(
+            tmp_path,
+            f"""
+sources:
+  warehouse:
+    type: {source_type}
+    project: "{{{{ env_var('DCT_TEST_NEVER_SET') }}}}"
+""",
+        )
+        with pytest.raises(CompilationError, match="warehouse"):
+            load_declared_sources(project)
+
+    @pytest.mark.parametrize("bad_field", ["bogus_field: 1", "target_path: 5"])
+    def test_a_malformed_dbt_profile_entry_is_reported(
+        self, tmp_path: Path, bad_field: str
+    ) -> None:
+        project = self._project(
+            tmp_path,
+            f"""
+sources:
+  warehouse:
+    type: dbt_profile
+    profile: "{{{{ env_var('DCT_TEST_NEVER_SET') }}}}"
+    {bad_field}
+""",
+        )
+        with pytest.raises(CompilationError, match="warehouse"):
+            load_declared_sources(project)
+
+    def test_validates_an_entry_with_nothing_to_render(self, tmp_path: Path) -> None:
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    type: not_a_warehouse
+""",
+        )
+        with pytest.raises(CompilationError, match="warehouse"):
+            load_declared_sources(project)
+
+    def test_a_templated_entry_still_needs_a_type(self, tmp_path: Path) -> None:
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    project: "{{ env_var('DCT_TEST_NEVER_SET') }}"
+""",
+        )
+        with pytest.raises(CompilationError, match="warehouse"):
+            load_declared_sources(project)
+
+    def test_rejects_a_credential_literal_in_a_templated_entry(
+        self, tmp_path: Path
+    ) -> None:
+        project = self._project(
+            tmp_path,
+            """
+sources:
+  warehouse:
+    type: postgres
+    host: "{{ env_var('DCT_TEST_NEVER_SET') }}"
+    password: hunter2
+""",
+        )
+        with pytest.raises(CompilationError):
+            load_declared_sources(project)
+
+    def test_a_dbt_project_gets_its_implicit_source(self, tmp_path: Path) -> None:
+        (tmp_path / "dbt_project.yml").write_text("name: shop\nprofile: shop\n")
+        declared = load_declared_sources(FilesystemProject(tmp_path))
+        assert declared.implicit_source == "shop"
+        assert declared.sources == {"shop": {"type": "dbt_profile"}}

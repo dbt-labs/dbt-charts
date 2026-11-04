@@ -27,7 +27,7 @@ use crate::common::{row_num, row_str, FormatSlot, MarkLabels};
 use crate::families::axis_caption::{slot_format, AxisCaption, CaptionScale, NumericScale};
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend::{LegendConfig, LegendEntry, LegendSymbol};
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role, Shape};
 use measure::FontBook;
 use crate::Payload;
 
@@ -131,6 +131,9 @@ pub(crate) struct OverlayAxisY {
     /// `grid.visible` the layer's own axis asks for, else the base's.
     #[serde(default)]
     pub grid: Option<OverlayAxisGrid>,
+    /// The ink resolve bakes for this axis's title.
+    #[serde(default)]
+    pub title_color: Option<String>,
     /// The ladder resolve bakes for a house SI layer format.
     #[serde(default)]
     pub tick_label: Option<crate::common::TickLabelConfig>,
@@ -162,6 +165,14 @@ pub(crate) struct OverlayAxisTicks {
 pub(crate) struct OverlayAxisGrid {
     #[serde(default)]
     pub visible: Option<bool>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub width: Option<f64>,
+    #[serde(default)]
+    pub dash: Option<Vec<f64>>,
+    #[serde(default)]
+    pub opacity: Option<f64>,
 }
 
 impl OverlayAxisY {
@@ -212,6 +223,9 @@ pub(crate) fn layer_series_swatches<'a>(
 pub(crate) struct OverlayAxisLabels {
     #[serde(default)]
     pub format: Option<FormatSlot>,
+    /// The ink resolve bakes for this axis's tick labels.
+    #[serde(default)]
+    pub font_color: Option<String>,
 }
 
 /// A `type: "line"` layer's raw JSON (`{Bar,Line}Resolved.layers[i]`),
@@ -641,14 +655,16 @@ impl LayerStack {
         baseline_first: &[Option<String>],
         impute: bool,
     ) -> Self {
-        let mut columns: Vec<(String, crate::common::StackZero)> = Vec::new();
-        let mut cells: HashMap<(String, Option<String>), Vec<(f64, f64)>> = HashMap::new();
-        let mut imputed = Vec::new();
+        // Every datum in the order it joins its x's pile, and whose it is: a row (`None`) or an imputed zero.
+        let mut items: Vec<(String, f64)> = Vec::new();
+        let mut owners: Vec<(String, Option<String>, bool)> = Vec::new();
+        let mut columns: Vec<String> = Vec::new();
+        let mut present: HashSet<(String, Option<String>)> = HashSet::new();
         if impute {
             for row in rows.iter().filter(|row| row_num(row, y_field).is_some()) {
                 let x = row_str(row, x_field);
-                if !columns.iter().any(|(seen, _)| *seen == x) {
-                    columns.push((x, crate::common::StackZero::new(0.0)));
+                if !columns.contains(&x) {
+                    columns.push(x);
                 }
             }
         }
@@ -656,21 +672,29 @@ impl LayerStack {
             for row in rows.iter().filter(|row| layer_color_of(row, color_field) == *series) {
                 let Some(val) = row_num(row, y_field) else { continue };
                 let x = row_str(row, x_field);
-                let slot = match columns.iter().position(|(seen, _)| *seen == x) {
-                    Some(slot) => slot,
-                    None => {
-                        columns.push((x.clone(), crate::common::StackZero::new(0.0)));
-                        columns.len() - 1
-                    }
-                };
-                cells.entry((x, series.clone())).or_default().push(columns[slot].1.push(val));
+                if !columns.contains(&x) {
+                    columns.push(x.clone());
+                }
+                present.insert((x.clone(), series.clone()));
+                owners.push((x.clone(), series.clone(), false));
+                items.push((x, val));
             }
             if impute {
-                for (x, stack) in columns.iter_mut() {
-                    if !cells.contains_key(&(x.clone(), series.clone())) {
-                        imputed.push(((x.clone(), series.clone()), stack.push(0.0)));
+                for x in &columns {
+                    if !present.contains(&(x.clone(), series.clone())) {
+                        owners.push((x.clone(), series.clone(), true));
+                        items.push((x.clone(), 0.0));
                     }
                 }
+            }
+        }
+        let mut cells = HashMap::<_, Vec<(f64, f64)>>::new();
+        let mut imputed = Vec::new();
+        for ((x, series, is_imputed), span) in owners.into_iter().zip(crate::common::zero_piles(items)) {
+            if is_imputed {
+                imputed.push(((x, series), span));
+            } else {
+                cells.entry((x, series)).or_default().push(span);
             }
         }
         LayerStack {
@@ -1017,6 +1041,7 @@ impl LayerScale {
                 }),
                 series_key: None,
                 recede: None,
+                action: None,
             })
             .collect()
     }
@@ -1182,6 +1207,7 @@ pub(crate) struct StepBand {
 /// `stacked` gives an area row's `(start, end)` on the stack of its color
 /// groups: the fill spans it while the line and points stay on the raw value.
 pub(crate) fn line_layer_marks(
+    layer: usize,
     l: &OverlayLineLayer,
     rows: &[serde_json::Map<String, Value>],
     // A NaN x is Vega's NaN position: the mark sits at 0 and the line or area is undefined there.
@@ -1204,13 +1230,22 @@ pub(crate) fn line_layer_marks(
     // A band step's marks are drawn from data Vega-Lite rewrites, so they carry no link; its labels still do.
     let mark_link = link.filter(|_| !(l.curve_name() == Some("step") && step_band.is_some()));
     let mut marks: Vec<Node> = Vec::new();
+    let series_mark = || Role::Mark { layer, series: None, datum: None };
 
     let mut points: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
     // Each point's own link; a path's is its first datum's.
     let mut hrefs: Vec<Option<String>> = Vec::with_capacity(rows.len());
     // Each point's area span `(top, bottom)` in the pile of the rows at its x.
     let mut spans: Vec<(f64, f64)> = Vec::with_capacity(rows.len());
-    let mut piles: HashMap<u64, crate::common::StackZero> = HashMap::new();
+    // An undefined row shares no pile with the row that really sits at 0.
+    let pile_key = |index: usize, x: f64| if x.is_nan() { u64::MAX - index as u64 } else { x.to_bits() };
+    // Each drawn row's span on its x's pile of rows, absent a stack of the color groups.
+    let piles: Vec<(f64, f64)> = if stacked.is_some() {
+        Vec::new()
+    } else {
+        crate::common::zero_piles(rows.iter().enumerate().filter_map(|(index, row)| Some((pile_key(index, x_of(row)?), row_num(row, &l.y)?))))
+    };
+    let mut piled = 0;
     let mut labels: Vec<Option<String>> = Vec::with_capacity(rows.len());
     let label_style = l
         .visible_labels()
@@ -1237,14 +1272,15 @@ pub(crate) fn line_layer_marks(
         kept_x.push(x);
         kept_rows.push(row);
         undefined.push(x.is_nan());
-        // An undefined row shares no pile with the row that really sits at 0.
-        let pile_key = if x.is_nan() { u64::MAX - index as u64 } else { x.to_bits() };
         let x = if x.is_nan() { 0.0 } else { x };
         points.push(if horizontal { (y_of(val), x) } else { (x, y_of(val)) });
         hrefs.push(link.map(|link| link.href(row)).transpose()?);
         let (below, end) = match &stack_spans {
             Some(spans) => spans[index].expect("a row with a value is on the stack"),
-            None => piles.entry(pile_key).or_insert_with(|| crate::common::StackZero::new(0.0)).push(val),
+            None => {
+                piled += 1;
+                piles[piled - 1]
+            }
         };
         spans.push(((frame.free_y)(end), (frame.free_y)(below)));
         labels.push(describe(row, val)?);
@@ -1289,12 +1325,12 @@ pub(crate) fn line_layer_marks(
                 }
             }
         }
-        let mut piles: HashMap<u64, crate::common::StackZero> = HashMap::new();
         let mut order: Vec<usize> = (0..items.len()).collect();
         order.sort_by(|&a, &b| items[b].3.cmp(items[a].3));
         let mut ends: Vec<(f64, f64)> = vec![(0.0, 0.0); items.len()];
-        for &item in &order {
-            ends[item] = piles.entry(items[item].1.to_bits()).or_insert_with(|| crate::common::StackZero::new(0.0)).push(items[item].2);
+        let stacked_in_order = crate::common::zero_piles(order.iter().map(|&item| (items[item].1.to_bits(), items[item].2)));
+        for (&item, span) in order.iter().zip(stacked_in_order) {
+            ends[item] = span;
         }
         for (&(kept, ..), &(below, end)) in items.iter().zip(&ends) {
             if let Some(kept) = kept {
@@ -1461,23 +1497,19 @@ pub(crate) fn line_layer_marks(
             && area_runs.iter().flatten().any(|&(_, top, bottom)| [top, bottom].iter().any(|v| *v < 0.0 || *v > if horizontal { plot_w } else { plot_h }));
         let clip_id = format!("dbt-area-clip-{plot_w}-{plot_h}");
         let mut fill = Attrs::new()
-            .set("d", d)
             .set("fill", series_color)
-            .set("fill-opacity", area.opacity.to_string())
-            .set("stroke-opacity", "0")
-            .set("opacity", "1");
+            .num("fill-opacity", area.opacity)
+            .num("stroke-opacity", 0.0)
+            .num("opacity", 1.0);
         if leaves_plot {
-            marks.push(Node::ClipPath {
-                attrs: Attrs::new().set("id", clip_id.as_str()),
-                children: vec![Node::Rect(Attrs::new().set("width", plot_w.to_string()).set("height", plot_h.to_string()))],
-            });
+            marks.push(plot_clip(&clip_id, (plot_w, plot_h)));
             fill = fill.set("clip-path", format!("url(#{clip_id})"));
         }
         let first = run_hrefs.first().cloned().flatten();
         marks.push(crate::contract::connected_group(
             "area",
             "layer_1_marks",
-            vec![crate::href::linked(crate::href::anchor_for(mark_link, &first), Node::Path(fill))],
+            vec![crate::href::linked(crate::href::anchor_for(mark_link, &first), Node::path(series_mark(), d, fill))],
         ));
     }
     // The imputed zero rows of this color value form their own mark group, zero-high atop each column.
@@ -1496,15 +1528,14 @@ pub(crate) fn line_layer_marks(
             let d = d3rs::shape::stacked_area_path(&[run], curve);
             let first_href = Some(first_href.to_string());
             let fill = Attrs::new()
-                .set("d", d)
                 .set("fill", series_color)
-                .set("fill-opacity", area.opacity.to_string())
-                .set("stroke-opacity", "0")
-                .set("opacity", "1");
+                .num("fill-opacity", area.opacity)
+                .num("stroke-opacity", 0.0)
+                .num("opacity", 1.0);
             marks.push(crate::contract::connected_group(
                 "area",
                 "layer_1_marks",
-                vec![crate::href::linked(crate::href::anchor_for(mark_link, &first_href), Node::Path(fill))],
+                vec![crate::href::linked(crate::href::anchor_for(mark_link, &first_href), Node::path(series_mark(), d, fill))],
             ));
         }
     }
@@ -1512,10 +1543,9 @@ pub(crate) fn line_layer_marks(
     for (run, run_href) in runs.iter().zip(&run_hrefs) {
         let d = d3rs::shape::line_path(std::slice::from_ref(run), curve);
         let stroke = Attrs::new()
-            .set("d", d)
             .set("fill", "none")
             .set("stroke", line_color)
-            .set("stroke-width", l.line_mark.stroke.width.to_string())
+            .num("stroke-width", l.line_mark.stroke.width)
             .set("stroke-linecap", cap)
             .set("stroke-linejoin", join);
         let stroke = match &dash {
@@ -1525,7 +1555,7 @@ pub(crate) fn line_layer_marks(
         marks.push(crate::contract::connected_group(
             "line",
             "layer_1_marks",
-            vec![crate::href::linked(crate::href::anchor_for(mark_link, run_href), Node::Path(stroke))],
+            vec![crate::href::linked(crate::href::anchor_for(mark_link, run_href), Node::path(series_mark(), d, stroke))],
         ));
     }
     // A visible point overlay only draws when `point_mark.size` is authored
@@ -1542,7 +1572,7 @@ pub(crate) fn line_layer_marks(
         let mut points = Vec::new();
         for ((&(px, py), label), href) in mark_points.iter().zip(&mark_labels).zip(&mark_hrefs) {
             let point_color = l.point_mark.color.as_deref().unwrap_or(series_color);
-            let point = overlay_point(&l.point_mark, px, py, r_pt, point_color, canvas, label.as_deref())?;
+            let point = overlay_point(layer, &l.point_mark, px, py, r_pt, point_color, canvas, label.as_deref())?;
             points.push(crate::href::linked(crate::href::anchor_for(mark_link, href), point));
         }
         if announced {
@@ -1556,14 +1586,16 @@ pub(crate) fn line_layer_marks(
         let mut targets = Vec::new();
         for ((&(px, py), label), href) in mark_points.iter().zip(&mark_labels).zip(&mark_hrefs) {
             let aria = if drawn.is_some() { None } else { label.as_deref() };
-            let target = Node::Circle(
+            let target = Node::circle(
+                Role::Chrome,
+                (0.0, 0.0),
+                hover_r,
                 Attrs::new()
-                    .set("transform", format!("translate({px:.3},{py:.3})"))
-                    .set("r", format!("{hover_r:.3}"))
                     .set("fill", series_color)
-                    .set("opacity", "0")
+                    .num("opacity", 0.0)
                     .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?),
-            );
+            )
+            .translate(px, py);
             targets.push(crate::href::linked(crate::href::anchor_for(mark_link, href), target));
         }
         marks.push(if drawn.is_some() {
@@ -1663,7 +1695,7 @@ impl<'a> LayerLabelStyle<'a> {
         rows: &[serde_json::Map<String, Value>],
         board_style: Option<&crate::BoardStyle>,
     ) -> Result<Self, String> {
-        ml.refuse_last("layered chart")?;
+        ml.refuse_anchors("layered chart")?;
         let font = crate::families::bar::labels::label_font(ml, board_style)?;
         let color = ml.font.as_ref().and_then(|f| f.color.as_deref()).unwrap_or("#313233");
         Ok(LayerLabelStyle {
@@ -1760,11 +1792,12 @@ pub(crate) fn layer_value_labels(
 /// datum's structured-tooltip label when the caller wires one (scatter
 /// only today); `None` paints the pre-existing unlabeled status quo.
 ///
-/// The circle is centered on its own origin and placed by `transform`, the way
+/// The circle is centered on its own origin and placed by a translation, the way
 /// Vega places a symbol: `chart_interactivity.js` reads a datum's position off
 /// the element's screen CTM, so `cx`/`cy` would put every marker at the group
 /// origin.
 fn overlay_point(
+    layer: usize,
     pm: &OverlayPointMark,
     px: f64,
     py: f64,
@@ -1773,20 +1806,18 @@ fn overlay_point(
     canvas: &str,
     aria: Option<&str>,
 ) -> Result<Node, String> {
-    let attrs = Attrs::new().set("transform", format!("translate({px:.3},{py:.3})")).set("r", format!("{r_pt:.3}"));
     let attrs = if pm.filled.unwrap_or(true) {
-        attrs.set("fill", point_color)
+        Attrs::new().set("fill", point_color)
     } else {
-        attrs
+        Attrs::new()
             .set("fill", pm.fill.as_deref().unwrap_or(canvas))
             .set("stroke", point_color)
-            .set("stroke-width", pm.stroke_width.to_string())
+            .num("stroke-width", pm.stroke_width)
     };
-    Ok(Node::Circle(
-        attrs
-            .set_if(aria.is_some(), "opacity", "1")
-            .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?),
-    ))
+    let attrs = attrs
+        .set_if(aria.is_some(), "opacity", "1")
+        .extend(crate::contract::aria_attrs(aria, crate::contract::ItemRole::Point)?);
+    Ok(Node::circle(Role::Mark { layer, series: None, datum: None }, (0.0, 0.0), r_pt, attrs).translate(px, py))
 }
 
 /// How a scatter layer's points take their color.
@@ -1910,7 +1941,7 @@ pub(crate) fn scatter_layer_marks(
             PointColor::Claimed(claimed) => l.point_mark.color.as_deref().unwrap_or(claimed).to_string(),
             PointColor::Encoded(of_row) => of_row(row),
         };
-        let point = overlay_point(&l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
+        let point = overlay_point(layer_index, &l.point_mark, x, y, r_pt, &point_color, canvas, aria.as_deref())?;
         points.push(crate::href::linked(anchor, point));
         if let Some(style) = &label_style {
             if let Some(label_cross) = label_x_of.map_or(Some(cross), |label_x_of| label_x_of(row)) {
@@ -2172,6 +2203,10 @@ pub(crate) struct LayerAxis {
     pub gutter: f64,
     /// Whether the layer's own grid paints: its authored `grid.visible`, else the base's.
     pub grid_visible: bool,
+    pub grid: LayerGrid,
+    /// The baked ink of the axis's tick labels and title; the base's where absent.
+    pub label_color: Option<String>,
+    pub title_color: Option<String>,
     pub title_text: String,
     /// Vega's description of the layer's axis.
     pub caption: AxisCaption,
@@ -2182,10 +2217,44 @@ pub(crate) struct LayerAxis {
     pub title_extra: f64,
 }
 
+/// A layer axis's gridline paint: each field its own, else the base's.
+pub(crate) struct LayerGrid {
+    color: Option<String>,
+    width: Option<f64>,
+    dash: Option<String>,
+    pub opacity: Option<f64>,
+}
+
+impl LayerGrid {
+    fn of(own: Option<&OverlayAxisGrid>, base: &crate::common::AxisGrid) -> Self {
+        let dash = own.and_then(|g| g.dash.as_deref()).or(base.dash.as_deref());
+        LayerGrid {
+            color: own.and_then(|g| g.color.clone()),
+            width: own.and_then(|g| g.width),
+            dash: crate::common::dash_array(dash),
+            opacity: own.and_then(|g| g.opacity).or(base.opacity),
+        }
+    }
+
+    /// The gridline attributes, over the base ink and width a family paints.
+    pub(crate) fn attrs(&self, base_color: &str, base_width: f64) -> Attrs {
+        Attrs::new()
+            .set("stroke", self.color.as_deref().unwrap_or(base_color))
+            .num("stroke-width", self.width.unwrap_or(base_width))
+            .quick_some("stroke-dasharray", self.dash.clone())
+    }
+}
+
 impl LayerAxis {
+    /// Gridline attributes for a family that draws an opaque grid with no
+    /// opacity attribute at all.
+    pub(crate) fn layer_grid_attrs(&self, base_color: &str, base_width: f64) -> Attrs {
+        self.grid.attrs(base_color, base_width).num_some("opacity", self.grid.opacity.filter(|&o| o != 1.0))
+    }
+
     /// The axis's own scale at a plot height.
-    pub(crate) fn scale(&self, plot_h: f64) -> crate::families::cartesian::LinearScale {
-        crate::families::cartesian::LinearScale::new(self.domain_min, self.domain_max, plot_h, 0.0)
+    pub(crate) fn scale(&self, plot_h: f64) -> d3rs::scale::Continuous {
+        d3rs::scale::Continuous::linear([self.domain_min, self.domain_max], [plot_h, 0.0])
     }
 
     /// How far the axis reaches past the plot edge it sits on: its offset,
@@ -2226,7 +2295,7 @@ impl LayerAxis {
             } else {
                 (-(offset + self.label_offset), "right")
             };
-            b.union(&text_ink(x, scale.position(tv), lw.min(label_limit), font_size, align, "middle"));
+            b.union(&text_ink(x, scale.scale(tv), lw.min(label_limit), font_size, align, "middle"));
         }
     }
 }
@@ -2273,16 +2342,13 @@ pub(crate) fn row_order_stack<'a>(
     y: &str,
     nan: IsNan,
 ) -> Vec<(String, f64, f64)> {
-    let mut stacks: HashMap<Option<String>, crate::common::StackZero> = HashMap::new();
-    rows.into_iter()
-        .filter_map(|row| {
-            let cat = row_str(row, cat_field);
-            // Vega groups every NaN position into one pile.
-            let pile = (!nan(&cat)).then(|| cat.clone());
-            let (start, end) = stacks.entry(pile).or_insert_with(|| crate::common::StackZero::new(0.0)).push(row_num(row, y)?);
-            Some((cat, start, end))
-        })
-        .collect()
+    let valued: Vec<(String, f64)> = rows
+        .into_iter()
+        .filter_map(|row| Some((row_str(row, cat_field), row_num(row, y)?)))
+        .collect();
+    // Vega groups every NaN position into one pile.
+    let spans = crate::common::zero_piles(valued.iter().map(|(cat, v)| ((!nan(cat)).then(|| cat.clone()), *v)));
+    valued.into_iter().zip(spans).map(|((cat, _), (start, end))| (cat, start, end)).collect()
 }
 
 /// Whether an x text is Vega's NaN position (a year below 100 over a calendar grain).
@@ -2337,36 +2403,32 @@ pub(crate) fn clamp_unless_clipped(position: f64, extent: f64, clipped: bool) ->
 /// `marks` in the plot clip (`clip: true` on a line or scatter layer).
 pub(crate) fn clip_marks(marks: Vec<Node>, (plot_w, plot_h): (f64, f64)) -> Vec<Node> {
     let id = format!("dbt-area-clip-{plot_w}-{plot_h}");
-    vec![
-        Node::ClipPath {
-            attrs: Attrs::new().set("id", id.as_str()),
-            children: vec![Node::Rect(Attrs::new().set("width", plot_w.to_string()).set("height", plot_h.to_string()))],
-        },
-        Node::group(Attrs::new().set("clip-path", format!("url(#{id})")), marks),
-    ]
+    vec![plot_clip(&id, (plot_w, plot_h)), Node::group(Role::Chrome, Attrs::new().set("clip-path", format!("url(#{id})")), marks)]
+}
+
+fn plot_clip(id: &str, (plot_w, plot_h): (f64, f64)) -> Node {
+    Node::new(
+        Role::Chrome,
+        Attrs::new().set("id", id),
+        Shape::ClipPath(vec![Node::rect(Role::Chrome, (0.0, 0.0, plot_w, plot_h), Attrs::new())]),
+    )
 }
 
 /// The id of the plot-sized clip a layer's marks paint under (`clip: true`): it names the
 /// plot box and carries the chart's namespace suffix, as every id production mints does
 /// (`_namespace_svg_ids`).
 pub(crate) fn layer_clip_id((plot_w, plot_h): (f64, f64), chart_id: &str) -> String {
-    format!("dbt-layer-clip-{plot_w}-{plot_h}-{}", crate::contract::safe_svg_id(chart_id))
+    format!("dbt-layer-clip-{plot_w}-{plot_h}-{}", crate::contract::scoped_id(chart_id))
 }
 
 /// `children` under the layer clip `id`, defining it first unless `defined`: a second
 /// clipped layer of the same plot reuses the definition.
-pub(crate) fn layer_clip_group(id: &str, (plot_w, plot_h): (f64, f64), defined: bool, children: Vec<Node>) -> Vec<Node> {
-    let group = Node::group(Attrs::new().set("clip-path", format!("url(#{id})")), children);
+pub(crate) fn layer_clip_group(id: &str, plot: (f64, f64), defined: bool, children: Vec<Node>) -> Vec<Node> {
+    let group = Node::group(Role::Chrome, Attrs::new().set("clip-path", format!("url(#{id})")), children);
     if defined {
         return vec![group];
     }
-    let clip = Node::ClipPath {
-        attrs: Attrs::new().set("id", id),
-        children: vec![Node::Rect(
-            Attrs::new().set("x", "0").set("y", "0").set("width", plot_w.to_string()).set("height", plot_h.to_string()),
-        )],
-    };
-    vec![clip, group]
+    vec![plot_clip(id, plot), group]
 }
 
 /// `children` under the layer clip of a `plot`-sized chart, defining the clip the first time the
@@ -2384,6 +2446,7 @@ pub(crate) struct BarLayerMark<'a> {
     pub to: f64,
     pub value: f64,
     pub row: &'a serde_json::Map<String, Value>,
+    pub datum: usize,
 }
 
 /// A bar layer's rects. A ranged layer spans its two columns; a colorless one
@@ -2400,9 +2463,10 @@ pub(crate) fn bar_layer_marks<'a>(
     if let Some(start) = bl.y_start.as_deref() {
         return rows
             .iter()
-            .filter_map(|row| {
+            .enumerate()
+            .filter_map(|(datum, row)| {
                 let value = row_num(row, &bl.y)?;
-                Some(BarLayerMark { from: row_num(row, start)?, to: value, value, row })
+                Some(BarLayerMark { from: row_num(row, start)?, to: value, value, row, datum })
             })
             .collect();
     }
@@ -2421,9 +2485,10 @@ pub(crate) fn bar_layer_marks<'a>(
     };
     rows.iter()
         .zip(spans)
-        .filter_map(|(row, span)| {
+        .enumerate()
+        .filter_map(|(datum, (row, span))| {
             let (from, to) = span?;
-            Some(BarLayerMark { from, to, value: row_num(row, &bl.y)?, row })
+            Some(BarLayerMark { from, to, value: row_num(row, &bl.y)?, row, datum })
         })
         .collect()
 }
@@ -2452,23 +2517,18 @@ pub(crate) fn layer_grids(
     let mut groups = Vec::new();
     for la in layer_axes.iter().filter(|la| la.grid_visible) {
         let gc = crate::common::required_ink(ax_y.grid.color.as_deref(), family, "axis_y.grid.color")?;
-        let gw = ax_y.grid.width.unwrap_or(1.0);
-        let go = ax_y.grid.opacity.unwrap_or(1.0);
+        let go = la.grid.opacity.unwrap_or(1.0);
         let scale = la.scale(plot_h);
         let lines = la
             .tick_values
             .iter()
             .map(|&tv| {
-                let gy = scale.position(tv).round() + 0.5;
-                Node::Line(
-                    Attrs::new()
-                        .set("x1", "0.5")
-                        .set("y1", format!("{gy:.3}"))
-                        .set("x2", format!("{:.3}", plot_w + 0.5))
-                        .set("y2", format!("{gy:.3}"))
-                        .set("stroke", gc)
-                        .set("stroke-width", gw.to_string())
-                        .set("opacity", go.to_string()),
+                let gy = crate::common::tick_round(scale.scale(tv));
+                Node::line(
+                    Role::Grid,
+                    (0.5, gy),
+                    (plot_w + 0.5, gy),
+                    la.grid.attrs(gc, ax_y.grid.width.unwrap_or(1.0)).num("opacity", go),
                 )
             })
             .collect();
@@ -2724,6 +2784,9 @@ impl<'a> ScaledLayer<'a> {
             label_offset,
             gutter,
             grid_visible: self.grid_visible(ax_y),
+            grid: LayerGrid::of(self.axis_y.grid.as_ref(), &ax_y.grid),
+            label_color: self.axis_y.labels.as_ref().and_then(|l| l.font_color.clone()),
+            title_color: self.axis_y.title_color.clone(),
             title_text,
             caption,
             title_extra,
@@ -2757,7 +2820,7 @@ pub(crate) struct LayerAxisInk<'a> {
 /// title draws nothing.
 pub(crate) fn layer_axis(
     la: &LayerAxis,
-    scale: &crate::families::cartesian::LinearScale,
+    scale: &d3rs::scale::Continuous,
     edge_x: f64,
     (top, bottom): (f64, f64),
     ink: &LayerAxisInk,
@@ -2770,37 +2833,36 @@ pub(crate) fn layer_axis(
     let label_x = edge_x + outward * la.label_offset;
     let title_x = edge_x + outward * la.gutter;
     let mut items = Vec::new();
-    let zero_rules = ink.zero_rule.map_or_else(Vec::new, |(stroke, width)| crate::common::value_axis_rules(top, [scale.position(0.0)], stroke, width));
+    let zero_rules = ink.zero_rule.map_or_else(Vec::new, |(stroke, width)| crate::common::value_axis_rules(top, [scale.scale(0.0)], stroke, width));
     for (&tv, label) in la.tick_values.iter().zip(&la.tick_labels) {
-        let tick_y = top + scale.position(tv) + 0.5;
+        let tick_y = top + scale.scale(tv) + 0.5;
         if tick_y < top - 1.0 || tick_y > bottom + 1.0 {
             continue;
         }
         items.extend(crate::common::value_ticks(
             ink.ticks,
-            (ink.tick_size > 0.0).then(|| crate::common::tick_row(top, scale.position(tv))),
+            (ink.tick_size > 0.0).then(|| crate::common::tick_row(top, scale.scale(tv))),
             edge_x,
             outward,
             ink.tick_size,
             &crate::common::thresholds(&zero_rules),
         )?);
         let y = tick_y + measure::baseline_shift("middle", ink.font_size);
-        items.push(Node::text(
-            Attrs::new()
-                .set("x", format!("{label_x:.2}"))
-                .set("y", format!("{y:.2}"))
-                .set("text-anchor", anchor)
-                .vega("font-family", ink.font_family)
-                .set("font-size", ink.font_size.to_string())
-                .quick_some("font-style", ink.font_style)
-                .set("font-weight", ink.font_weight)
-                .set("fill", ink.font_color),
-            label.as_str(),
-        ));
+        items.push(crate::text::label(Role::Label, (label_x, y), Attrs::new().set("text-anchor", anchor).vega("font-family", ink.font_family).num("font-size", ink.font_size).quick_some("font-style", ink.font_style).set("font-weight", ink.font_weight).set("fill", la.label_color.as_deref().unwrap_or(ink.font_color)), label.as_str()));
     }
+    let inked_title;
+    let title_style = match &la.title_color {
+        Some(color) => {
+            let mut style = ink.title_style.clone();
+            style.font.color = Some(color.clone());
+            inked_title = style;
+            &inked_title
+        }
+        None => ink.title_style,
+    };
     items.extend(crate::common::axis_title_rotated(
         &la.title_text,
-        ink.title_style,
+        title_style,
         title_x,
         top + (bottom - top) / 2.0,
         outward,
@@ -2987,6 +3049,9 @@ mod tests {
             label_offset: 6.0,
             gutter: 20.0,
             grid_visible: false,
+            grid: LayerGrid { color: None, width: None, dash: None, opacity: None },
+            label_color: None,
+            title_color: None,
             title_text: String::new(),
             caption: AxisCaption {
                 bare: false,
@@ -3095,13 +3160,13 @@ mod tests {
     fn an_overlay_point_is_placed_by_transform_and_carries_its_description() {
         let described = " data-dct-role=\"point\" aria-label=\"a: 1\" role=\"graphics-symbol\" aria-roledescription=\"point\"";
         for (filled, want) in [
-            (true, format!("<circle transform=\"translate(10.000,20.000)\" r=\"4.000\" fill=\"#111\" opacity=\"1\"{described}/>")),
+            (true, format!("<circle transform=\"translate(10,20)\" cx=\"0\" cy=\"0\" r=\"4\" fill=\"#111\" opacity=\"1\"{described}/>")),
             (
                 false,
-                format!("<circle transform=\"translate(10.000,20.000)\" r=\"4.000\" fill=\"#fff\" stroke=\"#111\" stroke-width=\"2\" opacity=\"1\"{described}/>"),
+                format!("<circle transform=\"translate(10,20)\" cx=\"0\" cy=\"0\" r=\"4\" fill=\"#fff\" stroke=\"#111\" stroke-width=\"2\" opacity=\"1\"{described}/>"),
             ),
         ] {
-            let point = overlay_point(&point_mark(filled), 10.0, 20.0, 4.0, "#111", "#fff", Some("a: 1")).unwrap();
+            let point = overlay_point(1, &point_mark(filled), 10.0, 20.0, 4.0, "#111", "#fff", Some("a: 1")).unwrap();
             assert_eq!(print::print(&[point]), want);
         }
     }

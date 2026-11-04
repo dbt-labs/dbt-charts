@@ -536,7 +536,8 @@ class TestThinShimLOCGuards:
             # RENDER_BOARD's own include_raw_data/no-format shape). Raised
             # 209→260 for the per-tool MCP annotations (title + hints), which
             # are declarative data, not logic.
-            ("ai/tool_schemas.py", 260),
+            # 260→270 for the describe_semantics tool and its AGENT_TOOLS carve-out.
+            ("ai/tool_schemas.py", 270),
         ],
         ids=["server.py", "tools/__init__.py", "tool_schemas.py"],
     )

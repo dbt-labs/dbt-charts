@@ -8,6 +8,7 @@ fixture is exactly what hid the earlier variable- and semicolon-handling bugs.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -36,6 +37,8 @@ from dbt_charts.core.execute.warehouse_check import (
     _strip_trailing_semicolon_for_script_join,
     warehouse_check,
 )
+
+from .test_metricflow import _project, needs_metricflow
 
 _CHART = """\
 charts:
@@ -86,7 +89,7 @@ def _check(compiled, registry, query_name: str = "my_query"):
     )
 
 
-def _check_sql(sql: str, registry, *, target: str | None = None):
+def _check_sql(sql: str, registry):
     """Check one SQL string against a stubbed registry, via a real compiled board.
 
     The board is real even where the registry is a double: the check reads
@@ -101,7 +104,7 @@ def _check_sql(sql: str, registry, *, target: str | None = None):
         yaml.dump(
             {
                 "source": "s",
-                "queries": {"q": {"sql": sql, "target": target} if target else sql},
+                "queries": {"q": sql},
                 "charts": {"c": {"query": "q", "type": "table"}},
             }
         )
@@ -317,9 +320,8 @@ class TestWarehouseCheckDuckDB:
 
         Carrying the limit into the wrap makes a 3-column query report 2 columns,
         and the sweep then reports the third as missing from the result. The
-        limit is set on the compiled query because that is where it lands: a
-        `limit:` on an authored http query normalizes onto the
-        compiled ``SqlQuery``, which is what the check receives.
+        limit is set on the compiled query because that is where the check
+        receives it.
         """
         compiled, registry = _duckdb_project(
             tmp_path,
@@ -617,13 +619,12 @@ class TestWarehouseCheckBigQuery:
             attribution={"team": "analytics"},
         )
 
-        _check_sql("SELECT 1 FROM orders", registry, target="prod")
+        _check_sql("SELECT 1 FROM orders", registry)
 
         labels = fake_bigquery_client.query.call_args.kwargs["job_config"].labels
         assert labels["app"] == "dbt-charts"
         assert labels["dbt_charts_surface"] == "cli"
         assert labels["dbt_charts_query"] == "q"
-        assert labels["dbt_charts_target"] == "prod"
         assert "dbt_charts_board" in labels
         assert labels["team"] == "analytics"
 
@@ -1614,24 +1615,120 @@ class TestPrepareSqlThroughARealRegistry:
         assert job_config.use_query_cache is False
 
 
-def test_dialect_query_is_unchecked_not_sent_untranslated(tmp_path: Path) -> None:
-    """EXPLAIN-wrapping would send the authored dialect to the warehouse."""
-    board_yml = """\
+def _dialect_board(sql: str, dialect: str = "bigquery", variables: str = "") -> str:
+    return f"""\
 title: T
 source: testdb
-queries:
+{variables}queries:
   my_query:
-    sql: SELECT a FROM t
-    dialect: bigquery
+    sql: {sql}
+    dialect: {dialect}
 charts:
   c:
     query: my_query
     type: table
 """
-    compiled, registry = _duckdb_project(tmp_path, board_yml=board_yml)
-    result = _check(compiled, registry)
-    assert result.status == "unchecked"
-    assert result.mechanism == "dialect"
+
+
+class TestWarehouseCheckDialectQuery:
+    """A query authored in another dialect is translated, then checked, as it runs."""
+
+    def test_translated_sql_is_checked(self, tmp_path: Path) -> None:
+        """SAFE_CAST is BigQuery-only: DuckDB can run it only once translated."""
+        compiled, registry = _duckdb_project(
+            tmp_path,
+            board_yml=_dialect_board("SELECT SAFE_CAST(a AS STRING) AS a FROM t"),
+        )
+        result = _check(compiled, registry)
+        assert result.status == "valid", result.error
+        assert result.mechanism == "DESCRIBE"
+        assert [c.name for c in result.columns] == ["a"]
+
+    def test_defect_in_translated_sql_is_invalid(self, tmp_path: Path) -> None:
+        compiled, registry = _duckdb_project(
+            tmp_path, board_yml=_dialect_board("SELECT missing_col FROM t")
+        )
+        result = _check(compiled, registry)
+        assert result.status == "invalid"
+        assert "missing_col" in result.error
+
+    def test_variables_are_rendered_before_translation(self, tmp_path: Path) -> None:
+        compiled, registry = _duckdb_project(
+            tmp_path,
+            board_yml=_dialect_board(
+                "SELECT a FROM t WHERE a > {{ min_a }}",
+                variables="variables:\n  min_a:\n    default: 1\n",
+            ),
+        )
+        assert _check(compiled, registry).status == "valid"
+
+    def test_translation_failure_is_invalid_not_a_silent_pass(
+        self, tmp_path: Path
+    ) -> None:
+        compiled, registry = _duckdb_project(
+            tmp_path, board_yml=_dialect_board("SELECT a FROM t WHERE (")
+        )
+        result = _check(compiled, registry)
+        assert result.status == "invalid"
+        assert result.mechanism == "translation"
+        assert result.error
+
+    def test_file_source_refuses_dialect_as_execution_does(
+        self, tmp_path: Path
+    ) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "orders.csv").write_text("id,revenue\n1,100.0\n")
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  testdb:\n    type: csv\n    files:\n"
+            "      orders: data/orders.csv\n"
+        )
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "board.yml").write_text(
+            _dialect_board("SELECT id FROM orders")
+        )
+        project = FilesystemProject(tmp_path)
+        compiled = compile_file(project.path("charts/board.yml").read_board())
+        assert compiled.board is not None, compiled.errors
+        registry = build_adapter_registry(project, profile_type="duckdb")
+
+        result = _check(compiled, registry)
+
+        assert result.status == "invalid"
+        assert result.mechanism == "translation"
+        assert "duckdb" in result.error
+
+    @staticmethod
+    def _bundle_check(tmp_path: Path):
+        from dbt_charts.core.compile import compile as compile_board
+
+        project = _project(tmp_path)
+        compiled = compile_board(
+            "queries:\n  q:\n    source: db\n    dialect: bigquery\n"
+            "    sql: SELECT AGG(invoiced_total) AS total FROM invoices\n"
+            "charts:\n  c:\n    type: table\n    query: q\n",
+            project_sources=project.sources,
+        )
+        assert compiled.board is not None, compiled.errors
+        return _check(
+            compiled, build_adapter_registry(project, profile_type="duckdb"), "q"
+        )
+
+    @needs_metricflow
+    def test_bundle_dataset_is_compiled_by_metricflow(self, tmp_path: Path) -> None:
+        """`AGG()` exists only in the bundle: DuckDB can describe it once compiled."""
+        result = self._bundle_check(tmp_path)
+        assert result.status == "valid", result.error
+        assert [c.name for c in result.columns] == ["total"]
+
+    def test_bundle_load_error_is_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "metricflow_sql", None)
+        result = self._bundle_check(tmp_path)
+        assert result.status == "invalid"
+        assert result.mechanism == "translation"
+        assert "metricflow-sql" in result.error
 
 
 def test_dialect_query_matching_the_source_is_still_checked(tmp_path: Path) -> None:

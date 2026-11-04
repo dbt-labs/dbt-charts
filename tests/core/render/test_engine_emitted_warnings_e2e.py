@@ -110,3 +110,26 @@ def test_a_chart_placed_twice_is_judged_at_its_narrowest_placement(
     )
     codes = [w.code for w in render_board_svg_result(board).warnings]
     assert "WARN-BAR-BAND-WIDTH-TOO-NARROW" in codes
+
+
+def _narrow_patterned_bar(color: str) -> tuple[str, list[str]]:
+    rows = [f"{{x: {x}, s: s{s}, v: {x + s}}}" for x in range(30) for s in range(3)]
+    chart = (
+        "    type: bar\n    x: x\n    y: v\n    pattern: s\n"
+        f"{color}    width: 300\n    style:\n      stack: none"
+    )
+    return chart, rows
+
+
+def test_a_colored_patterned_bar_too_narrow_for_its_tile_warns() -> None:
+    chart, rows = _narrow_patterned_bar("    color: s\n")
+    assert "WARN-PATTERN-FALLBACK-FLAT" in _warning_codes(chart, rows)
+
+
+def test_a_single_color_patterned_bar_too_narrow_for_its_tile_is_an_error() -> None:
+    chart, rows = _narrow_patterned_bar("")
+    board = "title: T\nqueries:\n  q:\n    type: values\n    rows:\n"
+    board += "".join(f"      - {row}\n" for row in rows)
+    board += f"charts:\n  c:\n    query: q\n{chart}\nrows:\n  - c\n"
+    result = render_board_svg_result(board)
+    assert [e.code for e in result.chart_errors] == ["ERR-PATTERN-FALLBACK-FLAT"]

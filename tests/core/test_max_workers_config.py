@@ -52,6 +52,7 @@ def board_and_executor():
     result = compile(BOARD_YAML)
     assert result.success, result.errors
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.return_value = QueryResult(
         data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
     )

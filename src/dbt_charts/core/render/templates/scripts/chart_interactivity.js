@@ -83,9 +83,9 @@
     /*{# shape only decides whether there is anything to SHOW: a role marker, or #}*/
     /*{# a bare "key: value" -- the latter is load-bearing for geo families, #}*/
     /*{# which carry Vega's auto-generated label and no role marker. #}*/
-    /*{# Cheap test first: every [aria-label] in the chart runs through here on #}*/
-    /*{# each hover transition, so short-circuit on the label before paying for #}*/
-    /*{# the ancestor walk. #}*/
+    /*{# Cheap test first: every [aria-label] in a scope runs through here on an #}*/
+    /*{# index build and on each gap-snap sweep, so short-circuit on the label #}*/
+    /*{# before paying for the ancestor walk. #}*/
     function isDataMark(element) {
         if (!element || typeof element.getAttribute !== 'function') return false;
         const label = element.getAttribute('aria-label');
@@ -166,16 +166,6 @@
 
         return entries;
     }
-
-    /*{# Row cap for the x-unified bubble (grouped bar / stacked bar / aligned #}*/
-    /*{# multi-series line): shows at most MAX_XUNIFIED_ROWS - 1 individual rows #}*/
-    /*{# plus one "+N" remainder row (MAX_XUNIFIED_ROWS lines total). #}*/
-    const MAX_XUNIFIED_ROWS = 8;
-    /*{# Past this many exact-identity matches the bubble would be unreadably #}*/
-    /*{# tall -- fall back to the single-mark tooltip instead of expanding. #}*/
-    /*{# Mirrors the theme's default legend.symbol_limit (defaults/themes/_base.yaml) #}*/
-    /*{# as the same "this many distinct series stops being legible" cutoff. #}*/
-    const XUNIFIED_ABANDON_THRESHOLD = 20;
 
     function markHeaderEntry(entries) {
         for (let i = 0; i < entries.length; i++) {
@@ -305,6 +295,41 @@
         return null;
     }
 
+    /*{# What a hover reads off a scope's (a chart's or one facet panel's) #}*/
+    /*{# labeled marks, gathered in one pass on its first hover: the marks #}*/
+    /*{# are static after render, and rescanning a large chart on every #}*/
+    /*{# transition was most of a hover's cost. mount() drops every index, #}*/
+    /*{# since armHidingItems() rewrites aria-labels in place. #}*/
+    let markIndexes = new WeakMap();
+
+    function markIndex(scope) {
+        let index = markIndexes.get(scope);
+        if (!index) {
+            index = buildMarkIndex(scope);
+            markIndexes.set(scope, index);
+        }
+        return index;
+    }
+
+    function buildMarkIndex(scope) {
+        const byIdentity = new Map();
+        const symbols = new Map();
+        const grouped = [];
+        scope.querySelectorAll('[aria-label]').forEach(function (el) {
+            if (!el.closest(MARK_GROUP_SELECTOR)) return;
+            grouped.push(el);
+            const label = el.getAttribute('aria-label');
+            if (isSymbolMark(el) && !symbols.has(label)) symbols.set(label, el);
+            if (!isDataMark(el)) return;
+            const entries = parseAriaLabel(label);
+            if (!markHeaderEntry(entries)) return;
+            const identity = headerKey(entries);
+            if (!byIdentity.has(identity)) byIdentity.set(identity, []);
+            byIdentity.get(identity).push({ mark: el, entries: entries });
+        });
+        return { byIdentity: byIdentity, symbols: symbols, recedable: recedableMarks(grouped) };
+    }
+
     /*{# Groups every data mark in the chart whose IDENTITY (header value) #}*/
     /*{# EXACTLY matches the hovered mark's -- string equality only, no #}*/
     /*{# nearest-point tracking. A mark with no header (rare, deferred families) #}*/
@@ -341,17 +366,14 @@
 
         const seen = {};
         const matches = [];
-        matchScope.querySelectorAll('[aria-label]').forEach(function (candidate) {
-            if (!isDataMark(candidate)) return;
-            const entries = parseAriaLabel(candidate.getAttribute('aria-label'));
-            if (!markHeaderEntry(entries) || headerKey(entries) !== identity) return;
-            if (isImputed(entries)) return;
+        markIndex(matchScope).byIdentity.get(identity).forEach(function (candidate) {
+            if (isImputed(candidate.entries)) return;
 
-            const series = markSeriesEntry(entries);
+            const series = markSeriesEntry(candidate.entries);
             const key = identity + '|' + (series ? series.value : '');
             if (seen[key]) return;
             seen[key] = true;
-            matches.push({ mark: candidate, entries: entries });
+            matches.push({ mark: candidate.mark, entries: candidate.entries });
         });
 
         const order = legendSeriesOrder(chartScope);
@@ -390,16 +412,18 @@
 
     /*{# Splits matches into the rows to render individually and the rows to #}*/
     /*{# fold into a "+N" remainder -- always keeping the hovered mark's #}*/
-    /*{# own row visible, even when it would otherwise fall past the cap. #}*/
+    /*{# own row visible, even when it would otherwise fall past the cap #}*/
+    /*{# (the theme's tooltip.max_rows). One series past the cap is shown #}*/
+    /*{# itself -- a "+1" row hides it for no gain. #}*/
     function buildRowPlan(matches, hoveredMark) {
-        if (matches.length <= MAX_XUNIFIED_ROWS) {
+        const visibleCount = DCT_TOOLTIP_STYLE.maxRows;
+        if (matches.length <= visibleCount + 1) {
             return { shown: matches, remainder: [] };
         }
         let hoveredIndex = -1;
         for (let i = 0; i < matches.length; i++) {
             if (matches[i].mark === hoveredMark) { hoveredIndex = i; break; }
         }
-        const visibleCount = MAX_XUNIFIED_ROWS - 1;
         let shown = matches.slice(0, visibleCount);
         if (hoveredIndex >= visibleCount) {
             shown = shown.slice(0, visibleCount - 1).concat([matches[hoveredIndex]]);
@@ -502,10 +526,11 @@
         window.__dbtChartsChartHoverState = {
             activeMark: null,
             tooltip: tooltip,
-            /*{# Hover-emphasis state is just the list of elements currently #}*/
-            /*{# dimmed, so clearing is "put back what I touched" and nothing #}*/
-            /*{# else -- no geometry, no inserted nodes, no cache key. #}*/
-            emphasis: { dimmed: [], drawn: [] },
+            /*{# `painted` maps each element the emphasis styled to the paints #}*/
+            /*{# it wrote, so clearing is "put back what I touched"; `drawn` #}*/
+            /*{# holds the overlay nodes it inserted, `raised` the series nodes #}*/
+            /*{# it lifted out of place, and `lifted` the groups that hold them. #}*/
+            emphasis: { painted: new Map(), drawn: [], raised: [], lifted: [], preview: null },
         };
 
         return window.__dbtChartsChartHoverState;
@@ -634,19 +659,18 @@
     /*{# carries Vega's own "revenue: 0" -- neither carries #}*/
     /*{# `data-dbt-value-label`, so neither is reachable here, with no #}*/
     /*{# exclusion list needed to say so. #}*/
-    function recedableMarks(chartEl) {
-        const labeled = chartEl.querySelectorAll('[aria-label]');
+    /*{# `grouped`: the scope's labeled elements inside a mark group. #}*/
+    function recedableMarks(grouped) {
         const bars = [];
         const barLabels = {};
-        labeled.forEach(function (el) {
-            if (!isRecedableMark(el) || !el.closest(MARK_GROUP_SELECTOR)) return;
+        grouped.forEach(function (el) {
+            if (!isRecedableMark(el)) return;
             bars.push(el);
             barLabels[el.getAttribute('aria-label')] = true;
         });
         const twins = [];
-        labeled.forEach(function (el) {
-            if (isRecedableMark(el) || !el.closest(MARK_GROUP_SELECTOR)) return;
-            if (!el.closest('[data-dbt-value-label]')) return;
+        grouped.forEach(function (el) {
+            if (isRecedableMark(el) || !el.closest('[data-dbt-value-label]')) return;
             if (barLabels[el.getAttribute('aria-label')]) twins.push(el);
         });
         return bars.concat(twins);
@@ -683,6 +707,40 @@
     /*{# hovered bar, which reads as the opposite emphasis. #}*/
     const RECEDABLE_PAINT = ['fill', 'stroke'];
 
+    /*{# A pattern fill: `url(#id)`, optionally followed by the outline color #}*/
+    /*{# as SVG's paint fallback (markSeriesColor()). #}*/
+    const PATTERN_PAINT = /^url\(#([\w-]+)\)(?:\s+(\S+))?$/;
+    function patternPaint(paint) {
+        const m = PATTERN_PAINT.exec(paint || '');
+        return m ? { id: m[1], url: 'url(#' + m[1] + ')', ink: m[2] || null } : null;
+    }
+    function isPatternUrl(paint) {
+        return patternPaint(paint) !== null;
+    }
+
+    /*{# A receded pattern is a clone of the referenced <pattern> with every #}*/
+    /*{# child paint mixed toward the background by the same rule as a flat #}*/
+    /*{# mark's (recededPaint), swapped in as the mark's fill and dropped on #}*/
+    /*{# clear: still solid colors only, never an opacity. One clone per #}*/
+    /*{# (pattern, background), in the same <defs>, found again by its id. #}*/
+    function recededPattern(el, paint, background) {
+        const source = el.ownerDocument.getElementById(patternPaint(paint).id);
+        if (!source) return null;
+        const id = source.id + '-recede-' + background.replace(/[^\w]/g, '');
+        if (!el.ownerDocument.getElementById(id)) {
+            const clone = source.cloneNode(true);
+            clone.id = id;
+            clone.querySelectorAll('*').forEach(function (child) {
+                RECEDABLE_PAINT.forEach(function (prop) {
+                    const value = child.getAttribute(prop);
+                    if (isColor(value)) child.style.setProperty(prop, recededPaint(value, background));
+                });
+            });
+            source.parentNode.appendChild(clone);
+        }
+        return 'url(#' + id + ')';
+    }
+
     /*{# 'none' is Vega's explicit not-painted value and a url() is a pattern #}*/
     /*{# or gradient; neither is a color, so neither can mix. 'transparent' #}*/
     /*{# is a color, but mixing toward it yields an alpha -- the exact #}*/
@@ -692,14 +750,14 @@
         return !!paint && paint !== 'none' && paint !== 'transparent' && paint.indexOf('url(') !== 0;
     }
 
-    /*{# A mark the board's selected variable value does not name arrives #}*/
-    /*{# already receded: the engine baked the same mix into its paint, kept #}*/
-    /*{# the paint it had beside it (data-dbt-rest-fill / -stroke), and #}*/
-    /*{# flagged its link. Hover treats the selection as suspended -- the #}*/
-    /*{# hovered datum lights up at its own color and the rest recede from #}*/
-    /*{# theirs, exactly as on a board with nothing selected. #}*/
+    /*{# A mark the board's selected variable value does not name, and a #}*/
+    /*{# hidden series' legend entry, arrive already receded: the engine #}*/
+    /*{# baked the same mix into the paint and kept the paint it had beside #}*/
+    /*{# it (data-dbt-rest-fill / -stroke). Hover treats the selection as #}*/
+    /*{# suspended -- the hovered datum lights up at its own color and the #}*/
+    /*{# rest recede from theirs, exactly as on a board with nothing selected. #}*/
     function isBakedReceded(el) {
-        return !!el.closest('a[data-dbt-receded]');
+        return RECEDABLE_PAINT.some(function (prop) { return el.hasAttribute('data-dbt-rest-' + prop); });
     }
 
     function rgbOf(color) {
@@ -767,15 +825,98 @@
         return share === 1 ? paint : 'color-mix(in srgb, ' + paint + ' ' + Number((share * 100).toFixed(2)) + '%, ' + background + ')';
     }
 
-    function clearHoverEmphasis(state) {
-        state.emphasis.dimmed.forEach(function (el) {
-            RECEDABLE_PAINT.forEach(function (prop) { el.style.removeProperty(prop); });
+    /*{# Plans `el`'s paint into `next` (element -> {prop: paint}); repaint() #}*/
+    /*{# writes it. False when there is nothing to paint. #}*/
+    function emphasize(next, el, background, kept) {
+        const baked = isBakedReceded(el);
+        if (kept && !baked) return false;
+        const paints = {};
+        RECEDABLE_PAINT.forEach(function (prop) {
+            const paint = baked ? restPaint(el, prop) : el.getAttribute(prop);
+            if (prop === 'fill' && isPatternUrl(paint)) {
+                const receded = kept ? paint : recededPattern(el, paint, background);
+                if (receded) paints[prop] = receded;
+                return;
+            }
+            if (!isColor(paint)) return;
+            paints[prop] = kept ? paint : recededPaint(paint, background);
         });
-        state.emphasis.dimmed = [];
+        if (!Object.keys(paints).length) return false;
+        next.set(el, paints);
+        return true;
+    }
+
+    /*{# Moves the page from what the last hover painted to `next`, writing #}*/
+    /*{# only what differs: a move between neighbors restyles the marks whose #}*/
+    /*{# state flipped, not every mark in the panel. #}*/
+    function repaint(state, next) {
+        const painted = state.emphasis.painted;
+        painted.forEach(function (paints, el) {
+            const keep = next.get(el) || {};
+            Object.keys(paints).forEach(function (prop) {
+                if (!(prop in keep)) el.style.removeProperty(prop);
+            });
+        });
+        next.forEach(function (paints, el) {
+            const was = painted.get(el) || {};
+            Object.keys(paints).forEach(function (prop) {
+                if (was[prop] !== paints[prop]) el.style.setProperty(prop, paints[prop]);
+            });
+        });
+        state.emphasis.painted = next;
+    }
+
+    /*{# A patterned pie wedge or area band is drawn fill-only; the line it #}*/
+    /*{# shares with its neighbors is its own non-interactive path, right #}*/
+    /*{# after the mark's group, tracing the same `d`. It recedes with the #}*/
+    /*{# mark, or a receded fill is outlined harder than the hovered one. #}*/
+    function outlineNodes(el) {
+        const nodes = [];
+        let next = (el.closest(MARK_GROUP_SELECTOR) || el).nextElementSibling;
+        for (; next && next.getAttribute('pointer-events') === 'none' && !next.hasAttribute('aria-label') && !next.matches(MARK_GROUP_SELECTOR); next = next.nextElementSibling) {
+            if (next.getAttribute('d') === el.getAttribute('d')) nodes.push(next);
+        }
+        return nodes;
+    }
+
+    /*{# A hovered patterned mark's shared line is half covered by the #}*/
+    /*{# later-drawn, receded neighbor. Nothing moves a node, so the line is #}*/
+    /*{# redrawn whole in the hover overlay in its own color (the canvas on an #}*/
+    /*{# inverse ground, not the ink): a bar's own stroke, or a wedge's or #}*/
+    /*{# band's edge path. #}*/
+    function drawWholeOutline(overlay, el) {
+        const edges = el.hasAttribute('stroke') ? [el] : outlineNodes(el);
+        const to = overlay.getScreenCTM();
+        edges.forEach(function (edge) {
+            const from = edge.parentNode.getScreenCTM();
+            if (!to || !from) return;
+            const outline = edge.cloneNode(false);
+            ['aria-label', 'role', 'aria-roledescription', 'data-dct-role', 'data-dbt-ink', 'fill-opacity', 'style', 'id']
+                .forEach(function (name) { outline.removeAttribute(name); });
+            outline.setAttribute('fill', 'none');
+            outline.setAttribute('pointer-events', 'none');
+            const m = to.inverse().multiply(from);
+            const placed = svgNode('g', { transform: 'matrix(' + [m.a, m.b, m.c, m.d, m.e, m.f].join(' ') + ')' });
+            placed.appendChild(outline);
+            overlay.appendChild(placed);
+        });
+    }
+
+    function clearDrawn(state) {
         state.emphasis.drawn.forEach(function (el) {
             if (el.parentNode) el.parentNode.removeChild(el);
         });
         state.emphasis.drawn = [];
+        state.emphasis.raised.reverse().forEach(function (r) { r.parent.insertBefore(r.node, r.next); });
+        state.emphasis.raised = [];
+        state.emphasis.lifted.forEach(function (el) { el.remove(); });
+        state.emphasis.lifted = [];
+        state.emphasis.preview = null;
+    }
+
+    function clearHoverEmphasis(state) {
+        repaint(state, new Map());
+        clearDrawn(state);
     }
 
     /*{# `keptLabels` is a set of raw aria-label strings, not nodes. Vega #}*/
@@ -785,7 +926,13 @@
     /*{# all -- the case that needed a repeat-count heuristic when marks had #}*/
     /*{# to be cloned above a veil instead. #}*/
     function applyHoverEmphasis(state, mark, keptLabels) {
-        clearHoverEmphasis(state);
+        clearDrawn(state);
+        const next = new Map();
+        planHoverEmphasis(state, mark, keptLabels, next);
+        repaint(state, next);
+    }
+
+    function planHoverEmphasis(state, mark, keptLabels, next) {
         if (!DCT_HOVER_EMPHASIS.visible) return;
         const chartEl = mark.closest('.dbt-chart');
         if (!chartEl || isMagnitudeColored(chartEl)) return;
@@ -797,36 +944,258 @@
         /*{# marks under one shared `.role-scope.cell` (see panelScope()), so #}*/
         /*{# an unscoped sweep would recede every mark in every OTHER panel #}*/
         /*{# too, not just the ones the tooltip isn't describing. #}*/
-        const dimmed = [];
-        recedableMarks(panelScope(mark, chartEl)).forEach(function (el) {
+        const inked = [];
+        markIndex(panelScope(mark, chartEl)).recedable.forEach(function (el) {
             if (!isOpaqueAtRest(el)) return;
-            const kept = keptLabels[el.getAttribute('aria-label')];
-            const baked = isBakedReceded(el);
-            if (kept && !baked) return;
-            let touched = false;
-            RECEDABLE_PAINT.forEach(function (prop) {
-                const paint = baked ? restPaint(el, prop) : el.getAttribute(prop);
-                if (!isColor(paint)) return;
-                el.style.setProperty(prop, kept ? paint : recededPaint(paint, background));
-                touched = true;
-            });
-            if (touched) dimmed.push(el);
+            const kept = !!keptLabels[el.getAttribute('aria-label')];
+            const inkedMark = el.hasAttribute('data-dbt-ink');
+            if (kept && inkedMark) inked.push(el);
+            if (!emphasize(next, el, background, kept)) return;
+            if (!kept && inkedMark) {
+                outlineNodes(el).forEach(function (outline) {
+                    next.set(outline, { stroke: recededPaint(outline.getAttribute('stroke'), background) });
+                });
+            }
         });
+        if (inked.length) {
+            const overlay = markerOverlay(chartEl, state);
+            if (overlay) inked.forEach(function (el) { drawWholeOutline(overlay, el); });
+        }
         /*{# Whatever else the selection receded -- a pie slice label, an area's #}*/
         /*{# endpoint label -- sits in the same flagged link as its mark, so #}*/
         /*{# hover restores it with the rest of the suspended selection. #}*/
         panelScope(mark, chartEl).querySelectorAll('a[data-dbt-receded] *').forEach(function (el) {
-            if (dimmed.indexOf(el) !== -1) return;
-            let touched = false;
+            if (next.has(el)) return;
+            const paints = {};
             RECEDABLE_PAINT.forEach(function (prop) {
                 const paint = restPaint(el, prop);
-                if (!isColor(paint)) return;
-                el.style.setProperty(prop, paint);
-                touched = true;
+                if (isColor(paint)) paints[prop] = paint;
             });
-            if (touched) dimmed.push(el);
+            if (Object.keys(paints).length) next.set(el, paints);
         });
-        state.emphasis.dimmed = dimmed;
+    }
+
+    /*{# ---------------------------------------------------------------- #}*/
+    /*{# Series preview: hovering a legend entry or a direct series label #}*/
+    /*{# recedes every other series. The engine draws legend entries #}*/
+    /*{# pointer-events="none", so an entry is found by its box. #}*/
+    const LEGEND_HIT_SLOP_PX = 3;
+
+    function legendEntryKey(label) {
+        const stamped = label.getAttribute('data-dbt-series');
+        if (stamped) return stamped;
+        const full = label.querySelector('title');
+        return ((full || label).textContent || '').trim();
+    }
+
+    function legendEntries(chartEl) {
+        const entries = [];
+        chartEl.querySelectorAll('.role-legend-label').forEach(function (label) {
+            const symbol = label.previousElementSibling;
+            entries.push({
+                key: legendEntryKey(label),
+                label: label,
+                symbol: symbol && symbol.classList.contains('role-legend-symbol') ? symbol : null,
+            });
+        });
+        return entries;
+    }
+
+    /*{# A pie slice names its color in a swatched header, not a series row. #}*/
+    function seriesInk(chartEl) {
+        const ink = [];
+        markIndex(chartEl).recedable.forEach(function (el) {
+            const entries = parseAriaLabel(el.getAttribute('aria-label'));
+            const series = markSeriesEntry(entries) || entries.find(function (e) { return e.role === 'header' && e.swatch; });
+            if (series && isOpaqueAtRest(el)) ink.push({ el: el, key: series.value });
+        });
+        chartEl.querySelectorAll('[data-dbt-series]').forEach(function (el) {
+            if (!el.closest('.role-legend') && !el.hasAttribute('data-dbt-legend-hidden')) {
+                ink.push({ el: el, key: el.getAttribute('data-dbt-series') });
+            }
+        });
+        return ink;
+    }
+
+    function within(el, x, y) {
+        const r = el.getBoundingClientRect();
+        return x >= r.left - LEGEND_HIT_SLOP_PX && x <= r.right + LEGEND_HIT_SLOP_PX
+            && y >= r.top - LEGEND_HIT_SLOP_PX && y <= r.bottom + LEGEND_HIT_SLOP_PX;
+    }
+
+    function legendEntryAt(chartEl, x, y) {
+        const legends = Array.prototype.filter.call(chartEl.querySelectorAll('.role-legend'), function (legend) {
+            return within(legend, x, y);
+        });
+        if (!legends.length) return null;
+        return legendEntries(chartEl).find(function (entry) {
+            return [entry.label, entry.symbol].some(function (el) { return el && within(el, x, y); });
+        }) || null;
+    }
+
+    function seriesHandleAt(target, x, y) {
+        const chartEl = target.closest('.dbt-chart');
+        if (!chartEl || !DCT_HOVER_EMPHASIS.visible || isMagnitudeColored(chartEl) || !chartBackground(chartEl)) return null;
+        const direct = target.closest('text[data-dbt-series]');
+        const entry = direct && !direct.closest('.role-legend') ? null : legendEntryAt(chartEl, x, y);
+        const key = entry ? entry.key : direct && direct.getAttribute('data-dbt-series');
+        return key ? { chartEl: chartEl, key: key } : null;
+    }
+
+    /*{# False when `handle` names no drawn series (a layer's entry, say). #}*/
+    function previewSeries(state, handle) {
+        const preview = state.emphasis.preview;
+        if (preview && preview.chartEl === handle.chartEl && preview.key === handle.key) return true;
+        const ink = seriesInk(handle.chartEl);
+        const background = chartBackground(handle.chartEl);
+        const next = new Map();
+        if (!ink.some(function (item) { return item.key === handle.key; })) {
+            /*{# A hidden series has no marks to preview: its entry and its direct #}*/
+            /*{# label light up, so they read as clickable. #}*/
+            const lit = [];
+            legendEntries(handle.chartEl).forEach(function (entry) {
+                if (entry.key === handle.key && entry.label.hasAttribute('data-dbt-legend-hidden')) {
+                    [entry.label, entry.symbol].forEach(function (group) {
+                        if (group) group.querySelectorAll('*').forEach(function (el) { lit.push(el); });
+                    });
+                }
+            });
+            handle.chartEl.querySelectorAll('text[data-dbt-legend-hidden]').forEach(function (label) {
+                if (!label.closest('.role-legend') && label.getAttribute('data-dbt-series') === handle.key) {
+                    lit.push(label);
+                    label.querySelectorAll('*').forEach(function (el) { lit.push(el); });
+                }
+            });
+            if (!lit.length) return false;
+            hideTooltip(state);
+            lit.forEach(function (el) { emphasize(next, el, background, true); });
+            repaint(state, next);
+            state.emphasis.preview = handle;
+            return true;
+        }
+        hideTooltip(state);
+        const drawn = {};
+        ink.forEach(function (item) {
+            drawn[item.key] = true;
+            emphasize(next, item.el, background, item.key === handle.key);
+        });
+        legendEntries(handle.chartEl).forEach(function (entry) {
+            if (!drawn[entry.key]) return;
+            [entry.label, entry.symbol].forEach(function (group) {
+                if (!group) return;
+                group.querySelectorAll('*').forEach(function (el) {
+                    emphasize(next, el, background, entry.key === handle.key);
+                });
+            });
+        });
+        repaint(state, next);
+        state.emphasis.preview = handle;
+        raiseSeries(state, handle);
+        return true;
+    }
+
+    /*{# Lifts the series' line (or area) and dots after their plot's last mark #}*/
+    /*{# group, so they paint over overlapping receded series. A faceted chart #}*/
+    /*{# lifts within each panel. The lifted group takes no pointer events (the #}*/
+    /*{# invisible hover targets keep catching the pointer); clearHoverEmphasis #}*/
+    /*{# puts every node back. #}*/
+    function raiseSeries(state, handle) {
+        const named = function (tag) {
+            return Array.prototype.filter.call(handle.chartEl.querySelectorAll(tag + '[data-dbt-series]'), function (el) {
+                return el.getAttribute('data-dbt-series') === handle.key && !el.closest('.role-legend');
+            });
+        };
+        const unit = function (el) {
+            const node = el.parentNode.tagName.toLowerCase() === 'a' ? el.parentNode : el;
+            const group = node.parentNode;
+            const alone = group.children.length === 1 && /\bmark-(line|area)\b/.test(group.getAttribute('class') || '');
+            return alone ? group : node;
+        };
+        const byPlot = new Map();
+        named('path').concat(named('circle')).map(unit).forEach(function (node) {
+            const plot = node.closest('.role-mark').parentNode;
+            byPlot.set(plot, (byPlot.get(plot) || []).concat(node));
+        });
+        byPlot.forEach(function (units, plot) {
+            const marks = Array.prototype.filter.call(plot.children, function (el) { return el.classList.contains('role-mark'); });
+            const lifted = document.createElementNS(SVG_NS, 'g');
+            lifted.setAttribute('data-dbt-raised', '');
+            lifted.setAttribute('pointer-events', 'none');
+            plot.insertBefore(lifted, marks[marks.length - 1].nextSibling);
+            units.forEach(function (node) {
+                state.emphasis.raised.push({ node: node, parent: node.parentNode, next: node.nextSibling });
+                lifted.appendChild(node);
+            });
+            state.emphasis.lifted.push(lifted);
+        });
+    }
+
+    /*{# An entry is found by its box (legends take no pointer events); a direct #}*/
+    /*{# label takes the click itself. #}*/
+    function hidingItemAt(target, x, y) {
+        const chartEl = target && target.closest && target.closest('.dbt-chart');
+        if (!chartEl) return null;
+        const label = target.closest(HIDING_ITEM_TEXT);
+        if (label) return { chartEl: chartEl, item: label };
+        const entry = legendEntryAt(chartEl, x, y);
+        return entry && entry.label.hasAttribute('data-dbt-legend-var') ? { chartEl: chartEl, item: entry.label } : null;
+    }
+
+    /*{# A direct label gives up its mark role as a button; `picture()` restores it. #}*/
+    /*{# The × CLEAR control the engine draws hidden for a held variable is armed #}*/
+    /*{# the same way, and revealed: a static picture never shows it. #}*/
+    const ARMED = 'data-dbt-armed';
+    const ARMED_ATTRS = ['role', 'aria-roledescription', 'aria-label', 'visibility'];
+    const HIDING_ITEM = '[data-dbt-legend-var], [data-dbt-clear-var]';
+    const HIDING_ITEM_TEXT = 'text[data-dbt-legend-var], text[data-dbt-clear-var]';
+
+    function armHidingItems(svg) {
+        if (!window.dbtControls) return;
+        svg.querySelectorAll(HIDING_ITEM).forEach(function (item) {
+            const clear = item.hasAttribute('data-dbt-clear-var');
+            if (!item.hasAttribute(ARMED)) {
+                item.setAttribute(ARMED, JSON.stringify(ARMED_ATTRS.map(function (name) { return item.getAttribute(name); })));
+                item.setAttribute('tabindex', '0');
+                item.setAttribute('role', 'button');
+                item.removeAttribute('aria-roledescription');
+                if (clear) {
+                    item.setAttribute('aria-label', 'Clear ' + item.getAttribute('data-dbt-clear-var') + ' filter');
+                    const hint = document.createElementNS(SVG_NS, 'title');
+                    hint.textContent = item.getAttribute('aria-label');
+                    item.appendChild(hint);
+                    item.removeAttribute('visibility');
+                    const ink = item.getAttribute('data-dbt-clear-ink');
+                    ['mouseover', 'focus'].forEach(function (type) {
+                        item.addEventListener(type, function () { item.style.fill = ink; });
+                    });
+                    ['mouseout', 'blur'].forEach(function (type) {
+                        item.addEventListener(type, function () { item.style.removeProperty('fill'); });
+                    });
+                } else {
+                    item.setAttribute('aria-label', legendEntryKey(item));
+                }
+            }
+            if (!clear) item.setAttribute('aria-pressed', item.hasAttribute('data-dbt-legend-hidden') ? 'false' : 'true');
+        });
+    }
+
+    function disarmHidingItem(item) {
+        const was = JSON.parse(item.getAttribute(ARMED));
+        ARMED_ATTRS.forEach(function (name, i) {
+            if (was[i] === null) item.removeAttribute(name);
+            else item.setAttribute(name, was[i]);
+        });
+        ['tabindex', 'aria-pressed', ARMED].forEach(function (name) { item.removeAttribute(name); });
+        if (item.hasAttribute('data-dbt-clear-var')) {
+            item.style.removeProperty('fill');
+            item.querySelectorAll('title').forEach(function (hint) { hint.remove(); });
+        }
+    }
+
+    function clickHidingItem(state, item) {
+        hideTooltip(state);
+        const prefix = item.hasAttribute('data-dbt-clear-var') ? 'data-dbt-clear' : 'data-dbt-legend';
+        window.dbtControls.update(item.getAttribute(prefix + '-var'), JSON.parse(item.getAttribute(prefix + '-next')));
     }
 
     /*{# ---------------------------------------------------------------- #}*/
@@ -952,16 +1321,16 @@
         });
         if (background === null) {
             for (let i = mine.length - 1; i >= 0; i--) {
-                const color = markSeriesColor(mine[i]);
+                const color = markInkColor(mine[i]);
                 if (color) return color;
             }
         } else {
             for (let i = 0; i < mine.length; i++) {
-                const color = markSeriesColor(mine[i]);
+                const color = markInkColor(mine[i]);
                 if (color && color !== background) return color;
             }
         }
-        return markSeriesColor(point);
+        return markInkColor(point);
     }
 
     /*{# The y-axes, merged into the vertical bands they occupy. A row facet #}*/
@@ -1045,9 +1414,17 @@
         /*{# The drop line is anchored on the HOVERED datum's x -- every match #}*/
         /*{# shares it -- not on whichever series happens to sort first. Its #}*/
         /*{# color is a fixed theme neutral (DCT_HOVER_EMPHASIS.dropLineColor), #}*/
-        /*{# never the hovered series' own paint: the line reads as "here is #}*/
+        /*{# never the hovered series' own paint (below, the one shared ink of a #}*/
+        /*{# single-color pattern chart, which is every series' paint): the line reads as "here is #}*/
         /*{# the x", the dots beside it already say which series is which. #}*/
         const anchor = bandAwareOrigin(hovered, overlay) || spots[0];
+
+        /*{# A chart whose patterns all share one ink (a single-color pattern #}*/
+        /*{# chart) draws the line in it; any other chart keeps the neutral. #}*/
+        const inks = new Set(Array.from(chartEl.querySelectorAll('[data-dbt-ink]'), function (el) { return el.getAttribute('data-dbt-ink'); }));
+        const dropLineColor = inks.size === 1 && points.every(function (point) { return point.hasAttribute('data-dbt-ink'); })
+            ? inks.values().next().value
+            : DCT_HOVER_EMPHASIS.dropLineColor;
 
         /*{# Vega's grid group carries the same transform as the real x-axis #}*/
         /*{# but is aria-hidden, so the axis is identified by its label. A #}*/
@@ -1086,7 +1463,7 @@
             spots.forEach(function (spot) { if (spot.y < top) top = spot.y; });
             overlay.appendChild(svgNode('line', {
                 x1: anchor.x, y1: top, x2: anchor.x, y2: baselineY,
-                stroke: DCT_HOVER_EMPHASIS.dropLineColor,
+                stroke: dropLineColor,
                 'stroke-width': DCT_HOVER_EMPHASIS.dropLineWidth,
             }));
         }
@@ -1133,11 +1510,7 @@
         if (isSymbolMark(mark)) return mark;
         const label = mark.getAttribute('aria-label');
         if (!label) return null;
-        let found = null;
-        panelScope(mark, chartEl).querySelectorAll('[aria-label]').forEach(function (el) {
-            if (!found && isSymbolMark(el) && el.getAttribute('aria-label') === label) found = el;
-        });
-        return found;
+        return markIndex(panelScope(mark, chartEl)).symbols.get(label) || null;
     }
 
     /*{# `matches` is the tooltip's own row set, so the chart marks exactly #}*/
@@ -1186,19 +1559,40 @@
     /*{# A mark the selected variable receded reports its own ink, not the #}*/
     /*{# baked mix: the tooltip swatch and hover markers key the SERIES, and #}*/
     /*{# the legend beside them recedes with its series, so it is no source. #}*/
+    /*{# A pattern fill is a url(), which no HTML element can paint: its #}*/
+    /*{# series color is the url() followed by the mark's ink (data-dbt-ink, #}*/
+    /*{# the pattern's outline color) as the SVG paint fallback ("url(#id) #}*/
+    /*{# #ink"), which is the tooltip key's whole recipe, and which #}*/
+    /*{# markInkColor() reads the ink back out of. The ink is its own #}*/
+    /*{# attribute because a stacked segment strokes the gap between #}*/
+    /*{# neighbors and draws its outline on a sibling. #}*/
     function markSeriesColor(mark) {
         const own = function (prop) {
             return isBakedReceded(mark) ? restPaint(mark, prop) : mark.getAttribute(prop);
         };
         const fill = own('fill');
         const stroke = own('stroke');
+        if (isPatternUrl(fill)) {
+            const ink = mark.getAttribute('data-dbt-ink');
+            return isColor(ink) ? fill + ' ' + ink : fill;
+        }
         return fill && fill !== 'none' ? fill : stroke && stroke !== 'none' ? stroke : null;
     }
 
-    /*{# A line is keyed with a line, not a filled square that reads as a bar. #}*/
+    /*{# The color a hover marker or ring takes from a mark: its series color, #}*/
+    /*{# or for a pattern mark the outline, which is the pattern's ink. #}*/
+    function markInkColor(mark) {
+        const paint = markSeriesColor(mark);
+        const pattern = patternPaint(paint);
+        return pattern ? pattern.ink : paint;
+    }
+
+    /*{# A line is keyed with a line, not a filled square that reads as a bar; #}*/
+    /*{# a patterned mark (an area band's hover target too) is always a fill. #}*/
     /*{# Its hover target is either the stroke itself or the invisible point a #}*/
     /*{# line layer lays over each datum to be hoverable (opacity 0). #}*/
     function isStrokedMark(mark) {
+        if (mark.hasAttribute('data-dbt-ink')) return false;
         const fill = mark.getAttribute('fill');
         if ((!fill || fill === 'none') && markSeriesColor(mark)) return true;
         /*{# Stored renders without data-dct-role are English. #}*/
@@ -1212,7 +1606,18 @@
         return /^[A-Za-z0-9#.,%()\/\s+-]*$/.test(color) ? color : 'transparent';
     }
 
+    /*{# A pattern mark's key is a tiny SVG rect at the legend key's 16 x 12, #}*/
+    /*{# filled with the mark's own pattern (ids are document-global in a #}*/
+    /*{# served page, so the reference resolves) under its ink outline. #}*/
+    function patternSwatch(pattern) {
+        return '<svg data-dbt-tooltip-key width="16" height="12" viewBox="0 0 16 12" style="display:inline-block;' +
+            'margin-right:6px;flex-shrink:0;"><rect x="0.5" y="0.5" width="15" height="11" fill="' +
+            pattern.url + '" stroke="' + swatchColor(pattern.ink) + '" stroke-width="1"/></svg>';
+    }
+
     function seriesSwatch(color, asLine) {
+        const pattern = patternPaint(color);
+        if (pattern) return patternSwatch(pattern);
         const sw = DCT_TOOLTIP_STYLE.swatch;
         const height = asLine ? 2 : sw.size;
         return '<span style="display:inline-block;width:' + sw.size + 'px;height:' + height +
@@ -1303,7 +1708,7 @@
     /*{# The single-mark tooltip -- today's rendering, unchanged. This is the #}*/
     /*{# degenerate case of x-unified grouping (exactly one match) and the #}*/
     /*{# fallback when grouping doesn't apply (no header, misaligned-x lines) or #}*/
-    /*{# cardinality exceeds XUNIFIED_ABANDON_THRESHOLD. #}*/
+    /*{# cardinality exceeds the theme's tooltip.group_limit. #}*/
     /*{# An 'order' entry carries no `label` -- it's sort metadata for the #}*/
     /*{# x-unified path (xUnifiedRow filters to role === 'value' and never sees #}*/
     /*{# it), not a row to render here. Skipping it explicitly, rather than #}*/
@@ -1556,7 +1961,7 @@
         const ts = DCT_TOOLTIP_STYLE;
         state.activeMark = mark;
         const matches = svg ? collectMatchingMarks(svg, mark, entries) : [{ mark: mark, entries: entries }];
-        const useXUnified = matches.length > 1 && matches.length <= XUNIFIED_ABANDON_THRESHOLD;
+        const useXUnified = matches.length > 1 && matches.length <= ts.groupLimit;
         /*{# The card of one mark: the hovered one, or -- when it is an imputed #}*/
         /*{# slot with no value to report -- the only real mark at its x. #}*/
         const lone = !isImputed(entries) ? { mark: mark, entries: entries } : (matches.length === 1 ? matches[0] : null);
@@ -1605,9 +2010,14 @@
             /*{# The toolbar's buttons own their own popovers; the snap below #}*/
             /*{# would otherwise hand the cursor to a mark within radius. #}*/
             if (target && target.closest && target.closest('.dbt-chart-toolbar')) {
-                if (state.activeMark) hideTooltip(state);
+                if (state.activeMark || state.emphasis.preview) hideTooltip(state);
                 return;
             }
+            const handle = target && target.closest
+                ? seriesHandleAt(target, event.clientX, event.clientY)
+                : null;
+            if (handle && previewSeries(state, handle)) return;
+            if (state.emphasis.preview) hideTooltip(state);
             const labeledTarget = target && target.closest
                 ? event.target.closest('[aria-label]')
                 : null;
@@ -1673,6 +2083,29 @@
 
         svg.addEventListener('mouseleave', function () {
             hideTooltip(state);
+        });
+
+        svg.addEventListener('mousemove', function (event) {
+            const chartEl = event.target && event.target.closest && event.target.closest('.dbt-chart');
+            if (!chartEl || !window.dbtControls || !chartEl.querySelector(HIDING_ITEM)) return;
+            if (hidingItemAt(event.target, event.clientX, event.clientY)) chartEl.style.cursor = 'pointer';
+            else chartEl.style.removeProperty('cursor');
+        });
+
+        svg.addEventListener('click', function (event) {
+            if (event.defaultPrevented || event.button !== 0 || !window.dbtControls) return;
+            const hit = hidingItemAt(event.target, event.clientX, event.clientY);
+            if (!hit) return;
+            event.preventDefault();
+            clickHidingItem(state, hit.item);
+        });
+
+        svg.addEventListener('keydown', function (event) {
+            if (event.repeat || (event.key !== 'Enter' && event.key !== ' ') || !window.dbtControls) return;
+            const item = event.target && event.target.closest && event.target.closest(HIDING_ITEM);
+            if (!item || !svg.contains(item)) return;
+            event.preventDefault();
+            clickHidingItem(state, item);
         });
     }
 
@@ -1782,17 +2215,24 @@
     window.dbtChartHover = {
         registerChartButton: registerChartButton,
         picture: function (svg) {
+            /*{# No hover state means no preview to clear; building one would #}*/
+            /*{# need tooltip styles an embed host may not ship. #}*/
+            if (window.__dbtChartsChartHoverState) clearHoverEmphasis(window.__dbtChartsChartHoverState);
             const copy = svg.cloneNode(true);
             copy.querySelectorAll('.dbt-chart-toolbar').forEach(function (el) { el.remove(); });
+            copy.querySelectorAll('.dbt-chart').forEach(function (chart) { chart.style.removeProperty('cursor'); });
+            copy.querySelectorAll('[' + ARMED + ']').forEach(disarmHidingItem);
             return copy;
         },
         mount: function (root) {
+            markIndexes = new WeakMap();
             const scope = root || document;
             const boards = scope.matches && scope.matches('svg') ? [scope] : [];
             scope.querySelectorAll('svg').forEach(function (svg) { boards.push(svg); });
             boards.forEach(function (svg) {
                 initializeSvg(svg);
                 mountToolbars(svg);
+                armHidingItems(svg);
             });
         }
     };

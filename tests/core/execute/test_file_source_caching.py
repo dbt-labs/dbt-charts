@@ -60,11 +60,9 @@ class _CountingMaterializer(FileSourceMaterializer):
         super().__init__(project)
         self.run_calls = 0
 
-    def materialize_and_run(
-        self, source: Any, sql: str, variables: dict[str, Any], source_name: str
-    ) -> list[dict[str, Any]]:  # type: ignore[override]
+    def materialize_and_run(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:  # type: ignore[override]
         self.run_calls += 1
-        return super().materialize_and_run(source, sql, variables, source_name)
+        return super().materialize_and_run(*args, **kwargs)
 
 
 def _bump_mtime(path: Path) -> None:
@@ -72,10 +70,10 @@ def _bump_mtime(path: Path) -> None:
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
 
 
-def _registry(project: FilesystemProject) -> Any:
+def _registry(project: FilesystemProject, **file_source: Any) -> Any:
     from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
 
-    return build_adapter_registry(project)
+    return build_adapter_registry(project, **file_source)
 
 
 def _bump_mtime_of(project: FilesystemProject, relpath: str) -> None:
@@ -96,10 +94,9 @@ class TestWarmRenderSkipsMaterializer:
         mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat1,
         )
         rows1 = ex1.execute_query("q")
         assert [r["amount"] for r in rows1] == [100, 200]
@@ -109,10 +106,9 @@ class TestWarmRenderSkipsMaterializer:
         mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat2,
         )
         rows2 = ex2.execute_query("q")
         assert [r["amount"] for r in rows2] == [100, 200]
@@ -127,10 +123,9 @@ class TestWarmRenderSkipsMaterializer:
         mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat1,
         )
         rows1 = ex1.execute_query("q")
         assert [r["amount"] for r in rows1] == [100]
@@ -144,10 +139,9 @@ class TestWarmRenderSkipsMaterializer:
         mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat2,
         )
         rows2 = ex2.execute_query("q")
         # Fresh rows, and the materializer had to run again (cache invalidated).
@@ -170,10 +164,9 @@ class TestSourceVersionMemoizedMidRender:
         mat = _CountingMaterializer(project)
         ex = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat),
             query_registry={"q": board.queries["q"]},
             result_cache=TrivialDuckDBCache(),
-            file_materializer=mat,
         )
         ex.execute_query("q")
         assert mat.run_calls == 1
@@ -235,10 +228,9 @@ class TestMultiFileSource:
         mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat1),
             query_registry={"j": board.queries["j"]},
             result_cache=result_cache,
-            file_materializer=mat1,
         )
         assert [r["name"] for r in ex1.execute_query("j")] == ["Alice", "Bob"]
 
@@ -251,10 +243,9 @@ class TestMultiFileSource:
         mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer=mat2),
             query_registry={"j": board.queries["j"]},
             result_cache=result_cache,
-            file_materializer=mat2,
         )
         assert [r["name"] for r in ex2.execute_query("j")] == ["Alice", "Robert"]
         assert mat2.run_calls == 1
@@ -275,10 +266,9 @@ class TestLazySharedMaterializer:
         # Cold render: the factory builds exactly one shared materializer.
         ex1 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer_factory=_factory),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer_factory=_factory,
         )
         ex1.execute_query("q")
         assert builds["n"] == 1
@@ -287,10 +277,9 @@ class TestLazySharedMaterializer:
         # no DuckDB is opened at all.
         ex2 = Executor(
             board,
-            adapter_registry=_registry(project),
+            adapter_registry=_registry(project, file_materializer_factory=_factory),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer_factory=_factory,
         )
         ex2.execute_query("q")
         assert builds["n"] == 1

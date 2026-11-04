@@ -45,7 +45,7 @@ class ResolvedBarStyle(_SeriesCartesianResolvedStyle):
         default=False,
         description=(
             "True when the bar segment label format should use the house narrative "
-            "register (1.2mn). False when the author wrote a literal d3 SI spec."
+            "register (1.2m). False when the author wrote a literal d3 SI spec."
         ),
     )
     # Required, not Optional: every theme resolves the text-mark size and the

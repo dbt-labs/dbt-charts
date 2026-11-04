@@ -1,0 +1,3 @@
+kind: Fixes
+body: Table money columns that mix thousands and millions print each row at its own magnitude ($2.66M beside $631K) instead of forcing every row onto one suffix.
+time: 2026-10-29T14:31:32.723889-07:00

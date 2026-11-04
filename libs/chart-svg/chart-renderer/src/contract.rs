@@ -9,8 +9,8 @@
 use display_text::language::tr;
 use crate::families::axis_caption::AxisCaption;
 use crate::common::FormatSlot;
-use scene::{Attrs, Node};
-use print::{print, xml_escape_attr};
+use scene::{Attrs, Node, Role};
+use print::print;
 use std::fmt::Write as _;
 
 /// `_tooltip.py:56-73`'s exact codepoints -- `chart_interactivity.js`
@@ -43,25 +43,18 @@ pub fn extra_row(label: &str, value: &str) -> String {
 /// Brackets a value row's swatch color: `SWATCH #hex SWATCH` leads its title.
 pub const SWATCH: char = '\u{200B}'; // ZERO WIDTH SPACE
 
-/// Open a Vega mark-set's `.role-mark` group -- `chart_interactivity.js`'s
+/// A Vega mark-set's `.role-mark` group, holding `children`: `chart_interactivity.js`'s
 /// `isDataMark` classifies an element by its NEAREST ancestor carrying
-/// `role-mark`/`role-axis`/`role-legend`/`role-title`, so wrapping the
-/// datum here is what makes its own `aria-label` readable as a data mark
-/// (`chart_svg_dev/contract.py::_group_role`). `kind` is Vega's own mark
-/// tag ("rect", "rule"); `name` is cosmetic -- the extractor never reads
-/// the group's third class token.
-pub fn mark_group_open(out: &mut String, kind: &str, name: &str) -> Result<(), String> {
-    out.push_str(&open_tag(mark_group(kind, name, Vec::new())?));
-    Ok(())
-}
-
-/// The `.role-mark` group of [`mark_group_open`], holding `children`.
+/// `role-mark`/`role-axis`/`role-legend`/`role-title`, so wrapping the datum here is what makes
+/// its own `aria-label` readable as a data mark (`chart_svg_dev/contract.py::_group_role`).
+/// `kind` is Vega's own mark tag ("rect", "rule"); `name` is cosmetic -- the extractor never
+/// reads the group's third class token.
 pub fn mark_group(kind: &str, name: &str, children: Vec<Node>) -> Result<Node, String> {
-    Ok(Node::group(mark_group_attrs(kind, name, false)?, children))
+    Ok(Node::group(Role::Chrome, mark_group_attrs(kind, name, false)?, children))
 }
 
 pub fn value_label_group(name: &str, children: Vec<Node>) -> Result<Node, String> {
-    Ok(Node::group(mark_group_attrs("text", name, true)?, children))
+    Ok(Node::group(Role::Chrome, mark_group_attrs("text", name, true)?, children))
 }
 
 fn mark_group_attrs(kind: &str, name: &str, value_label: bool) -> Result<Attrs, String> {
@@ -104,22 +97,8 @@ pub enum AxisChannel {
 /// This engine draws axis items in plot-card coordinates, so the frame is
 /// opened at `origin` and the items sit in a second `<g>` that undoes the
 /// translate: the frame origin is the real axis origin and no item moves.
-/// Close with [`axis_group_close`].
-pub fn axis_group_open(
-    out: &mut String,
-    channel: AxisChannel,
-    caption: &AxisCaption,
-    origin: (f64, f64),
-) -> Result<(), String> {
-    let label = caption.describe(channel)?;
-    let frame = axis_frame(channel, &label, origin, caption.bare, Vec::new());
-    let printed = print(&[frame]);
-    out.push_str(printed.strip_suffix("</g></g></g>").expect("a childless axis frame prints three end tags"));
-    Ok(())
-}
-
-/// [`axis_group_open`]'s group around `children`; a bare axis (Vega-Lite drops it) is its
-/// `children` alone.
+///
+/// A bare axis (Vega-Lite drops it) is `children` alone.
 pub fn axis_group(
     channel: AxisChannel,
     caption: &AxisCaption,
@@ -130,49 +109,34 @@ pub fn axis_group(
     if caption.bare {
         return Ok(children);
     }
-    Ok(vec![axis_frame(channel, &label, origin, false, children)])
+    Ok(vec![axis_frame(channel, &label, origin, children)])
 }
 
 /// `.role-axis` around the axis's coordinate frame and the second `<g>` that undoes its
-/// translate; `mark_bare` stamps the opener a string-building caller later unwraps.
-fn axis_frame(channel: AxisChannel, label: &str, (ox, oy): (f64, f64), mark_bare: bool, children: Vec<Node>) -> Node {
+/// translate.
+fn axis_frame(channel: AxisChannel, label: &str, (ox, oy): (f64, f64), children: Vec<Node>) -> Node {
     let key = match channel {
         AxisChannel::X => "x-axis",
         AxisChannel::Y => "y-axis",
     };
     let attrs = Attrs::new()
         .set("class", "mark-group role-axis")
-        .set_if(mark_bare, BARE_AXIS_ATTR.0, BARE_AXIS_ATTR.1)
         .set("data-dct-role", key)
         .set("role", "graphics-symbol")
         .set("aria-roledescription", "axis")
         .set("aria-label", label);
-    let undo = Node::group(Attrs::new().set("transform", format!("translate({:.3},{:.3})", -ox, -oy)), children);
-    let frame = Node::group(Attrs::new().set("transform", format!("translate({ox:.3},{oy:.3})")), vec![undo]);
-    Node::group(attrs, vec![frame])
+    let undo = Node::group(Role::Axis, Attrs::new(), children).translate(-ox, -oy);
+    let frame = Node::group(Role::Axis, Attrs::new(), vec![undo]).translate(ox, oy);
+    Node::group(Role::Axis, attrs, vec![frame])
 }
-
-/// Marks the opener of an axis group Vega-Lite drops; [`axis_group_close`]
-/// unwraps it.
-const BARE_AXIS_ATTR: (&str, &str) = ("data-dct-bare", "1");
 
 /// The group Vega draws around an axis's gridlines, holding `children`.
 pub fn grid_group(children: Vec<Node>) -> Node {
-    Node::group(Attrs::new().set("class", "mark-rule role-axis-grid").set("aria-hidden", "true"), children)
+    Node::group(Role::Grid, Attrs::new().set("class", "mark-rule role-axis-grid").set("aria-hidden", "true"), children)
 }
 
-pub fn axis_group_close(out: &mut String) {
-    let opener = out.rfind("<g class=\"mark-group role-axis\"").expect("an axis group is open");
-    if !out[opener..].starts_with(&format!("<g class=\"mark-group role-axis\" {}=\"{}\"", BARE_AXIS_ATTR.0, BARE_AXIS_ATTR.1)) {
-        out.push_str("</g></g></g>");
-        return;
-    }
-    // The wrapper is three tags, none with a `>` inside.
-    let mut end = opener;
-    for _ in 0..3 {
-        end += out[end..].find('>').expect("an axis opener has three tags") + 1;
-    }
-    out.replace_range(opener..end, "");
+pub fn rule(role: Role, from: (f64, f64), to: (f64, f64), stroke: &str, width: f64) -> Node {
+    Node::line(role, from, to, Attrs::new().set("stroke", stroke).num("stroke-width", width))
 }
 
 /// The authored label an axis title edits: the key a click-to-edit writes back.
@@ -218,39 +182,41 @@ pub fn legend_entries_attrs() -> Attrs {
     Attrs::new().set("class", "mark-group role-legend-entry")
 }
 
-/// One entry's swatch group (`role-legend-symbol`).
-pub fn legend_symbol_attrs() -> Attrs {
-    Attrs::new().set("class", "mark-symbol role-legend-symbol").set("pointer-events", "none")
+/// One entry's swatch group (`role-legend-symbol`); a `linked` entry takes the pointer so its
+/// `<a>` receives the click.
+pub fn legend_symbol_attrs(linked: bool) -> Attrs {
+    Attrs::new().set("class", "mark-symbol role-legend-symbol").set_if(!linked, "pointer-events", "none")
 }
 
 const LEGEND_LABEL_CLASS: &str = "mark-text role-legend-label";
+
+/// The series a legend entry, a direct label, or a line or area's own ink belongs to.
+pub const SERIES_KEY: &str = "data-dbt-series";
 
 /// The group Vega draws around legend label text (`role-legend-label`): the
 /// runtime reads a legend's labels from it. A gradient legend has one for all
 /// its tick labels, a symbol legend one per entry. `series_key` is the
 /// `data-dbt-series` join key (`_stamp_series_keys`), `None` when none is baked.
-pub fn legend_label_attrs(series_key: Option<&str>) -> Attrs {
-    let attrs = Attrs::new().set("class", LEGEND_LABEL_CLASS).set("pointer-events", "none");
+pub fn legend_label_attrs(series_key: Option<&str>, linked: bool) -> Attrs {
+    let attrs = Attrs::new().set("class", LEGEND_LABEL_CLASS).set_if(!linked, "pointer-events", "none");
     match series_key {
-        Some(key) => attrs.set("data-dbt-series", key),
+        Some(key) => attrs.set(SERIES_KEY, key),
         None => attrs,
     }
 }
 
-/// Open the group Vega draws around a facet header (`role-title-text`). The
-/// authored-kind stamp is the converter's regex over every such group, so a
-/// header carries the chart-title kind exactly as the chart's own title does.
-/// Close with [`mark_group_close`].
-pub fn facet_header_open(out: &mut String, header: &str) -> Result<(), String> {
-    let _ = write!(
-        out,
-        "<g class=\"mark-text role-title-text\"{kind} role=\"graphics-symbol\" \
-         aria-roledescription=\"{title}\" aria-label=\"{label}\" pointer-events=\"none\">",
-        kind = authored_kind_attr("title"),
-        title = xml_escape_attr(&tr("aria.title", None, &[])?),
-        label = xml_escape_attr(&tr("aria.title_text", None, &[("header", header)])?),
-    );
-    Ok(())
+/// The group Vega draws around a facet header (`role-title-text`), holding its `text`. The
+/// authored-kind stamp is the converter's regex over every such group, so a header carries the
+/// chart-title kind exactly as the chart's own title does.
+pub fn facet_header(header: &str, text: Node) -> Result<Node, String> {
+    let attrs = Attrs::new()
+        .set("class", "mark-text role-title-text")
+        .set("data-authored-kind", "title")
+        .set("role", "graphics-symbol")
+        .set("aria-roledescription", tr("aria.title", None, &[])?)
+        .set("aria-label", tr("aria.title_text", None, &[("header", header)])?)
+        .set("pointer-events", "none");
+    Ok(Node::group(Role::Title, attrs, vec![text]))
 }
 
 /// Whether `svg` announces nothing but axes: no mark carries an `aria-label`.
@@ -273,7 +239,7 @@ pub(crate) fn has_no_mark_labels(svg: &str) -> bool {
 /// or `.mark-area` group. The path carries no description, so the group is
 /// bare, as Vega leaves it.
 pub fn connected_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
-    Node::group(Attrs::new().set("class", format!("mark-{kind} role-mark {name}")), children)
+    Node::group(Role::Chrome, Attrs::new().set("class", format!("mark-{kind} role-mark {name}")), children)
 }
 
 /// The `.role-mark` group of a mark set declared `aria: false`. Vega
@@ -283,14 +249,10 @@ pub fn connected_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
 /// why the group is kept rather than dropped.
 pub fn hidden_mark_group(kind: &str, name: &str, children: Vec<Node>) -> Node {
     Node::group(
+        Role::Chrome,
         Attrs::new().set("class", format!("mark-{kind} role-mark {name}")).set("aria-hidden", "true"),
         children,
     )
-}
-
-/// Close with [`mark_group_close`].
-pub fn hidden_mark_group_open(out: &mut String, kind: &str, name: &str) {
-    out.push_str(&open_tag(hidden_mark_group(kind, name, Vec::new())));
 }
 
 /// What a screen reader is told about one mark.
@@ -378,16 +340,10 @@ impl ItemRole {
     }
 }
 
-/// The attributes a datum's first drawn element carries: its `aria-label`
-/// plus the `role="graphics-symbol"` / `aria-roledescription` pair Vega
-/// stamps on every item that has a description. Empty when the shape wires
-/// no label (an unlabeled mark is bare in production too, never an
-/// approximation).
-pub fn aria_attr(label: Option<&str>, role: ItemRole) -> Result<String, String> {
-    Ok(print::attributes(&aria_attrs(label, role)?))
-}
-
-/// [`aria_attr`] as attributes.
+/// The attributes a datum's first drawn element carries: its `aria-label` plus the
+/// `role="graphics-symbol"` / `aria-roledescription` pair Vega stamps on every item that has a
+/// description. Empty when the shape wires no label (an unlabeled mark is bare in production
+/// too, never an approximation).
 pub fn aria_attrs(label: Option<&str>, role: ItemRole) -> Result<Attrs, String> {
     let Some(label) = label else { return Ok(Attrs::new()) };
     let (description_id, key) = role.description_id_and_key();
@@ -527,15 +483,14 @@ pub fn ghost_layer(rules: &[GhostRule], run: GhostRun) -> Result<Node, String> {
                 GhostRun::ToLeftEdge => (-rule.x, 0.0),
                 GhostRun::ToOrigin => (-rule.x, -rule.y),
             };
-            let line = Node::Line(
-                Attrs::new()
-                    .set("transform", format!("translate({:.3},{:.3})", rule.x, rule.y))
-                    .set("x2", format!("{x2:.3}"))
-                    .set("y2", format!("{y2:.3}"))
-                    .set("stroke", rule.stroke)
-                    .set("opacity", "0")
-                    .extend(aria_attrs(rule.aria, ItemRole::RuleMark)?),
-            );
+            // Placed by a translation, as Vega places a rule: the runtime reads a datum's position off the CTM.
+            let line = Node::line(
+                Role::Chrome,
+                (0.0, 0.0),
+                (x2, y2),
+                Attrs::new().set("stroke", rule.stroke).num("opacity", 0.0).extend(aria_attrs(rule.aria, ItemRole::RuleMark)?),
+            )
+            .translate(rule.x, rule.y);
             Ok(crate::href::linked(rule.anchor, line))
         })
         .collect::<Result<_, String>>()?;
@@ -734,7 +689,8 @@ pub fn heatmap_aria_label(t: &HeatmapTooltip) -> Result<String, String> {
 
 /// Structured-tooltip header text for one x/category value --
 /// `emitters/_tooltip.py::header_tooltip_field`'s temporal branch, ported.
-/// The raw category string when the field types nominal; otherwise
+/// The raw category string when the field types nominal; otherwise, at `date` (the
+/// date the caller's axis read for `cat`, `TimeAxis::date`),
 /// `temporal::tooltip_header_date`'s formatted text -- the FULL bucket when
 /// `detected_tu` names one, else its own continuous-date fallback
 /// (`time_unit == ""`, `"%-d %b %Y"`). `is_standard_date` is production's
@@ -748,6 +704,7 @@ pub fn heatmap_aria_label(t: &HeatmapTooltip) -> Result<String, String> {
 /// (line/area).
 pub fn tooltip_header_text(
     cat: &str,
+    date: Option<(i32, u8, u8)>,
     detected_tu: Option<crate::families::temporal::TimeUnit>,
     is_standard_date: bool,
     grain_format: Option<crate::families::temporal::AuthoredTimeFormat>,
@@ -755,8 +712,7 @@ pub fn tooltip_header_text(
     if detected_tu.is_none() && !is_standard_date {
         return Ok(cat.to_string());
     }
-    let (y, m, d) = crate::time_axis::parse_iso_date(cat)
-        .ok_or_else(|| format!("tooltip header: unparsed date {cat:?}"))?;
+    let (y, m, d) = date.ok_or_else(|| format!("tooltip header: unparsed date {cat:?}"))?;
     match grain_format {
         Some(format) => Ok(format.text(y, m, d)),
         None => crate::families::temporal::tooltip_header_date(y, m, d, detected_tu),
@@ -775,6 +731,41 @@ pub fn tooltip_order_rank(order_domain: &[String], series: &str) -> i64 {
 /// `authored_kind_attr`, verbatim.
 pub fn authored_kind_attr(kind: &str) -> String {
     print::attributes(&Attrs::new().set("data-authored-kind", kind))
+}
+
+thread_local! {
+    /// Which placement of its chart the render in flight draws (0 for the first), set by
+    /// [`with_placement`].
+    static PLACEMENT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `draw` as the `placement`th placement of its chart in the board (0 for the first).
+pub fn with_placement<T>(placement: usize, draw: impl FnOnce() -> T) -> T {
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PLACEMENT.with(|cell| cell.set(self.0));
+        }
+    }
+    let _restore = Restore(PLACEMENT.with(|cell| cell.replace(placement)));
+    draw()
+}
+
+/// The suffix a later placement of a chart adds to every id it defines, `""` for the first, so
+/// `url(#id)` (document-wide) never resolves to another placement's def.
+pub fn placement_suffix() -> String {
+    match PLACEMENT.with(std::cell::Cell::get) {
+        0 => String::new(),
+        placement => format!(".placed{placement}"),
+    }
+}
+
+/// The namespace a chart's ids are minted in: its [`safe_svg_id`] (`chart.anon` for a chart with
+/// no id) and, for a later placement in the board, the placement suffix. `.` is never in a
+/// `safe_svg_id`, so neither the suffix nor the fallback can collide with another chart's id.
+pub fn scoped_id(chart_id: &str) -> String {
+    let base = if chart_id.is_empty() { "chart.anon".to_string() } else { safe_svg_id(chart_id) };
+    format!("{base}{}", placement_suffix())
 }
 
 /// The chart-id tail of the id-namespace suffix every vl-convert-minted id
@@ -806,43 +797,30 @@ pub fn safe_svg_id(chart_id: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn mark_group_wraps_a_datum_as_the_reference_does() {
-        let mut svg = String::new();
-        mark_group_open(&mut svg, "rect", "layer_0_marks").unwrap();
-        svg.push_str("<path aria-label=\"x\"/>");
-        mark_group_close(&mut svg);
-        assert_eq!(
-            svg,
-            "<g class=\"mark-rect role-mark layer_0_marks\" role=\"graphics-object\" \
-             aria-roledescription=\"rect mark container\"><path aria-label=\"x\"/></g>"
-        );
+    fn line(aria: Attrs) -> Node {
+        Node::line(Role::Chrome, (0.0, 0.0), (0.0, 0.0), aria)
     }
 
     #[test]
     fn a_hidden_mark_set_is_aria_hidden_with_bare_items() {
-        let svg = print(&[
-            item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Hidden, |aria| Node::Line(aria)).unwrap()
-        ]);
-        assert_eq!(
-            svg,
-            "<g class=\"mark-rule role-mark layer_1_marks\" aria-hidden=\"true\"><line/></g>"
-        );
+        let group = item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Hidden, line).unwrap();
+        assert_eq!(print::attributes(&group.attrs), " class=\"mark-rule role-mark layer_1_marks\" aria-hidden=\"true\"");
+        assert_eq!(group.children(), [line(Attrs::new())]);
     }
 
     #[test]
     fn item_group_announces_a_label_and_leaves_a_bare_mark_ungrouped() {
-        let item = |aria: Attrs| Node::Line(aria);
-        let announced =
-            print(&[item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Label("v: 1"), item).unwrap()]);
+        let announced = item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Label("v: 1"), line).unwrap();
         assert_eq!(
-            announced,
-            "<g class=\"mark-rule role-mark layer_1_marks\" role=\"graphics-object\" \
-             aria-roledescription=\"rule mark container\"><line data-dct-role=\"rule\" \
-             aria-label=\"v: 1\" role=\"graphics-symbol\" aria-roledescription=\"rule mark\"/></g>"
+            print::attributes(&announced.attrs),
+            " class=\"mark-rule role-mark layer_1_marks\" role=\"graphics-object\" aria-roledescription=\"rule mark container\""
         );
-        let bare = print(&[item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Bare, item).unwrap()]);
-        assert_eq!(bare, "<line/>");
+        assert_eq!(
+            print::attributes(&announced.children()[0].attrs),
+            " data-dct-role=\"rule\" aria-label=\"v: 1\" role=\"graphics-symbol\" aria-roledescription=\"rule mark\""
+        );
+        let bare = item_group("rule", "layer_1_marks", ItemRole::RuleMark, Reads::Bare, line).unwrap();
+        assert_eq!(bare, line(Attrs::new()));
     }
 
     #[test]
@@ -871,15 +849,6 @@ mod tests {
         assert!(stamp_view_root(classed.into()).is_err());
     }
 
-    #[test]
-    fn aria_attr_stamps_role_and_roledescription_beside_the_label() {
-        assert_eq!(
-            aria_attr(Some("a: 1"), ItemRole::Bar).unwrap(),
-            " data-dct-role=\"bar\" aria-label=\"a: 1\" role=\"graphics-symbol\" aria-roledescription=\"bar\""
-        );
-        assert_eq!(aria_attr(None, ItemRole::Bar).unwrap(), "");
-    }
-
     /// The description strings Vega/Vega-Lite write on the reference corpus's
     /// marks, and the machine key `chart_interactivity.js` matches instead.
     #[test]
@@ -894,7 +863,7 @@ mod tests {
             (ItemRole::PathMark, "path mark", "path"),
         ] {
             assert_eq!(
-                aria_attr(Some("x"), role).unwrap(),
+                print::attributes(&aria_attrs(Some("x"), role).unwrap()),
                 format!(
                     " data-dct-role=\"{key}\" aria-label=\"x\" role=\"graphics-symbol\" \
                      aria-roledescription=\"{description}\""
@@ -1128,7 +1097,7 @@ mod tests {
         let _en = crate::time_locale::en_us_scope();
         use crate::families::temporal::TimeUnit;
         assert_eq!(
-            tooltip_header_text("2024-02-01", Some(TimeUnit::YearMonth), false, None).unwrap(),
+            tooltip_header_text("2024-02-01", Some((2024, 2, 1)), Some(TimeUnit::YearMonth), false, None).unwrap(),
             "Feb 2024"
         );
     }
@@ -1143,10 +1112,10 @@ mod tests {
         use crate::families::temporal::{AuthoredTimeFormat, TimeUnit};
         let spec = AuthoredTimeFormat::parse("test", Some("%b '%y")).unwrap();
         assert_eq!(
-            tooltip_header_text("2024-02-01", Some(TimeUnit::YearMonth), false, spec).unwrap(),
+            tooltip_header_text("2024-02-01", Some((2024, 2, 1)), Some(TimeUnit::YearMonth), false, spec).unwrap(),
             "Feb '24"
         );
-        assert_eq!(tooltip_header_text("Enterprise", None, false, spec).unwrap(), "Enterprise");
+        assert_eq!(tooltip_header_text("Enterprise", None, None, false, spec).unwrap(), "Enterprise");
     }
 
     /// `playground/chart-lab-import-review/area_review`: a 28-day cadence
@@ -1159,12 +1128,16 @@ mod tests {
     #[test]
     fn tooltip_header_text_formats_a_standard_date_with_no_detected_bucket() {
         let _en = crate::time_locale::en_us_scope();
-        assert_eq!(tooltip_header_text("2025-04-27", None, true, None).unwrap(), "27 Apr 2025");
-        // An offset timestamp names its instant's day in the board zone: on a UTC board, March 11.
-        assert_eq!(tooltip_header_text("2024-03-10T23:00:00-05:00", None, true, None).unwrap(), "11 Mar 2024");
+        // The date the axis reads: an offset timestamp's day in the board zone, a naive one as written.
+        let header = |text: &str| {
+            let date = crate::time_axis::testing::dates(&[text]).date[0];
+            tooltip_header_text(text, date, None, true, None).unwrap()
+        };
+        assert_eq!(header("2025-04-27"), "27 Apr 2025");
+        assert_eq!(header("2024-03-10T23:00:00-05:00"), "11 Mar 2024", "on a UTC board, March 11");
         let _zone = crate::time_zone::zone_scope("America/New_York");
-        assert_eq!(tooltip_header_text("2024-03-02T03:00:00Z", None, true, None).unwrap(), "1 Mar 2024");
-        assert_eq!(tooltip_header_text("2024-03-02T03:00:00", None, true, None).unwrap(), "2 Mar 2024");
+        assert_eq!(header("2024-03-02T03:00:00Z"), "1 Mar 2024");
+        assert_eq!(header("2024-03-02T03:00:00"), "2 Mar 2024");
     }
 
     /// Neither a detected bucket nor a standard-date shape (a plain
@@ -1173,7 +1146,7 @@ mod tests {
     /// through unformatted.
     #[test]
     fn tooltip_header_text_passes_through_a_plain_category() {
-        assert_eq!(tooltip_header_text("Enterprise", None, false, None).unwrap(), "Enterprise");
+        assert_eq!(tooltip_header_text("Enterprise", None, None, false, None).unwrap(), "Enterprise");
     }
 
     // ── PieTooltip / pie_aria_label ─────────────────────────────────────
@@ -1488,8 +1461,9 @@ mod tests {
     #[test]
     fn axis_groups_carry_a_machine_role_key() {
         let mut out = String::new();
-        axis_group_open(&mut out, AxisChannel::X, &empty_caption(false), (0.0, 0.0)).unwrap();
-        axis_group_open(&mut out, AxisChannel::Y, &empty_caption(false), (0.0, 0.0)).unwrap();
+        for channel in [AxisChannel::X, AxisChannel::Y] {
+            out.push_str(&print(&axis_group(channel, &empty_caption(false), (0.0, 0.0), Vec::new()).unwrap()));
+        }
         assert_eq!(out.matches(" data-dct-role=\"x-axis\"").count(), 1);
         assert_eq!(out.matches(" data-dct-role=\"y-axis\"").count(), 1);
     }
@@ -1503,58 +1477,24 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_axis_group_unwraps_and_keeps_what_it_held() {
-        let mut out = String::from("<g>");
-        axis_group_open(&mut out, AxisChannel::X, &empty_caption(true), (1.0, 2.0)).unwrap();
-        out.push_str("<text>t</text>");
-        axis_group_close(&mut out);
-        assert_eq!(out, "<g><text>t</text>");
+    fn a_bare_axis_group_is_its_children_alone() {
+        let kept = vec![Node::rect(Role::Chrome, (0.0, 0.0, 1.0, 1.0), Attrs::new())];
+        let built = axis_group(AxisChannel::X, &empty_caption(true), (1.0, 2.0), kept.clone()).unwrap();
+        assert_eq!(built, kept);
     }
 
     #[test]
     fn an_axis_group_describes_its_scale() {
-        let mut out = String::new();
-        axis_group_open(&mut out, AxisChannel::Y, &empty_caption(false), (0.0, 0.0)).unwrap();
+        let out = print(&axis_group(AxisChannel::Y, &empty_caption(false), (0.0, 0.0), Vec::new()).unwrap());
         assert!(out.contains(" aria-label=\"Y-axis for a discrete scale with 0 values: \""), "{out}");
     }
 
     #[test]
-    fn the_group_builders_print_what_the_open_and_close_pairs_write() {
-        let mut open = String::new();
-        mark_group_open(&mut open, "rect", "marks").unwrap();
-        open.push_str("<rect/>");
-        mark_group_close(&mut open);
-        let built = mark_group("rect", "marks", vec![Node::Rect(Attrs::new())]).unwrap();
-        assert_eq!(print(&[built]), open);
-
-        let (origin, mut open) = ((2.5, -4.0), String::new());
-        axis_group_open(&mut open, AxisChannel::X, &empty_caption(false), origin).unwrap();
-        open.push_str("<rect/>");
-        axis_group_close(&mut open);
-        let built = axis_group(AxisChannel::X, &empty_caption(false), origin, vec![Node::Rect(Attrs::new())]).unwrap();
-        assert_eq!(print(&built), open);
-
-        let mut bare = String::new();
-        axis_group_open(&mut bare, AxisChannel::Y, &empty_caption(true), origin).unwrap();
-        bare.push_str("<rect/>");
-        axis_group_close(&mut bare);
-        let built = axis_group(AxisChannel::Y, &empty_caption(true), origin, vec![Node::Rect(Attrs::new())]).unwrap();
-        assert_eq!(print(&built), bare);
-        assert_eq!(bare, "<rect/>");
-
+    fn an_axis_title_group_prints_its_authored_kind() {
         assert_eq!(
-            print(&[Node::group(axis_title_attrs(Some(LabelKey::Y)), vec![])]),
+            print(&[Node::group(Role::Axis, axis_title_attrs(Some(LabelKey::Y)), vec![])]),
             "<g class=\"mark-text role-axis-title\" pointer-events=\"none\" data-authored-kind=\"y_label\"></g>"
         );
-    }
-
-    #[test]
-    fn aria_attrs_are_the_attribute_run_aria_attr_writes() {
-        assert_eq!(
-            aria_attr(Some("a \"b\""), ItemRole::RectMark).unwrap(),
-            print::attributes(&aria_attrs(Some("a \"b\""), ItemRole::RectMark).unwrap())
-        );
-        assert_eq!(aria_attr(None, ItemRole::Bar).unwrap(), "");
     }
 
     #[test]
@@ -1562,7 +1502,7 @@ mod tests {
         let rules = [GhostRule { aria: Some("a: 1"), x: 10.0, y: 20.0, stroke: "#abc", anchor: None }];
         let out = print(&[ghost_layer(&rules, GhostRun::ToOrigin).unwrap()]);
         assert!(
-            out.contains("<line transform=\"translate(10.000,20.000)\" x2=\"-10.000\" y2=\"-20.000\" stroke=\"#abc\" opacity=\"0\" data-dct-role=\"rule\" aria-label=\"a: 1\""),
+            out.contains("<line transform=\"translate(10,20)\" x1=\"0\" y1=\"0\" x2=\"-10\" y2=\"-20\" stroke=\"#abc\" opacity=\"0\" data-dct-role=\"rule\" aria-label=\"a: 1\""),
             "{out}"
         );
     }
@@ -1578,6 +1518,14 @@ mod tests {
     /// Mirrors `test_namespace_svg_ids_disambiguates_chart_ids_that_
     /// sanitize_to_the_same_token` / `test_namespace_svg_ids_sanitizes_
     /// chart_id_for_funciri_safety` (test_chart_converter.py).
+    #[test]
+    fn scoped_ids_never_collide_across_charts_and_placements() {
+        let second = with_placement(1, || scoped_id("a"));
+        assert_ne!(second, scoped_id("a-placed1"));
+        assert_ne!(second, scoped_id("a.placed1"));
+        assert_ne!(scoped_id(""), scoped_id("chart"));
+    }
+
     #[test]
     fn safe_svg_id_matches_production() {
         assert_eq!(safe_svg_id("a_b"), "a_b", "an already-safe chart id is untouched");

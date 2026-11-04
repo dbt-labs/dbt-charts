@@ -6,7 +6,7 @@ default theme) sets the stripe via a single scaffold-token
 (`charts.table.row.stripe.color: dbt-grays.2` in
 editorial.yaml) — one step off the canvas, faint enough to read as
 row-tracking texture rather than value encoding. Summary and total rules
-still fire via row typing when `row.role` is configured.
+still fire via row typing when `row_role` is configured.
 
 Background context: cell backgrounds are reserved for value encoding
 (heatmap fills). Header fills compete with that signal, so header fill
@@ -59,6 +59,7 @@ class TestDefaultTableScaffold:
 
         chart = make_chart(
             "table",
+            row_role=role,
             style={"columns": {"name": {}, "value": {}}},
         )
         data = data or [
@@ -68,32 +69,6 @@ class TestDefaultTableScaffold:
             {"name": "D", "value": 40},
         ]
 
-        if role is not None:
-            from dbt_charts.core.compile.models.style.resolved.table import (
-                ResolvedTableStyle,
-            )
-
-            charts = resolve_chart_style_context(get_theme_style())
-            new_row = charts.table.row.model_copy(update={"role": role})
-            new_table = charts.table.model_copy(update={"row": new_row})
-            resolved_chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
-            chart = resolved_chart.model_copy(
-                update={
-                    "style": ResolvedTableStyle(
-                        table=new_table,
-                        title=resolved_chart.style.title,
-                        formats=resolved_chart.style.formats,
-                        title_font=resolved_chart.style.title_font,
-                        pagination=resolved_chart.style.pagination,
-                    )
-                }
-            )
-            return render_table_svg(
-                chart,
-                data,
-                width=400,
-                board_style=resolve_style(get_theme_style()),
-            )
         chart = resolve(chart, data, chart_style_context=_BOARD_STYLE)
         return render_table_svg(
             chart,

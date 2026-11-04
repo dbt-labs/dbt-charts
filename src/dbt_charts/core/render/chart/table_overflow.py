@@ -27,6 +27,23 @@ from contextlib import contextmanager
 from pydantic import BaseModel, ConfigDict
 
 
+class TableOverflowCause(BaseModel):
+    """The word that forced a table past its slot.
+
+    Present only when the columns would have fit with their word floors lifted,
+    so pins and numeric lanes are never blamed for it. ``column`` is the column
+    its floor lifted most and ``word_width`` that floor's word. ``header_word``
+    is the word itself when it comes from the header; a cell's value is never
+    carried.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    column: str
+    word_width: float
+    header_word: str | None  # type-state: optional — a cell's word is never carried
+
+
 class TableOverflow(BaseModel):
     """A table whose columns need more width than its slot allows.
 
@@ -41,34 +58,7 @@ class TableOverflow(BaseModel):
 
     required_width: float
     available_width: float
-
-
-class TableCramping(BaseModel):
-    """A table the renderer had to degrade to fit the width it was given.
-
-    Distinct from ``TableOverflow``, which is the physical case: columns that
-    cannot fit even at their minimum readable width, so the table is clipped at
-    its slot's edge. Cramping is the quieter ladder below that — the renderer absorbs
-    the width shortfall by wrapping headers, and the table still fits its box
-    while reading badly. The height axis is not cramping: a slot cutting the
-    rows-per-page down is captured as ``TablePageSqueeze``
-    (``table_page_squeeze.py``) for WARN-TABLE-PAGE-SQUEEZED, whose grow-the-
-    slot fix matches that cause.
-
-    ``required_width`` is the columns' pre-allocation demand (cell content, or
-    the header label where that is wider); ``available_width`` is the budget
-    they were divided into. ``wrapped_headers`` of ``column_count`` counts
-    headers forced onto a second line.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    required_width: float
-    available_width: float
-    wrapped_headers: int
-    column_count: int
-    # The board width that clears the cramping, sized by the engine.
-    suggested_width: float
+    cause: TableOverflowCause | None  # type-state: optional — no word to blame
 
 
 # Stack of active collection sinks (innermost last); empty when no render pass
@@ -103,29 +93,3 @@ def record_table_overflow(chart_id: str, overflow: TableOverflow) -> None:
     sinks = _sinks.get()
     if sinks:
         sinks[-1][chart_id] = overflow
-
-
-_cramping_sinks: contextvars.ContextVar[tuple[dict[str, TableCramping], ...]] = (
-    contextvars.ContextVar("table_cramping_sinks", default=())
-)
-
-
-@contextmanager
-def collect_table_crampings() -> Generator[dict[str, TableCramping]]:
-    """Open a fresh cramping sink for the duration of a render."""
-    collected: dict[str, TableCramping] = {}
-    token = _cramping_sinks.set((*_cramping_sinks.get(), collected))
-    try:
-        yield collected
-    finally:
-        _cramping_sinks.reset(token)
-
-
-def record_table_cramping(chart_id: str, cramping: TableCramping) -> None:
-    """Record a table's cramping into the innermost open sink, if any.
-
-    No-op when no sink is open (e.g. non-SVG formats).
-    """
-    sinks = _cramping_sinks.get()
-    if sinks:
-        sinks[-1][chart_id] = cramping

@@ -89,7 +89,6 @@ class BoardRenderSession:
                     height=slot_height,
                     padding=inset,
                     board_style=self.board_style,
-                    board_width=None,
                     title_shift=title_shift,
                     is_placeholder=is_placeholder,
                 )
@@ -123,7 +122,6 @@ class BoardRenderSession:
                     else height,
                     padding=padding,
                     board_style=self.board_style,
-                    board_width=width,
                     title_shift=title_shift,
                 )
                 return svg
@@ -183,6 +181,5 @@ class BoardRenderSession:
                     height=0.0 if height is None else height,
                     padding=None,
                     board_style=self.board_style,
-                    board_width=width,
                 )
                 return svg

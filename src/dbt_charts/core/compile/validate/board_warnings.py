@@ -9,7 +9,7 @@ markdown boards after their translation to YAML.
 from __future__ import annotations
 
 import difflib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 
 from pydantic import BaseModel
 
@@ -38,9 +38,9 @@ from dbt_charts.core.compile.resolve.style.axis_cascade import (
 from dbt_charts.core.compile.validate.formats import format_names_used
 from dbt_charts.core.diagnostics import (
     WARN_AXIS_ALIGN_DISCARDED,
+    WARN_BODY_HEADING_NO_TITLE,
     WARN_DOUBLE_HEADER,
     WARN_FORMAT_UNUSED_NAME,
-    WARN_H1_BODY_NO_TITLE,
     WARN_RETIRED_IGNORE_CODE,
     WARN_SINGLE_CHART_REDUNDANT_TITLE,
     WARN_UNREFERENCED_CHART,
@@ -66,6 +66,7 @@ def detect_board_warnings(
     """
     warnings: list[Diagnostic] = []
     _detect_double_headers(board, warnings)
+    _detect_untitled_sections(board, warnings)
     _detect_single_chart_redundant_title(board, warnings)
     _detect_orphan_charts(board, warnings)
     _detect_unreferenced_queries(board, warnings)
@@ -79,16 +80,15 @@ def detect_board_warnings(
 
 
 def _detect_double_headers(board: Board, warnings: list[Diagnostic]) -> None:
-    """Warn when the board's body opens with a heading that should be its title.
+    """Warn when a board `title:` is re-stated by the heading opening its body.
 
-    Two shapes, split on whether `title:` is set: a title re-stated by a body
-    heading (WARN-DOUBLE-HEADER), or no title at all with a body heading that
-    should have been one (WARN-H1-BODY-NO-TITLE). Root-only, like the
-    single-chart check below. A nested board is a section, and a section card
-    that opens its body with a heading — titled or not — is a deliberate
-    pattern often enough (a styled hero inside a card) that flagging it would
-    spend the warning's credibility on authored intent.
+    Root-only, like the single-chart check below. A nested board is a section,
+    and a titled section card pairing its title with a styled body heading is a
+    deliberate pattern often enough that flagging it would spend the warning's
+    credibility on authored intent.
     """
+    if not board.title:
+        return
     heading = _body_opening_heading(board)
     if heading is None:
         return
@@ -101,21 +101,6 @@ def _detect_double_headers(board: Board, warnings: list[Diagnostic]) -> None:
     # down to just it. Reconstructing it from `level` + `text` would guess wrong
     # on `#   Sales` and on setext headings.
     needle = {"source_needle": heading_line}
-    if not board.title:
-        # No title to compare a lower-level heading against — only a literal
-        # level 1 stands in for a missing document title.
-        if level != 1:
-            return
-        warnings.append(
-            Diagnostic.from_code(
-                WARN_H1_BODY_NO_TITLE,
-                path="text",
-                fields=needle,
-                message=WARN_H1_BODY_NO_TITLE.message_template.format(heading=text),
-                fix=WARN_H1_BODY_NO_TITLE.fix_template.format(heading=text),
-            )
-        )
-        return
     # Level 1 is the document-title level — a second one under the board title is
     # a double header whatever it says. Below that, only a heading that repeats
     # the title is; `## Overview` under `title: Sales` is section structure.
@@ -152,26 +137,79 @@ def _detect_double_headers(board: Board, warnings: list[Diagnostic]) -> None:
     )
 
 
+def _detect_untitled_sections(board: Board, warnings: list[Diagnostic]) -> None:
+    """Warn when text opens with a heading its board has no `title:` for.
+
+    A prose row is a section, and a section's title is the board's `title:`.
+    Runs after `_detect_double_headers`, whose first-slot heading is already the
+    one line that warning tells the author to delete.
+    """
+    rows = list(_rows_in(board))
+    if not board.text and any(w.code == WARN_DOUBLE_HEADER.code for w in warnings):
+        rows = rows[1:]
+    sections = [
+        (board, "text"),
+        *((row, f"{path}.text" if path else None) for row, path in rows),
+    ]
+    for section, path in sections:
+        heading = None if section.title else _opening_heading(section.text)
+        if heading is None:
+            continue
+        _, text, heading_line = heading
+        warnings.append(
+            Diagnostic.from_code(
+                WARN_BODY_HEADING_NO_TITLE,
+                path=path,
+                fields={"source_needle": heading_line},
+                message=WARN_BODY_HEADING_NO_TITLE.message_template.format(
+                    heading=text
+                ),
+                fix=WARN_BODY_HEADING_NO_TITLE.fix_template.format(heading=text),
+            )
+        )
+
+
+def _rows_in(board: Board) -> Iterator[tuple[Board, str]]:
+    """Yield each `rows:` item that is a board, with its path, tab panes' included.
+
+    Stops at `cols:` and `grid:`: a cell is a card, whose opening heading titles
+    it level with its neighbors.
+    """
+    if board.layout.type in (LayoutType.COLS, LayoutType.GRID):
+        return
+    for item in board.layout.items:
+        if item.board is None:
+            continue
+        if board.layout.type == LayoutType.ROWS:
+            yield item.board, item.source_path
+        yield from _rows_in(item.board)
+
+
 def _body_opening_heading(board: Board) -> tuple[int, str, str] | None:
-    """Return (level, text, heading_line) for a body that opens with a markdown
-    heading.
+    """Return `_opening_heading` of a board's body.
 
     The body is either the board's own ``text`` (text-only board) or, for a board
     with a layout, a bare text block in the first slot — the two ways prose lands
     directly under the board header.
-
-    ``heading_line`` is the body's first non-blank line — the heading exactly as
-    authored, whatever its spacing or style — so stamping can narrow a ``text:``
-    block range down to it.
     """
-    own_text = board.text
     # A tab's pane opens under its own tab label, not under the board header.
     first = (
         None
         if board.layout.type == LayoutType.TABS
         else next(iter(board.layout.items), None)
     )
-    body = own_text or (_bare_text_block_body(first) if first is not None else None)
+    return _opening_heading(
+        board.text or (_bare_text_block_body(first) if first is not None else None)
+    )
+
+
+def _opening_heading(body: str | None) -> tuple[int, str, str] | None:
+    """Return (level, text, heading_line) when ``body`` opens with a heading.
+
+    ``heading_line`` is the body's first non-blank line — the heading exactly as
+    authored, whatever its spacing or style — so stamping can narrow a ``text:``
+    block range down to it.
+    """
     if not body:
         return None
     heading_line = next(
@@ -238,7 +276,7 @@ def _detect_single_chart_redundant_title(
     warnings.append(
         Diagnostic.from_code(
             WARN_SINGLE_CHART_REDUNDANT_TITLE,
-            path=f"charts.{chart.id}.title",
+            path="title",
             chart=chart.id,
             message=WARN_SINGLE_CHART_REDUNDANT_TITLE.message_template.format(
                 title=board.title, chart_title=chart.title

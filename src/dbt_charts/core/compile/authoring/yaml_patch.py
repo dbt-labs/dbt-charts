@@ -683,7 +683,7 @@ def set_board_values(yaml_text: str, updates: dict[str, ScalarLeaf | None]) -> s
             CRLF input is rejected rather than silently mixed with the
             LF-only lines this setter emits.
         updates: Dot-path -> value. Paths address top-level keys (`"title"`),
-            nested leaves (`"style.frame.width"`), and leaves inside sequence
+            nested leaves (`"style.frame.margin"`), and leaves inside sequence
             items, where a numeric segment indexes the sequence
             (`"rows.0.cols.1.title"`). A `None` value deletes a scalar leaf (a
             no-op if it's already absent; deleting a key that holds a nested

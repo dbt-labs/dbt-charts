@@ -1,0 +1,3 @@
+kind: Fixes
+body: '`WARN-SINGLE-CHART-REDUNDANT-TITLE` now flags the board title and tells you to remove it, keeping the chart title.'
+time: 2026-10-30T23:00:57.869739-07:00

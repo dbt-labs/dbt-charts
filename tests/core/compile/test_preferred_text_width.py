@@ -1,6 +1,6 @@
 """Prose and board titles ask the board for width, the way charts do.
 
-A board without an exact ``frame.width`` hugs what its items prefer: a prose
+A board without an exact ``width:`` hugs what its items prefer: a prose
 block or title its one-line width capped at the readable measure
 (``style.text.column.max_chars`` characters).
 """
@@ -97,8 +97,8 @@ def test_a_title_only_board_hugs_its_title() -> None:
     assert board_container_width(result.board, {}) < max_width
 
 
-def test_an_exact_frame_width_beats_title_and_prose() -> None:
-    style = "style:\n  frame:\n    width: 500\n"
+def test_an_exact_width_beats_title_and_prose() -> None:
+    style = "width: 500\n"
     assert _width(f"rows:\n  - text: {_LONG}\n", title=f'"{_LONG}"', style=style) == 500
 
 

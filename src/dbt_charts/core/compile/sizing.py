@@ -548,11 +548,11 @@ def board_container_width(
     chart: ChartWidth = config_chart_width,
     drawn: DrawnPredicate = is_drawn,
 ) -> float:
-    """Final board container width: ``frame.width`` exactly, else the hug.
+    """Final board container width: the authored ``width:`` exactly, else the hug.
 
-    ``width`` set anywhere in the cascade (board, extends template, meta.yml
-    — root ``width:`` sugar lands in the same slot) is the board's exact
-    width; the layout distributes it. Without one, the board hugs what its
+    A root ``width:`` authored anywhere in the cascade (board, extends template,
+    meta.yml) is the board's exact width, even past ``frame.max_width``; the
+    layout distributes it. Without one, the board hugs what its
     items prefer but never below its minimum, bounded by ``frame.max_width``,
     so a lone KPI does not sit in a full-width card. A board that prefers
     nothing (no charts, no text) takes the full ``max_width``.
@@ -562,9 +562,9 @@ def board_container_width(
     interpolates; ``chart`` is the data-aware sizing pass's seam for measuring
     tables from their data; ``drawn`` is the one for which items take space.
     """
+    if board.authored_width is not None:
+        return board.authored_width
     frame = board.resolved_style.frame
-    if frame.width is not None:
-        return float(frame.width)
     max_container_width = float(frame.max_width)
     max_content_width = max(max_container_width - 2 * float(frame.margin), 0.0)
     width = board_intrinsic_width(

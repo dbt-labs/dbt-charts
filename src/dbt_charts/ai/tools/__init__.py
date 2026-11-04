@@ -17,6 +17,7 @@ from dbt_charts.agent_api import (
     attribute,
     boards as _boards,
     files as _files,
+    find_queries as _find_queries,
     paging as _paging,
     query as _query,
     search as _search,
@@ -35,6 +36,7 @@ from dbt_charts.agent_api.query_csv import (
     fit_failure,
     with_csv,
 )
+from dbt_charts.agent_api.semantics import DescribeSemanticsArgs, describe_semantics
 from dbt_charts.ai.context import DbtChartsAIContext
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.diagnostics import Diagnostic
@@ -93,6 +95,7 @@ def _handle_render(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, A
 
 def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
     parsed = _ExecuteQueryArgs.model_validate(args)
+    session = ctx.project_session
     variables = (
         _vars_to_dict(parsed.variables) if parsed.variables is not None else None
     )
@@ -102,23 +105,42 @@ def _handle_query(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, An
         result = _query.query_board(
             name=parsed.query,
             path=parsed.board,
-            project=ctx.project_session.project,
+            project=session.project,
             vars=variables,
             limit=_query.MAX_QUERY_LIMIT,
-            adapter_registry=ctx.project_session.adapter_registry,
+            adapter_registry=session.adapter_registry,
         ).model_dump(mode="json", exclude_none=True)
         hint = BOARD_QUERY_HINT
+    elif parsed.board is not None:
+        result = session.execute_board_sql(
+            parsed.sql, parsed.board, variables
+        ).model_dump(mode="json", exclude_none=True)
+        hint = SQL_QUERY_HINT
     else:
         result = _query.execute_query(
             sql=parsed.sql,
             variables=variables,
             source=parsed.source or ctx.default_source,
             limit=_query.MAX_QUERY_LIMIT,
-            adapter_registry=ctx.project_session.adapter_registry,
+            adapter_registry=session.adapter_registry,
             lenient_variables=parsed.lenient_variables,
         ).model_dump(mode="json", exclude_none=True)
         hint = SQL_QUERY_HINT
     return with_csv(result, hint=hint) if result["success"] else fit_failure(result)
+
+
+def _handle_find_queries(
+    args: dict[str, Any], ctx: DbtChartsAIContext
+) -> dict[str, Any]:
+    parsed = _find_queries.FindQueriesArgs.model_validate(args)
+    session = ctx.project_session
+    return _find_queries.find_queries(
+        session.project,
+        session.cache,
+        session.adapter_registry,
+        parsed.text,
+        parsed.limit,
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def _handle_search(args: dict[str, Any], ctx: DbtChartsAIContext) -> dict[str, Any]:
@@ -149,6 +171,15 @@ def _handle_describe_board(
     return describe_board(parsed.path, project=project, chart=parsed.chart).model_dump(
         mode="json", exclude_none=True
     )
+
+
+def _handle_describe_semantics(
+    args: dict[str, Any], ctx: DbtChartsAIContext
+) -> dict[str, Any]:
+    parsed = DescribeSemanticsArgs.model_validate(args)
+    return describe_semantics(
+        ctx.project_session.project, parsed.source, parsed.name, parsed.search
+    ).model_dump(mode="json", exclude_none=True)
 
 
 def _handle_list_skills(
@@ -268,8 +299,10 @@ def _handle_delete_file(
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "render_board": _handle_render,
     "execute_sql": _handle_query,
+    "find_queries": _handle_find_queries,
     "search_files": _handle_search,
     "describe_board": _handle_describe_board,
+    "describe_semantics": _handle_describe_semantics,
     "read_file": _handle_read_file,
     "write_file": _handle_write_file,
     "apply_patch": _handle_apply_patch,

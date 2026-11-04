@@ -66,7 +66,16 @@ class TabsStyle(BaseModel):
     )
     min_width: float = Field(description="Minimum tab width in pixels.")
     max_width: float = Field(
-        description="Maximum tab width in pixels; a longer label is cut with an ellipsis."
+        description=(
+            "Maximum tab width in pixels. A longer label wraps in a left rail "
+            "(up to rail_max_lines) and is otherwise cut with an ellipsis."
+        )
+    )
+    rail_max_lines: int = Field(
+        ge=1,
+        description=(
+            "Lines a left-rail tab label wraps to before it is cut with an ellipsis."
+        ),
     )
     padding_x: float = Field(
         description="Horizontal padding between a tab's edge and its label in pixels."

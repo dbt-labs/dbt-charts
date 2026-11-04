@@ -15,6 +15,7 @@ import pytest
 
 from dbt_charts.core.colors import (
     InvalidColorError,
+    canvas_tone,
     ensure_readable_ink,
     is_light_canvas,
     is_sanitizable_color,
@@ -110,6 +111,11 @@ def test_is_light_canvas_crossover_above_0_18_luminance_is_light():
 def test_is_light_canvas_white_and_near_black():
     assert is_light_canvas("#ffffff") is True
     assert is_light_canvas("#161616") is False
+
+
+def test_canvas_tone_is_is_light_canvas_named():
+    for canvas in ("#727272", "#7a7a7a", "#ffffff", "#161616", "#faf7f0"):
+        assert canvas_tone(canvas) == ("light" if is_light_canvas(canvas) else "dark")
 
 
 def test_is_light_canvas_agrees_with_ensure_readable_ink_direction():

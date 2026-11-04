@@ -13,7 +13,7 @@ band. A row whose titles agree computes all-zero shifts.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -33,9 +33,14 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.chart.resolved._base import (
     _SharedResolvedChartFields,
 )
-from dbt_charts.core.compile.models.primitives import PieMode
+from dbt_charts.core.compile.models.primitives import (
+    PieMode,
+    ResolvedFontStyle,
+    WidthTier,
+)
 from dbt_charts.core.compile.models.style.resolved import effective_padding
 from dbt_charts.core.compile.resolve.chart.plot_height_floor import subtitle_cost_px
+from dbt_charts.core.compile.resolve.style.typography import width_tier
 from dbt_charts.core.constants.estimates import (
     SPARK_BAR_TITLE_BASELINE_Y_PX,
     SPARK_BAR_TITLE_HEIGHT_PX,
@@ -51,6 +56,9 @@ __all__ = [
     "TitleMetrics",
     "board_title_metrics",
     "chart_title_metrics",
+    "failed_title_font",
+    "failed_title_metrics",
+    "failed_title_text",
     "row_title_shifts",
     "vega_title_block_height",
 ]
@@ -95,6 +103,54 @@ _TITLE_ASCENT_RATIO = 0.8
 def title_ascent(font_size: float) -> float:
     """First-baseline distance below a Vega-Lite title's top at ``font_size``."""
     return float(round(font_size * _TITLE_ASCENT_RATIO))
+
+
+def failed_title_font(
+    title_fonts: Mapping[WidthTier, ResolvedFontStyle], width: float
+) -> ResolvedFontStyle:
+    """The title font a card of ``width`` gives a chart, healthy or failed."""
+    return title_fonts[width_tier(width)]
+
+
+def failed_title_text(
+    title: str | None,
+    variables: VariableValues | None,
+    resolved_style: ResolvedStyle,
+) -> str | None:
+    """A failed chart's authored title, filled as a healthy chart's is.
+
+    ``None`` when it has none, or when filling it fails: the diagnostic the tile
+    reports is the failure, and raw template text is never drawn.
+    """
+    from dbt_charts.core.render.boards import (  # noqa: PLC0415
+        resolve_display_text_from_provider,
+    )
+
+    if not title:
+        return None
+    try:
+        return (
+            resolve_display_text_from_provider(
+                title, variables, resolved_style=resolved_style
+            )
+            or None
+        )
+    except Exception:  # noqa: BLE001 — a title that cannot be filled is not a second crash on the error tile
+        return None
+
+
+def failed_title_metrics(font: ResolvedFontStyle, card_padding: float) -> TitleMetrics:
+    """Title geometry of a failed chart's tile, laid out as a Vega-Lite title is.
+
+    A failed chart draws its authored title above its tile in the slot a healthy
+    chart's title takes, so the row's band covers it too.
+    """
+    title_size = float(font.size)
+    ascent = title_ascent(title_size)
+    return TitleMetrics(
+        ascent=card_padding + ascent,
+        tail=title_size + VEGA_TITLE_OFFSET - ascent,
+    )
 
 
 def chart_title_metrics(

@@ -183,7 +183,7 @@ def test_table_beside_chart_shares_baseline_and_keeps_every_row() -> None:
         )
     )
     baselines, _ = _baselines_and_plot_tops(svg)
-    assert abs(baselines["Wide Title"] - baselines["Table Title"]) <= 0.5 + 1e-6
+    assert abs(baselines["Wide title"] - baselines["Table title"]) <= 0.5 + 1e-6
     assert "1.13M" in baselines and any(k.startswith("1.8") for k in baselines)
 
 
@@ -213,7 +213,7 @@ def test_spark_bar_beside_chart_shares_baseline() -> None:
         )
     )
     baselines, _ = _baselines_and_plot_tops(svg)
-    assert abs(baselines["Wide Title"] - baselines["Spark Title"]) <= 0.5 + 1e-6
+    assert abs(baselines["Wide title"] - baselines["Spark title"]) <= 0.5 + 1e-6
 
 
 def test_null_title_offset_still_renders_a_banded_row() -> None:
@@ -224,7 +224,7 @@ def test_null_title_offset_still_renders_a_banded_row() -> None:
         )
     )
     baselines, _ = _baselines_and_plot_tops(svg)
-    assert abs(baselines["Wide Title"] - baselines["Narrow Title"]) <= 0.5 + 1e-6
+    assert abs(baselines["Wide title"] - baselines["Narrow title"]) <= 0.5 + 1e-6
 
 
 def test_stacked_charts_in_a_wrapper_still_get_the_band() -> None:
@@ -244,7 +244,7 @@ def test_stacked_charts_in_a_wrapper_still_get_the_band() -> None:
         )
     )
     baselines, _ = _baselines_and_plot_tops(svg)
-    assert abs(baselines["Wide Title"] - baselines["Narrow Title"]) <= 0.5 + 1e-6
+    assert abs(baselines["Wide title"] - baselines["Narrow title"]) <= 0.5 + 1e-6
 
 
 def test_one_chart_in_two_rows_gets_each_rows_own_band() -> None:
@@ -265,7 +265,7 @@ def test_one_chart_in_two_rows_gets_each_rows_own_band() -> None:
     second_row_only = render_board_to_svg(_board(alone))
 
     def narrow_gap(markup: str, last: bool) -> float:
-        positions = _all_baselines(markup, "Narrow Title")
+        positions = _all_baselines(markup, "Narrow title")
         tops = _plot_top_list(markup)
         return tops[-1 if last else 0] - positions[-1 if last else 0]
 
@@ -369,14 +369,14 @@ def test_spark_bar_title_and_bars_follow_their_shift(
         block = _chart_block(markup, "spark")
         height = float(re.search(r'data-chart-height="([\d.]+)"', block)[1])
         first_bar = float(re.search(r'<rect[^>]*?y="([\d.]+)"[^>]*rx=', block)[1])
-        return height, first_bar, _baselines_and_plot_tops(markup)[0]["Spark Title"]
+        return height, first_bar, _baselines_and_plot_tops(markup)[0]["Spark title"]
 
     shifted = card(banded)
     unshifted = card(plain)
     title_dy = shifted[2] - unshifted[2]
     assert title_dy > 5
     baselines = _baselines_and_plot_tops(banded)[0]
-    assert abs(baselines["Wide Title"] - baselines["Spark Title"]) <= 0.5 + 1e-6
+    assert abs(baselines["Wide title"] - baselines["Spark title"]) <= 0.5 + 1e-6
     assert shifted[0] - unshifted[0] >= title_dy
     assert shifted[1] - unshifted[1] == pytest.approx(
         shifted[0] - unshifted[0], abs=0.5

@@ -177,4 +177,6 @@ def test_every_color_field_of_the_board_model_has_a_respell_move() -> None:
         and move.value_map.get("dbt-grays.separator") == "dbt-grays.4"
     }
 
-    assert color_fields - reached == set()
+    # Color fields no pre-0.11 board could author: nothing to respell.
+    born_after_the_retired_aliases = {"ground"}  # style.pattern.ground
+    assert color_fields - reached - born_after_the_retired_aliases == set()

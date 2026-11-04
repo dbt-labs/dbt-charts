@@ -3,9 +3,7 @@
 //! (along, across) coordinates of the edge; a vertical edge transposes them
 //! when it paints.
 
-use std::fmt::Write;
-
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathCommand, PathData, Role};
 
 use crate::common::TornBaseline;
 
@@ -95,15 +93,15 @@ pub fn torn_cubics(x1: f64, x2: f64, edge: f64, inward: f64, ticks: &[f64], tear
     cubics
 }
 
-pub fn torn_path(cubics: &[Cubic], vertical: bool) -> String {
+pub fn torn_path(cubics: &[Cubic], vertical: bool) -> PathData {
     let at = |(along, across): (f64, f64)| if vertical { (across, along) } else { (along, across) };
     let (x0, y0) = at(cubics[0][0]);
-    let mut d = format!("M{x0:.2},{y0:.2}");
+    let mut commands = vec![PathCommand::M(x0, y0)];
     for [_, c1, c2, b] in cubics {
         let ((c1x, c1y), (c2x, c2y), (bx, by)) = (at(*c1), at(*c2), at(*b));
-        let _ = write!(d, "C{c1x:.2},{c1y:.2} {c2x:.2},{c2y:.2} {bx:.2},{by:.2}");
+        commands.push(PathCommand::C(c1x, c1y, c2x, c2y, bx, by));
     }
-    d
+    PathData(commands)
 }
 
 /// The domain end that tears: the one nearest the off-screen zero. `None`
@@ -167,14 +165,10 @@ impl<'a> ValueTear<'a> {
     pub fn node(&self, edge_px: f64, across: f64, along: f64, vertical: bool, ink: &str, width: f64) -> Node {
         let inward = torn_inward(edge_px, 0.0, across);
         let cubics = torn_cubics(0.0, along, edge_px, inward, &[], self.tear);
-        let d = torn_path(&cubics, vertical);
-        Node::Path(
-            Attrs::new()
-                .set("class", "torn-baseline")
-                .set("d", d)
-                .set("fill", "none")
-                .set("stroke", ink)
-                .set("stroke-width", width.to_string()),
+        Node::path(
+            Role::Grid,
+            torn_path(&cubics, vertical),
+            Attrs::new().set("class", "torn-baseline").set("fill", "none").set("stroke", ink).num("stroke-width", width),
         )
     }
 }

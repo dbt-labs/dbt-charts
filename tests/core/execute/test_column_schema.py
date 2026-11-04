@@ -9,7 +9,6 @@ from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import nanoarrow as na
 import pyarrow as pa
@@ -23,7 +22,6 @@ from dbt_charts.core.column_types import (
     map_to_json,
 )
 from dbt_charts.core.compile.models.query.normalized import (
-    HttpQuery,
     SqlQuery,
     ValuesQuery,
 )
@@ -36,7 +34,6 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_COLUMN_TYPE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.base import QueryResult, RowFetchLimit
 from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-from dbt_charts.core.execute.adapters.http_adapter import HttpAdapter
 from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
 from dbt_charts.core.execute.adapters.values_adapter import ValuesAdapter
 from dbt_charts.core.execute.duckdb_types import duckdb_column_type
@@ -217,19 +214,6 @@ def test_sqlite_schema_is_read_from_values_and_empty_columns_are_string(
         SqlQuery(sql="select a from t where a > 9", source="db"), source_config=source
     )
     assert empty.schema == {"a": ColumnType(kind="string")}
-
-
-def test_http_schema_is_read_from_the_json_and_empty_columns_are_string() -> None:
-    rows = [{"id": 1, "note": None}, {"id": 2, "note": None}]
-    response = MagicMock()
-    response.json.return_value = rows
-    with patch("dbt_charts.core.execute.adapters.http_adapter.httpx.Client") as client:
-        client.return_value.__enter__.return_value.get.return_value = response
-        result = HttpAdapter().execute(HttpQuery(url="https://api.example.com/"))
-    assert result.schema == {
-        "id": ColumnType(kind="integer"),
-        "note": ColumnType(kind="string"),
-    }
 
 
 def test_file_source_result_declares_duckdb_types(

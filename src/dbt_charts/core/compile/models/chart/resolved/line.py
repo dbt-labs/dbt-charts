@@ -30,6 +30,10 @@ class ResolvedLineChart(_DateAxisResolvedChartFields, _TooltipResolvedField):
     chart_type: Literal["line"] = Field(
         description="Discriminator key; always 'line'.",
     )
+    connect: str | None = Field(
+        default=None,
+        description="Column whose order the line follows, instead of x.",
+    )
     style: ResolvedLineStyle = Field(
         description="Line family style slice — self-contained, globals merged down by resolve.",
     )

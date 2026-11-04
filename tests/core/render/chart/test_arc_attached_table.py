@@ -764,7 +764,7 @@ def _group_offsets(svg: str) -> list[tuple[float, float]]:
     root = ET.fromstring(svg)
     offsets = []
     for g in root.findall(f"{_SVG_NS}g"):
-        m = re.match(r"translate\(([-\d.]+), ([-\d.]+)\)", g.get("transform", ""))
+        m = re.match(r"translate\(([-\d.]+),([-\d.]+)\)", g.get("transform", ""))
         assert m, f"expected a translate(...) transform, got {g.get('transform')!r}"
         offsets.append((float(m.group(1)), float(m.group(2))))
     return offsets

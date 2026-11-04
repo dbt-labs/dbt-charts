@@ -15,7 +15,9 @@ from dbt_charts.core.render.prose import render_prose_svg
 
 from ._prose_plan import full_width_plan
 
-_MARKDOWN = "# the quick brown fox\n\nbody `code span` text here"
+_MARKDOWN = (
+    "# the quick brown fox\n\nbody `code span` text here\n\n[`linked code`](docs/x.md)"
+)
 
 
 def _painted_text(case: str | None, model_copy_at: Callable[..., Style]) -> str:
@@ -43,6 +45,7 @@ def test_title_case_reaches_headings_and_body_but_not_code(
     assert "The Quick Brown Fox" in painted
     assert "Text Here" in painted
     assert "code span" in painted
+    assert "linked code" in painted
 
 
 def test_upper_case_applies_to_body_text(model_copy_at: Callable[..., Style]) -> None:
@@ -56,8 +59,8 @@ def test_unset_case_leaves_prose_as_written(
 ) -> None:
     painted = _painted_text(None, model_copy_at)
     assert "text here" in painted
-    # The heading follows style.title.font.case (title in clarity), not text.font.case.
-    assert "The Quick Brown Fox" in painted
+    # A heading prints as typed: only a theme that sets style.title.font.case recases it.
+    assert "the quick brown fox" in painted
 
 
 def test_content_width_is_measured_on_the_cased_text(

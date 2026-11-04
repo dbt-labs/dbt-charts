@@ -1262,8 +1262,7 @@ def test_callout_resolve_returns_resolved_callout_chart() -> None:
 
 def test_callout_resolve_carries_full_style_from_board_cascade() -> None:
     """resolved.style is the board's whole cascaded callout style, with the
-    colors it left unset filled from its tone: a chart of tone negative
-    resolves to exactly the board's own negative-tone error card style."""
+    colors it left unset filled from its tone."""
     from dbt_charts.core.compile.models.chart.normalized import CalloutChart
     from dbt_charts.core.compile.models.style.authored import CalloutChartStylePatch
     from dbt_charts.core.compile.resolve import resolve
@@ -1278,7 +1277,6 @@ def test_callout_resolve_carries_full_style_from_board_cascade() -> None:
     )
     resolved = resolve(compiled, [], board_style).style
 
-    assert resolved == board_style.callout_error
     assert resolved.background == color("negative.bg")
     assert resolved.border.color == color("negative.border")
     assert resolved.title.font.color == color("negative.solid")

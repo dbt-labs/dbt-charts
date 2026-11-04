@@ -29,6 +29,9 @@ notes: saturated, glowing colors
 style:
   roles:
     muted: &mid chrome[7]
+    panel: chrome[11]
+    # The dark panel's step that matches the light themes' stripe contrast.
+    stripe: chrome[10]
     accent: info.border
   background: chrome[12]
   font:

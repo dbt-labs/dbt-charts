@@ -6,14 +6,12 @@
 
 use crate::common::{Font, TitleBlock, TitleStyle};
 use print::print;
-use scene::{Attrs, Extent, Node};
+use scene::{Attrs, Extent, Node, Role, Shape};
 use measure::FontBook;
 use crate::vega_fit::{self, Bounds, FitMargins, TitleInk};
 use crate::Payload;
 
 /// The card: the canvas `<svg>` and the padded rect the body fits into.
-/// `dim` prints the root's `width`/`height` (and so the rect's): families
-/// disagree on how a whole-number size reads (`600` vs Python's `600.0`).
 pub struct ChartFrame<'a> {
     /// The card's width, which the emitters' own decisions read.
     pub w: f64,
@@ -24,18 +22,11 @@ pub struct ChartFrame<'a> {
     /// `(left, right, top, bottom)`.
     pub pad: (f64, f64, f64, f64),
     pub background: &'a str,
-    pub dim: fn(f64) -> String,
 }
 
 impl<'a> ChartFrame<'a> {
-    pub fn new(
-        w: f64,
-        h: f64,
-        pad: (f64, f64, f64, f64),
-        background: &'a str,
-        dim: fn(f64) -> String,
-    ) -> Self {
-        ChartFrame { w, view_w: w, h, pad, background, dim }
+    pub fn new(w: f64, h: f64, pad: (f64, f64, f64, f64), background: &'a str) -> Self {
+        ChartFrame { w, view_w: w, h, pad, background }
     }
 
     /// [`Self::of`] over a card with no room: the view takes the theme's default width.
@@ -55,12 +46,12 @@ impl<'a> ChartFrame<'a> {
         Ok(ChartFrame { view_w: crate::view_width(w, board_style, x_scale)?, ..Self::at(w, h, padding, background) })
     }
 
-    /// The payload's own card, its dims printed as bare numbers.
+    /// The payload's own card.
     pub fn of(payload: &Payload, background: &'a str) -> Self {
         Self::at(payload.width, payload.height, payload.padding.as_ref(), background)
     }
 
-    /// A `w` x `h` card, its dims printed as bare numbers.
+    /// A `w` x `h` card.
     pub fn at(w: f64, h: f64, padding: Option<&crate::Padding>, background: &'a str) -> Self {
         Self::new(
             w,
@@ -72,14 +63,13 @@ impl<'a> ChartFrame<'a> {
                 padding.map_or(0.0, |p| p.bottom),
             ),
             background,
-            crate::svg::num_full,
         )
     }
 
     /// The frame over a canvas of its own size: a plot laid out under
     /// `autosize: pad` grows the canvas around its ink.
     pub fn sized(&self, w: f64, h: f64) -> ChartFrame<'a> {
-        ChartFrame { w, view_w: w, h, pad: self.pad, background: self.background, dim: self.dim }
+        ChartFrame { w, view_w: w, h, pad: self.pad, background: self.background }
     }
 
     /// The width a title wraps against.
@@ -118,22 +108,11 @@ impl<'a> ChartFrame<'a> {
 
     /// The root `<svg>` around `children`.
     pub(crate) fn root_node(&self, children: Vec<Node>) -> Node {
-        let (w, h) = ((self.dim)(self.view_w), (self.dim)(self.h));
-        let attrs = Attrs::new()
-            .set("xmlns", "http://www.w3.org/2000/svg")
-            .set("width", w.as_str())
-            .set("height", h.as_str())
-            .set("viewBox", format!("0 0 {w} {h}"));
-        Node::Svg { extent: Extent { width: self.view_w, height: self.h }, attrs, children }
+        Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent: Extent { width: self.view_w, height: self.h }, children })
     }
 
     pub(crate) fn background_node(&self) -> Node {
-        Node::Rect(
-            Attrs::new()
-                .set("width", (self.dim)(self.view_w))
-                .set("height", (self.dim)(self.h))
-                .set("fill", self.background),
-        )
+        Node::rect(Role::Chrome, (0.0, 0.0, self.view_w, self.h), Attrs::new().set("fill", self.background))
     }
 
     /// The whole card: root and background around `body`.
@@ -149,53 +128,6 @@ impl<'a> ChartFrame<'a> {
         let rect_at = out.len();
         self.background(out);
         rect_at
-    }
-}
-
-/// Where a composite cuts a printed panel: after the card's background rect, before its
-/// closing tag, and around the value axis.
-pub struct PanelCuts {
-    pub content_start: usize,
-    pub svg_end: usize,
-    value_axis: Option<std::ops::Range<usize>>,
-}
-
-impl PanelCuts {
-    /// The value axis's cut; the panel was drawn with one.
-    pub fn value_axis(&self) -> std::ops::Range<usize> {
-        self.value_axis.clone().expect("these cuts were taken with a value axis")
-    }
-}
-
-/// Where a panel's value axis sits among the children of its printed card.
-pub enum ValueAxisAt {
-    /// `plot[range]`, inside the plot group.
-    Plot(std::ops::Range<usize>),
-    /// `tail[range]`, after the plot group.
-    Tail(std::ops::Range<usize>),
-}
-
-impl ChartFrame<'_> {
-    /// The cuts of the panel this frame draws: `head` ahead of the plot `group` of children `plot`,
-    /// then `tail`, with the value axis, if the panel has one, at `value_axis`. Printing is concatenative, so each cut is
-    /// the length of what is printed ahead of it.
-    pub fn cuts(&self, head: &[Node], group: &Attrs, plot: &[Node], tail: &[Node], value_axis: Option<&ValueAxisAt>) -> PanelCuts {
-        let opened = print(&[self.svg(Vec::new())]);
-        let content_start = opened.strip_suffix("</svg>").expect("a childless card prints its end tag").len();
-        let opened_group = print(&[Node::group(group.clone(), Vec::new())]);
-        let group_open = opened_group.strip_suffix("</g>").expect("a childless group prints its end tag").len();
-        let ahead = content_start + print(head).len() + group_open;
-        let after_plot = ahead + print(plot).len() + "</g>".len();
-        let value_axis = value_axis.map(|at| {
-            let (children, base, range) = match at {
-                ValueAxisAt::Plot(range) => (plot, ahead, range),
-                ValueAxisAt::Tail(range) => (tail, after_plot, range),
-            };
-            let start = base + print(&children[..range.start]).len();
-            start..start + print(&children[range.clone()]).len()
-        });
-        let svg_end = after_plot + print(tail).len();
-        PanelCuts { content_start, svg_end, value_axis }
     }
 }
 
@@ -271,11 +203,6 @@ impl FrameTitle {
         &self.block
     }
 
-    /// Paints the title group with its top-left at `(x, y)`.
-    pub fn paint_at(&self, out: &mut String, x: f64, y: f64) {
-        out.push_str(&print(&self.nodes_at(x, y)));
-    }
-
     /// The title group with its top-left at `(x, y)`.
     pub fn nodes_at(&self, x: f64, y: f64) -> Vec<Node> {
         crate::common::title_block_nodes(&self.block, self.style.as_ref(), x, y, self.font_size)
@@ -304,10 +231,12 @@ mod tests {
 
     #[test]
     fn the_card_node_prints_what_open_and_the_closing_tag_write() {
-        let frame = ChartFrame::new(600.0, 400.5, (0.0, 0.0, 0.0, 0.0), "#f<f", crate::svg::num_full);
+        let frame = ChartFrame::new(600.0, 400.5, (0.0, 0.0, 0.0, 0.0), "#f<f");
         let mut written = String::new();
         frame.open(&mut written);
-        written.push_str("<rect/></svg>");
-        assert_eq!(print(&[frame.svg(vec![Node::Rect(Attrs::new())])]), written);
+        let body = Node::rect(Role::Chrome, (0.0, 0.0, 1.0, 1.0), Attrs::new());
+        written.push_str(&print(std::slice::from_ref(&body)));
+        written.push_str("</svg>");
+        assert_eq!(print(&[frame.svg(vec![body])]), written);
     }
 }

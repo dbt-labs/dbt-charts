@@ -171,6 +171,19 @@ fn test_render_inline_code_uses_code_background_for_chip() {
 }
 
 #[test]
+fn test_render_code_in_a_link_label_is_a_linked_chip() {
+    let style = Style {
+        code_background: "#eeeeee".to_string(),
+        ..Style::default()
+    };
+    let svg = render("See [`file.yml`](docs/file.yml) now", 400.0, style);
+    assert!(!svg.contains('`'));
+    assert!(svg.contains("file.yml"));
+    assert!(svg.contains(r##"fill="#eeeeee""##));
+    assert!(svg.contains(r#"href="docs/file.yml""#));
+}
+
+#[test]
 fn test_render_inline_code_keeps_internal_spaces_styled() {
     let svg = render("Use `line_height = 1.25` here", 400.0, Style::default());
     assert!(svg.contains("line_height = 1.25"));
@@ -1101,7 +1114,7 @@ fn authored_font_stacks_are_css_escaped_in_every_rule_and_the_inline_code_style(
     assert!(md_rule_body(&svg, "code").starts_with(&format!(" font-family: {EVIL_ESCAPED}; fill:")));
     assert!(md_rule_body(&svg, "blockquote")
         .contains(r" font-family: &quot;Q\3c b\3e &quot;, monospace;"));
-    assert!(svg.contains(&format!("<tspan style=\"font-family: {EVIL_ESCAPED}; fill:")), "{svg}");
+    assert!(svg.contains(&format!(" style=\"font-family: {EVIL_ESCAPED}; fill:")), "{svg}");
 }
 
 #[test]
@@ -2065,10 +2078,10 @@ fn test_measure_blocks_reports_one_entry_per_block() {
 fn test_measure_blocks_line_count_tracks_available_width() {
     let renderer = block_windows_renderer();
     let blocks = parse(LONG);
-    let narrow = renderer.measure_blocks(&blocks, 200.0).unwrap()[0];
-    let wide = renderer.measure_blocks(&blocks, 600.0).unwrap()[0];
-    assert!(narrow.line_count > wide.line_count);
-    assert!(wide.line_count > 1);
+    let narrow = renderer.measure_blocks(&blocks, 200.0).unwrap()[0].clone();
+    let wide = renderer.measure_blocks(&blocks, 600.0).unwrap()[0].clone();
+    assert!(narrow.line_advances.len() > wide.line_advances.len());
+    assert!(wide.line_advances.len() > 1);
 }
 
 #[test]
@@ -2094,7 +2107,7 @@ fn test_render_block_window_renders_only_the_requested_lines() {
     let renderer = block_windows_renderer();
     let blocks = parse(LONG);
     let block = &blocks[0];
-    let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_count;
+    let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_advances.len();
     assert!(
         total >= 4,
         "fixture must wrap to several lines to be meaningful"
@@ -2133,7 +2146,7 @@ fn test_render_block_window_lines_concatenate_to_the_whole_block() {
     let renderer = block_windows_renderer();
     let blocks = parse(LONG);
     let block = &blocks[0];
-    let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_count;
+    let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_advances.len();
 
     let window = |start: usize, count: usize| {
         let result = renderer
@@ -2151,7 +2164,7 @@ fn test_render_block_window_starts_at_the_top_of_its_own_box() {
     let renderer = block_windows_renderer();
     let blocks = parse(LONG);
     let block = &blocks[0];
-    let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_count;
+    let total = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].line_advances.len();
     let tail = renderer
         .render_block_window(block, 300.0, total - 2, Some(2))
         .unwrap();
@@ -2193,6 +2206,28 @@ fn test_heading_leading_margin_matches_what_the_renderer_draws() {
     let reported = renderer.measure_blocks(&blocks, 300.0).unwrap()[0].leading_margin;
     let drawn = renderer.heading_margins(&blocks[0]).0;
     assert!((reported - drawn).abs() < 1e-9);
+}
+
+#[test]
+fn test_column_lift_is_the_margin_plus_whole_body_lines_to_a_paragraph_s_baseline() {
+    let renderer = block_windows_renderer();
+    let line = renderer.style.base_font_size * renderer.style.line_height;
+    for level in 1u8..=3 {
+        let heading = parse(&format!("{} Heading", "#".repeat(level as usize)));
+        let m = &renderer.measure_blocks(&heading, 300.0).unwrap()[0];
+        let drop = renderer.first_baseline(&heading, 300.0).unwrap()
+            - renderer.first_baseline(&parse("Heading"), 300.0).unwrap();
+        let lines = (m.column_lift - m.leading_margin) / line;
+        assert!((lines - lines.round()).abs() < 1e-9, "level {level}: {lines} body lines");
+        assert!((lines * line - drop).abs() <= line / 2.0, "level {level}: {lines} lines for a drop of {drop}");
+    }
+}
+
+#[test]
+fn test_a_paragraph_has_no_column_lift() {
+    let renderer = block_windows_renderer();
+    let metrics = renderer.measure_blocks(&parse(&format!("{LONG}\n\n- item")), 300.0).unwrap();
+    assert!(metrics.iter().all(|m| m.column_lift == 0.0));
 }
 
 // --- Class prefix and style-rule bodies (pinned against Python mdsvg) ---
@@ -2478,7 +2513,7 @@ fn image_block_explicit_height_alone_spans_the_column() {
 }
 
 #[test]
-fn image_block_fractional_dims_pass_through_format_number() {
+fn image_block_fractional_dims_pass_through_print_geometry() {
     let (svg, height) = unfetched("![Logo](u.png){width=140.5 height=12.25}", 400.0, Style::default());
     assert_eq!(
         image_lines(&svg)[0],
@@ -2528,8 +2563,8 @@ fn image_block_href_passes_every_scheme_through_unfiltered() {
 }
 
 #[test]
-fn image_block_height_ties_round_like_format_number() {
-    // 10 / (16/9) = 5.625 exactly; `format_number` rounds the tie to even.
+fn image_block_height_ties_round_like_print_geometry() {
+    // 10 / (16/9) = 5.625 exactly; `print::geometry` rounds the tie to even.
     let (svg, height) = unfetched("![x](u.png){width=10}", 400.0, Style::default());
     assert_eq!(
         image_lines(&svg)[0],
@@ -2910,7 +2945,7 @@ fn max_content_cases() -> Vec<(&'static str, String, f64)> {
         ("numbered", format!("1. {SENTENCE}"), 432.27),
         ("blockquote", format!("> {SENTENCE}"), 430.27),
         ("bold run", format!("Plain **{SENTENCE}** plain"), 485.49),
-        ("code span", format!("Run `{SENTENCE}` now"), 530.13),
+        ("code span", format!("Run `{SENTENCE}` now"), 530.56),
         ("table", MAX_CONTENT_TABLE.to_string(), 212.53),
         (
             "code block",
@@ -2960,7 +2995,7 @@ fn a_blockquote_asks_for_the_size_and_case_it_is_painted_at() {
     let renderer = SVGRenderer::new(style, test_fonts()).unwrap();
     for (markdown, expected) in [
         (format!("> {SENTENCE}"), 825.54),
-        ("> Revenue is `net_revenue` minus **returns** overall".to_string(), 581.82),
+        ("> Revenue is `net_revenue` minus **returns** overall".to_string(), 580.01),
     ] {
         assert_eq!(renderer.max_content_width(&parse(&markdown)).unwrap(), expected, "{markdown}");
     }
@@ -3302,14 +3337,14 @@ fn centered_image_line_paints_start_anchored_segments_from_its_left_edge() {
         style,
         400.0,
         &[
-            r##"  <rect x="231.13" y="48" width="36" height="17.5" fill="#f3f4f6" rx="3"/>"##,
-            r#"  <text x="106.93" y="60" font-size="14" class="text" text-anchor="start">Before </text>"#,
-            r#"  <image x="155.2" y="20" width="40" height="40" href="SQ40" preserveAspectRatio="xMidYMid meet"/>"#,
+            r##"  <rect x="232.13" y="49" width="34" height="15.5" fill="#f3f4f6" rx="3"/>"##,
+            r#"  <text x="104.93" y="60" font-size="14" class="text" text-anchor="start">Before </text>"#,
+            r#"  <image x="153.2" y="20" width="40" height="40" href="SQ40" preserveAspectRatio="xMidYMid meet"/>"#,
             "  <title>logo</title>",
-            r#"  <text x="199.13" y="60" font-size="14" class="text" text-anchor="start">after <tspan style="font-family: ui-monospace, &#x27;SF Mono&#x27;, Menlo, Consolas, monospace; fill: #be185d; font-size: 12.5px">code</tspan> end</text>"#,
+            r#"  <text x="197.13" y="60" font-size="14" class="text" text-anchor="start">after <tspan dx="2" style="font-family: ui-monospace, &#x27;SF Mono&#x27;, Menlo, Consolas, monospace; fill: #be185d; font-size: 12.5px">code</tspan><tspan dx="2"> end</tspan></text>"#,
         ],
         85.4072265625,
-        189.71,
+        190.15,
     );
 }
 
@@ -3374,9 +3409,33 @@ fn first_baseline_is_the_first_line_s_own_ascent() {
 }
 
 #[test]
+fn a_list_measures_one_advance_per_item_and_windows_by_item() {
+    let renderer = SVGRenderer::new(Style::default(), test_fonts()).unwrap();
+    let blocks = parse("- first item\n- second item\n- third item");
+    let metrics = &renderer.measure_blocks(&blocks, 300.0).unwrap()[0];
+    assert_eq!(metrics.line_advances.len(), 3);
+    assert!(metrics.splittable && metrics.whole_items);
+    let drawn = renderer.render_block_window(&blocks[0], 300.0, 0, None).unwrap().height;
+    let gaps = metrics.item_gap * (metrics.line_advances.len() - 1) as f64;
+    assert!((metrics.line_advances.iter().sum::<f64>() + gaps - drawn).abs() < 1e-9);
+    let tail = renderer.render_block_window(&blocks[0], 300.0, 1, Some(2)).unwrap().height;
+    assert!((metrics.line_advances[1..].iter().sum::<f64>() + metrics.item_gap - tail).abs() < 1e-9);
+
+    let window = renderer.render_block_window(&blocks[0], 300.0, 1, Some(1)).unwrap();
+    let text = format!("{:?}", window.elements);
+    assert!(text.contains("second item"));
+    assert!(!text.contains("first item") && !text.contains("third item"));
+
+    let ordered = parse("3. first item\n4. second item\n5. third item");
+    let window = renderer.render_block_window(&ordered[0], 300.0, 2, Some(1)).unwrap();
+    let text = format!("{:?}", window.elements);
+    assert!(text.contains("5.") && !text.contains("3."));
+}
+
+#[test]
 fn inline_image_beyond_the_ported_line_model_refuses_by_name() {
     // A table cell's lines and a packed paragraph whose lines differ in
-    // height (`BlockMetrics` carries one advance) refuse.
+    // height refuse.
     let table = "| a |\n| --- |\n| ![x](SQ12) |";
     assert_eq!(
         inline(table, Style::default(), 400.0).unwrap_err(),
@@ -3393,12 +3452,12 @@ fn inline_image_beyond_the_ported_line_model_refuses_by_name() {
     let single = parse(&format!("logo: ![x]({SQ40})"));
     let metrics = renderer.measure_blocks(&single, 120.0).unwrap();
     let window = renderer.render_block_window(&single[0], 120.0, 0, None).unwrap();
-    assert_eq!((metrics[0].line_count, metrics[0].line_advance), (1, window.height));
+    assert_eq!((metrics[0].line_advances.len(), metrics[0].line_advances[0]), (1, window.height));
     // ...and a short image never grows its line.
     let short = parse(&format!("word word word word ![x]({SQ12}) word"));
     let metrics = renderer.measure_blocks(&short, 120.0).unwrap();
-    assert!(metrics[0].line_count > 1);
-    assert_eq!(metrics[0].line_advance, 14.0 * Style::default().line_height);
+    assert!(metrics[0].line_advances.len() > 1);
+    assert_eq!(metrics[0].line_advances[0], 14.0 * Style::default().line_height);
 }
 
 #[test]
@@ -3548,13 +3607,18 @@ fn laid_out(markdown: &str) -> RenderResult {
     super::render(markdown, 400.0, 0.0, Style::default(), test_fonts()).unwrap()
 }
 
-fn attr<'a>(element: &'a Element, name: &str) -> &'a str {
-    element
+/// An attribute as `print` writes it: its text, or its number at a hundredth.
+fn attr(element: &Element, name: &str) -> String {
+    let (_, value, _) = element
         .attrs
         .iter()
         .find(|(key, _, _)| *key == name)
-        .unwrap_or_else(|| panic!("<{}> has no {name}: {:?}", element.tag, element.attrs))
-        .1
+        .unwrap_or_else(|| panic!("<{}> has no {name}: {:?}", element.tag, element.attrs));
+    match value {
+        scene::AttrValue::Text(text) => text.clone(),
+        scene::AttrValue::Geom(v) => print::geometry(*v),
+        other => panic!("{name} is {other:?}"),
+    }
 }
 
 fn child_elements(element: &Element) -> Vec<&Element> {
@@ -3575,14 +3639,14 @@ fn a_heading_is_one_text_element_holding_its_words_unescaped() {
         panic!("one heading, one element: {:?}", result.elements);
     };
     assert_eq!(text.tag, "text");
-    assert!(has_md_class(attr(text, "class"), "heading"));
+    assert!(has_md_class(&attr(text, "class"), "heading"));
     assert_eq!(attr(text, "text-anchor"), "start");
     let [tspan] = child_elements(text)[..] else {
         panic!("one weighted run: {text:?}");
     };
     assert_eq!(attr(tspan, "style"), "font-weight: bold");
     assert_eq!(tspan.children, vec![quoted("Tom & \"Jerry\" <3")]);
-    let printed = print::print(&[scene::Node::Element(text.clone())]);
+    let printed = print::print(&[scene::Node::element(text.clone())]);
     assert!(printed.ends_with(">Tom &amp; &quot;Jerry&quot; &lt;3</tspan></text>"), "{printed}");
 }
 
@@ -3604,7 +3668,7 @@ fn a_code_fence_keeps_its_tab_raw_in_a_preserved_text() {
     let line = &result.elements[1];
     assert_eq!(attr(line, "xml:space"), "preserve");
     assert_eq!(line.children, vec![quoted("a\tb")]);
-    let printed = print::print(&[scene::Node::Element(line.clone())]);
+    let printed = print::print(&[scene::Node::element(line.clone())]);
     assert!(printed.ends_with(">a&#9;b</text>"), "{printed}");
 }
 
@@ -3630,11 +3694,12 @@ fn inline_code_is_a_chip_rect_then_a_text_with_a_monospace_tspan() {
     let tags: Vec<&str> = result.elements.iter().map(|e| e.tag.as_str()).collect();
     assert_eq!(tags, ["rect", "text"]);
     let tspans = child_elements(&result.elements[1]);
-    let [code] = tspans[..] else {
-        panic!("one styled run: {tspans:?}");
+    let [code, after] = tspans[..] else {
+        panic!("the code run and the run its chip pushes along: {tspans:?}");
     };
     assert!(attr(code, "style").contains("font-family:"));
     assert_eq!(code.children, vec![quoted("a<b")]);
+    assert_eq!(attr(after, "dx"), attr(code, "dx"));
 }
 
 #[test]
@@ -3657,13 +3722,25 @@ fn the_style_block_is_an_element_of_one_rule_line_per_class() {
 #[test]
 fn the_root_carries_the_extent_the_layout_reserved() {
     let result = laid_out("# Title\n\nBody text.");
-    let Node::Svg { extent, attrs, .. } = result.svg() else {
+    let scene::Shape::Svg { extent, .. } = result.svg().shape else {
         panic!("the root is an svg");
     };
-    assert_eq!(extent, Extent { width: 400.0, height: result.height });
-    let value = |name: &str| attrs.iter().find(|(key, _, _)| *key == name).unwrap().1.to_string();
-    assert_eq!(value("width"), "400");
-    assert_eq!(value("viewBox"), format!("0 0 400 {}", fmt(result.height)));
+    assert_eq!(extent, Extent { width: 400.0, height: print::geometry(result.height).parse().unwrap() });
+    let printed = print::print(&[result.svg()]);
+    assert!(printed.starts_with(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"{0}\" viewBox=\"0 0 400 {0}\"", print::geometry(result.height))), "{printed}");
+}
+
+fn first_with_tag<'a>(elements: impl IntoIterator<Item = &'a Element>, tag: &str) -> Option<&'a Element> {
+    elements.into_iter().find_map(|e| if e.tag == tag { Some(e) } else { first_with_tag(child_elements(e), tag) })
+}
+
+#[test]
+fn a_rect_carries_its_box_as_numbers() {
+    let result = laid_out("```\ncode\n```");
+    let rect = first_with_tag(&result.elements, "rect").expect("the code block's rect");
+    for name in ["x", "y", "width", "height"] {
+        assert!(rect.attrs.get_num(name).is_some(), "{name} is a number: {rect:?}");
+    }
 }
 
 #[test]
@@ -3682,7 +3759,7 @@ fn grid_style() -> Style {
         heading_margin_top_px: Some(39.2),
         minor_heading_margin_top_px: Some(19.6),
         heading_margin_bottom_px: Some(0.0),
-        h1_margin_bottom_px: Some(19.6),
+        major_heading_margin_bottom_px: Some(19.6),
         heading_line_height: Some(1.1),
         heading_grid_px: Some(19.6),
         paragraph_spacing: 19.6,
@@ -3701,7 +3778,7 @@ fn grid_block(md: &str, width: f64) -> f64 {
 #[test]
 fn test_heading_block_rounds_up_to_whole_body_lines() {
     assert!((grid_block("Body.\n\n# H", 400.0) - (39.2 + 2.0 * 19.6 + 19.6)).abs() < 1e-6);
-    assert!((grid_block("Body.\n\n## H", 400.0) - (39.2 + 19.6)).abs() < 1e-6);
+    assert!((grid_block("Body.\n\n## H", 400.0) - (39.2 + 39.2)).abs() < 1e-6);
     assert!((grid_block("Body.\n\n### H", 400.0) - (19.6 + 19.6)).abs() < 1e-6);
     let wrapped = format!("Body.\n\n# {}", "word ".repeat(40));
     let lines = (grid_block(&wrapped, 200.0) - 39.2 - 19.6) / 19.6;
@@ -3727,4 +3804,66 @@ fn test_code_block_leading_is_whole_body_lines_that_clear_the_glyph() {
             assert!((height(3) - height(1) - 2.0 * leading).abs() < 1e-6, "{code_size} {overflow:?}");
         }
     }
+}
+
+#[test]
+fn test_inline_code_chip_reserves_its_padding_in_the_line() {
+    let style = Style::default();
+    let pad = style.inline_code_padding;
+    let size = style.base_font_size;
+    let renderer = SVGRenderer::new(style.clone(), test_fonts()).unwrap();
+    let before = renderer.measure_text("Use ", size, false, false, false, Some("normal"), false).unwrap();
+    let code = renderer.measure_text("code", size, false, false, true, Some("normal"), false).unwrap();
+
+    let svg = render_full("Use `code`. Done", 400.0, 0.0, style, test_fonts()).unwrap();
+
+    let re = regex::Regex::new(r#"<rect x="([^"]+)"[^>]*width="([^"]+)""#).unwrap();
+    let rect = re.captures(&svg).unwrap();
+    assert!((rect[1].parse::<f64>().unwrap() - before).abs() < 0.01, "{svg}");
+    assert!((rect[2].parse::<f64>().unwrap() - (code + 2.0 * pad)).abs() < 0.01, "{svg}");
+    assert!(svg.contains(&format!(r#"<tspan dx="{pad}" style="#)), "{svg}");
+    assert!(svg.contains(&format!(r#"<tspan dx="{pad}">. Done</tspan>"#)), "{svg}");
+}
+
+#[test]
+fn test_table_cell_code_reserves_no_chip_padding() {
+    let svg = render_default("| a |\n| --- |\n| x `code` y |");
+    assert!(!svg.contains("dx="), "{svg}");
+}
+
+#[test]
+fn test_italic_blockquote_is_measured_in_the_italic_face() {
+    let style = Style {
+        blockquote_font_style: "italic".to_string(),
+        code_background: "#eeeeee".to_string(),
+        ..Style::default()
+    };
+    let renderer = SVGRenderer::new(style.clone(), test_fonts()).unwrap();
+    let size = style.base_font_size;
+    let italic = renderer
+        .measure_text("Quote with ", size, false, true, false, Some("normal"), false)
+        .unwrap();
+
+    let svg = render_full("> Quote with `code`", 400.0, 0.0, style.clone(), test_fonts()).unwrap();
+
+    let re = regex::Regex::new(r##"<rect x="([^"]+)"[^>]*fill="#eeeeee""##).unwrap();
+    let x: f64 = re.captures(&svg).unwrap()[1].parse().unwrap();
+    assert!((x - (style.blockquote_padding + italic)).abs() < 0.01, "{svg}");
+}
+
+#[test]
+fn test_a_trailing_chip_keeps_its_right_padding_under_an_end_anchor() {
+    let style = Style {
+        text_align: TextAlign::Right,
+        code_background: "#eeeeee".to_string(),
+        ..Style::default()
+    };
+    let pad = style.inline_code_padding;
+    let svg = render_full("End with `code`", 300.0, 0.0, style, test_fonts()).unwrap();
+
+    let rect = regex::Regex::new(r##"<rect x="([^"]+)"[^>]*width="([^"]+)""##).unwrap();
+    let caps = rect.captures(&svg).unwrap();
+    let right = caps[1].parse::<f64>().unwrap() + caps[2].parse::<f64>().unwrap();
+    assert!((right - 300.0).abs() < 0.01, "{svg}");
+    assert!(svg.contains(&format!(r#"<text x="{}""#, 300.0 - pad)), "{svg}");
 }

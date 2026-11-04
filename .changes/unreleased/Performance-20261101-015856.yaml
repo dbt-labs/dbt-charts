@@ -1,0 +1,3 @@
+kind: Performance
+body: A repeat `dct search` takes under a second, and `dct search`, `dct describe`, `dct validate` and `dct impact` start faster and work without warehouse environment variables.
+time: 2026-11-01T01:58:56.697403-08:00

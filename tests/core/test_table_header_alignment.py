@@ -101,8 +101,6 @@ def _style(**overrides):
             rule_color = value
         elif key == "symbol_mode":
             table_updates["symbol_mode"] = value
-        elif key == "row_role":
-            row_updates["role"] = value
         else:
             table_updates[key] = value
 

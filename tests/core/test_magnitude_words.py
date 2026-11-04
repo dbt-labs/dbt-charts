@@ -65,7 +65,7 @@ def test_a_named_locale_prints_its_own_words(notation: Notation, expected: str) 
 
 
 @pytest.mark.parametrize(
-    ("notation", "expected"), [("analytic", "1.5M"), ("narrative", "1.5mn")]
+    ("notation", "expected"), [("analytic", "1.5M"), ("narrative", "1.5m")]
 )
 def test_en_us_keeps_the_house_words(notation: Notation, expected: str) -> None:
     assert _formatted(Regional(), 1_500_000, notation) == expected
@@ -73,7 +73,7 @@ def test_en_us_keeps_the_house_words(notation: Notation, expected: str) -> None:
 
 def test_a_definition_without_words_prints_en_us_words() -> None:
     regional = Regional(locale=RegionalLocale(number=NumberLocale.model_validate(_FR)))
-    assert _formatted(regional, 1_500_000, "narrative") == "1,5mn"
+    assert _formatted(regional, 1_500_000, "narrative") == "1,5m"
 
 
 def test_a_definition_names_its_own_words() -> None:

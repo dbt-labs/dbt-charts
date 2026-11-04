@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -40,7 +41,13 @@ from dbt_charts.core.compile.normalize.charts import (
     normalize_chart,
 )
 from dbt_charts.core.compile.template.listings import check_listing_calls
-from dbt_charts.core.diagnostics.codes_compile import ERR_TAB_DEFAULT_UNKNOWN
+from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_BOARD_IMPORT_CYCLE,
+    ERR_DUPLICATE_CHART_NAME,
+    ERR_DUPLICATE_QUERY_NAME,
+    ERR_MARKDOWN_NOT_BOARD,
+    ERR_TAB_DEFAULT_UNKNOWN,
+)
 
 # The enclosing board's own authoring path, threaded down so each item can name
 # its absolute position. Two distinguishable states, which is why this is
@@ -96,6 +103,7 @@ def build_unified_layout(
     links: BoardLinks,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
+    importing: tuple[str, ...] = (),
 ) -> Layout:
     """Build a unified Layout from board layout fields.
 
@@ -151,6 +159,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            importing=importing,
         )
         return Layout(type=LayoutType.ROWS, items=items)
 
@@ -177,6 +186,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            importing=importing,
         )
         return Layout(type=LayoutType.COLS, items=items)
 
@@ -203,6 +213,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            importing=importing,
         )
         return Layout(
             type=LayoutType.GRID,
@@ -231,6 +242,7 @@ def build_unified_layout(
             regional=regional,
             links=links,
             path_prefix=path_prefix,
+            importing=importing,
         )
 
         # Compute tab slugs and variable name
@@ -302,6 +314,7 @@ def build_unified_layout(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            importing=importing,
         )
         return Layout(type=LayoutType.ROWS, items=items)
 
@@ -333,6 +346,7 @@ def _resolve_layout_items(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
+    importing: tuple[str, ...] = (),
 ) -> list[LayoutItem]:
     """Resolve layout items to LayoutItem objects.
 
@@ -385,6 +399,7 @@ def _resolve_layout_items(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            importing=importing,
         )
         resolved.append(layout_item)
 
@@ -414,6 +429,7 @@ def _resolve_single_item(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
+    importing: tuple[str, ...] = (),
 ) -> LayoutItem:
     """Resolve a single layout item.
 
@@ -438,8 +454,8 @@ def _resolve_single_item(
     """
     # String reference to chart OR board file import
     if isinstance(item, str):
-        # Check for board file import (ends with .yml or .yaml)
-        if item.endswith(".yml") or item.endswith(".yaml"):
+        # A board file or Markdown page placed by its path.
+        if item.endswith((".yml", ".yaml", ".md")):
             return _resolve_board_file_import(
                 item,
                 query_registry,
@@ -457,6 +473,7 @@ def _resolve_single_item(
                 sources=sources,
                 regional=regional,
                 links=links,
+                importing=importing,
             )
         elif item in charts:
             if chart_registry is None:
@@ -535,6 +552,7 @@ def _resolve_single_item(
                 "regional": regional,
                 "links": links,
                 "variables": parent_variables,
+                "importing": importing,
             },
             query_registry=query_registry,
             chart_registry=chart_registry,
@@ -649,6 +667,7 @@ def _resolve_board_file_import(
     cache_root: CachePatch | None = None,
     regional: Regional,
     links: BoardLinks,
+    importing: tuple[str, ...] = (),
 ) -> LayoutItem:
     """Load and resolve a board file import.
 
@@ -680,8 +699,16 @@ def _resolve_board_file_import(
         CompilationError: If file not found or invalid
     """
     from dbt_charts.core.compile.normalize.dispatch import normalize_board
+    from dbt_charts.core.compile.parse.markdown import (
+        is_markdown_board_content,
+        markdown_to_yaml,
+        with_document_style,
+    )
     from dbt_charts.core.compile.parse.parser import load_yaml_text
     from dbt_charts.core.compile.template.jinja import resolve_jinja_template
+
+    # tach-ignore(pre-existing compile->project coupling — accepted debt)
+    from dbt_charts.core.project import CHARTS_SUBDIR
 
     # Resolve the file path (might contain Jinja templates for parameterized imports
     # like `partials/{{ chart_type }}.yml`). This always uses parent_variables so
@@ -690,6 +717,14 @@ def _resolve_board_file_import(
     resolved_path = resolve_jinja_template(file_path, parent_variables, strict=False)
 
     nested_path = resolve_ref(resolved_path, base_dir, "file")
+    if nested_path.relpath in importing:
+        cycle = [
+            *importing[importing.index(nested_path.relpath) :],
+            nested_path.relpath,
+        ]
+        raise CompilationError.from_code(
+            ERR_BOARD_IMPORT_CYCLE, chain=" -> ".join(cycle)
+        )
 
     # Load and parse the YAML file
     try:
@@ -698,12 +733,27 @@ def _resolve_board_file_import(
         raise CompilationError(
             f"Failed to read board file '{resolved_path}': {e}"
         ) from e
+    if nested_path.is_markdown:
+        in_boards = CHARTS_SUBDIR in PurePosixPath(nested_path.relpath).parts
+        if not is_markdown_board_content(yaml_content, in_boards=in_boards, named=True):
+            raise CompilationError.from_code(ERR_MARKDOWN_NOT_BOARD)
+        yaml_content = markdown_to_yaml(yaml_content)
     board_data = load_yaml_text(yaml_content, source=nested_path.relpath)
 
     if not isinstance(board_data, dict):
         raise CompilationError(
             f"Board file '{resolved_path}' must contain a YAML dictionary"
         )
+
+    from dbt_charts.core.compile.migrations import (
+        migration_notice_file,
+        prepare_board_mapping,
+    )
+
+    with migration_notice_file(nested_path.relpath):
+        board_data = prepare_board_mapping(board_data)
+    if nested_path.is_markdown:
+        board_data = with_document_style(board_data)
 
     # Convert raw YAML dict to AuthoredBoard; model_validate handles all nested models.
     nested_board = AUTHORED_BOARD_ADAPTER.validate_python(
@@ -733,7 +783,60 @@ def _resolve_board_file_import(
         "regional": regional,
         "links": links,
         "variables": parent_variables,  # Pass variables to child
+        "importing": (*importing, nested_path.relpath),
     }
+
+    # Chart and query names are board-global, and the registries were built from
+    # the importing file before this one was read, so its own names join them
+    # here, in place, where execution looks them up. A name both files declare is
+    # a duplicate, as within one file.
+    if chart_registry is None:
+        raise ValueError(f"chart_registry is required to import {resolved_path!r}")
+    from dbt_charts.core.compile.compiler import (
+        _CROSS_BOARD_QUERY_PREFIX,
+        build_chart_registry,
+        build_query_registry,
+    )
+    from dbt_charts.core.compile.template.jinja import detect_query_dependencies
+
+    cross_board_queries: dict[str, AnyQuery] = {}
+    own_charts = build_chart_registry(
+        nested_board,
+        cross_board_queries,
+        base_dir=nested_path.parent,
+        sources=sources,
+        cache_root=cache_root,
+        board_cache=board_cache,
+    )
+    own_queries = build_query_registry(
+        nested_board,
+        nested_path.parent,
+        registry=cross_board_queries,
+        default_source=default_source,
+        sources=sources,
+        cache_root=cache_root,
+        board_cache=board_cache,
+    )
+    for code, own, outer in (
+        (ERR_DUPLICATE_CHART_NAME, own_charts.keys(), chart_registry.keys()),
+        (ERR_DUPLICATE_QUERY_NAME, own_queries.keys(), query_registry.keys()),
+    ):
+        # A key under the reserved prefix names one query in one source file,
+        # pulled in by both boards' cross-board chart imports: the same query.
+        for name in sorted(
+            n for n in own & outer if not n.startswith(_CROSS_BOARD_QUERY_PREFIX)
+        ):
+            raise CompilationError.from_code(
+                code,
+                name=name,
+                first=f"the board that places {nested_path.relpath!r}",
+                second=nested_path.relpath,
+            )
+    chart_registry.update(own_charts)
+    query_registry.update(own_queries)
+    # The importing file's queries were checked for cycles before this file was
+    # read; check again with its queries in.
+    detect_query_dependencies(query_registry)
 
     # Compile the nested board
     compiled_nested = normalize_board(
@@ -777,6 +880,7 @@ def _resolve_grid_items(
     cache_root: CachePatch | None = None,
     local_chart_ids: set[str] | None = None,
     path_prefix: AuthoringPathPrefix = "",
+    importing: tuple[str, ...] = (),
 ) -> list[LayoutItem]:
     """Resolve grid layout items.
 
@@ -833,6 +937,7 @@ def _resolve_grid_items(
             links=links,
             local_chart_ids=local_chart_ids,
             path_prefix=path_prefix,
+            importing=importing,
         )
 
         # Get span values (default to 1)
@@ -888,6 +993,7 @@ def _resolve_tab_items(
     links: BoardLinks,
     cache_root: CachePatch | None = None,
     path_prefix: AuthoringPathPrefix = "",
+    importing: tuple[str, ...] = (),
 ) -> tuple[list[LayoutItem], list[str]]:
     """Resolve tab layout items.
 
@@ -948,6 +1054,7 @@ def _resolve_tab_items(
                     "html_policy": html_policy,
                     "regional": regional,
                     "links": links,
+                    "importing": importing,
                 },
                 query_registry=query_registry,
                 chart_registry=chart_registry,

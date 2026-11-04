@@ -95,6 +95,41 @@ class TestDispatchToolCall:
         assert [c["name"] for c in result["charts"]] == ["c"]
         assert "layout" not in result
 
+    def test_dispatch_execute_sql_with_a_board_reads_its_cached_rows(
+        self, tmp_path: Path, make_context: Callable[..., DbtChartsAIContext]
+    ) -> None:
+        from dbt_charts.agent_api.query_csv import model_json
+        from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  db:\n    type: duckdb\n    path: ':memory:'\n"
+        )
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "sales.yml").write_text(
+            "source: db\nqueries:\n  q:\n    sql: select * from range(3) t(v)\n"
+            "charts:\n  c:\n    query: q\n    type: table\nrows:\n  - c\n"
+        )
+        cache = TrivialDuckDBCache()
+        session = ProjectSession.open(tmp_path, cache=cache, read_only=False)
+        context = make_context(project_session=session)
+        args = {
+            "board": "sales.yml",
+            "sql": "SELECT SUM(v) AS s FROM {{ queries.q.cache }}",
+        }
+        try:
+            cold = dispatch_tool_call("execute_sql", args, context=context)
+            warm = dispatch_tool_call("execute_sql", args, context=context)
+        finally:
+            cache.close()
+
+        assert cold["ran_on"] == "warehouse"
+        assert warm["success"] is True, warm
+        assert warm["csv"].splitlines() == ["s", "3"]
+        assert warm["ran_on"] == "cache"
+        assert warm["cache_refs"][0]["query"] == "q"
+        assert warm["cache_refs"][0]["hit"] is True
+        assert "data" not in model_json(warm)
+
     def test_dispatch_search_rejects_unknown_field(
         self, context: DbtChartsAIContext
     ) -> None:
@@ -624,8 +659,10 @@ def _project_scaffold_context(
 _TOOL_HAPPY_PATH_ARGS: dict[str, dict[str, Any]] = {
     "render_board": {"yaml_content": _INLINE_BOARD_YAML},
     "execute_sql": {"sql": "SELECT 1 AS x"},
+    "find_queries": {"text": "revenue"},
     "search_files": {"text": "overview"},
     "describe_board": {"path": "nonexistent.yml"},
+    "describe_semantics": {"source": "nonexistent"},
     # "project_dir" injected at test time (writes stay inside tmp_path).
     "read_file": {"path": "nonexistent.yml"},
     "write_file": {"path": "out.yml", "content": "title: X\n"},
@@ -835,22 +872,23 @@ class TestToolErrorEnvelopes:
         [
             pytest.param(
                 {},
-                "execute_sql: needs either 'sql', or both 'board' and 'query'",
+                "execute_sql: needs 'sql', 'sql' + 'board', or both 'board' and 'query'",
                 id="neither-form",
             ),
             pytest.param(
                 {"board": "charts/x.yml"},
-                "execute_sql: needs either 'sql', or both 'board' and 'query'",
+                "execute_sql: needs 'sql', 'sql' + 'board', or both 'board' and 'query'",
                 id="board-without-query",
             ),
             pytest.param(
                 {"query": "revenue"},
-                "execute_sql: needs either 'sql', or both 'board' and 'query'",
+                "execute_sql: needs 'sql', 'sql' + 'board', or both 'board' and 'query'",
                 id="query-without-board",
             ),
             pytest.param(
                 {"sql": "SELECT 1", "board": "charts/x.yml", "query": "revenue"},
-                "execute_sql: takes either 'sql' or 'board' + 'query', not both",
+                "execute_sql: 'query' names a board query and takes no 'sql'; to run "
+                "SQL on a board pass 'sql' + 'board'",
                 id="both-forms",
             ),
             *(
@@ -1509,64 +1547,3 @@ class TestWriteFileNeverClobbersUnreadContent:
         assert result["success"] is False
         assert result["path"] == "../escape.yml"
         assert "error" in result
-
-
-class TestRenderBoardHttpSourcesAreReadOnly:
-    """render_board is advertised readOnlyHint=true, so on the stdio MCP
-    session an inline board with a mutating http source is refused, not sent."""
-
-    @pytest.fixture
-    def stdio_context(
-        self, make_context: Callable[..., DbtChartsAIContext], tmp_path: Path
-    ) -> DbtChartsAIContext:
-        """The session `dct mcp serve` opens (run_server's construction)."""
-        from dbt_charts.cli.filesystem_project import FilesystemProject
-        from dbt_charts.core.execute.adapters import LOCAL_AUTHORING_REGISTRY_KWARGS
-
-        return make_context(
-            project_session=ProjectSession.from_project(
-                FilesystemProject(tmp_path), **LOCAL_AUTHORING_REGISTRY_KWARGS
-            )
-        )
-
-    @staticmethod
-    def _http_board(method: str) -> str:
-        return (
-            "title: T\nqueries:\n  q:\n    type: http\n"
-            f"    url: https://api.example.com/x\n    method: {method}\n"
-            "charts:\n  c:\n    query: q\n    type: table\nrows:\n  - c\n"
-        )
-
-    @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
-    def test_mutating_method_is_refused(
-        self, method: str, stdio_context: DbtChartsAIContext
-    ) -> None:
-        from unittest.mock import patch
-
-        with patch(
-            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
-        ) as mock_client:
-            result = dispatch_tool_call(
-                "render_board",
-                {"yaml_content": self._http_board(method)},
-                context=stdio_context,
-            )
-        mock_client.assert_not_called()
-        assert method in json.dumps(result)
-        assert "disabled" in json.dumps(result)
-
-    def test_get_still_renders(self, stdio_context: DbtChartsAIContext) -> None:
-        from unittest.mock import MagicMock, patch
-
-        response = MagicMock()
-        response.json.return_value = [{"id": 1}]
-        with patch(
-            "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
-        ) as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = response
-            result = dispatch_tool_call(
-                "render_board",
-                {"yaml_content": self._http_board("GET")},
-                context=stdio_context,
-            )
-        assert result["status"] == "ok", result

@@ -41,6 +41,7 @@ from dbt_charts.core.render.board_resolve import build_resolved_board
 from dbt_charts.core.render.boards import render_board_svg
 from dbt_charts.core.render.controls import interactive_controls
 
+from ..._results import rows_result
 from ..._svg_normalize import normalize_same_run_svg
 from .._pooled_table import visible_svg
 from .._svg_render import PINNED_RENDER_TIME
@@ -244,25 +245,26 @@ def test_pie_fingerprint_survives_recording_json_non_finite_values() -> None:
     recording = BoardRecording(
         recorded_at=datetime.now(UTC),
         variables={},
-        rows_by_query={"shares": rows},
+        results_by_query={"shares": rows_result(rows)},
         provenance={},
     )
 
     reloaded = load_board_recording(recording.model_dump_json().encode())
 
     assert pie_presentation_fingerprint(
-        reloaded.rows_by_query["shares"]
+        reloaded.results_by_query["shares"].rows
     ) == pie_presentation_fingerprint(rows)
 
 
 def test_pie_artifact_rejects_changed_recording_rows(tmp_path: Path) -> None:
     artifact_bytes, recording, _live_svg = _pie_live(tmp_path)
-    changed_rows = [dict(row) for row in recording.rows_by_query["shares"]]
+    changed_rows = [dict(row) for row in recording.results_by_query["shares"].rows]
     changed_rows[0]["value"] = 99
     changed = BoardRecording(
         recorded_at=recording.recorded_at,
         variables=recording.variables,
-        rows_by_query=recording.rows_by_query | {"shares": changed_rows},
+        results_by_query=recording.results_by_query
+        | {"shares": rows_result(changed_rows)},
         provenance=recording.provenance,
     )
 
@@ -359,7 +361,7 @@ def test_render_board_from_artifact_raises_on_unrecorded_query(
 ) -> None:
     artifact_bytes, recording, _live_svg = _live(tmp_path)
     reloaded = load_board_artifact(artifact_bytes)
-    truncated_recording = recording.model_copy(update={"rows_by_query": {}})
+    truncated_recording = recording.model_copy(update={"results_by_query": {}})
 
     with pytest.raises(DbtChartsError) as exc_info:
         render_board_from_artifact(

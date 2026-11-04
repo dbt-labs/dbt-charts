@@ -1,7 +1,8 @@
 /*{# In-page table sort, filter, and paging. A board is a picture: the engine
    draws every row of a table once (`data-dbt-table`) and publishes the hooks
    this reads -- row groups, `data-dbt-sort` keys, header `data-col`, stripes,
-   rules, pagers. This script only moves, hides, and relabels those elements;
+   rules, pagers, a date column's `data-dbt-day`. This script only moves,
+   hides, and relabels those elements;
    it never computes a cell's text, format, or color, never issues a request,
    and never touches the URL. State lives in the page and is not saved. #}*/
 (function() {
@@ -49,12 +50,14 @@
 
     /*{# The words come from the board's language, which the engine publishes on #}*/
     /*{# the table root as `data-dbt-language`; the page cannot fetch the catalog. #}*/
-    /*{# Stored renders without the attribute are English (controls_english.js). #}*/
+    /*{# A word the root does not carry is English (controls_english.js): the #}*/
+    /*{# stored render predates the attribute or that word. #}*/
     function _word(table, name) {
         var raw = table.getAttribute('data-dbt-language');
-        var words = raw ? JSON.parse(raw) : window.dbtControlsEnglish;
-        if (typeof words[name] !== 'string') throw new Error('table runtime: no word ' + name);
-        return words[name];
+        var words = raw ? JSON.parse(raw) : {};
+        var word = name in words ? words[name] : window.dbtControlsEnglish[name];
+        if (typeof word !== 'string') throw new Error('table runtime: no word ' + name);
+        return word;
     }
 
     function _readRow(el) {
@@ -80,6 +83,7 @@
             row.cells[cell.getAttribute('data-col')] = {
                 text: _cellText(cell),
                 key: cell.hasAttribute('data-dbt-sort') ? cell.getAttribute('data-dbt-sort') : null,
+                day: cell.getAttribute('data-dbt-day'),
             };
         });
         return row;
@@ -89,7 +93,7 @@
     function _sortKey(type, row, col) {
         var cell = row.cells[col];
         if (!cell || cell.key === null) return null;
-        if (type === 'text') return cell.key;
+        if (type !== 'number') return cell.key;
         var value = cell.key.trim() === '' ? NaN : Number(cell.key);
         return isFinite(value) ? value : null;
     }
@@ -103,19 +107,28 @@
                 if (a.key === b.key) return a.i - b.i;
                 return a.key === null ? 1 : -1;
             }
-            var order = type === 'text' ? a.key.localeCompare(b.key) : a.key - b.key;
+            /*{# A date key is ISO text, so code-point order is time order for dates #}*/
+            /*{# and for timestamps in one offset, the shape a warehouse column returns. #}*/
+            var order = type === 'number' ? a.key - b.key
+                : type === 'text' ? a.key.localeCompare(b.key)
+                    : a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
             return order * dir || a.i - b.i;
         });
         return decorated.map(function(d) { return d.row; });
     }
 
     function _filterActive(state) {
-        return Object.keys(state.filters).length > 0;
+        return Object.keys(state.filters).length > 0 || Object.keys(state.ranges).length > 0;
     }
 
+    /*{# A range compares the engine's wall-day strings, ends included. #}*/
     function _passes(state, row) {
         return Object.keys(state.filters).every(function(col) {
             return row.cells[col] && state.filters[col].has(row.cells[col].text);
+        }) && Object.keys(state.ranges).every(function(col) {
+            var range = state.ranges[col];
+            var day = row.cells[col] ? row.cells[col].day : null;
+            return day !== null && day >= range.from && day <= range.to;
         });
     }
 
@@ -162,7 +175,10 @@
             if (row.number) row.number.textContent = String(i + 1);
         });
         _markAffixes(state, onPage);
-        _layoutPager(state, all.length, pages, first, onPage.length);
+        /*{# The pager counts data rows: a summary row takes no number. #}*/
+        var isData = function(row) { return !row.summary; };
+        _layoutPager(state, all.filter(isData).length, pages,
+            all.slice(0, first).filter(isData).length, onPage.filter(isData).length);
         _markHeaders(state);
     }
 
@@ -216,7 +232,7 @@
         if (!compact || !useCompact) return;
         var label = compact.querySelector('[data-dbt-pager-label]');
         if (label) {
-            var values = { first: first + 1, last: first + shown, total: total };
+            var values = { first: Math.min(first + 1, first + shown), last: first + shown, total: total };
             label.textContent = _word(state.table, 'page_range').replace(/\{(\w+)\}/g, function(_, name) {
                 return values[name];
             });
@@ -251,7 +267,8 @@
         Object.keys(state.headers).forEach(function(col) {
             var sorted = state.sort && state.sort.col === col;
             _setMark(state.headers[col], 'sort', sorted ? (state.sort.dir > 0 ? ' \u25B2' : ' \u25BC') : '');
-            _setMark(state.headers[col], 'filter', state.filters[col] ? ' \u25CF' : '');
+            var filtered = state.filters[col] || state.ranges[col];
+            _setMark(state.headers[col], 'filter', filtered ? ' \u25CF' : '');
         });
     }
 
@@ -315,17 +332,102 @@
                 box.parentNode.style.display = matches ? '' : 'none';
             });
         });
-        list.addEventListener('change', function() {
+        function apply() {
             var allowed = new Set(checks.filter(function(box) { return box.checked; })
                 .map(function(box) { return box.getAttribute('data-value'); }));
             if (allowed.size === values.length) delete state.filters[col];
             else state.filters[col] = allowed;
             state.page = 1;
             _layout(state);
+        }
+        list.addEventListener('change', apply);
+        /*{# Select all and Clear act on the values the search shows, as in a spreadsheet. #}*/
+        var bulk = document.createElement('div');
+        bulk.className = 'dbt-table-menu-bulk';
+        [['all', 'select_all'], ['none', 'clear']].forEach(function(item) {
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'dbt-table-menu-link';
+            button.setAttribute('data-check', item[0]);
+            button.textContent = _word(state.table, item[1]);
+            button.addEventListener('click', function() {
+                checks.forEach(function(box) {
+                    if (box.parentNode.style.display !== 'none') box.checked = item[0] === 'all';
+                });
+                apply();
+            });
+            bulk.appendChild(button);
         });
         wrap.appendChild(search);
+        wrap.appendChild(bulk);
         wrap.appendChild(list);
         return wrap;
+    }
+
+    /*{# The date controls' range calendar (calendar.js) over a column's #}*/
+    /*{# `data-dbt-day`s: a range filters once both ends are picked, ends included. #}*/
+    function _buildCalendar(state, col, days) {
+        var cal = window.dbtCalendar;
+        var calEl = document.createElement('div');
+        calEl.className = 'dbt-calendar-area';
+        calEl.setAttribute('data-dbt-time-locale', state.table.getAttribute('data-dbt-time-locale'));
+        var words = {};
+        ['calendar_header', 'calendar_day', 'previous_month', 'next_month'].forEach(function(name) {
+            words[name] = _word(state.table, name);
+        });
+        function setRange(range) {
+            if (range) state.ranges[col] = range;
+            else delete state.ranges[col];
+            state.page = 1;
+            _layout(state);
+        }
+        var picker = cal.rangePicker(calEl, words, {
+            onPick: function(range) {
+                if (range[0] && range[1]) setRange({ from: cal.toISO(range[0]), to: cal.toISO(range[1]) });
+            },
+            footer: function(range) {
+                if (!range[0] && !range[1]) return null;
+                var foot = document.createElement('div');
+                foot.className = 'dbt-cal-footer';
+                var clear = document.createElement('button');
+                clear.type = 'button';
+                clear.className = 'dbt-cal-action';
+                clear.setAttribute('data-range-clear', '');
+                clear.textContent = _word(state.table, 'clear');
+                clear.addEventListener('click', function() {
+                    setRange(null);
+                    picker.show([null, null]);
+                });
+                foot.appendChild(clear);
+                return foot;
+            },
+        });
+        var set = state.ranges[col];
+        picker.show(set ? [cal.fromISO(set.from), cal.fromISO(set.to)] : [null, null],
+            cal.fromISO(days[days.length - 1]));
+        /*{# A pick or a month step rebuilds the grid under the click, so the #}*/
+        /*{# document's outside-click check would see a detached target. #}*/
+        calEl.addEventListener('click', function(event) { event.stopPropagation(); });
+        return calEl;
+    }
+
+    /*{# A collapsible filter section, as in a spreadsheet's filter menu. #}*/
+    function _section(state, name, open, body) {
+        var details = document.createElement('details');
+        details.className = 'dbt-table-menu-section';
+        details.setAttribute('data-section', name);
+        details.open = open;
+        var summary = document.createElement('summary');
+        summary.textContent = _word(state.table, 'filter_by_' + name);
+        details.appendChild(summary);
+        details.appendChild(body);
+        return details;
+    }
+
+    function _days(state, col) {
+        return state.rows.filter(function(row) {
+            return !row.summary && row.cells[col] && row.cells[col].day !== null;
+        }).map(function(row) { return row.cells[col].day; }).sort();
     }
 
     /*{# Page-level and viewport-positioned, like the variable popovers: a fixed #}*/
@@ -349,12 +451,18 @@
         el.className = 'dbt-popover dbt-table-menu dbt-popover-open';
         el.setAttribute('role', 'menu');
         var dir = state.sort && state.sort.col === col ? state.sort.dir : 0;
-        el.appendChild(_menuItem(_word(state.table, 'sort_ascending'), 'asc', dir === 1));
-        el.appendChild(_menuItem(_word(state.table, 'sort_descending'), 'desc', dir === -1));
+        var type = state.types[col];
+        el.appendChild(_menuItem(_word(state.table, 'sort_' + type + '_ascending'), 'asc', dir === 1));
+        el.appendChild(_menuItem(_word(state.table, 'sort_' + type + '_descending'), 'desc', dir === -1));
         el.appendChild(_menuItem(_word(state.table, 'clear_sort'), 'clear', false));
+        var days = type === 'date' ? _days(state, col) : [];
+        if (days.length > 0) el.appendChild(_section(state, 'range', true, _buildCalendar(state, col, days)));
         var values = _distinctValues(state, col);
         if (values.length > 0 && values.length <= MAX_CHECKLIST_VALUES) {
-            el.appendChild(_buildChecklist(state, col, values));
+            /*{# On a date column the calendar leads and the checklist waits #}*/
+            /*{# folded, unless it is what filters. #}*/
+            var open = type !== 'date' || col in state.filters;
+            el.appendChild(_section(state, 'values', open, _buildChecklist(state, col, values)));
         }
         el.addEventListener('click', function(event) {
             var item = event.target.closest('[data-action]');
@@ -395,14 +503,24 @@
             types: {},
             sort: null,
             filters: {},
+            ranges: {},
             page: _numberHook(table, 'data-dbt-page'),
         };
         table.querySelectorAll('[data-dbt-sortable]').forEach(function(header) {
             var col = header.getAttribute('data-col');
             var type = header.getAttribute('data-dbt-sort-type');
-            if (type !== 'number' && type !== 'text') {
+            if (type !== 'number' && type !== 'text' && type !== 'date') {
                 throw new Error('table runtime: missing or unknown data-dbt-sort-type on column ' + col);
             }
+            if (type === 'date' && !table.hasAttribute('data-dbt-time-locale')) {
+                throw new Error('table runtime: no data-dbt-time-locale on a table with date column ' + col);
+            }
+            state.rows.forEach(function(row) {
+                var cell = row.cells[col];
+                if (type === 'date' && cell && cell.key !== null && cell.day === null) {
+                    throw new Error('table runtime: no data-dbt-day on a keyed cell of date column ' + col);
+                }
+            });
             state.headers[col] = header;
             state.types[col] = type;
             header.setAttribute('tabindex', '0');

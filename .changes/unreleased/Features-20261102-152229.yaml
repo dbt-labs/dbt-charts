@@ -1,0 +1,3 @@
+kind: Features
+body: Line, point and bar value labels accept a list of anchors, any of `first`, `last`, `min` and `max`, to label only those values of each series.
+time: 2026-11-02T15:22:29.971612-08:00

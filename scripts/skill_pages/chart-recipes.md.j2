@@ -1,0 +1,45 @@
+---
+name: chart-recipes
+kind: workflow
+description: >
+  Named chart shapes no `type:` draws (bullet, waterfall, lollipop, dumbbell,
+  slope, bump, gantt), bars against a target per period, and pacers, each
+  built from bar and line charts with layers.
+metadata:
+  author: fivetran
+---
+
+# Chart recipes
+
+{{ recipes() }}
+
+## Targets and pacers
+
+A value against a target per period (monthly revenue against plan) is bars with the target drawn as a flat tick on each bar, never a line across the bars. A period still in progress gets a dashed pace tick at the target times the share of the period elapsed, from a one-row `pace` query, so a partial bar reads against pace. Every layer's `x` has the bars' type (cast both to DATE):
+
+```yaml
+type: bar
+x: month
+y: revenue
+layers:
+  - type: line
+    y: target
+    style:
+      marks:
+        line:
+          curve: step
+          connect: false
+  - type: line
+    query: pace
+    y: pace
+    label: On pace
+    style:
+      marks:
+        line:
+          curve: step
+          connect: false
+          stroke:
+            dasharray: 4 3
+```
+
+One target for the whole chart is a `rule` annotation at `y:`. A cumulative pacer is a running-total `line` with a `layers:` line from 0 at the period's start to the target at its end.

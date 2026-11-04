@@ -28,17 +28,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable
-from typing import overload
+from typing import Any, Final, overload
 
 import jinja2
 import jinja2.nodes
 import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
-from sqlglot.dialects.dialect import Dialect as SqlglotDialect
+from sqlglot.dialects import DIALECT_MODULE_NAMES
 from sqlglot.tokens import TokenType
 
 from dbt_charts.core.compile.config import get_execution_config
+from dbt_charts.core.compile.models.source import SourceConfig
 from dbt_charts.core.diagnostics.execution import (
     MutatingSqlError,
     SqlErrorPosition,
@@ -69,10 +70,20 @@ def sqlglot_dialect(dialect: str | None) -> str | None:
     return aliases.get(dialect, dialect)
 
 
+# sqlglot's own `Dialect.classes` imports every dialect module to answer a
+# membership question; the module names are the same set, already in memory.
+_SQLGLOT_DIALECTS: Final[frozenset[str]] = frozenset(DIALECT_MODULE_NAMES)
+
+
+def is_sqlglot_dialect(name: str | None) -> bool:
+    """Whether *name* (already through `sqlglot_dialect`) is a sqlglot dialect."""
+    return name in _SQLGLOT_DIALECTS
+
+
 def require_sqlglot_dialect(dialect: str | None) -> str | None:
     """`sqlglot_dialect`, raising ValueError for a name sqlglot has no dialect for."""
     resolved = sqlglot_dialect(dialect)
-    if resolved is not None and resolved not in SqlglotDialect.classes:
+    if resolved is not None and not is_sqlglot_dialect(resolved):
         raise ValueError(
             f"Unknown SQL dialect {dialect!r}. Use a sqlglot dialect name "
             "(duckdb, bigquery, postgres, tsql, ...) or an alias such as sqlserver."
@@ -86,12 +97,47 @@ def source_dialect(source_type: str | None) -> str | None:
     None means "could not establish one" (csv/json/parquet file sources,
     `dbt_profile`, ...).
     """
-    if (
-        source_type is None
-        or sqlglot_dialect(source_type) not in SqlglotDialect.classes
-    ):
+    if source_type is None or not is_sqlglot_dialect(sqlglot_dialect(source_type)):
         return None
     return source_type
+
+
+def dialect_for_source(
+    source: str | None,
+    sources: dict[str, Any],  # type-state: explicit_any — raw or validated registry
+) -> str | None:
+    """The sqlglot dialect for a query's source, or None when unresolvable.
+
+    A source's `type` is its dialect when the type names one ("duckdb",
+    "bigquery", "sqlserver" via the alias table). Plenty don't: `csv` /
+    `json` / `parquet` are file sources, and `dbt_profile`'s real dialect
+    lives in the profile and isn't knowable until execute. sqlglot's own
+    registry is the arbiter — asking it for an unknown name raises rather
+    than degrading, and `dialects.get_dialect` can't stand in here because
+    it names warehouse types, not every sqlglot dialect.
+
+    None means "could not establish one", and callers must treat it as "do
+    not report parse findings" rather than falling back to the default
+    dialect: parsing BigQuery SQL as generic SQL is how a parse warning ends
+    up firing on ~40% of real boards. The callers that do fall back are
+    `agent_api.lookup_board_query_sql`, which reports no findings (it only
+    renders SQL text for a preview), and `ProjectSession.validate_query`,
+    which lints an ad-hoc statement the user asked to lint.
+    """
+    if source is None:
+        return None
+    config = sources.get(source)
+    # The registry holds either a raw dict or a validated config, depending on
+    # how far normalization has gotten — `source_cache_layer` reads it the same
+    # two ways. Handling only the dict would silently stop warning for the
+    # other caller rather than fail.
+    if isinstance(config, dict):
+        source_type = config.get("type")
+    elif isinstance(config, SourceConfig):
+        source_type = config.type
+    else:
+        return None
+    return source_dialect(source_type) if isinstance(source_type, str) else None
 
 
 # Top-level statements allowed by validate_select_only. exp.Select is further
@@ -381,19 +427,55 @@ def as_expressions(nodes: Iterable[exp.Expr | None]) -> list[exp.Expression]:
     return result
 
 
-_DOUBLE_ALIAS_RE = re.compile(r"\)\s+AS\s+\w+\s+AS\s+(\w+)", re.IGNORECASE)
+# A `{{ queries.x }}` reference inlines as `(...) AS x`, which is only valid in
+# FROM/JOIN position. Each misuse leaves its own trace in the inlined SQL.
+_DOUBLE_ALIAS_RE = re.compile(r"\)\s+AS\s+(\w+)\s+AS\s+(\w+)", re.IGNORECASE)
+_REFERENCE_AS_CTE_RE = re.compile(r"\)\s+AS\s+(\w+)\s+SELECT\b", re.IGNORECASE)
+_REFERENCE_IN_CTE_PARENS_RE = re.compile(
+    r"(\w+)\s+AS\s*\(\s*\(.*\)\s+AS\s+(\w+)\s*\)", re.IGNORECASE | re.DOTALL
+)
 
 
-def double_alias_advice(sql: str) -> str | None:
-    """The fix for ``) AS name AS other``: a ``{{ queries.x }}`` inlines as
-    ``(...) AS x`` already, so an alias written after it is a second one."""
-    match = _DOUBLE_ALIAS_RE.search(sql)
-    if match is None:
+def reference_alias_advice(
+    sql: str,
+) -> str | None:  # type-state: optional — no recognized shape, no advice
+    """The fix for a ``{{ queries.x }}`` used where its ``(...) AS x`` is invalid.
+
+    Covers an alias written after the reference (``) AS x AS g``) and the
+    reference as a CTE body, bare (``WITH x AS (...) AS x SELECT``) or inside
+    the CTE's own parentheses (``WITH x AS ((...) AS x)``). Meant for SQL that
+    already failed; it only recognizes the shapes, it does not validate.
+    """
+    if (match := _DOUBLE_ALIAS_RE.search(sql)) is not None:
+        return (
+            "A `{{ queries.x }}` reference already carries its alias: delete the "
+            f"`AS {match[2]}` you wrote after it; to alias it, wrap it: "
+            f"(SELECT * FROM {{{{ queries.{match[1]} }}}}) AS {match[2]}"
+        )
+    if (match := _REFERENCE_AS_CTE_RE.search(sql)) is not None:
+        cte, reference = match[1], match[1]
+    elif (match := _REFERENCE_IN_CTE_PARENS_RE.search(sql)) is not None:
+        cte, reference = match[1], match[2]
+    else:
         return None
     return (
-        "A `{{ queries.x }}` reference already carries its alias: delete the "
-        f"`AS {match[1]}` you wrote after it."
+        "A `{{ queries.x }}` reference is not a CTE body: delete the "
+        f"`WITH {cte} AS` and write `FROM {{{{ queries.{reference} }}}}`."
     )
+
+
+def _reserved_word_advice(
+    exc: sqlglot.errors.ParseError,
+    dialect: str | None,  # type-state: optional — parser's default dialect
+) -> str | None:  # type-state: optional — the parser stopped at no keyword
+    """Name the keyword the parser stopped at, when it stopped at one."""
+    word = exc.errors[0].get("highlight") if exc.errors else None
+    if not word or not word.isidentifier():
+        return None
+    tokens = sqlglot.tokenize(word, read=sqlglot_dialect(dialect))
+    if len(tokens) != 1 or tokens[0].token_type == TokenType.VAR:
+        return None
+    return f"`{word}` is a reserved word here: rename it or double-quote it."
 
 
 def _parse_failure_advice(skeleton: str, dialect: str | None) -> str | None:
@@ -407,7 +489,7 @@ def _parse_failure_advice(skeleton: str, dialect: str | None) -> str | None:
         tokens = sqlglot.tokenize(skeleton, read=sqlglot_dialect(dialect))
     except sqlglot.errors.TokenError:
         return None
-    if (advice := double_alias_advice(skeleton)) is not None:
+    if (advice := reference_alias_advice(skeleton)) is not None:
         return advice
     opens = sum(token.token_type == TokenType.L_PAREN for token in tokens)
     closes = sum(token.token_type == TokenType.R_PAREN for token in tokens)
@@ -451,7 +533,8 @@ def _parse(
         raise UnparseableSqlError(
             exc,
             sql_position=position,
-            advice=_parse_failure_advice(skeleton, dialect),
+            advice=_parse_failure_advice(skeleton, dialect)
+            or _reserved_word_advice(exc, dialect),
         ) from exc
     return as_expressions(parsed)
 

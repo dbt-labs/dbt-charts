@@ -1,0 +1,20 @@
+# Pattern palette — pattern-mixed-8
+#
+# The default categorical pattern set: eight motifs at roughly equal ink, so a
+# series reads by texture when hue alone cannot carry it. `dither` is a 4 px
+# pixel grid that reads as a tint.
+
+name: pattern-mixed-8
+description: |
+  Eight categorical fill patterns of matched ink: hatch, blue-noise dots, dashes,
+  hexagons, worms, crosshatch, pebbles, and a pixel dither.
+kind: categorical
+motifs:
+  - hatch-45
+  - bluenoise-dots
+  - dash-field
+  - bendday-hex
+  - worms-fine
+  - crosshatch
+  - pebbles-fine
+  - dither

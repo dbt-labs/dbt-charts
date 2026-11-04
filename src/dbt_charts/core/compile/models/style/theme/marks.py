@@ -257,6 +257,24 @@ class BasemapStyle(BaseModel):
     )
 
 
+LabelAnchor = Literal["first", "last", "min", "max"]
+
+
+def label_anchors(
+    visible: bool | Literal["last"] | list[LabelAnchor] | None,
+) -> frozenset[LabelAnchor]:
+    """The anchors a ``labels.visible`` value names; empty when it names none."""
+    if visible == "last":
+        return frozenset({"last"})
+    return frozenset(visible) if isinstance(visible, list) else frozenset()
+
+
+def _unique_anchors(anchors: list[LabelAnchor]) -> list[LabelAnchor]:
+    if len(set(anchors)) < len(anchors):
+        raise ValueError(f"labels.visible repeats an anchor: {anchors}")
+    return anchors
+
+
 class MarkLabelsStyle(BaseModel):
     """Shared value-label config for bar/line/point marks.
 
@@ -267,13 +285,24 @@ class MarkLabelsStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Cascade tier sentinel: None means "not specified at this tier".
-    visible: bool | Literal["last"] | None = Field(
+    visible: (
+        bool
+        | Literal["last"]
+        | Annotated[
+            list[LabelAnchor], Field(min_length=1), AfterValidator(_unique_anchors)
+        ]
+        | None
+    ) = Field(
         default=None,
         description=(
-            "Show numeric value labels on each mark; `last` labels only each "
-            "series' most recent mark, and a bar chart needs a time axis for it."
+            "Show numeric value labels on every mark or on listed anchors. "
+            "Anchors are `first`, `last`, `min`, `max`, per series; a tie "
+            "labels every tied mark. A stacked bar's anchors pick stacks and "
+            "print their totals; a grouped bar takes none. `first` and `last` "
+            "need a time axis on a bar chart. `last` alone means `[last]`."
         ),
     )
+
     # Authored-only override (not theme-populated): name a data column to draw the
     # label text from instead of the chart's y-field. Lets the axis keep the true y
     # unit (e.g. "200M") while the label shows a pre-computed column from the query

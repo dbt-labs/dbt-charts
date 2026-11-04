@@ -171,7 +171,8 @@ def _render_board(
 
 
 def _text_excerpt(text: str) -> list[str]:
-    """The board's text, cut to ``TEXT_EXCERPT_CHARS`` with a note saying so."""
+    """Authored prose (board text, a callout's message), cut to
+    ``TEXT_EXCERPT_CHARS`` with a note saying so."""
     body = text.strip()
     if len(body) <= TEXT_EXCERPT_CHARS:
         return body.split("\n")
@@ -210,6 +211,12 @@ def _render_chart(
     # neither.
     if chart_type == "kpi":
         _render_kpi_value(item, lines)
+        return
+
+    # A callout's message is its whole content, often the board's headline.
+    if chart_type == "callout":
+        lines.append("")
+        lines.extend(_text_excerpt(chart["message"]))
         return
 
     # Table: the resolved per-column display config (label, format) — already
@@ -380,6 +387,18 @@ def _field_display(
     return None if value is None else str(value)
 
 
+def _data_columns(
+    node: dict[str, Any],  # type-state: explicit_any — wire dict
+    key: str,
+) -> list[str]:
+    """The result-row columns a wire channel reads; a wide ``y`` reads one
+    column per authored measure (rows are not folded yet)."""
+    if key == "y" and node.get("wide_measures"):
+        return list(node["wide_measures"])
+    value = node.get(key)
+    return [str(value)] if value else []
+
+
 def _field_mappings(chart: dict[str, Any]) -> list[str]:
     """Extract field mapping strings like 'x: month, y: revenue'.
 
@@ -428,15 +447,13 @@ def _data_summary(
     # column's original role rather than being reassigned).
     field_roles: dict[str, str] = {}
     for key in ("x", "y", "color", "size", "theta"):
-        val = chart.get(key)
-        if val:
+        for val in _data_columns(chart, key):
             field_roles[val] = key
     # A non-layered chart carries no "layers" key at all; [] is the genuine
     # "no overlays" case, not a shape guard.
     for layer in chart.get("layers") or []:  # type-state: silent_fallback — see above
         for key in ("x", "y", "color"):
-            val = _field_display(layer, key)
-            if val:
+            for val in _data_columns(layer, key):
                 field_roles.setdefault(val, key)
 
     base_y = chart.get("y")

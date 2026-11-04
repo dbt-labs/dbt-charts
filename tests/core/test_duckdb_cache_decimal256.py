@@ -29,6 +29,8 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result
+
 
 def test_duckdb_cache_put_with_high_precision_decimal_round_trips(tmp_path):
     """End-to-end: cache.put with rows containing precision-47 decimals.
@@ -51,7 +53,7 @@ def test_duckdb_cache_put_with_high_precision_decimal_round_trips(tmp_path):
         source_hash,
         query_hash,
         variables_hash,
-        data,
+        rows_result(data),
         board_slug="test_board",
         query_name="test_query",
     )
@@ -90,7 +92,7 @@ def test_duckdb_cache_list_column_round_trips_as_list(tmp_path):
         source_hash,
         query_hash,
         variables_hash,
-        data,
+        rows_result(data),
         board_slug="f",
         query_name="q",
     )
@@ -114,7 +116,7 @@ def test_duckdb_cache_dict_column_round_trips_as_dict(tmp_path):
         source_hash,
         query_hash,
         variables_hash,
-        data,
+        rows_result(data),
         board_slug="f",
         query_name="q",
     )
@@ -137,7 +139,7 @@ def test_duckdb_cache_put_with_normal_decimal_round_trips(tmp_path):
         source_hash,
         query_hash,
         variables_hash,
-        data,
+        rows_result(data),
         board_slug="f",
         query_name="q",
     )

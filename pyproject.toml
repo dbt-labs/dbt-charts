@@ -53,7 +53,9 @@ name = "dbt-charts"
 dynamic = ["version"]
 description = "Declarative YAML around SQL for dbt-native dashboards: easy for agents to write, easy for humans to audit."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+# <3.15: PyYAML has no cp315 wheel, so 3.15 would install a PyYAML without
+# libyaml, which core/utils.py refuses to import. Lift it once that wheel ships.
+requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
@@ -68,11 +70,14 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 dependencies = [
     "typer>=0.27,<0.28",
-    "pyyaml>=6.0",
+    # 6.0.3 is the first with cp314 wheels; older ones build from source
+    # without libyaml, and core/utils.py requires yaml.CSafeLoader.
+    "pyyaml>=6.0.3",
     "pydantic>=2.0.0",
     "annotated-types>=0.4.0",
     # Backport of stdlib importlib.resources — as_file() gains directory support
@@ -124,6 +129,10 @@ dependencies = [
     # manifest as plain JSON. Canaries: test_dbt_macro_loader.py,
     # test_dbt_adapter_factory.py.
     "dbt-core>=1.8,<2",
+    # dbt-core 1.11 pins mashumaro<3.15, which crashes building dbt's manifest
+    # on Python 3.14. Scoped to 3.14 so a dbt project on an older dbt-core can
+    # still share an environment with dbt-charts on 3.11-3.13.
+    "dbt-core>=1.12; python_version >= '3.14'",
     "dbt-adapters>=1.20,<2",
     "dbt-common>=1.0",
     # core/execute/adapters/dbt_adapter_factory.py monkeypatches
@@ -241,6 +250,12 @@ mkdocs-plugin = [
     "mkdocs>=1.4.0",
 ]
 
+# dbt_charts.integrations.markdown is a Python-Markdown extension; every host
+# that loads it (MkDocs, Pelican) already brings Python-Markdown.
+markdown = [
+    "markdown>=3.4",
+]
+
 [project.scripts]
 dct = "dbt_charts.cli.main:app"
 
@@ -294,8 +309,7 @@ constraint-dependencies = [
     # walking into 3.x before those mocks are ported off httpx.
     "openai<3",
     # sqlglot majors reshape the expression type surface (28 -> 30 did); this
-    # keeps a re-lock of oss/uv.lock on the major the monorepo type-checks
-    # against, the same ceiling the asql dependency declares for the shared lock.
+    # keeps a re-lock of oss/uv.lock on the major the monorepo's lock holds.
     "sqlglot<31",
 ]
 cache-keys = [
@@ -304,6 +318,7 @@ cache-keys = [
     { file = "libs/chart-svg/*/src/**/*" },
     { file = "libs/chart-svg/*/assets/**/*" },
     { file = "libs/chart-svg/display-text/language/*.json" },
+    { file = "libs/chart-svg/chart-renderer/data/*.json" },
     { file = "src/dbt_charts/core/defaults/palettes/tone/*.yml" },
     { file = "libs/chart-svg/*/Cargo.toml" },
     { file = "libs/chart-svg/python/Cargo.lock" },

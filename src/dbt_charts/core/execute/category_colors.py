@@ -10,8 +10,9 @@ per chart — the rows it reads are the same ones the sizing pass reads next.
 
 from __future__ import annotations
 
-import dataclasses
-from typing import TYPE_CHECKING
+import json
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
 from dbt_charts.core.compile.models.chart.normalized._base import (
@@ -27,11 +28,19 @@ from dbt_charts.core.compile.resolve.style.category_colors import (
     categorical_channel_fields,
     plan_category_colors,
 )
+from dbt_charts.core.compile.resolve.style.chart_context import (
+    context_with_category_colors,
+)
+from dbt_charts.core.compile.template.variables import color_link_variable
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.utils import is_date_like
 
 if TYPE_CHECKING:
     from dbt_charts.core.execute.executor import Executor
+
+
+# Choice variable → its option cells, as authored or queried.
+OptionCells = Mapping[str, Sequence[Any]]  # type-state: explicit_any — option cells
 
 
 def _observe(
@@ -89,8 +98,14 @@ def plan_board_category_colors(
     board: Board,
     executor: Executor,
     variables: VariableValues,
+    variable_options: OptionCells,
 ) -> tuple[CategoryColorScale, ...]:
     """Return the board's value→color scales, one per bound field.
+
+    ``variable_options`` maps each choice variable a chart link sets to its
+    options. A chart whose link sets one from its color field seeds that
+    field's scale with them in option order (see ``_linked_options``), so a
+    filter that leaves rows for one option does not move any series' swatch.
 
     A chart whose query fails is skipped rather than aborting the board: its
     own error surfaces through the normal resolve path, and dropping it here
@@ -134,10 +149,40 @@ def plan_board_category_colors(
         observations,
         pins,
         board.chart_style_context.palette,
+        _linked_options(_placed_charts(board), variable_options),
     )
     for field in poisoned:
         plan.pop(field, None)
     return tuple(plan.values())
+
+
+def _linked_options(
+    charts: Sequence[_BaseChartFields],
+    variable_options: OptionCells,
+) -> dict[str, tuple[str, ...]]:
+    """Field → the options of the variable a chart's link sets from it.
+
+    Each option is seeded as the text the engine prints it as (a JSON scalar's
+    own text), so ``static: [1, 2]`` seats the text rows ``"1"`` and ``"2"``. A
+    list holding anything but scalars seeds nothing: dates and the like belong
+    to a field `_observe` never binds.
+    """
+    seeded: dict[str, tuple[str, ...]] = {}
+    for chart in charts:
+        variable = (
+            color_link_variable(chart.link) if isinstance(chart.link, str) else None
+        )
+        if variable is None or variable not in variable_options:
+            continue
+        options = variable_options[variable]
+        if options and all(isinstance(option, str | int | float) for option in options):
+            texts = tuple(
+                option if isinstance(option, str) else json.dumps(option)
+                for option in options
+            )
+            for field in categorical_channel_fields(chart):
+                seeded[field] = texts
+    return seeded
 
 
 def _placed_charts(board: Board) -> list[_BaseChartFields]:
@@ -211,10 +256,8 @@ def with_category_colors(board: Board, scales: tuple[CategoryColorScale, ...]) -
     )
     return board.model_copy(
         update={
-            # ChartStyleContext is compiler working state, not a Resolved*
-            # model — dataclasses.replace on it is the sanctioned build step.
-            "chart_style_context": dataclasses.replace(
-                board.chart_style_context, category_colors=scales
+            "chart_style_context": context_with_category_colors(
+                board.chart_style_context, scales
             ),
             "layout": layout,
         }

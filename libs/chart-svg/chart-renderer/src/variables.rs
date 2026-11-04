@@ -22,6 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use d3rs::py_float::float_repr;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -385,6 +386,9 @@ mod refinement_tests {
 
 pub const WRAP_EPSILON: f64 = 0.5;
 
+/// `variables_layout.py::MIN_CONTROLS_FOR_RESET`.
+const MIN_CONTROLS_FOR_RESET: usize = 2;
+
 struct InputTraits {
     sizing: &'static str,
     ornament: &'static str,
@@ -401,8 +405,13 @@ fn traits_of(input_type: &str) -> Result<InputTraits, String> {
             ornament: "none",
             unset: "none",
         },
-        "select" | "multiselect" | "radio" => InputTraits {
+        "select" | "radio" => InputTraits {
             sizing: "content",
+            ornament: "arrow",
+            unset: "chooser",
+        },
+        "multiselect" => InputTraits {
+            sizing: "summary",
             ornament: "arrow",
             unset: "chooser",
         },
@@ -456,10 +465,28 @@ pub struct ControlBox {
     pub label_width: f64,
 }
 
+/// `variables_layout.py::ResetBox`.
+#[derive(Clone)]
+pub struct ResetBox {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 pub struct VariablesLayout {
     pub boxes: Vec<ControlBox>,
     pub height: f64,
     pub rows: i64,
+    pub reset: Option<ResetBox>,
+}
+
+impl VariablesLayout {
+    /// Controls plus the reset item, as `(y, right edge)`.
+    fn placed_extents(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        let reset = self.reset.iter().map(|r| (r.y, r.x + r.width));
+        self.boxes.iter().map(|b| (b.y, b.x + b.width)).chain(reset)
+    }
 }
 
 /// `variables_layout.py::ornament_width`.
@@ -530,6 +557,9 @@ fn input_width(
     if sizing == "checkbox" {
         return Ok(widths.checkbox);
     }
+    if sizing == "summary" {
+        return Ok(widths.text);
+    }
     if sizing == "slider" {
         return Ok(widths.range
             + vs.control_gap
@@ -545,6 +575,23 @@ fn input_width(
     })
 }
 
+/// `variables_layout.py::_drawn_value` — a `summary` field's text cut to its
+/// text slot by the engine's truncation law.
+fn drawn_value(
+    spec: &ControlSpec,
+    vs: &VariablesStyleDoc,
+    font_size: f64,
+    fonts_dir: &str,
+) -> Result<String, String> {
+    if traits_of(&spec.input)?.sizing != "summary" {
+        return Ok(spec.value.clone());
+    }
+    let slot = vs.input.widths.text - vs.input.padding.left - vs.input.padding.right;
+    crate::common::truncate_label_with(&spec.value, slot, |s| {
+        Ok(text_width(s, font_size, fonts_dir))
+    })
+}
+
 /// `variables_layout.py::lay_out_variables`.
 pub fn lay_out_variables(
     specs: &[ControlSpec],
@@ -557,6 +604,7 @@ pub fn lay_out_variables(
             boxes: Vec::new(),
             height: 0.0,
             rows: 0,
+            reset: None,
         });
     }
     let gap = vs.gap;
@@ -585,7 +633,7 @@ pub fn lay_out_variables(
             name: spec.name.clone(),
             input: spec.input.clone(),
             label: spec.label.clone(),
-            value: spec.value.clone(),
+            value: drawn_value(spec, vs, font_size, fonts_dir)?,
             x,
             y: row as f64 * (row_height + gap),
             width: control_width,
@@ -594,17 +642,77 @@ pub fn lay_out_variables(
         });
         x += control_width + gap;
     }
+    let reset = if specs.len() >= MIN_CONTROLS_FOR_RESET {
+        let reset_width = text_width(&word("controls.reset")?, font_size, fonts_dir)
+            + vs.input.padding.left
+            + vs.input.padding.right;
+        if x + reset_width > available + WRAP_EPSILON {
+            row += 1;
+            x = 0.0;
+        }
+        Some(ResetBox {
+            x,
+            y: row as f64 * (row_height + gap),
+            width: reset_width,
+            height: row_height,
+        })
+    } else {
+        None
+    };
     let rows = row + 1;
     Ok(VariablesLayout {
         boxes,
         height: rows as f64 * row_height + (rows - 1) as f64 * gap,
         rows,
+        reset,
     })
 }
 
 #[cfg(test)]
 mod layout_tests {
     use super::*;
+
+    fn multiselect(value: &str) -> ControlSpec {
+        ControlSpec {
+            name: "r".into(),
+            input: "multiselect".into(),
+            label: "Region".into(),
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn a_multiselect_holds_one_width_whatever_is_selected() {
+        let vs = fixture_style();
+        let widths: Vec<f64> = ["All", "North", "(5) Latin America and the Caribbean"]
+            .iter()
+            .map(|v| {
+                lay_out_variables(&[multiselect(v)], 2000.0, &vs, &fonts_dir()).unwrap().boxes[0]
+                    .width
+            })
+            .collect();
+        assert!(widths.iter().all(|w| *w == widths[0]), "{widths:?}");
+    }
+
+    #[test]
+    fn a_multiselect_value_too_long_for_its_field_ends_in_an_ellipsis() {
+        let vs = fixture_style();
+        let long = "Latin America and the Caribbean, Sub-Saharan Africa";
+        let layout = lay_out_variables(&[multiselect(long)], 2000.0, &vs, &fonts_dir()).unwrap();
+        let value = &layout.boxes[0].value;
+        let slot = vs.input.widths.text - vs.input.padding.left - vs.input.padding.right;
+        assert!(value.ends_with('\u{2026}'), "{value}");
+        assert!(long.starts_with(value.trim_end_matches('\u{2026}')), "{value}");
+        assert!(text_width(value, 11.0, &fonts_dir()) <= slot, "{value}");
+    }
+
+    #[test]
+    fn a_multiselect_value_that_fits_is_drawn_whole() {
+        let vs = fixture_style();
+        let layout =
+            lay_out_variables(&[multiselect("(2) North")], 2000.0, &vs, &fonts_dir()).unwrap();
+        assert_eq!(layout.boxes[0].value, "(2) North");
+    }
 
     fn fixture_style() -> VariablesStyleDoc {
         serde_json::from_value(serde_json::json!({
@@ -665,11 +773,27 @@ mod layout_tests {
                 value: "value".into(),
             },
         ];
-        // A narrow strip forces the second control onto its own row.
+        // A narrow strip forces the second control, then the reset, onto their own rows.
         let layout = lay_out_variables(&specs, 50.0, &vs, &fonts_dir()).unwrap();
-        assert_eq!(layout.rows, 2);
+        assert_eq!(layout.rows, 3);
         assert_eq!(layout.boxes[0].y, 0.0);
         assert_eq!(layout.boxes[1].y, vs.container_height + vs.gap);
+        let reset = layout.reset.expect("two controls reserve a reset");
+        assert_eq!(reset.x, 0.0);
+        assert_eq!(reset.y, 2.0 * (vs.container_height + vs.gap));
+    }
+
+    #[test]
+    fn a_lone_control_reserves_no_reset() {
+        let vs = fixture_style();
+        let specs = vec![ControlSpec {
+            name: "a".into(),
+            input: "text".into(),
+            label: "A".into(),
+            value: "".into(),
+        }];
+        let layout = lay_out_variables(&specs, 400.0, &vs, &fonts_dir()).unwrap();
+        assert!(layout.reset.is_none());
     }
 
     fn assert_close(actual: f64, expected: f64) {
@@ -995,7 +1119,16 @@ fn format_variable_display_value(
                     "controls.all",
                 );
             }
-            Ok(selected.iter().map(py_str).collect::<Vec<_>>().join(&word("controls.list_join")?))
+            if selected.len() == 1 {
+                return Ok(py_str(&selected[0]));
+            }
+            let first = py_str(&selected[0]);
+            let n = selected.len().to_string();
+            display_text::language::tr(
+                "controls.selection_summary",
+                None,
+                &[("first", &first), ("n", &n)],
+            )
         }
         "daterange" => {
             if daterange_is_unset(value) {
@@ -1080,7 +1213,7 @@ fn py_json_dumps(value: &Value, out: &mut String) -> Result<(), String> {
             (Some(i), _, _) => out.push_str(&i.to_string()),
             (_, Some(u), _) => out.push_str(&u.to_string()),
             (_, _, Some(f)) if f == 0.0 || (1e-4..1e16).contains(&f.abs()) => {
-                out.push_str(&crate::svg::py_float_str(f))
+                out.push_str(&float_repr(f))
             }
             _ => {
                 return Err(format!(
@@ -1293,6 +1426,20 @@ pub fn resolve_title_variables_inline_widths(
     Ok((title_w, vars_w))
 }
 
+/// Width and packing edge of a variables band on its own line:
+/// `sizing.py::standalone_variables_band`.
+pub fn standalone_variables_band(
+    title: &str,
+    content_width: f64,
+    card_padding: f64,
+    vs: &VariablesStyleDoc,
+) -> (f64, &'static str) {
+    if title.is_empty() && vs.position == "title-inline" {
+        return ((content_width - 2.0 * card_padding).max(0.0), "end");
+    }
+    ((content_width - card_padding).max(0.0), "start")
+}
+
 /// `sizing.py::should_use_title_inline_band`.
 #[allow(clippy::too_many_arguments)]
 pub fn should_use_title_inline_band(
@@ -1329,9 +1476,8 @@ pub fn should_use_title_inline_band(
         return Ok(false);
     }
     let widest = layout
-        .boxes
-        .iter()
-        .map(|b| b.x + b.width)
+        .placed_extents()
+        .map(|(_, end)| end)
         .fold(0.0_f64, f64::max);
     Ok(widest <= vars_w + WRAP_EPSILON)
 }
@@ -1452,6 +1598,7 @@ pub fn render_title_variables_inline_band(
     title_min_height: f64,
     title_authored_attrs: &str,
     variables_path: &str,
+    overridden: &[String],
     datasets: Option<&HashMap<String, Vec<serde_json::Map<String, Value>>>>,
     vs: &VariablesStyleDoc,
     fonts_dir: &str,
@@ -1509,7 +1656,15 @@ pub fn render_title_variables_inline_band(
         .ok_or("style.variables.label.font.case must be resolved")?;
     let controls = resolve_controls(visible_variables, variable_values, datasets, vs, label_case)?;
     let (vars_svg, vars_h) =
-        render_variables_strip_svg(&controls, vars_w, vs, "end", variables_path, fonts_dir)?;
+        render_variables_strip_svg(
+            &controls,
+            vars_w,
+            vs,
+            "end",
+            variables_path,
+            overridden,
+            fonts_dir,
+        )?;
 
     let label_size = vs
         .font
@@ -1573,6 +1728,25 @@ pub fn render_title_variables_inline_band(
 #[cfg(test)]
 mod resolve_tests {
     use super::*;
+
+    #[test]
+    fn a_multiselect_with_several_values_shows_the_first_and_a_count() {
+        let doc: VariableDoc = serde_json::from_value(serde_json::json!({"visible": true})).unwrap();
+        assert_eq!(
+            format_variable_display_value(
+                &doc,
+                &serde_json::json!(["South", "North", "East"]),
+                "multiselect"
+            )
+            .unwrap(),
+            "(3) South"
+        );
+        assert_eq!(
+            format_variable_display_value(&doc, &serde_json::json!(["North"]), "multiselect")
+                .unwrap(),
+            "North"
+        );
+    }
 
     #[test]
     fn a_set_date_displays_as_day_month_year_not_raw_iso() {
@@ -1802,11 +1976,14 @@ fn font_weight_as_css(w: &Value) -> String {
 /// `variables_strip.py::_row_offsets`.
 fn row_offsets(layout: &VariablesLayout, width: f64, align: &str) -> HashMap<u64, f64> {
     if align != "end" {
-        return layout.boxes.iter().map(|b| (b.y.to_bits(), 0.0)).collect();
+        return layout
+            .placed_extents()
+            .map(|(y, _)| (y.to_bits(), 0.0))
+            .collect();
     }
     let mut ends: HashMap<u64, f64> = HashMap::new();
-    for b in &layout.boxes {
-        ends.insert(b.y.to_bits(), b.x + b.width);
+    for (y, end) in layout.placed_extents() {
+        ends.insert(y.to_bits(), end);
     }
     ends.into_iter()
         .map(|(y, end)| (y, (width - end).max(0.0)))
@@ -1825,6 +2002,38 @@ fn field_rect(x: f64, y: f64, width: f64, height: f64, vs: &VariablesStyleDoc) -
         pxi(input_style.border.radius),
         xml_escape_attr(&input_style.background)
     )
+}
+
+/// `variables_strip.py::_draw_reset`.
+fn draw_reset(
+    reset: &ResetBox,
+    dx: f64,
+    vs: &VariablesStyleDoc,
+    enabled: bool,
+    fonts_dir: &str,
+) -> Result<String, String> {
+    let fs = font_size(vs)?;
+    let family = vs.value.font.family.as_deref().unwrap_or_default();
+    let x = reset.x + dx;
+    let ink = if enabled { &vs.value.font.color } else { &vs.placeholder.font.color };
+    let disabled = if enabled { "" } else { r#" data-dbt-enabled="false""# };
+    let field_y = reset.y + (reset.height - vs.input.height) / 2.0;
+    let baseline = reset.y + reset.height / 2.0 + centered_baseline_offset(family, fs, fonts_dir);
+    Ok(format!(
+        r#"<g data-dbt-reset="true"{disabled} opacity="0"><rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" stroke="none"/><text x="{}" y="{}" font-size="{}" font-family="{}" fill="{}">{}</text></g>"#,
+        pxi(x),
+        pxi(field_y),
+        pxi(reset.width),
+        pxi(vs.input.height),
+        pxi(vs.input.border.radius),
+        xml_escape_attr(&vs.input.background),
+        pxi(x + vs.input.padding.left),
+        pxi(baseline),
+        pxi(fs),
+        xml_escape_attr(family),
+        xml_escape_attr(ink.as_deref().unwrap_or_default()),
+        xml_escape(&word("controls.reset")?)
+    ))
 }
 
 /// `variables_strip.py::_draw_arrow`.
@@ -1958,7 +2167,7 @@ fn number_attr(value: f64) -> String {
     if value.fract() == 0.0 {
         format!("{}", value as i64)
     } else {
-        crate::svg::py_float_str(value)
+        float_repr(value)
     }
 }
 
@@ -2207,6 +2416,7 @@ pub fn render_variables_strip_svg(
     vs: &VariablesStyleDoc,
     align: &str,
     variables_path: &str,
+    overridden: &[String],
     fonts_dir: &str,
 ) -> Result<(String, f64), String> {
     if controls.is_empty() {
@@ -2227,6 +2437,14 @@ pub fn render_variables_strip_svg(
             variables_path,
             fonts_dir,
         )?);
+    }
+
+    if let Some(reset) = &layout.reset {
+        let dx = *offsets.get(&reset.y.to_bits()).unwrap_or(&0.0);
+        // A chart's legend view is board state a Reset clears, though no control draws it.
+        let enabled = controls.iter().any(|c| overridden.contains(&c.name))
+            || overridden.iter().any(|name| name.starts_with(crate::legend_view::PARAM_PREFIX));
+        drawn.push(draw_reset(reset, dx, vs, enabled, fonts_dir)?);
     }
 
     let anchor = format!(

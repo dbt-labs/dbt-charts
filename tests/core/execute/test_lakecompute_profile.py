@@ -360,4 +360,4 @@ def test_metricflow_rides_the_resolved_source(
         metricflow="semantics",
     )
     assert result is not None
-    assert result.metricflow == "semantics"
+    assert result.metricflow is not None and result.metricflow.path == "semantics"

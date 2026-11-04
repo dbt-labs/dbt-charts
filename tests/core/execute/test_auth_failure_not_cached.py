@@ -35,6 +35,12 @@ class _ScriptedRegistry:
         self.calls = 0
         self.project_sources = SimpleNamespace(sources={})
 
+    def resolve_query_source(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def project_file_sources(self) -> dict[str, Any]:
+        return {}
+
     def execute(self, *args: Any, **kwargs: Any) -> QueryResult:
         self.calls += 1
         return self.results.pop(0)

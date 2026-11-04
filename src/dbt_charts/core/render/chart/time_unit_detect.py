@@ -745,6 +745,19 @@ def _bucket_index(bucket_start: dt.date, time_unit: str) -> int:
     return bucket_start.toordinal() // _DAY_LADDER_STEP[time_unit]
 
 
+def bucket_position(
+    value: Any,  # type-state: explicit_any — a raw x cell
+    time_unit: str,
+) -> int | None:
+    """Position of the bucket holding an x cell on its grain's ladder, or None
+    when the cell is not a date. Consecutive buckets differ by exactly 1."""
+    parsed = _parse_date(value)
+    if parsed is None:
+        return None
+    day = parsed.date() if isinstance(parsed, dt.datetime) else parsed
+    return _bucket_index(_floor_to_bucket_start(day, time_unit, 1), time_unit)
+
+
 def ordinal_scaffold_within_budget(
     panels: list[list[Any]],  # type-state: explicit_any — raw x cells
     time_unit: str,

@@ -28,6 +28,7 @@ FILES = {
     "charts/sub/_q.yml": "",
     "charts/sub/data/local.csv": "",
     "data/root.csv": "",
+    "data/root.duckdb": "",
     "charts/sub/img/logo.PNG": "",
     "charts/assets/brand.svg": "",
     "charts/sub/notes.txt": "",
@@ -168,6 +169,31 @@ class TestFileSourceKind:
     def test_unknown_suffix(self, project: Project) -> None:
         with pytest.raises(ReferenceError, match="an inline file source needs one of"):
             resolve_file_source("data/x.txt", _sub(project), "q")
+
+    @pytest.mark.parametrize(
+        ("ref", "kind"),
+        [
+            ("data/dundersign.duckdb", "duckdb"),
+            ("data/app.DB", "sqlite"),
+            ("app.sqlite", "sqlite"),
+            ("data/app.sqlite3", "sqlite"),
+        ],
+    )
+    def test_database_file_says_to_declare_it_under_sources(
+        self, project: Project, ref: str, kind: str
+    ) -> None:
+        with pytest.raises(ReferenceError) as e:
+            resolve_file_source(ref, _sub(project), "q")
+        name = Path(ref).stem
+        assert "is a database file" in str(e.value)
+        assert "declare it under `sources:`" in str(e.value)
+        assert f"{name}: {{type: {kind}," in str(e.value)
+
+    def test_database_file_prints_the_path_a_source_resolves(
+        self, project: Project
+    ) -> None:
+        with pytest.raises(ReferenceError, match="path: data/root.duckdb"):
+            resolve_file_source("data/root.duckdb", _sub(project), "q")
 
     def test_escape_from_both_anchors(self, project: Project) -> None:
         with pytest.raises(ReferenceError, match="escape"):

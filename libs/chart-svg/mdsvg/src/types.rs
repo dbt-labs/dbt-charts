@@ -24,6 +24,13 @@ pub struct Span {
     /// Authored `{width=X height=Y}`: image spans only.
     pub width: Option<f64>,
     pub height: Option<f64>,
+    /// Link spans only: the label is inline code (``[`file.yml`](path)``),
+    /// drawn as a code chip that links.
+    pub code: bool,
+    /// Emphasis a span inherits rather than declares by its type: code inside
+    /// emphasis, or every span of an italic blockquote.
+    pub bold: bool,
+    pub italic: bool,
 }
 
 impl Span {
@@ -45,6 +52,9 @@ impl Span {
             title,
             width: None,
             height: None,
+            code: false,
+            bold: false,
+            italic: false,
         }
     }
 

@@ -4,8 +4,11 @@
 //! `subday_header_for`).
 
 use super::temporal::{
-    civil_from_days, clock_instants_at, end_labels_fit, interval_axis, AuthoredTickCadence, BareMark, BareTick, LabelPeriods, TimeUnit,
+    end_labels_fit, every_instants, interval_axis, AuthoredTickCadence, BareMark, BareTick, LabelPeriods, TimeUnit,
 };
+use d3rs::calendar::civil_from_days;
+use d3rs::time::Unit;
+use jiff::tz::TimeZone;
 use crate::common::AxisStyle;
 use crate::time_axis::TimeAxis;
 
@@ -113,35 +116,41 @@ const DAY_STEP_BOUNDARY_HOURS: f64 = 16.970_562_748_477_14;
 const MINUTE_STEP_BOUNDARY_SECONDS: f64 = 42.426_406_871_192_85;
 const TOOLTIP_SPAN_MS: i64 = 2 * DAY_MS;
 
-/// A clock-aligned tick step a person reads off a clock face: its unit's length in days and its step.
+/// A clock-aligned tick step a person reads off a clock face: a minute or hour interval and its step.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct ClockStep {
-    unit_ms: i64,
-    /// The count the unit's field (minute of the hour, hour of the day) wraps at.
-    parent: i64,
+    unit: Unit,
     step: i64,
 }
 
 const MINUTE: i64 = 60_000;
 const HOUR: i64 = 3_600_000;
 const LADDER: [ClockStep; 10] = [
-    ClockStep { unit_ms: MINUTE, parent: 60, step: 1 },
-    ClockStep { unit_ms: MINUTE, parent: 60, step: 5 },
-    ClockStep { unit_ms: MINUTE, parent: 60, step: 10 },
-    ClockStep { unit_ms: MINUTE, parent: 60, step: 15 },
-    ClockStep { unit_ms: MINUTE, parent: 60, step: 30 },
-    ClockStep { unit_ms: HOUR, parent: 24, step: 1 },
-    ClockStep { unit_ms: HOUR, parent: 24, step: 2 },
-    ClockStep { unit_ms: HOUR, parent: 24, step: 3 },
-    ClockStep { unit_ms: HOUR, parent: 24, step: 6 },
-    ClockStep { unit_ms: HOUR, parent: 24, step: 12 },
+    ClockStep { unit: Unit::Minute, step: 1 },
+    ClockStep { unit: Unit::Minute, step: 5 },
+    ClockStep { unit: Unit::Minute, step: 10 },
+    ClockStep { unit: Unit::Minute, step: 15 },
+    ClockStep { unit: Unit::Minute, step: 30 },
+    ClockStep { unit: Unit::Hour, step: 1 },
+    ClockStep { unit: Unit::Hour, step: 2 },
+    ClockStep { unit: Unit::Hour, step: 3 },
+    ClockStep { unit: Unit::Hour, step: 6 },
+    ClockStep { unit: Unit::Hour, step: 12 },
 ];
 
 impl ClockStep {
+    fn unit_ms(self) -> i64 {
+        match self.unit {
+            Unit::Minute => MINUTE,
+            Unit::Hour => HOUR,
+            _ => unreachable!("the clock ladder steps minutes and hours"),
+        }
+    }
+
     /// Every aligned instant of `[lo, hi]`, d3's `interval.every(step).range(lo, hi + 1)`. Only a naive column
     /// steps a clock ladder, so its clock is UTC's.
-    pub fn instants(self, lo: f64, hi: f64) -> Vec<f64> {
-        clock_instants_at(lo, hi, self.unit_ms, self.parent, self.step)
+    pub fn instants(self, lo: f64, hi: f64) -> Result<Vec<f64>, String> {
+        every_instants(self.unit, self.step, &TimeZone::UTC, lo, hi)
     }
 }
 
@@ -327,7 +336,7 @@ fn default_ladder(extent: &Extent, available_width: f64) -> Option<(ClockStep, u
         return None;
     }
     LADDER.into_iter().find_map(|step| {
-        let count = (extent.span_ms() + step.unit_ms * step.step - 1).div_euclid(step.unit_ms * step.step);
+        let count = (extent.span_ms() + step.unit_ms() * step.step - 1).div_euclid(step.unit_ms() * step.step);
         (2 <= count && count as f64 <= max_ticks).then_some((step, count as usize))
     })
 }
@@ -495,7 +504,7 @@ pub fn plan_for(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_axis::date_text_day;
+    use crate::time_axis::testing::day;
 
     fn setup(outer_width: f64) -> AxisSetup<'static> {
         AxisSetup {
@@ -526,7 +535,7 @@ mod tests {
     fn plan_over(values: &[String], width: f64) -> (SubdayPlan, f64, f64) {
         let refs: Vec<&str> = values.iter().map(String::as_str).collect();
         let source = source_of(&refs);
-        let (lo, hi) = (date_text_day(&values[0]).unwrap(), date_text_day(values.last().unwrap()).unwrap());
+        let (lo, hi) = (day(&values[0]), day(values.last().unwrap()));
         (SubdayPlan::of(&source, &setup(width)).expect("a sub-day plan"), lo, hi)
     }
 
@@ -535,7 +544,7 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let (plan, lo, hi) = plan_over(&day_hours("2024-03-05", 24), 600.0);
         let step = plan.ladder.expect("the clock ladder fits");
-        let ticks = step.instants(lo, hi);
+        let ticks = step.instants(lo, hi).unwrap();
         let texts: Vec<String> = ticks.iter().enumerate().map(|(i, &at)| plan.label(at, i).unwrap().unwrap().0).collect();
         assert_eq!(texts, ["Midnight", "6am", "Noon", "6pm"]);
         assert!(!plan.stacked(), "one midnight draws no date row");
@@ -570,25 +579,25 @@ mod tests {
         let refs: Vec<&str> = values.iter().map(String::as_str).collect();
         let source = source_of(&refs);
         let narrow = SubdayPlan::of(&source, &setup(340.0)).expect("a plan");
-        assert_eq!(narrow.label(date_text_day(&values[0]).unwrap(), 0).unwrap().unwrap().0, "12am");
+        assert_eq!(narrow.label(day(&values[0]), 0).unwrap().unwrap().0, "12am");
         let mut clock24 = setup(600.0);
         clock24.clock = Some(24);
         let plan = SubdayPlan::of(&source, &clock24).expect("a plan");
-        assert_eq!(plan.label(date_text_day(&values[6]).unwrap() + 0.5 / 24.0, 1).unwrap().unwrap().0, "06:30");
+        assert_eq!(plan.label(day(&values[6]) + 0.5 / 24.0, 1).unwrap().unwrap().0, "06:30");
     }
 
     #[test]
     fn a_span_of_days_keeps_vega_s_own_labels_and_an_offset_its_own_ticks() {
         let _locale = crate::time_locale::en_us_scope();
-        let wide: Vec<String> = (0..400).map(|d| format!("{}T12:00:00", civil_text(date_text_day("2024-01-01").unwrap() + d as f64))).collect();
+        let wide: Vec<String> = (0..400).map(|d| format!("{}T12:00:00", civil_text(day("2024-01-01") + d as f64))).collect();
         let refs: Vec<&str> = wide.iter().map(String::as_str).collect();
         let plan = SubdayPlan::of(&source_of(&refs), &setup(600.0)).expect("a plan");
-        assert!(plan.label(date_text_day(&wide[3]).unwrap(), 0).unwrap().is_none(), "a year or more spans no vocabulary");
+        assert!(plan.label(day(&wide[3]), 0).unwrap().is_none(), "a year or more spans no vocabulary");
         let utc: Vec<String> = day_hours("2024-03-05", 24).into_iter().map(|t| format!("{t}Z")).collect();
         let refs: Vec<&str> = utc.iter().map(String::as_str).collect();
         let plan = SubdayPlan::of(&source_of(&refs), &setup(600.0)).expect("a plan");
         assert!(plan.ladder.is_none(), "an absolute instant keeps Vega's ticks");
-        assert!(plan.label(date_text_day(&utc[6]).unwrap(), 0).unwrap().is_some());
+        assert!(plan.label(day(&utc[6]), 0).unwrap().is_some());
     }
 
     fn civil_text(day: f64) -> String {
@@ -605,13 +614,13 @@ mod tests {
             Header::of(&source_of(&refs), Some(24)).expect("a header")
         };
         let aware: Vec<String> = (5..10).map(|h| format!("2024-03-10T{h:02}:00:00Z")).collect();
-        let texts: Vec<String> = aware.iter().map(|v| header(&aware).text(date_text_day(v).unwrap()).unwrap()).collect();
+        let texts: Vec<String> = aware.iter().map(|v| header(&aware).text(crate::time_axis::testing::day(v)).unwrap()).collect();
         assert_eq!(texts, ["00:00", "01:00", "03:00", "04:00", "05:00"]);
         let naive: Vec<String> = (5..10).map(|h| format!("2024-03-10T{h:02}:00:00")).collect();
-        assert_eq!(header(&naive).text(date_text_day(&naive[2]).unwrap()).unwrap(), "07:00");
+        assert_eq!(header(&naive).text(crate::time_axis::testing::day(&naive[2])).unwrap(), "07:00");
         // 03:00Z to 05:00Z crosses New York's midnight: the header names the date.
         let midnight: Vec<String> = (3..6).map(|h| format!("2024-03-10T{h:02}:00:00Z")).collect();
-        assert_eq!(header(&midnight).text(date_text_day(&midnight[0]).unwrap()).unwrap(), "9 Mar 2024, 22:00");
+        assert_eq!(header(&midnight).text(crate::time_axis::testing::day(&midnight[0])).unwrap(), "9 Mar 2024, 22:00");
     }
 
     #[test]
@@ -619,10 +628,10 @@ mod tests {
         let _locale = crate::time_locale::en_us_scope();
         let within: Vec<&str> = vec!["2024-03-05T09:00:00", "2024-03-05T17:30:00"];
         let header = Header::of(&source_of(&within), Some(12)).expect("a header");
-        assert_eq!(header.text(date_text_day(within[1]).unwrap()).unwrap(), "5:30pm");
+        assert_eq!(header.text(day(within[1])).unwrap(), "5:30pm");
         let across: Vec<&str> = vec!["2024-03-05T23:00:00", "2024-03-06T01:15:30"];
         let header = Header::of(&source_of(&across), Some(24)).expect("a header");
-        assert_eq!(header.text(date_text_day(across[1]).unwrap()).unwrap(), "6 Mar 2024, 01:15:30");
+        assert_eq!(header.text(day(across[1])).unwrap(), "6 Mar 2024, 01:15:30");
         let spread: Vec<&str> = vec!["2024-03-05T09:00:00", "2024-03-09T09:00:00"];
         assert!(Header::of(&source_of(&spread), Some(12)).is_none(), "more than 48 hours reads the date alone");
     }
@@ -659,7 +668,7 @@ mod tests {
     #[test]
     fn day_labels_too_crowded_to_name_every_day_keep_the_clock_axis() {
         let _locale = crate::time_locale::en_us_scope();
-        let first = crate::time_axis::date_text_day("2024-03-01").unwrap();
+        let first = crate::time_axis::testing::day("2024-03-01");
         let values: Vec<String> = (0..40).flat_map(|d| day_hours(&civil_text(first + d as f64), 24)).collect();
         let (mut plan, lo, hi) = plan_over(&values, 600.0);
         plan.day_labels = DayLabels::Authored;

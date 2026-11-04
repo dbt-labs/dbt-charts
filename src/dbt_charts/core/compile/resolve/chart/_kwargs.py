@@ -76,6 +76,7 @@ __all__ = [
     "AutomaticLinkCandidate",
     "_FAMILY_SLOT",
     "donut_over_pie",
+    "board_family_style",
     "_base_kwargs",
     "_cartesian_kwargs",
     "_color_column_format",
@@ -443,6 +444,18 @@ def donut_over_pie(chart_style_context: ChartStyleContext) -> PieChartStyle:
     return pie if donut is None else merge_unset(pie, donut)
 
 
+def board_family_style(
+    chart_style_context: ChartStyleContext, chart: Chart
+) -> Any:  # type-state: explicit_any — one of the per-family style classes
+    """The board's family style for a chart's type; a donut's sits over its pie's.
+
+    A resolver that layers the chart's own patch merges it onto this.
+    """
+    if isinstance(chart, PieChart) and chart.is_donut:
+        return donut_over_pie(chart_style_context)
+    return getattr(chart_style_context, _FAMILY_SLOT[chart.type])
+
+
 def preferred_chart_width(
     normalized: Chart, chart_style_context: ChartStyleContext
 ) -> float:
@@ -458,10 +471,9 @@ def preferred_chart_width(
         return float(authored)
     if normalized.type == "custom":  # no theme family slot: board-wide width
         return float(chart_style_context.preferred_width)
-    family_base = getattr(chart_style_context, _FAMILY_SLOT[normalized.type])
-    if isinstance(normalized, PieChart) and normalized.is_donut:
-        family_base = donut_over_pie(chart_style_context)
-    family = merge_unset(family_base, normalized.style)
+    family = merge_unset(
+        board_family_style(chart_style_context, normalized), normalized.style
+    )
     return float(family.preferred_width)
 
 
@@ -483,30 +495,6 @@ def default_chart_width(
     return float(family_base.preferred_width)
 
 
-def _column_is_numeric(data: list[dict[str, Any]], field: str) -> bool:
-    """True when the column has values and every non-null one is a real number.
-
-    Gates the compact number-format inheritance below: a string ``y`` column
-    (category labels) must NOT get a d3 numeric format grafted on —
-    ``format(datum, '.3~s')`` on a string yields NaN and the cell renders
-    ``-`` instead of the label. Bools (an ``int`` subclass) are treated as
-    non-numeric labels.
-
-    Deliberately stricter than compile's own ``classify_column_type`` — it
-    also rejects numeric strings and ``Decimal``, so a value d3 ``format()``
-    would choke on renders as its raw label rather than a broken ``-``.
-    """
-    seen = False
-    for row in data:
-        raw = row.get(field)
-        if raw is None:
-            continue
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-            return False
-        seen = True
-    return seen
-
-
 def _resolved_support_table(
     support_table: ChartSupportTable | None,
     y: str | list[str] | None,
@@ -515,12 +503,8 @@ def _resolved_support_table(
     query_formats: Mapping[str, str] | None,
     header_inks: Mapping[str, str],
 ) -> ResolvedSupportTable | None:
-    """Bake the final support_table, entry formats and header inks included.
-
-    A string y column stays unformatted (its raw label renders rather than a
-    formatted "-"), so the numeric-y gate for the default ``number`` stamp is
-    decided here from the same rows render sees.
-    """
+    """Bake the final support_table, entry formats and header inks included,
+    from the same rows render sees."""
     if support_table is None:
         return None
     # Deferred like the one in _support_table_geometry below: support_table.py imports
@@ -537,7 +521,6 @@ def _resolved_support_table(
         data,
         y,
         query_formats,
-        stamp_number=isinstance(y, str) and _column_is_numeric(data, y),
         header_inks=header_inks,
     )
 

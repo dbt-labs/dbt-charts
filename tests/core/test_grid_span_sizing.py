@@ -24,9 +24,7 @@ def _render_svg(yaml_body: str, board_width: float = 1872.0) -> str:
     yaml_content = f"""\
 title: Test
 extends: clarity
-style:
-  frame:
-    width: {board_width}
+width: {board_width}
 queries:
   q:
     type: values

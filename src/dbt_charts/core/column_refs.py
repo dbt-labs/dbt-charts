@@ -34,10 +34,10 @@ from sqlglot.optimizer.scope import Scope, traverse_scope
 from sqlglot.tokens import TokenType
 
 from dbt_charts.core.compile.models.query.normalized import is_sql_query
-from dbt_charts.core.compile.normalize.queries import dialect_for_source
 from dbt_charts.core.compile.sql_guard import (
     SKELETON_PLACEHOLDER_PREFIX,
     build_skeleton,
+    dialect_for_source,
     sqlglot_dialect,
 )
 from dbt_charts.core.diagnostics.execution import UnparseableSqlError

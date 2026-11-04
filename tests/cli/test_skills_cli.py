@@ -59,10 +59,12 @@ class TestSkillsList:
         assert names == {
             "board-migrate",
             "chart",
+            "chart-recipes",
             "cloud-setup",
             "custom-chart-build",
             "mcp-setup",
             "report-design",
+            "semantic-query",
             "styling",
         }
 

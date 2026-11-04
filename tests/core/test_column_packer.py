@@ -18,6 +18,7 @@ from dbt_charts.core.render.column_packer import (
     choose_grid,
     columns_earned,
     pack_columns,
+    pack_earned,
     span_boxes,
 )
 
@@ -34,10 +35,123 @@ def paragraphs(*counts: int, advance: float = 20.0) -> list[PackUnit]:
                 line_total=n,
                 splittable=True,
                 keep_with_next=False,
+                leading_margin=0.0,
+                whole_item=False,
             )
             for i in range(n)
         ]
     return units
+
+
+def heading(block_id: int, leading_margin: float = 40.0) -> PackUnit:
+    """A heading whose block draws ``leading_margin`` above a 40px text box."""
+    return PackUnit(
+        advance=40.0 + leading_margin,
+        space_before=0.0,
+        block_id=block_id,
+        line_index=0,
+        line_total=1,
+        splittable=False,
+        keep_with_next=True,
+        leading_margin=leading_margin,
+        whole_item=False,
+    )
+
+
+def list_items(*heights: float, block_id: int = 7) -> list[PackUnit]:
+    return [
+        PackUnit(
+            advance=height,
+            space_before=0.0,
+            block_id=block_id,
+            line_index=i,
+            line_total=len(heights),
+            splittable=True,
+            keep_with_next=False,
+            leading_margin=0.0,
+            whole_item=True,
+        )
+        for i, height in enumerate(heights)
+    ]
+
+
+class TestColumnsAreCostedAsPainted:
+    def test_a_heading_opening_a_column_costs_only_what_is_drawn(self) -> None:
+        """Its margin collapses at a column top, so it must not cost the column lines."""
+        units = [heading(0), *paragraphs(10, advance=20.0)]
+        for unit in units[1:]:
+            object.__setattr__(unit, "block_id", 1)
+        assignment = pack_columns(units, columns=2)
+        assert assignment is not None
+        assert assignment.count(0) - 1 == 4  # 40px heading + 4 lines is 120
+        assert assignment.count(1) == 6  # 6 lines is 120
+
+    def test_a_gap_does_not_count_at_the_top_of_a_column(self) -> None:
+        tall_gap = [
+            PackUnit(
+                advance=20.0,
+                space_before=500.0 if i == 6 else 0.0,
+                block_id=0 if i < 6 else 1,
+                line_index=i if i < 6 else i - 6,
+                line_total=6,
+                splittable=True,
+                keep_with_next=False,
+                leading_margin=0.0,
+                whole_item=False,
+            )
+            for i in range(12)
+        ]
+        assert pack_columns(tall_gap, columns=2) == [0] * 6 + [1] * 6
+
+
+class TestListsBreakBetweenItems:
+    def test_any_two_items_may_part(self) -> None:
+        """A one-item foot is no orphan: the item is whole."""
+        assert pack_columns(list_items(100.0, 300.0, 40.0), columns=2) == [0, 1, 1]
+
+    def test_a_heading_can_head_a_single_item(self) -> None:
+        units = [heading(0), *list_items(80.0, 120.0)]
+        assert pack_columns(units, columns=2) == [0, 0, 1]
+
+
+class TestHeadingsOverOneLine:
+    def test_a_one_line_block_may_end_a_column(self) -> None:
+        units: list[PackUnit] = []
+        for block in range(8):
+            line = paragraphs(1)[0]
+            object.__setattr__(line, "block_id", 2 * block + 1)
+            units += [heading(2 * block, leading_margin=0.0), line]
+        assignment = pack_columns(units, columns=2)
+        assert assignment is not None
+        for i, unit in enumerate(units[:-1]):
+            if unit.keep_with_next:
+                assert assignment[i] == assignment[i + 1]
+
+
+class TestEarnedColumns:
+    def test_a_legal_break_is_not_enough_when_a_column_falls_short(self) -> None:
+        """Three columns of this list would leave one under the line floor."""
+        items = list_items(60.0, 140.0, 140.0, 60.0)
+        assignment = pack_earned(items, spans=3, line_height=20.0)
+        assert max(assignment) == 1
+
+    def test_an_unbreakable_block_is_one_column_whatever_its_height(self) -> None:
+        block = PackUnit(
+            advance=400.0,
+            space_before=0.0,
+            block_id=0,
+            line_index=0,
+            line_total=1,
+            splittable=False,
+            keep_with_next=False,
+            leading_margin=0.0,
+            whole_item=False,
+        )
+        assert pack_earned([heading(1), block], spans=3, line_height=20.0) == [0, 0]
+
+    def test_even_lines_keep_every_span_they_earn(self) -> None:
+        assignment = pack_earned(paragraphs(15), spans=3, line_height=20.0)
+        assert [assignment.count(c) for c in range(3)] == [5, 5, 5]
 
 
 class TestContinuousFlow:
@@ -105,6 +219,8 @@ class TestUnsplittableAndKeepWithNext:
                 line_total=1,
                 splittable=False,
                 keep_with_next=False,
+                leading_margin=0.0,
+                whole_item=False,
             )
         )
         units += paragraphs(6)
@@ -124,6 +240,8 @@ class TestUnsplittableAndKeepWithNext:
                 line_total=1,
                 splittable=False,
                 keep_with_next=True,
+                leading_margin=0.0,
+                whole_item=False,
             )
         )
         units += paragraphs(7)

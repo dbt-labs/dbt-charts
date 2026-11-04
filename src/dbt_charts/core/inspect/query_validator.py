@@ -52,6 +52,7 @@ from dbt_charts.core.diagnostics.codes_query import (
     WARN_MISSING_JOIN_PREDICATE,
     WARN_PARSE_ERROR,
     WARN_REAGGREGATION,
+    WARN_SEMANTIC_COMPILE_FAILED,
 )
 
 # Pattern for -- dct:ignore [code1 code2 ...]
@@ -69,6 +70,7 @@ _QUERY_CODES = frozenset(
         WARN_MISSING_JOIN_PREDICATE.code,
         WARN_PARSE_ERROR.code,
         WARN_REAGGREGATION.code,
+        WARN_SEMANTIC_COMPILE_FAILED.code,
     }
 )
 
@@ -315,8 +317,6 @@ def _detect_missing_join_predicates(
             severity="error",
             message=f"{how} between {left} and {right} — no join predicate",
             detail=f"{how} produces a cartesian product of {left} × {right}.",
-            recommendation="If intentional, document why. Otherwise, "
-            "use JOIN with ON clause.",
         )
         for left, right, how in _find_cross_joins(select)
     ]

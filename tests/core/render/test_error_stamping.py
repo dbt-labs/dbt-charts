@@ -33,9 +33,9 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # warnings/legend_position_width_fallback.py: sizing records a mode on
         # every placed pie, so a pie without one is a sizing bug, not a finding.
         ("warnings/legend_position_width_fallback.py", "detect"),
-        # layouts.py: same theme-cascade guarantee (layout.tabs.font.case is
+        # sizing.py: same theme-cascade guarantee (layout.tabs.font is
         # inherited from style.font, so a resolved style always carries it).
-        ("layouts.py", "render_tabs_layout"),
+        ("sizing.py", "tab_font"),
         # chart/table_support.py
         ("chart/table_support.py", "resolve_palette_stops"),
         ("chart/table_support.py", "interpolate_scale_color"),

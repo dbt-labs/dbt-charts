@@ -9,6 +9,7 @@ from here.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 
 def aspect_ratio_height(
@@ -26,6 +27,17 @@ def aspect_ratio_height(
     this only owns the shared arithmetic.
     """
     return max(min_height, min(max_height, width / aspect_ratio))
+
+
+def ladder_step(ticks: Sequence[float]) -> float:
+    """The step tick formatting must resolve: the smallest adjacent gap.
+
+    Precision and SI tier are chosen from it, so no painted gap is finer than
+    the format can state. An uneven ladder (an authored end beside nice rungs,
+    or an authored ``scale.values`` list) is judged by its finest gap rather
+    than its first. Needs at least two distinct ticks.
+    """
+    return min(abs(b - a) for a, b in zip(ticks, ticks[1:], strict=False) if a != b)
 
 
 def nice_tick_values(

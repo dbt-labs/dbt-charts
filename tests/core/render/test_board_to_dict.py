@@ -196,6 +196,7 @@ _OMITTED_FROM_PROJECTION = {
     # carries the full set of baked mark styles (line_mark/point_mark/...) plus
     # `query_name`, none of which the authored layer accepts. Projecting it
     # makes the yaml document fail to re-compile.
+    "pattern": "shares the authored `pattern:` name but resolves to an object (scale, motifs, ink), not a column name",
     "layers": "resolved layer carries baked mark styles; no authored counterpart",
     "annotations": "resolved annotations carry baked anchors and styles; no authored counterpart",
     "annotation_gaps": "annotations resolve found no rows for; a warning input, not authored",

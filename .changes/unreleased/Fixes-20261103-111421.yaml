@@ -1,0 +1,3 @@
+kind: Fixes
+body: Inline-code chips no longer overlap the text around them, and callout code paints in the theme code font.
+time: 2026-11-03T11:14:21.351434-08:00

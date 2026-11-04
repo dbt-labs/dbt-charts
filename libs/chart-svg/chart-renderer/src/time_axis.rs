@@ -9,21 +9,23 @@
 use std::collections::HashMap;
 
 use crate::diagnostic::Diagnostic;
-use crate::families::temporal::{civil_from_days, days_from_civil, days_in_month, floor_day, instant_iso, next_bucket, TimePart, TimeUnit};
+use crate::families::temporal::{floor_day, instant_iso, next_bucket, TimePart, TimeUnit};
+use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month};
 
 /// A date cell as days since the epoch, with any clock `datetime.fromisoformat` takes
 /// after `[T ]` as the day's fraction and an optional `Z` or `±HH[[:]MM[[:]SS]]` offset. A clock without an
 /// offset is UTC (the render pins the zone). Fractional seconds keep V8's
 /// millisecond precision. `None` for any other shape, and for a day the month does not have.
 pub fn date_text_day(text: &str) -> Option<f64> {
-    read_clock(text).map(|(day, _)| day)
+    read_clock(text).map(|(day, ..)| day)
 }
 
-/// [`date_text_day`] with whether the wall clock (before any offset) has a nonzero hour, minute or second.
-fn read_clock(text: &str) -> Option<(f64, bool)> {
+/// [`date_text_day`] with whether the wall clock (before any offset) has a nonzero hour, minute or second, and the
+/// date as written.
+fn read_clock(text: &str) -> Option<(f64, bool, (i32, u8, u8))> {
     let (y, m, d) = parse_date_part(text.get(..text.len().min(10))?)?;
     if text.len() <= 10 {
-        return Some((days_from_civil(y, m, d) as f64, false));
+        return Some((days_from_civil(y, m, d) as f64, false, (y, m, d)));
     }
     if !matches!(text.as_bytes()[10], b'T' | b' ') {
         return None;
@@ -54,7 +56,7 @@ fn read_clock(text: &str) -> Option<(f64, bool)> {
     let clock_ms = (i64::from(hours) * 3600 + i64::from(minutes) * 60 + i64::from(seconds)) * 1000 + millis as i64;
     let offset_ms = (offset_minutes * 60_000.0).round() as i64;
     let total_ms = days_from_civil(y, m, d) * 86_400_000 + clock_ms - offset_ms;
-    Some((total_ms as f64 / 86_400_000.0, hours != 0 || minutes != 0 || seconds != 0))
+    Some((total_ms as f64 / 86_400_000.0, hours != 0 || minutes != 0 || seconds != 0, (y, m, d)))
 }
 
 /// A date cell's calendar date on the board's wall clock, `(year, month, day)`: a timestamp carrying `Z` or an
@@ -147,6 +149,9 @@ pub(crate) struct Instant {
     pub absolute: bool,
     /// The text's wall clock has a nonzero hour, minute or second, whatever its offset.
     pub timed: bool,
+    /// The calendar date on the board's wall clock ([`parse_iso_date`]'s reading): an aware instant's in the board
+    /// zone, a naive value's as written. The grain detection, the bucket rekey and the date texts of a key read it.
+    pub date: (i32, u8, u8),
     /// The text of the instant: a date as written, a timestamp as its UTC `YYYY-MM-DDTHH:MM:SS[.mmm]`.
     pub iso: String,
     /// The text of where the instant sits: the grain's bucket start as a date, a part axis's cycle instant, else `iso`.
@@ -164,14 +169,13 @@ pub(crate) struct Grain {
 
 impl Instant {
     fn read(text: &str, grain: Grain) -> Result<Self, Unreadable> {
-        let (at, timed) = read_clock(text).ok_or_else(|| Unreadable::NotADate(text.to_string()))?;
+        let (at, timed, written) = read_clock(text).ok_or_else(|| Unreadable::NotADate(text.to_string()))?;
         let absolute = text.len() <= 10 || crate::time_zone::is_aware(text);
-        // An aware instant buckets, and reads its time part and time of day, on the board zone's wall clock.
-        let (wall, timed) = if crate::time_zone::is_aware(text) {
+        let (wall, timed, date) = if crate::time_zone::is_aware(text) {
             let wall = crate::time_zone::wall_day(at).map_err(|_| Unreadable::OutsideYears(text.to_string()))?;
-            (wall, ((wall * 86_400_000.0).round() as i64).rem_euclid(86_400_000) >= 1000)
+            (wall, ((wall * 86_400_000.0).round() as i64).rem_euclid(86_400_000) >= 1000, civil_from_days(wall.floor() as i64))
         } else {
-            (at, timed)
+            (at, timed, written)
         };
         let floor = grain.unit.map(|tu| floor_day(wall.floor() as i64, tu));
         let pos = match (floor, grain.part) {
@@ -193,7 +197,7 @@ impl Instant {
             (None, Some(_)) => instant_iso(pos),
             (None, None) => iso.clone(),
         };
-        Ok(Self { at, pos, end, nan, absolute, timed, iso, key })
+        Ok(Self { at, pos, end, nan, absolute, timed, date, iso, key })
     }
 }
 
@@ -237,11 +241,14 @@ pub(crate) struct TimeAxis {
     /// A labeled bucket or year the x-type law rewrote to its ISO start; the raw label stays the key.
     rewritten: HashMap<String, String>,
     instants: HashMap<String, Instant>,
+    /// The date of a key the axis cannot place whose date part reads (`2024-01-01 00:00:00 UTC`): no instant, but
+    /// [`parse_iso_date`] names its date, which a category's date texts read.
+    dates_only: HashMap<String, (i32, u8, u8)>,
 }
 
 impl TimeAxis {
     pub(crate) fn new(grain: Grain, rewritten: HashMap<String, String>) -> Self {
-        Self { grain, rewritten, instants: HashMap::new() }
+        Self { grain, rewritten, instants: HashMap::new(), dates_only: HashMap::new() }
     }
 
     pub(crate) fn grain(&self) -> Grain {
@@ -259,9 +266,14 @@ impl TimeAxis {
             return Ok(());
         }
         let text = self.rewritten.get(key).map_or(key, String::as_str);
-        let instant = Instant::read(text, self.grain).map_err(|e| match e {
-            Unreadable::NotADate(_) => Unreadable::NotADate(key.to_string()),
-            other => other,
+        let instant = Instant::read(text, self.grain).map_err(|e| {
+            if let Some(date) = parse_iso_date(text) {
+                self.dates_only.insert(key.to_string(), date);
+            }
+            match e {
+                Unreadable::NotADate(_) => Unreadable::NotADate(key.to_string()),
+                other => other,
+            }
         })?;
         self.instants.insert(key.to_string(), instant);
         Ok(())
@@ -272,16 +284,29 @@ impl TimeAxis {
         self.instants.get(key)
     }
 
+    /// The UTC instant of a key read already; `None` for one the axis could not read.
+    pub(crate) fn at(&self, key: &str) -> Option<f64> {
+        self.get(key).map(|instant| instant.at)
+    }
+
+    /// The date of a key read already ([`Instant::date`]), or of one whose date part reads though its clock does not.
+    pub(crate) fn date(&self, key: &str) -> Option<(i32, u8, u8)> {
+        self.get(key).map(|instant| instant.date).or_else(|| self.dates_only.get(key).copied())
+    }
+
+    /// An axis of no grain over `texts`, for a domain no chart axis holds: a text that names no date stays unread.
+    pub(crate) fn over(texts: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        let mut axis = Self::new(Grain::default(), HashMap::new());
+        for text in texts {
+            axis.add(text.as_ref()).ok();
+        }
+        axis
+    }
+
     /// Reads `key` and returns its instant.
     pub(crate) fn read(&mut self, key: &str) -> Result<&Instant, Unreadable> {
         self.add(key)?;
         Ok(&self.instants[key])
-    }
-
-    /// The UTC days of every key, or `None` when any is no date: the question a chart asks of a column
-    /// that may be a category.
-    pub(crate) fn days(&mut self, keys: &[String]) -> Option<Vec<f64>> {
-        keys.iter().map(|key| self.read(key).ok().map(|instant| instant.at)).collect()
     }
 
     /// The start of the bucket of `tu` holding the UTC day of `key`, as a date.
@@ -337,11 +362,20 @@ impl TimeAxis {
         });
     }
 
+    pub(crate) fn dates(&self, keys: &[String]) -> Dates {
+        Dates {
+            text: keys.to_vec(),
+            day: keys.iter().map(|key| self.at(key)).collect(),
+            date: keys.iter().map(|key| self.date(key)).collect(),
+        }
+    }
+
     /// The instants of `domain`, index-aligned with it; `None` when a key was never read.
     pub(crate) fn columns(&self, domain: &[String]) -> Option<TimeColumns> {
         let grain = self.grain;
         let entries = domain.iter().map(|key| self.instants.get(key)).collect::<Option<Vec<_>>>()?;
         Some(TimeColumns {
+            part: grain.part.is_some(),
             at: entries.iter().map(|i| i.at).collect(),
             pos: entries.iter().map(|i| i.pos).collect(),
             nan: entries.iter().map(|i| i.nan).collect(),
@@ -354,6 +388,8 @@ impl TimeAxis {
 /// The instants of an x domain, index-aligned with it.
 #[derive(Clone)]
 pub(crate) struct TimeColumns {
+    /// `iso` names each value's cycle instant (`pos`) rather than its instant (`at`).
+    part: bool,
     pub at: Vec<f64>,
     pub pos: Vec<f64>,
     pub nan: Vec<bool>,
@@ -377,6 +413,84 @@ impl TimeColumns {
         out.end.push(None);
         out.iso.push(end_iso);
         out
+    }
+
+    /// The domain's texts with the instant each names.
+    pub(crate) fn dates(&self) -> Dates {
+        let days = if self.part { &self.pos } else { &self.at };
+        let mut dates = Dates::default();
+        for (text, &day) in self.iso.iter().zip(days) {
+            dates.push(text.clone(), Some(day));
+        }
+        dates
+    }
+}
+
+/// Texts of an x domain beside the UTC instant (in days) each names and its date ([`Instant::date`]), index-aligned.
+/// A text that names no date has neither; one whose date part reads though its clock does not, or whose UTC instant
+/// leaves years 0001 to 9999, has a date alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Dates {
+    pub text: Vec<String>,
+    pub day: Vec<Option<f64>>,
+    pub date: Vec<Option<(i32, u8, u8)>>,
+}
+
+impl Dates {
+    /// The instants of a domain no chart axis holds ([`TimeAxis::over`]).
+    pub fn read(texts: &[String]) -> Self {
+        TimeAxis::over(texts).dates(texts)
+    }
+
+    pub fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// An entry whose text is written on the UTC day of its instant: a date, or a canonical UTC timestamp.
+    pub fn push(&mut self, text: String, day: Option<f64>) {
+        self.text.push(text);
+        self.day.push(day);
+        self.date.push(day.map(|day| civil_from_days(day.floor() as i64)));
+    }
+
+    /// Entry `i` of `from`, as it is.
+    pub fn push_from(&mut self, from: &Dates, i: usize) {
+        self.text.push(from.text[i].clone());
+        self.day.push(from.day[i]);
+        self.date.push(from.date[i]);
+    }
+
+    pub fn extend(&mut self, other: Dates) {
+        self.text.extend(other.text);
+        self.day.extend(other.day);
+        self.date.extend(other.date);
+    }
+
+    /// The entries `keep` holds by index.
+    pub fn filtered(&self, keep: impl Fn(usize) -> bool) -> Dates {
+        let kept: Vec<usize> = (0..self.len()).filter(|&i| keep(i)).collect();
+        Dates {
+            text: kept.iter().map(|&i| self.text[i].clone()).collect(),
+            day: kept.iter().map(|&i| self.day[i]).collect(),
+            date: kept.iter().map(|&i| self.date[i]).collect(),
+        }
+    }
+
+    pub fn civil(&self, i: usize) -> Option<(i32, u8, u8)> {
+        self.date[i]
+    }
+
+    /// Each entry that names a date, with its index and civil date, in domain order.
+    pub fn dated(&self) -> Vec<(usize, (i32, u8, u8))> {
+        (0..self.len()).filter_map(|i| self.civil(i).map(|date| (i, date))).collect()
+    }
+
+    pub fn civils(&self) -> Vec<(i32, u8, u8)> {
+        (0..self.len()).filter_map(|i| self.civil(i)).collect()
     }
 }
 
@@ -481,6 +595,35 @@ mod tests {
         assert_eq!(nine.end, Some(nine.pos + 1.0 / 24.0));
     }
 
+    /// A key's date is the one the parser reads, beside its UTC instant: an aware instant's date on the board's
+    /// wall clock, a naive value's as written. Tokyo's midnight of February 1 is still January 31 in UTC.
+    #[test]
+    fn a_date_reads_on_the_board_wall_clock_beside_its_utc_instant() {
+        let _tokyo = crate::time_zone::zone_scope("Asia/Tokyo");
+        let texts: Vec<String> = [
+            "2024-01-31T15:00:00Z",
+            "2024-02-01T00:00:00",
+            "2024-02-01",
+            "2024-01-31T23:30:00-05:00",
+            "2024-02-01 00:00:00 UTC",
+            "2024-02-01T24:00:00",
+            "2024-02",
+            "2024-02-30",
+            "Q1",
+        ]
+        .map(String::from)
+        .to_vec();
+        let dates = Dates::read(&texts);
+        assert_eq!(dates.civil(0), Some((2024, 2, 1)));
+        assert_eq!(dates.day[0], Some(days_from_civil(2024, 1, 31) as f64 + 15.0 / 24.0));
+        assert_eq!((dates.civil(4), dates.day[4]), (Some((2024, 2, 1)), None));
+        let outside = Dates::read(&["0000-06-01T12:00:00".to_string()]);
+        assert_eq!((outside.civil(0), outside.day[0]), (Some((0, 6, 1)), None));
+        for (i, text) in texts.iter().enumerate() {
+            assert_eq!((dates.civil(i), dates.day[i]), (parse_iso_date(text), date_text_day(text)), "{text}");
+        }
+    }
+
     #[test]
     fn a_labeled_bucket_reads_as_its_start_under_its_own_key() {
         let mut axis = TimeAxis::new(Grain::default(), HashMap::from([("2024-Q2".to_string(), "2024-04-01".to_string())]));
@@ -503,12 +646,69 @@ mod tests {
         assert!(err.diagnostic("c", "x", "bar").to_string().contains("outside years 0001 to 9999"));
     }
 
-    /// The one parser: nothing else in the engine defines a date reader.
+    /// One reading of a date cell for every family: clock as the day's fraction
+    /// (V8's millisecond precision), an offset applied, any other shape unread.
     #[test]
-    fn this_module_holds_the_only_date_parser() {
+    fn a_date_text_is_its_day_with_the_clock_as_the_fraction() {
+        let jan_first = 19723.0;
+        assert_eq!(date_text_day("2024-01-01"), Some(jan_first));
+        assert_eq!(date_text_day("2024-01"), Some(jan_first));
+        assert_eq!(date_text_day("2024-01-01T12:00:00"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01 06:00"), Some(jan_first + 0.25));
+        assert_eq!(date_text_day("2024-01-01T12:00:00Z"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01T12:00:00+06:00"), Some(jan_first + 0.25));
+        assert_eq!(date_text_day("2024-01-01T12:00:00-06:00"), Some(jan_first + 0.75));
+        assert_eq!(date_text_day("2024-01-01T12:00:00.5"), Some(jan_first + 0.5 + 0.5 / 86_400.0));
+        assert_eq!(date_text_day("2024-01-01T12:00:00Z05:00"), None);
+        assert_eq!(date_text_day("2024-01-01T12:00:00."), None);
+        // Every clock and offset `datetime.fromisoformat` takes, as `x_type::parse_date` does.
+        assert_eq!(date_text_day("2024-01-01T12"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01T120000"), Some(jan_first + 0.5));
+        assert_eq!(date_text_day("2024-01-01 00:00:00+05"), Some(jan_first - 5.0 / 24.0));
+        assert_eq!(date_text_day("2024-01-01T12:00:00+0600"), Some(jan_first + 0.25));
+        assert_eq!(date_text_day("2024-01-01T12:00:00.123456"), Some(jan_first + 0.5 + 0.123 / 86_400.0));
+        for unread in ["soon", "2024-01-01T", "2024/01/05", "2024-01-01T24:00:00", "2024-01-01T1:00", "2024-01-01T12:00:00+6", "2024-01-01T12:00:00.x", "2024-01-01T12:00:00Zulu"] {
+            assert_eq!(date_text_day(unread), None, "{unread}");
+        }
+    }
+
+    // ── parse_iso_date ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_full_date() {
+        assert_eq!(parse_iso_date("2024-03-15"), Some((2024, 3, 15)));
+    }
+
+    #[test]
+    fn parse_yearmonth() {
+        assert_eq!(parse_iso_date("2024-03"), Some((2024, 3, 1)));
+    }
+
+    #[test]
+    fn parse_year_only() {
+        assert_eq!(parse_iso_date("2024"), Some((2024, 1, 1)));
+    }
+
+    #[test]
+    fn parse_invalid() {
+        assert_eq!(parse_iso_date("not-a-date"), None);
+        assert_eq!(parse_iso_date("Jan"), None);
+        assert_eq!(parse_iso_date("2025-01-06X00:00:00"), None);
+        assert_eq!(parse_iso_date("2025-1-06 00:00:00"), None);
+    }
+
+    #[test]
+    fn parse_datetime_takes_date_part() {
+        // Production's _ISO_DATETIME_RE accepts "YYYY-MM-DD" followed by "T"
+        // or " " (time_unit_detect.py); grain detection uses the date part.
+        assert_eq!(parse_iso_date("2025-01-06 00:00:00"), Some((2025, 1, 6)));
+        assert_eq!(parse_iso_date("2025-01-06T12:30:00"), Some((2025, 1, 6)));
+    }
+
+    fn sources() -> Vec<(std::path::PathBuf, String)> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut stack = vec![root.clone()];
-        let mut offenders = Vec::new();
+        let mut out = Vec::new();
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -516,20 +716,136 @@ mod tests {
                     stack.push(path);
                 } else if path.extension().is_some_and(|e| e == "rs") && path != root.join("time_axis.rs") {
                     let text = std::fs::read_to_string(&path).unwrap();
-                    for needle in ["fn date_text_day(", "fn parse_iso_date("] {
-                        if text.contains(needle) {
-                            offenders.push(format!("{}: {needle}", path.display()));
-                        }
-                    }
+                    out.push((path.strip_prefix(&root).unwrap().to_path_buf(), text));
+                }
+            }
+        }
+        out
+    }
+
+    /// The one parser: nothing else in the engine defines a date reader.
+    #[test]
+    fn this_module_holds_the_only_date_parser() {
+        let mut offenders = Vec::new();
+        for (path, text) in sources() {
+            for needle in ["fn date_text_day(", "fn parse_iso_date("] {
+                if text.contains(needle) {
+                    offenders.push(format!("{}: {needle}", path.display()));
                 }
             }
         }
         assert!(offenders.is_empty(), "{offenders:?}");
     }
+
+    /// Outside this module only the readers of text no axis holds call the parser, and only the readers of a
+    /// domain no chart axis holds read one into dates; tests read through [`testing`].
+    #[test]
+    fn only_readers_of_text_no_axis_holds_call_the_parser() {
+        const PARSERS: [&str; 2] = ["date_text_day", "parse_iso_date"];
+        const PARSER_READERS: [(&str, &str); 9] = [
+            ("annotation/model.rs", "days"),
+            ("families/x_type.rs", "parse_date"),
+            ("families/scatter_axis.rs", "authored_day_domain"),
+            ("families/scatter/layout.rs", "fit"),
+            ("variables.rs", "full_iso_date"),
+            ("families/bar/vertical.rs", "leading_dates"),
+            ("families/temporal.rs", "iso_format_day"),
+            ("families/table/bind.rs", "iso_day"),
+            ("families/custom_d3_time.rs", "instant"),
+        ];
+        const DOMAIN_READS: [&str; 2] = ["Dates::read", "TimeAxis::over"];
+        const DOMAIN_READERS: [(&str, &str); 10] = [
+            ("families/bar/bind.rs", "rekey_to_enclosing_buckets"),
+            ("families/line/bind.rs", "rekey_to_enclosing_buckets"),
+            ("families/bar/horizontal.rs", "render_horizontal_panel"),
+            ("families/scatter/bind.rs", "bind"),
+            ("families/x_type.rs", "scaffold_rows"),
+            ("families/temporal.rs", "has_labeled_bucket"),
+            ("families/axis_caption.rs", "x_axis_caption"),
+            ("families/heatmap.rs", "of"),
+            ("families/heatmap/layout.rs", "y_date_labels"),
+            ("families/heatmap_facet.rs", "dates"),
+        ];
+        let calls = |code: &str, names: &[&str]| {
+            names.iter().any(|name| {
+                code.match_indices(name).any(|(i, _)| {
+                    let before = code[..i].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_');
+                    let after = &code[i + name.len()..];
+                    !before && (after.starts_with('(') || after.starts_with(')') || after.starts_with(',') || after.starts_with(';'))
+                })
+            })
+        };
+        let mut offenders = Vec::new();
+        for (path, text) in sources() {
+            let path = path.to_string_lossy().replace('\\', "/");
+            // The functions open around a line: name, the brace depth it starts at, whether its body opened.
+            let mut open: Vec<(&str, i64, bool)> = Vec::new();
+            let mut depth = 0_i64;
+            let mut within_use = false;
+            for (n, line) in text.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or_default();
+                let item = code.trim_start();
+                let item = item.strip_prefix("pub").map_or(item, |rest| match rest.strip_prefix('(') {
+                    Some(scoped) => scoped.split_once(')').map_or(rest, |(_, after)| after),
+                    None => rest,
+                });
+                within_use |= item.trim_start().starts_with("use ");
+                if within_use {
+                    // A renamed reader hides its calls from the scan.
+                    let renames = PARSERS.iter().chain(&["Dates", "TimeAxis"]).any(|name| {
+                        code.match_indices(&format!("{name} as ")).any(|(i, _)| {
+                            !code[..i].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_')
+                        })
+                    });
+                    if renames {
+                        offenders.push(format!("{path}:{} renames a date reader", n + 1));
+                    }
+                    within_use = !code.trim_end().ends_with(';');
+                    continue;
+                }
+                if let Some(at) = code.find("fn ") {
+                    let name = code[at + 3..].split(|c: char| !c.is_alphanumeric() && c != '_').next().unwrap_or_default();
+                    if !name.is_empty() {
+                        open.push((name, depth, false));
+                    }
+                }
+                let within = open.last().map_or("", |f| f.0);
+                let site = (path.as_str(), within);
+                if calls(code, &PARSERS) && !PARSER_READERS.contains(&site) || calls(code, &DOMAIN_READS) && !DOMAIN_READERS.contains(&site) {
+                    offenders.push(format!("{path}:{} in {within}", n + 1));
+                }
+                depth += code.matches('{').count() as i64 - code.matches('}').count() as i64;
+                while let Some(f) = open.last_mut() {
+                    f.2 |= depth > f.1 || code.contains('{');
+                    let ended = if f.2 { depth <= f.1 } else { code.trim_end().ends_with(';') };
+                    if !ended {
+                        break;
+                    }
+                    open.pop();
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "{offenders:#?}");
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod testing {
+    /// The UTC day of a date text, for a test that states its instants as text.
+    pub(crate) fn day(text: &str) -> f64 {
+        super::date_text_day(text).unwrap_or_else(|| panic!("{text:?} is no date"))
+    }
+
+    /// Date texts with their instants, for a test that hands the ladder a domain.
+    pub(crate) fn dates<T: AsRef<str>>(texts: &[T]) -> super::Dates {
+        super::Dates::read(&texts.iter().map(|t| t.as_ref().to_string()).collect::<Vec<_>>())
+    }
+
+    /// An axis of no grain over texts, for a test that hands a mark its axis.
+    pub(crate) fn axis<T: AsRef<str>>(texts: &[T]) -> super::TimeAxis {
+        super::TimeAxis::over(texts)
+    }
+
     /// Every positioning attribute of an SVG, in document order: the drawn geometry with the
     /// texts that name a row (tooltips, aria labels) left out, so two spellings of one instant
     /// compare equal when they draw the same marks.

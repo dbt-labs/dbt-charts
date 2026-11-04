@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from dbt_charts.core.compile import compile
+from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure, CacheHit
 from dbt_charts.core.execute.duckdb_cache import (
     compute_query_hash,
@@ -17,6 +18,8 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_variables_hash,
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
+
+from .._results import rows_result, rows_schema
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
@@ -88,13 +91,16 @@ class TestCrossRaceCacheDedup:
         ok = Mock()
         ok.is_success = True
         ok.data = shared_rows
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         registry_a = Mock()
+        registry_a.project_file_sources.return_value = {}
         registry_a.execute.return_value = ok
 
         # Adapter for board B — must NOT be called
         registry_b = Mock()
+        registry_b.project_file_sources.return_value = {}
         registry_b.execute.side_effect = AssertionError(
             "BoardB adapter must not be called — should hit BoardA's cache entry"
         )
@@ -146,39 +152,32 @@ class TestReferenceExpansionKeysCache:
     """Editing an upstream query must bust the downstream query's cache entry."""
 
     def test_upstream_edit_misses_downstream_cache(
-        self, in_memory_cache: TrivialDuckDBCache, monkeypatch: pytest.MonkeyPatch
+        self, in_memory_cache: TrivialDuckDBCache
     ):
         from dbt_charts.core.execute import Executor
 
-        # The file-source path writes the cache under the authored query, which
-        # is where a stale downstream entry used to survive.
-        monkeypatch.setattr(Executor, "_has_file_support", True)
-        monkeypatch.setattr(
-            Executor, "_resolve_file_source", lambda self, q: Mock(files={})
-        )
-
         def run(yaml_text: str, rows: list[dict[str, int]]) -> tuple[list, Mock]:
             compiled = compile(yaml_text)
-            materializer = Mock()
-            materializer.materialize_and_run.return_value = (rows, {})
+            registry = Mock()
+            registry.project_file_sources.return_value = {}
+            registry.execute.return_value = QueryResult(
+                data=rows, columns=["n"], schema=rows_schema(rows)
+            )
             executor = Executor(
                 compiled.board,
-                adapter_registry=Mock(),
+                adapter_registry=registry,
                 query_registry=compiled.query_registry,
                 result_cache=in_memory_cache,
             )
-            monkeypatch.setattr(
-                Executor, "_get_file_materializer", lambda self: materializer
-            )
-            return executor.execute_query("downstream"), materializer
+            return executor.execute_query("downstream"), registry
 
         old_rows, _ = run(BOARD_YAML_REFS, [{"n": 1}])
         edited = BOARD_YAML_REFS.replace("SELECT 1 AS n", "SELECT 2 AS n")
-        new_rows, materializer = run(edited, [{"n": 2}])
+        new_rows, registry = run(edited, [{"n": 2}])
 
         assert old_rows == [{"n": 1}]
         assert new_rows == [{"n": 2}]
-        assert materializer.materialize_and_run.call_count == 1
+        assert registry.execute.call_count == 1
 
     def test_upstream_dbt_ref_manifest_change_changes_downstream_key(self) -> None:
         from dbt_charts.core.execute import Executor
@@ -189,6 +188,7 @@ class TestReferenceExpansionKeysCache:
 
         def key_for(manifest_version: str) -> tuple[str, str, str]:
             registry = Mock()
+            registry.project_file_sources.return_value = {}
             registry.resolve_query_source.return_value = {}
             registry.dbt_manifest_version.return_value = manifest_version
             executor = Executor(
@@ -196,9 +196,7 @@ class TestReferenceExpansionKeysCache:
                 adapter_registry=registry,
                 query_registry=compiled.query_registry,
             )
-            return executor._cache_key(
-                "downstream", executor._get_query("downstream"), {}
-            )
+            return executor.cache_key("downstream", {})
 
         assert key_for("v1") != key_for("v2")
 
@@ -222,7 +220,7 @@ class TestSourceHashInvalidation:
             source_hash_a,
             query_hash,
             vars_hash,
-            [{"x": 1}],
+            rows_result([{"x": 1}]),
             board_slug="board1",
             query_name="q",
         )
@@ -262,7 +260,9 @@ class TestNewKeyRoundtrip:
         vh = compute_variables_hash({})
         data = [{"x": 1}]
 
-        in_memory_cache.put(sh, qh, vh, data, board_slug="f", query_name="q")
+        in_memory_cache.put(
+            sh, qh, vh, rows_result(data), board_slug="f", query_name="q"
+        )
         result = in_memory_cache.get(sh, qh, vh)
         assert isinstance(result, CacheHit)
         assert result.rows == data
@@ -286,7 +286,9 @@ class TestNewKeyRoundtrip:
         sh = compute_source_hash("duckdb://:memory:")
         qh = compute_query_hash("SELECT 1 AS x")
         vh = compute_variables_hash({})
-        in_memory_cache.put(sh, qh, vh, [{"x": 1}], board_slug="f", query_name="q")
+        in_memory_cache.put(
+            sh, qh, vh, rows_result([{"x": 1}]), board_slug="f", query_name="q"
+        )
         assert in_memory_cache.get(sh, qh, vh) is not None
 
         in_memory_cache.clear(sh, qh, vh)
@@ -332,6 +334,7 @@ class TestQueryResultCacheProtocol:
                 query_name,
                 source_name="",
                 truncated_reason=None,
+                variables=None,
             ):
                 pass
 
@@ -367,6 +370,7 @@ class TestQueryResultCacheProtocol:
                 query_name,
                 source_name="",
                 truncated_reason=None,
+                variables=None,
             ):
                 pass
 
@@ -385,9 +389,11 @@ class TestQueryResultCacheProtocol:
         ok = Mock()
         ok.is_success = True
         ok.data = [{"amount": 1}]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = ok
 
         noop = NoopCache()
@@ -482,7 +488,7 @@ class TestPutReplacesNotAppends:
         kw = {"board_slug": "f", "query_name": "q"}
 
         for _ in range(3):
-            in_memory_cache.put(sh, qh, vh, data, **kw)
+            in_memory_cache.put(sh, qh, vh, rows_result(data), **kw)
             hit = in_memory_cache.get(sh, qh, vh)
             assert hit is not None
             assert hit.rows == data

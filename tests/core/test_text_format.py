@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from dbt_charts.core.compile.models.primitives import BoardLinks
 
 """Tests for text render output format."""
@@ -65,6 +67,7 @@ def _make_compiled_executor(
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     return Executor(
         compile_result.board,
@@ -780,7 +783,7 @@ class TestTextFormatFormattingCorrectness:
     """Regression coverage for text-render formatting correctness and error isolation."""
 
     def test_compact_formats_are_analytic_on_a_kpi(self, make_chart):
-        """The KPI slot defaults to the narrative register ("140 mn"); `compact`
+        """The KPI slot defaults to the narrative register ("140m"); `compact`
         and `currency_compact` carry the analytic one into every slot."""
         kpi = make_chart(
             "kpi",
@@ -803,7 +806,7 @@ class TestTextFormatFormattingCorrectness:
 
         assert "- value: 140M" in result
         assert "- value: $140M" in result
-        assert "mn" not in result
+        assert "140m" not in result
 
     def test_kpi_sub_unit_currency_not_multiplied(self, make_chart):
         """A sub-$1 KPI must not take the SI spec meant for $500m-scale values."""
@@ -1235,6 +1238,7 @@ rows:
         ok.resolved_relations = None
         ok.truncated_reason = "max_rows"
         mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
         mock_registry.execute.return_value = ok
         executor = Executor(
             result.board,
@@ -1404,13 +1408,15 @@ class TestTextDataFormat:
         assert "4e-05" in data_section
 
 
-def _render_yaml_text(board_yaml: str, data: list[dict], **kwargs) -> str:
+def _render_yaml_text(
+    board_yaml: str, data: list[dict], output_format: str = "text", **kwargs
+) -> str:
     from dbt_charts.core.compile import compile as compile_board
 
     result = compile_board(board_yaml)
     assert result.success and result.board is not None, result.errors
     executor = _make_compiled_executor(result, data)
-    return render(result.board, executor, format="text", **kwargs).output
+    return render(result.board, executor, format=output_format, **kwargs).output
 
 
 _ONE_QUERY = """\
@@ -1428,6 +1434,18 @@ def _data_summary_for_bar(data: list[dict]) -> str:
 
 
 class TestTextSummaryFidelity:
+    def test_wide_chart_summarizes_each_measure(self) -> None:
+        from dbt_charts.core.render.text_format import _data_summary
+
+        chart = {"x": "month", "y": "value", "wide_measures": ["a", "b"]}
+        data = [
+            {"month": "2024-01", "a": 1, "b": 10},
+            {"month": "2024-02", "a": 3, "b": 20},
+        ]
+        summary = _data_summary(chart, data, {})
+        assert "a: 1–3" in summary
+        assert "b: 10–20" in summary
+
     def test_kpi_heading_uses_authored_label(self) -> None:
         output = _render_yaml_text(
             f"""\
@@ -1538,6 +1556,61 @@ text: |
             f"[text cut: showing the first {TEXT_EXCERPT_CHARS} of "
             f"{len(body.strip())} characters]"
         ) in output
+
+    @pytest.mark.parametrize("output_format", ["text", "text-data"])
+    def test_callout_message_prints_under_its_heading(self, output_format: str) -> None:
+        output = _render_yaml_text(
+            """\
+title: Report
+charts:
+  insight:
+    type: callout
+    title: Tuesdays lead
+    message: |
+      Tuesday books the most revenue.
+
+      Mondays trail by a third.
+rows:
+  - insight
+""",
+            [],
+            output_format,
+        )
+
+        assert (
+            "## Tuesdays lead (callout)\n"
+            "\n"
+            "Tuesday books the most revenue.\n"
+            "\n"
+            "Mondays trail by a third."
+        ) in output
+
+    def test_long_callout_message_is_cut_with_an_explicit_note(self) -> None:
+        from dbt_charts.core.render.text_format import TEXT_EXCERPT_CHARS
+
+        body = "word " * TEXT_EXCERPT_CHARS
+        output = _render_yaml_text(
+            f"""\
+title: Report
+charts:
+  insight:
+    type: callout
+    message: |
+      {body}
+rows:
+  - insight
+""",
+            [],
+        )
+        # The drawn card overflows too, and its warning quotes the authored text.
+        summary = output.split("\n## Warnings", 1)[0]
+
+        assert body[: TEXT_EXCERPT_CHARS - 1] in summary
+        assert body not in summary
+        assert (
+            f"[text cut: showing the first {TEXT_EXCERPT_CHARS} of "
+            f"{len(body.strip())} characters]"
+        ) in summary
 
     def test_table_states_one_consistent_total(self) -> None:
         data = [{"account": f"Acct{i}", "n": i} for i in range(60)]

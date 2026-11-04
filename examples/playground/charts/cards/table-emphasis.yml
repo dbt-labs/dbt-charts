@@ -443,6 +443,7 @@ charts:
     query: company_revenue_total
     title: Company Revenue
     subtitle: M6a — Sequential scale on revenue + total row (total suppresses fill)
+    row_role: row_role
     style:
       columns:
         quarterly_revenue:
@@ -457,7 +458,6 @@ charts:
         margin:
           format: percent
       row:
-        role: row_role
         divider:
           width: 0.5
           visible: true
@@ -477,6 +477,7 @@ charts:
           background: '#f0fdf4'
           font:
             color: '#16a34a'
+    row_role: row_role
     style:
       columns:
         quarterly_revenue:
@@ -488,7 +489,6 @@ charts:
         margin:
           format: percent
       row:
-        role: row_role
         divider:
           width: 0.5
           visible: true

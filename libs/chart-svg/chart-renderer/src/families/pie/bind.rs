@@ -41,7 +41,7 @@ pub(crate) struct Wheel {
 }
 
 pub(crate) struct Slice {
-    pub(crate) fill: String,
+    pub(crate) fill: crate::pattern::Paint,
     /// The structured-tooltip description; `None` when the chart authors no tooltip format.
     pub(crate) aria: Option<String>,
     pub(crate) href: Option<String>,
@@ -207,11 +207,14 @@ fn bind_slices(
     let slices = (0..thetas.len())
         .map(|idx| {
             let fill = match (color_field, category_scale) {
-                (None, _) => r.palette[0].clone(),
+                (None, _) => r.patterns.category(0, &r.palette[0])?,
                 (Some(cf), Some(scale)) if !matches!(rows[idx].get(cf), None | Some(Value::Null)) => {
-                    category_color(scale, &row_str(&rows[idx], cf), &r.palette)?
+                    crate::common::category_paint(scale, &row_str(&rows[idx], cf), &r.palette, &r.patterns)?
                 }
-                _ => r.palette[idx % r.palette.len()].clone(),
+                _ => {
+                    let slot = palette_slot(r, rows, color_field, idx);
+                    r.patterns.category(slot, &r.palette[slot])?
+                }
             };
             let aria = value_title
                 .as_deref()
@@ -221,6 +224,13 @@ fn bind_slices(
         })
         .collect::<Result<Vec<_>, String>>()?;
     Ok(slices)
+}
+
+/// The palette position of row `idx`'s slice: its series' slot in a linked legend, else its row
+/// position, so a filter that leaves fewer slices recolors none.
+fn palette_slot(r: &Resolved, rows: &[serde_json::Map<String, Value>], color_field: Option<&str>, idx: usize) -> usize {
+    let linked = color_field.zip(r.legend_view.as_ref()).and_then(|(field, view)| view.slot(&row_str(&rows[idx], field)));
+    linked.unwrap_or(idx) % r.palette.len()
 }
 
 /// The link of row 0 the visible center total carries. A pie over no rows has no row to fill
@@ -287,7 +297,7 @@ fn bind_labels(
         let fill = via_scale.unwrap_or_else(|| {
             authored.unwrap_or_else(|| {
                 r.dark_companion_stops
-                    .get(idx % r.dark_companion_stops.len().max(1))
+                    .get(palette_slot(r, rows, color_field, idx) % r.dark_companion_stops.len().max(1))
                     .cloned()
                     .unwrap_or_else(|| "#333".into())
             })
@@ -442,14 +452,21 @@ fn plan_legend(
             }
         }
     }
+    // A linked legend lists the options of its variable, whether or not a slice holds them.
+    if let Some(options) = r.legend_view.as_ref().and_then(|view| view.series()) {
+        domain = options.iter().map(String::as_str).collect();
+    }
     let fills: Vec<String> = domain
         .iter()
         .enumerate()
-        .map(|(idx, value)| match category_scale {
-            Some(scale) => category_color(scale, value, &r.palette),
-            None => Ok(r.palette[idx % r.palette.len()].clone()),
+        .map(|(idx, value)| {
+            let paint = match category_scale {
+                Some(scale) => crate::common::category_paint(scale, value, &r.palette, &r.patterns)?,
+                None => r.patterns.category(idx, &r.palette[idx % r.palette.len()])?,
+            };
+            Ok(paint.swatch("none", 0.0).fill)
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, String>>()?;
 
     if domain.is_empty() {
         return Err("pie: a legend over a color field with no values is not ported".into());
@@ -517,6 +534,7 @@ fn bind_attached(
         &attached.table,
         &attached.row_indices,
         &r.palette,
+        &|i| palette_slot(r, &payload.rows, color_field_of(r), i),
         r.identity_field.as_ref(),
         &r.theta,
         thetas,
@@ -567,6 +585,7 @@ pub(super) fn project_pie_table_rows(
     payload: &Payload,
     row_indices: &[usize],
     palette: &[String],
+    slot: &dyn Fn(usize) -> usize,
     identity_field: Option<&String>,
     theta_field: &str,
     thetas: &[f64],
@@ -584,7 +603,7 @@ pub(super) fn project_pie_table_rows(
             (Some(scale), Some(field)) if !matches!(rows[i].get(field.as_str()), None | Some(Value::Null)) => {
                 category_color(scale, &row_str(&rows[i], field), palette)?
             }
-            _ => palette[i % palette.len()].clone(),
+            _ => palette[slot(i)].clone(),
         };
         let mut row = serde_json::Map::new();
         row.insert("swatch".into(), Value::String(swatch));
@@ -608,6 +627,7 @@ fn bind_table(
     attached: &Value,
     row_indices: &[usize],
     palette: &[String],
+    slot: &dyn Fn(usize) -> usize,
     identity_field: Option<&String>,
     theta_field: &str,
     thetas: &[f64],
@@ -626,6 +646,7 @@ fn bind_table(
         payload,
         row_indices,
         palette,
+        slot,
         identity_field,
         theta_field,
         thetas,
@@ -645,6 +666,7 @@ fn bind_table(
         board_style: payload.board_style.clone(),
         language: None,
         variables: payload.variables.clone(),
+        variable_options: Default::default(),
         filter_variables: payload.filter_variables.clone(),
         // A legend with a hidden header and no paging: nothing to sort or filter.
         interactive_controls: false,
@@ -657,6 +679,7 @@ fn bind_table(
         pie_mode: None,
         board_composed: false,
         authored_height: None,
+        placement: payload.placement,
     };
     crate::families::table::bind::bind(&table_payload)
 }

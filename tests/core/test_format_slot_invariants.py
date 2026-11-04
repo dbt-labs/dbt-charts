@@ -17,8 +17,10 @@ from pydantic import BaseModel
 import dbt_charts.core.compile.models as _models_pkg
 from dbt_charts.core.compile.compiler import compile as compile_board
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.format import resolve_format_parts
 from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.markers import Format
+from dbt_charts.core.compile.support_table import _compact_counterpart
 from dbt_charts.core.text.format_d3 import format_d3, is_d3_si_spec
 from dbt_charts.core.text.numeral_scale import sub_unit_digit_format
 from dbt_charts.core.text.predefined_formats import PREDEFINED_SPECS
@@ -169,6 +171,9 @@ class SlotFixture:
     # True for a slot that paints the exact authored value, so a preset's house digits
     # can be checked against format_value.
     exact_value: bool = False
+    # True for a support table slot: a reference prints a full-digit preset in the
+    # compact name of its kind (`currency_whole` paints `currency`).
+    compacts_full_digits: bool = False
 
 
 def _axis_y_labels(shape: str, value: float) -> dict[str, Any]:
@@ -585,6 +590,7 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             bands=_ALL_BANDS,
             build=_support_table_entry,
             exact_value=True,
+            compacts_full_digits=True,
         ),
         SlotFixture(
             "support_table.entries.N.format (aggregate)",
@@ -592,6 +598,7 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             bands=_ALL_BANDS,
             build=_support_table_aggregate_entry,
             exact_value=True,
+            compacts_full_digits=True,
         ),
         SlotFixture(
             "support_table.entries.N.format (per_series)",
@@ -599,6 +606,7 @@ SLOT_FIXTURES: dict[str, SlotFixture] = {
             bands=_ALL_BANDS,
             build=_support_table_per_series_entry,
             exact_value=True,
+            compacts_full_digits=True,
         ),
         SlotFixture(
             "tooltip.N.format",
@@ -723,9 +731,10 @@ def _check_renders(shape: str, band: str, svg: str) -> None:
 
 def _check_no_milli_beside_currency(shape: str, band: str, svg: str) -> None:
     """I2: no digit-followed-by-milli-'m' in a text token that also carries a currency
-    affix.
+    affix. Only a band below 1 can print milli; at or above it, `m` is the narrative
+    million.
     """
-    if shape == "none":
+    if shape == "none" or abs(BANDS[band]) >= 1:
         return
     hits = [
         t
@@ -784,8 +793,16 @@ _HOUSE_REGISTER_SLOTS = frozenset(
 def _check_preset_paints_house_digits(
     slot: SlotFixture, preset: str, band: str, svg: str
 ) -> None:
-    """A bare predefined name paints the digits ``format_value`` gives it."""
+    """A bare predefined name paints the digits ``format_value`` gives it, or the
+    compact name's a support table prints it in."""
     value = BANDS[band]
+    compact = (
+        _compact_counterpart(resolve_format_parts(preset))
+        if slot.compacts_full_digits
+        else None
+    )
+    if compact is not None and compact.spec is not None:
+        preset = compact.spec
     if (
         slot.id in _HOUSE_REGISTER_SLOTS
         and 0 < abs(value) < 1
@@ -1141,7 +1158,7 @@ _UNIT_SUFFIX_PAINT: dict[str, tuple[dict[str, str], float, str]] = {
     "magnitude": (
         {"spec": "number", "suffix": " EUR"},
         1_234_567.0,
-        r"1\.23(?:mn|M) EUR",
+        r"1\.23(?:m|M) EUR",
     ),
     "percent": ({"spec": "percent", "suffix": " YoY"}, 0.123, r"12\.3% YoY"),
 }
@@ -1351,15 +1368,18 @@ def test_support_table_currency_preset_at_or_above_one_still_compacts(
     build: Callable[[str, float], dict[str, Any]],
 ) -> None:
     svg = render_board_to_svg(_to_yaml(build("currency", BANDS["large"])))
-    assert any(t.startswith(("$12.4M", "$12.4mn")) for t in _dollar_texts(svg))
+    assert any(t.startswith(("$12.4M", "$12.4m")) for t in _dollar_texts(svg))
 
 
 @pytest.mark.parametrize("build", _SUPPORT_TABLE_BUILDERS, ids=lambda b: b.__name__)
-def test_support_table_without_a_format_below_one_is_unchanged(
+def test_support_table_without_a_format_below_one_paints_plain_digits(
     build: Callable[[str, float], dict[str, Any]],
 ) -> None:
+    """The compact ``number`` a support table defaults to never prints a sub-unit
+    SI prefix (``670m`` reads as millions)."""
     svg = render_board_to_svg(_to_yaml(build("none", BANDS["sub_one"])))
-    assert "670m" in [_TAG_RE.sub("", t) for t in _digit_texts(svg)]
+    painted = [_TAG_RE.sub("", t) for t in _digit_texts(svg)]
+    assert "0.67" in painted and "670m" not in painted, painted
 
 
 def test_mirror_axis_currency_preset_below_one_paints_plain_digits() -> None:

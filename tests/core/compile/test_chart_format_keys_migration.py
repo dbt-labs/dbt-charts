@@ -188,7 +188,7 @@ def test_theme_family_key_is_deleted_with_a_warning(
     raw: dict[str, Any] = {"style": {"charts": {"bar": {key: "$,.0f"}}}}
 
     with pytest.warns(SchemaMigrationWarning, match=key):
-        prepared = prepare_board_mapping(raw, model=BoardPatch)
+        prepared = prepare_board_mapping(raw, patch=True)
 
     BoardPatch.model_validate(prepared)
     assert "number_format" not in str(prepared)

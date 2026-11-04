@@ -44,7 +44,7 @@ use crate::families::color_scale::{
 use crate::contract;
 use measure::baseline_shift;
 use print::print;
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 use crate::families::legend::{
     drawn_symbol_legend, horizontal_gradient_length, unit_position, vega_legend, LegendConfig, LegendEntry, LegendSymbol,
     VEGA_GRADIENT_THICKNESS,
@@ -187,7 +187,7 @@ impl HeatmapXAxis {
             .transpose()?;
         // A heatmap collapses `values` to the ticks the ladder keeps.
         let resolved = ordinal_date_labels(
-            &dated,
+            &crate::time_axis::Dates::read(&dated),
             data_tu,
             unit,
             labels_cfg,
@@ -424,7 +424,7 @@ impl HeatmapXAxis {
         let anchor_y = axis_top + sign * (self.tick_len + self.label_pad);
         let dy = measure::baseline_shift(baseline, self.font_size);
         // A flat label is `middle`-anchored whatever the side; a rotated one follows the angle.
-        let face = LabelFace { places: 2, anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, style: ax_x.labels.font.style.as_deref(), fill: label_color };
+        let face = LabelFace { anchor: svg_text_anchor(align), family: &self.family, size: self.font_size, weight: &label_weight, style: ax_x.labels.font.style.as_deref(), fill: label_color };
         let flat_face = LabelFace { anchor: "middle", ..face };
         let visible = self.visible(plot_w);
         let center_of = |label: &AxisLabel| {
@@ -433,7 +433,7 @@ impl HeatmapXAxis {
         let mut items = Vec::new();
         if self.tick_len > 0.0 {
             let xs = self.labels.iter().map(|label| plot_left + center_of(label).floor() + AXIS_TRANSLATE);
-            items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (floor_y, axis_top + sign * self.tick_len), 2)?);
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (floor_y, axis_top + sign * self.tick_len))?);
         }
         for (label, &shown) in self.labels.iter().zip(&visible) {
             let center = center_of(label);
@@ -458,7 +458,7 @@ impl HeatmapXAxis {
             };
             for (text, y) in [(&label.row1, row1_y), (&label.row2, row2_y)] {
                 if !text.is_empty() {
-                    items.push(flat_label((plot_left + center, y), &flat_face, !shown, text));
+                    items.push(flat_label(Role::Axis, (plot_left + center, y), &flat_face, !shown, text));
                 }
             }
         }
@@ -693,8 +693,8 @@ fn row_axis(
     title: Option<(&str, &crate::common::AxisTitle, f64, f64, f64)>,
 ) -> Result<Vec<Node>, String> {
     let mut ink = crate::common::value_ticks(face.ticks, labels.iter().map(|&(cy, _)| cy), tick_edge, outward, face.tick_len, &[])?;
-    let label_face = LabelFace { places: 2, anchor, family: face.family, size: face.size, weight: face.weight, style: face.style, fill: face.color };
-    ink.extend(labels.iter().map(|(cy, text)| flat_label((label_x, cy + face.shift), &label_face, false, text)));
+    let label_face = LabelFace { anchor, family: face.family, size: face.size, weight: face.weight, style: face.style, fill: face.color };
+    ink.extend(labels.iter().map(|(cy, text)| flat_label(Role::Axis, (label_x, cy + face.shift), &label_face, false, text)));
     if let Some((text, style, edge, center, sign)) = title {
         ink.extend(crate::common::axis_title_rotated(text, style, edge, center, sign, None));
     }
@@ -709,7 +709,7 @@ fn render_panel(
     plot_w: f64,
     plot_h: f64,
     right: &RightAxis,
-) -> Result<(String, PanelGeometry), String> {
+) -> Result<PanelGeometry, String> {
     let x_scale = BandScale::new(x_domain.to_vec(), 0.0, plot_w, 0.0, 0.0);
     let y_scale = BandScale::new(y_domain.to_vec(), 0.0, plot_h, 0.0, 0.0);
     let shown = |band: &String| style.ax_y.labels.cased(band);
@@ -757,12 +757,8 @@ fn render_panel(
     }, None);
     let left = margins.left;
 
-    let (canvas_w, canvas_h) = (left + plot_w + margins.right, plot_h + margins.bottom);
     let cells = bind_cells(rows, x_scale.domain(), y_scale.domain(), &style.cells)?;
-    let mut head = vec![Node::group(
-        Attrs::new().set("transform", format!("translate({left:.2},0)")),
-        cell_nodes(&cells, &x_scale, &y_scale, &style.marks)?,
-    )];
+    let mut head = vec![Node::group(Role::Chrome, Attrs::new(), cell_nodes(&cells, &x_scale, &y_scale, &style.marks)?).translate(left, 0.0)];
     let y_caption = category_axis_caption(style.y_title, style.ax_y, y_domain)?;
     let face = style.row_face();
     let label_shift = face.shift;
@@ -798,25 +794,9 @@ fn render_panel(
             style.y_right.then_some((style.y_title, style.y_title_style, edge_x + style.y_label_reach, plot_h / 2.0, 1.0)),
         )?;
     }
-    let root = |children: Vec<Node>| {
-        let attrs = Attrs::new()
-            .set("xmlns", "http://www.w3.org/2000/svg")
-            .set("width", canvas_w.to_string())
-            .set("height", canvas_h.to_string())
-            .set("viewBox", format!("0 0 {canvas_w} {canvas_h}"));
-        print(&[Node::Svg { extent: scene::Extent { width: canvas_w, height: canvas_h }, attrs, children }])
-    };
-    // Printing is concatenative, and the composer cuts the panel by byte offset: print the pieces apart and
-    // take the opener from a childless root, which always prints its end tag (hence the `expect`).
-    let opened = root(Vec::new());
-    let opener = opened.strip_suffix("</svg>").expect("a childless root prints its end tag");
-    let (printed_head, printed_value_axis) = (print(&head), print(&value_axis_nodes));
-    let content_start = opener.len();
-    let value_axis_start = content_start + printed_head.len();
-    let svg_end = value_axis_start + printed_value_axis.len();
-    let svg = format!("{opener}{printed_head}{printed_value_axis}</svg>");
-    let value_axis = (right_axis && right.paint)
-        .then(|| crate::families::facet_compose::ValueAxisInk { range: value_axis_start..svg_end, origin: (0.0, 0.0) });
+    let ink_nodes = crate::families::facet_compose::PanelInk::flat(head, value_axis_nodes);
+    let content = ink_nodes.content.clone();
+    let value_axis = (right_axis && right.paint).then(|| ink_nodes.value_axis((0.0, 0.0)));
 
     let mut ink = vega_fit::Bounds::new(left, 0.0, left + plot_w, plot_h).expand(style.marks.reach);
     if right_axis && right.fold {
@@ -838,8 +818,7 @@ fn render_panel(
         }
     }
     let geometry = PanelGeometry {
-        content_start,
-        svg_end,
+        content,
         top_axis_overhang: (-ink.y1).max(0.0),
         value_title_w: 0.0,
         legend: None,
@@ -862,14 +841,14 @@ fn render_panel(
             caption: y_caption.clone(),
             val_font_size: style.y_font_size,
             val_weight: style.y_weight.clone(),
-            val_style: style.ax_y.labels.font.style_attr(),
+            val_style: style.ax_y.labels.font.style.clone(),
             val_color: style.y_color.to_string(),
             val_family: style.y_family.to_string(),
         }),
         axis: PanelXAxis::Heat(x_axis.clone()),
         value_axis,
     };
-    Ok((svg, geometry))
+    Ok(geometry)
 }
 
 /// A gradient legend: a horizontal `length x 16` bar with its ladder labels a
@@ -1065,12 +1044,12 @@ impl<'a> GradientLegend<'a> {
         let mut nodes = Vec::new();
         if let Some(t) = &self.title {
             nodes.push(Node::text(
+                Role::Legend,
+                (x, y + baseline_shift("top", t.size)),
                 Attrs::new()
-                    .set("x", format!("{x:.2}"))
-                    .set("y", format!("{:.2}", y + baseline_shift("top", t.size)))
                     .set("text-anchor", "start")
                     .vega("font-family", t.family)
-                    .set("font-size", t.size.to_string())
+                    .num("font-size", t.size)
                     .quick_some("font-style", t.style)
                     .set("font-weight", t.weight.clone())
                     .set("fill", t.color),
@@ -1079,13 +1058,10 @@ impl<'a> GradientLegend<'a> {
         }
         let y = y + self.title_band();
         nodes.push(self.def_node(false));
-        nodes.push(Node::Rect(
-            Attrs::new()
-                .set("x", format!("{x:.2}"))
-                .set("y", format!("{y:.2}"))
-                .set("width", length.to_string())
-                .set("height", VEGA_GRADIENT_THICKNESS.to_string())
-                .set("fill", format!("url(#{})", self.grad_id)),
+        nodes.push(Node::rect(
+            Role::Legend,
+            (x, y, length, VEGA_GRADIENT_THICKNESS),
+            Attrs::new().set("fill", format!("url(#{})", self.grad_id)),
         ));
         let label_y = y + VEGA_GRADIENT_THICKNESS + self.label_offset + baseline_shift("top", self.font_size);
         let placed: Vec<(&str, f64)> = self
@@ -1122,12 +1098,12 @@ impl<'a> GradientLegend<'a> {
             .zip(visible)
             .map(|((text, &(anchor, px)), shown)| {
                 Node::text(
+                    Role::Legend,
+                    (px, label_y),
                     Attrs::new()
-                        .set("x", format!("{px:.2}"))
-                        .set("y", format!("{label_y:.2}"))
                         .set("text-anchor", anchor)
                         .vega("font-family", self.family)
-                        .set("font-size", self.font_size.to_string())
+                        .num("font-size", self.font_size)
                         .quick_some("font-style", self.legend.label.font.style.as_deref())
                         .set("font-weight", self.weight.clone())
                         .set("fill", self.color)
@@ -1136,7 +1112,7 @@ impl<'a> GradientLegend<'a> {
                 )
             })
             .collect();
-        nodes.push(Node::group(contract::legend_label_attrs(None), labels));
+        nodes.push(Node::group(Role::Legend, contract::legend_label_attrs(None, false), labels));
         nodes
     }
 }
@@ -1164,6 +1140,9 @@ fn render_facet(
     kind: ColorKind,
 ) -> Result<String, Diagnostic> {
     let mc = r.multiples.as_ref().expect("render dispatched on multiples");
+    if r.patterns.is_active() {
+        return Err(crate::refuse!("heatmap: pattern fills on small multiples are not supported").into());
+    }
     let independent = mc.scale == "independent";
     let legend_edge = facet_compose::facet_legend_edge(&r.legend.position);
     let ax_x = &r.style.axis_x;
@@ -1265,7 +1244,7 @@ fn render_facet(
             FacetColor::Gradient { min, max, ticks, scale }
         }
     };
-    let grad_id = format!("heat_grad-{}", crate::contract::safe_svg_id(&r.id));
+    let grad_id = format!("heat_grad-{}", crate::contract::scoped_id(&r.id));
     let cells = CellPaint {
         x_field: &r.x,
         y_field: &r.y,
@@ -1286,6 +1265,7 @@ fn render_facet(
         link: r.datum_link((x_grain.is_some(), false, kind == ColorKind::Dates)),
         mirror,
         ghost_titles: Some((x_title.as_str(), y_title.as_str())),
+        patterns: &r.patterns,
     };
     let style = PanelStyle {
         ax_x,
@@ -1412,7 +1392,7 @@ fn render_facet(
         FacetColor::Categories(scale) => category_legend_entries(scale, r.legend.values.as_deref()),
         FacetColor::Gradient { .. } | FacetColor::Dates { .. } => ladder
             .iter()
-            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None, recede: None })
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: None, series_key: None, recede: None, action: None })
             .collect(),
     };
     // A time-scale bar's ladder follows its drawn length, so it is measured and
@@ -1449,7 +1429,7 @@ fn render_facet(
     let chrome = FacetChrome {
         title: title_plan.as_ref().map(|plan| TitleChrome {
             ink: plan.ink.clone(),
-            paint: Box::new(|svg, x, y| svg.push_str(&print(&plan.nodes(&title_src, x, y)))),
+            paint: Box::new(|x, y| plan.nodes(&title_src, x, y)),
         }),
         legends: legend
             .as_ref()
@@ -1457,7 +1437,7 @@ fn render_facet(
                 edge: legend_edge,
                 width: Box::new(|panel_w, panel_h| legend.box_width(legend.bar_len(panel_w, panel_h))),
                 height: Box::new(|panel_h| legend.height(legend.bar_len(0.0, panel_h))),
-                paint: Box::new(|svg, x, y, panel_w, panel_h| svg.push_str(&print(&legend.nodes(x, y, legend.bar_len(panel_w, panel_h))))),
+                paint: Box::new(|x, y, panel_w, panel_h| legend.nodes(x, y, legend.bar_len(panel_w, panel_h))),
             })
             .into_iter()
             .chain(dates.as_ref().map(|scale| LegendChrome {
@@ -1472,19 +1452,17 @@ fn render_facet(
                         .expect("probed at both length extremes")
                         .1
                 }),
-                paint: Box::new(|svg, x, y, panel_w, panel_h| {
-                    let nodes = GradientAt::nodes(&r.legend, None, scale, (&grad_id, &legend_title), fonts, (panel_w, panel_h), (x, y))
-                        .expect("probed at both length extremes");
-                    svg.push_str(&print(&nodes));
+                paint: Box::new(|x, y, panel_w, panel_h| {
+                    GradientAt::nodes(&r.legend, None, scale, (&grad_id, &legend_title), fonts, (panel_w, panel_h), (x, y))
+                        .expect("probed at both length extremes")
                 }),
             }))
             .chain(symbol_legend.as_ref().map(|symbols| LegendChrome {
                 edge: legend_edge,
                 width: Box::new(|_, _| symbols.box_w),
                 height: Box::new(|_| symbols.box_h()),
-                paint: Box::new(|svg, x, y, _, _| {
-                    let legend = drawn_symbol_legend(&symbol_entries, symbols, &r.legend, entry_symbol, x, y, false);
-                    svg.extend(legend.map(|node| print(&[node])));
+                paint: Box::new(|x, y, _, _| {
+                    drawn_symbol_legend(&symbol_entries, symbols, &r.legend, entry_symbol, x, y, false).into_iter().collect()
                 }),
             }))
             .collect(),
@@ -1520,7 +1498,7 @@ fn render_facet(
         title_style: &ax_y.title,
         hugs_labels: None,
     });
-    facet_compose::compose_facet_full(payload, fonts, &spec, Some(&chrome), row_axis.as_ref(), &render_pass)
+    Ok(print(&[facet_compose::compose_facet_full(payload, fonts, &spec, Some(&chrome), row_axis.as_ref(), &render_pass)?]))
 }
 
 #[cfg(test)]

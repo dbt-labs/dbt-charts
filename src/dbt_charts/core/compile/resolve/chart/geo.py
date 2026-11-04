@@ -51,6 +51,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _geo_kwargs,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._marks import _resolved_point_mark
 from dbt_charts.core.compile.resolve.chart._palette import (
@@ -350,7 +351,7 @@ def _resolve_geoshape(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    geoshape = merge_unset(chart_style_context.geoshape, primary)
+    geoshape = merge_unset(board_family_style(chart_style_context, normalized), primary)
     channels = _channels_for(normalized, data)
     _tf = resolve_title_font(chart_local_style_context, width)
     # The tooltip formats chart.value_field (the choropleth tooltip), which
@@ -418,7 +419,9 @@ def _resolve_point_map(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    point_map = merge_unset(chart_style_context.point_map, primary)
+    point_map = merge_unset(
+        board_family_style(chart_style_context, normalized), primary
+    )
     channels = _channels_for(normalized, data)
     # The point tooltip formats only size_field with tooltip_format -- the
     # color entry gets no format at all, so voting on color would drag an

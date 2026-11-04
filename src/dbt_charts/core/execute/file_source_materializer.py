@@ -25,7 +25,7 @@ from dbt_charts.core.compile.models.source import (
     JsonSourceConfig,
     ParquetSourceConfig,
 )
-from dbt_charts.core.compile.sql_guard import double_alias_advice
+from dbt_charts.core.compile.sql_guard import reference_alias_advice
 from dbt_charts.core.compile.template.parameterized import render_parameterized
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_execute import (
@@ -248,7 +248,7 @@ class FileSourceMaterializer:
                 advice = (
                     duckdb_unknown_column_advice(conn, resolved_sql, str(exc))
                     if code is ERR_BINDER_UNKNOWN_COLUMN
-                    else double_alias_advice(resolved_sql)
+                    else reference_alias_advice(resolved_sql)
                 )
                 raise QueryError(
                     "\n".join(

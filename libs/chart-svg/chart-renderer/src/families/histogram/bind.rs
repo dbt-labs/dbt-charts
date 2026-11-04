@@ -9,7 +9,6 @@ use serde_json::Value;
 use super::{histogram_bins_by, Bin, Resolved};
 use crate::common::{axis_title_text, format_y_label, row_num, MirrorGhost};
 use crate::diagnostic::Diagnostic;
-use crate::families::cartesian::d3_nice_domain;
 use crate::families::color_scale::ContinuousColor;
 use crate::families::legend;
 use crate::families::temporal::{infer_vega_type, VegaType};
@@ -139,7 +138,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         Some(link) => binned_rows.iter().map(|row| link.href(row).map(Some)).collect::<Result<_, _>>()?,
         None => Vec::new(),
     };
-    let bins = histogram_bins_by(&binned, series_count.max(1), &row_hrefs)?;
+    let bins = histogram_bins_by(&binned, series_count.max(1), &row_hrefs);
     // No numeric x leaves the x scale with a NaN domain: no bin, tick or label.
     let (bin_start, bin_stop) =
         bins.first().zip(bins.last()).map_or((f64::NAN, f64::NAN), |(first, last)| (first.start, last.end));
@@ -185,7 +184,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
 
     // ── Y: never baked (a count aggregate has no static column); the ticks are
     // re-derived at the fitted extent at layout.
-    let y_domain_max = d3_nice_domain(0.0, max_count, 10).1;
+    let y_domain_max = d3rs::ticks::d3_nice(0.0, max_count, 10).1;
 
     let x_title = axis_title_text(&r.x, r.x_label.as_deref(), &r.field_labels)?;
     // `chart.y_label or COUNT_TITLE` — an authored
@@ -289,7 +288,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         colored: stack_color.is_some(),
         legend: stack_color.map(|c| c.legend),
         legend_title,
-        gradient_id: format!("hist_grad-{}", crate::contract::safe_svg_id(&r.id)),
+        gradient_id: format!("hist_grad-{}", crate::contract::scoped_id(&r.id)),
         r,
     })
 }
@@ -386,7 +385,7 @@ fn stack_color(
         let spec = match r.color_format.as_ref().filter(|_| r.legend.visible).and_then(crate::families::color_scale::legend_format_spec) {
             Some(spec) => spec,
             None if gradient_mode => "",
-            None => return Ok(crate::families::color_scale::js_number_string(v)),
+            None => return Ok(d3rs::js_math::js_number_string(v)),
         };
         crate::number_locale::d3_format(spec, v).map_err(|e| format!("histogram color tooltip format: {e}"))
     };
@@ -456,7 +455,7 @@ fn nominal_color(
     }
     let fills: Vec<String> = ranked
         .iter()
-        .map(|(name, _)| crate::common::series_color(name, &color_domain, &r.series_palette, None))
+        .map(|(name, _)| crate::common::series_color(name, &color_domain, &r.series_palette, None, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color))
         .collect::<Result<_, _>>()?;
     let mut series: Vec<Series> = Vec::new();
     if has_null {

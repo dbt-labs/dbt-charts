@@ -20,9 +20,6 @@ from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.file_source_materializer import (
-    default_local_materializer_factory,
-)
 from dbt_charts.core.project import InMemoryBoard
 
 _BOARD_YAML = """
@@ -100,7 +97,6 @@ class TestMissingCsvSourceFile:
             board,
             adapter_registry=build_adapter_registry(project),
             query_registry=dict(board.queries),
-            file_materializer_factory=default_local_materializer_factory(project),
         )
 
         assert executor.is_cached("q_bad") is False

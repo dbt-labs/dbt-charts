@@ -10,7 +10,7 @@ use super::table_dates::{strftime, Moment};
 use super::temporal::{
     axis_time_format, time_unit_specifier, LabelUnit, TimeUnit, VegaType,
 };
-use crate::time_axis::{parse_iso_date, Grain as AxisGrain, TimeAxis};
+use crate::time_axis::{Grain as AxisGrain, TimeAxis};
 use super::x_type::{Grain, XResolution};
 use crate::common::{axis_title_band, AxisStyle, AxisTitle, FormatSlot};
 use crate::contract::AxisChannel;
@@ -177,7 +177,8 @@ pub fn x_axis_caption(
 ) -> Result<AxisCaption, String> {
     match resolution.vl_type {
         VegaType::Ordinal | VegaType::Nominal => {
-            let values: Vec<String> = domain.iter().map(|v| bucket_text(v, resolution.grain)).collect();
+            let dates = crate::time_axis::Dates::read(domain);
+            let values: Vec<String> = domain.iter().zip(&dates.date).map(|(v, &date)| bucket_text(v, date, resolution.grain)).collect();
             category_axis_caption(text, axis, &values)
         }
         VegaType::Temporal => {
@@ -227,7 +228,7 @@ pub fn x_axis_caption(
         VegaType::Quantitative => {
             let numbers = domain
                 .iter()
-                .map(|v| v.parse::<f64>().map_err(|e| format!("axis aria: x value {v:?} is not a number: {e}")))
+                .map(|v| super::line::bind::x_number(v).ok_or_else(|| format!("axis aria: x value {v:?} is not a number")))
                 .collect::<Result<Vec<_>, _>>()?;
             let lo = numbers.iter().copied().fold(f64::INFINITY, f64::min);
             let hi = numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
@@ -249,15 +250,16 @@ pub fn authored_time_format(axis: &AxisStyle, grain: Option<TimeUnit>) -> Result
 /// A date scale's domain in days, widened by `scale.padding` pixels over a
 /// range `plot_w` wide; Dates keep whole milliseconds.
 pub fn padded_day_domain(domain: (f64, f64), plot_w: f64, pad: f64) -> (f64, f64) {
-    let (lo, hi) = crate::vega_fit::pad_domain(domain, plot_w, pad, crate::vega_fit::Bend::Linear);
+    let (lo, hi) = crate::vega_fit::pad_domain(domain, plot_w, pad, d3rs::scale::Transform::Identity);
     let whole_ms = |day: f64| (day * MS_PER_DAY + 1e-3).trunc() / MS_PER_DAY;
     (whole_ms(lo), whole_ms(hi))
 }
 
 /// A category date as its calendar bucket's date-only text: the ordinal
-/// scaffold keys every row by `bucket.isoformat()`.
-pub fn bucket_text(value: &str, grain: Grain) -> String {
-    match (grain, parse_iso_date(value)) {
+/// scaffold keys every row by `bucket.isoformat()`. `date` is the date the
+/// axis read `value` as written on.
+pub fn bucket_text(value: &str, date: Option<(i32, u8, u8)>, grain: Grain) -> String {
+    match (grain, date) {
         (Grain::Calendar(_), Some((y, m, d))) => format!("{y:04}-{m:02}-{d:02}"),
         _ => value.to_string(),
     }

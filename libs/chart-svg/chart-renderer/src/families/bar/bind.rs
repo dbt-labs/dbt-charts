@@ -6,7 +6,7 @@
 use crate::common::{MarkLabels, row_num, row_str};
 use crate::diagnostic::Diagnostic;
 use crate::families::layers::{OverlayBarLayer, OverlayLayer, OverlayLineLayer, OverlayScatterLayer, resolve_layer_rows};
-use crate::families::cartesian::LinearScale;
+use d3rs::scale::Continuous;
 use crate::families::span;
 use crate::families::support_table_strip::{self, SupportTableConfig};
 use crate::Payload;
@@ -84,11 +84,24 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         (None, false) => Some(("x", r.x.as_str())),
         (None, true) => None,
     };
+    r.legend_view = crate::legend_view::LegendView::of(
+        &prepared,
+        &crate::legend_view::ViewFacts {
+            family: crate::legend_view::Family::Bar,
+            color: r.color.as_deref(),
+            panel_fields: r.panel_axes.iter().map(|axis| axis.field.as_str()).collect(),
+            wide: !r.wide_measures.is_empty(),
+            normalized: r.stack == "normalize",
+            layered: !r.layers.is_empty() || r.support_table.is_some(),
+            continuous_color: r.numeric_color.is_some(),
+        },
+    )?;
     r.selection = crate::selected::Selection::of(
         &prepared,
         r.link.as_deref(),
         &selection_key.into_iter().collect::<Vec<_>>(),
-    )?;
+    )?
+    .viewing(r.legend_view.clone());
     // A date measure draws as day numbers on the numeric arms; a row missing either date refuses in
     // `with_day_numbers`.
     if let (Some("temporal"), Some(start_field)) = (r.measure_type.as_deref(), r.y_start.as_deref()) {
@@ -106,6 +119,22 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
     if let Some((rekeyed, prefold_rows)) = rekey_to_enclosing_buckets(&r, &prepared)? {
         r.prefold_rows = prefold_rows;
         prepared = Cow::Owned(rekeyed);
+    }
+    // The value axis fits what a legend view draws; resolve baked its bounds and ladder off every row.
+    if let Some(narrowed) = r.legend_view.clone().and_then(|view| view.narrowed(&prepared, r.color.as_deref().expect("a legend view needs a color field"))) {
+        let stacked = matches!(r.stack.as_str(), "zero" | "center");
+        let top = r.stacked_domain_top(&narrowed.payload.rows);
+        if narrowed.refits_axes() && stacked && top.is_some() {
+            crate::legend_view::unbake(&mut r.style.axis_y, r.orientation != "horizontal");
+            r.stacked_domain_max = top;
+        } else if narrowed.refits_axes() && !stacked {
+            let ends = std::iter::once(r.y.as_str()).chain(r.y_start.as_deref());
+            let shown: Vec<f64> = ends.flat_map(|field| narrowed.payload.rows.iter().filter_map(move |row| crate::common::row_num(row, field))).collect();
+            crate::legend_view::refit(&mut r.style.axis_y, &shown, r.orientation != "horizontal");
+        }
+        r.unviewed = r.legend_view.as_ref().map(|view| view.unviewed(payload));
+        r.whole_rows = Some(narrowed.whole);
+        prepared = Cow::Owned(narrowed.payload);
     }
     // A centered stack piles magnitudes upward from 0, so a chart of negatives alone bakes a domain
     // top of 0 (the ladder's last rung) and every mark collapses to zero height.
@@ -278,6 +307,7 @@ pub(super) fn rekey_to_enclosing_buckets(
     };
     let fiscal = r.style.axis_x.fiscal_year_start_month;
     let rekey = |rows: &[serde_json::Map<String, Value>]| {
+        let axis = crate::time_axis::TimeAxis::over(rows.iter().filter_map(|row| row.get(&r.x).and_then(Value::as_str)));
         let mut changed = false;
         let rekeyed: Vec<_> = rows
             .iter()
@@ -286,7 +316,8 @@ pub(super) fn rekey_to_enclosing_buckets(
                 let start = row
                     .get(&r.x)
                     .and_then(Value::as_str)
-                    .and_then(|text| crate::families::temporal::off_anchor_bucket_start(text, tu, fiscal));
+                    .and_then(|text| axis.date(text))
+                    .and_then(|date| crate::families::temporal::off_anchor_bucket_start(date, tu, fiscal));
                 if let Some(start) = start {
                     if let Some(raw) = row.insert(r.x.clone(), Value::String(start)) {
                         row.insert(crate::common::RAW_X.to_string(), raw);
@@ -328,7 +359,7 @@ pub(super) fn rekey_to_enclosing_buckets(
 pub(super) fn zero_label(
     r: &BarResolved,
     rows: &[serde_json::Map<String, Value>],
-    scale: &LinearScale,
+    scale: &Continuous,
 ) -> Result<Option<MarkLabels>, String> {
     let authored = r.style.mark.labels.as_ref();
     let in_scope = r.stack == "none"
@@ -336,8 +367,8 @@ pub(super) fn zero_label(
         && r.wide_measures.is_empty()
         && !authored.is_some_and(|l| l.visible)
         && !r.resolved_channels.contains_key("color");
-    let px = |v: f64| scale.position(v);
-    let range = (scale.range_start, scale.range_end);
+    let px = |v: f64| scale.scale(v);
+    let range = (scale.range[0], scale.range[1]);
     let invisible = |row: &serde_json::Map<String, Value>| {
         row_num(row, &r.y).is_some_and(|v| painted_extent(&px, range, v) * MIN_PLOT_SHARE < INVISIBLE_BAR_PX)
     };
@@ -347,7 +378,7 @@ pub(super) fn zero_label(
     let slot = authored.ok_or("bar: style.mark.labels absent (resolved payload required)")?;
     Ok(Some(MarkLabels {
         visible: true,
-        last_only: false,
+        anchors: Vec::new(),
         field: None,
         format: slot.format.clone(),
         dx: None,

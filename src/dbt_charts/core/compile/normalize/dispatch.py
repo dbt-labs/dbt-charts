@@ -90,6 +90,7 @@ from dbt_charts.core.compile.models.style.theme.page import (
     clock_hides_zone,
 )
 from dbt_charts.core.compile.models.variable.authored import Variable
+from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
     _collect_charts_from_layout,
@@ -623,18 +624,17 @@ def _regional_text(regional: Regional, fields: list[str]) -> str:
     return ", ".join(f"{field}: {_shown(field)}" for field in fields)
 
 
-def _root_width_style_patch(board: AuthoredBoard) -> StylePatch | None:
-    """Desugar the root board's ``width:`` into a ``style.frame.width`` patch.
+def _root_authored_width(  # type-state: optional — None is no authored width
+    board: AuthoredBoard,
+) -> float | None:
+    """The root board's own exact pixel width, from its ``width:``.
 
-    ``width:`` is normally layout-placement sugar, read only when a board is
-    nested inside a parent's rows/cols/grid (``normalize/layout.py``). At the
-    root there is no parent to place it into, so it means the same thing as
-    ``style.frame.width`` — this is the sole place that equivalence is wired.
-
-    Percentages are meaningless without a parent to be relative to, and
-    authoring both ``width:`` and ``style.frame.width:`` is ambiguous — both
-    are ``ERR-VALIDATION-FIELD`` rather than silently picking one. This runs
-    past the parse gate, so a bare raise here would surface as ``ERR-INTERNAL``.
+    ``width:`` is layout placement when a board is nested inside a parent's
+    rows/cols/grid (``normalize/layout.py``). At the root there is no parent to
+    place it into, so it is the board's own width. A percentage is meaningless
+    without a parent to be relative to. These are ``ERR-VALIDATION-FIELD``
+    rather than a bare raise, which this far past the parse gate would surface
+    as ``ERR-INTERNAL``.
     """
     if board.width is None:
         return None
@@ -660,16 +660,7 @@ def _root_width_style_patch(board: AuthoredBoard) -> StylePatch | None:
         )
     if pixels <= 0:
         raise reject(f"{board.width!r} must be positive (got {pixels}).")
-
-    frame_patch = board.style.model_dump().get("frame") if board.style else None
-    if isinstance(frame_patch, dict) and frame_patch.get("width") is not None:
-        raise reject(
-            "Cannot specify both 'width:' and 'style.frame.width:' on the "
-            "root board. 'width:' is sugar for 'style.frame.width:' — use "
-            "one or the other."
-        )
-
-    return StylePatch.model_validate({"frame": {"width": pixels}})
+    return pixels
 
 
 def sync_board_resolved_style(
@@ -707,6 +698,7 @@ def sync_board_resolved_style(
             layout_type=board.layout.type,
         )
     )
+    attach_chart_styles(board)
     for item in board.layout.items or []:
         if item.board is not None:
             sync_board_resolved_style(
@@ -1045,7 +1037,7 @@ def normalize_board(
 
     # Pull synthetic queries (from promote_inline_option_queries and
     # promote_column_option_queries) into local_queries so that Board.queries
-    # contains them.  The executor's _get_query checks board.queries first; having
+    # contains them.  The executor's get_query checks board.queries first; having
     # them here means tests and callers do not need to pass a separate query_registry.
     for var in local_variables.values():
         q = var.get_option_query()
@@ -1146,26 +1138,11 @@ def normalize_board(
         or get_default_theme_name()
     )
 
+    authored_width = _root_authored_width(board) if depth == 0 else None
+
     # Compile board-scoped resolved style before layout so nested boards can inherit.
-    # Root-only frame width: `width:` is layout-placement sugar everywhere except
-    # the root, where it means `style.frame.width:` (see _root_width_style_patch).
-    # Folded into board_style itself (not applied as a separate one-shot patch) so
-    # it survives Board.set_theme's later re-cascade via authored_style, exactly
-    # like an authored style.frame.width would.
-    board_style = board.style
-    if depth == 0:
-        root_width_patch = _root_width_style_patch(board)
-        if root_width_patch is not None:
-            from dbt_charts.core.compile.merge import merge_patches
-
-            board_style = (
-                merge_patches(board_style, root_width_patch)
-                if board_style is not None
-                else root_width_patch
-            )
-
     resolved_style, chart_style_context, own_style_patch = compile_board_resolved_style(
-        board_style,
+        board.style,
         parent_context.get("resolved_style"),
         parent_context.get("chart_style_context"),
         theme_name=theme,
@@ -1224,6 +1201,9 @@ def normalize_board(
         links=links,
         cache_root=cache_root,
         path_prefix=path_prefix,
+        importing=parent_context.get(
+            "importing", ()
+        ),  # type-state: silent_fallback — a board normalized on its own has no file above it
     )
 
     # The root's walk re-resolves every nested board against its real parent,
@@ -1285,7 +1265,8 @@ def normalize_board(
         card_gap=board.card_gap,
         links=links,
         regional=regional,
-        authored_style=board_style,
+        authored_style=board.style,
+        authored_width=authored_width,
         theme=theme,
         resolved_style=resolved_style,
         chart_style_context=chart_style_context,

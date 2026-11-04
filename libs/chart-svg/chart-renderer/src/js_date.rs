@@ -7,7 +7,7 @@
 //! (`DateParser::Parse` with `ParseES5DateTime`, `DayComposer`, `TimeComposer`,
 //! `TimeZoneComposer`).
 
-use crate::families::temporal::days_from_civil;
+use d3rs::calendar::days_from_civil;
 
 const MS_PER_DAY: f64 = 86_400_000.0;
 const MAX_TIME_MS: f64 = 8.64e15;

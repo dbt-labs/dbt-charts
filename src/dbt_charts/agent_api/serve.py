@@ -102,7 +102,6 @@ def prepare_serve(
         max_workers=settings.max_workers,
         no_cache=settings.no_cache,
         cache_path=settings.cache_path,
-        allow_mutating_methods=True,
     )
 
     return ServeSetup(
@@ -156,9 +155,12 @@ def resolve_serve_settings(
     cache_path: Path | None,
 ) -> tuple[ServeSettings, bool]:
     """Resolve the serve options; also returns whether dbt supplied the dialect."""
-    from dbt_charts.core.project_roots import infer_dialect_from_dbt
+    from dbt_charts.core.project_roots import (
+        infer_dialect_from_dbt,
+        resolve_dbt_target_name,
+    )
 
-    effective_target = target or os.environ.get("DBT_TARGET") or None
+    effective_target = resolve_dbt_target_name(target)
     inferred = (
         None
         if dialect is not None
@@ -387,7 +389,6 @@ def _check_boards(
         dialect=settings.dialect,
         target=settings.target,
         max_workers=settings.max_workers,
-        allow_mutating_methods=True,
     )
     checked: list[CheckedBoard] = []
     with (
@@ -399,7 +400,6 @@ def _check_boards(
             cache=cache,
             adapter_registry=registry,
             owns_registry=True,
-            allow_mutating_methods=True,
         ) as session,
     ):
         for relpath, url in urls.items():

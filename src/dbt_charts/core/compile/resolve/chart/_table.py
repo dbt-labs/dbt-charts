@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any
 
 from d3_format import format as _d3_fmt
-from dbt_charts.core.colors import sanitize_color
+from dbt_charts.core.colors import CanvasTone, sanitize_color
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     column_format,
@@ -54,6 +54,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _shared_kwargs,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_requested_alias_palette,
@@ -337,6 +338,7 @@ def _text_link_field(
 def _with_resolved_scale_stops(
     columns: dict[str, TableColumnConfig] | None,
     text_color: str | None,
+    canvas_tone: CanvasTone,
     formats: FormatTable | None,
     font_family: str,
     rows: list[dict[str, Any]],  # type-state: explicit_any — rows are raw query output
@@ -357,7 +359,8 @@ def _with_resolved_scale_stops(
 
     Inline stop lists leave background/color as plain ResolvedColumnScaleTargetConfig
     (no resolved_stops). `text_color` is only required when a column actually
-    authors a named-string scale palette.
+    authors a named-string scale palette; `canvas_tone` is the table's own
+    canvas tone, which picks a palette's `-dark` twin on a dark canvas.
 
     ``font_family`` is the numeric cell font (dbt Sans Tabular, or Source Serif
     for Source Serif table themes) -- not the body font. ``rows`` is used to
@@ -580,7 +583,10 @@ def _with_resolved_scale_stops(
                     )
                 stops = tuple(
                     resolve_named_palette(
-                        target.palette, surface="table", text_color=text_color
+                        target.palette,
+                        surface="table",
+                        text_color=text_color,
+                        canvas_tone=canvas_tone,
                     )
                 )
                 resolved_scale_fields[attr] = (
@@ -668,7 +674,7 @@ def _resolve_table(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    table = merge_unset(chart_style_context.table, primary)
+    table = merge_unset(board_family_style(chart_style_context, normalized), primary)
     channels = _channels_for(normalized, data)
     column_defaults_val = table.column_defaults
     # Table-specific promoted field, lifted to the top level here so the
@@ -681,7 +687,7 @@ def _resolve_table(
                 normalized.rows or [],
                 normalized.columns,
                 normalized.values,
-                table.row.role,
+                normalized.row_role,
             )
         )
         if normalized.columns
@@ -708,7 +714,7 @@ def _resolve_table(
         primary.columns if primary is not None else None,
         column_defaults_val,
         data,
-        table.row.role,
+        normalized.row_role,
         pivot_measure_names,
         table_column_links,
         table_column_rows,
@@ -716,6 +722,7 @@ def _resolve_table(
     resolved_columns = _with_resolved_scale_stops(
         table_columns,
         effective_table_ink,
+        chart_local_style_context.canvas_tone,
         formats=chart_local_style_context.formats,
         font_family=numeric_cell_font,
         rows=data,
@@ -756,6 +763,7 @@ def _resolve_table(
         rows=normalized.rows,
         pivot_columns=normalized.columns,
         values=normalized.values,
+        row_role=normalized.row_role,
         spanners=normalized.spanners,
         min_height=normalized.min_height,
         max_height=normalized.max_height,

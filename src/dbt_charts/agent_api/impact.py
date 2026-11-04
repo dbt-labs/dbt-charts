@@ -98,7 +98,7 @@ def column_impact(
         boards_scanned += 1
         relpath = board_path.relpath
         try:
-            result = compile_file(board_path.read_board())
+            result = compile_file(board_path.read_board(), declared_sources=True)
         except (OSError, UnicodeDecodeError, CompilationError) as exc:
             indeterminate.append(
                 ColumnImpactIndeterminate(

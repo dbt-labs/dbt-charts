@@ -22,6 +22,7 @@ from dbt_charts.core.compile.template.jinja import (
 from dbt_charts.core.diagnostics.codes_compile import ERR_VARIABLE_NAME_INVALID
 
 if TYPE_CHECKING:
+    from dbt_charts.core.compile.normalize.layout import AuthoringPathPrefix
     from dbt_charts.core.project import ProjectDirectory
 from dbt_charts.core.compile.models.board.normalized import Board, Layout
 from dbt_charts.core.compile.models.chart.normalized import (
@@ -45,6 +46,7 @@ from dbt_charts.core.compile.template.variables import (
     parse_iso_date,
 )
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_DUPLICATE_VARIABLE_NAME,
     ERR_SOURCE_REQUIRED,
     ERR_UNKNOWN_VARIABLE,
     ERR_VALIDATION_FIELD,
@@ -116,6 +118,11 @@ class VariableReferenceErrors(CompilationError):
 
 _QUERY_NAME_RE = re.compile(r"^(?:queries\.)?[a-zA-Z_][a-zA-Z0-9_]*$")
 _SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# The row count a column-bound options query returns beside each value, for the
+# menu to draw and sort by. Lowercase: adapters lowercase result column names.
+# Never one of the names the option reader takes for the value column.
+OPTION_COUNT_COLUMN = "dbt_option_count"
 
 
 def synthetic_query_name(kind: str, *parts: str | int) -> str:
@@ -307,7 +314,7 @@ def promote_column_option_queries(
     - ``var.column = "table.col"`` — top-level column shorthand
 
     For each valid binding, synthesizes:
-    ``SELECT DISTINCT col FROM tbl ORDER BY col``
+    ``SELECT col, COUNT(*) AS dbt_option_count FROM tbl GROUP BY col ORDER BY col``
     as a ``SqlQuery`` under the key ``_var_options_{name}``, then rewrites
     the variable's option-query pointer (``var.options.query``) to point at it
     and clears the ``column`` field so the render layer uses the named-query path.
@@ -376,7 +383,10 @@ def promote_column_option_queries(
                 "identifier — use only letters, digits, and underscores"
             )
 
-        sql = f"SELECT DISTINCT {column_name} FROM {table_name} ORDER BY {column_name}"
+        sql = (
+            f"SELECT {column_name}, COUNT(*) AS {OPTION_COUNT_COLUMN} "
+            f"FROM {table_name} GROUP BY {column_name} ORDER BY {column_name}"
+        )
         sname = synthetic_query_name("var_options", var_name)
         if default_source is None:
             raise CompilationError.from_code(ERR_SOURCE_REQUIRED, query_name=sname)
@@ -431,20 +441,30 @@ def build_variable_registry(board: Board) -> dict[str, Variable]:
         CompilationError: If duplicate variable names found
     """
     registry: dict[str, Variable] = {}
-    _collect_variables_recursive(board, registry)
+    _collect_variables_recursive(board, registry, {}, "")
     return registry
 
 
-def _collect_variables_recursive(board: Board, registry: dict[str, Variable]) -> None:
+def _collect_variables_recursive(
+    board: Board,
+    registry: dict[str, Variable],
+    declared_at: dict[str, str],
+    board_path: AuthoringPathPrefix,
+) -> None:
     """Recursively collect variables from board and nested boards.
 
     Args:
         board: Board to collect variables from
         registry: Registry dict to add variables to
+        declared_at: Where each name in ``registry`` was first declared
+        board_path: This board's dotted path, empty at the root and ``None``
+            under an imported board, whose keys have no path in this file
 
     Raises:
         CompilationError: If duplicate variable names found
     """
+    from dbt_charts.core.compile.normalize.layout import prefixed
+
     # Add variables from this board
     if board.variables:
         for var_name, var in board.variables.items():
@@ -454,18 +474,26 @@ def _collect_variables_recursive(board: Board, registry: dict[str, Variable]) ->
                     f"It conflicts with a dbt charts helper or dbt Jinja builtin. "
                     f"Choose a different name."
                 )
+            path = prefixed(board_path, f"variables.{var_name}")
+            location = "an imported board" if board_path is None else path
             if var_name in registry:
-                raise CompilationError(
-                    f"Duplicate variable name '{var_name}'. Variable names must be unique "
-                    "within a file (and those that are imported)."
+                raise CompilationError.from_code(
+                    ERR_DUPLICATE_VARIABLE_NAME,
+                    field_path=path,
+                    name=var_name,
+                    first=declared_at[var_name],
+                    second=location,
                 )
             registry[var_name] = var
+            declared_at[var_name] = location
 
     # Recursively collect from nested boards in layout
     if board.layout.items:
         for item in board.layout.items:
             if item.type == "board" and item.board:
-                _collect_variables_recursive(item.board, registry)
+                _collect_variables_recursive(
+                    item.board, registry, declared_at, item.source_path or None
+                )
 
 
 def validate_variable_references(board: Board) -> list[UnknownVariableError]:

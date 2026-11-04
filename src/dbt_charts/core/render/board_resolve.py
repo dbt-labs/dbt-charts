@@ -25,6 +25,7 @@ from dbt_charts.core.compile.models.board.resolved import (
 from dbt_charts.core.compile.models.chart.normalized import Chart
 from dbt_charts.core.compile.models.primitives import LinkOpen
 from dbt_charts.core.compile.resolve import resolve
+from dbt_charts.core.compile.resolve.style.typography import own_title_fonts
 from dbt_charts.core.compile.template.daterange import board_clock
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.execute.chart_resolution import resolve_chart_with_runtime_inputs
@@ -33,6 +34,7 @@ from dbt_charts.core.render.chart_diagnostics import stamp_chart_diagnostic
 from dbt_charts.core.render.conditions import item_is_drawn
 from dbt_charts.core.render.errors import RenderError
 from dbt_charts.core.render.prose import plan_board_prose
+from dbt_charts.core.render.variables_resolve import linked_variable_options
 from dbt_charts.core.text.format_d3 import regional_scope
 
 if TYPE_CHECKING:
@@ -200,7 +202,6 @@ def build_resolved_nested_board_static(board: Board) -> ResolvedBoard:
         title=board.title,
         notes=board.notes,
         regional=board.regional,
-        fiscal_year_start_month=board.fiscal_year_start_month,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,
@@ -261,7 +262,6 @@ def build_resolved_board_static(board: Board) -> ResolvedBoard:
         title=board.title,
         notes=board.notes,
         regional=board.regional,
-        fiscal_year_start_month=board.fiscal_year_start_month,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,
@@ -377,7 +377,18 @@ def _build_resolved_board(
     # Board-wide category colors, before anything resolves: a value's swatch is
     # decided once for the whole board, so every chart must see the same plan.
     board = with_category_colors(
-        board, plan_board_category_colors(board, executor, variables)
+        board,
+        plan_board_category_colors(
+            board,
+            executor,
+            variables,
+            {
+                name: linked["options"]
+                for name, linked in linked_variable_options(
+                    board, executor, variables
+                ).items()
+            },
+        ),
     )
     board = with_dbt_column_formats(board, executor, variables)
 
@@ -440,7 +451,6 @@ def _build_resolved_board(
             title=board.title,
             notes=board.notes,
             regional=board.regional,
-            fiscal_year_start_month=board.fiscal_year_start_month,
             tags=tuple(board.tags),
             text=board.text,
             base_dir=board.base_dir,
@@ -590,6 +600,9 @@ def _resolve_layout_item(
                                 failure, item.chart.id, item.chart.source_path
                             ),
                             identity=ChartIdentity.from_normalized(item.chart),
+                            title_fonts=own_title_fonts(
+                                chart_style_context, item.chart
+                            ),
                         )
                         resolve_errors[item.chart.id] = chart_error
     resolved_board = (
@@ -666,7 +679,6 @@ def _resolve_nested(
         title=board.title,
         notes=board.notes,
         regional=board.regional,
-        fiscal_year_start_month=board.fiscal_year_start_month,
         tags=tuple(board.tags),
         text=board.text,
         base_dir=board.base_dir,

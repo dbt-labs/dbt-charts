@@ -33,6 +33,18 @@ class TestDftSearchHappyPath:
         assert result.exit_code == 0, result.output + (result.stderr or "")
         assert "Multi Query Board" in result.output
 
+    def test_unquoted_words_search_as_one_query(self, tmp_path: Path) -> None:
+        shutil.copytree(_FIXTURE_DIR / "multi-query-board", tmp_path / "project")
+        (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
+        project = ["--project-dir", str(tmp_path / "project")]
+
+        unquoted = runner.invoke(app, ["search", "monthly", "revenue", *project])
+        quoted = runner.invoke(app, ["search", "monthly revenue", *project])
+
+        assert unquoted.exit_code == 0, unquoted.output + (unquoted.stderr or "")
+        assert "Multi Query Board" in unquoted.output
+        assert unquoted.output == quoted.output
+
     def test_search_zero_results_exits_0(self, tmp_path: Path) -> None:
         shutil.copytree(_FIXTURE_DIR / "multi-query-board", tmp_path / "project")
         (tmp_path / "project" / "dbt_charts.yml").write_text("# project marker\n")
@@ -168,7 +180,7 @@ class TestDftSearchHelpLayout:
         lines = [line.strip() for line in output.splitlines()]
         for form in (
             "dct search revenue",
-            'dct search "monthly trends" --limit 5',
+            "dct search monthly trends --limit 5",
             "dct search orders --json",
         ):
             assert form in lines, (
@@ -204,3 +216,51 @@ class TestDftSearchShowsMatchedCharts:
         lines = [line.strip() for line in result.output.splitlines()]
         assert "chart k_revenue" in lines
         assert "k_orders" not in result.output
+
+
+class TestSearchNamesEachChartsQuery:
+    @staticmethod
+    def _project(root: Path) -> None:
+        (root / "dbt_charts.yml").write_text("# project marker\n")
+        (root / "charts").mkdir()
+        (root / "charts" / "sales.yml").write_text(
+            "title: Sales\n"
+            "queries:\n"
+            "  monthly:\n"
+            "    sql: select 1 as x\n"
+            "charts:\n"
+            "  revenue_trend:\n"
+            "    query: monthly\n"
+            "    type: bar\n"
+            "  revenue_note:\n"
+            "    type: callout\n"
+            "    message: hello\n"
+            "rows:\n"
+            "  - revenue_trend\n"
+            "  - revenue_note\n"
+        )
+
+    def test_text_output(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app, ["search", "revenue", "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.output
+        assert result.output == (
+            "  [4.00] Sales  charts/sales.yml\n"
+            "           chart revenue_trend  query monthly\n"
+            "           chart revenue_note\n"
+        )
+
+    def test_json_gains_the_field(self, tmp_path: Path) -> None:
+        self._project(tmp_path)
+        result = runner.invoke(
+            app, ["search", "revenue", "--json", "--project-dir", str(tmp_path)]
+        )
+        assert result.exit_code == 0, result.output
+        hit = json.loads(result.output)["results"][0]
+        assert hit["matched_charts"] == ["revenue_trend", "revenue_note"]
+        assert hit["charts"] == [
+            {"name": "revenue_trend", "query": "monthly"},
+            {"name": "revenue_note"},
+        ]

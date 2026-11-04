@@ -1,9 +1,7 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Cards and layouts
+width: 1440
 source: examples_db
-style:
-  frame:
-    width: 1440
 text: |
   A board is built from a handful of card types — KPIs, markdown, tables, and
   charts — arranged with a handful of layout devices. This board shows one of

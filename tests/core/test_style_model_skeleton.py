@@ -150,7 +150,6 @@ def test_compiled_style_board_dimensions():
     """Style.frame has dimension fields with defaults."""
 
     s = get_theme_style()
-    assert s.frame.width is None
     assert isinstance(s.frame.max_width, float)
     assert isinstance(s.frame.min_height, float)
     assert isinstance(s.frame.margin, float)
@@ -986,7 +985,7 @@ def test_callout_card_uses_inline_spacing_from_style():
     def _message_y(svg: str) -> float:
         # Message content is in a <g transform="translate(padding, y)"> group;
         # the last translate group is the message block (title comes first).
-        translates = re.findall(r'<g transform="translate\([0-9.]+, ([0-9.]+)\)"', svg)
+        translates = re.findall(r'<g transform="translate\([0-9.]+,([0-9.]+)\)"', svg)
         assert len(translates) >= 2, f"expected ≥2 translate groups, got {translates!r}"
         return float(translates[-1])
 

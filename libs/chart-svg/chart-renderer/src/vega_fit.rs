@@ -21,6 +21,8 @@
 
 use crate::constants::layout::VEGA_SUBTITLE_PADDING;
 use crate::labels_expr::view::FitPlan;
+use d3rs::js_math::js_sign;
+use d3rs::scale::Transform;
 
 /// Vega-Lite's default `labelLimit` — the width cap it truncates axis and
 /// legend labels to when the theme doesn't override it.
@@ -33,6 +35,18 @@ pub struct Bounds {
     pub y1: f64,
     pub x2: f64,
     pub y2: f64,
+}
+
+impl From<Bounds> for scene::Bounds {
+    fn from(b: Bounds) -> Self {
+        scene::Bounds { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 }
+    }
+}
+
+impl From<scene::Bounds> for Bounds {
+    fn from(b: scene::Bounds) -> Self {
+        Bounds { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 }
+    }
 }
 
 impl Bounds {
@@ -159,54 +173,26 @@ pub fn label_row_advance(font_size: f64) -> f64 {
     font_size + 2.0
 }
 
-/// A continuous scale's transform: the space Vega pads a domain in and d3
-/// interpolates positions in. `sqrt` is `Pow(0.5)`.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Bend {
-    Linear,
-    Log,
-    Pow(f64),
-    Symlog(f64),
+/// vega-util's lift into a scale's zoom space and the ground back (`zoomLog`,
+/// `zoomPow`, `zoomSymlog`, and the identity of `zoomLinear`): d3's transform,
+/// a log domain read through the sign of its first end.
+pub fn lift_ground(transform: Transform, domain0: f64) -> (impl Fn(f64) -> f64, impl Fn(f64) -> f64) {
+    let sign = if matches!(transform, Transform::Log { .. }) { js_sign(domain0) } else { 1.0 };
+    (move |x| transform.apply(false, sign * x), move |x| sign * transform.undo(false, x))
 }
 
-impl Bend {
-    pub fn fwd(self, v: f64) -> f64 {
-        match self {
-            Bend::Linear => v,
-            Bend::Log => v.ln(),
-            Bend::Pow(exponent) => v.signum() * v.abs().powf(exponent),
-            Bend::Symlog(constant) => v.signum() * (v.abs() / constant).ln_1p(),
-        }
-    }
-
-    pub fn inv(self, t: f64) -> f64 {
-        match self {
-            Bend::Linear => t,
-            Bend::Log => t.exp(),
-            Bend::Pow(exponent) => t.signum() * t.abs().powf(1.0 / exponent),
-            Bend::Symlog(constant) => t.signum() * t.abs().exp_m1() * constant,
-        }
-    }
-
-    /// A value's fraction along `(lo, hi)`, d3 centering a collapsed domain.
-    pub fn frac(self, (lo, hi): (f64, f64), v: f64) -> f64 {
-        if lo == hi {
-            return 0.5;
-        }
-        let (a, b) = (self.fwd(lo), self.fwd(hi));
-        (self.fwd(v) - a) / (b - a)
-    }
-}
-
-/// Vega's `padDomain`: the domain widened about its center, in the scale's
-/// transformed space, so its ends sit `pad` pixels inside a range `pw` wide.
-pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64, bend: Bend) -> (f64, f64) {
-    if pad <= 0.0 || lo == hi {
+/// Vega's `padDomain` (vega-encode, over vega-util's `zoomLinear`, `zoomLog`,
+/// `zoomPow` and `zoomSymlog`): the domain widened about its center, in the
+/// scale's lifted space, so its ends sit `pad` pixels inside a range `pw` wide.
+pub fn pad_domain((lo, hi): (f64, f64), pw: f64, pad: f64, transform: Transform) -> (f64, f64) {
+    if pad <= 0.0 {
         return (lo, hi);
     }
-    let (a, b) = (bend.fwd(lo), bend.fwd(hi));
-    let (mid, half) = ((a + b) / 2.0, (b - a) / 2.0 * pw / (pw - 2.0 * pad));
-    (bend.inv(mid - half), bend.inv(mid + half))
+    let (lift, ground) = lift_ground(transform, lo);
+    let frac = pw / (pw - 2.0 * pad);
+    let (d0, d1) = (lift(lo), lift(hi));
+    let center = (d0 + d1) / 2.0;
+    (ground(center + (d0 - center) * frac), ground(center + (d1 - center) * frac))
 }
 
 /// Ink bounds of a single-line text item, per vega-scenegraph
@@ -766,6 +752,21 @@ mod tests {
             "/../../../src/dbt_charts/core/render/fonts"
         ))
         .expect("shipped fonts load")
+    }
+
+    /// vega-util's `zoomLinear`/`zoomLog`/`zoomPow`/`zoomSymlog` at `frac = 100 / (100 - 2 * 10)`,
+    /// run in node.
+    #[test]
+    fn pad_domain_zooms_in_the_scale_s_lifted_space() {
+        let pad = |domain, transform| pad_domain(domain, 100.0, 10.0, transform);
+        assert_eq!(pad((0.0, 10.0), Transform::Identity), (-1.25, 11.25));
+        assert_eq!(pad((1.0, 100.0), Transform::Log { base: 10.0 }), (0.562341325190349, 177.82794100389242));
+        assert_eq!(pad((-100.0, -1.0), Transform::Log { base: 10.0 }), (-177.82794100389242, -0.562341325190349));
+        assert_eq!(pad((2.0, 10.0), Transform::Pow(2.0)), (-2.8284271247461903, 10.583005244258363));
+        assert_eq!(pad((0.0, 100.0), Transform::Pow(0.5)), (-1.5625, 126.5625));
+        assert_eq!(pad((-99.0, 99.0), Transform::Symlog(1.0)), (-315.22776601683825, 315.22776601683825));
+        assert_eq!(pad((0.0, 50.0), Transform::Symlog(2.0)), (-1.0053957239293634, 76.14028882216344));
+        assert_eq!(pad_domain((0.0, 10.0), 100.0, 0.0, Transform::Log { base: 10.0 }), (0.0, 10.0));
     }
 
     fn tilting_labels(weight: serde_json::Value) -> crate::common::AxisLabels {

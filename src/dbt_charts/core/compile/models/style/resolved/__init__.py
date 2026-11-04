@@ -16,7 +16,7 @@ area.py        — ResolvedAreaStyle
 scatter.py     — ResolvedScatterStyle
 heatmap.py     — ResolvedHeatmapStyle
 pie.py         — ResolvedPieStyle
-callout.py     — ResolvedCalloutStyle, ResolvedCalloutElementStyle
+callout.py     — ResolvedCalloutStyle, ResolvedCalloutElementStyle, ResolvedErrorTileStyle
 kpi.py         — ResolvedKpiStyle
 table.py       — ResolvedTableStyle
 geoshape.py    — ResolvedGeoshapeStyle
@@ -88,6 +88,7 @@ from dbt_charts.core.compile.models.style.resolved.bar import ResolvedBarStyle
 from dbt_charts.core.compile.models.style.resolved.callout import (
     ResolvedCalloutElementStyle,
     ResolvedCalloutStyle,
+    ResolvedErrorTileStyle,
 )
 from dbt_charts.core.compile.models.style.resolved.geoshape import (
     ResolvedGeoshapeChartStyle,
@@ -127,6 +128,7 @@ __all__ = [
     "ResolvedAxisTicksStyle",
     "ResolvedCalloutElementStyle",
     "ResolvedCalloutStyle",
+    "ResolvedErrorTileStyle",
     "ResolvedChartDefaults",
     "ResolvedLegendElementStyle",
     "ResolvedLegendPosition",

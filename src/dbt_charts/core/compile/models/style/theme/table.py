@@ -163,10 +163,6 @@ class TableRowStyle(BaseModel):
         description="Alternating row stripe style; None means no stripe.",
     )
     divider: TableDividerStyle = Field(description="Line under each body row.")
-    role: Annotated[str | None, Absent("plain body row")] = Field(
-        default=None,
-        description="Default row role assignment; None means plain body row.",
-    )
     roles: TableRowRolesStyle = Field(
         description="Per-role style overrides for summary and total rows."
     )

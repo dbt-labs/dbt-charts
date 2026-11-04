@@ -19,7 +19,7 @@ from rich.panel import Panel
 from typer.core import TyperGroup
 
 from dbt_charts._render_tz import pin_vl_convert_tz_utc
-from dbt_charts.agent_api import RenderFormat, set_surface
+from dbt_charts.agent_api import RenderOutputFormat, set_surface
 from dbt_charts.agent_api._paths import (
     defaults_file_skip_diagnostics,
     empty_stdin_diagnostic,
@@ -35,7 +35,7 @@ from dbt_charts.cli._error_format import (
     print_warning,
 )
 from dbt_charts.cli._extras import require_extras
-from dbt_charts.cli._parsing import cwd_first_all, parse_kv_pairs
+from dbt_charts.cli._parsing import cwd_first_all, parse_var_options
 from dbt_charts.cli._project import has_charts_marker, project_dir_was_typed
 from dbt_charts.cli._workspace_guard import detect_workspace_mismatch
 from dbt_charts.cli.commands import (
@@ -55,6 +55,7 @@ from dbt_charts.cli.commands import (
     query as query_cmd,
     render as render_cmd,
     search as search_cmd,
+    semantics as semantics_cmd,
     serve as serve_cmd,
     skills as skills_cmd,
     validate as validate_cmd,
@@ -156,6 +157,20 @@ DbtProjectDirOption = Annotated[
         envvar="DBT_PROJECT_DIR",
         help="External dbt project directory (dbt_project.yml, profiles.yml, "
         "target/manifest.json) when it does not sit next to dbt_charts.yml",
+    ),
+]
+
+# Shared --var option. Values take the forms a `dct serve` URL carries, so a
+# link's query string and a CLI call mean the same thing.
+VarOption = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--var",
+        help="Variable value as key=value (repeatable). A multiselect takes a "
+        'JSON list (--var \'channel=["email","web"]\') or the key repeated '
+        "(--var channel=email --var channel=web); an empty value or [] selects "
+        "all. A daterange takes a JSON [start, end] or a preset such as "
+        "last_30_days.",
     ),
 ]
 
@@ -723,8 +738,8 @@ def describe(
         typer.Argument(
             metavar="[PATH]...",
             help=(
-                "Path(s) to board YAML files or directories to describe. "
-                "Omit for the project overview."
+                "Path(s) to board YAML files or directories to describe, or a "
+                "board's title. Omit for the project overview."
             ),
             callback=cwd_first_all,
         ),
@@ -735,7 +750,7 @@ def describe(
             "--chart",
             help=(
                 "Describe one chart on the board: the queries it reads and the variables "
-                "it depends on. Takes exactly one board file."
+                "it depends on. Takes exactly one board file or title."
             ),
         ),
     ] = None,
@@ -758,8 +773,10 @@ def describe(
     `source:` value for each data file), boards with their serve URLs, and
     the warehouse tables the boards read. Add --all to list every board's charts.
 
-    With a path, compiles the board YAML and returns a structured summary without executing
-    any queries. Use this for orientation when picking up an unfamiliar dashboard.
+    With a path, compiles the board YAML and returns a structured summary, each query's
+    SQL included, without executing any queries. Use this for orientation when picking
+    up an unfamiliar dashboard. A board's title names it too when no file has that path
+    and no other board shares the title.
     Accepts multiple paths; each may be a file or a directory (walked recursively).
     With --chart, describes a single chart on one board.
 
@@ -817,22 +834,20 @@ def render(
         ),
     ] = None,
     format: Annotated[
-        RenderFormat | None,
+        RenderOutputFormat | None,
         typer.Option(
             help=(
                 "Output format: svg, html, png, pdf, thumbnail (an abstracted "
                 "SVG preview with no readable text), terminal, json, text, "
                 "text-data (text plus every query's rows, grouped by query, "
-                "row-capped), yaml, or data"
+                "row-capped), yaml, data, or md (a markdown page with each "
+                "`charts` fence swapped for an SVG file and an image link)"
             )
         ),
     ] = None,
     project_dir: ProjectDirOption = None,
     dbt_project_dir: DbtProjectDirOption = None,
-    var: Annotated[
-        list[str] | None,
-        typer.Option(help="Variable value as key=value (repeatable)"),
-    ] = None,
+    var: VarOption = None,
     no_cache: Annotated[
         bool,
         typer.Option(
@@ -963,6 +978,7 @@ def render(
       dct render charts/*.yml --output renders/{stem}.svg --print0 | xargs -0 ls -lh
       dct render charts/sales.yml --var region=West --var category=Electronics
       dct render charts/sales.yml --format terminal
+      dct render docs/post.md --format md --output site/post.md
       dct render charts/sales.yml --no-cache
       dct render charts/sales.yml --cache renders.duckdb
       dct render charts/sales.yml --diagnostics-json
@@ -977,7 +993,7 @@ def render(
             "mutually exclusive",
             param_hint="--cache",
         )
-    variables = parse_kv_pairs(var or [], "--var")
+    variables = parse_var_options(var or [])
     use_cache = not no_cache
     ignore_codes = set(ignore_warning) if ignore_warning else None
     fail_on_chart_errors = not allow_chart_errors
@@ -1011,9 +1027,33 @@ def render(
         raise typer.Exit(1)
 
     # Infer format from output extension when not explicitly given
-    effective_format: RenderFormat = (
+    effective_format: RenderOutputFormat = (
         format or (output and render_cmd.infer_format_from_extension(output)) or "svg"
     )
+    if effective_format == "md":
+        if has_stdin:
+            raise typer.BadParameter(
+                "--format md renders a markdown file; stdin is read as board YAML",
+                param_hint="BOARDS",
+            )
+        if output == "-":
+            raise typer.BadParameter(
+                "--format md writes image files beside the page, so it needs a "
+                "path to write, not stdout",
+                param_hint="--output",
+            )
+        if chart is not None:
+            raise typer.BadParameter(
+                "--format md renders every chart on the page; drop --chart",
+                param_hint="--chart",
+            )
+        not_markdown = [b for b in boards if b.suffix not in (".md", ".markdown")]
+        if not_markdown:
+            source = "--format md" if format else f"md (from --output {output})"
+            raise typer.BadParameter(
+                f"{source} renders a markdown page; {not_markdown[0]} is not one",
+                param_hint="BOARDS",
+            )
 
     # Reject flat --output when rendering multiple boards (ambiguous destination)
     if len(boards) > 1 and output is not None:
@@ -1034,6 +1074,7 @@ def render(
 
     # Stdin path (single board "-")
     if has_stdin:
+        assert effective_format != "md"  # refused above
         yaml_content = sys.stdin.read()
         if not yaml_content.strip():
             empty = empty_stdin_diagnostic()
@@ -1111,10 +1152,7 @@ def emit_board(
             )
         ),
     ] = None,
-    var: Annotated[
-        list[str] | None,
-        typer.Option(help="Variable value as key=value (repeatable)"),
-    ] = None,
+    var: VarOption = None,
     no_cache: Annotated[
         bool,
         typer.Option(
@@ -1197,13 +1235,15 @@ def artifact_schema() -> None:
 
 @app.command("search", rich_help_panel="Dashboards")
 def search(
-    text: Annotated[
-        str | None,
+    words: Annotated[
+        list[str] | None,
         typer.Argument(
+            metavar="[TEXT]...",
             help=(
                 "Boards: keywords to match against board metadata. Other kinds: "
-                "a substring to find in file contents. Omit to list."
-            )
+                "a substring to find in file contents. Several words are one "
+                "query, quoted or not. Omit to list."
+            ),
         ),
     ] = None,
     kind: Annotated[
@@ -1237,13 +1277,13 @@ def search(
     \b
     Examples:
       dct search revenue
-      dct search "monthly trends" --limit 5
+      dct search monthly trends --limit 5
       dct search orders --json
       dct search --kind meta
       dct search order_id --kind models
     """
     search_cmd.search_command(
-        text=text,
+        text=" ".join(words) if words else None,
         kind=kind,
         path=path,
         json_output=json_output,
@@ -1327,6 +1367,55 @@ def exposures(
     """
     exposures_cmd.exposures_command(
         check=check,
+        json_output=json_output,
+        project_dir=project_dir,
+        dbt_project_dir=dbt_project_dir,
+    )
+
+
+@app.command("semantics", rich_help_panel="Dashboards")
+def semantics(
+    source: Annotated[
+        str,
+        typer.Argument(help="A source from dbt_charts.yml that declares `metricflow:`"),
+    ],
+    name: Annotated[
+        str | None,
+        typer.Argument(
+            help="A dataset, entity, constellation or page, to read it in full"
+        ),
+    ] = None,
+    search: Annotated[
+        str | None,
+        typer.Option(
+            "--search",
+            help="Find objects and fields by keyword, or only within NAME",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output as JSON"),
+    ] = False,
+    project_dir: ProjectDirOption = None,
+    dbt_project_dir: DbtProjectDirOption = None,
+) -> None:
+    """List what a source's MetricFlow bundle offers.
+
+    Semantic SQL may name only the datasets, calculations, relationship paths,
+    constellations, roles and metrics the bundle declares. Reads the bundle's
+    files, never the warehouse.
+
+    \b
+    Examples:
+      dct semantics db
+      dct semantics db invoices
+      dct semantics db --search "unpaid invoices"
+      dct semantics db --json
+    """
+    semantics_cmd.semantics_command(
+        source,
+        name,
+        search=search,
         json_output=json_output,
         project_dir=project_dir,
         dbt_project_dir=dbt_project_dir,
@@ -1835,10 +1924,7 @@ def query(
             ),
         ),
     ] = None,
-    var: Annotated[
-        list[str] | None,
-        typer.Option("--var", help="Variable override as key=value (repeatable)"),
-    ] = None,
+    var: VarOption = None,
     show_suppressed: Annotated[
         bool,
         typer.Option("--show-suppressed", help="Include suppressed lint diagnostics"),
@@ -1850,7 +1936,7 @@ def query(
     project_dir: ProjectDirOption = None,
     dbt_project_dir: DbtProjectDirOption = None,
 ) -> None:
-    variables = parse_kv_pairs(var or [], "--var")
+    variables = parse_var_options(var or [])
 
     query_cmd.query_command(
         context=context,

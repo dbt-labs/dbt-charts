@@ -44,6 +44,55 @@ pub fn py_sum(values: impl IntoIterator<Item = PyNum>) -> f64 {
 pub fn py_float_sum(values: &[f64]) -> f64 {
     py_sum(values.iter().map(|&x| PyNum::Float(x)))
 }
+/// `math.fsum`: the correctly rounded sum of `values` (Shewchuk's exact
+/// partials, with CPython's final half-even correction). Finite inputs only.
+pub fn py_fsum(values: &[f64]) -> f64 {
+    let mut partials: Vec<f64> = Vec::new();
+    for &value in values {
+        let mut x = value;
+        let mut kept = 0;
+        for j in 0..partials.len() {
+            let mut y = partials[j];
+            if x.abs() < y.abs() {
+                std::mem::swap(&mut x, &mut y);
+            }
+            let hi = x + y;
+            let lo = y - (hi - x);
+            if lo != 0.0 {
+                partials[kept] = lo;
+                kept += 1;
+            }
+            x = hi;
+        }
+        partials.truncate(kept);
+        partials.push(x);
+    }
+    let Some(mut idx) = partials.len().checked_sub(1) else {
+        return 0.0;
+    };
+    let mut hi = partials[idx];
+    let mut lo = 0.0;
+    while idx > 0 {
+        let x = hi;
+        idx -= 1;
+        let y = partials[idx];
+        hi = x + y;
+        lo = y - (hi - x);
+        if lo != 0.0 {
+            break;
+        }
+    }
+    // Round half to even across the discarded partials.
+    if idx > 0 && ((lo < 0.0 && partials[idx - 1] < 0.0) || (lo > 0.0 && partials[idx - 1] > 0.0)) {
+        let y = lo * 2.0;
+        let x = hi + y;
+        if y == x - hi {
+            hi = x;
+        }
+    }
+    hi
+}
+
 /// `repr(float)`: the shortest round-tripping digits, laid out as CPython's
 /// `format_float_short` does for `'r'` — scientific when the decimal point
 /// sits at or before `-4` or after `16` digits.
@@ -149,6 +198,16 @@ pub fn format_g(x: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fsum_is_exactly_rounded_like_math_fsum() {
+        assert_eq!(py_fsum(&[0.1; 10]), 1.0);
+        assert_eq!(py_fsum(&[]), 0.0);
+        assert_eq!(py_fsum(&[1e100, 1.0, -1e100]), 1.0);
+        assert_eq!(py_fsum(&[300.2, 100.1, 55.000_000_000_000_01]), 455.3);
+        // Three ties-to-even roundings the partials must carry through.
+        assert_eq!(py_fsum(&[1.0, 2f64.powi(-53), 2f64.powi(-105)]), 1.0 + 2f64.powi(-52));
+    }
 
     #[test]
     fn float_sum_is_compensated_like_python_312() {

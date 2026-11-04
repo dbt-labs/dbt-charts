@@ -41,8 +41,8 @@ Two cases stay unbacked, both deliberately. The tooltip's "+N" overflow row
 (``templates/scripts/chart_interactivity.js``) is painted by the hover runtime, so
 render time cannot know whether a reader will ever trigger it — backing it would cost
 the board sans italic on every export for a row that may never appear. Emphasis inside
-a callout *message* is the other: ``_callout_md_renderer`` measures from a bare
-``font_path`` rather than a face set, so mdsvg has no italic face to report having used,
+a callout *message* is the other: the engine's callout renderer supplies regular, bold
+and mono faces but no italic, so mdsvg has no italic face to report having used,
 and the emphasis is measured against the roman today regardless. Both fall to a
 browser-synthesized oblique, which is metrically harmless — neither is laid out against
 our measurements.
@@ -242,3 +242,21 @@ def board_font_face_css(
         for face in served_faces()
         if face.family != NOTO_EMOJI_FONT_FAMILY or emoji_mode == "monochrome"
     )
+
+
+def hoist_embedded_font_faces(fragments: list[str]) -> tuple[str, list[str]]:
+    """One stylesheet of the embedded faces *fragments* carry, and the fragments
+    without them.
+
+    For several standalone renders inlined in one page: each embeds the faces it
+    paints, often the same ones, and a page needs each face once. A block is
+    matched as the exact text ``render_embedded_font_face_css`` writes for its
+    face, so nothing is parsed and a block it did not write is left alone.
+    """
+    css: list[str] = []
+    for face in served_faces():
+        block = render_embedded_font_face_css([face])
+        if any(block in fragment for fragment in fragments):
+            css.append(block)
+            fragments = [fragment.replace(block, "") for fragment in fragments]
+    return "".join(css), fragments

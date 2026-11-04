@@ -37,11 +37,11 @@ SPECIMEN = EXAMPLES_DIR / "playground" / "charts" / "cards" / "table-emphasis.ym
 
 
 def _registry(local_project: Callable[..., FilesystemProject]) -> AdapterRegistry:
+    project = local_project(EXAMPLES_DIR / "playground")
     reg = AdapterRegistry(
-        project=local_project(EXAMPLES_DIR / "playground"),
-        project_sources=load_project_sources(
-            local_project(EXAMPLES_DIR / "playground")
-        ),
+        project=project,
+        project_sources=load_project_sources(project),
+        file_materializer=FileSourceMaterializer(project),
     )
     return reg
 
@@ -61,13 +61,11 @@ def _compile_and_render(
     assert board is not None
 
     cache = TrivialDuckDBCache()
-    mat = FileSourceMaterializer(project)
     executor = Executor(
         board,
         adapter_registry=_registry(local_project),
         query_registry=result.query_registry,
         result_cache=cache,
-        file_materializer=mat,
     )
 
     # board.charts is a dict keyed by chart id.

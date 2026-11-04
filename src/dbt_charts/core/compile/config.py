@@ -46,7 +46,6 @@ from platformdirs import user_cache_dir
 from pydantic import ValidationError
 
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.merge import deep_merge_dict
 from dbt_charts.core.compile.models.config import (
     Config,
     ConfigNode,
@@ -62,10 +61,14 @@ from dbt_charts.core.compile.models.config import (
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
 from dbt_charts.core.compile.models.schema_names import ThemeName, built_in_theme_stems
 from dbt_charts.core.compile.models.source import (
+    VALID_SOURCE_TYPES,
     parse_source_config,
     reject_credential_literals,
 )
-from dbt_charts.core.compile.sources.dbt_jinja import render_dbt_jinja_in_dict
+from dbt_charts.core.compile.sources.dbt_jinja import (
+    nothing_to_render,
+    render_dbt_jinja_in_dict,
+)
 from dbt_charts.core.diagnostics.codes_compile import (
     ERR_CONFIG_KEY_MOVED,
     ERR_PROJECT_CONFIG_SCHEMA,
@@ -73,7 +76,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
 )
 from dbt_charts.core.diagnostics.hints import CHART_RENDERING_SUCCESSORS
 from dbt_charts.core.diagnostics.suppression import validate_suppression_codes
-from dbt_charts.core.utils import UniqueKeyLoader
+from dbt_charts.core.utils import UniqueKeyLoader, deep_merge_dict
 
 if TYPE_CHECKING:
     from importlib_resources.abc import Traversable
@@ -903,6 +906,67 @@ def load_project_sources(project: FilesystemProject) -> ProjectSourcesConfig:
     """
     filename, sources_section = _dbt_charts_yml_mapping_section(project, "sources")
     normalized = _validate_sources_section(sources_section, filename)
+    return _project_sources_config(normalized, project)
+
+
+def load_declared_sources(project: FilesystemProject) -> ProjectSourcesConfig:
+    """``load_project_sources`` for a verb that never connects.
+
+    Names, types and the implicit source, reading no credential and connecting
+    nowhere. A value holding a template is left out rather than rendered, except
+    ``_DECLARED_RENDERED_KEYS``. An entry with nothing to render is validated as
+    ``load_project_sources`` validates it; the rest are typed at their first query.
+    """
+    filename, sources_section = _dbt_charts_yml_mapping_section(project, "sources")
+    entries = _source_entries(sources_section, filename)
+    static = {k: v for k, v in entries.items() if nothing_to_render(v)}
+    _validate_source_registry(static, filename)
+    declared = {
+        name: _declared_entry(name, entry, filename) for name, entry in entries.items()
+    }
+    return _project_sources_config(declared, project)
+
+
+# What a board's static checks read: `type` names the SQL dialect and `target_path`
+# the manifest `ref()` resolves against, so both must match what a run would use.
+_DECLARED_RENDERED_KEYS = ("type", "target_path")
+
+
+def _declared_entry(
+    name: str,
+    entry: dict[str, Any],  # type-state: explicit_any — raw source entry
+    filename: str,
+) -> dict[str, Any]:  # type-state: explicit_any — raw source entry
+    static = {k: v for k, v in entry.items() if nothing_to_render(v)}
+    templated = {
+        k: entry[k] for k in _DECLARED_RENDERED_KEYS if k in entry and k not in static
+    }
+    try:
+        declared = {**static, **render_dbt_jinja_in_dict(templated)}
+    except ValueError as e:
+        raise CompilationError.from_code(
+            ERR_SOURCE_CONFIG_INVALID,
+            source_name=name,
+            filename=filename,
+            detail=str(e),
+        ) from e
+    source_type = declared.get("type")
+    if not isinstance(source_type, str) or source_type not in VALID_SOURCE_TYPES:
+        raise CompilationError.from_code(
+            ERR_SOURCE_CONFIG_INVALID,
+            source_name=name,
+            filename=filename,
+            detail=f"unknown source type: {source_type!r}",
+        )
+    # The one type a wrong `target_path` misleads, and every field of it is optional.
+    if source_type == "dbt_profile":
+        _validate_source_registry({name: declared}, filename)
+    return declared
+
+
+def _project_sources_config(
+    normalized: _NormalizedSources, project: FilesystemProject
+) -> ProjectSourcesConfig:
     sources = _absolutize_source_paths(normalized, project)
     # tach-ignore(pre-existing compile->project coupling — accepted debt)
     from dbt_charts.core.project_roots import implicit_dbt_source
@@ -939,6 +1003,15 @@ def _validate_sources_section(
         CompilationError: a source entry fails typed ``SourceConfig``
             validation, or carries a raw credential literal.
     """
+    normalized = _normalize_project_sources(_source_entries(sources_section, filename))
+    _validate_source_registry(normalized, filename)
+    return normalized
+
+
+def _source_entries(
+    sources_section: _RawSourcesBlock | None, filename: str
+) -> _NormalizedSources:
+    """The mapping entries of a raw ``sources:`` block, secrets rejected."""
     if sources_section is None:
         sources_section = {}
     elif "default" in sources_section:
@@ -952,10 +1025,7 @@ def _validate_sources_section(
         # RAW authored value — before env_var rendering could turn a
         # reference into a literal (dbt defers `password`, renders the rest).
         reject_credential_literals(name, entry)
-
-    normalized = _normalize_project_sources(all_sources)
-    _validate_source_registry(normalized, filename)
-    return normalized
+    return all_sources
 
 
 def validate_config_data(
@@ -1129,6 +1199,30 @@ def read_locked_schema_version(
         return validate_locked_schema_version(value, source=filename)
     except ValueError as exc:
         raise _project_config_error(str(exc)) from None
+
+
+def read_boards_dir(
+    config: dict[str, Any],  # type-state: explicit_any — raw YAML section
+    filename: str,
+) -> str:
+    """The normalized ``boards_dir`` of a raw ``dbt_charts.yml`` mapping, checked
+    to be a project-relative folder; the shipped default when unset.
+
+    A narrow read, like ``get_project_cache_root``: a host that stores files
+    itself needs this one key before it can find any board, and must not fail
+    on an unrelated key. Raises ``pydantic.ValidationError`` naming
+    ``boards_dir``.
+    """
+    data = _load_defaults()
+    if "boards_dir" in config:
+        data = deep_merge_dict(data, {"boards_dir": config["boards_dir"]})
+    return Config.model_validate(data).boards_dir
+
+
+def get_project_boards_dir(project: Project) -> str:
+    """The project's ``boards_dir``. Fresh read per call."""
+    filename, config = _load_dbt_charts_yml(project)
+    return read_boards_dir(config, filename)
 
 
 def get_project_locked_schema_version(project: Project) -> str | None:

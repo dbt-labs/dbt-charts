@@ -23,6 +23,7 @@ def _bar(
     theme: str | None = None,
     style: ResolvedStyle | None = None,
     tab_variable: str | None = "view",
+    tab_position: str = "top",
 ) -> str:
     item = ResolvedLayoutItem(
         type="chart", chart=None, board=None, x=0.0, y=0.0, width=400.0, height=200.0
@@ -37,6 +38,7 @@ def _bar(
         tab_slugs=[f"t{i}" for i in range(len(titles))],
         tab_variable=tab_variable,
         active_tab=active,
+        tab_position=tab_position,
         resolved_style=style or resolve_style(get_theme_style(theme)),
         render_cache={},
         painted_canvas=None,
@@ -192,3 +194,170 @@ def test_each_tab_is_its_title_leaf_with_a_box_to_mark() -> None:
         assert svg.count(f'data-authored-path="{path}"') == 1
         boxes = [c.get("class") for c in tab if c.tag.endswith("rect")]
         assert "dbt-box-outer" in boxes
+
+
+def _tablist_chain(svg: str) -> list[tuple[float, float]]:
+    """Each ancestor ``<g>`` translate down to the tablist, outermost first."""
+    from xml.etree import ElementTree
+
+    def walk(
+        el: ElementTree.Element, chain: list[tuple[float, float]]
+    ) -> list[tuple[float, float]] | None:
+        moved = re.fullmatch(
+            r"translate\(([\d.]+), ([\d.]+)\)", el.get("transform", "")
+        )
+        here = [*chain, (float(moved[1]), float(moved[2]))] if moved else chain
+        if el.get("role") == "tablist":
+            return here
+        for child in el:
+            found = walk(child, here)
+            if found is not None:
+                return found
+        return None
+
+    chain = walk(ElementTree.fromstring(svg), [])
+    assert chain is not None
+    return chain
+
+
+_CARD_PADDING = resolve_style(get_theme_style()).frame.card_padding
+_BAR_HEIGHT = resolve_style(get_theme_style()).layout.tabs.bar_height
+_TWO_TABS = (
+    "  items:\n    - title: One\n      text: A\n    - title: Two\n      text: B\n"
+)
+
+
+def test_root_tabs_bar_sits_a_card_padding_below_title_and_filters() -> None:
+    svg = render_board_to_svg(
+        "title: T\nvariables:\n  a:\n    input: select\n    options:\n"
+        "      static: [x, y]\n    default: x\ntabs:\n" + _TWO_TABS
+    )
+    slot, inset = _tablist_chain(svg)[-2:]
+    assert inset == (0.0, _CARD_PADDING)
+    # The inset is the bar's own: the slot top is still the filters' bottom.
+    assert re.search(rf'<g transform="translate\(36, {slot[1]:g}\)"><rect ', svg)
+
+
+def test_bare_tabs_board_insets_the_bar_like_card_ink() -> None:
+    chain = _tablist_chain(render_board_to_svg("tabs:\n" + _TWO_TABS))
+    assert chain[-1] == (0.0, _CARD_PADDING)
+
+
+def test_tabs_nested_after_a_text_row_inset_the_bar() -> None:
+    svg = render_board_to_svg(
+        "rows:\n  - text: ABOVE\n  - tabs:\n      items:\n"
+        "        - title: One\n          text: A\n"
+        "        - title: Two\n          text: B\n"
+    )
+    assert _tablist_chain(svg)[-1] == (0.0, _CARD_PADDING)
+
+
+def test_panel_starts_below_inset_plus_bar_and_height_counts_it() -> None:
+    svg = render_board_to_svg("tabs:\n" + _TWO_TABS)
+    content_y = _CARD_PADDING + _BAR_HEIGHT
+    assert re.search(rf'translate\(0, {content_y:g}\)"', svg)
+    height = re.search(
+        r'<rect x="0" y="0" width="[\d.]+" height="([\d.]+)" fill="#FFFFFF" rx', svg
+    )
+    assert height is not None
+    assert float(height[1]) > content_y
+
+
+def _rail_cells(svg: str) -> list[tuple[float, float]]:
+    return [
+        (float(x), float(y))
+        for x, y in re.findall(
+            r'role="tab"[^>]*transform="translate\(([\d.]+), ([\d.]+)\)"', svg
+        )
+    ]
+
+
+def test_left_rail_stacks_tabs_vertically_at_one_shared_width() -> None:
+    svg = _bar(["Hi", "Overview Everything Today", "Three"], tab_position="left")
+    assert _rail_cells(svg) == [(0.0, 0.0), (0.0, _BAR_HEIGHT), (0.0, 2 * _BAR_HEIGHT)]
+    widths = set(re.findall(r'class="dbt-box-inner" x="0" y="0" width="([\d.]+)"', svg))
+    assert len(widths) == 1
+    assert 'aria-orientation="vertical"' in svg
+    texts = re.findall(r"<text [^>]*>", svg)
+    assert all('text-anchor="start"' in t for t in texts)
+
+
+def test_left_rail_outline_opens_right_onto_a_full_height_rule() -> None:
+    svg = _bar(["One", "Two", "Three"], active=1, tab_position="left")
+    (path,) = re.findall(r"<path [^>]*/>", svg)
+    d = re.search(r' d="([^"]+)"', path)
+    assert d is not None
+    rule_x = d.group(1).split()[1]
+    # Starts on the rule at the rail's top, wraps the active cell, ends on the rule.
+    assert d.group(1).startswith(f"M {rule_x} 0 V {_BAR_HEIGHT + 0.5}")
+    assert f"H {rule_x} V " in d.group(1)
+
+
+def test_left_rail_pane_sits_right_of_rail_and_gutter() -> None:
+    svg = render_board_to_svg("tabs:\n  position: left\n" + _TWO_TABS)
+    assert _tablist_chain(svg)[-1] == (0.0, _CARD_PADDING)
+    cell = re.search(r'class="dbt-box-inner" x="0" y="0" width="([\d.]+)"', svg)
+    assert cell is not None
+    pane_x = float(cell[1]) + _CARD_PADDING
+    assert re.search(rf'translate\({pane_x:g}, 0\)"', svg)
+    assert not re.search(rf'translate\(0, {_CARD_PADDING + _BAR_HEIGHT:g}\)"', svg)
+
+
+def test_left_rail_board_is_never_shorter_than_its_rail() -> None:
+    items = "".join(f"    - title: T{i}\n      text: x\n" for i in range(8))
+    svg = render_board_to_svg("tabs:\n  position: left\n  items:\n" + items)
+    height = re.search(
+        r'<rect x="0" y="0" width="[\d.]+" height="([\d.]+)" fill="#FFFFFF" rx', svg
+    )
+    assert height is not None
+    assert float(height[1]) >= _CARD_PADDING + 8 * _BAR_HEIGHT
+
+
+TWO_LINE_LABEL = "Quarterly Revenue Breakdown by Region"
+
+
+def _line_step() -> float:
+    font = resolve_style(get_theme_style()).layout.tabs.font
+    return font.size * font.line_height
+
+
+def _tspans(svg: str, idx: int) -> list[str]:
+    tab = re.findall(r'role="tab".*?</text>', svg)[idx]
+    return re.findall(r"<tspan [^>]*>(.*?)</tspan>", tab)
+
+
+def test_left_rail_wraps_a_long_label_to_two_lines_before_truncating() -> None:
+    svg = _bar(["One", TWO_LINE_LABEL, "Three"], tab_position="left")
+    lines = _tspans(svg, 1)
+    assert len(lines) == 2
+    assert " ".join(lines) == TWO_LINE_LABEL
+    assert "…" not in svg
+    assert "<title>" not in svg
+    # The wrapped cell is one line step taller, pushing the next tab down.
+    assert _rail_cells(svg)[2] == (0.0, 2 * _BAR_HEIGHT + _line_step())
+
+
+def test_left_rail_truncates_only_after_two_lines() -> None:
+    svg = _bar(["One", LONG_LABEL], tab_position="left")
+    lines = _tspans(svg, 1)
+    assert len(lines) == 2
+    assert lines[1].endswith("…")
+    assert f"<title>{LONG_LABEL}</title>" in svg
+
+
+def test_top_bar_still_truncates_a_long_label_on_one_line() -> None:
+    svg = _bar(["One", TWO_LINE_LABEL])
+    assert "<tspan" not in svg
+    assert "…</text>" in svg
+
+
+def test_left_rail_height_counts_wrapped_cells() -> None:
+    items = "".join(
+        f"    - title: {TWO_LINE_LABEL} {i}\n      text: x\n" for i in range(6)
+    )
+    svg = render_board_to_svg("tabs:\n  position: left\n  items:\n" + items)
+    height = re.search(
+        r'<rect x="0" y="0" width="[\d.]+" height="([\d.]+)" fill="#FFFFFF" rx', svg
+    )
+    assert height is not None
+    assert float(height[1]) >= _CARD_PADDING + 6 * (_BAR_HEIGHT + _line_step())

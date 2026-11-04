@@ -42,6 +42,7 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.constants.layout import SUPPORT_TABLE_COLUMN_BLOCK_SHARE_WARN_RATIO
 from dbt_charts.core.diagnostics.chart_data import ChartDataError
+from dbt_charts.core.render.board_variables import variable_options
 from dbt_charts.core.render.chart.annotation_nothing_drawn import (
     collect_annotation_nothing_drawn,
 )
@@ -53,6 +54,7 @@ from dbt_charts.core.render.chart.endpoint_label_overflow import (
     EndpointLabelGapOverflow,
     collect_endpoint_label_gap_overflows,
 )
+from dbt_charts.core.render.chart.geometry_warnings import collect_geometry_warnings
 from dbt_charts.core.render.chart.plot_width_floor_record import (
     PlotWidthShareWarning,
     collect_plot_width_share_warnings,
@@ -62,9 +64,7 @@ from dbt_charts.core.render.chart.series_label_truncation import (
     collect_series_label_truncations,
 )
 from dbt_charts.core.render.chart.table_overflow import (
-    TableCramping,
     TableOverflow,
-    collect_table_crampings,
     collect_table_overflows,
 )
 from dbt_charts.core.render.chart.table_page_squeeze import (
@@ -97,7 +97,6 @@ from .._svg_render import render_board_to_svg
 _BOARD_RS, _BOARD_CTX = resolve_style_and_context(
     get_theme_style(get_default_theme_name())
 )
-_BOARD_WIDTH = 900.0
 
 
 def _resolved(chart_def: dict[str, Any], data: list[dict[str, Any]]) -> ResolvedChart:
@@ -110,7 +109,6 @@ def _resolved(chart_def: dict[str, Any], data: list[dict[str, Any]]) -> Resolved
 class Sinks:
     truncations: dict[str, list[TextTruncation]]
     overflows: dict[str, TableOverflow]
-    crampings: dict[str, TableCramping]
     squeezes: dict[str, TablePageSqueeze]
     paginations: dict[str, StaticPagination]
 
@@ -121,7 +119,6 @@ def _sinks() -> Generator[Sinks]:
         yield Sinks(
             stack.enter_context(collect_text_truncations()),
             stack.enter_context(collect_table_overflows()),
-            stack.enter_context(collect_table_crampings()),
             stack.enter_context(collect_table_page_squeezes()),
             stack.enter_context(collect_static_paginations()),
         )
@@ -144,7 +141,6 @@ def _native(
         height=height,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=_BOARD_WIDTH,
         variables=variables,
     )
 
@@ -153,7 +149,25 @@ _KPI = {"type": "kpi", "query": "q", "value": "revenue"}
 _REVENUE = [{"revenue": 128_000}]
 
 
-def test_payload_carries_board_width_variables_and_datasets() -> None:
+def test_payload_carries_the_options_of_the_variables_chart_links_set() -> None:
+    chart = _resolved(_KPI, _REVENUE)
+    options = {"metric": {"options": ["strict", "loose"], "multiple": False}}
+    with variable_options(options):
+        payload = build_chart_payload(
+            chart,
+            {chart.query_name: _REVENUE},
+            width=300.0,
+            height=150.0,
+            padding=None,
+            board_style=_BOARD_RS,
+            variables={},
+            title_shift=NO_TITLE_SHIFT,
+            is_placeholder=False,
+        )
+    assert payload["variable_options"] == options
+
+
+def test_payload_carries_variables_and_datasets() -> None:
     chart = _resolved(_KPI, _REVENUE)
     payload = build_chart_payload(
         chart,
@@ -162,13 +176,11 @@ def test_payload_carries_board_width_variables_and_datasets() -> None:
         height=150.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=_BOARD_WIDTH,
         variables={"c1_page": 2},
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
     )
     assert payload["title_shift"] == {"title_dy": 0.0, "body_dy": 0.0}
-    assert payload["board_style"]["board_width"] == _BOARD_WIDTH
     assert payload["variables"] == {"c1_page": 2}
     assert payload["rows"] == _REVENUE
     assert payload["datasets"] == {chart.query_name: _REVENUE}
@@ -220,7 +232,6 @@ def test_payload_carries_no_engine_decided_literal(
         height=150.0,
         padding=None,
         board_style=board_rs,
-        board_width=_BOARD_WIDTH,
         variables=None,
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
@@ -239,7 +250,6 @@ def test_payload_types_every_column_of_rows_and_each_dataset() -> None:
         height=150.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=_BOARD_WIDTH,
         variables={},
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
@@ -320,7 +330,6 @@ def test_payload_carries_the_active_time_locale() -> None:
             height=150.0,
             padding=None,
             board_style=_BOARD_RS,
-            board_width=_BOARD_WIDTH,
             variables=None,
             title_shift=NO_TITLE_SHIFT,
             is_placeholder=False,
@@ -379,7 +388,6 @@ def test_title_shift_grows_the_card_by_body_dy() -> None:
             height=90.0,
             padding=None,
             board_style=_BOARD_RS,
-            board_width=None,
             title_shift=shift,
         )
         match = re.search(r'<svg[^>]* height="([\d.]+)"', svg)
@@ -402,11 +410,10 @@ def test_kpi_and_spark_bar_numbers_print_under_the_active_number_locale() -> Non
             height=90.0,
             padding=None,
             board_style=_BOARD_RS,
-            board_width=None,
         )
         return re.findall(r">([^<>]+)</(?:tspan|text)>", svg)
 
-    assert texts(kpi)[:2] == ["4.8", "mn"]
+    assert texts(kpi)[:2] == ["4.8", "m"]
     assert "1,234,567" in texts(spark)
     german = Regional(locale=RegionalLocale(number="de-DE"))
     with regional_scope(
@@ -441,7 +448,6 @@ def test_kpi_prints_a_non_finite_cell_as_pythons_str_of_it(
         height=90.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=None,
     )
     assert f">{text}</tspan>" in svg
 
@@ -470,10 +476,21 @@ def _spark_svg(**kwargs: Any) -> str:
         height=0.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=None,
         **kwargs,
     )
     return svg
+
+
+def _numerically_canonical(svg: str) -> str:
+    """C14N of `svg` with every numeric attribute value rounded to 0.01 (the engine's precision)."""
+    root = ET.fromstring(svg)
+    for element in root.iter():
+        for name, value in element.attrib.items():
+            try:
+                element.set(name, repr(round(float(value), 2)))
+            except ValueError:
+                continue
+    return ET.canonicalize(ET.tostring(root, encoding="unicode"))
 
 
 def test_spark_bar_placeholder_fades_the_chart_and_paints_the_overlay() -> None:
@@ -494,8 +511,11 @@ def test_spark_bar_placeholder_fades_the_chart_and_paints_the_overlay() -> None:
         font=chart.style.spark_bar.font,
         resolved_style=_BOARD_RS,
     )
-    # Python's overlay and the engine's writer spell an apostrophe differently.
-    assert ET.canonicalize(_spark_svg(is_placeholder=True)) == ET.canonicalize(expected)
+    # The overlay (full-repr floats) and the engine's writer (0.01-rounded,
+    # `12` for `12.0`, different apostrophe) spell values differently; they must agree.
+    assert _numerically_canonical(_spark_svg(is_placeholder=True)) == (
+        _numerically_canonical(expected)
+    )
 
 
 def test_a_kpi_link_resolves_against_the_link_context() -> None:
@@ -518,7 +538,6 @@ def test_a_kpi_link_resolves_against_the_link_context() -> None:
             height=90.0,
             padding=None,
             board_style=_BOARD_RS,
-            board_width=None,
         )
         match = re.search(r'href="([^"]*)"', svg)
         assert match is not None
@@ -551,7 +570,6 @@ def test_a_spark_bar_link_is_ignored_as_it_always_was(how: str) -> None:
         height=0.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=None,
     )
     assert "href" not in svg
 
@@ -577,7 +595,6 @@ def test_spark_bar_labels_print_str_of_the_cell() -> None:
         height=0.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=None,
     )
     labels = re.findall(r'fill="#[0-9a-f]+" font-family="[^"]*">([^<]+)</text>', svg)
     assert labels == ["2024-01-01 12:00:00", "2024-01-02", "nan"]
@@ -621,7 +638,6 @@ def test_the_engine_kpi_prints_the_text_board_to_dict_and_the_terminal_print(
         height=90.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=None,
     )
     value_run = re.search(r"<text[^>]*>(.*?)</text>", svg, re.S)
     assert value_run is not None
@@ -668,7 +684,6 @@ def test_a_placeholder_font_weight_of_any_authored_kind_leaves_every_engine_char
             height=90.0,
             padding=None,
             board_style=board_style,
-            board_width=None,
             is_placeholder=name == "spark_bar",
         )
         if name == "spark_bar":
@@ -684,7 +699,7 @@ def test_the_spark_bar_title_estimate_constants_reach_the_painted_title(
         "dbt_charts.core.render.engine.SPARK_BAR_TITLE_BASELINE_Y_PX", 30.0
     )
     svg = _spark_svg()
-    assert 'y="30.0"' in svg and 'y="30.0"' not in default_svg
+    assert 'y="30"' in svg and 'y="30"' not in default_svg
 
 
 def test_table_pagination_reads_the_variables_the_seam_forwards() -> None:
@@ -817,7 +832,8 @@ def test_spark_label_truncation_records_one_entry_per_label() -> None:
 
 
 def test_table_text_truncation_records_the_engine_count_per_column() -> None:
-    chart = _resolved({"type": "table", "query": "q"}, [_WIDE_ROW])
+    table = {"type": "table", "query": "q", "style": {"wrap": False}}
+    chart = _resolved(table, [_WIDE_ROW])
     payload = build_chart_payload(
         chart,
         {chart.query_name: [_WIDE_ROW]},
@@ -825,7 +841,6 @@ def test_table_text_truncation_records_the_engine_count_per_column() -> None:
         height=0.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=_BOARD_WIDTH,
         variables={},
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
@@ -838,7 +853,7 @@ def test_table_text_truncation_records_the_engine_count_per_column() -> None:
     }
     assert counts
     with _sinks() as sinks:
-        _native({"type": "table", "query": "q"}, [_WIDE_ROW], width=200.0, height=0.0)
+        _native(table, [_WIDE_ROW], width=200.0, height=0.0)
     assert Counter(
         t.authored_field for t in sinks.truncations["c1"] if t.surface == "table_cell"
     ) == Counter(counts)
@@ -867,7 +882,6 @@ def test_callout_truncation_reports_the_text_as_authored_not_as_resolved() -> No
             height=40.0,
             padding=None,
             board_style=_BOARD_RS,
-            board_width=_BOARD_WIDTH,
         )
     [truncation] = sinks.truncations["c1"]
     assert truncation.authored_text == callout.message
@@ -900,35 +914,38 @@ def test_table_columns_overflow_lands_in_its_sink() -> None:
     assert overflow.required_width > 400.0
 
 
-def test_table_cramping_lands_in_its_sink_with_the_engine_suggested_width() -> None:
-    table = {"type": "table", "query": "q", "style": {"preferred_width": 800}}
-    rows = [{f"a_long_header_name_{i}": "1,234" for i in range(6)}]
+def test_table_overflow_names_the_header_word_that_forced_it() -> None:
+    table = {"type": "table", "query": "q"}
+    rows = [
+        {
+            "Incomprehensibilities": f"Renewal expected next quarter pending sign-off {i}",
+            "seats": i,
+        }
+        for i in range(4)
+    ]
     with _sinks() as sinks:
-        _native(table, rows, width=420.0, height=0.0)
-    cramping = sinks.crampings["c1"]
-    assert cramping.wrapped_headers > 0
-    assert cramping.column_count == 6
-    assert cramping.required_width > cramping.available_width
-    assert cramping.suggested_width is not None
-    assert cramping.suggested_width % 50 == 0
+        _native(table, rows, width=130.0, height=0.0)
+    cause = sinks.overflows["c1"].cause
+    assert cause is not None
+    assert cause.column == "Incomprehensibilities"
+    assert cause.header_word == "Incomprehensibilities"
 
 
-def test_a_cramped_table_outside_a_board_renders_with_no_suggested_fix() -> None:
-    table = {"type": "table", "query": "q", "style": {"preferred_width": 800}}
-    rows = [{f"a_long_header_name_{i}": "1,234" for i in range(6)}]
-    chart = _resolved(table, rows)
-    with _sinks() as sinks:
-        svg, _ = render_native(
-            chart,
-            rows,
-            width=420.0,
-            height=0.0,
-            padding=None,
-            board_style=_BOARD_RS,
-            board_width=None,
+def test_table_header_extra_wrap_lands_in_the_geometry_sink() -> None:
+    table = {
+        "type": "table",
+        "query": "q",
+        "style": {"columns": {"a_long_header_name": {"width": 70}}},
+    }
+    with collect_geometry_warnings() as found:
+        _native(
+            table, [{"a_long_header_name": "1,234", "b": 2}], width=420.0, height=0.0
         )
-    assert svg.startswith("<svg")
-    assert sinks.crampings == {}
+    (params,) = found["c1"]["WARN-TABLE-HEADER-EXTRA-WRAP"]
+    assert params["column"] == "a_long_header_name"
+    assert params["lines"] > 2
+    assert params["column_width"] == 70.0
+    assert params["column_count"] == 2
 
 
 _CAPPED_TABLE = {
@@ -1163,7 +1180,7 @@ def test_a_nan_element_in_a_spark_columns_cell_does_not_erase_the_real_bars() ->
         "style": {"columns": {"trend": {"spark": {"type": "columns"}}}},
     }
     svg, _ = _native(table, rows, width=400.0, height=0.0)
-    assert svg.count('rx="1.0"') == 2
+    assert svg.count('rx="1"') == 2
 
 
 def test_a_tables_title_metrics_follow_the_engines_painted_title_block() -> None:
@@ -1209,9 +1226,21 @@ def test_board_style_envelope_carries_the_sizers_pagination_control_height() -> 
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale(), "UTC", 0
+        style, active_format_locale(), active_time_locale(), "UTC", 0
     )
     assert envelope["pagination_control_height"] == TABLE_PAGINATION_CONTROL_HEIGHT
+
+
+@pytest.mark.parametrize("theme", ["clarity", "neon"])
+def test_board_style_envelope_carries_the_canvas_tone(theme: str) -> None:
+    from dbt_charts.core.render.engine import board_style_envelope
+    from dbt_charts.core.text.format_d3 import active_format_locale, active_time_locale
+
+    style, _ = resolve_style_and_context(get_theme_style(theme))
+    envelope = board_style_envelope(
+        style, active_format_locale(), active_time_locale(), "UTC", 0
+    )
+    assert envelope["canvas_tone"] == style.canvas_tone
 
 
 def test_board_style_envelope_carries_the_resolved_text_mark_font() -> None:
@@ -1220,7 +1249,7 @@ def test_board_style_envelope_carries_the_resolved_text_mark_font() -> None:
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale(), "UTC", 0
+        style, active_format_locale(), active_time_locale(), "UTC", 0
     )
     font = style.chart_defaults.marks.text.font
     assert envelope["text_mark_font"] == {"family": font.family, "size": font.size}
@@ -1234,7 +1263,7 @@ def test_board_style_envelope_carries_the_authored_numeral_family() -> None:
     def envelope_for(patch: StylePatch | None) -> dict:
         style, _ = resolve_style_and_context(get_theme_style(), patch)
         return board_style_envelope(
-            style, None, active_format_locale(), active_time_locale(), "UTC", 0
+            style, active_format_locale(), active_time_locale(), "UTC", 0
         )
 
     assert envelope_for(None)["numeral_family"] == (
@@ -1254,7 +1283,7 @@ def test_board_style_envelope_carries_the_themes_hover_emphasis() -> None:
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale(), "UTC", 0
+        style, active_format_locale(), active_time_locale(), "UTC", 0
     )
     hover = style.chart_defaults.hover_emphasis
     assert envelope["hover_emphasis"] == {
@@ -1269,7 +1298,7 @@ def test_board_style_envelope_carries_the_themes_default_view_widths() -> None:
 
     style, _ = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale(), "UTC", 0
+        style, active_format_locale(), active_time_locale(), "UTC", 0
     )
     view = style.chart_defaults.view
     assert envelope["continuous_width"] == view.continuous_width
@@ -1284,7 +1313,7 @@ def test_board_style_envelope_carries_the_board_palette_a_chart_with_none_falls_
 
     style, context = resolve_style_and_context(get_theme_style())
     envelope = board_style_envelope(
-        style, None, active_format_locale(), active_time_locale(), "UTC", 0
+        style, active_format_locale(), active_time_locale(), "UTC", 0
     )
     assert envelope["palette"] == context.palette
 
@@ -1964,7 +1993,6 @@ def _payload_of(
         height=400.0,
         padding=None,
         board_style=_BOARD_RS,
-        board_width=_BOARD_WIDTH,
         variables={},
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,

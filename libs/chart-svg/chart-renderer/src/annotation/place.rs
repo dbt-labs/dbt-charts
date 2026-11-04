@@ -830,7 +830,7 @@ mod tests {
     use crate::annotation::{DataMark, PlotRect, Reach};
     use crate::diagnostic::collect;
     use crate::vega_fit::Bounds;
-    use crate::time_axis::date_text_day;
+    use crate::time_axis::testing::day;
     use measure::FontBook;
 
     const W: f64 = 40.0;
@@ -966,9 +966,6 @@ mod tests {
         assert!(close(side(t, a), 9.0));
     }
 
-    fn day(s: &str) -> f64 {
-        date_text_day(s).unwrap()
-    }
 
     fn ctx<'a>(anns: &'a [Annotation], fonts: &'a FontBook, orientation: Orientation) -> AnnotationCtx<'a> {
         let (along, cross) = match orientation {
@@ -1741,7 +1738,7 @@ mod tests {
             let mut c = ctx(&anns, &fonts, o);
             c.x = AxisMap::Band {
                 domain: vec!["East".into(), "West".into()],
-                geometry: crate::families::cartesian::BandGeometry::new(2, 0.0, along, 0.0, 0.0),
+                geometry: d3rs::scale::Band::new(2, [0.0, along], 0.0, 0.0, 0.5, false),
                 days: None,
                 range: (0.0, along),
             };
@@ -1772,7 +1769,7 @@ mod tests {
         domain.push("West".into());
         c.x = AxisMap::Band {
             domain,
-            geometry: crate::families::cartesian::BandGeometry::new(slots, 0.0, along, 0.0, 0.0),
+            geometry: d3rs::scale::Band::new(slots, [0.0, along], 0.0, 0.0, 0.5, false),
             days: None,
             range: (0.0, along),
         };
@@ -1808,7 +1805,7 @@ mod tests {
         let mut c = ctx(&anns, &fonts, Orientation::Vertical);
         c.x = AxisMap::Band {
             domain: days.iter().map(|d| d.to_string()).collect(),
-            geometry: crate::families::cartesian::BandGeometry::new(4, 0.0, 200.0, 0.0, 0.0),
+            geometry: d3rs::scale::Band::new(4, [0.0, 200.0], 0.0, 0.0, 0.5, false),
             days: Some(days.iter().map(|d| Scalar::Date((*d).into()).days().unwrap()).collect()),
             range: (0.0, 200.0),
         };

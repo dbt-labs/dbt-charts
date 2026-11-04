@@ -1,0 +1,3 @@
+kind: Fixes
+body: A rows item or charts fence can place a board file that declares its own charts and queries, or another Markdown page, which draws in place.
+time: 2026-11-02T20:52:05.27694-08:00

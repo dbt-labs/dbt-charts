@@ -15,7 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
 
 from dbt_charts.core.compile.models.chart.authored import (
     BasemapConfig,
@@ -143,6 +147,16 @@ class _TooltipFields(BaseModel):
     tooltip: list[TooltipField] = Field(
         default_factory=list,
         description="Query columns the hover card adds after the chart's own rows.",
+    )
+
+
+class _PatternField(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: str | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="Field mapped to the fill pattern.",
     )
 
 

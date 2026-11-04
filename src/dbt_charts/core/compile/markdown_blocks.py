@@ -34,10 +34,10 @@ SpanRun = tuple[Span, ...]
 def map_span_runs(
     blocks: list[AnyBlock],
     run_fn: Callable[[SpanRun], SpanRun],
-    image_fn: Callable[[ImageBlock], ImageBlock],
+    image_fn: Callable[[ImageBlock], AnyBlock],
 ) -> list[AnyBlock]:
     """Return *blocks* with ``run_fn`` applied to each block's run of spans (a
-    paragraph, heading, list item, table cell) and ``image_fn`` to every
+    paragraph, heading, list item, table cell) and ``image_fn`` replacing every
     standalone image block."""
 
     def row(table_row: TableRow) -> TableRow:

@@ -70,7 +70,6 @@ def _render_with_summary(make_chart, width: int = 600) -> str:
             "row": tc.row.model_copy(
                 update={
                     "stripe": TableRowStripeStyle(color="#f0f0f0"),
-                    "role": "kind",
                 }
             ),
         }
@@ -83,6 +82,7 @@ def _render_with_summary(make_chart, width: int = 600) -> str:
 
     chart = make_chart(
         "table",
+        row_role="kind",
         style={"table": {"columns": {"label": {}, "amount": {}}}},
     )
     data = [
@@ -515,7 +515,6 @@ class TestEdgeToEdgeFills:
             update={
                 "row": base_row.model_copy(
                     update={
-                        "role": "kind",
                         "roles": base_row.roles.model_copy(
                             update={
                                 "summary": base_row.roles.summary.model_copy(
@@ -535,6 +534,7 @@ class TestEdgeToEdgeFills:
 
         chart = make_chart(
             "table",
+            row_role="kind",
             style={"columns": {"label": {}, "amount": {}}},
         )
         data = [

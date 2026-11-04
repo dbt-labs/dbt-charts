@@ -3,7 +3,9 @@
 import re
 from collections.abc import Callable
 
+_JINJA_OPENER_RE = re.compile(r"\{[{%#]")
 _MARKDOWN_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})([^\r\n]*)$")
+MASKED_FENCE_RE = re.compile(r"(__DCT_MARKDOWN_FENCE_\d+__)")
 
 
 def resolve_outside_fences(text: str, resolve: Callable[[str], str]) -> str:
@@ -12,6 +14,17 @@ def resolve_outside_fences(text: str, resolve: Callable[[str], str]) -> str:
     for token, fence in fences.items():
         resolved = resolved.replace(token, fence)
     return resolved
+
+
+def escape_jinja_outside_fences(text: str) -> str:
+    """*text* with each Jinja opener (``{{``, ``{%``, ``{#``) outside fenced code
+    rewritten to an expression that prints it, so Jinja renders the text as written."""
+    return resolve_outside_fences(
+        text,
+        lambda masked: _JINJA_OPENER_RE.sub(
+            lambda opener: f'{{{{ "{opener.group()}" }}}}', masked
+        ),
+    )
 
 
 def mask_fenced_code(text: str) -> tuple[str, dict[str, str]]:

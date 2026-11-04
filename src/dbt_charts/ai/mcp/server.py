@@ -4,8 +4,8 @@ Resources: dct://boards, dct://board/{path},
            dct://guide/*
 
 Tools: all tools from dbt_charts.ai.tool_schemas.ALL_TOOLS (render_board,
-       execute_sql, search_files, describe_board, list_skills,
-       get_skill, list_diagnostic_codes, get_diagnostic_code)
+       execute_sql, search_files, describe_board, describe_semantics,
+       list_skills, get_skill, list_diagnostic_codes, get_diagnostic_code)
 
 Usage: dct mcp serve
 """
@@ -42,8 +42,9 @@ MCP_INSTRUCTIONS = (
     "Before authoring or analyzing anything, call "
     f"get_skill(name={ENTRY_SKILL_NAME!r}) — the dbt Charts board and chart "
     "grammar and the build-render-fix loop. Call list_skills() to see the rest. "
-    "Answer a data question with a chart: render_board draws it inline for the "
-    "user, while execute_sql's rows reach only you. Render a stored board by "
+    "Answer a data question with a chart, because execute_sql's rows reach "
+    "only you. "
+    "Render a stored board by "
     "'path' when one already answers the question; otherwise author "
     "whole-board YAML as render_board's 'yaml_content'. "
     f"{SINGLE_VALUE_RULE}"

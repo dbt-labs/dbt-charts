@@ -3,7 +3,7 @@
 Tests verify that:
 1. Top-level scalars can be set, replaced, or deleted without disturbing
    unrelated lines (comments, blank lines, key order).
-2. Nested dot-path leaves (`style.frame.width`) can be set, creating
+2. Nested dot-path leaves (`style.frame.margin`) can be set, creating
    intermediate block mappings when needed, and appending to existing blocks.
 3. Deleting via `None` removes an existing key; an absent key is a no-op.
 4. Values that need YAML quoting round-trip through `yaml.safe_load` to the
@@ -131,26 +131,26 @@ class TestSetNestedPath:
 
     def test_creates_intermediate_blocks_when_missing(self) -> None:
         original = "title: X\n"
-        result = set_board_values(original, {"style.frame.width": 800})
-        assert result == ("style:\n  frame:\n    width: 800\ntitle: X\n")
+        result = set_board_values(original, {"style.frame.margin": 800})
+        assert result == ("style:\n  frame:\n    margin: 800\ntitle: X\n")
 
     def test_appends_leaf_to_existing_nested_block(self) -> None:
-        original = "style:\n  frame:\n    width: 800\n"
+        original = "style:\n  frame:\n    margin: 800\n"
         result = set_board_values(original, {"style.frame.min_height": 400})
-        assert result == "style:\n  frame:\n    width: 800\n    min_height: 400\n"
+        assert result == "style:\n  frame:\n    margin: 800\n    min_height: 400\n"
 
     def test_replaces_existing_nested_leaf(self) -> None:
-        original = "style:\n  frame:\n    width: 800\n  background: white\n"
-        result = set_board_values(original, {"style.frame.width": 900})
-        assert result == ("style:\n  frame:\n    width: 900\n  background: white\n")
+        original = "style:\n  frame:\n    margin: 800\n  background: white\n"
+        result = set_board_values(original, {"style.frame.margin": 900})
+        assert result == ("style:\n  frame:\n    margin: 900\n  background: white\n")
 
     def test_deletes_existing_nested_leaf(self) -> None:
-        original = "style:\n  frame:\n    width: 800\n    min_height: 400\n"
+        original = "style:\n  frame:\n    margin: 800\n    min_height: 400\n"
         result = set_board_values(original, {"style.frame.min_height": None})
-        assert result == "style:\n  frame:\n    width: 800\n"
+        assert result == "style:\n  frame:\n    margin: 800\n"
 
     def test_deleting_absent_nested_leaf_is_noop(self) -> None:
-        original = "style:\n  frame:\n    width: 800\n"
+        original = "style:\n  frame:\n    margin: 800\n"
         result = set_board_values(original, {"style.frame.min_height": None})
         assert result == original
 
@@ -309,9 +309,9 @@ class TestBlockScalarLeaves:
 
 class TestUnsupportedConstructsRaise:
     def test_flow_style_parent_mapping_raises(self) -> None:
-        original = "style: {frame: {width: 800}}\n"
+        original = "style: {frame: {margin: 8}}\n"
         with pytest.raises(ValueError, match="flow"):
-            set_board_values(original, {"style.frame.width": 900})
+            set_board_values(original, {"style.frame.margin": 900})
 
     def test_anchor_raises(self) -> None:
         original = "style: &base\n  background: white\n"
@@ -331,17 +331,17 @@ class TestUnsupportedConstructsRaise:
     def test_non_mapping_intermediate_value_raises(self) -> None:
         original = "style: solid\n"
         with pytest.raises(ValueError, match="mapping"):
-            set_board_values(original, {"style.frame.width": 900})
+            set_board_values(original, {"style.frame.margin": 900})
 
     def test_delete_of_key_owning_nested_mapping_raises(self) -> None:
         # Deleting only the parent line would orphan its children into
         # top-level keys — scalar-leaves-only applies to deletes too.
-        original = "style:\n  frame:\n    width: 800\n"
+        original = "style:\n  frame:\n    margin: 800\n"
         with pytest.raises(ValueError, match="nested mapping"):
             set_board_values(original, {"style": None})
 
     def test_delete_of_nested_key_owning_mapping_raises(self) -> None:
-        original = "style:\n  frame:\n    width: 800\n  bg: white\n"
+        original = "style:\n  frame:\n    margin: 800\n  bg: white\n"
         with pytest.raises(ValueError, match="nested mapping"):
             set_board_values(original, {"style.frame": None})
 

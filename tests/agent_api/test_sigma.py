@@ -426,22 +426,47 @@ def test_no_credential_or_token_is_written(http: Any, tmp_path: Path) -> None:
             assert TOKEN.encode() not in data
 
 
-def test_failed_export_names_it_leaves_nothing_and_hides_the_token(
+def _server_error(request: urllib.request.Request) -> bytes:
+    raise urllib.error.HTTPError(
+        request.full_url, 500, f"boom {TOKEN}", Message(), io.BytesIO()
+    )
+
+
+def test_failed_kpi_export_is_named_in_the_outline_and_hides_the_token(
     http: Any, tmp_path: Path
 ) -> None:
-    def server_error(request: urllib.request.Request) -> bytes:
-        raise urllib.error.HTTPError(
-            request.full_url, 500, f"boom {TOKEN}", Message(), io.BytesIO()
-        )
+    http[("GET", "/v2/query/k1/download")] = _server_error
 
-    http[("GET", "/v2/query/k1/download")] = server_error
+    out = _run(tmp_path)
 
-    with pytest.raises(BundleError) as exc:
+    assert "kpi/total-revenue-k1.csv" not in _files(out)
+    outline = (out / "outline.md").read_text()
+    assert "kpi/total-revenue-k1.csv" in outline and "HTTP 500" in outline
+    assert TOKEN not in outline
+
+
+def test_failed_page_image_is_named_and_the_rest_of_the_bundle_is_written(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", "/v2/query/p1/download")] = _server_error
+
+    out = _run(tmp_path)
+
+    assert not any(f.startswith("png/") for f in _files(out))
+    assert "queries/c1.sql" in _files(out)
+    outline = (out / "outline.md").read_text()
+    assert "png/00-summary-co.png" in outline and "HTTP 500" in outline
+
+
+def test_failed_workbook_definition_still_fails_the_bundle(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", f"/v2/workbooks/{WID}")] = _server_error
+
+    with pytest.raises(BundleError, match="500") as exc:
         _run(tmp_path)
 
-    assert "kpi/total-revenue-k1.csv" in str(exc.value) and "500" in str(exc.value)
     assert TOKEN not in "".join(traceback.format_exception(exc.value))
-    assert not (tmp_path / "b").exists()
     assert list(tmp_path.iterdir()) == []
 
 
@@ -476,14 +501,75 @@ def test_download_not_ready_statuses_are_polled_again(
     assert (out / "kpi/total-revenue-k1.csv").read_bytes() == b"bytes-of-k1"
 
 
-def test_query_for_an_element_missing_from_the_layout_is_an_error(
+def test_an_element_sigma_cannot_compile_is_named_in_the_outline(
+    http: Any, tmp_path: Path
+) -> None:
+    error = "Not found: Table p:d.gone was not found in location US"
+    http[("GET", f"/v2/workbooks/{WID}/queries")] = _json(
+        {
+            "entries": [
+                QUERIES[0],
+                {"elementId": "k1", "name": "Total revenue", "error": error},
+                QUERIES[2],
+            ]
+        }
+    )
+
+    out = _run(tmp_path)
+
+    assert "queries/k1.sql" not in _files(out)
+    assert "kpi/total-revenue-k1.csv" not in _files(out)
+    assert f"Sigma could not compile it: {error}" in (out / "outline.md").read_text()
+
+
+@pytest.mark.parametrize(
+    "answer", [{"sql": "select 9 as gone"}, {"error": "Not found: d.t"}]
+)
+def test_a_query_of_an_element_no_longer_in_the_workbook_is_listed(
+    http: Any, tmp_path: Path, answer: dict[str, str]
+) -> None:
+    deleted = {"elementId": "gone", "name": "Old chart", **answer}
+    http[("GET", f"/v2/workbooks/{WID}/queries")] = _json(
+        {"entries": [*QUERIES, deleted]}
+    )
+
+    out = _run(tmp_path)
+
+    assert "queries/gone.sql" not in _files(out)
+    outline = (out / "outline.md").read_text()
+    assert "elements no longer in the workbook: gone" in outline
+
+
+def test_elements_the_layout_does_not_place_are_listed_apart(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", f"/v2/workbooks/{WID}")] = _json(
+        {
+            **CONTENTS,
+            "contents": {
+                **CONTENTS["contents"],
+                "layout": '<?xml version="1.0" encoding="utf-8"?>\n',
+            },
+        }
+    )
+
+    out = _run(tmp_path)
+
+    outline = (out / "outline.md").read_text()
+    unplaced = outline.split("## Not placed on any page", 1)[1]
+    for element_id in ("c1", "k1", "h1"):
+        assert f"sql: queries/{element_id}.sql" in unplaced
+    assert "kpi/total-revenue-k1.csv" not in _files(out)
+
+
+def test_a_query_with_neither_sql_nor_an_error_is_refused(
     http: Any, tmp_path: Path
 ) -> None:
     http[("GET", f"/v2/workbooks/{WID}/queries")] = _json(
-        {"entries": [*QUERIES, {"elementId": "ghost", "name": "n", "sql": "select 1"}]}
+        {"entries": [QUERIES[0], {"elementId": "k1", "name": "Total revenue"}]}
     )
 
-    with pytest.raises(BundleError, match="ghost"):
+    with pytest.raises(BundleError, match="k1"):
         _run(tmp_path)
 
 
@@ -645,3 +731,42 @@ def test_unlisted_element_option_still_reaches_the_outline(
         del ELEMENTS[0]["brandNewOption"]
 
     assert "brandNewOption: on" in tile_block(outline, "c1")
+
+
+def test_a_bar_or_area_chart_with_no_stacking_key_is_stacked_in_the_outline() -> None:
+    def lines(el: dict[str, Any]) -> list[str]:
+        return module._describe(el, {}, {}, set(), {})
+
+    bar = {"id": "b", "kind": "bar-chart", "columns": []}
+    area = {"id": "a", "kind": "area-chart", "columns": []}
+    grouped = {"id": "g", "kind": "bar-chart", "stacking": "none", "columns": []}
+    line = {"id": "l", "kind": "line-chart", "columns": []}
+    assert "stacking: stacked (Sigma's default)" in lines(bar)
+    assert "stacking: stacked (Sigma's default)" in lines(area)
+    assert not any(s.startswith("stacking: stacked") for s in lines(grouped))
+    assert any("stacking" in s and "none" in s for s in lines(grouped))
+    assert not any("stacking" in s for s in lines(line))
+
+
+def test_a_column_without_a_formula_is_listed_by_its_name() -> None:
+    table = {
+        "id": "t",
+        "kind": "table",
+        "columns": [
+            {"id": "a", "name": "Account"},
+            {"id": "b", "name": "Cost", "formula": "Sum([Cost])"},
+        ],
+    }
+
+    lines = module._describe(table, {}, {}, set(), {})
+
+    assert "  - a: Account" in lines
+    assert "  - b: Cost = Sum([Cost])" in lines
+
+
+def test_a_value_given_as_a_formula_is_listed() -> None:
+    progress = {"id": "p", "kind": "progress", "value": "Sum([Hours])", "columns": []}
+
+    lines = module._describe(progress, {}, {}, set(), {})
+
+    assert "value: Sum([Hours])" in lines

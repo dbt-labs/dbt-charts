@@ -143,9 +143,23 @@ def test_uuid_is_text() -> None:
     assert conn.execute("SELECT v FROM t").fetchone() == (str(value),)
 
 
-def test_decimal_wider_than_38_digits_raises() -> None:
-    with pytest.raises(ValueError, match="precision 39"):
-        rows_to_arrow([{"v": Decimal("1" * 39)}])
+def test_trailing_zeros_do_not_widen_a_decimal() -> None:
+    """A BigQuery BIGNUMERIC carries 38 decimal places whatever its value, so
+    the column is sized by the digits that carry value and loads exactly."""
+    wide = Decimal("12345.5" + "0" * 37)
+    conn = _load([{"v": wide}, {"v": Decimal("2.25")}, {"v": Decimal("0E-38")}])
+    assert conn.execute("SELECT typeof(v) FROM t LIMIT 1").fetchone() == (
+        "DECIMAL(7,2)",
+    )
+    loaded = [r[0] for r in conn.execute("SELECT v FROM t ORDER BY v").fetchall()]
+    assert loaded == [Decimal("0.00"), Decimal("2.25"), Decimal("12345.50")]
+
+
+def test_a_decimal_wider_than_38_significant_digits_is_refused() -> None:
+    """DuckDB's DECIMAL holds 38 digits; a column that needs more is refused
+    rather than loaded at float precision."""
+    with pytest.raises(ValueError, match="precision 41"):
+        _load([{"v": Decimal("1" * 39 + ".55")}])
 
 
 def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
@@ -179,7 +193,9 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
         from dbt_charts.core.compile.models.source import (
             CsvSourceConfig, JsonSourceConfig, ParquetSourceConfig,
         )
+        from dbt_charts.core.column_types import ColumnType
         from dbt_charts.core.execute.adapters.base import RowFetchLimit
+        from dbt_charts.core.execute.cache_backend import ResultRows
         from dbt_charts.core.execute.arrow_ingest import rows_to_arrow
         from dbt_charts.core.execute.cache_composition import compose_over_named_rows
         from dbt_charts.core.execute.file_source_materializer import (
@@ -203,12 +219,13 @@ def test_runtime_paths_do_not_import_pyarrow(tmp_path: Path) -> None:
         )[0] == [{{"n": 2}}]
 
         cache = TrivialDuckDBCache()
-        cache.put("s", "q", "v", [{{"a": 1}}, {{"a": "2"}}], board_slug="b", query_name="q")
-        assert cache.get("s", "q", "v").rows == [{{"a": 1}}, {{"a": "2"}}]
+        rows = ResultRows([{{"a": 1}}, {{"a": 2}}], {{"a": ColumnType(kind="integer")}})
+        cache.put("s", "q", "v", rows, board_slug="b", query_name="q")
+        assert cache.get("s", "q", "v").rows == rows.rows
 
         assert compose_over_named_rows(
             "SELECT sum(a) AS n FROM up", {{"up": [{{"a": 1}}, {{"a": 2}}]}}, []
-        ) == [{{"n": 3}}]
+        )[0] == [{{"n": 3}}]
 
         limit = RowFetchLimit(fetch_limit=10, effective_limit=9, ceiling_binding=False)
         result = arrow_to_query_result(rows_to_arrow([{{"n": Decimal("4")}}]), limit)

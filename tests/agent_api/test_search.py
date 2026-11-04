@@ -27,6 +27,7 @@ from dbt_charts.agent_api.search import (
     search_files,
 )
 from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile import compile_file
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.project import Project
 
@@ -342,6 +343,7 @@ class TestSearchDashboardsContract:
                     "match_score",
                     "match_reasons",
                     "matched_charts",
+                    "charts",
                 }
             )
         }
@@ -634,7 +636,7 @@ class TestMarkdownBoardsAreSearchable:
             "      value: n\n"
             "---\n"
             "Intro prose.\n\n"
-            "{{ chart pipe }}\n"
+            "```charts\npipe\n```\n"
         )
         project = local_project(tmp_path)
 
@@ -887,7 +889,7 @@ class TestChartGrainSearch:
         assert hit.matched_charts == []
         assert "chart_match" not in hit.match_reasons
 
-    def test_hit_carries_no_chart_list_query_names_or_sql(
+    def test_hit_carries_no_full_chart_list_or_sql(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """A hit is for picking a board; the detail is describe_board's."""
@@ -917,6 +919,7 @@ class TestChartGrainSearch:
             "match_score",
             "match_reasons",
             "matched_charts",
+            "charts",
         }
 
     def test_chart_title_match_boosts_score_and_reason(
@@ -1364,3 +1367,176 @@ class TestSearchFilesArgsWireSchema:
     def test_unknown_field_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             SearchFilesArgs.model_validate({"text": "x", "directory": "some/path"})
+
+
+def test_a_maintainer_reference_in_notes_never_scores(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    boards = tmp_path / "charts"
+    boards.mkdir()
+    (boards / "b.yml").write_text(
+        "title: Sales\nnotes: Totals; see ai_notes/internal_plan.md\nrows: []\n"
+    )
+    assert search_boards_hits("internal_plan", local_project(tmp_path)) == []
+
+
+class TestHitNamesTheQueryOfEachMatchedChart:
+    @staticmethod
+    def _hit(root: Path, project: FilesystemProject, board: str) -> BoardMatch:
+        (root / "charts").mkdir()
+        (root / "charts" / "b.yml").write_text(board)
+        hit = search_boards_hits("revenue", project)[0]
+        assert isinstance(hit, BoardMatch)
+        return hit
+
+    def test_a_named_query(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        hit = self._hit(
+            tmp_path,
+            local_project(tmp_path),
+            """
+title: Sales
+queries:
+  monthly:
+    sql: select 1 as x
+charts:
+  revenue_trend:
+    query: monthly
+    type: bar
+  unrelated:
+    query: monthly
+    type: bar
+rows:
+  - revenue_trend
+""",
+        )
+        assert [chart.model_dump() for chart in hit.charts] == [
+            {"name": "revenue_trend", "query": "monthly"}
+        ]
+        assert hit.matched_charts == ["revenue_trend"]
+
+    def test_an_inline_query_gets_the_name_dct_query_takes(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        hit = self._hit(
+            tmp_path,
+            project,
+            """
+title: Sales
+charts:
+  revenue_trend:
+    query:
+      columns: [x, y]
+      values:
+        - [a, 1]
+    type: bar
+    x: x
+    y: y
+rows:
+  - revenue_trend
+""",
+        )
+        query = hit.charts[0].query
+        result = compile_file(project.path("charts/b.yml").read_board())
+        assert result.board is not None, result.errors
+        assert query in {**result.query_registry, **result.board.queries}
+
+    @pytest.mark.parametrize(
+        ("authored", "expected"),
+        [
+            ("queries.monthly", "monthly"),
+            ("select 1 as x", "_inline_query_revenue_trend"),
+            ("select lib.yml#monthly", "select lib.yml#monthly"),
+            ('"select all"', "select all"),
+        ],
+    )
+    def test_each_query_spelling_gives_the_name_dct_query_takes(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        authored: str,
+        expected: str,
+    ) -> None:
+        project = local_project(tmp_path)
+        hit = self._hit(
+            tmp_path,
+            project,
+            f"""
+title: Sales
+source: db
+queries:
+  monthly:
+    sql: select 1 as x
+  select all:
+    sql: select 1 as x
+charts:
+  revenue_trend:
+    query: {authored}
+    type: bar
+    x: x
+    y: x
+rows:
+  - revenue_trend
+""",
+        )
+        assert [chart.query for chart in hit.charts] == [expected]
+
+    def test_a_keyword_shaped_name_off_the_board_is_kept(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(tmp_path)
+        hit = self._hit(
+            tmp_path,
+            project,
+            """
+title: Sales
+charts:
+  revenue_trend:
+    query: update
+    type: bar
+rows:
+  - revenue_trend
+""",
+        )
+        assert [chart.query for chart in hit.charts] == ["update"]
+
+    def test_a_chart_with_no_query_names_none(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        hit = self._hit(
+            tmp_path,
+            local_project(tmp_path),
+            """
+title: Sales
+charts:
+  revenue_note:
+    type: callout
+    message: hello
+rows:
+  - revenue_note
+""",
+        )
+        assert [chart.query for chart in hit.charts] == [None]
+
+    def test_a_board_that_matched_elsewhere_lists_no_charts(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        hit = self._hit(
+            tmp_path,
+            local_project(tmp_path),
+            """
+title: Revenue
+queries:
+  monthly:
+    sql: select 1 as x
+charts:
+  trend:
+    query: monthly
+    type: bar
+rows:
+  - trend
+""",
+        )
+        assert hit.charts == []

@@ -1,10 +1,9 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: "One dataset, nine ways"
+width: 1200
 notes: One 15-month dataset drawn nine different ways, all in the same ink — a tour of the mark types dbt Charts supports.
 
 style:
-  frame:
-    width: 1200
   charts:
     color:
       categorical:

@@ -4,7 +4,7 @@ Object titles (chart/table/spark) pick font size AND family by outer card
 width tier alone (``chart_title_spec``). The width thresholds that separate
 tiers are derived once from the default board's column grid (board width,
 margin, column count) rather than hand-picked pixels. If ``frame.margin`` (or
-``frame.width``) ever changes without re-deriving the thresholds, cards get
+``frame.max_width``) ever changes without re-deriving the thresholds, cards get
 narrower or wider and can silently drop a tier -- e.g. a 2-column card that
 used to sit in the "medium" tier (title-slot family) sliding into "narrow"
 (body family), quietly losing serif titles on themes like editorial/cream.

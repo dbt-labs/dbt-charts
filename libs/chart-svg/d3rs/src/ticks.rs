@@ -177,8 +177,8 @@ fn tick_spec(start: f64, stop: f64, count: f64) -> (f64, f64, f64) {
 }
 
 /// d3-array `tickIncrement`: [`tick_spec`]'s encoded increment.
-fn tick_increment(start: f64, stop: f64, count: usize) -> f64 {
-    tick_spec(start, stop, count as f64).2
+pub(crate) fn tick_increment(start: f64, stop: f64, count: f64) -> f64 {
+    tick_spec(start, stop, count).2
 }
 
 /// d3-array `tickStep(start, stop, count)`: [`tick_increment`] decoded back
@@ -188,9 +188,9 @@ fn tick_increment(start: f64, stop: f64, count: usize) -> f64 {
 pub fn d3_tick_step(start: f64, stop: f64, count: usize) -> f64 {
     let reverse = stop < start;
     let inc = if reverse {
-        tick_increment(stop, start, count)
+        tick_increment(stop, start, count as f64)
     } else {
-        tick_increment(start, stop, count)
+        tick_increment(start, stop, count as f64)
     };
     (if reverse { -1.0 } else { 1.0 }) * if inc < 0.0 { 1.0 / -inc } else { inc }
 }
@@ -198,7 +198,12 @@ pub fn d3_tick_step(start: f64, stop: f64, count: usize) -> f64 {
 /// d3-array `nice(start, stop, count)` — the domain extension Vega's linear
 /// scale applies for `nice: true` (d3's default count 10): widen both ends
 /// to the tick increment, re-deriving the increment until it stabilizes.
-pub fn d3_nice(mut start: f64, mut stop: f64, count: usize) -> (f64, f64) {
+pub fn d3_nice(start: f64, stop: f64, count: usize) -> (f64, f64) {
+    d3_nice_fractional(start, stop, count as f64)
+}
+
+/// [`d3_nice`] over a count that need not be whole (a histogram's threshold count is whatever its rule returns).
+pub fn d3_nice_fractional(mut start: f64, mut stop: f64, count: f64) -> (f64, f64) {
     let mut prestep: Option<f64> = None;
     loop {
         let step = tick_increment(start, stop, count);
@@ -389,6 +394,8 @@ mod tests {
         assert_eq!(d3_nice(0.0, 139.0, 10), (0.0, 140.0));
         // Already-nice domain is a fixed point.
         assert_eq!(d3_nice(0.0, 40.0, 10), (0.0, 40.0));
+        // One pass gives [-20, 130]; the re-derived step then widens it to 140.
+        assert_eq!(d3_nice(-14.0, 127.0, 10), (-20.0, 140.0));
     }
 
     /// d3-array's `tickStep`: [`tick_increment`] decoded back to a plain

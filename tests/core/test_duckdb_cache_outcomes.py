@@ -18,6 +18,8 @@ from dbt_charts.core.execute.duckdb_cache import (
 )
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result
+
 
 @pytest.fixture
 def cache():
@@ -63,7 +65,7 @@ def put_rows(
         SOURCE_HASH,
         query_hash,
         variables_hash,
-        rows,
+        rows_result(rows),
         board_slug="test_board",
         query_name="broken_query",
     )

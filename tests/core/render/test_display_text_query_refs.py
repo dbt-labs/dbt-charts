@@ -37,7 +37,7 @@ queries:
       - [AMER, 1500000]
 """
 
-_FIXED_WIDTH = "style:\n  frame:\n    width: 600\n"
+_FIXED_WIDTH = "width: 600\n"
 
 _FULL = (
     """title: "Q3 revenue {{ queries.summary.one.net_revenue | format('currency') }}"
@@ -117,7 +117,7 @@ def test_every_surface_reads_query_results(
     assert result.board_error is None, result.board_error
     assert not result.chart_errors, result.chart_errors
     assert isinstance(result.output, str)
-    assert 'data-dbt-page-title="Q3 revenue $4.21mn"' in result.output
+    assert 'data-dbt-page-title="Q3 revenue $4.21m"' in result.output
     assert 'data-chart-title="2 regions"' in result.output
     assert 'data-chart-title="Net revenue (ahead)"' in result.output
     plain = _plain(result.output)
@@ -150,7 +150,7 @@ def test_html_page_title_reads_query_results(
     result = _render(_FULL, local_project, "html")
     assert result.board_error is None, result.board_error
     assert isinstance(result.output, str)
-    assert "<title>Q3 revenue $4.21mn</title>" in result.output
+    assert "<title>Q3 revenue $4.21m</title>" in result.output
 
 
 def test_nested_board_title_reads_query_results(
@@ -319,7 +319,7 @@ def test_board_to_dict_carries_resolved_titles(
 ) -> None:
     executor = _executor(_FULL, local_project)
     out = board_to_dict(executor.board, executor, {})
-    assert out["title"] == "Q3 revenue $4.21mn"
+    assert out["title"] == "Q3 revenue $4.21m"
     chart_titles = [item["chart"].get("title") for item in out["items"]]
     assert "2 regions" in chart_titles
     assert "Plan 4.2%" in chart_titles
@@ -504,7 +504,7 @@ def test_terminal_renders_data_titles(
     assert result.board_error is None, result.board_error
     out = result.output
     assert isinstance(out, str)
-    assert "Q3 revenue $4.21mn" in out
+    assert "Q3 revenue $4.21m" in out
     assert "2 regions" in out
     assert "Net revenue (ahead)" in out
 
@@ -708,7 +708,7 @@ rows:
     )
     assert result.board_error is None, result.board_error
     assert isinstance(result.output, str)
-    assert "$4.21mn" in result.output
+    assert "$4.21m" in result.output
 
 
 def test_imported_chart_text_reads_a_qualified_query_ref(

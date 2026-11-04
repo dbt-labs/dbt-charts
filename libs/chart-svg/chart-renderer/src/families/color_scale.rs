@@ -2,7 +2,9 @@
 //! numeric, date or authored-gradient column (Vega's `linear` and `time`
 //! scales with a color range), shared by every family that paints one.
 
-use d3rs::color::{byte, interpolate_hcl_color, interpolate_rgb_piecewise, rgb_text, Color, Rgb};
+use d3rs::color::{byte, format_rgb, interpolate_hcl_color, interpolate_rgb, piecewise, rgb_text, Color, Rgb};
+use d3rs::scale::linear_range;
+use d3rs::sequential::{Diverging, Sequential};
 use d3rs::vega_schemes::BLUES;
 
 use crate::common::{FormatSlot, ScaleTarget};
@@ -14,8 +16,7 @@ use crate::families::legend::{
 };
 use crate::contract;
 use measure::baseline_shift;
-use scene::{Attrs, Node};
-use print::print;
+use scene::{Attrs, Node, Role, Shape};
 use measure::FontBook;
 use crate::vega_fit;
 
@@ -42,14 +43,25 @@ enum Ramp {
     Halved { ramp: &'static [Rgb], pivot: f64, hcl: bool },
 }
 
-/// Where `v` sits in `[lo, hi]` for a sequential color scale: d3's `scaleSequential` multiplies by the
-/// domain's reciprocal (`75000 * (1 / 100000)` is `0.7500000000000001`, which rounds a tie channel the
-/// other way than dividing does) and puts a zero-width domain mid-ramp.
-fn sequential_position(v: f64, lo: f64, hi: f64) -> f64 {
-    if lo == hi {
-        0.5
-    } else {
-        (v - lo) * (1.0 / (hi - lo))
+/// What d3 gives a NaN position: `unknown`, undefined, which an SVG fill paints black.
+const UNKNOWN: Rgb = (0, 0, 0);
+
+/// `piecewise(interpolateRgb, scheme)(t)` as d3 prints it.
+fn rgb_ramp(scheme: &[Rgb], t: f64) -> String {
+    if t.is_nan() {
+        return rgb_text(UNKNOWN);
+    }
+    rgb_text(piecewise(interpolate_rgb, scheme, t).expect("a scheme has two or more colors"))
+}
+
+/// `piecewise(interpolateHcl, colors)(t)` as d3 prints it. Vega paints an empty range black and a one-color range
+/// as that color: there is no segment to mix.
+fn hcl_ramp(colors: &[Color], t: f64) -> String {
+    match colors {
+        [] => rgb_text(UNKNOWN),
+        [only] => format_rgb(*only),
+        _ if t.is_nan() => rgb_text(UNKNOWN),
+        _ => format_rgb(piecewise(interpolate_hcl_color, colors, t).expect("two or more colors")),
     }
 }
 
@@ -148,34 +160,31 @@ impl ContinuousColor {
             Ramp::Diverging { domain, colors } => {
                 // d3 pairs a one-point domain with no second stop, so every value takes the lone color.
                 if domain.len() == 1 {
-                    return color_text(colors[0]);
+                    return format_rgb(colors[0]);
                 }
-                let v = v.clamp(self.lo, self.hi);
-                let i = domain.partition_point(|&x| x <= v).saturating_sub(1).min(domain.len() - 2);
-                // d3 maps a zero-width segment to its middle.
-                let span = domain[i + 1] - domain[i];
-                let t = if span == 0.0 { 0.5 } else { (v - domain[i]) / span };
-                color_text(interpolate_hcl_color(colors[i], colors[i + 1], t))
+                match linear_range(domain, colors, interpolate_hcl_color, true, v) {
+                    Some(color) => format_rgb(color),
+                    None => rgb_text(UNKNOWN),
+                }
             }
             Ramp::Windowed { ramp, extent: (a, b) } => {
                 let t = unit_position(v.clamp(self.lo, self.hi), self.lo, self.hi);
-                rgb_text(interpolate_rgb_piecewise(ramp, a + t * (b - a)))
+                rgb_ramp(ramp, a + t * (b - a))
             }
             Ramp::Halved { ramp, pivot, hcl } => {
-                // d3's `scaleDiverging`: each arm's own reciprocal width, zero for a collapsed one, and the
-                // clamp on the position. An authored `min` past the pivot runs the domain backwards (`s`).
-                let arm = |width: f64| if width == 0.0 { 0.0 } else { 0.5 / width };
-                let s = if *pivot < self.lo { -1.0 } else { 1.0 };
-                let k = if s * v < s * pivot { arm(pivot - self.lo) } else { arm(self.hi - pivot) };
-                let t = (0.5 + (v - pivot) * k).clamp(0.0, 1.0);
+                // An authored `min` past the pivot runs the domain backwards.
+                let Some(t) = Diverging::new([self.lo, *pivot, self.hi], true).position(v) else { return rgb_text(UNKNOWN) };
                 if *hcl {
-                    color_text(piecewise_hcl(&ramp.iter().copied().map(Color::opaque).collect::<Vec<_>>(), t))
+                    hcl_ramp(&ramp.iter().copied().map(Color::opaque).collect::<Vec<_>>(), t)
                 } else {
-                    rgb_text(interpolate_rgb_piecewise(ramp, t))
+                    rgb_ramp(ramp, t)
                 }
             }
             _ if self.dates => self.fill_at(unit_position(v, self.lo, self.hi)),
-            _ => self.fill_at(sequential_position(v, self.lo, self.hi)),
+            _ => match Sequential::new([self.lo, self.hi], false).position(v) {
+                Some(t) => self.fill_at(t),
+                None => rgb_text(UNKNOWN),
+            },
         }
     }
 
@@ -188,9 +197,9 @@ impl ContinuousColor {
             return self.fill(self.lo);
         }
         match &self.ramp {
-            Ramp::Rgb(colors) => rgb_text(interpolate_rgb_piecewise(colors, t)),
+            Ramp::Rgb(colors) => rgb_ramp(colors, t),
             Ramp::DatePair(scheme) => rgb_text(d3rs::color::quantized_pair_hcl(scheme, t)),
-            Ramp::Stops(colors) => color_text(piecewise_hcl(colors, t)),
+            Ramp::Stops(colors) => hcl_ramp(colors, t),
             Ramp::Diverging { .. } | Ramp::Windowed { .. } | Ramp::Halved { .. } => unreachable!("handled above"),
         }
     }
@@ -262,49 +271,6 @@ pub(crate) fn legend_format_spec(format: &FormatSlot) -> Option<&str> {
     (!painted_by_expr && !matches!(format.spec.as_str(), "bytes" | "duration")).then_some(format.spec.as_str())
 }
 
-/// JavaScript's `String(number)`: Rust's shortest round-trip digits, spelled in
-/// exponent form past `1e21` and below `1e-6`, where JavaScript switches.
-pub(crate) fn js_number_string(v: f64) -> String {
-    if v == 0.0 {
-        return "0".to_string();
-    }
-    if (1e-6..1e21).contains(&v.abs()) {
-        return format!("{v}");
-    }
-    let spelled = format!("{v:e}");
-    match spelled.split_once('e') {
-        Some((mantissa, exp)) if !exp.starts_with('-') => format!("{mantissa}e+{exp}"),
-        _ => spelled,
-    }
-}
-
-/// `d3.piecewise(d3.interpolateHcl, colors)(t)`. An empty range has nothing to
-/// mix: Vega paints it black.
-fn piecewise_hcl(colors: &[Color], t: f64) -> Color {
-    match colors {
-        [] => Color::opaque((0, 0, 0)),
-        // A one-color ramp has no segment to mix; the scale reports it unpaintable.
-        [only] => *only,
-        _ => {
-            let n = (colors.len() - 1) as f64;
-            let scaled = t * n;
-            let i = scaled.floor().clamp(0.0, n - 1.0) as usize;
-            interpolate_hcl_color(colors[i], colors[i + 1], scaled - i as f64)
-        }
-    }
-}
-
-/// d3's `formatRgb`: `rgb(r, g, b)`, or `rgba(r, g, b, a)` under a partial
-/// opacity, each channel rounded and clamped to a byte.
-fn color_text(c: Color) -> String {
-    let alpha = if c.a.is_nan() { 1.0 } else { c.a.clamp(0.0, 1.0) };
-    let (r, g, b) = (byte(c.r), byte(c.g), byte(c.b));
-    if alpha == 1.0 {
-        format!("rgb({r}, {g}, {b})")
-    } else {
-        format!("rgba({r}, {g}, {b}, {})", js_number_string(alpha))
-    }
-}
 
 /// What a gradient channel's `palette` names: color stops (a named palette's
 /// baked ones, or the authored list), a continuous Vega scheme, or a
@@ -554,21 +520,7 @@ impl GradientAt {
         Ok((laid.box_width(at.length), laid.height(at.length)))
     }
 
-    /// Paints the legend at `(x, y)`, sized for a unit `(pw, ph)`.
-    pub(crate) fn paint(
-        legend: &LegendConfig,
-        color_format: Option<&FormatSlot>,
-        color: &ContinuousColor,
-        (id, title): (&str, &str),
-        fonts: &FontBook,
-        unit: (f64, f64),
-        (svg, x, y): (&mut String, f64, f64),
-    ) -> Result<(), String> {
-        svg.push_str(&print(&Self::nodes(legend, color_format, color, (id, title), fonts, unit, (x, y))?));
-        Ok(())
-    }
-
-    /// [`Self::paint`] as nodes.
+    /// The legend at `(x, y)`, sized for a unit `(pw, ph)`.
     pub(crate) fn nodes(
         legend: &LegendConfig,
         color_format: Option<&FormatSlot>,
@@ -642,7 +594,7 @@ pub(crate) struct LegendStack {
     pub(crate) size: (f64, f64),
     /// Whether a legend of the chart's own series leads the stack; a chart whose
     /// color field is numeric has only the numeric legends.
-    base_block: bool,
+    pub(crate) base_block: bool,
 }
 
 impl<'a> NumericLegends<'a> {
@@ -689,20 +641,7 @@ impl<'a> NumericLegends<'a> {
         }
     }
 
-    /// Paints legend `index` at `(x, y)` beside a unit `(pw, ph)`.
-    pub(crate) fn paint_part(
-        &self,
-        index: usize,
-        svg: &mut String,
-        cfg: &LegendConfig,
-        fonts: &FontBook,
-        unit: (f64, f64),
-        at: (f64, f64),
-    ) -> Result<(), String> {
-        svg.push_str(&print(&self.part_nodes(index, cfg, fonts, unit, at)?));
-        Ok(())
-    }
-
+    /// Legend `index` at `(x, y)` beside a unit `(pw, ph)`.
     pub(crate) fn part_nodes(
         &self,
         index: usize,
@@ -724,6 +663,7 @@ impl<'a> NumericLegends<'a> {
                 symbol: Some(crate::families::legend::LegendSymbol::Circle),
                 series_key: None,
                 recede: None,
+                action: None,
             })
             .collect();
         Ok(crate::families::legend::drawn_symbol_legend(
@@ -806,6 +746,7 @@ impl NumericPart<'_> {
                 symbol: Some(crate::families::legend::LegendSymbol::Circle),
                 series_key: None,
                 recede: None,
+                action: None,
             })
             .collect();
         let legend = crate::families::legend::vega_legend(&entries, false, &self.title, cfg, fonts)?;
@@ -816,14 +757,11 @@ impl NumericPart<'_> {
 /// A `<linearGradient>` in `<defs>`: vertical (y1=1 bottom, y2=0 top) for a
 /// legend beside the plot, horizontal (x1=0 left, x2=1 right) for one above
 /// or below it. `stops` are `(offset, color)` as printed.
-fn gradient_def(id: &str, vertical: bool, stops: Vec<(String, String)>) -> Node {
-    let (x2, y1, y2) = if vertical { ("0", "1", "0") } else { ("1", "0", "0") };
-    let attrs = Attrs::new().set("id", id).set("x1", "0").set("x2", x2).set("y1", y1).set("y2", y2);
-    let stops = stops
-        .into_iter()
-        .map(|(offset, color)| Node::Stop(Attrs::new().set("offset", offset).set("stop-color", color)))
-        .collect();
-    Node::Defs(vec![Node::LinearGradient { attrs, stops }])
+fn gradient_def(id: &str, vertical: bool, stops: Vec<(f64, String)>) -> Node {
+    let to = if vertical { (0.0, 0.0) } else { (1.0, 0.0) };
+    let from = (0.0, if vertical { 1.0 } else { 0.0 });
+    let gradient = Node::new(Role::Chrome, Attrs::new().set("id", id), Shape::LinearGradient { from, to, stops });
+    Node::new(Role::Chrome, Attrs::new(), Shape::Defs(vec![gradient]))
 }
 
 /// The gradient of a continuous legend: a stop at each end and at each of the
@@ -841,7 +779,7 @@ fn scale_gradient_def(
         .into_iter()
         .chain(ticks.iter().copied())
         .chain(tail)
-        .map(|v| (((v - min) / (max - min)).to_string(), color(v)))
+        .map(|v| ((v - min) / (max - min), color(v)))
         .collect();
     gradient_def(id, vertical, stops)
 }
@@ -852,7 +790,7 @@ fn ramp_gradient_def(id: &str, vertical: bool, color_at: impl Fn(f64) -> String)
     let stops = (0..=20)
         .map(|step| {
             let t = f64::from(step) / 20.0;
-            (t.to_string(), color_at(t))
+            (t, color_at(t))
         })
         .collect();
     gradient_def(id, vertical, stops)
@@ -876,7 +814,7 @@ pub(crate) fn stops_gradient_def(id: &str, stops: &[String], vertical: bool) -> 
         .enumerate()
         .map(|(i, stop)| {
             let offset = if n == 1 { 0.0 } else { i as f64 / (n - 1) as f64 };
-            (format!("{offset:.4}"), stop.clone())
+            (offset, stop.clone())
         })
         .collect();
     gradient_def(id, vertical, stops)
@@ -905,27 +843,13 @@ impl VerticalGradient<'_> {
         let mut nodes = Vec::new();
         let mut bar_y = y;
         if !self.title.is_empty() {
-            nodes.push(Node::text(
-                Attrs::new()
-                    .set("x", format!("{x:.2}"))
-                    .set("y", format!("{:.2}", y + baseline_shift("top", title_size)))
-                    .set("text-anchor", "start")
-                    .vega("font-family", cfg.title.font.family_or("sans-serif"))
-                    .set("font-size", title_size.to_string())
-                    .quick_some("font-style", cfg.title.font.style.as_deref())
-                    .set("font-weight", cfg.title.font.weight_str())
-                    .set("fill", cfg.title.font.color.as_deref().unwrap_or("#313233")),
-                self.title,
-            ));
+            nodes.push(Node::text(Role::Label, (x, y + baseline_shift("top", title_size)), Attrs::new().set("text-anchor", "start").vega("font-family", cfg.title.font.family_or("sans-serif")).num("font-size", title_size).quick_some("font-style", cfg.title.font.style.as_deref()).set("font-weight", cfg.title.font.weight_str()).set("fill", cfg.title.font.color.as_deref().unwrap_or("#313233")), self.title));
             bar_y += title_size + VEGA_LEGEND_TITLE_PADDING;
         }
-        nodes.push(Node::Rect(
-            Attrs::new()
-                .set("x", format!("{x:.2}"))
-                .set("y", format!("{bar_y:.2}"))
-                .set("width", VEGA_GRADIENT_THICKNESS.to_string())
-                .set("height", self.length.to_string())
-                .set("fill", format!("url(#{})", self.gradient_id)),
+        nodes.push(Node::rect(
+            Role::Legend,
+            (x, bar_y, VEGA_GRADIENT_THICKNESS, self.length),
+            Attrs::new().set("fill", format!("url(#{})", self.gradient_id)),
         ));
         let label_color = label_font.color.as_deref().unwrap_or("#626366");
         let label_weight = label_font.weight_str();
@@ -968,22 +892,10 @@ impl VerticalGradient<'_> {
             .zip(&placed)
             .zip(visible)
             .map(|((text, &(baseline, y)), shown)| {
-                Node::text(
-                    Attrs::new()
-                        .set("x", format!("{label_x:.2}"))
-                        .set("y", format!("{:.2}", y + baseline_shift(baseline, label_size)))
-                        .set("text-anchor", "start")
-                        .vega("font-family", label_family)
-                        .set("font-size", label_size.to_string())
-                        .quick_some("font-style", label_font.style.as_deref())
-                        .set("font-weight", label_weight.clone())
-                        .set("fill", label_color)
-                        .set_if(!shown, "opacity", "0"),
-                    text.as_str(),
-                )
+                Node::text(Role::Label, (label_x, y + baseline_shift(baseline, label_size)), Attrs::new().set("text-anchor", "start").vega("font-family", label_family).num("font-size", label_size).quick_some("font-style", label_font.style.as_deref()).set("font-weight", label_weight.clone()).set("fill", label_color).set_if(!shown, "opacity", "0"), text.as_str())
             })
             .collect();
-        nodes.push(Node::group(contract::legend_label_attrs(None), labels));
+        nodes.push(Node::group(Role::Legend, contract::legend_label_attrs(None, false), labels));
         Ok(nodes)
     }
 }
@@ -991,6 +903,7 @@ impl VerticalGradient<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use print::print;
 
     /// A symbol legend over a continuous scale labels each tick at the precision its step
     /// implies, and colors it as the scale does.
@@ -1006,12 +919,12 @@ mod tests {
 
     #[test]
     fn a_number_prints_as_javascript_spells_it() {
-        assert_eq!(js_number_string(5.0), "5");
-        assert_eq!(js_number_string(-0.30000000000000004), "-0.30000000000000004");
-        assert_eq!(js_number_string(0.000012345), "0.000012345");
-        assert_eq!(js_number_string(1e21), "1e+21");
-        assert_eq!(js_number_string(1.5e-7), "1.5e-7");
-        assert_eq!(js_number_string(123456789012.0), "123456789012");
+        assert_eq!(d3rs::js_math::js_number_string(5.0), "5");
+        assert_eq!(d3rs::js_math::js_number_string(-0.30000000000000004), "-0.30000000000000004");
+        assert_eq!(d3rs::js_math::js_number_string(0.000012345), "0.000012345");
+        assert_eq!(d3rs::js_math::js_number_string(1e21), "1e+21");
+        assert_eq!(d3rs::js_math::js_number_string(1.5e-7), "1.5e-7");
+        assert_eq!(d3rs::js_math::js_number_string(123456789012.0), "123456789012");
     }
 
     /// Oracle: production's compiled histogram `color: w` over `w` in 2.5..20,
@@ -1302,12 +1215,12 @@ mod tests {
         let scale = ContinuousColor::blues(2.5, 20.0);
         for (edge, direction, title) in [("right", "vertical", "Ti<&'\"tle"), ("top", "horizontal", "Title"), ("top", "horizontal", "")] {
             let cfg = cfg(edge, direction);
-            GradientAt::paint(&cfg, None, &scale, ("g<'1", title), &fonts, (300.0, 200.0), (&mut svg, 5.0, 7.5)).unwrap();
+            svg.push_str(&print(&GradientAt::nodes(&cfg, None, &scale, ("g<'1", title), &fonts, (300.0, 200.0), (5.0, 7.5)).unwrap()));
         }
         let flat = ContinuousColor::blues(5.0, 5.0);
-        GradientAt::paint(&cfg("right", "vertical"), None, &flat, ("flat", "T"), &fonts, (300.0, 200.0), (&mut svg, 1.0, 2.0)).unwrap();
+        svg.push_str(&print(&GradientAt::nodes(&cfg("right", "vertical"), None, &flat, ("flat", "T"), &fonts, (300.0, 200.0), (1.0, 2.0)).unwrap()));
         let dates = ContinuousColor::dates(&BLUES, 0.0, 152.0, false);
-        GradientAt::paint(&cfg("right", "vertical"), None, &dates, ("dates", "D"), &fonts, (300.0, 200.0), (&mut svg, 1.0, 2.0)).unwrap();
+        svg.push_str(&print(&GradientAt::nodes(&cfg("right", "vertical"), None, &dates, ("dates", "D"), &fonts, (300.0, 200.0), (1.0, 2.0)).unwrap()));
         let stops: Vec<String> = ["#ffffcc", "#41b6c4", "#0c2c84"].map(String::from).to_vec();
         let labels = ["0".to_string(), "5".to_string()];
         for (edge, direction) in [("right", "vertical"), ("top", "horizontal")] {

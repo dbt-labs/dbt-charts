@@ -118,14 +118,13 @@ def test_merge_extends_user_fragment_checks_currency_against_boardpatch(
     non-current regardless of whether it's actually current schema)."""
     from dbt_charts.core.compile import migrations
     from dbt_charts.core.compile.merge import merge_extends
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    seen_models: list[type] = []
+    seen_patch: list[bool] = []
     real_prepare_board_mapping = migrations.prepare_board_mapping
 
-    def _spy(mapping: object, *, model: type | None = None, **kwargs: object) -> object:
-        seen_models.append(model)  # type: ignore[arg-type]
-        return real_prepare_board_mapping(mapping, model=model, **kwargs)  # type: ignore[arg-type]
+    def _spy(mapping: object, *, patch: bool = False, **kwargs: object) -> object:
+        seen_patch.append(patch)
+        return real_prepare_board_mapping(mapping, patch=patch, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(migrations, "prepare_board_mapping", _spy)
 
@@ -140,7 +139,7 @@ def test_merge_extends_user_fragment_checks_currency_against_boardpatch(
     result = merge_extends(node, board_file)
 
     assert "style" in result.model_fields_set  # type: ignore[union-attr]
-    assert seen_models == [BoardPatch]
+    assert seen_patch == [True]
 
 
 def test_merge_extends_unknown_name_no_boards_root_raises(

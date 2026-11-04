@@ -1,0 +1,7 @@
+# Pattern palette — pattern-hatch
+name: pattern-hatch
+description: |
+  Sequential pattern ramp from sparse hatch to dense crosshatch.
+kind: sequential
+ramp: hatch-crosshatch
+steps: 6

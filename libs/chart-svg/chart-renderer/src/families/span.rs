@@ -9,9 +9,8 @@ use serde_json::Value;
 
 use crate::common::FormatSlot;
 use crate::contract::{self, SpanRow};
-use crate::families::temporal::{
-    civil_from_days, month_abbr, utc_instants, AuthoredTimeFormat, TimeUnit,
-};
+use crate::families::temporal::{month_abbr, zone_instants, AuthoredTimeFormat, TimeUnit};
+use d3rs::calendar::civil_from_days;
 use crate::time_axis::TimeAxis;
 use crate::Payload;
 
@@ -137,6 +136,7 @@ impl RangedBars {
         &self,
         tooltip_labels: bool,
         cat: &str,
+        time: &crate::time_axis::TimeAxis,
         detected_tu: Option<TimeUnit>,
         is_standard_date: bool,
         grain_format: Option<AuthoredTimeFormat>,
@@ -149,7 +149,7 @@ impl RangedBars {
         if !tooltip_labels || (self.duration.is_none() && start == 0.0) {
             return plain();
         }
-        let header = contract::tooltip_header_text(cat, detected_tu, is_standard_date, grain_format)?;
+        let header = contract::tooltip_header_text(cat, time.date(cat), detected_tu, is_standard_date, grain_format)?;
         let row = |title: &str, value: String, muted: bool| SpanRow { title: title.to_string(), value, muted, swatch: None };
         let rows = match self.duration {
             Some(unit) => {
@@ -398,7 +398,7 @@ pub(crate) fn date_axis(rows: &[Row], fields: [&str; 2], extra: &[f64], tick_cou
     if !(hi > lo) {
         return Ok(None);
     }
-    let ticks = utc_instants(lo, hi, tick_count);
+    let ticks = zone_instants(lo, hi, tick_count, None)?;
     let labels = ticks.iter().map(|&t| date_tick_label(t.floor() as i64)).collect::<Result<Vec<_>, _>>()?;
     Ok(Some(DateAxis { domain: (lo, hi), labels, ticks }))
 }
@@ -480,8 +480,7 @@ pub(crate) fn with_layer_day_numbers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::families::temporal::days_from_civil;
-    use crate::time_axis::parse_iso_date;
+    use d3rs::calendar::days_from_civil;
 
     #[test]
     fn the_median_length_picks_the_charts_one_unit() {
@@ -558,10 +557,7 @@ mod tests {
         let rows: Vec<Row> = [("2026-01-05", "2026-01-23"), ("2026-04-20", "2026-05-01")]
             .iter()
             .map(|(s, e)| {
-                let day = |t: &str| {
-                    let (y, m, d) = parse_iso_date(t).unwrap();
-                    Value::from(days_from_civil(y, m, d) as f64)
-                };
+                let day = |t: &str| Value::from(crate::time_axis::testing::day(t));
                 serde_json::json!({"start": day(s), "end": day(e)}).as_object().unwrap().clone()
             })
             .collect();
@@ -595,7 +591,7 @@ mod tests {
 
     fn label(rb: &RangedBars, start: f64, end: f64) -> String {
         let plain = || Ok(Some("plain".to_string()));
-        rb.aria(true, "Region A", None, false, None, None, None, ("End", &FormatSlot::from(",.2~f")), (start, end), plain).unwrap().unwrap()
+        rb.aria(true, "Region A", &crate::time_axis::testing::axis(&["Region A"]), None, false, None, None, None, ("End", &FormatSlot::from(",.2~f")), (start, end), plain).unwrap().unwrap()
     }
 
     /// `floating_bar`'s reference tooltip: every bar rises, so an unsigned
@@ -653,7 +649,7 @@ mod tests {
         };
         let aria = |rb: &RangedBars, fmt: &FormatSlot, start, end| {
             let plain = || Ok(Some("plain".to_string()));
-            rb.aria(true, "Region A", None, false, None, None, None, ("End", fmt), (start, end), plain).unwrap().unwrap()
+            rb.aria(true, "Region A", &crate::time_axis::testing::axis(&["Region A"]), None, false, None, None, None, ("End", fmt), (start, end), plain).unwrap().unwrap()
         };
         let both_ways = bars(&[(100.0, 600.0), (700.0, 200.0)], false);
         assert!(aria(&both_ways, &slot(None), 100.0, 600.0).contains("Δ: +US$500"));

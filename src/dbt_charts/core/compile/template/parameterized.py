@@ -808,12 +808,15 @@ def make_filter_date_range_helper(
     def filter_date_range_helper(
         column: str,
         date_range: Any,
+        timestamp: bool = False,
     ) -> str:
-        """Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'.
+        """Date range filter `{{ filter_date_range('col', range_var) }}`. The column may be a date or a timestamp and compares by its calendar date, so pass it bare (no DATE(), CAST or wrapping subquery). The range may be a preset name literal such as 'last_30_days'. Pass `timestamp=true` for a TIMESTAMP column to take its date in the board's `regional.time_zone` instead of UTC.
 
         Args:
             column: Date or timestamp column name (must be valid SQL identifier)
             date_range: `[start, end]` dates, or a preset name
+            timestamp: The column is a timestamp: take its calendar date in the
+                board clock's time zone. A DATE column must not pass it.
 
         Returns:
             SQL BETWEEN clause, or a one-sided >= / <= clause when one end is
@@ -827,6 +830,14 @@ def make_filter_date_range_helper(
 
         if not date_range or isinstance(date_range, _NullValue):
             return "1=1"
+
+        def date_of_column() -> str:
+            if not timestamp:
+                return dialect.date_expr(column)
+            zone = current_board_clock().time_zone
+            if zone == "UTC":
+                return dialect.date_expr(column)
+            return dialect.zoned_date_expr(column, zone)
 
         # Unwrap if it's a ParameterizedValue
         actual_value = (
@@ -862,11 +873,19 @@ def make_filter_date_range_helper(
         if not start and not end:
             return "1=1"  # Empty dates = no filter (intentional)
 
+        if timestamp and any(isinstance(bound, datetime) for bound in (start, end)):
+            raise ValueError(
+                f"filter_date_range(timestamp=true) dates the column in the board "
+                f"time zone, but the bounds carry a time of day ({start!r}, "
+                f"{end!r}) and compare the column as is; drop timestamp=true or "
+                f"pass dates"
+            )
+
         # A date range is inclusive of the whole end day, so the column is
         # compared as a date; bounds carrying a time of day are compared raw.
         if not start or not end:
             bound, op = (start, ">=") if start else (end, "<=")
-            col = column if isinstance(bound, datetime) else dialect.date_expr(column)
+            col = column if isinstance(bound, datetime) else date_of_column()
             return f"{col} {op} {emit(bound)}"
         timed = (isinstance(start, datetime), isinstance(end, datetime))
         if any(timed) and not all(timed):
@@ -874,7 +893,7 @@ def make_filter_date_range_helper(
                 f"date_range mixes a date with a datetime ({start!r}, {end!r}); "
                 f"the column can only be compared one way"
             )
-        compared = column if all(timed) else dialect.date_expr(column)
+        compared = column if all(timed) else date_of_column()
         sql = f"{compared} BETWEEN {emit(start)} AND {emit(end)}"
         if (
             range_filters is not None

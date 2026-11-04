@@ -6,7 +6,7 @@ vega_lite/mapping.py's ``_vl_overlay_merge``) before consolidation.
 
 from __future__ import annotations
 
-from dbt_charts.core.compile.merge import deep_merge_dict
+from dbt_charts.core.utils import deep_merge_dict
 
 
 def test_deep_merge_dict_recurses_into_nested_mappings() -> None:

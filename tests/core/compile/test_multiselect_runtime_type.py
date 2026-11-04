@@ -54,7 +54,7 @@ def test_multiselect_members_keep_their_own_types() -> None:
 def test_numeric_multiselect_still_displays_as_text() -> None:
     """Stringification happens at the display site, where it belongs."""
     var = Variable(input="multiselect")
-    assert format_variable_display_value(var, [1, 2]) == "1, 2"
+    assert format_variable_display_value(var, [1, 2]) == "(2) 1"
 
 
 def test_unset_multiselect_joins_to_empty_rather_than_raising() -> None:
@@ -83,7 +83,7 @@ def test_populated_multiselect_joins_without_a_guard() -> None:
 def test_display_value_accepts_the_resolved_shape() -> None:
     """The read-only strip renders the same list the queries see."""
     var = Variable(input="multiselect")
-    assert format_variable_display_value(var, ["Rappi", "iFood"]) == "Rappi, iFood"
+    assert format_variable_display_value(var, ["Rappi", "iFood"]) == "(2) Rappi"
 
 
 def test_display_value_of_an_unset_multiselect_is_the_unset_label() -> None:

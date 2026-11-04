@@ -62,7 +62,8 @@ def collect_all_query_names(board: Board) -> set[str]:
     SingleRowBoolProbe queries, and queries read by board ``title:``/``text:``
     and by chart display text. Descends into nested boards.
 
-    All names returned are keys in ``board.queries``. Callers pass the result
+    Names are not all keys in ``board.queries``: a nested board's own
+    ``queries:`` resolve through ``Executor.get_query``. Callers pass the result
     directly to ``execute_queries_parallel``.
     """
     names: set[str] = set(text_query_references([board.title, board.text]))

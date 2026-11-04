@@ -71,11 +71,11 @@ def test_named_query_sql_syntax_error_keeps_execute_code_and_query_name(
     assert "Query execution failed" not in error.message
     assert "DuckDB SQL execution failed" not in error.message
 
-    # The placard title is the registered code's title, not a hardcoded
+    # The placard headline is the registered code, not a hardcoded
     # "Query Error: {name}" / "Chart Error: {id}" string.
     data = rendered.data
     assert isinstance(data, str)
-    assert "Warehouse reports a table or view does not exist" in data
+    assert error.code in data
     assert "Query Error:" not in data
     assert "Chart Error:" not in data
     # Query attribution must still reach the *rendered* placard body — not

@@ -70,6 +70,15 @@ def parse_ref(ref: str, *, base_url: str | None) -> tuple[str, str]:
     return dashboard_id, f"{origin}{API_SUFFIX}"
 
 
+class _Unfetchable(BundleError):
+    """One Looker request or render failed; the bundle can name it and go on.
+
+    Raised for every HTTP error status, 404 included: a deleted Look or merged
+    result is as unfetchable as a SQL error, so the tile degrades rather than
+    the bundle.
+    """
+
+
 def _send(
     api_base: str,
     method: str,
@@ -84,7 +93,7 @@ def _send(
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:  # noqa: S310 — http(s) URL supplied by the user
             return response.read()
     except urllib.error.HTTPError as exc:
-        raise BundleError(f"Looker {method} {path} failed: HTTP {exc.code}") from None
+        raise _Unfetchable(f"Looker {method} {path} failed: HTTP {exc.code}") from None
     except urllib.error.URLError as exc:
         raise BundleError(f"Looker {method} {path} failed: {exc.reason}") from None
 
@@ -133,7 +142,7 @@ class _Looker:
             if status == "success":
                 return self.get(f"/render_tasks/{task}/results")
             if status == "failure":
-                raise BundleError(f"Looker render task {task} failed")
+                raise _Unfetchable(f"Looker render task {task} failed")
             time.sleep(POLL_SECONDS)
         raise BundleError(f"Looker render task {task} did not finish in time")
 
@@ -343,6 +352,7 @@ def _tile_lines(
     tile: str,
     *,
     totals: bool,
+    sql_error: str | None,
 ) -> list[str]:
     lines = option_lines(
         {k: v for k, v in element.items() if k not in ELEMENT_NON_OPTION_KEYS},
@@ -350,7 +360,12 @@ def _tile_lines(
         nested_dropped=NESTED_STYLING_KEYS,
     )
     if query is not None:
-        lines.append(f"queries/{query['id']}.sql ({query['model']}/{query['view']})")
+        if sql_error:
+            lines.append(f"sql: none, Looker could not fetch it: {sql_error}")
+        else:
+            lines.append(
+                f"queries/{query['id']}.sql ({query['model']}/{query['view']})"
+            )
         if totals:
             lines.append(
                 f"queries/{query['id']}.totals.sql (total and pivot-column "
@@ -391,9 +406,16 @@ def import_looker(
     ``out`` and moved into place once complete; a non-empty ``out`` is refused
     unless ``force``.
 
+    A saved-Look tile is resolved to the Look's query. Raises are for the
+    bundle as a whole; what Looker cannot give for one tile or image is named in
+    the outline instead: a Look, a tile's SQL, or a merged result it cannot
+    fetch (a deleted merge 404s), the values of a merged single-value tile (the
+    API cannot run it), and a failed render.
+
     Raises:
-        BundleError: on missing credentials, any failed request, a failed render,
-            an unsupported tile, or an incomplete bundle.
+        BundleError: on missing credentials, a failed request for the dashboard
+            itself, a Looker error row in a single-value tile, or an incomplete
+            bundle.
     """
     dashboard_id, api_base = parse_ref(ref, base_url=base_url)
     out = out or Path(f"looker-{slug(dashboard_id, fallback='tile')}")
@@ -419,6 +441,9 @@ def _fill_bundle(
 ) -> None:
     queries: dict[str, dict[str, Any]] = {}
     with_totals: set[str] = set()
+    # A query whose SQL Looker cannot produce keeps its config; the outline names the
+    # error where the SQL would be, and its tile gets no KPI export.
+    sql_errors: dict[str, str] = {}
 
     def fetch_query(query_id: str) -> dict[str, Any]:
         if query_id not in queries:
@@ -426,7 +451,11 @@ def _fill_bundle(
             bundle.write(
                 f"queries/{query_id}.json", json.dumps(queries[query_id], indent=2)
             )
-            sql = looker.get(f"/queries/{query_id}/run/sql").decode()
+            try:
+                sql = looker.get(f"/queries/{query_id}/run/sql").decode()
+            except _Unfetchable as exc:
+                sql_errors[query_id] = str(exc)
+                return queries[query_id]
             if marker := TOTALS_MARKER.search(sql):
                 bundle.write(
                     f"queries/{query_id}.sql", sql[: marker.start()].rstrip() + "\n"
@@ -457,43 +486,73 @@ def _fill_bundle(
             else "not placed in the layout"
         )
         tiles.append(f"- **{element['type']}** `{element_id}` {title!r} — {where}")
-        if not element["query_id"] and element.get("look_id"):
-            raise BundleError(
-                f"tile {tile} is backed by Look {element['look_id']}; "
-                "saved-Look tiles are not supported"
-            )
-        query = fetch_query(element["query_id"]) if element["query_id"] else None
+        query_id = element["query_id"]
+        look_line: str | None = None
+        if not query_id and element.get("look_id"):
+            look_id = element["look_id"]
+            try:
+                look = looker.get_json(f"/looks/{look_id}")
+            except _Unfetchable as exc:
+                look_line = f"look {look_id}: none, Looker could not fetch it: {exc}"
+            else:
+                query_id = look["query_id"]
+                look_line = f"look: {look_id} {look['title']}"
+        query = fetch_query(query_id) if query_id else None
         lines = _tile_lines(
-            element, query, tile, totals=element["query_id"] in with_totals
+            element,
+            query,
+            tile,
+            totals=query_id in with_totals,
+            sql_error=sql_errors.get(query_id),
         )
+        if look_line:
+            lines.insert(0, look_line)
         if element.get("merge_result_id"):
             merge_id = element["merge_result_id"]
-            merge = looker.get_json(f"/merge_queries/{merge_id}")
-            if "single_value" in (
-                element["type"],
-                (merge.get("vis_config") or {}).get("type"),
-            ):
-                raise BundleError(
-                    f"tile {tile}: values of a merged single-value tile "
-                    "cannot be fetched through the Looker API"
+            try:
+                merge = looker.get_json(f"/merge_queries/{merge_id}")
+            except _Unfetchable as exc:
+                lines.append(
+                    f"merged results {merge_id}: none, Looker could not fetch it: {exc}"
                 )
-            bundle.write(f"queries/merge-{merge_id}.json", json.dumps(merge, indent=2))
-            lines.append(f"merged results {merge_id}: queries/merge-{merge_id}.json")
-            for source in merge["source_queries"]:
-                fetch_query(source["query_id"])
-                joined = (
-                    f" merge_fields={compact(source['merge_fields'])}"
-                    if source.get("merge_fields")
-                    else ""
+            else:
+                bundle.write(
+                    f"queries/merge-{merge_id}.json", json.dumps(merge, indent=2)
                 )
                 lines.append(
-                    f"  - source query {source['query_id']} {source['name']!r}: "
-                    f"queries/{source['query_id']}.sql{joined}"
+                    f"merged results {merge_id}: queries/merge-{merge_id}.json"
                 )
-            lines += _query_option_lines(merge, tile)
-        if query is not None and "single_value" in (
-            element["type"],
-            (query["vis_config"] or {}).get("type"),
+                for source in merge["source_queries"]:
+                    fetch_query(source["query_id"])
+                    joined = (
+                        f" merge_fields={compact(source['merge_fields'])}"
+                        if source.get("merge_fields")
+                        else ""
+                    )
+                    where_sql = (
+                        "sql: none, Looker could not fetch it: "
+                        f"{sql_errors[source['query_id']]}"
+                        if source["query_id"] in sql_errors
+                        else f"queries/{source['query_id']}.sql"
+                    )
+                    lines.append(
+                        f"  - source query {source['query_id']} "
+                        f"{source['name']!r}: {where_sql}{joined}"
+                    )
+                lines += _query_option_lines(merge, tile)
+                if "single_value" in (
+                    element["type"],
+                    (merge.get("vis_config") or {}).get("type"),
+                ):
+                    lines.append(
+                        "values: none, Looker cannot run a merged single-value "
+                        "query through its API"
+                    )
+        if (
+            query is not None
+            and query["id"] not in sql_errors
+            and "single_value"
+            in (element["type"], (query["vis_config"] or {}).get("type"))
         ):
             values = looker.get_json(f"/queries/{query['id']}/run/json")
             errors = [r["looker_error"] for r in values if "looker_error" in r]
@@ -508,6 +567,11 @@ def _fill_bundle(
         f"- {f['name']} ({f['type']}) default: {f['default_value']}"
         for f in dashboard["dashboard_filters"]
     ]
+    try:
+        bundle.write("png/dashboard.png", looker.render_png(dashboard_id))
+        not_fetched: list[str] = []
+    except _Unfetchable as exc:
+        not_fetched = [f"- `png/dashboard.png`: {exc}"]
     bundle.write(
         "outline.md",
         "\n".join(
@@ -524,11 +588,23 @@ def _fill_bundle(
                 "",
                 *tiles,
                 "",
+                *(
+                    [
+                        "## Not fetched: Looker failed to produce these",
+                        "",
+                        *not_fetched,
+                        "",
+                    ]
+                    if not_fetched
+                    else []
+                ),
             ]
         ),
     )
-    bundle.write("png/dashboard.png", looker.render_png(dashboard_id))
     timezones = sorted(
         {q["query_timezone"] for q in queries.values() if q["query_timezone"]}
     )
-    bundle.finish(extra={"query_timezones": timezones} if timezones else None)
+    bundle.finish(
+        extra={"query_timezones": timezones} if timezones else None,
+        missing_images=["png/dashboard.png"] if not_fetched else [],
+    )

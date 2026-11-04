@@ -79,6 +79,8 @@ class DbtContext:
     """
 
     dbt_project_path: Path | None = None
+    # The registry's dbt target, for a dbt_profile source that names none.
+    target: str | None = None
 
 
 class SourceResolver(Protocol):
@@ -279,12 +281,17 @@ class DefaultSourceResolver:
             target_dict = _read_target_dict(
                 project_path,
                 resolve_dbt_profile_name(cfg.profile, project_path),
-                cfg.target,
+                cfg.target
+                if cfg.target is not None or dbt_context is None
+                else dbt_context.target,
                 profiles_dir=profiles_dir,
             )
         except (FileNotFoundError, ValueError) as exc:
             raise ExecutionError(str(exc)) from exc
 
+        # The resolved models render dbt Jinja over their raw input, so the bundle
+        # crosses as the mapping it was authored as.
+        metricflow = cfg.metricflow.model_dump() if cfg.metricflow is not None else None
         if target_dict["type"] == "lakecompute":
             # The driver has no query-header channel, and a manifest directory
             # would need a field only a dbt_profile source can carry. Refuse
@@ -300,7 +307,7 @@ class DefaultSourceResolver:
                 )
             try:
                 return LAKECOMPUTE_ADAPTER.validate_python(
-                    {**target_dict, "metricflow": cfg.metricflow}
+                    {**target_dict, "metricflow": metricflow}
                 )
             except ValueError as exc:
                 # Validation errors hide their input, so no credential is quoted.
@@ -318,7 +325,7 @@ class DefaultSourceResolver:
                 {
                     **target_dict,
                     "attribution": cfg.attribution,
-                    "metricflow": cfg.metricflow,
+                    "metricflow": metricflow,
                 }
             )
 
@@ -326,11 +333,13 @@ class DefaultSourceResolver:
         # not the dbt target — profiles.yml belongs to dbt and rejects keys it
         # doesn't know — so carry them across the expansion or they are lost for
         # every dbt_profile source.
-        return DbtTargetSourceConfig(
-            **target_dict,
-            attribution=cfg.attribution,
-            target_path=cfg.target_path,
-            metricflow=cfg.metricflow,
+        return DbtTargetSourceConfig.model_validate(
+            {
+                **target_dict,
+                "attribution": cfg.attribution,
+                "target_path": cfg.target_path,
+                "metricflow": metricflow,
+            }
         )
 
 

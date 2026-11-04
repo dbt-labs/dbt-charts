@@ -3,14 +3,15 @@
 //! positioning over the x scale. Axis and chart titles that overflow are cut here and returned
 //! in `Layout.diagnostics`.
 
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathData, Role};
 
 use super::bind::{Bound, LegendPaint};
 use super::Resolved;
 use crate::common::{format_y_label, XEdge};
 use crate::diagnostic::Diagnostic;
 use crate::families::axis_caption::value_axis_caption;
-use crate::families::cartesian::{vl_default_tick_count, LinearScale};
+use crate::families::cartesian::{vl_default_tick_count};
+use d3rs::scale::Continuous;
 use crate::families::color_scale::GradientAt;
 use crate::families::heatmap::{flat_label, rotated_label, svg_text_anchor, tick_line, LabelFace};
 use crate::families::legend;
@@ -18,9 +19,6 @@ use crate::frame::{ChartFrame, FrameTitle};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
 use crate::vega_fit;
 use measure::Measure;
-
-/// The decimals a histogram's axis and bar coordinates print with.
-const PLACES: usize = 3;
 
 /// A histogram fills the width it is given: nothing to hug.
 pub fn intrinsic(_bound: &Bound, _measure: &Measure) -> Result<Option<IntrinsicWidth>, Diagnostic> {
@@ -49,22 +47,12 @@ fn stack_segment(
     (x, w): (f64, f64),
     (top, bottom): (f64, f64),
     (stack_top, r): (f64, f64),
-    fill: Option<&str>,
+    (role, fill): (Role, Option<&str>),
     aria: Attrs,
 ) -> Node {
-    let fill = fill.unwrap_or("none");
-    let h = bottom - top;
+    let paint = Attrs::new().set("fill", fill.unwrap_or("none")).set("stroke-width", "0").extend(aria);
     if r <= 0.0 || top >= stack_top + r {
-        return Node::Rect(
-            Attrs::new()
-                .set("x", format!("{x:.4}"))
-                .set("y", format!("{top:.4}"))
-                .set("width", format!("{w:.4}"))
-                .set("height", format!("{h:.4}"))
-                .set("fill", fill)
-                .set("stroke-width", "0")
-                .extend(aria),
-        );
+        return Node::rect(role, (x, top, w, bottom - top), paint);
     }
     // The clip's corner circles are centered `r` below the stack top, `r` in
     // from each side; a segment's side runs along the circle down to the
@@ -72,18 +60,18 @@ fn stack_segment(
     let arc_end = bottom.min(stack_top + r);
     let side = |y: f64| r - (r * r - (stack_top + r - y).powi(2)).max(0.0).sqrt();
     let x2 = x + w;
-    let (start, down) = if bottom > arc_end {
-        (format!("M {x:.4},{bottom:.4} V {arc_end:.4}"), format!(" V {bottom:.4}"))
+    let straight = bottom > arc_end;
+    let start = if straight {
+        PathData::new().move_to(x, bottom).line_to(x, arc_end)
     } else {
-        (format!("M {:.4},{arc_end:.4}", x + side(arc_end)), String::new())
+        PathData::new().move_to(x + side(arc_end), arc_end)
     };
-    let d = format!(
-        "{start} A {r:.4},{r:.4} 0 0,1 {:.4},{top:.4} H {:.4} A {r:.4},{r:.4} 0 0,1 {:.4},{arc_end:.4}{down} Z",
-        x + side(top),
-        x2 - side(top),
-        x2 - side(arc_end),
-    );
-    Node::Path(Attrs::new().set("d", d).set("fill", fill).set("stroke-width", "0").extend(aria))
+    let d = start
+        .arc_to(r, true, x + side(top), top)
+        .line_to(x2 - side(top), top)
+        .arc_to(r, true, x2 - side(arc_end), arc_end);
+    let d = if straight { d.line_to(x2 - side(arc_end), bottom) } else { d };
+    Node::path(role, d.close(), paint)
 }
 
 pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Diagnostic> {
@@ -137,7 +125,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let symbol_entries: Vec<legend::LegendEntry> = match &bound.legend {
         Some(LegendPaint::Symbols(entries)) if r.legend.visible => entries
             .iter()
-            .map(|(label, fill)| legend::LegendEntry { label, fill, symbol: Some(swatch), series_key: None, recede: None })
+            .map(|(label, fill)| legend::LegendEntry { label, fill, symbol: Some(swatch), series_key: None, recede: None, action: None })
             .collect(),
         _ => Vec::new(),
     };
@@ -299,9 +287,9 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 }
             }
             let row_y = x_edge.at(ph, x_axis_offset + x_tick_eff + x_label_pad);
-            let pass_x_scale = LinearScale::new(bin_start, bin_stop, 0.0, pw);
+            let pass_x_scale = Continuous::linear([bin_start, bin_stop], [0.0, pw]);
             for ((&tv, &lw), lbl) in x_ticks_domain.iter().zip(x_label_ws.iter()).zip(x_tick_labels) {
-                let pos = pass_x_scale.position(tv);
+                let pos = pass_x_scale.scale(tv);
                 let align = crate::families::line::flush_align(pos, pw);
                 b.union(&vega_fit::text_ink_rows(pos, row_y, lw.min(x_limit), x_font_size, align, x_edge.baseline(), crate::text::line_count(lbl)));
             }
@@ -345,8 +333,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             // straight rect bounds).
             let y0 = ph;
             for bin in &bound.bins {
-                let x_scale = LinearScale::new(bin_start, bin_stop, 0.0, pw);
-                let (left, right) = bar_edges(x_scale.position(bin.start), x_scale.position(bin.end), band_width);
+                let x_scale = Continuous::linear([bin_start, bin_stop], [0.0, pw]);
+                let (left, right) = bar_edges(x_scale.scale(bin.start), x_scale.scale(bin.end), band_width);
                 let top = ph * (1.0 - bin.count as f64 / y_domain_max);
                 b.union(&vega_fit::Bounds::new(left, top.min(y0), right, top.max(y0)));
             }
@@ -360,7 +348,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         return Err(e.into());
     }
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
-    let x_scale = LinearScale::new(bin_start, bin_stop, 0.0, plot_w);
+    let x_scale = Continuous::linear([bin_start, bin_stop], [0.0, plot_w]);
     if crate::labels_expr::view::active() {
         use crate::labels_expr::view::{register_axis, register_linear, AxisSpec, Orient, Span};
         register_linear("x", bin_start, bin_stop, Span::Width);
@@ -395,26 +383,17 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         let go = ax_y.grid.opacity.unwrap_or(1.0);
         // The gridline on the axis edge also reaches under the outermost tick strokes.
         let (floor_x1, floor_x2) =
-            crate::common::floor_rule_span(plot_w, ax_x, x_ticks_visible, x_ticks_domain.iter().map(|&tv| x_scale.position(tv).round() + 0.5));
+            crate::common::floor_rule_span(plot_w, ax_x, x_ticks_visible, x_ticks_domain.iter().map(|&tv| crate::common::tick_round(x_scale.scale(tv))));
         let lines = y_ticks
             .iter()
             .map(|&tv| {
-                let gy = y_pos(tv).round() + 0.5;
+                let gy = crate::common::tick_round(y_pos(tv));
                 let (x1, x2) = if crate::common::rule_on_edge([gy - 0.5], x_edge.edge_y(plot_h)) {
-                    (format!("{:.3}", floor_x1.min(0.5)), format!("{:.3}", floor_x2.max(plot_w + 0.5)))
+                    (floor_x1.min(0.5), floor_x2.max(plot_w + 0.5))
                 } else {
-                    ("0.5".to_string(), format!("{:.3}", plot_w + 0.5))
+                    (0.5, plot_w + 0.5)
                 };
-                Node::Line(
-                    Attrs::new()
-                        .set("x1", x1)
-                        .set("y1", format!("{gy:.3}"))
-                        .set("x2", x2)
-                        .set("y2", format!("{gy:.3}"))
-                        .set("stroke", gc)
-                        .set("stroke-width", gw.to_string())
-                        .set("opacity", go.to_string()),
-                )
+                Node::line(Role::Grid, (x1, gy), (x2, gy), ax_y.grid.stroke(gc, gw).num("opacity", go))
             })
             .collect();
         plot.push(crate::contract::grid_group(lines));
@@ -424,21 +403,21 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let mut marks = Vec::new();
     // The mirror's invisible rule layer carries each segment's label at its own count (the rules do not stack).
     let mut ghosts: Vec<(&str, f64, f64, &str, Option<&str>)> = Vec::new();
-    for bin in bound.bins.iter().filter(|b| b.count > 0) {
-        let (left, right) = bar_edges(x_scale.position(bin.start), x_scale.position(bin.end), band_width);
+    for (datum, bin) in bound.bins.iter().enumerate().filter(|(_, b)| b.count > 0) {
+        let (left, right) = bar_edges(x_scale.scale(bin.start), x_scale.scale(bin.end), band_width);
         // One rounded clip over the whole stack: it rounds the stack's top
         // corners, and a segment inside the curve follows it.
         let stack_h = plot_h - y_pos(bin.count as f64);
         let corner = crate::common::bar_corner_radius(corner_r, right - left, stack_h);
         let stack_top = y_pos(bin.count as f64);
-        let mut below = 0;
-        for segment in &bin.segments {
-            let bottom = y_pos(below as f64);
-            below += segment.n;
-            let top = y_pos(below as f64);
+        let piled = crate::common::zero_piles(bin.segments.iter().map(|segment| ((), segment.n as f64)));
+        for (segment, (below, end)) in bin.segments.iter().zip(piled) {
+            let bottom = y_pos(below);
+            let top = y_pos(end);
             let Some(mark) = &segment.mark else { continue };
             let aria = crate::contract::aria_attrs(Some(&mark.label), crate::contract::ItemRole::Bar)?;
-            let rect = stack_segment((left, right - left), (top, bottom), (stack_top, corner), mark.fill.as_deref(), aria);
+            let role = Role::Mark { layer: 0, series: None, datum: Some(datum) };
+            let rect = stack_segment((left, right - left), (top, bottom), (stack_top, corner), (role, mark.fill.as_deref()), aria);
             marks.push(crate::href::linked(r.link_open.anchor(mark.href.as_deref()), rect));
             if mirror_active {
                 let ink = match mark.fill.as_deref() {
@@ -447,7 +426,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 };
                 ghosts.push((
                     &mark.label,
-                    (x_scale.position(bin.start) + x_scale.position(bin.end)) / 2.0,
+                    (x_scale.scale(bin.start) + x_scale.scale(bin.end)) / 2.0,
                     y_pos(segment.n as f64),
                     ink,
                     mark.href.as_deref(),
@@ -489,21 +468,20 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let x_group_y = x_edge.at(plot_h, x_axis_offset) + 0.5;
     let mut x_items = Vec::new();
     if x_ticks_visible {
-        let xs = x_ticks_domain.iter().map(|&tv| x_scale.position(tv).round() + 0.5);
+        let xs = x_ticks_domain.iter().map(|&tv| crate::common::tick_round(x_scale.scale(tv)));
         let end_y = x_group_y + x_edge.sign() * x_tick_len;
-        x_items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (x_edge.edge_y(plot_h), end_y), PLACES)?);
+        x_items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (x_edge.edge_y(plot_h), end_y))?);
     }
     let x_label_color = ax_x.labels.font.color.as_deref().unwrap_or("#626366");
     let x_label_weight = ax_x.labels.font.weight_str();
     let x_label_y =
         x_group_y + x_edge.sign() * (x_tick_eff + x_label_pad) + measure::baseline_shift(x_edge.baseline(), x_font_size);
     for (&tv, lbl) in x_ticks_domain.iter().zip(x_tick_labels.iter()) {
-        let pos = x_scale.position(tv);
+        let pos = x_scale.scale(tv);
         // labelOverlap: allow — every tick always draws; the
         // edges still flush-anchor (VL's default labelFlush on a
         // continuous scale).
         let face = LabelFace {
-            places: PLACES,
             anchor: crate::families::line::flush_anchor_px(pos, plot_w),
             family: x_family,
             size: x_font_size,
@@ -513,7 +491,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         };
         // `x_label_y` carries the crisp shift on the constant coordinate; this is the
         // same term on the label's own varying position.
-        x_items.push(flat_label((pos + 0.5, x_label_y), &face, false, &ax_x.labels.clip(lbl, fonts)?));
+        x_items.push(flat_label(Role::Axis, (pos + 0.5, x_label_y), &face, false, &ax_x.labels.clip(lbl, fonts)?));
     }
     let x_label_rows = x_tick_labels.iter().map(|l| crate::text::line_count(l)).max().unwrap_or(1);
     x_items.extend(crate::common::axis_title_flat(
@@ -544,8 +522,8 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         Ok(y_ticks
             .iter()
             .map(|&tv| {
-                let gy = y_pos(tv).round() + 0.5;
-                tick_line(PLACES, (tick_x1, gy), (tick_x2, gy), tc, tw)
+                let gy = crate::common::tick_round(y_pos(tv));
+                tick_line(Role::Axis, (tick_x1, gy), (tick_x2, gy), tc, tw)
             })
             .collect())
     };
@@ -553,7 +531,6 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     let y_label_weight = ax_y.labels.font.weight_str();
     let y_label = |x: f64, (align, baseline): (&str, &str), tv: f64, lbl: &str| -> Result<Node, String> {
         let face = LabelFace {
-            places: PLACES,
             anchor: svg_text_anchor(align),
             family: y_family,
             size: y_font_size,
@@ -567,7 +544,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         Ok(if y_angle != 0.0 {
             rotated_label((x, y, y_angle, measure::baseline_shift(baseline, y_font_size)), &face, (&text, ""), false)
         } else {
-            flat_label((x, y + measure::baseline_shift(baseline, y_font_size)), &face, false, &text)
+            flat_label(Role::Axis, (x, y + measure::baseline_shift(baseline, y_font_size)), &face, false, &text)
         })
     };
     let y_label_x = if val_on_right {
@@ -620,10 +597,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         )?);
     }
 
-    body.push(Node::group(
-        Attrs::new().set("transform", format!("translate({group_x:.3},{group_y:.3})")),
-        plot,
-    ));
+    body.push(Node::group(Role::Chrome, Attrs::new(), plot).translate(group_x, group_y));
     let canvas = Rect { x: 0.0, y: 0.0, width: frame.view_w, height: frame.h };
     let data_box = Rect { x: group_x, y: group_y, width: plot_w, height: plot_h };
     Ok(Layout {

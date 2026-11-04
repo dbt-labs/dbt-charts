@@ -68,7 +68,10 @@ export default function ({ data, parentElement, setStateValue, setTriggerValue }
       if (event.source !== frame.contentWindow || !event.data) return;
       const { type, href } = event.data;
       if (type === "dbt-variable-change") {
-        setStateValue("variables", event.data.variables);
+        // null means "the default": the variable is dropped, not stored.
+        setStateValue("variables", Object.fromEntries(
+          Object.entries(event.data.variables).filter(([, value]) => value !== null),
+        ));
       } else if (frame.navigate && type === "dbt-board-open-tab") {
         const target = new URL(href, window.location.origin);
         const params = new URLSearchParams(target.search);
@@ -139,7 +142,6 @@ def _session(
 ) -> ProjectSession:
     return ProjectSession.from_project(
         project,
-        allow_mutating_methods=True,
         extra_adapters_factory=(
             (lambda: [SnowparkAdapter(session=session, project=project)])
             if session is not None

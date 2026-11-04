@@ -18,6 +18,8 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.execute.cache_backend import CacheHit
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result
+
 
 class TestOpenCache:
     def test_none_path_opens_in_memory_cache(self) -> None:
@@ -49,7 +51,7 @@ class TestOpenCache:
             "s" * 16,
             "q" * 16,
             "v" * 16,
-            [{"x": 1}],
+            rows_result([{"x": 1}]),
             board_slug="f",
             query_name="q",
         )

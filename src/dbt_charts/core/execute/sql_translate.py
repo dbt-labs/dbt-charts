@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 import sqlglot
 import sqlglot.expressions as exp
-from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
@@ -22,7 +21,7 @@ from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
     is_file_source,
 )
-from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+from dbt_charts.core.compile.sql_guard import is_sqlglot_dialect, sqlglot_dialect
 from dbt_charts.core.compile.template.parameterized import (
     render_parameterized_with_queries,
 )
@@ -209,7 +208,7 @@ def engine_dialect(authored: str, source_config: ResolvedSourceConfig) -> str:
     engine = source_config.type
     if engine in _DIALECT_ALIASES:
         engine = _DIALECT_ALIASES[engine]
-    if sqlglot_dialect(engine) not in SqlglotDialect.classes:
+    if not is_sqlglot_dialect(sqlglot_dialect(engine)):
         raise dialect_unsupported(
             authored, source_config.type, "this source type has no known SQL dialect"
         )
@@ -243,7 +242,8 @@ def render_in_dialect(
 
     With `semantic`, the source's MetricFlow bundle, a statement that reads one
     of its datasets or constellations is compiled by MetricFlow instead of
-    translated; it emits `write` SQL itself.
+    translated; it emits `write` SQL itself. A required bundle compiles every
+    statement, and refuses one that reads a table it does not declare.
 
     Raises:
         ExecutionError: ERR-SQL-DIALECT-UNSUPPORTED, a MetricFlow compile
@@ -269,7 +269,7 @@ def render_in_dialect(
     # A composed `{{ queries.X }}` body is inlined during the render above, so
     # its refs only appear now.
     composed_sql, _ = resolver.resolve(rendered.sql, target_path, encode)
-    if semantic is not None and semantic.references(composed_sql, read):
+    if semantic is not None and semantic.governs(composed_sql, read):
         translated = semantic.compile(composed_sql, read, write)
     else:
         translated = translate_sql(composed_sql, read, write)

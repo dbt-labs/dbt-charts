@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from dbt_charts.core.compile import compile, compile_file
 from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.config import reset_config
@@ -232,11 +234,17 @@ def test_markdown_board_frontmatter_title_plus_h1_body_warns(tmp_path) -> None:
     assert "WARN-DOUBLE-HEADER" in [w.code for w in result.warnings]
 
 
-# ─────────────────────────── WARN-H1-BODY-NO-TITLE ────────────────────────────
+# ──────────────────────── WARN-BODY-HEADING-NO-TITLE ──────────────────────────
 
 
-def test_h1_body_with_no_title_warns() -> None:
-    result = compile(
+def _no_title(yaml: str) -> list[Diagnostic]:
+    result = compile(yaml)
+    assert result.success, result.errors
+    return [w for w in result.warnings if w.code == "WARN-BODY-HEADING-NO-TITLE"]
+
+
+def test_heading_opening_a_board_with_no_title_warns() -> None:
+    warnings = _no_title(
         """
 text: |
   # dbt charts Cloud
@@ -245,40 +253,131 @@ text: |
 """
     )
 
-    assert result.success, result.errors
-    warnings = [w for w in result.warnings if w.code == "WARN-H1-BODY-NO-TITLE"]
     assert len(warnings) == 1
+    assert warnings[0].path == "text"
     assert "dbt charts Cloud" in warnings[0].message
-    assert "title:" in warnings[0].fix
+    assert warnings[0].fix is not None
+    assert "`title: dbt charts Cloud`" in warnings[0].fix
 
 
-def test_h1_in_a_rows_text_block_with_no_title_warns() -> None:
-    yaml = f"""
+@pytest.mark.parametrize("marker", ["#", "##", "###"])
+def test_any_heading_level_opening_a_text_row_warns(marker: str) -> None:
+    warnings = _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - untitled
+  - text: |
+      {marker} Regional Detail
+
+      Prose.
+"""
+    )
+
+    assert [w.path for w in warnings] == ["rows.1.text"]
+
+
+def test_a_board_title_does_not_title_the_rows_under_it() -> None:
+    warnings = _no_title(
+        f"""
+title: Sales
 {_QUERIES_AND_CHARTS}
 rows:
   - text: |
-      # dbt charts Cloud
+      ## Overview
 
       Prose.
   - untitled
 """
-    assert "WARN-H1-BODY-NO-TITLE" in _codes(yaml)
+    )
+
+    assert [w.path for w in warnings] == ["rows.0.text"]
 
 
-def test_subheading_with_no_title_does_not_warn() -> None:
-    """Only a literal H1 stands in for a missing title — `##` is just structure."""
-    assert "WARN-H1-BODY-NO-TITLE" not in _codes(
-        """
-text: |
-  ## Overview
+def test_a_heading_alone_in_a_row_warns() -> None:
+    warnings = _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - text: "## Revenue"
+  - untitled
+"""
+    )
 
-  Prose.
+    assert [w.path for w in warnings] == ["rows.0.text"]
+
+
+def test_each_section_row_warns_at_any_depth() -> None:
+    warnings = _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - text: |
+      ## First
+
+      Prose.
+  - title: A titled section
+    rows:
+      - text: |
+          ## Second
+
+          Prose.
+  - untitled
+"""
+    )
+
+    assert [w.path for w in warnings] == ["rows.0.text", "rows.1.rows.0.text"]
+
+
+def test_the_mark_lands_on_the_heading_line() -> None:
+    (warning,) = _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - untitled
+  - text: |
+      ##   Regional Detail
+
+      Prose.
+"""
+    )
+
+    assert warning.fields["source_needle"] == "##   Regional Detail"
+
+
+def test_a_titled_text_row_does_not_warn() -> None:
+    assert not _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - title: Regional Detail
+    text: |
+      ## A subheading
+
+      Prose.
+  - untitled
 """
     )
 
 
-def test_prose_with_no_title_does_not_warn() -> None:
-    assert "WARN-H1-BODY-NO-TITLE" not in _codes(
+def test_a_heading_further_down_a_text_row_does_not_warn() -> None:
+    assert not _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - text: |
+      Prose first.
+
+      ## Inset in the columns
+
+      More prose.
+  - untitled
+"""
+    )
+
+
+def test_prose_with_no_heading_does_not_warn() -> None:
+    assert not _no_title(
         """
 text: |
   Just prose, no heading at all.
@@ -286,20 +385,137 @@ text: |
     )
 
 
-def test_h1_opening_an_untitled_nested_section_does_not_warn() -> None:
-    """Root-only: the check never descends into a nested section's own body,
-    same reasoning as test_heading_in_a_titled_nested_section_does_not_warn."""
-    yaml = f"""
+def test_a_fenced_comment_is_not_a_heading() -> None:
+    assert not _no_title(
+        f"""
 {_QUERIES_AND_CHARTS}
 rows:
-  - rows:
-      - text: |
-          # Regional Detail
-
-          Prose.
+  - text: |
+      ```bash
+      # not a heading
+      ```
   - untitled
 """
-    assert "WARN-H1-BODY-NO-TITLE" not in _codes(yaml)
+    )
+
+
+def test_a_heading_titling_a_cols_card_does_not_warn() -> None:
+    """In a cols row the heading already sits level with the chart titles beside it."""
+    assert not _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+rows:
+  - cols:
+      - text: |
+          ## Card title
+
+          Prose.
+      - untitled
+"""
+    )
+
+
+def test_a_heading_opening_a_tab_pane_does_not_warn() -> None:
+    """A pane opens under its tab label, which is its title."""
+    assert not _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+tabs:
+  items:
+    - title: One
+      text: |
+        ## Pane heading
+
+        Prose.
+    - title: Two
+      rows: [untitled]
+"""
+    )
+
+
+def test_a_section_row_inside_a_tab_pane_warns() -> None:
+    warnings = _no_title(
+        f"""
+{_QUERIES_AND_CHARTS}
+tabs:
+  items:
+    - title: One
+      rows:
+        - untitled
+        - text: |
+            ## Inside the pane
+
+            Prose.
+"""
+    )
+
+    assert [w.path for w in warnings] == ["tabs.items.0.rows.1.text"]
+
+
+def _markdown_warnings(tmp_path: Path, body: str) -> list[str]:
+    from dbt_charts.cli.filesystem_project import FilesystemProject
+
+    boards = tmp_path / "charts"
+    boards.mkdir()
+    (boards / "guide.md").write_text(body)
+    result = compile_file(
+        FilesystemProject(tmp_path).path("charts/guide.md").read_board()
+    )
+    assert result.success, result.errors
+    return [w.code for w in result.warnings]
+
+
+def test_a_heading_after_a_markdown_embed_does_not_warn(tmp_path: Path) -> None:
+    """Embeds split a markdown body into rows, and markdown has no per-row title."""
+    codes = _markdown_warnings(
+        tmp_path,
+        "---\nboard:\n  title: Report\n  queries:\n    q:\n      type: values\n"
+        "      rows:\n        - x: 1\n          y: 2\n  charts:\n    c:\n"
+        "      query: q\n      type: bar\n      x: x\n      y: y\n---\n\n"
+        "Prose.\n\n```charts\nc\n```\n\n## Next section\n\nMore prose.\n",
+    )
+    assert "WARN-BODY-HEADING-NO-TITLE" not in codes
+
+
+def test_a_heading_opening_an_untitled_markdown_board_warns(tmp_path: Path) -> None:
+    codes = _markdown_warnings(tmp_path, "# Guide\n\nProse.\n")
+    assert "WARN-BODY-HEADING-NO-TITLE" in codes
+
+
+def test_a_row_flagged_as_a_double_header_warns_once() -> None:
+    yaml = f"""
+title: Sales
+{_QUERIES_AND_CHARTS}
+rows:
+  - text: |
+      ## Sales
+
+      Prose.
+  - untitled
+"""
+    assert "WARN-DOUBLE-HEADER" in _codes(yaml)
+    assert not _no_title(yaml)
+
+
+def test_a_double_header_in_the_boards_own_text_leaves_its_rows_checked() -> None:
+    warnings = _no_title(
+        f"""
+title: Sales
+text: |
+  # Sales
+
+  Prose.
+{_QUERIES_AND_CHARTS}
+rows:
+  - text: |
+      ## Overview
+
+      Prose.
+  - untitled
+"""
+    )
+
+    assert [w.path for w in warnings] == ["rows.0.text"]
 
 
 # ───────────────────── WARN-SINGLE-CHART-REDUNDANT-TITLE ──────────────────────
@@ -319,8 +535,10 @@ rows: [titled]
     ]
     assert len(warnings) == 1
     assert "Revenue by Month" in warnings[0].message
-    assert warnings[0].path == "charts.titled.title"
+    assert warnings[0].path == "title"
     assert warnings[0].chart == "titled"
+    assert warnings[0].fix is not None
+    assert "Remove the board's `title:`" in warnings[0].fix
 
 
 def test_single_titled_chart_inside_a_titled_section_does_not_warn() -> None:
@@ -347,7 +565,7 @@ rows:
 
 
 def test_single_untitled_chart_under_a_board_title_does_not_warn() -> None:
-    """The board title is the only header — that is the shape we want."""
+    """One header is not two, whichever of the pair it is."""
     yaml = f"""
 title: Revenue
 {_QUERIES_AND_CHARTS}

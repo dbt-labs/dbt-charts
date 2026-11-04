@@ -33,7 +33,6 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
-    HttpQuery,
     SchemaQuery,
     SqlParseError,
     SqlQuery,
@@ -41,12 +40,14 @@ from dbt_charts.core.compile.models.query.normalized import (
     is_schema_query,
     is_sql_query,
 )
-from dbt_charts.core.compile.models.refs import infer_query_type_from_keys
+from dbt_charts.core.compile.models.refs import (
+    infer_query_type_from_keys,
+    is_removed_http_query,
+)
 from dbt_charts.core.compile.models.source import (
     CsvSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
-    SourceConfig,
     source_cache_layer,
 )
 from dbt_charts.core.compile.normalize.sql_authoring_lint import (
@@ -54,7 +55,7 @@ from dbt_charts.core.compile.normalize.sql_authoring_lint import (
     has_literal_escaped_newlines,
 )
 from dbt_charts.core.compile.sql_guard import (
-    source_dialect,
+    dialect_for_source,
     validate_select_only,
     validate_setup_sql,
 )
@@ -64,6 +65,7 @@ from dbt_charts.core.compile.template.jinja import (
 )
 from dbt_charts.core.diagnostics.ansi import strip_ansi
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_HTTP_QUERY_REMOVED,
     ERR_SOURCE_INLINE_FORBIDDEN,
     ERR_SOURCE_NOT_FOUND,
     ERR_SOURCE_REQUIRED,
@@ -124,41 +126,6 @@ def _resolve_inline_file_source(
     return config.model_dump()
 
 
-def dialect_for_source(source: str | None, sources: dict[str, Any]) -> str | None:
-    """The sqlglot dialect for a query's source, or None when unresolvable.
-
-    A source's `type` is its dialect when the type names one ("duckdb",
-    "bigquery", "sqlserver" via the alias table). Plenty don't: `csv` /
-    `json` / `parquet` are file sources, and `dbt_profile`'s real dialect
-    lives in the profile and isn't knowable until execute. sqlglot's own
-    registry is the arbiter — asking it for an unknown name raises rather
-    than degrading, and `dialects.get_dialect` can't stand in here because
-    it names warehouse types, not every sqlglot dialect.
-
-    None means "could not establish one", and callers must treat it as "do
-    not report parse findings" rather than falling back to the default
-    dialect: parsing BigQuery SQL as generic SQL is how a parse warning ends
-    up firing on ~40% of real boards. The callers that do fall back are
-    `agent_api.lookup_board_query_sql`, which reports no findings (it only
-    renders SQL text for a preview), and `ProjectSession.validate_query`,
-    which lints an ad-hoc statement the user asked to lint.
-    """
-    if source is None:
-        return None
-    config = sources.get(source)
-    # The registry holds either a raw dict or a validated config, depending on
-    # how far normalization has gotten — `source_cache_layer` reads it the same
-    # two ways. Handling only the dict would silently stop warning for the
-    # other caller rather than fail.
-    if isinstance(config, dict):
-        source_type = config.get("type")
-    elif isinstance(config, SourceConfig):
-        source_type = config.type
-    else:
-        return None
-    return source_dialect(source_type) if isinstance(source_type, str) else None
-
-
 def normalize_query(
     name: str,
     query_def: Any,
@@ -172,7 +139,7 @@ def normalize_query(
 ) -> AnyQuery:
     """Normalize a query definition to AnyQuery.
 
-    Creates the appropriate query type (SqlQuery, HttpQuery, etc.) based on the
+    Creates the appropriate query type (SqlQuery, ValuesQuery, etc.) based on the
     query definition.
 
     Args:
@@ -201,16 +168,12 @@ def normalize_query(
             False, or None) to inherit when the query does not specify its own.
 
     Returns:
-        Query object (SqlQuery, HttpQuery, etc.)
+        Query object (SqlQuery, ValuesQuery, etc.)
     """
     # Non-SQL pre-built query types need no guard — return immediately.
     if isinstance(
         query_def,
-        (
-            HttpQuery,
-            ValuesQuery,
-            SchemaQuery,
-        ),
+        (ValuesQuery, SchemaQuery),
     ):
         return query_def
 
@@ -243,6 +206,8 @@ def normalize_query(
             # own field_validator when this instance was constructed.
             query_incremental = query_dict.pop("incremental", None)
         elif isinstance(query_def, dict):
+            if is_removed_http_query(query_def):
+                raise CompilationError.from_code(ERR_HTTP_QUERY_REMOVED)
             query_dict = dict(query_def)
             authored_cache = validate_cache_layer(name, query_dict.pop("cache", None))
             try:
@@ -267,8 +232,8 @@ def normalize_query(
         # Apply default source if query doesn't have one. Only query types that
         # lower to a connection-backed SqlQuery take the inherited default:
         # ValuesQuery is inline data, SchemaQuery's source is a dbt source name
-        # (not a connection reference), and HttpQuery uses url — none of those
-        # have a connection slot for the default to fill.
+        # (not a connection reference) — neither has a connection slot for the
+        # default to fill.
         has_source = query_dict.get("source") is not None
         if (
             not has_source
@@ -327,20 +292,6 @@ def normalize_query(
             if query_dict.get("source") is None:
                 raise CompilationError.from_code(ERR_SOURCE_REQUIRED, query_name=name)
             query = SqlQuery(**query_dict)
-        elif query_type == "http":
-            if "url" not in query_dict:
-                raise CompilationError(
-                    f"Query '{name}': HTTP queries require a 'url' field"
-                )
-            try:
-                query = HttpQuery(**query_dict)
-            except PydanticValidationError as e:
-                fields = ", ".join(
-                    str(err["loc"][0]) for err in e.errors() if err["loc"]
-                )
-                raise CompilationError(
-                    f"Query '{name}': invalid field(s) for HTTP query: {fields}"
-                ) from e
         elif query_type == "values":
             query = ValuesQuery(**query_dict)
         elif query_type == "schema":
@@ -348,7 +299,7 @@ def normalize_query(
         else:
             raise CompilationError(
                 f"Query '{name}': unknown type '{query_type}'. "
-                "Valid types: http, schema, sql, values."
+                "Valid types: schema, sql, values."
             )
 
     # Validate setup_sql doesn't contain query references (non-nestable by design)
@@ -480,8 +431,8 @@ def normalize_query(
         from dbt_charts.core.compile.config import shipped_cache_root
 
         # SchemaQuery carries a source and goes through the same executor cache
-        # path as SqlQuery, so it takes the source scope too. HttpQuery and
-        # ValuesQuery have no source to take one from.
+        # path as SqlQuery, so it takes the source scope too. ValuesQuery has no
+        # source to take one from.
         source_name = (
             query.source if is_sql_query(query) or is_schema_query(query) else None
         )

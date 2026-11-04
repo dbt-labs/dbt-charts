@@ -16,7 +16,6 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import (
-    HttpQuery,
     SqlQuery,
     ValuesQuery,
 )
@@ -31,7 +30,6 @@ from dbt_charts.core.execute.adapters import (
     BaseAdapter,
     DbtAdapter,
     DuckDBAdapter,
-    HttpAdapter,
     QueryResult,
     SqlAdapter,
     ValuesAdapter,
@@ -109,8 +107,8 @@ class TestSqlAdapter:
         """Test SQL adapter rejects non-SQL queries."""
         adapter = _sql(local_project)
 
-        http_query = HttpQuery(url="http://example.com")
-        assert not adapter.can_execute(http_query, None)
+        values_query = ValuesQuery(rows=[{"a": 1}])
+        assert not adapter.can_execute(values_query, None)
 
     def test_duckdb_source_query(self):
         """Test that DuckDB source config executes queries correctly."""
@@ -216,24 +214,6 @@ class TestSqlAdapter:
             assert resolved_sql == "SELECT * FROM analytics.fct_orders"
 
 
-class TestHttpAdapter:
-    """Tests for HTTP adapter."""
-
-    def test_can_execute_http(self):
-        """Test HTTP adapter identifies HTTP queries."""
-        adapter = HttpAdapter()
-
-        http_query = HttpQuery(url="http://example.com")
-        assert adapter.can_execute(http_query, None)
-
-    def test_cannot_execute_other_types(self):
-        """Test HTTP adapter rejects non-HTTP queries."""
-        adapter = HttpAdapter()
-
-        sql_query = SqlQuery(sql="SELECT 1", source="test_profile")
-        assert not adapter.can_execute(sql_query, None)
-
-
 class TestAdapterRegistry:
     """Tests for adapter registry."""
 
@@ -248,16 +228,6 @@ class TestAdapterRegistry:
         )
         assert isinstance(registry.get_adapter(sql_query, warehouse), SqlAdapter)
         assert isinstance(registry.get_adapter(sql_query, None), DuckDBAdapter)
-
-    def test_get_adapter_http(self, local_project: Callable[..., FilesystemProject]):
-        """Test registry finds HTTP adapter."""
-        registry = build_adapter_registry(local_project(Path("/tmp")))
-
-        http_query = HttpQuery(url="http://example.com")
-        adapter = registry.get_adapter(http_query, None)
-
-        assert adapter is not None
-        assert isinstance(adapter, HttpAdapter)
 
     def test_execute_returns_query_result(
         self, local_project: Callable[..., FilesystemProject]
@@ -274,10 +244,8 @@ class TestAdapterRegistry:
         """Test registry reports all supported types."""
         registry = build_adapter_registry(local_project(Path("/tmp")))
 
-        # Should have at least sql, values, http
         assert "sql" in registry.supported_types
         assert "values" in registry.supported_types
-        assert "http" in registry.supported_types
 
     def test_register_custom_adapter(
         self, local_project: Callable[..., FilesystemProject]
@@ -745,7 +713,6 @@ class TestBuildAdapterRegistry:
         assert registry.supported_types >= {
             "sql",
             "values",
-            "http",
         }
 
     def test_read_only_propagates_to_duckdb_adapter(
@@ -779,19 +746,6 @@ class TestBuildAdapterRegistry:
         ddb_adapters = [a for a in registry.adapters if isinstance(a, DuckDBAdapter)]
         assert ddb_adapters, "Expected at least one DuckDBAdapter"
         assert all(a.read_only is False for a in ddb_adapters)
-
-    def test_allowed_types_restricts_adapters(
-        self, local_project: Callable[..., FilesystemProject]
-    ):
-        """allowed_types should restrict which adapters are registered."""
-        from dbt_charts.core.execute.adapters.adapter_registry import (
-            build_adapter_registry,
-        )
-
-        registry = build_adapter_registry(
-            local_project(Path("/tmp/test")), allowed_types={"values"}
-        )
-        assert registry.supported_types == {"values"}
 
     def test_dbt_adapter_registered_via_sibling_discovery(
         self, local_project: Callable[..., FilesystemProject]

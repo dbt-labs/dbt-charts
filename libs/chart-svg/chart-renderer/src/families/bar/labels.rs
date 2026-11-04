@@ -1,13 +1,14 @@
 //! Value labels: where they sit, the ink they take and whether they fit.
 
-use crate::common::{AxisStyle, MarkLabels, VALUE_AXIS_BREATHING_ROOM, format_mark_label, row_num, row_str};
+use crate::common::{AxisStyle, LabelAnchor, MarkLabels, VALUE_AXIS_BREATHING_ROOM, format_mark_label, row_num, row_str};
 use crate::constants::bar::LABEL_FIT_LINE_HEIGHT_MULTIPLIER;
-use crate::families::cartesian::{BandScale, LinearScale};
+use crate::families::cartesian::{BandScale};
+use d3rs::scale::Continuous;
 use crate::families::span::RangedBars;
 use crate::vega_fit;
 
 use measure::FontBook;
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -75,6 +76,9 @@ pub(super) struct LabelPoint {
     pub(super) href: Option<String>,
     /// The bar this label names recedes, so the label does with it.
     pub(super) recede: Option<crate::selected::Recede>,
+    /// The label's ink box, plot-relative: what the text node carries as its measured box.
+    /// `None` in a genuine-zero layer that labels nothing at this size.
+    pub(super) ink: Option<vega_fit::Bounds>,
 }
 
 /// A ranged bar's label under `top` (`_build_bar_span_text_layer`). A row that
@@ -382,7 +386,7 @@ pub(super) struct LabelGeometry<'a> {
     pub(super) band: &'a BandScale,
     /// A site's category, its band's own start and its slot to the label's band-axis center.
     pub(super) center: &'a dyn Fn(&str, f64, Option<usize>) -> f64,
-    pub(super) linear: &'a LinearScale,
+    pub(super) linear: &'a Continuous,
 }
 
 /// The fit test (`_fit_hide_test`) of a vertical `top`/`middle` label: its
@@ -401,7 +405,7 @@ pub(super) struct LabelBuild<'a> {
     /// The rows a colorless bar labels, in the order the arm paints them.
     pub(super) plain_rows: &'a [&'a serde_json::Map<String, Value>],
     pub(super) cat_field: &'a str,
-    /// The drawn category axis, which `visible: last` ranks the rows on.
+    /// The drawn category axis, which `labels.visible` anchors rank the rows on.
     pub(super) cat_domain: &'a [String],
     pub(super) val_field: &'a str,
     pub(super) color_field: Option<&'a str>,
@@ -422,12 +426,9 @@ pub(super) struct LabelBuild<'a> {
     pub(super) link: Option<&'a crate::href::DatumLink<'a>>,
 }
 
-/// `labels.visible: last`: each series' sites at its most recent date, the rank
-/// `x_ranked_rows` gives its rows over the dates in time order (not the drawn
-/// order, which a horizontal bar sorts by value). Only a time axis has one; the
-/// compile stage refuses the rest. A stacked bar keeps every segment of its last
-/// stack (each series ends there); the total label has its own switch.
-fn last_sites(sites: Vec<LabelSite>, b: &LabelBuild) -> Result<Vec<LabelSite>, String> {
+/// The drawn category axis in time order, a time axis's own rank (not the drawn
+/// order, which a horizontal bar sorts by value). `None` on a categorical axis.
+fn chronological_axis(b: &LabelBuild) -> Result<Option<Vec<String>>, String> {
     let dates: Vec<&str> = b.cat_domain.iter().map(String::as_str).collect();
     let mut chronological = b.cat_domain.to_vec();
     if crate::families::temporal::x_values_are_standard_dates(&dates) {
@@ -436,26 +437,51 @@ fn last_sites(sites: Vec<LabelSite>, b: &LabelBuild) -> Result<Vec<LabelSite>, S
             axis.add(date).map_err(|e| e.diagnostic(&b.r.id, b.cat_field, "bar").to_string())?;
         }
         axis.sort_by_instant(&mut chronological);
-    } else if crate::common::is_year_shaped(b.rows, b.cat_field) {
+        return Ok(Some(chronological));
+    }
+    if crate::common::is_year_shaped(b.rows, b.cat_field) {
         // A year-shaped integer axis is a time axis: its years order numerically.
         let mut years = chronological
             .iter()
             .map(|c| c.parse::<i32>().map(|y| (y, c.clone())).map_err(|_| format!("bar: category {c:?} is no year on a year axis")))
             .collect::<Result<Vec<_>, _>>()?;
         years.sort();
-        chronological = years.into_iter().map(|(_, c)| c).collect();
-    } else {
-        return Err("bar: labels.visible \"last\" needs a time axis on a bar chart; a categorical axis has no most-recent bar".into());
+        return Ok(Some(years.into_iter().map(|(_, c)| c).collect()));
     }
-    let series_of = |row: &serde_json::Map<String, Value>| b.color_field.map(|cf| row_str(row, cf)).unwrap_or_default();
-    let mut last: HashMap<String, u64> = HashMap::new();
-    for row in crate::common::x_ranked_rows(b.rows, b.cat_field, &chronological)? {
-        let (Some(at), Some(_)) = (row.get(b.cat_field).and_then(Value::as_u64), row_num(&row, b.val_field)) else { continue };
-        let slot = last.entry(series_of(&row)).or_insert(at);
-        *slot = (*slot).max(at);
+    Ok(None)
+}
+
+/// The category axis anchors rank on: the time axis, or the drawn order on a
+/// categorical axis, which has no `first` or `last` bar.
+fn anchor_axis(anchors: &[LabelAnchor], b: &LabelBuild) -> Result<Vec<String>, String> {
+    match chronological_axis(b)? {
+        Some(axis) => Ok(axis),
+        None if anchors.iter().any(|a| matches!(a, LabelAnchor::First | LabelAnchor::Last)) => {
+            Err("bar: labels.visible \"first\" and \"last\" need a time axis on a bar chart; a categorical axis has no first or last bar".into())
+        }
+        None => Ok(b.cat_domain.to_vec()),
     }
-    let rank: HashMap<&str, u64> = chronological.iter().enumerate().map(|(at, c)| (c.as_str(), at as u64)).collect();
-    Ok(sites.into_iter().filter(|s| last.get(&s.key.1) == rank.get(s.cat.as_str())).collect())
+}
+
+/// The sites whose category `anchors` pick from `values`, each category's one
+/// value. The compile stage refuses a grouped bar, so no category holds two.
+fn anchored_categories(sites: Vec<LabelSite>, values: impl Iterator<Item = (String, f64)>, anchors: &[LabelAnchor], b: &LabelBuild) -> Result<Vec<LabelSite>, String> {
+    let axis = anchor_axis(anchors, b)?;
+    let rank: HashMap<&str, usize> = axis.iter().enumerate().map(|(at, c)| (c.as_str(), at)).collect();
+    let points: Vec<(String, usize, f64)> = values.filter_map(|(cat, v)| rank.get(cat.as_str()).map(|at| (String::new(), *at, v))).collect();
+    let anchored = crate::common::anchored_points(anchors, &points);
+    Ok(sites.into_iter().filter(|s| rank.get(s.cat.as_str()).is_some_and(|at| anchored.contains(&(String::new(), *at)))).collect())
+}
+
+/// A stacked bar's anchors: the totals of the stacks they pick, printed above
+/// each stack in the value labels' own format and font.
+fn anchored_total_layer(ml: &MarkLabels, b: &LabelBuild) -> Result<LabelLayer, String> {
+    let total = MarkLabels { position: Some("above".into()), anchors: Vec::new(), ..ml.clone() };
+    let spec = LabelSpec::new(&total, false, b.r.style.label_is_house, b.rows, b.val_field);
+    let color = b.color_field.expect("is_stacked implies color");
+    let sites = total_sites(b.spans, b.totals, b.rows, (b.cat_field, b.val_field), b.link, color, b.stack_order, &spec)?;
+    let sites = anchored_categories(sites, b.totals.iter().map(|(c, t)| (c.clone(), *t)), &ml.anchors, b)?;
+    LabelLayer::new(spec, sites, b.horizontal, false, false, false, true, b.fonts, b.board_style)
 }
 
 /// A bar's value-label layers, one law for both orientations: the authored
@@ -464,7 +490,9 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
     let r = b.r;
     let authored = r.style.mark.labels.as_ref().filter(|ml| ml.visible && r.wide_measures.is_empty());
     let mut layers = Vec::new();
-    if let Some(ml) = authored.or(b.zero_text) {
+    if let Some(ml) = authored.filter(|ml| b.is_stacked && !ml.anchors.is_empty()) {
+        layers.push(anchored_total_layer(ml, b)?);
+    } else if let Some(ml) = authored.or(b.zero_text) {
         let zero_only = authored.is_none();
         let spec = LabelSpec::new(ml, b.is_stacked, r.style.label_is_house && !zero_only, b.rows, b.val_field);
         let sites = match b.color_field.filter(|_| b.is_grouped) {
@@ -487,7 +515,17 @@ pub(super) fn value_label_layers(b: &LabelBuild) -> Result<Vec<LabelLayer>, Stri
                 b.label_spans,
             )?,
         };
-        let sites = if ml.last_only { last_sites(sites, b)? } else { sites };
+        let sites = if ml.anchors.is_empty() {
+            sites
+        } else {
+            let mut values = Vec::new();
+            for row in b.rows {
+                if let Some(v) = row_num(row, b.val_field) {
+                    values.push((row_str(row, b.cat_field), v));
+                }
+            }
+            anchored_categories(sites, values.into_iter(), &ml.anchors, b)?
+        };
         layers.push(LabelLayer::new(
             spec,
             sites,
@@ -636,8 +674,8 @@ pub(super) fn zero_label_blank(px: &dyn Fn(f64) -> f64, range: (f64, f64), value
 }
 
 /// One genuine-zero label on a vertical bar: `(extent, side, blank)`.
-pub(super) fn zero_label_at(spec: &LabelSpec, value: f64, linear: &LinearScale, plot_h: f64, font_size: f64) -> (f64, Option<LabelSide>, bool) {
-    let px = |v: f64| linear.position(v);
+pub(super) fn zero_label_at(spec: &LabelSpec, value: f64, linear: &Continuous, plot_h: f64, font_size: f64) -> (f64, Option<LabelSide>, bool) {
+    let px = |v: f64| linear.scale(v);
     let at = spec.extent(value, px, plot_h);
     let (extent, side) = plain_label_place(&spec.position, value, at, &px, (plot_h, 0.0), label_need(false, 0.0, font_size));
     (extent, side, zero_label_blank(&px, (plot_h, 0.0), value))
@@ -707,7 +745,7 @@ impl LabelLayer {
     pub(super) fn place(&self, site: &LabelSite, width: f64, geom: &LabelGeometry, hide: Option<FitHide>) -> Option<LabelPlace> {
         let band_x = geom.band.position(&site.cat)?;
         let center = (geom.center)(&site.cat, band_x, site.slot);
-        let at = geom.linear.position(site.at);
+        let at = geom.linear.scale(site.at);
         let blank_at = |blank| Some(LabelPlace { center, extent: at, blank, side: None });
         if site.blank {
             return blank_at(true);
@@ -719,8 +757,8 @@ impl LabelLayer {
             return blank_at(hidden);
         }
         let linear = geom.linear;
-        let px = |v: f64| linear.position(v);
-        let range = (linear.range_start, linear.range_end);
+        let px = |v: f64| linear.scale(v);
+        let range = (linear.range[0], linear.range[1]);
         if self.zero_only && zero_label_blank(&px, range, site.value) {
             return blank_at(true);
         }
@@ -740,8 +778,11 @@ impl LabelLayer {
         plain_aria: impl Fn(&LabelSite) -> Result<Option<String>, String>,
     ) -> Result<Vec<LabelPoint>, String> {
         let mut points = Vec::with_capacity(self.sites.len());
+        let silent = self.silent(geom, hide);
         for (site, &width) in self.sites.iter().zip(&self.widths) {
-            let Some(LabelPlace { center, extent, blank, side }) = self.place(site, width, geom, hide) else { continue };
+            let Some(place) = self.place(site, width, geom, hide) else { continue };
+            let ink = (!silent).then(|| self.ink_of(site, width, &place));
+            let LabelPlace { center, extent, blank, side } = place;
             let (aria, series_fill) = match decors.get(&site.key) {
                 Some(d) => (d.aria.clone(), d.fill.clone()),
                 None => (plain_aria(site)?, None),
@@ -757,6 +798,7 @@ impl LabelLayer {
                 text: site.text.clone(),
                 href: site.href.clone(),
                 recede: selection.recede_of(site.href.as_deref()),
+                ink,
             });
         }
         Ok(points)
@@ -770,25 +812,24 @@ impl LabelLayer {
         geom: &'a LabelGeometry,
         hide: Option<FitHide>,
     ) -> impl Iterator<Item = (&'a LabelSite, vega_fit::Bounds, Option<LabelSide>)> + 'a {
-        let silent = self.zero_only
-            && self.sites.iter().zip(&self.widths).all(|(site, &width)| self.place(site, width, geom, hide).is_none_or(|p| p.blank));
+        let silent = self.silent(geom, hide);
         self.sites.iter().zip(&self.widths).filter_map(move |(site, &width)| {
             if silent {
                 return None;
             }
-            let LabelPlace { center, extent, blank, side } = self.place(site, width, geom, hide)?;
-            let spot = label_spot(
-                &self.spec.ml,
-                &self.style.position,
-                self.style.horizontal_offset,
-                center,
-                extent,
-                site.span,
-                side,
-            );
-            let w = if blank { 0.0 } else { width };
-            Some((site, vega_fit::text_ink(spot.x, spot.y, w, self.font.size, spot.align(), spot.baseline), side))
+            let place = self.place(site, width, geom, hide)?;
+            Some((site, self.ink_of(site, width, &place), place.side))
         })
+    }
+
+    fn silent(&self, geom: &LabelGeometry, hide: Option<FitHide>) -> bool {
+        self.zero_only && self.sites.iter().zip(&self.widths).all(|(site, &width)| self.place(site, width, geom, hide).is_none_or(|p| p.blank))
+    }
+
+    fn ink_of(&self, site: &LabelSite, width: f64, place: &LabelPlace) -> vega_fit::Bounds {
+        let spot = label_spot(&self.spec.ml, &self.style.position, self.style.horizontal_offset, place.center, place.extent, site.span, place.side);
+        let w = if place.blank { 0.0 } else { width };
+        vega_fit::text_ink(spot.x, spot.y, w, self.font.size, spot.align(), spot.baseline)
     }
 
     pub(super) fn site_inks<'a>(
@@ -1104,28 +1145,27 @@ pub(super) fn mark_labels(
     let stamped = points.iter().any(|p| p.aria.is_some());
     let mut labels = Vec::new();
     for point in points {
-        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede } = *point;
+        let LabelPoint { center, extent, ref aria, ref series_fill, blank, side, span, ref text, ref href, recede, ink } = *point;
         let anchor = link_open.anchor(href.as_deref()).map(|anchor| crate::href::Anchor { recede, ..anchor });
         let color = style.font.color.as_deref().unwrap_or(if style.inside_bar && !matches!(side, Some(LabelSide::Out(_) | LabelSide::Bare)) {
             canvas
         } else {
             series_fill.as_deref().unwrap_or("#313233")
         });
-                let spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
+        let spot = label_spot(ml, &style.position, style.horizontal_offset, center, extent, span, side);
+        let at = (plot_left + spot.x, plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size));
         let attrs = Attrs::new()
-            .set("x", format!("{:.2}", plot_left + spot.x))
-            .set("y", format!("{:.2}", plot_top + spot.y + measure::baseline_shift(spot.baseline, style.font.size)))
             .set("text-anchor", spot.anchor)
             .vega("font-family", style.font.family.as_str())
-            .set("font-size", style.font.size.to_string())
+            .num("font-size", style.font.size)
             .set("font-weight", style.font.weight.as_str())
             .set_if(style.font_style.is_some(), "font-style", style.font_style.clone().unwrap_or_default())
             .set("fill", color)
             .extend(crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?);
-        let label = if blank {
-            Node::EmptyText(attrs)
-        } else {
-            Node::text(attrs, text.as_str())
+        let label = if blank { Node::empty_text(Role::Label, at, attrs) } else { Node::text(Role::Label, at, attrs, text.as_str()) };
+        let label = match ink {
+            Some(ink) => label.with_text_bounds(scene::Bounds { x1: plot_left + ink.x1, y1: plot_top + ink.y1, x2: plot_left + ink.x2, y2: plot_top + ink.y2 }),
+            None => label,
         };
         labels.push(crate::href::linked(anchor, label));
     }

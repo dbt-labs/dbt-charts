@@ -30,6 +30,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from dbt_charts.core.compile.models.primitives import ErrorHint
+from dbt_charts.core.diagnostics.codes_compile import ERR_HTTP_QUERY_REMOVED
 
 # File-path portion: an optional leading run of literal "../" segments (to
 # climb into a sibling directory), then a normal path starting with a
@@ -73,9 +74,19 @@ def infer_query_type_from_keys(query_dict: dict[str, Any]) -> str:
     """Infer query type from dictionary keys."""
     if "rows" in query_dict or "values" in query_dict or "columns" in query_dict:
         return "values"
-    if "url" in query_dict:
-        return "http"
     return "sql"
+
+
+def is_removed_http_query(
+    query_def: dict[str, Any],  # type-state: explicit_any — raw YAML mapping
+) -> bool:
+    """Whether a raw query mapping authors `type: http`, or a bare `url:`.
+
+    A `url:` with no `type`, `ref` or `schema` is an http query too. Every path
+    that reads a raw query mapping asks this before inferring its type.
+    """
+    typeless = not {"type", "ref", "schema"} & query_def.keys()
+    return query_def.get("type") == "http" or (typeless and "url" in query_def)
 
 
 def normalize_query_value(query_def: Any) -> Any:
@@ -102,6 +113,8 @@ def normalize_query_value(query_def: Any) -> Any:
         return {"sql": query_def, "type": "sql"}
 
     # dict path
+    if is_removed_http_query(query_def):
+        raise ERR_HTTP_QUERY_REMOVED.validation_error()
     if "type" in query_def or "ref" in query_def or "schema" in query_def:
         # "ref" key → QueryRef; skip type inference to avoid adding a spurious
         # "type": "sql" that would be rejected as an extra field by QueryRef.

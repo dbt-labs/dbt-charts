@@ -40,9 +40,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.compile.models.query.normalized import AnyQuery
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
     from dbt_charts.core.execute.cache_backend import QueryResultCache
-    from dbt_charts.core.execute.file_source_materializer import (
-        FileSourceMaterializer,
-    )
     from dbt_charts.core.project import Project
     from dbt_charts.core.render.board_links import LinkContext
 
@@ -115,11 +112,9 @@ def _compile_registered_view(
     regular file-based routing), a ``RenderError`` when any step fails, or the
     compiled view ready for an ``Executor``.
     """
-    from sqlglot.dialects.dialect import Dialect as SqlglotDialect
-
     from dbt_charts.core.board import BoardRenderResult
     from dbt_charts.core.compile import compile_authored_board
-    from dbt_charts.core.compile.sql_guard import sqlglot_dialect
+    from dbt_charts.core.compile.sql_guard import is_sqlglot_dialect, sqlglot_dialect
     from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
     from dbt_charts.core.diagnostics.base import DbtChartsError
 
@@ -163,7 +158,7 @@ def _compile_registered_view(
         # dialect — csv/json/parquet are file sources and dbt_profile's real
         # dialect lives in the profile, unknowable here. sqlglot raises
         # rather than degrading on an unknown name, so guard before quoting.
-        if sqlglot_dialect(source_type) not in SqlglotDialect.classes:
+        if not is_sqlglot_dialect(sqlglot_dialect(source_type)):
             raise ExpansionError(
                 f"Source {source_param!r} has type {source_type!r}, which has "
                 "no SQL dialect dbt charts can use to quote identifiers (file "
@@ -215,7 +210,6 @@ def render_registered_view(
     result_cache: QueryResultCache | None,
     max_workers: int | None = None,
     link_context: LinkContext | None = None,
-    file_materializer: FileSourceMaterializer | None = None,
     request_variables: dict[str, str] = _NO_REQUEST_VARS,
     format: str = "html",
     controls: bool = False,
@@ -274,9 +268,6 @@ def render_registered_view(
     from dbt_charts.core.diagnostics import ERR_INTERNAL, Diagnostic
     from dbt_charts.core.diagnostics.execution import ExecutionError
     from dbt_charts.core.execute import Executor
-    from dbt_charts.core.execute.file_source_materializer import (
-        resolve_local_file_materializer_factory,
-    )
     from dbt_charts.core.render import render
     from dbt_charts.core.render.errors import RenderError as RenderExecError
 
@@ -288,17 +279,11 @@ def render_registered_view(
 
     # --- Step 4: execute + render ---
     try:
-        # Injected materializer (Cloud) wins; otherwise a lazy local factory so
-        # a fully-cached registered view never builds a DuckDB (see Executor).
         executor = Executor(
             compiled.board,
             adapter_registry=adapter_registry,
             query_registry=compiled.query_registry,
             result_cache=result_cache,
-            file_materializer=file_materializer,
-            file_materializer_factory=resolve_local_file_materializer_factory(
-                project, file_materializer
-            ),
         )
         with image_scope(project):
             render_result = render(

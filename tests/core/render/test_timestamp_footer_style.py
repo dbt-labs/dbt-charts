@@ -25,6 +25,8 @@ from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.project import Project
 from dbt_charts.core.render import render
 
+from ..._results import rows_result
+
 _BOARD = """\
 title: Test board
 queries:
@@ -233,7 +235,7 @@ class TestDataFreshnessStamp:
         try:
             query = result.board.queries["q"]
             key = compute_cache_key(query)
-            cache.put(*key, [{"n": 1}], board_slug="test", query_name="q")
+            cache.put(*key, rows_result([{"n": 1}]), board_slug="test", query_name="q")
 
             rendered = render(
                 result.board,

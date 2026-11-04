@@ -147,7 +147,7 @@ def _label_format_fallback(
     """Resolve ``labels`` as ``resolved_cls``, falling an unset format back to the axis's.
 
     Returns ``(labels, is_house)``: house paints the narrative register
-    (1.2mn), otherwise the spec goes straight to Vega (1.2M). An explicit
+    (1.2m), otherwise the spec goes straight to Vega (1.2M). An explicit
     format is resolved by ``resolve_label_format``; the fallback inherits the
     axis format un-voted, with ``axis_house_default`` so label and axis agree.
     ``values`` are what the label paints, for the sub-$1 vote.

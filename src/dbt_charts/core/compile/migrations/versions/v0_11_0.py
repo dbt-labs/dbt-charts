@@ -66,10 +66,39 @@ Changes in this release:
   `style.text.paragraph` instead of `margin_bottom`. The keys and their values are
   unchanged and valid, so a board that authors them cannot be migrated; the
   authored key is detectable, and warns (`WARN-HEADING-MARGIN-REDEFINED`).
+- **`style.frame.width` becomes the root `width:`.** A board's own exact width
+  is authored once, as `width:` on the root board (in the board, a template it
+  `extends`, or a project's `meta.yml`). The root's `style.frame.width` is one
+  `Move` to `width`; it follows no nesting prefix. On an inline nested board
+  the key never had an effect (that board's `width:` is placement in its
+  parent and its frame is ignored), so a `Deletion` strikes it there rather
+  than moving it, which would change the placement. Authoring both spellings
+  on one root still fails: the `Move` refuses an occupied `width`.
 - **Hover recede is a contrast target, not a blend fraction.** The theme key
   `style.charts.hover_emphasis.dimmed_opacity` is removed: a `Deletion` with a notice
   naming its successor `recede_contrast`, the WCAG ratio against the canvas a
   receded mark lands on. No value maps across (a fraction kept is not a ratio reached).
+- **`type: http` queries and `http` sources are removed**, with their fields
+  (`url`, `method`, `headers`, `params`, `body`, `json_path`, `limit`). Nothing
+  maps across: the data has to move into the warehouse or a committed
+  CSV/JSON/Parquet file source, and a query dropped silently would leave its
+  charts pointing at nothing. Recognition cannot rewrite it, so a board that
+  authors one (a typeless query with a `url:` included) fails to compile with
+  `ERR-HTTP-QUERY-REMOVED`, and a `dbt_charts.yml` source of `type: http` with
+  `ERR-SOURCE-CONFIG-INVALID`, each naming the replacement.
+- **A query's `target:` is removed.** It never chose a connection, so dropping it
+  leaves a board on the connection it already ran against. A `Deletion` with a
+  notice names the working spelling: a `type: dbt_profile` source with its own
+  `target:` in `dbt_charts.yml`.
+- **A table's role column is the chart-root `row_role:`.** The query column whose
+  value marks each row `total` or `summary` is data semantics, not presentation,
+  so `style.row.role` leaves the style grammar. A chart's `style.row.role` is
+  one `Move` (via `suffix_rename_moves`) to the chart's root `row_role`, at every
+  position a table chart sits. The board- or theme-level
+  `style.charts.table.row.role` names a column for every table and has no chart
+  root to move to: a `Deletion` with a notice naming the successor. A name that
+  was not a column used to be a literal role for every row; that now fails at
+  render with the missing column named.
 """
 
 from __future__ import annotations
@@ -83,6 +112,7 @@ from dbt_charts.core.compile.migrations.migrations import (
     Move,
     YamlKeyPath,
     board_nesting_prefixes,
+    suffix_rename_moves,
     token_respell_moves,
 )
 from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
@@ -191,16 +221,34 @@ _SPARK_LABEL_REASON = (
 )
 
 
+_NESTED_FRAME_WIDTH_REASON = (
+    "A nested board's `style.frame.width` never took effect: set its `width:` "
+    "to place it in the parent. Only the root board has a width of its own."
+)
+
+
 _RECEDE_REASON = (
     "Hover recede now targets a contrast ratio against the canvas. Set "
     "`style.charts.hover_emphasis.recede_contrast` instead."
 )
 
 
+_QUERY_TARGET_REASON = (
+    "A query's `target:` never chose its connection. Declare a `type: dbt_profile` "
+    "source with `target:` in dbt_charts.yml and name it with `source:`."
+)
+
+
+_ROW_ROLE_REASON = (
+    "A table's role column is data, not style. Set `row_role: <column>` on each "
+    "table chart."
+)
+
+
 def deletions(
     source_schema: str, target_schema: str, *, catalog: YamlSchemaCatalog
 ) -> tuple[Deletion, ...]:
-    """Return the Deletions of the geo theme ``projection`` key, the table spark-bar labels and ``dimmed_opacity``."""
+    """Return the Deletions of the geo theme ``projection`` key, the table spark-bar labels, ``dimmed_opacity``, a nested board's ``style.frame.width``, a query's ``target`` and the board-level table ``row.role``."""
     theme = tuple(
         Deletion(
             source_schema,
@@ -237,7 +285,34 @@ def deletions(
         ("style", "charts", "hover_emphasis", "dimmed_opacity"),
         reason=_RECEDE_REASON,
     )
-    return theme + chart_local + spark_labels + (recede,)
+    # Runs after the root `Move` below has taken the root's own, so it only
+    # reaches the keys of inline nested boards.
+    nested_frame_width = Deletion(
+        source_schema,
+        target_schema,
+        ("style", "frame", "width"),
+        reason=_NESTED_FRAME_WIDTH_REASON,
+    )
+    query_target = Deletion(
+        source_schema, target_schema, ("target",), reason=_QUERY_TARGET_REASON
+    )
+    row_role = Deletion(
+        source_schema,
+        target_schema,
+        ("style", "charts", "table", "row", "role"),
+        reason=_ROW_ROLE_REASON,
+    )
+    return (
+        theme
+        + chart_local
+        + spark_labels
+        + (
+            recede,
+            row_role,
+            nested_frame_width,
+            query_target,
+        )
+    )
 
 
 def moves(
@@ -258,7 +333,23 @@ def moves(
         rewrite=_respell_secondary_ink,
         sub_board_prefixes=(*nesting, ("tabs", "items", "*")),
     )
+    root_width = Move(
+        source_schema,
+        target_schema,
+        ("style", "frame", "width"),
+        ("width",),
+    )
+    row_role = suffix_rename_moves(
+        AuthoredBoard,
+        source_schema,
+        target_schema,
+        [(("row_role",), ("style", "row", "role"))],
+        catalog=catalog,
+        chart_type="table",
+    )
     return (
+        *row_role,
+        root_width,
         *(
             dataclasses.replace(move, sub_board_prefixes=nesting)
             for move in token_respell_moves(

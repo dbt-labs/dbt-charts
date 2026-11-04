@@ -1,7 +1,7 @@
 //! d3-geo 3.1.1 `src/path/measure.js`: the length of the lines (and polygon rings) a projected stream delivers.
 
 use crate::geo::stream::GeoStream;
-use crate::geo::Adder;
+use crate::array::Adder;
 
 #[derive(Clone, Copy)]
 enum Point {

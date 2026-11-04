@@ -1222,12 +1222,9 @@ class TestPackageBoardRoots:
         project = local_project(tmp_path)
         assert package_board_roots(project) == []
 
-    def test_symlinked_package_is_excluded(
+    def test_symlinked_package_is_a_root(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """A `local:`-installed package is a symlink outside the project root —
-        excluded by the same containment guard FilesystemProject.iter_dir
-        already applies (pinned separately in test_dir_context.py)."""
         outside = tmp_path.parent / f"{tmp_path.name}_outside_pkg_b"
         (outside / "charts").mkdir(parents=True)
         (outside / "charts" / "x.yml").write_text("title: X\n")
@@ -1238,7 +1235,55 @@ class TestPackageBoardRoots:
             outside, target_is_directory=True
         )
         project = local_project(project_dir)
-        assert package_board_roots(project) == []
+        assert package_board_roots(project) == [
+            BoardRoot("dbt_packages/pkg_b/charts", "pkg_b")
+        ]
+        assert [pf.relpath for pf in project.iter_boards()] == [
+            "dbt_packages/pkg_b/charts/x.yml"
+        ]
+
+    def test_local_parent_package_does_not_loop(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """`local: ../` from ``integration_tests/``: the package root contains
+        the host project itself, so a walk into it must stay inside ``charts/``."""
+        (tmp_path / "charts").mkdir()
+        (tmp_path / "charts" / "overview.yml").write_text("title: O\n")
+        host = tmp_path / "integration_tests"
+        (host / "dbt_packages").mkdir(parents=True)
+        (host / "dbt_packages" / "zendesk").symlink_to(
+            tmp_path, target_is_directory=True
+        )
+        project = local_project(host)
+        assert [pf.relpath for pf in project.iter_boards()] == [
+            "dbt_packages/zendesk/charts/overview.yml"
+        ]
+
+    def test_escape_inside_a_symlinked_package_is_still_excluded(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        pkg = tmp_path / "pkg_src"
+        (pkg / "charts").mkdir(parents=True)
+        secrets = tmp_path / "secrets"
+        secrets.mkdir()
+        (pkg / "leak").symlink_to(secrets, target_is_directory=True)
+        host = tmp_path / "host"
+        (host / "dbt_packages").mkdir(parents=True)
+        (host / "dbt_packages" / "pkg").symlink_to(pkg, target_is_directory=True)
+        project = local_project(host)
+        names = {e.name for e in project.iter_dir("dbt_packages/pkg")}
+        assert names == {"charts"}
+
+    def test_symlink_outside_dbt_packages_is_still_excluded(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        outside = tmp_path / "outside"
+        (outside / "charts").mkdir(parents=True)
+        host = tmp_path / "host"
+        host.mkdir()
+        (host / "elsewhere").symlink_to(outside, target_is_directory=True)
+        project = local_project(host)
+        assert [e.name for e in project.iter_dir(".")] == []
 
     def test_board_roots_includes_host_first_then_packages(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]

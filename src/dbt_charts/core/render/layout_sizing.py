@@ -47,6 +47,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 )
 from dbt_charts.core.compile.models.style.resolved import effective_padding
 from dbt_charts.core.compile.resolve import preferred_chart_width
+from dbt_charts.core.compile.resolve.style.typography import own_title_fonts
 from dbt_charts.core.compile.sizing import (
     ChartWidth,
     IntrinsicWidth,
@@ -82,6 +83,9 @@ from dbt_charts.core.render.title_band import (
     TitleMetrics,
     board_title_metrics,
     chart_title_metrics,
+    failed_title_font,
+    failed_title_metrics,
+    failed_title_text,
     row_title_shifts,
 )
 from dbt_charts.core.utils import Rows
@@ -375,15 +379,16 @@ def _require_resolved(
     if chart_id in render_ctx.resolve_errors:
         return None
     variant_key = resolved_chart_variant_key(chart_id, width, resolved_style)
-    canonical_key = canonical_resolved_key(
-        chart_id, resolved_style, chart_style_context.board_canvas
-    )
     if variant_key in render_ctx.resolved_variants:
         return render_ctx.resolved_variants[variant_key]
     if chart_id in render_ctx.pre_resolved:
         resolved = render_ctx.pre_resolved[chart_id]
         render_ctx.resolved_variants[variant_key] = resolved
         return resolved
+    # Built only past the identity hits: it reprs the whole resolved style.
+    canonical_key = canonical_resolved_key(
+        chart_id, resolved_style, chart_style_context.board_canvas
+    )
     canonical = render_ctx.canonical_resolved.get(canonical_key)
     if canonical is not None and not isinstance(canonical, ResolvedPieChart):
         render_ctx.resolved_variants[variant_key] = canonical
@@ -411,6 +416,7 @@ def _require_resolved(
     render_ctx.resolve_errors[chart_id] = ChartResolveFailure(
         diagnostic=stamp_chart_diagnostic(failure, chart_id, chart.source_path),
         identity=ChartIdentity.from_normalized(chart),
+        title_fonts=own_title_fonts(chart_style_context, chart),
     )
     return None
 
@@ -618,6 +624,7 @@ def _record_pie_modes_in_tree(
                     exc, item.chart.id, item.chart.source_path
                 ),
                 identity=ChartIdentity.from_normalized(item.chart),
+                title_fonts=own_title_fonts(render_ctx.chart_style_context, item.chart),
             )
 
 
@@ -735,6 +742,7 @@ def _make_data_aware_height_provider(
         render_ctx.resolve_errors[chart.id] = ChartResolveFailure(
             diagnostic=stamp_chart_diagnostic(exc, chart.id, chart.source_path),
             identity=ChartIdentity.from_normalized(chart),
+            title_fonts=own_title_fonts(render_ctx.chart_style_context, chart),
         )
         return _unresolved_height(chart, width, resolved_style)
 
@@ -805,7 +813,6 @@ def _make_data_aware_height_provider(
                         height=0.0,
                         padding=None,
                         board_style=resolved_style,
-                        board_width=width,
                     )
                 except DbtChartsError as exc:
                     return _sizing_render_failed(item.chart, exc, width, resolved_style)
@@ -1066,63 +1073,48 @@ def _make_data_aware_height_provider(
     return provider
 
 
+def _placement_natural(
+    item: LayoutItem, chart: Chart, render_ctx: SizingRenderCtx
+) -> float | None:
+    """A chart's natural height at this placement.
+
+    A chart can sit in several rows at one width, and natural_heights holds only the
+    last of them, so this placement's own slot render comes first.
+    """
+    slot_render = render_ctx.render_cache.get(
+        (chart.id, item.width, item.height, NO_TITLE_SHIFT)
+    )
+    if slot_render is not None:
+        return slot_render[1]
+    return render_ctx.natural_heights.get((chart.id, item.width))
+
+
 def _col_chart_body_target(
     items: list[LayoutItem], render_ctx: SizingRenderCtx
 ) -> float:
-    """Max natural chart body height across all items in a cols row.
+    """Max natural chart body height across the direct charts in a cols row.
 
-    For direct chart items uses the natural height from natural_heights.
-    For board items the logic depends on the board's inner layout:
-      - All-Vega rows board (every sub-item is a Vega chart): contribute
-        item.height (= sum of sub-chart heights + gaps, set by the sizing pass).
-        An adjacent direct chart must fill the same cell height.
-      - Any other board layout (mixed content, cols sub-layout, single chart):
-        contribute max(sub-chart natural heights) — the non-chart overhead must
-        not inflate adjacent chart bodies.
+    A nested board already filled its cell in the sizing pass, so it adds nothing.
     Non-aspect-ratio types (table, kpi, spark_bar) are excluded.
     Returns 0.0 if no Vega charts are found.
     """
     max_h = 0.0
     for item in items:
         if item.chart is not None and item.chart.type not in NON_ASPECT_RATIO_TYPES:
-            h = render_ctx.natural_heights.get((item.chart.id, item.width))
+            h = _placement_natural(item, item.chart, render_ctx)
             if h is not None:
                 max_h = max(max_h, h)
-        elif item.board is not None:
-            sub_items = item.board.layout.items
-            is_all_vega_rows = (
-                item.board.layout.type == "rows"
-                and len(sub_items) > 1
-                and all(
-                    s.chart is not None and s.chart.type not in NON_ASPECT_RATIO_TYPES
-                    for s in sub_items
-                )
-            )
-            if is_all_vega_rows and item.height > 0:
-                # board item.height = sum(sub-chart heights) + inter-item gaps,
-                # computed by the sizing pass. Use it as-is so the adjacent
-                # direct chart fills the same cell.
-                max_h = max(max_h, item.height)
-            else:
-                for sub in sub_items:
-                    if (
-                        sub.chart is not None
-                        and sub.chart.type not in NON_ASPECT_RATIO_TYPES
-                    ):
-                        h = render_ctx.natural_heights.get((sub.chart.id, sub.width))
-                        if h is not None:
-                            max_h = max(max_h, h)
     return max_h
 
 
 def _effective_alignment_target_for_chart(
+    item: LayoutItem,
     chart: Chart,
-    width: float,
     target_height: float,
     render_ctx: SizingRenderCtx,
 ) -> float:
     """Return the per-chart alignment target, capping pie/donut growth."""
-    natural_h = render_ctx.natural_heights.get((chart.id, width))
+    natural_h = _placement_natural(item, chart, render_ctx)
     if (
         chart.type in _FIXED_ASPECT_PIE_TYPES
         and natural_h is not None
@@ -1132,73 +1124,13 @@ def _effective_alignment_target_for_chart(
     return target_height
 
 
-def _align_board_charts(
-    board_item: LayoutItem, target_height: float, render_ctx: SizingRenderCtx
-) -> None:
-    """Expand Vega charts inside a board item toward target_height.
-
-    The board bounds the expansion: charts can grow at most to board.layout.content_height
-    minus the space taken by non-chart siblings (rows layout only — stacked items share
-    vertical space). For cols layouts, items are side-by-side so non-chart siblings do
-    not reduce the Vega chart's available height.
-
-    Updates each chart's item.height so the render layer uses the correct cache key,
-    then delegates the actual re-render to _align_cols_heights.
-    """
-    assert board_item.board is not None, (
-        "_align_board_charts requires a board LayoutItem"
-    )
-    board = board_item.board
-    vega_count = sum(
-        1
-        for sub in board.layout.items
-        if sub.chart is not None and sub.chart.type not in NON_ASPECT_RATIO_TYPES
-    )
-    # cols layout: all side-by-side charts need equalization.
-    # non-cols with exactly 1 Vega chart (e.g. chart + text caption): safe to expand.
-    # non-cols with multiple Vega charts: stacked rows — equalizing would overflow the board.
-    if board.layout.type != "cols" and vega_count != 1:
-        return
-    content_h: float = board.layout.content_height
-    if content_h <= 0:
-        return
-
-    if board.layout.type == "cols":
-        # cols: items are side-by-side — non-chart siblings don't consume Vega height.
-        board_chart_max = content_h
-    else:
-        # rows with 1 Vega chart: stacked non-chart items (captions, KPIs) do consume height.
-        non_chart_h = sum(
-            sub.height
-            for sub in board.layout.items
-            if sub.chart is None or sub.chart.type in NON_ASPECT_RATIO_TYPES
-        )
-        board_chart_max = max(content_h - non_chart_h, 0.0)
-    effective = min(target_height, board_chart_max)
-
-    for sub in board.layout.items:
-        if sub.chart is not None and sub.chart.type not in NON_ASPECT_RATIO_TYPES:
-            sub.height = _effective_alignment_target_for_chart(
-                sub.chart,
-                sub.width,
-                effective,
-                render_ctx,
-            )
-
-    _align_cols_heights(
-        board.layout.items, effective, _nested_render_ctx(render_ctx, board)
-    )
-
-
 def _align_cols_heights(
     items: list[LayoutItem], target_height: float, render_ctx: SizingRenderCtx
 ) -> None:
     """Re-render shorter Vega cols items at target_height; update their cache entries.
 
-    Handles both direct chart items and board items (delegating to
-    _align_board_charts for the latter).  Non-Vega items (table, KPI) are not
-    re-rendered — their container gets the max height but their content stays
-    at its natural height.
+    Non-Vega items (table, KPI) are not re-rendered — their container gets the max
+    height but their content stays at its natural height.
     """
     card_pad = float(render_ctx.resolved_style.frame.card_padding)
 
@@ -1208,16 +1140,13 @@ def _align_cols_heights(
     executor = render_ctx.executor
 
     for item in items:
-        if item.board is not None:
-            _align_board_charts(item, target_height, render_ctx)
-            continue
         if item.chart is None or item.chart.type in NON_ASPECT_RATIO_TYPES:
             continue
         chart_id = item.chart.id
         natural_h = render_ctx.natural_heights.get((chart_id, item.width))
         effective_target = _effective_alignment_target_for_chart(
+            item,
             item.chart,
-            item.width,
             target_height,
             render_ctx,
         )
@@ -1396,22 +1325,23 @@ def _ensure_resolved_variants_in_tree(
             )
 
 
-def _title_band_target(
+def _title_band_targets(
     item: LayoutItem,
     render_ctx: SizingRenderCtx,
     executor: Executor,
     variable_values: VariableValues,
-) -> tuple[LayoutItem, TitleMetrics] | None:
-    """The layout item that draws a cols cell's title, with its title geometry.
+) -> list[tuple[LayoutItem, TitleMetrics]]:
+    """The layout items that draw a cols cell's titles, with their title geometry.
 
     A cell that is a titled chart or a titled nested board draws its own title.
     An untitled board that only wraps a stack (the way a ``width:`` is authored)
-    draws its first item's title, so that item is the one to shift. None means
-    the cell has no title this row can align.
+    draws its first item's title, and an untitled board that only wraps a
+    ``cols:`` draws one title per item, so those are the items to shift. Empty
+    means the cell has no title this row can align.
     """
     # A details section draws its summary bar at its top edge, not a title.
     if item.details_variable:
-        return None
+        return []
     if item.chart is not None:
         resolved = _require_resolved(
             render_ctx,
@@ -1422,9 +1352,28 @@ def _title_band_target(
             render_ctx.resolved_style,
             render_ctx.chart_style_context,
         )
-        if resolved is None:
-            return None
         card_pad = float(render_ctx.resolved_style.frame.card_padding)
+        if resolved is None:
+            # A chart that failed to resolve still draws its authored title
+            # above its error tile.
+            failure = render_ctx.resolve_errors[item.chart.id]
+            if (
+                failed_title_text(
+                    failure.identity.title,
+                    render_ctx.variables,
+                    render_ctx.resolved_style,
+                )
+                is None
+            ):
+                return []
+            return [
+                (
+                    item,
+                    failed_title_metrics(
+                        failed_title_font(failure.title_fonts, item.width), card_pad
+                    ),
+                )
+            ]
         padding = additive_padding(card_pad, resolved.layout_padding)
         # A pie's title band follows its sized mode; a pie the engine cannot fit
         # draws its error tile, outside any band.
@@ -1438,16 +1387,16 @@ def _title_band_target(
                 render_ctx.resolved_style,
             )
         except ChartDataError:
-            return None
+            return []
         metrics = chart_title_metrics(
             resolved,
             card_pad,
             item.width - padding["left"] - padding["right"],
             pie_mode,
         )
-        return None if metrics is None else (item, metrics)
+        return [] if metrics is None else [(item, metrics)]
     if item.board is None:
-        return None
+        return []
     board = item.board
     style = board.resolved_style
     card_pad = float(style.frame.card_padding)
@@ -1459,30 +1408,39 @@ def _title_band_target(
                 variable_values,
             )
             if baseline is None:
-                return None
+                return []
             margin_top = style.margin.top if style.margin else 0.0
-            return item, TitleMetrics(
-                ascent=margin_top + effective_padding(style).top + card_pad + baseline,
-                tail=0.0,
-            )
-        if board.text or board.visible_variables or board.layout.type != "rows":
-            return None
+            return [
+                (
+                    item,
+                    TitleMetrics(
+                        ascent=margin_top
+                        + effective_padding(style).top
+                        + card_pad
+                        + baseline,
+                        tail=0.0,
+                    ),
+                )
+            ]
+        if (
+            board.text
+            or board.visible_variables
+            or board.layout.type not in ("rows", "cols")
+        ):
+            return []
         drawn = active_layout_items(board.layout, variable_values)
-        if not drawn:
-            return None
-        inner = _title_band_target(
-            drawn[0],
-            _nested_render_ctx(render_ctx, board),
-            executor,
-            variable_values,
-        )
-        if inner is None:
-            return None
-        target, metrics = inner
+        wrapped = drawn if board.layout.type == "cols" else drawn[:1]
+        nested_ctx = _nested_render_ctx(render_ctx, board)
         wrapper_top = (style.margin.top if style.margin else 0.0) + (
             effective_padding(style).top
         )
-        return target, TitleMetrics(metrics.ascent + wrapper_top, metrics.tail)
+        return [
+            (target, TitleMetrics(metrics.ascent + wrapper_top, metrics.tail))
+            for inner in wrapped
+            for target, metrics in _title_band_targets(
+                inner, nested_ctx, executor, variable_values
+            )
+        ]
     inline_band = should_use_title_inline_band(
         board.title,
         board.visible_variables,
@@ -1499,7 +1457,7 @@ def _title_band_target(
         variable_values=variable_values,
         inline_band=inline_band,
     )
-    return None if metrics is None else (item, metrics)
+    return [] if metrics is None else [(item, metrics)]
 
 
 def _assign_title_shifts_in_tree(
@@ -1512,17 +1470,9 @@ def _assign_title_shifts_in_tree(
 
     Runs whether or not the sizing pass rendered anything: the shifts come from
     the resolved titles alone, and the render pass reads them off the layout items.
+    Inner rows go first: a row an untitled ``cols:`` wraps shares its parent's
+    band, so the parent's shift is the one that stands.
     """
-    if layout.type == "cols":
-        cells = [
-            _title_band_target(item, render_ctx, executor, variable_values)
-            for item in active_layout_items(layout, variable_values)
-        ]
-        shifts = row_title_shifts([None if c is None else c[1] for c in cells])
-        for cell, shift in zip(cells, shifts, strict=True):
-            if cell is None:
-                continue
-            cell[0].title_shift = shift
     for item in active_layout_items(layout, render_ctx.variable_values):
         if item.board is not None:
             _assign_title_shifts_in_tree(
@@ -1531,6 +1481,15 @@ def _assign_title_shifts_in_tree(
                 executor,
                 variable_values,
             )
+    if layout.type == "cols":
+        cells = [
+            cell
+            for item in active_layout_items(layout, variable_values)
+            for cell in _title_band_targets(item, render_ctx, executor, variable_values)
+        ]
+        shifts = row_title_shifts([metrics for _, metrics in cells])
+        for (target, _), shift in zip(cells, shifts, strict=True):
+            target.title_shift = shift
 
 
 def _align_all_cols_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> None:
@@ -1545,8 +1504,8 @@ def _align_all_cols_in_tree(layout: Layout, render_ctx: SizingRenderCtx) -> None
                         and item.chart.type not in NON_ASPECT_RATIO_TYPES
                     ):
                         item.height = _effective_alignment_target_for_chart(
+                            item,
                             item.chart,
-                            item.width,
                             chart_target,
                             render_ctx,
                         )

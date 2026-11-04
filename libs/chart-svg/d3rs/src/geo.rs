@@ -1,5 +1,5 @@
 //! d3-geo 3.1.1: `geoArea`, `geoBounds` and `geoCentroid` as `GeoStream` sinks (spherical geometry in degrees,
-//! no projection), with d3-array's exact `Adder`. The pipeline modules (`stream`, `rotation`, `compose`,
+//! no projection), with d3-array's exact [`Adder`]. The pipeline modules (`stream`, `rotation`, `compose`,
 //! `transform`) transliterate their upstream files of the same name.
 
 pub mod cartesian;
@@ -15,61 +15,12 @@ pub mod rotation;
 pub mod stream;
 pub mod transform;
 
+use crate::array::Adder;
 use cartesian::{cartesian, cartesian_cross};
 use crate::geojson::GeoJson;
 use math::{asin, DEGREES, EPSILON, EPSILON2, QUARTER_PI, RADIANS, TAU};
 use crate::js_sort::js_sort;
 use stream::{geo_stream, GeoStream};
-
-/// d3-array's `Adder`: Shewchuk's exact running sum.
-#[derive(Default, Clone)]
-pub(crate) struct Adder {
-    partials: Vec<f64>,
-}
-
-impl Adder {
-    pub(crate) fn add(&mut self, mut x: f64) {
-        let mut kept = Vec::with_capacity(self.partials.len() + 1);
-        for &y in self.partials.iter().take(32) {
-            let hi = x + y;
-            let lo = if x.abs() < y.abs() { x - (hi - y) } else { y - (hi - x) };
-            if lo != 0.0 {
-                kept.push(lo);
-            }
-            x = hi;
-        }
-        kept.push(x);
-        self.partials = kept;
-    }
-
-    pub(crate) fn value(&self) -> f64 {
-        let p = &self.partials;
-        let mut n = p.len();
-        let (mut hi, mut lo) = (0.0, 0.0);
-        if n > 0 {
-            n -= 1;
-            hi = p[n];
-            while n > 0 {
-                let x = hi;
-                n -= 1;
-                let y = p[n];
-                hi = x + y;
-                lo = y - (hi - x);
-                if lo != 0.0 {
-                    break;
-                }
-            }
-            if n > 0 && ((lo < 0.0 && p[n - 1] < 0.0) || (lo > 0.0 && p[n - 1] > 0.0)) {
-                let y = lo * 2.0;
-                let x = hi + y;
-                if y == x - hi {
-                    hi = x;
-                }
-            }
-        }
-        hi
-    }
-}
 
 fn hypot3(x: f64, y: f64, z: f64) -> f64 {
     crate::js_math::hypot(&[x, y, z])

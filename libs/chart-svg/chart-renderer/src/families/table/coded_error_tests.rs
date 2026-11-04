@@ -218,15 +218,15 @@ fn a_pivot_column_the_query_lacks() {
     assert_eq!(raised(&payload), field_not_found("pivot.column", observed()));
 }
 
-/// `_validate_pivot_fields`.
+/// `check_row_role`, flat or pivoted: a role word is not a column.
 #[test]
-fn a_pivot_row_role_that_is_a_literal_role() {
+fn a_row_role_that_is_a_literal_role() {
     let mut payload = pivot(sales(), json!(["region"]), json!(["quarter"]), json!(["revenue"]));
-    payload.resolved["style"]["table"]["row"]["role"] = json!("total");
+    payload.resolved["row_role"] = json!("total");
     assert_eq!(
         raised(&payload),
         Diagnostic::new(
-            &codes::ERR_TABLE_PIVOT_ROW_ROLE_LITERAL,
+            &codes::ERR_TABLE_ROW_ROLE_NOT_FOUND,
             [("row_role", json!("total")), ("observed", observed())],
         )
     );
@@ -291,7 +291,7 @@ fn pivoted_rows_merging_with_conflicting_roles() {
         json!({"region": "West", "quarter": "Q2", "revenue": 12.0, "kind": "total"}),
     ];
     let mut payload = pivot(rows, json!(["region"]), json!(["quarter"]), json!(["revenue"]));
-    payload.resolved["style"]["table"]["row"]["role"] = json!("kind");
+    payload.resolved["row_role"] = json!("kind");
     assert_eq!(
         raised(&payload),
         Diagnostic::new(
@@ -439,4 +439,16 @@ fn a_pivot_row_dimension_holding_a_list_or_object_is_refused_by_name() {
         assert_eq!(refused.code, codes::ERR_ENGINE_REFUSED.id);
         assert!(refused.to_string().contains("'k'"), "{refused}");
     }
+}
+
+/// A pivot's leaf columns come from its rows, so an empty one with none resolved takes
+/// the empty state whether or not row numbers are on.
+#[test]
+fn an_empty_pivot_with_row_numbers_draws_the_empty_state() {
+    let mut payload = pivot(vec![], json!(["owner"]), json!(["bucket"]), json!(["n"]));
+    payload.resolved["style"]["table"]["row_numbers"]["visible"] = json!(true);
+    payload.resolved["style"]["table"]["empty_state"] =
+        json!({"font": {"size": 14.0, "color": "#626366"}});
+    let svg = render(&payload, &test_fonts()).expect("the empty state, not a refusal");
+    assert!(svg.contains(">\u{2014}</text>"), "{svg}");
 }

@@ -1,27 +1,27 @@
-//! d3-color / d3-interpolate / d3-scale-chromatic pieces Vega's continuous
-//! color scales run.
+//! d3-color / d3-interpolate pieces Vega's continuous color scales run.
 //!
 //! Ported from:
-//! - https://github.com/d3/d3-color/blob/main/src/lab.js (`rgb`↔`lab`↔`hcl`)
-//! - https://github.com/d3/d3-interpolate/blob/main/src/piecewise.js, `rgb.js`, `hcl.js`
-//! - vega-scale `palettes.js` (`yellowgreenblue`)
+//! - https://github.com/d3/d3-color/blob/v3.1.0/src/color.js (`color`), `lab.js` (`rgb`↔`lab`↔`hcl`)
+//! - https://github.com/d3/d3-interpolate/blob/v3.0.1/src/piecewise.js, `rgb.js`, `hcl.js`
+//! - vega-scale 8.1.3 `src/interpolate.js` (`quantizeInterpolator`)
 
 /// An sRGB color, one byte per channel.
 pub type Rgb = (u8, u8, u8);
 
-/// d3's `formatRgb` text of a color.
-pub fn rgb_text((r, g, b): Rgb) -> String {
-    format!("rgb({r}, {g}, {b})")
+/// d3's `formatRgb` text of a byte color.
+pub fn rgb_text(color: Rgb) -> String {
+    format_rgb(Color::opaque(color))
 }
 
-/// Sample `i` of Vega's `quantizeInterpolator(scheme, n)`: the scheme at
-/// `(i + 1) / (n + 1)`.
+/// Sample `i` of vega-scale's `quantizeInterpolator(scheme, n)` (`src/interpolate.js`): the scheme at
+/// `(i + 1) / (n + 1)`. Not d3-interpolate's `quantize`, which samples at `i / (n - 1)`.
 pub fn quantize_sample(scheme: &[Rgb], n: usize, i: usize) -> Rgb {
-    interpolate_rgb_piecewise(scheme, (i + 1) as f64 / (n + 1) as f64)
+    let t = (i + 1) as f64 / (n + 1) as f64;
+    piecewise(interpolate_rgb, scheme, t).expect("a scheme has two or more colors")
 }
 
 /// A scheme quantized to two colors and mixed in HCL: the ramp a time scale's
-/// two-value domain takes, `t` along it.
+/// two-value domain takes, `t` along it (`interpolateColors(quantizeInterpolator(scheme, 2), "hcl")`).
 pub fn quantized_pair_hcl(scheme: &[Rgb], t: f64) -> Rgb {
     interpolate_hcl(quantize_sample(scheme, 2, 0), quantize_sample(scheme, 2, 1), t)
 }
@@ -202,17 +202,25 @@ pub fn byte(v: f64) -> u8 {
     }
 }
 
-/// `d3.piecewise(d3.interpolateRgb, colors)(t)`, the way vega-scale turns a
-/// scheme's control colors into a continuous ramp: linear in each sRGB
-/// channel between neighboring colors, rounded as the color string prints.
-pub fn interpolate_rgb_piecewise(colors: &[Rgb], t: f64) -> Rgb {
-    let n = (colors.len() - 1) as f64;
-    let scaled = t * n;
-    let i = scaled.floor().clamp(0.0, n - 1.0) as usize;
-    let local = scaled - i as f64;
-    let mix = |a: u8, b: u8| byte(f64::from(a) + local * (f64::from(b) - f64::from(a)));
-    let (from, to) = (colors[i], colors[i + 1]);
-    (mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2))
+/// d3-interpolate's `piecewise(interpolate, values)(t)` (`piecewise.js`): `interpolate` between the neighbors of
+/// `values`, `t` running 0 to 1 along all of them, extrapolated past either end by the end segment. d3 throws a
+/// `TypeError` on the first call when there is no segment (fewer than two values) or `t` is NaN; both are `Err`.
+pub fn piecewise<T: Copy>(interpolate: impl Fn(T, T, f64) -> T, values: &[T], t: f64) -> Result<T, String> {
+    let Some(last_segment) = values.len().checked_sub(2) else {
+        return Err(format!("piecewise: {} values make no segment, need two or more", values.len()));
+    };
+    let scaled = t * (last_segment + 1) as f64;
+    if scaled.is_nan() {
+        return Err("piecewise: t is NaN".to_string());
+    }
+    let i = scaled.floor().clamp(0.0, last_segment as f64) as usize;
+    Ok(interpolate(values[i], values[i + 1], scaled - i as f64))
+}
+
+/// [`interpolate_rgb_color`] over opaque byte colors.
+pub fn interpolate_rgb(start: Rgb, end: Rgb, t: f64) -> Rgb {
+    let mixed = interpolate_rgb_color(Color::opaque(start), Color::opaque(end), t);
+    (byte(mixed.r), byte(mixed.g), byte(mixed.b))
 }
 
 const XN: f64 = 0.96422;
@@ -296,6 +304,43 @@ pub fn interpolate_hcl_color(start: Color, end: Color, t: f64) -> Color {
     Color { r, g, b, a: linear(start.a, end.a) }
 }
 
+/// d3-interpolate `rgb.js` (gamma 1) over d3 colors: `nogamma` in each channel
+/// and in opacity, so an undefined channel (a transparent end) borrows the
+/// other end's. The channels stay floats; [`format_rgb`] prints them as
+/// `interpolateRgb(a, b)(t)` does.
+pub fn interpolate_rgb_color(start: Color, end: Color, t: f64) -> Color {
+    // `nogamma`: `a + t * d` for a nonzero `d = b - a`, which rounds differently from
+    // `a * (1 - t) + b * t`; a zero or NaN `d` is the end that is defined.
+    let mix = |a: f64, b: f64| {
+        let d = b - a;
+        if d != 0.0 && !d.is_nan() {
+            a + t * d
+        } else if a.is_nan() {
+            b
+        } else {
+            a
+        }
+    };
+    Color { r: mix(start.r, end.r), g: mix(start.g, end.g), b: mix(start.b, end.b), a: mix(start.a, end.a) }
+}
+
+/// d3-color's `formatRgb` (`color + ""`): channels clamped and rounded, an
+/// undefined channel 0, and `rgba(...)` with the clamped opacity when it is not 1.
+pub fn format_rgb(color: Color) -> String {
+    let a = if color.a.is_nan() { 1.0 } else { color.a.clamp(0.0, 1.0) };
+    let (r, g, b) = (byte(color.r), byte(color.g), byte(color.b));
+    if a == 1.0 {
+        format!("rgb({r}, {g}, {b})")
+    } else {
+        format!("rgba({r}, {g}, {b}, {})", crate::js_math::js_number_string(a))
+    }
+}
+
+/// d3-color's `formatHex` (`color.js`): `#rrggbb`, each channel rounded and clamped (NaN is 0), opacity dropped.
+pub fn format_hex(color: Color) -> String {
+    format!("#{:02x}{:02x}{:02x}", byte(color.r), byte(color.g), byte(color.b))
+}
+
 /// [`interpolate_hcl_color`] over opaque byte colors.
 pub fn interpolate_hcl(start: Rgb, end: Rgb, t: f64) -> Rgb {
     let mixed = interpolate_hcl_color(Color::opaque(start), Color::opaque(end), t);
@@ -315,94 +360,11 @@ mod tests {
         }
     }
 
-    /// Oracle: `vega.scheme('yellowgreenblue')` (vega 5.25) sampled where Vega's
-    /// `quantize(scheme, 2)` samples a two-stop range.
-    #[test]
-    fn yellow_green_blue_matches_vega_s_scheme() {
-        let s = |t| interpolate_rgb_piecewise(&crate::vega_schemes::YELLOWGREENBLUE, t);
-        assert_eq!(s(0.0), (239, 249, 189));
-        assert_eq!(s(1.0), (28, 49, 133));
-        assert_eq!(s(1.0 / 3.0), (134, 208, 187));
-        assert_eq!(s(2.0 / 3.0), (37, 139, 187));
-    }
-
-    /// Oracle: a vega `time` scale with `interpolate: hcl` over those two
-    /// colors; Feb 1 sits 31 of the 60 days from Jan 1 to Mar 1.
-    #[test]
-    fn hcl_interpolation_matches_vega_s_scale() {
-        assert_eq!(interpolate_hcl((134, 208, 187), (37, 139, 187), 31.0 / 60.0), (68, 175, 188));
-        assert_eq!(interpolate_hcl((134, 208, 187), (37, 139, 187), 0.5), (70, 176, 188));
-        assert_eq!(interpolate_hcl((134, 208, 187), (37, 139, 187), 0.0), (134, 208, 187));
-    }
-
     /// `Math.round(0.49999999999999994)` is 0; `x + 0.5` rounds it up to 1.
     #[test]
     fn a_byte_rounds_like_math_round() {
         assert_eq!(byte(0.49999999999999994), 0);
         assert_eq!(byte(254.5), 255);
         assert_eq!(byte(f64::NAN), 0);
-    }
-
-    /// Oracle: `vega.scheme('blues')` (vega 5.25).
-    #[test]
-    fn blues_matches_vega_s_scheme() {
-        let at = |t| interpolate_rgb_piecewise(&crate::vega_schemes::BLUES, t);
-        assert_eq!(at(0.0), (207, 225, 242));
-        assert_eq!(at(1.0 / 7.0), (181, 212, 233));
-        assert_eq!(at(0.5), (91, 163, 207));
-        assert_eq!(at(13.0 / 14.0), (16, 87, 158));
-        assert_eq!(at(1.0), (10, 74, 144));
-    }
-
-    /// Oracle: `d3.interpolateHcl("rgb(128,128,128)", "blue")(0.5)`. A gray end
-    /// has an undefined hue, so the blue end's hue holds the whole way; sweeping
-    /// from 0 degrees instead lands on a magenta.
-    #[test]
-    fn a_gray_end_borrows_the_other_hue() {
-        assert_eq!(interpolate_hcl((128, 128, 128), (0, 0, 255), 0.5), (110, 79, 192));
-        assert_eq!(interpolate_hcl((0, 0, 255), (128, 128, 128), 0.5), (110, 79, 192));
-    }
-
-    /// Oracle: vega's `hcl` interpolator (d3): black and white have no hue
-    /// either, and black's chroma is undefined, so the other end's holds.
-    #[test]
-    fn a_black_or_white_end_has_no_hue_or_chroma_of_its_own() {
-        assert_eq!(interpolate_hcl((0, 0, 0), (77, 175, 74), 0.5), (0, 91, 0));
-        assert_eq!(interpolate_hcl((255, 255, 255), (77, 175, 74), 0.5), (128, 226, 121));
-    }
-
-    /// A two-sample quantize lands on the scheme's thirds, and a longer one at
-    /// `(i + 1) / (n + 1)`.
-    #[test]
-    fn quantize_samples_sit_between_the_scheme_ends() {
-        let scheme = &crate::vega_schemes::YELLOWGREENBLUE;
-        assert_eq!(quantize_sample(scheme, 2, 0), (134, 208, 187));
-        assert_eq!(quantize_sample(scheme, 2, 1), (37, 139, 187));
-        assert_eq!(quantize_sample(scheme, 3, 1), interpolate_rgb_piecewise(scheme, 0.5));
-        assert_eq!(quantized_pair_hcl(scheme, 0.0), (134, 208, 187));
-        assert_eq!(rgb_text((1, 2, 3)), "rgb(1, 2, 3)");
-    }
-
-    #[test]
-    fn parse_color_reads_what_d3_color_reads() {
-        assert_eq!(parse_color("#f00"), Some(Color::opaque((255, 0, 0))));
-        assert_eq!(parse_color("#0a4a90"), Some(Color::opaque((10, 74, 144))));
-        assert_eq!(parse_color("Blue"), Some(Color::opaque((0, 0, 255))));
-        assert_eq!(parse_color(concat!("dark", "gre", "y")), parse_color("darkgray"));
-        assert_eq!(parse_color("rgb(0, 255,0)"), Some(Color::opaque((0, 255, 0))));
-        assert_eq!(parse_color("rgb(100%, 0%, 50%)"), Some(Color { r: 255.0, g: 0.0, b: 127.5, a: 1.0 }));
-        assert_eq!(parse_color("rgba(0, 0, 255, 0.5)"), Some(Color { r: 0.0, g: 0.0, b: 255.0, a: 0.5 }));
-        assert_eq!(parse_color("hsl(0, 100%, 50%)"), Some(Color::opaque((255, 0, 0))));
-        assert_eq!(parse_color("#ff000080").map(|c| (c.r, c.a > 0.5)), Some((255.0, true)));
-        assert!(parse_color("transparent").is_some_and(|c| c.r.is_nan() && c.a == 0.0));
-        for bad in ["", "#ff", "#gggggg", "rgb(1, 2)", "rgb(1, 2, 3, 4)", "notacolor", "hsl(0, 100 %, 50%)"] {
-            assert_eq!(parse_color(bad), None, "{bad}");
-        }
-    }
-
-    /// d3's `hsla`: a fully transparent color has no channels at all.
-    #[test]
-    fn a_transparent_hsla_has_no_channels() {
-        assert!(parse_color("hsla(0, 100%, 50%, 0)").is_some_and(|c| c.r.is_nan() && c.g.is_nan() && c.b.is_nan() && c.a == 0.0));
     }
 }

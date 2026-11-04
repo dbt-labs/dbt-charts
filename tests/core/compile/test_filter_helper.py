@@ -246,11 +246,37 @@ class TestFilterDateRangePresetName:
     def test_a_preset_name_resolves_on_the_board_clock(self) -> None:
         collector = _collector()
         with board_clock(
-            BoardClock(date(2026, 10, 20), fiscal_start_month=7, week_start=1)
+            BoardClock(
+                date(2026, 10, 20), fiscal_start_month=7, week_start=1, time_zone="UTC"
+            )
         ):
             sql = self._helper(collector)("order_ts", "this_fiscal_quarter")
         assert sql == "CAST(order_ts AS DATE) BETWEEN $1 AND $2"
         assert collector.params == [date(2026, 10, 1), date(2026, 12, 31)]
+
+    def test_a_before_preset_emits_only_the_upper_bound(self) -> None:
+        collector = _collector()
+        with board_clock(
+            BoardClock(
+                date(2026, 10, 20), fiscal_start_month=7, week_start=1, time_zone="UTC"
+            )
+        ):
+            sql = self._helper(collector)(
+                "order_ts", "before_previous_4_fiscal_quarters"
+            )
+        assert sql == "CAST(order_ts AS DATE) <= $1"
+        assert collector.params == [date(2025, 9, 30)]
+
+    def test_last_months_is_calendar_aligned(self) -> None:
+        collector = _collector()
+        with board_clock(
+            BoardClock(
+                date(2026, 10, 28), fiscal_start_month=1, week_start=1, time_zone="UTC"
+            )
+        ):
+            sql = self._helper(collector)("d", "last_12_months")
+        assert sql == "CAST(d AS DATE) BETWEEN $1 AND $2"
+        assert collector.params == [date(2025, 11, 1), date(2026, 10, 28)]
 
     def test_a_preset_name_outside_a_board_clock_is_refused(self) -> None:
         with pytest.raises(ExecutionError, match="board_clock"):
@@ -259,7 +285,12 @@ class TestFilterDateRangePresetName:
     def test_a_name_outside_the_grammar_states_the_grammar(self) -> None:
         with (
             board_clock(
-                BoardClock(date(2026, 10, 20), fiscal_start_month=1, week_start=1)
+                BoardClock(
+                    date(2026, 10, 20),
+                    fiscal_start_month=1,
+                    week_start=1,
+                    time_zone="UTC",
+                )
             ),
             pytest.raises(ValueError, match=r"last_<N>_<unit>.*got 'last_week'"),
         ):

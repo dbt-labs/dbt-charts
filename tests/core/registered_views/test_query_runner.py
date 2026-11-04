@@ -27,6 +27,7 @@ from dbt_charts.core.execute.cache_backend import (
     CachedQueryFailure,
     CacheHit,
     CacheOutcome,
+    ResultRows,
 )
 from dbt_charts.core.registered_views.models import RegisteredView
 from dbt_charts.core.registered_views.query_runner import (
@@ -421,9 +422,7 @@ class TestSchemaQueryAsRegistryQuery:
             from dbt_charts.core.execute.adapters import build_adapter_registry
             from dbt_charts.core.execute.adapters.schema_adapter import SchemaAdapter
 
-            registry = build_adapter_registry(
-                local_project(tmp_path), allowed_types={"schema"}
-            )
+            registry = build_adapter_registry(local_project(tmp_path))
             # Call SchemaAdapter._execute directly to bypass source-resolution;
             # source resolution raises for unknown source names without a dbt project.
             # The SchemaAdapter does not use source_config — it calls build_resolver.
@@ -508,7 +507,7 @@ class _FakeCache:
         self._store: dict[
             tuple[str, str, str],
             tuple[
-                list[dict[str, Any]] | None,
+                ResultRows | None,
                 datetime | None,
                 Exception | None,
                 datetime | None,
@@ -538,7 +537,8 @@ class _FakeCache:
         now = self._now()
         # Rows first, then the error slot — the real read order.
         if rows_at is not None and (ttl is None or now - rows_at <= ttl):
-            return CacheHit(rows=rows or [], written_at=rows_at)
+            assert rows is not None
+            return CacheHit(rows=rows.rows, schema=rows.schema, written_at=rows_at)
         if error is not None and error_at is not None:
             if now - error_at <= _FAILURE_RETRY_WINDOW:
                 return CachedQueryFailure(
@@ -556,7 +556,7 @@ class _FakeCache:
         source_hash: str,
         query_hash: str,
         variables_hash: str,
-        outcome: list[dict[str, Any]] | Exception,
+        outcome: ResultRows | Exception,
         *,
         board_slug: str,
         query_name: str,

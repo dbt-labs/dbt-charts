@@ -3,7 +3,7 @@
 `chart_focus` (and `focus_on_chart()`) builds a single-chart board that sizes the
 chart exactly as if it were the only chart on a board with no width: its
 preferred width, or its authored `width:`. The slot it had on the source board,
-and that board's authored `frame.width`, do not carry over.
+and that board's authored `width:`, do not carry over.
 """
 
 from __future__ import annotations
@@ -112,10 +112,10 @@ def test_yaml_and_api_focus_give_identical_widths(
     ) == board_container_width(yaml_result.board, yaml_result.board.variable_defaults)
 
 
-def test_authored_frame_width_does_not_carry_into_focused_board(
+def test_authored_width_does_not_carry_into_focused_board(
     local_project: Callable[..., Project],
 ):
-    yaml = "style:\n  frame:\n    width: 1200\n" + _THREE_COL_YAML
+    yaml = "width: 1200\n" + _THREE_COL_YAML
     dashboard = compile(yaml)
     assert dashboard.success and dashboard.board is not None, dashboard.errors
     assert (

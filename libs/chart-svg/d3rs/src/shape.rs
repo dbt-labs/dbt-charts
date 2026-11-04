@@ -10,7 +10,18 @@
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/natural.js
 //! - https://github.com/d3/d3-shape/blob/main/src/curve/cardinal.js
 
-use crate::path::{Path, WITH_PATH_DIGITS};
+use crate::path::Path;
+use scene::PathData;
+
+/// `linkHorizontal()({source, target})` (link.js over curve/bump.js's
+/// `bumpX`): a cubic from `source` to `target` whose tangents are horizontal.
+pub fn link_horizontal((sx, sy): (f64, f64), (tx, ty): (f64, f64)) -> PathData {
+    let mut path = Path::new();
+    path.move_to(sx, sy);
+    let xm = (sx + tx) / 2.0;
+    path.bezier_curve_to(xm, sy, xm, ty, tx, ty);
+    path.into_path_data()
+}
 
 /// The curve a line/area mark interpolates with — production compiles
 /// `line_mark.curve` / `area_mark.curve` to VL's `interpolate`, which Vega
@@ -81,12 +92,12 @@ enum Edge {
 /// nothing (Vega's own SVG for three isolated points:
 /// `M40,133.333ZM200,133.333ZM360,133.333Z`). A longer run stays open; an
 /// empty run draws nothing, and so does empty input.
-pub fn line_path(runs: &[Vec<(f64, f64)>], curve: Curve) -> String {
-    let mut path = Path::rounded(WITH_PATH_DIGITS);
+pub fn line_path(runs: &[Vec<(f64, f64)>], curve: Curve) -> PathData {
+    let mut path = Path::new();
     for run in runs {
         append_edge(&mut path, run, curve, Edge::Bare);
     }
-    path.into_string()
+    path.into_path_data()
 }
 
 /// Build an SVG path string for a filled area under `curve`, flat bottom at
@@ -98,7 +109,7 @@ pub fn line_path(runs: &[Vec<(f64, f64)>], curve: Curve) -> String {
 /// replays its two edges — through the SAME curve on both, so a curved area
 /// has a curved baseline too. A single-point run is therefore
 /// `M x,top L x,bottom Z`.
-pub fn area_path(runs: &[Vec<(f64, f64)>], bottom_y: f64, curve: Curve) -> String {
+pub fn area_path(runs: &[Vec<(f64, f64)>], bottom_y: f64, curve: Curve) -> PathData {
     let runs3: Vec<Vec<(f64, f64, f64)>> =
         runs.iter().map(|run| run.iter().map(|&(x, y)| (x, y, bottom_y)).collect()).collect();
     stacked_area_path(&runs3, curve)
@@ -111,28 +122,28 @@ pub fn area_path(runs: &[Vec<(f64, f64)>], bottom_y: f64, curve: Curve) -> Strin
 /// walks its top edge left-to-right, then its own bottom edge (not a flat
 /// line) back right-to-left, then closes — [`area_path`] is this function
 /// at one flat `bottom` for every point.
-pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> String {
-    let mut path = Path::rounded(WITH_PATH_DIGITS);
+pub fn stacked_area_path(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> PathData {
+    let mut path = Path::new();
     for run in runs {
         let top: Vec<(f64, f64)> = run.iter().map(|&(x, top, _)| (x, top)).collect();
         append_edge(&mut path, &top, curve, Edge::AreaTop);
         let bottom: Vec<(f64, f64)> = run.iter().rev().map(|&(x, _, bottom)| (x, bottom)).collect();
         append_edge(&mut path, &bottom, curve.toggled_for_area_bottom(), Edge::AreaBottom);
     }
-    path.into_string()
+    path.into_path_data()
 }
 
 /// [`stacked_area_path`] for a horizontal area (Vega's `x`/`x2` over a `y` dimension): each
 /// run is `(y, top_x, bottom_x)`, its top edge walked in dimension order, then the bottom edge back.
-pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> String {
-    let mut path = Path::rounded(WITH_PATH_DIGITS);
+pub fn stacked_area_path_horizontal(runs: &[Vec<(f64, f64, f64)>], curve: Curve) -> PathData {
+    let mut path = Path::new();
     for run in runs {
         let top: Vec<(f64, f64)> = run.iter().map(|&(y, top, _)| (top, y)).collect();
         append_edge(&mut path, &top, curve, Edge::AreaTop);
         let bottom: Vec<(f64, f64)> = run.iter().rev().map(|&(y, _, bottom)| (bottom, y)).collect();
         append_edge(&mut path, &bottom, curve.toggled_for_area_bottom(), Edge::AreaBottom);
     }
-    path.into_string()
+    path.into_path_data()
 }
 
 /// Run one `lineStart … point* … lineEnd` cycle of `curve` over `points`.
@@ -469,6 +480,8 @@ fn js_min(a: f64, b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path::testing::assert_path;
+    use scene::PathCommand;
 
     /// One defined run — the shape both generators take.
     fn one_run(points: &[(f64, f64)]) -> Vec<Vec<(f64, f64)>> {
@@ -496,41 +509,29 @@ mod tests {
     /// `Math.round(v * 1e3) / 1e3` (`M0,100.062`, `L100,-0.063`, `L150,76.938`, `L200,0`).
     #[test]
     fn a_linear_line_prints_the_digits_vega_prints() {
-        assert_eq!(
-            line_path(&one_run(&ORACLE_PTS), Curve::Linear),
-            "M0,100.062L50,171.877L100,-0.063L150,76.938L200,0L250,122.679L300,122.679"
-        );
+        assert_path(&line_path(&one_run(&ORACLE_PTS), Curve::Linear), "M0,100.062L50,171.877L100,-0.063L150,76.938L200,0L250,122.679L300,122.679");
     }
 
     #[test]
     fn a_monotone_line_prints_the_digits_vega_prints() {
-        assert_eq!(
-            line_path(&one_run(&ORACLE_PTS), Curve::MonotoneX),
-            "M0,100.062C16.667,135.97,33.333,171.877,50,171.877\
+        assert_path(&line_path(&one_run(&ORACLE_PTS), Curve::MonotoneX), "M0,100.062C16.667,135.97,33.333,171.877,50,171.877\
              C66.667,171.877,83.333,-0.063,100,-0.063\
              C116.667,-0.063,133.333,76.938,150,76.938\
              C166.667,76.938,183.333,0,200,0\
              C216.667,0,233.333,122.679,250,122.679\
-             C266.667,122.679,283.333,122.679,300,122.679"
-        );
+             C266.667,122.679,283.333,122.679,300,122.679");
     }
 
     #[test]
     fn a_step_line_prints_the_digits_vega_prints() {
-        assert_eq!(
-            line_path(&one_run(&ORACLE_PTS), Curve::Step),
-            "M0,100.062L25,100.062L25,171.877L75,171.877L75,-0.063L125,-0.063\
-             L125,76.938L175,76.938L175,0L225,0L225,122.679L275,122.679L275,122.679L300,122.679"
-        );
+        assert_path(&line_path(&one_run(&ORACLE_PTS), Curve::Step), "M0,100.062L25,100.062L25,171.877L75,171.877L75,-0.063L125,-0.063\
+             L125,76.938L175,76.938L175,0L225,0L225,122.679L275,122.679L275,122.679L300,122.679");
     }
 
     #[test]
     fn an_area_prints_the_digits_vega_prints() {
-        assert_eq!(
-            area_path(&one_run(&ORACLE_PTS), 177.0, Curve::Linear),
-            "M0,100.062L50,171.877L100,-0.063L150,76.938L200,0L250,122.679L300,122.679\
-             L300,177L250,177L200,177L150,177L100,177L50,177L0,177Z"
-        );
+        assert_path(&area_path(&one_run(&ORACLE_PTS), 177.0, Curve::Linear), "M0,100.062L50,171.877L100,-0.063L150,76.938L200,0L250,122.679L300,122.679\
+             L300,177L250,177L200,177L150,177L100,177L50,177L0,177Z");
     }
 
     /// The shapes d3 emits either side of a `defined` break, pinned against
@@ -541,9 +542,9 @@ mod tests {
     #[test]
     fn each_defined_run_is_its_own_subpath() {
         let runs = vec![vec![(0.0, 1.0), (2.0, 3.0)], vec![(6.0, 7.0)]];
-        assert_eq!(line_path(&runs, Curve::Linear), "M0,1L2,3M6,7Z");
-        assert_eq!(area_path(&runs, 9.0, Curve::Linear), "M0,1L2,3L2,9L0,9ZM6,7L6,9Z");
-        assert_eq!(line_path(&[], Curve::Linear), "");
+        assert_path(&line_path(&runs, Curve::Linear), "M0,1L2,3M6,7Z");
+        assert_path(&area_path(&runs, 9.0, Curve::Linear), "M0,1L2,3L2,9L0,9ZM6,7L6,9Z");
+        assert_path(&line_path(&[], Curve::Linear), "");
     }
 
     /// A stacked area's baseline varies per point (each series' running sum
@@ -553,13 +554,13 @@ mod tests {
     #[test]
     fn a_horizontal_stacked_area_walks_its_end_edge_down_and_its_start_edge_back() {
         let run = vec![(38.0, 230.0, 0.0), (114.0, 153.0, 0.0)];
-        assert_eq!(stacked_area_path_horizontal(&[run], Curve::Linear), "M230,38L153,114L0,114L0,38Z");
+        assert_path(&stacked_area_path_horizontal(&[run], Curve::Linear), "M230,38L153,114L0,114L0,38Z");
     }
 
     #[test]
     fn stacked_area_path_takes_a_per_point_baseline() {
         let runs = vec![vec![(0.0, 1.0, 9.0), (2.0, 3.0, 5.0)], vec![(6.0, 7.0, 9.0)]];
-        assert_eq!(stacked_area_path(&runs, Curve::Linear), "M0,1L2,3L2,5L0,9ZM6,7L6,9Z");
+        assert_path(&stacked_area_path(&runs, Curve::Linear), "M0,1L2,3L2,5L0,9ZM6,7L6,9Z");
     }
 
     /// The seven points below and their expected control points come from a
@@ -582,16 +583,13 @@ mod tests {
 
     #[test]
     fn monotone_x_emits_d3_s_cubic_control_points() {
-        assert_eq!(
-            line_path(&one_run(&MONO_PTS), Curve::MonotoneX),
-            "M0,0C3.333,11.667,6.667,23.333,10,30\
+        assert_path(&line_path(&one_run(&MONO_PTS), Curve::MonotoneX), "M0,0C3.333,11.667,6.667,23.333,10,30\
              C15,40,20,40,25,45\
              C26.667,46.667,28.333,50,30,50\
              C33.333,50,36.667,10.067,40,10\
              C43.333,9.933,46.667,9.967,50,9.9\
              C53.333,9.833,56.667,-5.133,60,-20.1"
-                .replace(' ', "")
-        );
+                .replace(' ', ""));
     }
 
     /// `curveMonotoneY` is `curveMonotoneX` over `(y, x)` with every printed
@@ -599,29 +597,23 @@ mod tests {
     /// equality.
     #[test]
     fn monotone_y_is_monotone_x_reflected() {
-        let swap_pairs = |path: &str| -> String {
-            let mut out = String::new();
-            let mut numbers: Vec<&str> = Vec::new();
-            let flush = |out: &mut String, numbers: &mut Vec<&str>| {
-                let pairs: Vec<String> = numbers.chunks(2).map(|c| format!("{},{}", c[1], c[0])).collect();
-                out.push_str(&pairs.join(","));
-                numbers.clear();
-            };
-            let mut rest = path;
-            while !rest.is_empty() {
-                let end = rest[1..].find(|c: char| c.is_ascii_alphabetic()).map_or(rest.len(), |i| i + 1);
-                let (segment, tail) = rest.split_at(end);
-                out.push_str(&segment[..1]);
-                numbers.extend(segment[1..].split(',').filter(|n| !n.is_empty()));
-                flush(&mut out, &mut numbers);
-                rest = tail;
-            }
-            out
+        let swap_pairs = |path: PathData| -> PathData {
+            PathData(
+                path.0
+                    .into_iter()
+                    .map(|command| match command {
+                        PathCommand::M(x, y) => PathCommand::M(y, x),
+                        PathCommand::L(x, y) => PathCommand::L(y, x),
+                        PathCommand::C(a, b, c, d, x, y) => PathCommand::C(b, a, d, c, y, x),
+                        other => other,
+                    })
+                    .collect(),
+            )
         };
         let swapped: Vec<(f64, f64)> = MONO_PTS.iter().map(|&(x, y)| (y, x)).collect();
         assert_eq!(
             line_path(&one_run(&swapped), Curve::MonotoneY),
-            swap_pairs(&line_path(&one_run(&MONO_PTS), Curve::MonotoneX))
+            swap_pairs(line_path(&one_run(&MONO_PTS), Curve::MonotoneX))
         );
     }
 
@@ -629,9 +621,7 @@ mod tests {
     /// forward, then the flat bottom back through every x, then one `Z`.
     #[test]
     fn monotone_x_curves_the_area_s_bottom_edge_too() {
-        assert_eq!(
-            area_path(&one_run(&MONO_PTS), 100.0, Curve::MonotoneX),
-            "M0,0C3.333,11.667,6.667,23.333,10,30\
+        assert_path(&area_path(&one_run(&MONO_PTS), 100.0, Curve::MonotoneX), "M0,0C3.333,11.667,6.667,23.333,10,30\
              C15,40,20,40,25,45\
              C26.667,46.667,28.333,50,30,50\
              C33.333,50,36.667,10.067,40,10\
@@ -643,8 +633,7 @@ mod tests {
              C28.333,100,26.667,100,25,100\
              C20,100,15,100,10,100\
              C6.667,100,3.333,100,0,100Z"
-                .replace(' ', "")
-        );
+                .replace(' ', ""));
     }
 
     /// d3's `MonotoneX.point` opens `if (x !== this._x1 || y !== this._y1)`, so
@@ -655,10 +644,7 @@ mod tests {
     fn a_repeated_point_is_dropped_before_the_tangents_are_taken() {
         let doubled = one_run(&[(0.0, 0.0), (10.0, 10.0), (10.0, 10.0), (20.0, 5.0)]);
         let once = one_run(&[(0.0, 0.0), (10.0, 10.0), (20.0, 5.0)]);
-        assert_eq!(
-            line_path(&doubled, Curve::MonotoneX),
-            "M0,0C3.333,5,6.667,10,10,10C13.333,10,16.667,7.5,20,5"
-        );
+        assert_path(&line_path(&doubled, Curve::MonotoneX), "M0,0C3.333,5,6.667,10,10,10C13.333,10,16.667,7.5,20,5");
         assert_eq!(
             line_path(&doubled, Curve::MonotoneX),
             line_path(&once, Curve::MonotoneX)
@@ -670,8 +656,8 @@ mod tests {
     /// that makes a round-capped mark paint a dot.
     #[test]
     fn short_monotone_runs_take_d3_s_line_end_shapes() {
-        assert_eq!(line_path(&one_run(&MONO_PTS[..2]), Curve::MonotoneX), "M0,0L10,30");
-        assert_eq!(line_path(&one_run(&MONO_PTS[..1]), Curve::MonotoneX), "M0,0Z");
+        assert_path(&line_path(&one_run(&MONO_PTS[..2]), Curve::MonotoneX), "M0,0L10,30");
+        assert_path(&line_path(&one_run(&MONO_PTS[..1]), Curve::MonotoneX), "M0,0Z");
     }
 
     // Three points chosen so the riser's direction is visible: (0,0) →
@@ -685,19 +671,13 @@ mod tests {
         // t=1: x1 = x_prev*(1-1) + x*1 = x — the riser lands at the NEW
         // point's own x, so the pen is already there after `point()` (no
         // lineEnd extra).
-        assert_eq!(
-            line_path(&one_run(&STEP_PTS), Curve::StepAfter),
-            "M0,0L10,0L10,5L20,5L20,-5"
-        );
+        assert_path(&line_path(&one_run(&STEP_PTS), Curve::StepAfter), "M0,0L10,0L10,5L20,5L20,-5");
     }
 
     #[test]
     fn step_before_puts_the_riser_at_each_segment_s_start() {
         // t=0: x1 = x_prev — the riser lands at the PREVIOUS point's x.
-        assert_eq!(
-            line_path(&one_run(&STEP_PTS), Curve::StepBefore),
-            "M0,0L0,5L10,5L10,-5L20,-5"
-        );
+        assert_path(&line_path(&one_run(&STEP_PTS), Curve::StepBefore), "M0,0L0,5L10,5L10,-5L20,-5");
     }
 
     #[test]
@@ -705,10 +685,7 @@ mod tests {
         // t=0.5: x1 is the segment midpoint, and `lineEnd`'s extra `lineTo`
         // (0 < t < 1) draws the final flat run out to the last real point —
         // `point()` alone only ever reaches the last MIDPOINT.
-        assert_eq!(
-            line_path(&one_run(&STEP_PTS), Curve::Step),
-            "M0,0L5,0L5,5L15,5L15,-5L20,-5"
-        );
+        assert_path(&line_path(&one_run(&STEP_PTS), Curve::Step), "M0,0L5,0L5,5L15,5L15,-5L20,-5");
     }
 
     /// The `lineEnd` extra fires for ANY run of 2+ points under a centered
@@ -718,7 +695,7 @@ mod tests {
     #[test]
     fn centered_step_two_point_run_reaches_its_endpoint_only_via_the_lineend_extra() {
         let two = one_run(&[(0.0, 0.0), (10.0, 10.0)]);
-        assert_eq!(line_path(&two, Curve::Step), "M0,0L5,0L5,10L10,10");
+        assert_path(&line_path(&two, Curve::Step), "M0,0L5,0L5,10L10,10");
     }
 
     /// d3's area generator curves BOTH edges with the same curve — a flat
@@ -738,10 +715,10 @@ mod tests {
         // baseline (same ink, y never changes) — but this IS d3's own vertex
         // sequence, transcribed from `curve/step.js`, not merely "equivalent".
         let d = area_path(&one_run(&STEP_PTS), 100.0, Curve::StepAfter);
-        assert_eq!(
-            d,
+        assert_path(
+            &d,
             "M0,0L10,0L10,5L20,5L20,-5\
-             L20,100L20,100L10,100L10,100L0,100Z"
+             L20,100L20,100L10,100L10,100L0,100Z",
         );
     }
 
@@ -756,10 +733,10 @@ mod tests {
         let toggled = area_path(&one_run(&STEP_PTS), 100.0, Curve::StepBefore);
         // Top (step-before, t=0): risers at each segment's OWN start.
         // Bottom (toggled to step-after, t=1): risers at each segment's end.
-        assert_eq!(
-            toggled,
+        assert_path(
+            &toggled,
             "M0,0L0,5L10,5L10,-5L20,-5\
-             L20,100L10,100L10,100L0,100L0,100Z"
+             L20,100L10,100L10,100L0,100L0,100Z",
         );
     }
 
@@ -768,7 +745,7 @@ mod tests {
     /// enters its riser branch.
     #[test]
     fn a_lone_point_under_step_after_draws_only_its_moveto() {
-        assert_eq!(line_path(&one_run(&STEP_PTS[..1]), Curve::StepAfter), "M0,0Z");
+        assert_path(&line_path(&one_run(&STEP_PTS[..1]), Curve::StepAfter), "M0,0Z");
     }
 
     const SPLINE_PTS: [(f64, f64); 3] = [(0.0, 0.0), (1.0, 2.0), (2.0, 0.0)];
@@ -776,23 +753,24 @@ mod tests {
     /// Two points are a plain segment under `natural`; a lone point closes.
     #[test]
     fn natural_draws_two_points_straight_and_closes_a_lone_point() {
-        assert_eq!(line_path(&one_run(&SPLINE_PTS[..2]), Curve::Natural), "M0,0L1,2");
-        assert_eq!(line_path(&one_run(&SPLINE_PTS[..1]), Curve::Natural), "M0,0Z");
+        assert_path(&line_path(&one_run(&SPLINE_PTS[..2]), Curve::Natural), "M0,0L1,2");
+        assert_path(&line_path(&one_run(&SPLINE_PTS[..1]), Curve::Natural), "M0,0Z");
     }
 
     /// Three points under `basis` open with a line to the first B-spline knot
     /// and end on the last vertex.
     #[test]
     fn basis_starts_with_a_knot_line_and_ends_on_the_last_vertex() {
-        let d = line_path(&one_run(&SPLINE_PTS), Curve::Basis);
-        assert!(d.starts_with("M0,0L0.167,0.333C"), "{d}");
-        assert!(d.ends_with("2,0"), "{d}");
+        let d = line_path(&one_run(&SPLINE_PTS), Curve::Basis).0;
+        assert!(matches!(d[..], [PathCommand::M(..), PathCommand::L(..), PathCommand::C(..), .., PathCommand::L(2.0, 0.0)]), "{d:?}");
+        let PathCommand::L(x, y) = d[1] else { unreachable!() };
+        assert!((x - 1.0 / 6.0).abs() < 1e-9 && (y - 1.0 / 3.0).abs() < 1e-9, "{d:?}");
     }
 
     /// `cardinal` starts with a flat control at the first vertex.
     #[test]
     fn cardinal_starts_with_its_first_vertex_as_control_point() {
-        let d = line_path(&one_run(&SPLINE_PTS), Curve::Cardinal);
-        assert!(d.starts_with("M0,0C0,0,"), "{d}");
+        let d = line_path(&one_run(&SPLINE_PTS), Curve::Cardinal).0;
+        assert!(matches!(d[..], [PathCommand::M(0.0, 0.0), PathCommand::C(0.0, 0.0, ..), ..]), "{d:?}");
     }
 }

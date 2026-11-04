@@ -2,7 +2,7 @@
 tick labels with no signal today; WARN-AXIS-LABEL-COLLISION is the seam that
 makes it visible.
 
-Mirrors ``test_table_cramping_capture.py``'s shape: compile a real board,
+Mirrors ``test_table_overflow_capture.py``'s shape: compile a real board,
 render it, and read the warning codes off the output — the fact must survive
 the actual render pipeline, not just a hand-built WarningContext (that half
 is covered by ``tests/render/warnings/test_axis_label_collision.py``).

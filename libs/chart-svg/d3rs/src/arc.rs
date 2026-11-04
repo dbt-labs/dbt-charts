@@ -7,7 +7,7 @@
 // is not. The negated comparisons stay as written upstream.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
-use crate::path::{Path, WITH_PATH_DIGITS};
+use crate::path::Path;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 const EPSILON: f64 = 1e-12;
@@ -100,8 +100,8 @@ fn corner_tangents(x0: f64, y0: f64, x1: f64, y1: f64, r1: f64, rc: f64, cw: boo
 }
 
 impl Arc {
-    pub fn path(&self) -> String {
-        let mut ctx = Path::rounded(WITH_PATH_DIGITS);
+    pub fn path(&self) -> scene::PathData {
+        let mut ctx = Path::new();
         let mut r0 = self.inner_radius;
         let mut r1 = self.outer_radius;
         let a0 = self.start_angle - FRAC_PI_2;
@@ -310,7 +310,7 @@ impl Arc {
         }
 
         ctx.close_path();
-        ctx.into_string()
+        ctx.into_path_data()
     }
 
 }
@@ -336,19 +336,10 @@ mod tests {
     /// The `d` Vega prints for the first wedge of a 40/30/20/10 pie, outer
     /// radius 148.95 and corner radius 3 (vl-convert's SVG for the sector
     /// fixture): d3-shape's `arc` builds a `Path` rounded to 3 digits. Vega
-    /// walks the wedge from its end angle back; the coordinates are the same.
+    /// walks the wedge from its end angle back; the coordinates are the same
+    /// to the digits Vega printed.
     const VEGA_WEDGE: &str = "M85.769,118.051A3,3,0,0,0,90.009,118.678A148.95,148.95,0,0,0,\
                               3.062,-148.919A3,3,0,0,0,0,-145.919L0,0Z";
-
-    fn decimals(d: &str) -> Vec<String> {
-        let mut tokens: Vec<String> = d
-            .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
-            .filter(|t| t.contains('.'))
-            .map(str::to_string)
-            .collect();
-        tokens.sort();
-        tokens
-    }
 
     #[test]
     fn a_wedge_prints_the_coordinates_vega_prints() {
@@ -361,7 +352,10 @@ mod tests {
             end_angle: 0.4 * TAU,
             pad_angle: 0.0,
         };
-        let d = arc.path();
-        assert_eq!(decimals(&d), decimals(VEGA_WEDGE), "{d}");
+        // Vega's `d` is one `A` per edge at 3 digits; the drawn wedge is the same outline.
+        let got = crate::path::testing::flatten(&arc.path(), 0.05);
+        let want = crate::path::testing::flatten(&crate::path::testing::parse_d(VEGA_WEDGE), 0.05);
+        let apart = crate::path::testing::hausdorff(&got, &want);
+        assert!(apart <= 2.0 * crate::path::PATH_COORD_TOLERANCE, "the outlines differ by {apart}");
     }
 }

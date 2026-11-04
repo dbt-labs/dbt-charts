@@ -25,6 +25,7 @@ def _make_chart(
     link: str | None = None,
     style: dict[str, Any] | None = None,
     data: list[dict[str, Any]] | None = None,
+    row_role: str | None = None,
 ) -> Any:
     """Build a ResolvedChart for table rendering tests.
 
@@ -42,6 +43,7 @@ def _make_chart(
             "title": title,
             "subtitle": subtitle,
             "link": link,
+            "row_role": row_role,
             "style": normalized_style or None,
         }
     )
@@ -105,7 +107,7 @@ class TestSparkAlignmentInvariant:
         # Find the spark's translate-x. The column spark is 16px wide; its
         # center is translate_x + 8.
         translate_matches = re.findall(
-            r'<g transform="translate\(([0-9.]+), ([0-9.]+)\)">\s*<rect',
+            r'<g transform="translate\(([0-9.]+),\s*([0-9.]+)\)">\s*<rect',
             svg,
         )
         assert translate_matches, "No spark <g translate> found"
@@ -887,14 +889,14 @@ class TestSparkColumnLayoutExcludesSummaryRows:
 
     def test_negative_total_row_does_not_flip_detail_rows_to_midline(self) -> None:
         chart = _make_chart(
+            row_role="r",
             style={
-                "row": {"role": "r"},
                 "columns": {
                     "name": {},
                     "val": {"spark": {"type": "bar"}},
                     "r": {"visible": False},
                 },
-            }
+            },
         )
         detail_only = [
             {"name": "A", "val": 50, "r": "value"},

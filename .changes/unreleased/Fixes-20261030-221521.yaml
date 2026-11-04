@@ -1,0 +1,3 @@
+kind: Fixes
+body: Duplicate query, chart and variable names, an empty board folder, and misused font sizes now report their own error codes and name the fix, instead of ERR-INTERNAL.
+time: 2026-10-30T22:15:21.040479-07:00

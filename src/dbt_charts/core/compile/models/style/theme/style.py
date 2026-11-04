@@ -53,6 +53,7 @@ from dbt_charts.core.compile.models.style.theme.page import (
 from dbt_charts.core.compile.models.style.theme.variables import (
     VariablesStyle,
 )
+from dbt_charts.core.diagnostics.codes_compile import ERR_FONT_REGISTRY
 
 _RAMP_FONTS = {"heading": "H1–H6", "section": "H2–H6"}
 
@@ -216,13 +217,20 @@ class Style(BaseModel):
     def _validate_fonts(self) -> Style:
         for name, font in self.fonts.items() if self.fonts is not None else ():
             if name not in _RAMP_FONTS and font.sizes is not None:
-                raise ValueError(
-                    f"Only the 'heading' and 'section' fonts take sizes; "
-                    f"'{name}' sets size."
+                raise ERR_FONT_REGISTRY.validation_error(
+                    message=(
+                        "Only the 'heading' and 'section' fonts take sizes; "
+                        f"'{name}' sets sizes. Replace `sizes:` on "
+                        f"style.fonts.{name} with one `size:`."
+                    )
                 )
             if name in _RAMP_FONTS and font.size is not None:
-                raise ValueError(
-                    f"The '{name}' font takes sizes ({_RAMP_FONTS[name]}), not size."
+                raise ERR_FONT_REGISTRY.validation_error(
+                    message=(
+                        f"The '{name}' font takes sizes ({_RAMP_FONTS[name]}), not "
+                        f"size. Replace `size:` on style.fonts.{name} with a "
+                        "`sizes:` list, largest first."
+                    )
                 )
         ramp = self.heading_ramp()
         self.section_ramp()

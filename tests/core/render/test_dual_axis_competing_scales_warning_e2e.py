@@ -54,6 +54,7 @@ def test_fires_for_layer_pinned_to_its_own_axis() -> None:
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     executor = Executor(
         result.board,

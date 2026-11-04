@@ -208,3 +208,32 @@ def test_a_section_title_keeps_its_chrome_spacing_under_a_locked_title_level() -
     assert section_title_to_chart(14) == pytest.approx(
         section_title_to_chart(20), abs=0.01
     )
+
+
+def test_a_title_above_a_leading_text_row_keeps_the_h1_gap() -> None:
+    texts = svg_texts(
+        render_board_svg_text(
+            "title: Same Words\nrows:\n  - text: |\n      Body paragraph.\n"
+        )
+    )
+
+    title, body = _find(texts, "Same Words"), _find(texts, "Body paragraph.")
+
+    assert body.y - title.y == pytest.approx(2 * body_line(), abs=0.5)
+
+
+def test_a_details_section_keeps_its_gap_below_the_title() -> None:
+    texts = svg_texts(
+        render_board_svg_text(
+            "title: Same Words\n"
+            "rows:\n"
+            "  - details:\n"
+            "      summary: More\n"
+            "    text: |\n"
+            "      Body paragraph.\n"
+        )
+    )
+
+    title, summary = _find(texts, "Same Words"), _find(texts, "More")
+
+    assert summary.y - title.y > 2 * body_line()

@@ -190,11 +190,20 @@ def _scaffold_to_board(fence_body: str) -> dict[str, Any] | None:
     board: dict[str, Any]
     unknown_keys = set(data) - _BOARD_KEYS
     if unknown_keys:
-        # Inline chart snippet, e.g. {type: area, x: date, y: value}
+        # Inline chart snippet, e.g. {type: area, x: date, y: value}. A layer
+        # naming its own query gets a synthetic one, like a chart's does below.
+        layer_queries = {
+            layer["query"]
+            for layer in data.get("layers") or []
+            if isinstance(layer, dict) and isinstance(layer.get("query"), str)
+        }
         board = {
             "title": "_test",
             "source": "_test",
-            "queries": {"_q": {"sql": "SELECT 1"}},
+            "queries": {
+                "_q": {"sql": "SELECT 1"},
+                **{name: {"sql": "SELECT 1"} for name in layer_queries},
+            },
             "charts": {"_example": {"query": "_q", **data}},
             "rows": [],
         }

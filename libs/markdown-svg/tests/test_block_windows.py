@@ -25,6 +25,47 @@ def renderer() -> SVGRenderer:
     return SVGRenderer()
 
 
+class TestListWindows:
+    def test_a_list_reports_one_advance_per_item(self, renderer: SVGRenderer) -> None:
+        blocks = list(parse(f"- {LONG}\n- short\n- {LONG}"))
+        metrics = renderer.measure_blocks(blocks, width=300.0)[0]
+        assert len(metrics.line_advances) == 3
+        assert metrics.splittable is True
+        assert metrics.whole_items is True
+
+    def test_items_and_gaps_add_up_to_the_drawn_list(
+        self, renderer: SVGRenderer
+    ) -> None:
+        blocks = list(parse(f"- {LONG}\n- short\n- {LONG}"))
+        metrics = renderer.measure_blocks(blocks, width=300.0)[0]
+        drawn = renderer.render_block_window(blocks[0], width=300.0).height
+        gaps = metrics.item_gap * (len(metrics.line_advances) - 1)
+        assert sum(metrics.line_advances) + gaps == pytest.approx(drawn)
+
+    def test_advances_and_gaps_add_up_to_any_window(
+        self, renderer: SVGRenderer
+    ) -> None:
+        blocks = list(parse(f"- {LONG}\n- short\n- {LONG}\n- short"))
+        metrics = renderer.measure_blocks(blocks, width=300.0)[0]
+        window = renderer.render_block_window(blocks[0], 300.0, start=1, count=2)
+        assert sum(metrics.line_advances[1:3]) + metrics.item_gap == pytest.approx(
+            window.height
+        )
+
+    def test_a_window_draws_only_its_items(self, renderer: SVGRenderer) -> None:
+        blocks = list(parse("- first item\n- second item\n- third item"))
+        window = renderer.render_block_window(blocks[0], 300.0, start=1, count=1)
+        assert "second item" in window.elements
+        assert "first item" not in window.elements
+        assert "third item" not in window.elements
+
+    def test_an_ordered_window_keeps_its_numbering(self, renderer: SVGRenderer) -> None:
+        blocks = list(parse("3. first item\n4. second item\n5. third item"))
+        window = renderer.render_block_window(blocks[0], 300.0, start=2, count=1)
+        assert "5." in window.elements
+        assert "3." not in window.elements
+
+
 class TestMeasureBlocks:
     def test_reports_one_entry_per_block(self, renderer: SVGRenderer) -> None:
         blocks = list(parse(f"# Heading\n\n{LONG}\n\n{LONG}"))

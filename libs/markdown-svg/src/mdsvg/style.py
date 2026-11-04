@@ -98,10 +98,10 @@ class Style:
             taking the place of ``heading_margin_top_px`` at those levels so
             major and minor headings can sit at different distances from the
             text above. None = every level uses the heading top margin.
-        h1_margin_bottom_px: Optional absolute-px bottom margin for H1 alone,
-            taking the place of ``heading_margin_bottom_px`` at that level so a
-            first-level heading can be followed by a blank line the other
-            levels do not get. None = H1 uses the heading bottom margin.
+        major_heading_margin_bottom_px: Optional absolute-px bottom margin for H1 and
+            H2, taking the place of ``heading_margin_bottom_px`` at those levels
+            so they can be followed by a blank line the other levels do not get.
+            None = H1 and H2 use the heading bottom margin.
         heading_grid_px: Optional absolute-px body line height. When set, a
             heading keeps its natural leading between wrapped lines, but its
             block is rounded up to whole multiples of this (a block exceeding
@@ -204,7 +204,7 @@ class Style:
     )
 
     # Inline code chip geometry (separate from fenced-code block tokens)
-    inline_code_padding: float = 3.0  # px, equal on all sides
+    inline_code_padding: float = 2.0  # px, equal on all sides
     inline_code_border_radius: float = 3.0  # px corner radius
 
     # Blockquote font overrides (empty string = no override)
@@ -245,7 +245,7 @@ class Style:
     heading_margin_top_px: Optional[float] = None
     heading_margin_bottom_px: Optional[float] = None
     minor_heading_margin_top_px: Optional[float] = None
-    h1_margin_bottom_px: Optional[float] = None
+    major_heading_margin_bottom_px: Optional[float] = None
     heading_grid_px: Optional[float] = None
 
     # Spacing

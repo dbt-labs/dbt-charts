@@ -24,6 +24,21 @@ def test_validate_query_returns_typed_diagnostics_and_honors_suppress() -> None:
     assert "WARN-MISSING-JOIN-PREDICATE" not in {f.code for f in suppressed}
 
 
+def test_missing_join_predicate_prints_the_registered_fix_naming_ignore() -> None:
+    """The validator leaves `recommendation` unset, so the registry's
+    `fix_template` is what prints; it must name the exact suppression."""
+    from dbt_charts.core.diagnostics.from_query_diagnostic import (
+        from_query_diagnostic,
+    )
+
+    (finding,) = validate_query("SELECT a.x, b.y FROM t1 a, t2 b")
+    assert finding.recommendation is None
+    fix = from_query_diagnostic("q", finding).fix
+    assert fix is not None
+    assert "`ignore: [WARN-MISSING-JOIN-PREDICATE]`" in fix
+    assert "document why" not in fix
+
+
 _TSQL_TOP = "SELECT TOP 3 name FROM sys.objects"
 
 

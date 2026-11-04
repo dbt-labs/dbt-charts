@@ -468,7 +468,22 @@ class TestValidatePathsDispatchDriftOnNoSuffixMissingPath:
         )
         assert len(results) == 1
         assert results[0].success is False
-        assert "No board files found" in results[0].errors[0].message
+        assert results[0].errors[0].code == "ERR-NO-BOARD-FILES"
+        assert "No board files found in missing" in results[0].errors[0].message
+
+    def test_templates_directory_explains_templates_are_not_boards(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate_paths
+
+        templates = tmp_path / "templates"
+        templates.mkdir()
+        (templates / "gauge.svg.j2").write_text("<svg/>", encoding="utf-8")
+
+        [result] = validate_paths([templates], project=local_project(tmp_path))
+
+        assert result.errors[0].code == "ERR-NO-BOARD-FILES"
+        assert "`.svg.j2`" in result.errors[0].message
 
 
 class TestValidatePathDefaultsToProjectBoardsDir:
@@ -576,6 +591,37 @@ class TestValidatePathsAcceptsMarkdownBoards:
         assert results[0].path == "charts/page.md"
         assert results[0].errors == []
         assert results[0].success is True
+
+    def test_a_folder_validates_the_charts_in_its_markdown(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate_paths
+
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        (charts / "note.md").write_text("Prose.\n\n```charts\nmissing\n```\n")
+
+        (result,) = validate_paths([charts], project=local_project(tmp_path))
+
+        assert result.path == "charts/note.md"
+        assert [e.code for e in result.errors] == ["ERR-UNRESOLVED-REFERENCE"]
+
+    def test_a_named_note_with_a_chart_fence_is_a_board(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.agent_api.validate import validate_paths
+
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "note.md").write_text(
+            "Prose.\n\n```charts\nmissing\n```\n"
+        )
+        project = local_project(tmp_path)
+
+        (named,) = validate_paths([tmp_path / "docs" / "note.md"], project=project)
+        (listed,) = validate_paths([tmp_path / "docs"], project=project)
+
+        assert [e.code for e in named.errors] == ["ERR-UNRESOLVED-REFERENCE"]
+        assert [e.code for e in listed.errors] == ["ERR-MARKDOWN-NOT-BOARD"]
 
     def test_markdown_board_with_bad_frontmatter_is_a_real_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -1541,3 +1587,47 @@ def test_validate_text_honors_project_warnings_ignore(
     )
     project = FilesystemProject(tmp_path)
     assert code not in [w.code for w in validate_text(board, project=project).warnings]
+
+
+class TestBadSourceConfigReportedOnce:
+    """A source config the registry rejects shows once per run, however the
+    project config and boards were named."""
+
+    @staticmethod
+    def _source_config_findings(
+        tmp_path: Path, names: list[str], project: FilesystemProject
+    ) -> list[tuple[str, str]]:
+        from dbt_charts.agent_api.validate import (
+            annotate_with_data_lint,
+            validate_paths,
+        )
+
+        results = annotate_with_data_lint(
+            validate_paths([tmp_path / name for name in names], project=project),
+            project=project,
+        )
+        return [
+            (r.path, e.code)
+            for r in results
+            for e in r.errors
+            if e.code == "ERR-SOURCE-CONFIG-INVALID"
+        ]
+
+    @pytest.mark.parametrize("names", [["dbt_charts.yml", "board.yml"], ["board.yml"]])
+    def test_reported_exactly_once(
+        self,
+        tmp_path: Path,
+        local_project: Callable[..., FilesystemProject],
+        names: list[str],
+    ) -> None:
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  p:\n    type: parquet\n    files:\n      x: /abs/x.parquet\n"
+        )
+        _write_board(tmp_path, _VALID_BOARD)
+
+        findings = self._source_config_findings(
+            tmp_path, names, local_project(tmp_path)
+        )
+
+        assert len(findings) == len(set(findings))
+        assert ("dbt_charts.yml", "ERR-SOURCE-CONFIG-INVALID") in findings

@@ -362,8 +362,8 @@ def test_height_provider_resolved_style_param_propagated_to_render(
 
 
 def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
-    """A nested board that authors its own frame.card_padding re-renders its
-    aligned charts with that padding, not the parent board's.
+    """A nested board that authors its own frame.card_padding renders its charts
+    at their slot with that padding, not the parent board's.
     """
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style.board import (
@@ -374,7 +374,7 @@ def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
     from dbt_charts.core.render import layout_sizing
     from dbt_charts.core.render.layout_sizing import (
         SizingRenderCtx,
-        _align_board_charts,
+        _fix_slot_heights_in_tree,
     )
 
     outer_rs = resolve_style(get_theme_style("paper"))
@@ -384,7 +384,7 @@ def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
     )
 
     chart = _bar_chart("revenue")
-    chart_item = LayoutItem(type="chart", width=400.0, height=150.0, chart=chart)
+    chart_item = LayoutItem(type="chart", width=400.0, height=300.0, chart=chart)
     nested_board = MagicMock()
     nested_board.resolved_style = nested_rs
     nested_board.chart_style_context = outer_ctx
@@ -413,7 +413,9 @@ def test_cols_alignment_in_nested_board_uses_that_boards_card_padding() -> None:
         return f'<svg viewBox="0 0 {width} 300"></svg>', float(width), 300.0
 
     with patch.object(layout_sizing, "_render_chart_to_svg", side_effect=fake_render):
-        _align_board_charts(board_item, 300.0, render_ctx)
+        _fix_slot_heights_in_tree(
+            Layout.model_validate({"type": "cols", "items": [board_item]}), render_ctx
+        )
 
     assert len(paddings) == 1
     resolved = _resolved(chart, outer_ctx)

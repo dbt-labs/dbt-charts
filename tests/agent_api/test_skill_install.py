@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -54,7 +55,20 @@ def test_stub_is_a_versionless_pointer_at_the_cli() -> None:
     assert "version" not in text.split("---", 2)[1]
     assert "{{ s_" not in text
     assert "dct skills chart" in text
-    assert "dct skills\n" in text or "`dct skills`" in text
+
+
+def test_stub_leaves_the_check_loop_to_the_chart_page() -> None:
+    """A check command in the stub is a second loop beside the chart page's:
+    agents ran both, about seven extra calls a board."""
+    text = stub_skill_text()
+    for command in ("dct validate", "dct render", "dct serve", "dct --version"):
+        assert command not in text
+
+
+def test_stub_names_only_shipped_skills() -> None:
+    text = stub_skill_text()
+    named = set(re.findall(r"`([a-z-]+)`", text.split("---", 2)[2]))
+    assert named <= set(all_skill_names()) | {"dct"}
 
 
 def test_install_writes_one_stub_dir(install_root: Path) -> None:

@@ -1,0 +1,7 @@
+# Pattern palette — pattern-dots
+name: pattern-dots
+description: |
+  Sequential pattern ramp of dots, sparse to dense.
+kind: sequential
+ramp: dots
+steps: 6

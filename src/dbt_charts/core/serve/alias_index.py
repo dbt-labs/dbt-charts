@@ -24,13 +24,13 @@ import yaml
 from dbt_charts.core.aliases import normalize_alias_url
 from dbt_charts.core.project import (
     BOARD_CANDIDATE_SUFFIXES,
-    CHARTS_SUBDIR,
     INDEX_CANDIDATE_NAMES,
     BoardRoot,
     board_directory_candidates,
     board_relpath_candidates,
     board_roots,
     board_slug,
+    reserves_charts_url,
 )
 from dbt_charts.core.utils import YAML_LOADER
 
@@ -83,7 +83,7 @@ def read_aliases_from_file(board_path: ProjectPath) -> list[str]:
 
         text = board_path.read_text()
         in_boards = _is_under_a_board_root(board_path.relpath)
-        if not is_markdown_board_content(text, in_boards=in_boards):
+        if not is_markdown_board_content(text, in_boards=in_boards, named=False):
             return []
         try:
             board_yaml, _ = parse_markdown_board(text)
@@ -136,7 +136,7 @@ def board_file_candidates(
         clean_path: URL path with leading/trailing slashes stripped, e.g. "sales"
                     or "pkg_a/overview".  Empty string means the project root.
     """
-    if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
+    if reserves_charts_url(project, clean_path):
         return []
     return [
         project.path(relpath)

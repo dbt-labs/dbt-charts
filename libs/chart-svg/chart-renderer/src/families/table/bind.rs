@@ -4,6 +4,7 @@
 //! `bind` is the entry point.
 
 use crate::families::color_scale::nice_domain;
+use d3rs::color::{format_hex, interpolate_rgb, piecewise, Color, Rgb};
 use super::sanitize_color;
 use super::svg_font_family;
 use super::text_format;
@@ -352,27 +353,18 @@ pub(super) fn expand_hex(c: &str) -> String {
     }
 }
 
-pub(super) fn parse_hex(c: &str) -> (i64, i64, i64) {
-    let h = expand_hex(c);
-    let h = h.trim_start_matches('#');
-    let r = i64::from_str_radix(&h[0..2], 16).unwrap_or(0);
-    let g = i64::from_str_radix(&h[2..4], 16).unwrap_or(0);
-    let b = i64::from_str_radix(&h[4..6], 16).unwrap_or(0);
-    (r, g, b)
+/// `_parse_hex` over `_expand_hex`: a `#rgb` or `#rrggbb` stop, which production's `int(h[0:2], 16)` raises on
+/// when it is anything else.
+fn parse_stop(c: &str) -> Result<Rgb, String> {
+    d3rs::color::parse_hex(&expand_hex(c)).ok_or_else(|| format!("table: scale palette stop {c:?} is not a #rgb or #rrggbb color"))
 }
 
-/// Linear interpolation between two hex colors, rounding
-/// each channel `int(a + (b-a)*t + 0.5)` — Python's `int()` truncation of a
-/// value nudged up by 0.5, i.e. round-half-up, not `f64::round`'s
-/// round-half-away-from-zero (identical for positive channel values, which
-/// every RGB channel here is).
-pub(super) fn lerp_color(c1: &str, c2: &str, t: f64) -> String {
-    let (r1, g1, b1) = parse_hex(c1);
-    let (r2, g2, b2) = parse_hex(c2);
-    let r = (r1 as f64 + (r2 - r1) as f64 * t + 0.5) as i64;
-    let g = (g1 as f64 + (g2 - g1) as f64 * t + 0.5) as i64;
-    let b = (b1 as f64 + (b2 - b1) as f64 * t + 0.5) as i64;
-    format!("#{r:02x}{g:02x}{b:02x}")
+/// `_lerp_color` along the whole of `stops` (the palette, or one diverging arm) at `t`: production's
+/// `segment = t * n_segments; i = min(int(segment), n_segments - 1)` is d3's `piecewise(interpolateRgb)`, and its
+/// `int(a + (b - a) * t + 0.5)` is `Math.round` for the non-negative channels here.
+fn lerp_stops(stops: &[Rgb], t: f64) -> Result<String, String> {
+    let mixed = piecewise(interpolate_rgb, stops, t).map_err(|e| format!("table: scale palette {e}"))?;
+    Ok(format_hex(Color::opaque(mixed)))
 }
 
 /// `resolve_palette_stops`: an inline literal hex list passes through; a
@@ -441,16 +433,6 @@ pub(crate) fn arm_denominators(pivot: f64, (lo, hi): (f64, f64), asymmetric: boo
     (neg.max(1e-12), pos.max(1e-12))
 }
 
-/// Interpolate at normalized position `t` (clamped to
-/// `[0, 1]`) along one arm's stop list.
-pub(super) fn interpolate_arm(t: f64, stops: &[String]) -> String {
-    let t = t.clamp(0.0, 1.0);
-    let n_segments = stops.len() - 1;
-    let segment = t * n_segments as f64;
-    let i = (segment as usize).min(n_segments - 1);
-    lerp_color(&stops[i], &stops[i + 1], segment - i as f64)
-}
-
 /// `interpolate_scale_color`: sequential (`hinge: None`) linearly
 /// interpolates the whole palette across `[min_val, max_val]`; diverging
 /// splits the (odd-length, >= 3 stop) palette at its middle stop and maps
@@ -465,16 +447,13 @@ pub(crate) fn interpolate_scale_color(
     hinge: Option<f64>,
     arm_mode: &str,
 ) -> Result<String, String> {
-    let palette: Vec<String> = palette.iter().map(|c| expand_hex(c)).collect();
+    let palette: Vec<Rgb> = palette.iter().map(|c| parse_stop(c)).collect::<Result<_, _>>()?;
     let Some(hinge) = hinge else {
         if min_val == max_val {
-            return Ok(palette[palette.len() / 2].clone());
+            return Ok(format_hex(Color::opaque(palette[palette.len() / 2])));
         }
         let t = ((value - min_val) / (max_val - min_val)).clamp(0.0, 1.0);
-        let n_segments = palette.len() - 1;
-        let segment = t * n_segments as f64;
-        let i = (segment as usize).min(n_segments - 1);
-        return Ok(lerp_color(&palette[i], &palette[i + 1], segment - i as f64));
+        return lerp_stops(&palette, t);
     };
     if palette.len() < 3 || palette.len().is_multiple_of(2) {
         return Err(format!(
@@ -486,14 +465,14 @@ pub(crate) fn interpolate_scale_color(
     let (neg_denom, pos_denom) =
         arm_denominators(hinge, (min_val, max_val), arm_mode == "asymmetric");
     let mid = palette.len() / 2;
-    let mut neg_stops: Vec<String> = palette[..=mid].to_vec();
+    let mut neg_stops: Vec<Rgb> = palette[..=mid].to_vec();
     neg_stops.reverse();
-    let pos_stops: Vec<String> = palette[mid..].to_vec();
+    let pos_stops: Vec<Rgb> = palette[mid..].to_vec();
     let clamped = value.clamp(min_val, max_val);
     if clamped <= hinge {
-        Ok(interpolate_arm((hinge - clamped) / neg_denom, &neg_stops))
+        lerp_stops(&neg_stops, ((hinge - clamped) / neg_denom).clamp(0.0, 1.0))
     } else {
-        Ok(interpolate_arm((clamped - hinge) / pos_denom, &pos_stops))
+        lerp_stops(&pos_stops, ((clamped - hinge) / pos_denom).clamp(0.0, 1.0))
     }
 }
 
@@ -870,6 +849,27 @@ pub(crate) fn coerce_numeric_cell(value: Option<&Value>) -> Option<f64> {
     }
 }
 
+/// `row_role` names the query column that marks each row; a name the query
+/// does not return would silently give no row its role.
+pub(super) fn check_row_role(
+    r: &Resolved,
+    rows: &[serde_json::Map<String, Value>],
+) -> Result<(), Diagnostic> {
+    let (Some(role), Some(first)) = (r.row_role.as_deref(), rows.first()) else {
+        return Ok(());
+    };
+    if first.contains_key(role) {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        &codes::ERR_TABLE_ROW_ROLE_NOT_FOUND,
+        [
+            ("row_role", json!(role)),
+            ("observed", json!(first.keys().collect::<BTreeSet<_>>())),
+        ],
+    ))
+}
+
 pub(super) fn resolve_row_roles(
     rows: &[serde_json::Map<String, Value>],
     row_role_col: Option<&str>,
@@ -879,12 +879,9 @@ pub(super) fn resolve_row_roles(
             let Some(col) = row_role_col else {
                 return RowRole::Value;
             };
-            // Column-ID-first (`resolve_table_style_value`): a name that is not a
-            // column of the row is the literal role every row takes.
             let role_text = match row.get(col) {
                 Some(Value::String(s)) => s.as_str(),
-                Some(_) => return RowRole::Value,
-                None => col,
+                _ => return RowRole::Value,
             };
             match role_text.trim().to_lowercase().as_str() {
                 "summary" => RowRole::Summary,
@@ -899,8 +896,9 @@ pub(super) fn resolve_row_roles(
 /// "%": production's `magnitude_suffixes()` (`compile/format_value.py:104`)
 /// gates `suffix_gap` on it. A magnitude suffix sits 3px off the number, a
 /// unit suffix touches it directly. The set is d3's raw SI letters and both
-/// registers' words of the ACTIVE locale, bare; `m` (d3 milli) is a distinct,
-/// non-magnitude prefix production gives a 0px gap.
+/// registers' words of the ACTIVE locale, bare. d3's milli `m` takes a 0px gap
+/// unless the locale spells a magnitude word the same way, as en-US's narrative
+/// million does.
 pub(crate) fn is_magnitude_suffix(s: &str) -> bool {
     let bare = s.trim();
     crate::number_locale::active_number_locale()
@@ -1455,6 +1453,20 @@ pub(super) fn is_date_like_str(s: &str) -> bool {
     }
 }
 
+/// The wall day an ISO date or timestamp cell prints in, as `YYYY-MM-DD`; a
+/// year, a month or a date followed by anything but a clock has none.
+pub(super) fn iso_day(value: Option<&Value>) -> Option<String> {
+    let Some(Value::String(text)) = value else {
+        return None;
+    };
+    if text.len() < 10 {
+        return None;
+    }
+    crate::time_axis::date_text_day(text)?;
+    let (y, m, d) = crate::time_axis::parse_iso_date(text)?;
+    Some(format!("{y:04}-{m:02}-{d:02}"))
+}
+
 /// The date-lane membership test: a string cell matching any recognized
 /// date shape (production's `is_date_like`, string arm).
 pub(crate) fn is_date_like_cell(value: Option<&Value>) -> bool {
@@ -1561,7 +1573,7 @@ pub(super) fn transposed_inputs(
         Deserialize::deserialize(&flat).map_err(|e| format!("table payload: {e}"))?;
     check_transpose_input(&flat_resolved.columns, rows)?;
     let (cols, ..) = visible_columns(&flat_resolved, rows, &None)?;
-    let row_roles = resolve_row_roles(rows, flat_resolved.style.table.row.role.as_deref());
+    let row_roles = resolve_row_roles(rows, flat_resolved.row_role.as_deref());
     let cell_data = build_cell_data(rows, &cols, "all", &row_roles)?;
     let pivoted = cols
         .iter()
@@ -1584,6 +1596,7 @@ pub(super) fn transposed_inputs(
     });
     flat["conditional_formatting"] = Value::Null;
     flat["spanners"] = Value::Null;
+    flat["row_role"] = Value::Null;
     Ok((flat, pivoted))
 }
 
@@ -1721,8 +1734,7 @@ pub(super) fn is_swatch(col: &ColMeta) -> bool {
 }
 
 /// A typo'd `columns`/`values`/`rows`
-/// field, an empty measure set, or a literal row role used where a column
-/// belongs, raised before any reshape. With `values` omitted the measures are
+/// field or an empty measure set, raised before any reshape. With `values` omitted the measures are
 /// `infer_pivot_measure_names`'s: every field `rows`, `columns` and the role
 /// column leave unclaimed. Reshaping with them is refused by the caller.
 pub(super) fn validate_pivot_fields(
@@ -1752,14 +1764,6 @@ pub(super) fn validate_pivot_fields(
     };
     if let Some(field) = columns.iter().find(|c| !first.contains_key(*c)) {
         return Err(not_found("pivot.column", field));
-    }
-    if let Some(role) =
-        row_role.filter(|r| !first.contains_key(*r) && matches!(*r, "value" | "summary" | "total"))
-    {
-        return Err(Diagnostic::new(
-            &codes::ERR_TABLE_PIVOT_ROW_ROLE_LITERAL,
-            [("row_role", json!(role)), ("observed", json!(observed))],
-        ));
     }
     // `infer_pivot_measure_names`: explicit, else every query column that
     // `rows`, `columns` and the role marker do not claim.
@@ -1889,9 +1893,14 @@ pub(super) fn order_col_tuples(
 }
 
 /// A pivot dimension value's label: the wire's `str()` text for a tagged cell (a
-/// Decimal prints `2.50`, not `2.5`), else Python's `str()` of the cell.
+/// Decimal prints `2.50`, not `2.5`), the null display for NULL, else Python's
+/// `str()` of the cell.
 pub(super) fn dim_str(cell: &Value, tag: Option<&CellTag>) -> String {
-    tag.map_or_else(|| py_str(cell), |tag| tag.text.clone())
+    match (tag, cell) {
+        (Some(tag), _) => tag.text.clone(),
+        (None, Value::Null) => NULL_DISPLAY.to_string(),
+        (None, cell) => py_str(cell),
+    }
 }
 
 /// A pivot dimension value as a key and a sort input: a tagged non-finite value
@@ -1929,11 +1938,8 @@ pub(super) fn pivot_table_data(
     if data.is_empty() {
         return Err("table: pivot on empty data not supported".into());
     }
-    // An absent cascading role column is harmless; only a present one rides
-    // onto the wide rows.
-    let role_col = row_role.filter(|r| data[0].contains_key(*r));
     let role_of = |row: &serde_json::Map<String, Value>| -> &'static str {
-        match resolve_row_roles(std::slice::from_ref(row), role_col)[0] {
+        match resolve_row_roles(std::slice::from_ref(row), row_role)[0] {
             RowRole::Value => "value",
             RowRole::Summary => "summary",
             RowRole::Total => "total",
@@ -1948,6 +1954,25 @@ pub(super) fn pivot_table_data(
     };
 
     let n_measures = values.len();
+
+    // A NULL label is the null display, so a literal string of that text in the
+    // same pivot dimension would merge into the NULL column: refuse it.
+    for c in columns {
+        let (mut has_null, mut has_literal) = (false, false);
+        for row in data {
+            match row.get(c) {
+                None | Some(Value::Null) => has_null = true,
+                Some(Value::String(s)) if s == NULL_DISPLAY => has_literal = true,
+                _ => {}
+            }
+        }
+        if has_null && has_literal {
+            return Err(format!(
+                "table: pivot column '{c}' holds both NULL and the text '{NULL_DISPLAY}', which would share one header"
+            )
+            .into());
+        }
+    }
 
     // Distinct col-tuples in first-seen order, then canonically ordered.
     let mut col_tuples: Vec<Vec<String>> = Vec::new();
@@ -1991,7 +2016,7 @@ pub(super) fn pivot_table_data(
                     dim_value(row.get(k).unwrap_or(&Value::Null), tag_at(tags, i, k)),
                 );
             }
-            if let Some(role) = role_col {
+            if let Some(role) = row_role {
                 m.insert(
                     role.to_string(),
                     row.get(role).cloned().unwrap_or(Value::Null),
@@ -2002,7 +2027,7 @@ pub(super) fn pivot_table_data(
             }
             row_order.push(row_key.clone());
             row_map.insert(row_key.clone(), m);
-        } else if role_col.is_some() {
+        } else if row_role.is_some() {
             let stored_role = role_of(&row_map[&row_key]);
             let this_role = role_of(row);
             if this_role != stored_role {
@@ -2231,7 +2256,7 @@ pub(super) fn visible_columns<'a>(
     rows: &'a [serde_json::Map<String, Value>],
     pivot: &'a Option<PivotResult>,
 ) -> Result<(Vec<ColMeta>, usize, Vec<Vec<PivotLevel>>), Diagnostic> {
-    let row_role = r.style.table.row.role.as_deref();
+    let row_role = r.row_role.as_deref();
     let chart_id = r.id.as_deref().unwrap_or_default();
     // Visible-column set mirrors production's `_render_table_svg_core`
     // When style.columns was authored, ITS keys are
@@ -2414,17 +2439,33 @@ pub(super) fn visible_columns<'a>(
             let is_date = !is_numeric
                 && has_date_like
                 && (cfg.align.as_deref() == Some("right") || has_lane_cell);
+            // A day column: every non-blank cell is an ISO date or timestamp,
+            // so the in-page menu can filter it by a range of days.
+            let mut filled = rows
+                .iter()
+                .filter_map(|row| row.get(name))
+                .filter(|v| !v.is_null() && !matches!(v, Value::String(s) if s.trim().is_empty()))
+                .peekable();
+            let is_day = !is_numeric
+                && filled.peek().is_some()
+                && filled.all(|v| iso_day(Some(v)).is_some());
 
             // Production cases the AUTHORED label too: `display_name =
             // (label or slug_to_text(col))` then `apply_case(display_name,
             // header_case)` — an authored lowercase
             // label is not exempt from the header font case. An authored
             // `""` is an intentional blank header, as on a support table.
-            let raw_label = match cfg.label.clone() {
-                Some(l) => l,
-                None => display_text::slug_to_text(config_key)?,
+            // A leaf named by a dimension value (every single-measure leaf) heads
+            // with that value verbatim, as the group levels above it do.
+            let names_a_value = is_leaf && pivot.as_ref().is_some_and(|p| p.values.len() == 1);
+            let header = match cfg.label.clone() {
+                Some(l) => display_text::case::apply_case(&l, header_font_case)?,
+                None if names_a_value => config_key.to_string(),
+                None => display_text::case::apply_case(
+                    &display_text::slug_to_text(config_key)?,
+                    header_font_case,
+                )?,
             };
-            let header = display_text::case::apply_case(&raw_label, header_font_case)?;
 
             Ok(ColMeta {
                 name: name.to_string(),
@@ -2432,6 +2473,7 @@ pub(super) fn visible_columns<'a>(
                 cfg,
                 is_numeric,
                 is_date,
+                is_day,
                 when_rules,
             })
         })
@@ -2534,7 +2576,7 @@ pub(super) fn pivot_for(
     query_rows: &[serde_json::Map<String, Value>],
     cell_text: &[CellRow],
 ) -> Result<Option<PivotResult>, Diagnostic> {
-    let row_role = r.style.table.row.role.as_deref();
+    let row_role = r.row_role.as_deref();
     match &r.pivot_columns {
         // An empty result has nothing to reshape: the header shows the resolved
         // columns, as a flat table does.
@@ -2581,6 +2623,7 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
     }
     let r: Resolved =
         Deserialize::deserialize(src.resolved).map_err(|e| format!("table payload: {e}"))?;
+    check_row_role(&r, src.rows)?;
     if r.style.table.transpose && !src.rows.is_empty() {
         let (resolved, rows) = transposed_inputs(src.resolved, src.rows)?;
         return bind_chart(Source {
@@ -2595,7 +2638,7 @@ pub(super) fn bind_chart(src: Source) -> Result<Chart, Diagnostic> {
     let (cols, pivot_n_row_dims, pivot_levels_visible) = visible_columns(&r, rows, &pivot)?;
     let pivoted = pivot.is_some();
     let th = &r.style.table;
-    let row_roles = resolve_row_roles(rows, th.row.role.as_deref());
+    let row_roles = resolve_row_roles(rows, r.row_role.as_deref());
 
     // Spark `bar` auto-max + midline refusal,
     // scanned over the FULL dataset minus summary
@@ -2680,7 +2723,7 @@ pub(super) fn bind_drawn(chart: &Chart, payload: &Payload) -> Result<Drawn, Diag
 
     // Authored spanners apply only when no pivot built the header groups.
     let mut header_levels = chart.pivot_levels_visible.clone();
-    let row_role = th.row.role.as_deref();
+    let row_role = r.row_role.as_deref();
     let chart_id = r.id.as_deref().unwrap_or_default();
     if let (true, Some(spanners), false) = (
         !chart.pivoted,
@@ -2769,9 +2812,11 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         let resolved: EmptyResolved = Deserialize::deserialize(&payload.resolved)
             .map_err(|e| format!("table payload: {e}"))?;
         // A table with columns draws their header band too, as does one with row
-        // numbers, so those bind their rows.
+        // numbers, so those bind their rows. A pivot's leaf columns come from its
+        // rows, so an empty pivot with none resolved has no header, row numbers or not.
+        let pivoted = resolved.pivot_columns.as_ref().is_some_and(|c| !c.is_empty());
         if resolved.columns.as_ref().is_none_or(|c| c.is_empty())
-            && !resolved.style.table.row_numbers.visible
+            && (pivoted || !resolved.style.table.row_numbers.visible)
         {
             return Ok(Bound::Empty(Blank {
                 resolved,

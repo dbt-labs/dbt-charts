@@ -1061,6 +1061,41 @@ ERR_CHART_PAINTED_NO_MARKS = REGISTRY.register(
     )
 )
 
+ERR_PATTERN_FALLBACK_FLAT = REGISTRY.register(
+    ErrorCode(
+        code="ERR-PATTERN-FALLBACK-FLAT",
+        domain="render",
+        title="Marks too small for their pattern leave two series identical",
+        summary=(
+            "Two series of a patterned chart have marks too small to show "
+            "their pattern and draw the same flat tint."
+        ),
+        message_template=(
+            "Chart {chart_id!r}: {count} mark(s) are too small to show their "
+            "pattern and draw a flat tint instead, and two series end up with "
+            "the same tint and outline, so the chart can no longer tell them "
+            "apart."
+        ),
+        fix_template=(
+            "Give the chart wider marks (more width, fewer bars or points), "
+            "or add `color:` naming the pattern column so each series also "
+            "has its own hue."
+        ),
+        doc=(
+            "Fires when a patterned chart draws marks with fewer than 1.25 "
+            "pattern repeats across their short side, and two different "
+            "series that fell back draw the same flat tint with the same "
+            "outline. Such a mark draws a flat tint (with the pattern's "
+            "outline) instead of its tile; when two series end up identical "
+            "the chart looks right but cannot be read, which is worse than "
+            "none. A single-series bar that patterns its categories only "
+            "warns: the axis labels name them. WARN-PATTERN-FALLBACK-FLAT "
+            "covers a fallback that leaves every series distinguishable."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_X_VALUE_NOT_A_DATE = REGISTRY.register(
     ErrorCode(
         code="ERR-X-VALUE-NOT-A-DATE",
@@ -2229,6 +2264,34 @@ WARN_PLOT_HEIGHT_BELOW_MINIMUM = REGISTRY.register(
     )
 )
 
+WARN_PATTERN_FALLBACK_FLAT = REGISTRY.register(
+    WarningCode(
+        code="WARN-PATTERN-FALLBACK-FLAT",
+        domain="render",
+        title="Marks too small for their pattern draw a flat tint",
+        summary="A patterned chart has marks too small to show their pattern.",
+        message_template=(
+            "Chart {chart_id!r}: {count} mark(s) are too small to show their "
+            "pattern and draw a flat tint instead."
+        ),
+        fix_template=(
+            "Give the chart wider marks (more width, fewer bars or points) "
+            "so each pattern repeats at least 1.25 times across the mark."
+        ),
+        doc=(
+            "Fires when a patterned chart draws a mark with fewer than 1.25 "
+            "pattern repeats across its short side. The mark draws a flat "
+            "tint (with the pattern's outline) instead of its tile. Every "
+            "series is still told apart here: the fallen-back series draw "
+            "different tints or outlines, a series keeps its motif, or it is "
+            "a single-series bar whose categories sit on the axis. Two "
+            "series that fall back to the same tint and outline raise "
+            "ERR-PATTERN-FALLBACK-FLAT instead."
+        ),
+        docs_topic="charts",
+    )
+)
+
 WARN_PLOT_WIDTH_BELOW_MINIMUM = REGISTRY.register(
     WarningCode(
         code="WARN-PLOT-WIDTH-BELOW-MINIMUM",
@@ -2549,6 +2612,43 @@ WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT = REGISTRY.register(
             "authored key changes nothing a reader can see. Where the values "
             "differ in width, WARN-TABLE-NUMERIC-ALIGN-LEFT covers it "
             "instead."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_LINE_JOINS_MISSING_PERIODS = REGISTRY.register(
+    WarningCode(
+        code="WARN-LINE-JOINS-MISSING-PERIODS",
+        domain="render",
+        title="Line joins straight across periods missing from the data",
+        message_template=(
+            "Chart {chart_id!r}: the {chart_type} joins straight across periods "
+            "that have no row, so the gap reads as data: {detail}."
+        ),
+        fix_template=(
+            "Make each missing period a row with a NULL `{y_field}`: LEFT JOIN "
+            "the query to a spine of every {grain} from {first} to {last} "
+            "(`generate_series` or a date table){by_series}. The line then "
+            "breaks at the gap. If the join is deliberate, add "
+            "`warnings_ignore: [WARN-LINE-JOINS-MISSING-PERIODS]` to chart "
+            "{chart_id!r}."
+        ),
+        summary=(
+            "Fired when a temporal line or area joins across periods that have no row."
+        ),
+        doc=(
+            "Fires on a line or area chart with a temporal x when, for a series, "
+            "the x values keep a regular grain (the smallest step between "
+            "consecutive values is also most of the steps) and two consecutive "
+            "values with a y skip one or more periods of that grain. A line "
+            "breaks only at a row whose y is NULL; a period with no row draws "
+            "no gap, so the line joins the two neighbors and the missing "
+            "periods look like a straight trend. Irregular or event-shaped x "
+            "values have no grain to skip and stay quiet, as does a series "
+            "whose missing periods are already rows with a NULL y. A daily "
+            "series with no weekend rows does not count Saturdays and Sundays "
+            "as missing."
         ),
         docs_topic="charts",
     )
@@ -2976,53 +3076,82 @@ WARN_SUPPORT_TABLE_CELL_OVERFLOW = REGISTRY.register(
     WarningCode(
         code="WARN-SUPPORT-TABLE-CELL-OVERFLOW",
         domain="render",
-        title="Support table cells are wider than their band",
+        title="Support table cells do not fit",
         message_template=(
-            "Chart {chart_id!r}: support_table cells ({detail}) are wider than "
-            "the space between neighboring categories, so adjacent values run "
-            "together."
+            "Chart {chart_id!r}: support_table cells do not fit "
+            "({detail}), so adjacent values run together or the strip is hidden."
         ),
         fix_template=(
             "Widen the chart, show fewer categories, or shorten the values with "
             "a more compact format."
         ),
         doc=(
-            "Fires when the widest formatted cell in a support_table row, plus "
-            "the row's horizontal padding, is wider than one category band. "
-            "Every cell is drawn at its own band, so neighbors collide and read "
-            "as one number (6.7, 19.2, 20.4 becoming 6.719.220.4). The render "
-            "is unchanged by this warning. It is skipped when the strip is "
-            "already thinned to the axis's label periods."
+            "Fires when neighboring cells of a support_table row paint closer "
+            "than the row's horizontal padding. A date x first "
+            "swaps a crowded format for its compact form, then skips buckets "
+            "(preferring the ones the axis labels) and warns only if the cells "
+            "still run together. A categorical x hides the strip whole when its "
+            "cells do not fit, and warns; so does a rail chart whose strip "
+            "reaches farther left of the plot than the gutter it reserved."
         ),
         docs_topic="charts",
     )
 )
 
-WARN_TABLE_CRAMPED = REGISTRY.register(
+WARN_TABLE_HEADER_EXTRA_WRAP = REGISTRY.register(
     WarningCode(
-        code="WARN-TABLE-CRAMPED",
+        code="WARN-TABLE-HEADER-EXTRA-WRAP",
         domain="render",
-        title="Table columns were cramped under their width demand",
+        title="Table column header needs more than two lines",
         message_template=(
-            "Table {chart_id!r} is cramped: {wrapped_headers} of {column_count} "
-            "column headers wrapped onto a second line. Columns need "
-            "{needed_width:.0f}px but have {available_width:.0f}px."
+            "Table {chart_id!r}: the {column!r} column header {header!r} needs "
+            "{lines} lines. Two lines are fine; more is too much. Only "
+            "{column_width:.0f}px were allocated for this column, in a table of "
+            "{column_count} columns and {table_width:.0f}px total width."
         ),
         fix_template=(
-            "Set the board's style.frame.width to about {suggested_width:.0f}px, "
-            "widen the table's slot, drop columns, or set explicit pixel column widths."
+            "Shorten the header, or give the column more space: set "
+            "`style.columns.{column}.width`, drop columns, or widen the table."
         ),
         doc=(
-            "Fires when a table still fits its box widthwise but only because "
-            "the renderer degraded it: the columns were divided into less than "
-            "their content demanded and headers were forced onto a second line. "
-            "Distinct from WARN-TABLE-COLUMNS-OVERFLOW, which is the physical "
-            "case where columns cannot fit at all and the table paints past its "
-            "slot; from WARN-TABLE-TEXT-TRUNCATED, which fires only once text "
-            "is actually cut with an ellipsis; the last rung of the same "
-            "ladder; and from WARN-TABLE-PAGE-SQUEEZED, the height axis, where "
-            "the slot cuts the rows-per-page down and the fix is to grow the "
-            "slot rather than the width."
+            "Fires once per column whose header, wrapped with no line cap in the "
+            "column's content area, needs more than two lines. Two lines are the "
+            "theme default and never warn, so a header that fits in two does not "
+            "fire however many columns share the table. A `wrap-two` header is "
+            "cut at two lines with an ellipsis and a `wrap` header draws every "
+            "line; both fire. The width is the column's own: a header that needs "
+            "three lines in a 90px column is a column problem, not a table-width "
+            "problem."
+        ),
+        docs_topic="charts",
+    )
+)
+
+WARN_TABLE_CONTENT_TALLER_THAN_WIDE = REGISTRY.register(
+    WarningCode(
+        code="WARN-TABLE-CONTENT-TALLER-THAN-WIDE",
+        domain="render",
+        title="Table text wrapped into a block taller than its column is wide",
+        message_template=(
+            "Table {chart_id!r}: text in the {column!r} column wraps into blocks "
+            "taller than the column is wide, which usually means it wrapped too "
+            "much. The worst cell takes {max_lines} lines and {cell_count} "
+            "cell(s) are that tall, in {column_width:.0f}px allocated to the "
+            "column."
+        ),
+        fix_template=(
+            "Give the column more space with `style.columns.{column}.width`, "
+            "shorten the text, or drop columns from the table."
+        ),
+        doc=(
+            "Fires once per text column when a wrapped body cell's block of "
+            "lines is taller than the column's content area is wide and wraps "
+            "onto at least the engine's minimum line count, so three short "
+            "words in a thin column stay quiet. Text cells wrap without a line "
+            "cap and the row grows to fit, so a squeezed column turns into a "
+            "tower that pushes every other cell in its row down with it. "
+            "Numbers and dates never wrap and are not measured. The warning "
+            "names the column and counts cells; it never prints their values."
         ),
         docs_topic="charts",
     )
@@ -3032,7 +3161,7 @@ WARN_TABLE_TEXT_TRUNCATED = REGISTRY.register(
     WarningCode(
         code="WARN-TABLE-TEXT-TRUNCATED",
         domain="render",
-        title="Table column header or cell text was truncated",
+        title="Table cell text was truncated",
         message_template=(
             "Chart {chart_id!r}: truncated text in column(s) {authored_field}: "
             "{truncation_count} value(s) were cut with an ellipsis."
@@ -3041,10 +3170,11 @@ WARN_TABLE_TEXT_TRUNCATED = REGISTRY.register(
             "Widen the column, shorten the values, or increase the chart width."
         ),
         doc=(
-            "Fires when a table column header or one or more cell values are "
-            "clipped with an ellipsis because they exceed the column width. "
-            "One warning fires per table; each truncated column is a related "
-            "location."
+            "Fires when one or more table cell values are clipped with an "
+            "ellipsis because they exceed the column width. One warning fires "
+            "per table; each truncated column is a related location. Headers "
+            "are not counted: a header that needs more than two lines is "
+            "WARN-TABLE-HEADER-EXTRA-WRAP."
         ),
         docs_topic="charts",
     )
@@ -3270,8 +3400,7 @@ WARN_AXIS_LABEL_COLLISION = REGISTRY.register(
             "Fires on a line/area/scatter chart whose x-axis tick labels "
             "still overlap after the render tried every enabled overlap "
             "strategy (`style.axis_x.labels.overlap.skip`/`.tilt`, both on "
-            "by default) — the same collision a table's cramped-columns "
-            "warning reports for width, applied to axis tick text. Unlike "
+            "by default) — labels that cannot all be read at this width. Unlike "
             "`WARN-TOO-MANY-X-CATEGORIES` (a fixed category-count ceiling on "
             "a categorical band axis), this fires on any x-axis shape, "
             "including a continuous temporal axis whose auto-picked ticks "
@@ -3614,23 +3743,23 @@ ERR_TABLE_PIVOT_FIELD_NOT_FOUND = REGISTRY.register(
     )
 )
 
-ERR_TABLE_PIVOT_ROW_ROLE_LITERAL = REGISTRY.register(
+ERR_TABLE_ROW_ROLE_NOT_FOUND = REGISTRY.register(
     ErrorCode(
-        code="ERR-TABLE-PIVOT-ROW-ROLE-LITERAL",
+        code="ERR-TABLE-ROW-ROLE-NOT-FOUND",
         domain="render",
-        title="a pivot row.role is a role name, not a column",
+        title="a table's row_role is not a column of the query result",
         message_template=(
-            "pivot.row_role {row_role!r} is a literal role, not a query "
-            "column; under a pivot row.role must name the query column that "
-            "carries the per-row role. Observed keys: {observed}"
+            "row_role {row_role!r} is not a query column; `row_role` must name "
+            "the column that carries each row's role (`total`, `summary`). "
+            "Observed keys: {observed}"
         ),
         doc=(
-            "Fired when a pivoted table's `row.role` is a literal role such as "
-            "`total` instead of the name of the column that carries each "
-            "row's role. A literal would give every row the same role and "
-            "silently drop the reshape."
+            "Fired when a table's `row_role` names something the query does not "
+            "return, such as a role word like `total` instead of the column "
+            "that holds it. A name that is not a column would give no row the "
+            "role it was meant to mark."
         ),
-        summary="Fired when a pivoted table's row role is a literal instead of a column name.",
+        summary="Fired when a table's row_role is not a column of the query result.",
         docs_topic="charts",
     )
 )
@@ -3768,7 +3897,9 @@ ERR_IMAGE_REF_UNRESOLVED = REGISTRY.register(
             "written out; a template may put `{% if %}` around whole images), "
             "or "
             "the image's own content is malformed. An `http(s)://` reference "
-            "is never fetched or resolved, and never raises this code."
+            "is never fetched or resolved, and never raises this code. The text "
+            "around a bad image still renders, with an error marker where the "
+            "image was."
         ),
         docs_topic="charts",
     )

@@ -18,21 +18,6 @@
 source_png  # tests/integration/test_chart_lab_compare.py:164
 chosen_mark_type  # tests/integration/test_chart_lab_compare.py:164
 
-# === TYPE_CHECKING imports used in string-quoted annotations ===
-# WHY: Used in the string-quoted type annotation of `Executor.__init__`'s
-# `file_materializer` parameter
-# (`file_materializer: "FileSourceMaterializer | None" = None`).
-# The import lives under TYPE_CHECKING; vulture can't trace quoted annotations.
-FileSourceMaterializer  # src/dbt_charts/core/execute/executor.py:289 (quoted annotation; TYPE_CHECKING import at :89)
-
-# === pymdown-extensions SuperFences callback contract (integrations/markdown.py) ===
-# WHY: fence_dbt_charts / fence_dbt_charts_example are registered as
-# SuperFences handlers; the library calls every handler with this exact
-# positional signature (source, language, class_name, options, md, **kwargs),
-# so the params must exist even where these two handlers don't read them.
-language  # src/dbt_charts/integrations/markdown.py:402,453 (fence_dbt_charts, fence_dbt_charts_example)
-class_name  # src/dbt_charts/integrations/markdown.py:402,453 (fence_dbt_charts, fence_dbt_charts_example)
-md  # src/dbt_charts/integrations/markdown.py:402,453 (fence_dbt_charts, fence_dbt_charts_example)
 
 # === Duck-typed adapter stub (tests/core/inspect/test_sources_dbt.py) ===
 # WHY: this stub's execute(sql, fetch) matches a real warehouse adapter's

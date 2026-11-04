@@ -121,13 +121,38 @@ ChartColorColumn = Annotated[
     ),
 ]
 
+ChartPatternColumn = Annotated[
+    str,
+    StringConstraints(pattern=CHANNEL_COLUMN),
+    ErrorHint(
+        "chart.pattern is a data channel (bare field name only); "
+        "{value!r} is not a column name."
+    ),
+]
+
+
+class _PatternChannelField(BaseModel):
+    """The `pattern:` channel, shared by the families that fill marks with it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: Annotated[
+        ChartPatternColumn | None,
+        Channel(),
+        Field(
+            default=None,
+            description="Column whose values pick each mark's fill pattern (hatching, dots, dashes), alone or beside hue. When the chart also splits series by hue, both must name the same column; a heatmap patterns the measure it shades.",
+        ),
+    ]
+
+
 IgnoredChartCode = Annotated[
     ChartWarningCode,
     ErrorHint(
         "unknown or query-domain warning code {value!r} in warnings_ignore. "
         "Use a registered WARN-* code (error codes cannot be suppressed); "
-        "query-domain codes such as WARN-REAGGREGATION never carry a chart id, so "
-        "suppress them under `queries.<name>.ignore` instead."
+        "a query-domain code never carries a chart id, so write it on the query that "
+        "raised it: `queries.<name>.ignore: [{value}]`."
     ),
 ]
 

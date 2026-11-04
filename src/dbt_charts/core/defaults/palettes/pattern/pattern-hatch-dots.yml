@@ -1,0 +1,8 @@
+# Pattern palette — pattern-hatch-dots
+name: pattern-hatch-dots
+description: |
+  Diverging pattern ramp: dots for one side of zero, hatch for the other,
+  denser away from the zero step.
+kind: diverging
+ramp: hatch-dots
+steps: 7

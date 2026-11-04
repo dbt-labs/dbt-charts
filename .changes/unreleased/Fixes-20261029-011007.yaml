@@ -1,0 +1,3 @@
+kind: Fixes
+body: Picking a value in a board's filter control shows that value immediately instead of the old one until the charts finish re-rendering.
+time: 2026-10-29T01:10:07.075448-07:00

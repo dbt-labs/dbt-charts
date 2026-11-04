@@ -1,0 +1,3 @@
+kind: Fixes
+body: Charts in a nested `cols:`, `rows:`, `grid:` or `tabs:` now fill their cell, and a stack divides it.
+time: 2026-11-01T00:33:36.080017-07:00

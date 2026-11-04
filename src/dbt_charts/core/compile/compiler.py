@@ -86,6 +86,7 @@ from dbt_charts.core.compile.models.variable.authored import (
     Variable,
     reject_internal_variable_keys,
 )
+from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles_tree
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
     display_text_fields,
@@ -95,9 +96,7 @@ from dbt_charts.core.compile.normalize.dispatch import (
     normalize_board,
     normalize_query,
 )
-from dbt_charts.core.compile.normalize.queries import (
-    dialect_for_source,
-)
+from dbt_charts.core.compile.normalize.layout import prefixed
 from dbt_charts.core.compile.normalize.variables import VariableReferenceErrors
 from dbt_charts.core.compile.parse.meta import (
     MetaLintConfig,
@@ -121,6 +120,7 @@ from dbt_charts.core.compile.parse.yaml_error_formatter import (
     format_validation_errors_structured,
 )
 from dbt_charts.core.compile.restated import schema_default_restated, tree_restated
+from dbt_charts.core.compile.sql_guard import dialect_for_source
 from dbt_charts.core.compile.template.custom_template import available_template_names
 from dbt_charts.core.compile.template.jinja import (
     check_dialect_composition,
@@ -135,7 +135,7 @@ from dbt_charts.core.compile.validate.authoring_warnings import (
 from dbt_charts.core.compile.validate.board_warnings import detect_board_warnings
 from dbt_charts.core.compile.validate.dispatch import validate_board
 from dbt_charts.core.compile.validate.formats import validate_board_format_specs
-from dbt_charts.core.compile.validate.last_labels import validate_board_last_labels
+from dbt_charts.core.compile.validate.label_anchors import validate_board_label_anchors
 from dbt_charts.core.compile.validate.links import validate_board_links
 from dbt_charts.core.compile.validate.palettes import validate_board_palette_specs
 from dbt_charts.core.compile.validate.roles import validate_board_roles
@@ -146,12 +146,15 @@ from dbt_charts.core.compile.validate.zero_baseline import (
 from dbt_charts.core.diagnostics import Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
+    ERR_DUPLICATE_CHART_NAME,
+    ERR_DUPLICATE_QUERY_NAME,
     ERR_EMPTY_YAML_DOCUMENT,
     ERR_MARKDOWN_NOT_BOARD,
     ERR_MARKDOWN_PARSE,
     ERR_TEXT_UNKNOWN_QUERY,
     ERR_UNKNOWN_QUERY,
     ERR_YAML_SYNTAX,
+    WARN_BODY_HEADING_NO_TITLE,
     WARN_HTML_POLICY_CAPPED,
     WARN_SCHEMA_MIGRATED,
 )
@@ -239,6 +242,9 @@ class CompileResult:
     source_map: dict[str, SourceRange] = field(default_factory=dict)
     sql_blocks: dict[str, LiteralBlock] = field(default_factory=dict)
     container_paths: frozenset[str] = frozenset()
+    # The source a query authored without one inherits: board/meta `source:`,
+    # a host default, or the project's implicit dbt source.
+    default_source: str | None = None
 
     @property
     def success(self) -> bool:
@@ -454,6 +460,7 @@ def compile_authored_board(
                     "default_source": default_source,
                     "sources": sources_registry,
                     "cache_root": project_cache,
+                    "importing": (file,) if file else (),
                 },
                 query_registry=query_registry,
                 chart_registry=chart_registry,
@@ -550,9 +557,13 @@ def compile_authored_board(
         return CompileResult(errors=[e.to_diagnostic(file=file)])
 
     try:
-        validate_board_last_labels(compiled)
+        validate_board_label_anchors(compiled)
     except CompilationError as e:
         return CompileResult(errors=[e.to_diagnostic(file=file)])
+
+    # After the palette and role checks above: the per-chart merge raises, with
+    # no field path, on the bad chart-local palettes they report.
+    attach_chart_styles_tree(compiled)
 
     warnings.extend(
         detect_board_warnings(compiled, _own_format_names(_yaml_content), chart_styles)
@@ -570,6 +581,7 @@ def compile_authored_board(
         errors=errors,
         warnings=warnings,
         query_registry=query_registry,
+        default_source=default_source,
     )
 
 
@@ -994,7 +1006,7 @@ def validate_compiled_queries(result: CompileResult) -> None:
         # _sql_parse_warnings owns WARN-PARSE-ERROR with the calibrated dialect
         # gate (only fires when the source dialect is known and the position is
         # specific). Filtering here prevents false positives when dialect=None
-        # (dbt_profile / csv / json / parquet / http sources) causes a parse
+        # (dbt_profile / csv / json / parquet sources) causes a parse
         # failure on SQL that is valid in the actual warehouse dialect.
         # WARN-PARSE-ERROR is in _UNSUPPRESSIBLE_CODES so it never appears in
         # suppressed_diags — only the diags filter is reachable.
@@ -1022,6 +1034,7 @@ def compile_file(
     apply_meta: bool = True,
     *,
     markdown_metadata_table: bool = False,
+    declared_sources: bool = False,
 ) -> CompileResult:
     """Compile a board's content to a Board, applying the meta.yml cascade.
 
@@ -1035,6 +1048,9 @@ def compile_file(
         apply_meta: If True, resolve and apply meta.yml chain (default: True)
         markdown_metadata_table: When True and the board is a .md, prepend
             non-board frontmatter keys as a metadata table before the body.
+        declared_sources: Compile against ``Project.declared_sources``, for a
+            verb that reports on the board and never executes it: no
+            ``env_var()`` is read, and the result cannot reach a warehouse.
 
     Returns:
         CompileResult with compiled board or errors
@@ -1065,6 +1081,7 @@ def compile_file(
             board_path,
             apply_meta,
             markdown_metadata_table=markdown_metadata_table,
+            declared_sources=declared_sources,
         )
     return _with_migration_warnings(result, notices)
 
@@ -1075,6 +1092,7 @@ def _compile_file(
     apply_meta: bool,
     *,
     markdown_metadata_table: bool,
+    declared_sources: bool,
 ) -> CompileResult:
     project = board_path.project
     relpath = board_path.relpath
@@ -1094,7 +1112,9 @@ def _compile_file(
         # "In charts" means a charts/ directory *within* the project — the file's
         # project-relative path. The project's own on-disk location is irrelevant.
         in_boards = CHARTS_SUBDIR in PurePosixPath(relpath).parts
-        if not is_markdown_board_content(raw_text, in_boards=in_boards):
+        if not is_markdown_board_content(
+            raw_text, in_boards=in_boards, named=board.named
+        ):
             return CompileResult(
                 errors=[
                     CompilationError.from_code(ERR_MARKDOWN_NOT_BOARD).to_diagnostic(
@@ -1200,6 +1220,7 @@ def _compile_file(
                     board_path,
                     apply_meta,
                     markdown_metadata_table=markdown_metadata_table,
+                    declared_sources=declared_sources,
                 ),
             )
         )
@@ -1229,19 +1250,41 @@ def _compile_file(
             relpath,
         )
 
-    return _compile_with_text(
+    result = _compile_with_text(
         authored_board,
         yaml_content,
         base_dir=board_path.parent,
-        project_sources=project.sources,
+        project_sources=project.declared_sources
+        if declared_sources
+        else project.sources,
         project_cache=project.cache,
         meta_lint=meta_lint,
         file=relpath,
         merge_warnings=merge_warnings,
     )
+    if board_path.is_markdown:
+        result.warnings = _without_markdown_section_headings(result)
+    return result
 
 
-def _extract_nested_boards(board: AuthoredBoard) -> list[AuthoredBoard]:
+def _without_markdown_section_headings(result: CompileResult) -> list[Diagnostic]:
+    """Warnings, less the ones a markdown body has no way to act on.
+
+    Chart embeds split a body into rows, and markdown has no per-row `title:`, so
+    a heading after an embed is ordinary document structure. Only one opening the
+    body of an untitled board can move, to the frontmatter's `board.title`.
+    """
+    untitled = result.board is not None and not result.board.title
+    return [
+        w
+        for w in result.warnings
+        if w.code != WARN_BODY_HEADING_NO_TITLE.code
+        or w.path == "text"
+        or (untitled and w.path == "rows.0.text")
+    ]
+
+
+def _extract_nested_boards(board: AuthoredBoard) -> list[tuple[str, AuthoredBoard]]:
     """Extract all nested boards from a board's layout.
 
     Recursively traverses rows, cols, grid, and tabs to find all nested boards.
@@ -1250,31 +1293,36 @@ def _extract_nested_boards(board: AuthoredBoard) -> list[AuthoredBoard]:
         board: AuthoredBoard to extract nested boards from
 
     Returns:
-        List of nested AuthoredBoard objects found in the layout
+        Each nested AuthoredBoard found in the layout, with its dotted path
+        relative to ``board``, spelled as ``LayoutItem.source_path`` spells it
     """
     from dbt_charts.core.compile.models.board.authored import TabItem
 
-    nested_boards: list[AuthoredBoard] = []
-    items: list[Any] = []
+    nested_boards: list[tuple[str, AuthoredBoard]] = []
+    items: list[tuple[str, Any]] = []  # type-state: explicit_any — any layout item
 
     # Collect items from rows and cols
     if board.rows:
-        items.extend(board.rows)
+        items.extend((f"rows.{i}", item) for i, item in enumerate(board.rows))
     if board.cols:
-        items.extend(board.cols)
+        items.extend((f"cols.{i}", item) for i, item in enumerate(board.cols))
 
     # Collect items from grid (always GridLayout now — dict form removed)
     if board.grid:
-        items.extend([gi.item for gi in board.grid.items])
+        items.extend(
+            (f"grid.items.{i}", gi.item) for i, gi in enumerate(board.grid.items)
+        )
 
     # Collect items from tabs (always TabLayout now — dict form removed)
     if board.tabs:
-        items.extend(board.tabs.items)
+        items.extend(
+            (f"tabs.items.{i}", item) for i, item in enumerate(board.tabs.items)
+        )
 
     # Process all items to find nested boards
-    for item in items:
+    for path, item in items:
         if isinstance(item, AuthoredBoard):
-            nested_boards.append(item)
+            nested_boards.append((path, item))
         elif isinstance(item, TabItem):
             # Tab items contain their own rows/cols — treat as an inline board
             tab_board = AuthoredBoard.model_construct(
@@ -1283,7 +1331,7 @@ def _extract_nested_boards(board: AuthoredBoard) -> list[AuthoredBoard]:
                 grid=item.grid,
                 tabs=item.tabs,
             )
-            nested_boards.append(tab_board)
+            nested_boards.append((path, tab_board))
 
     return nested_boards
 
@@ -1293,6 +1341,7 @@ def _build_registry(
     registry_type: str,
     registry: dict[str, Any] | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
+    board_path: str = "",
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Build a registry for queries or charts recursively.
@@ -1312,9 +1361,10 @@ def _build_registry(
             in; this board's own `cache:` folds over it below. (The cascade
             *root* rides in `**kwargs` — it is uniform across the tree, so this
             function never touches it.)
+        board_path: This board's dotted path in the file, empty at the root.
         **kwargs: Additional arguments specific to registry type:
-            - For "queries": base_dir, default_source, sources
-            - For "charts": base_dir, cross_board_queries, sources
+            - For "queries": base_dir, default_source, sources, declared_at
+            - For "charts": base_dir, cross_board_queries, sources, declared_at
 
     Returns:
         Complete registry dictionary
@@ -1345,21 +1395,25 @@ def _build_registry(
             registry,
             board_cache=board_cache,
             board_incremental=effective_incremental,
+            board_path=board_path,
             **kwargs,
         )
     elif registry_type == "charts":
-        _process_charts_for_registry(board, registry, board_cache=board_cache, **kwargs)
+        _process_charts_for_registry(
+            board, registry, board_cache=board_cache, board_path=board_path, **kwargs
+        )
     else:
         raise CompilationError(f"Invalid registry type: {registry_type}")
 
     # Recursively process nested boards
     nested_boards = _extract_nested_boards(board)
-    for nested_board in nested_boards:
+    for nested_path, nested_board in nested_boards:
         _build_registry(
             nested_board,
             registry_type,
             registry,
             board_cache,
+            prefixed(board_path, nested_path),
             board_incremental=effective_incremental,
             **kwargs,
         )
@@ -1374,9 +1428,11 @@ def _process_queries_for_registry(
     default_source: str | None = None,
     *,
     sources: dict[str, Any],
+    declared_at: dict[str, str],
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
     board_incremental: IncrementalValue = None,
+    board_path: str = "",
 ) -> None:
     """Process queries from a board and add to registry.
 
@@ -1386,9 +1442,11 @@ def _process_queries_for_registry(
         base_dir: ProjectDirectory anchor for the board file (used to resolve sub-file refs).
         default_source: Default source to apply to queries without explicit source
         sources: Named source config dicts.
+        declared_at: The dotted path each name was first declared at.
         board_cache: The board-scope cache layer already folded down the nesting
             chain by the caller.
         board_incremental: Effective board-level incremental setting for the cascade.
+        board_path: This board's dotted path in the file, empty at the root.
 
     Raises:
         CompilationError: If duplicate query names found
@@ -1399,11 +1457,16 @@ def _process_queries_for_registry(
 
     # Process queries at this level
     for name, query_def in (board.queries or {}).items():
+        path = prefixed(board_path, f"queries.{name}")
         if name in registry:
-            raise CompilationError(
-                f"Duplicate query name '{name}'. Query names must be unique "
-                "within a file (and those that are imported)."
+            raise CompilationError.from_code(
+                ERR_DUPLICATE_QUERY_NAME,
+                field_path=path,
+                name=name,
+                first=declared_at[name],
+                second=path,
             )
+        declared_at[name] = path
 
         # Handle cross-file references
         if isinstance(query_def, QueryRef):
@@ -1435,8 +1498,10 @@ def _process_charts_for_registry(
     base_dir: ProjectDirectory | None = None,
     *,
     sources: dict[str, Any],
+    declared_at: dict[str, str],
     cache_root: CachePatch | None = None,
     board_cache: CachePatch = INHERIT_CACHE,
+    board_path: str = "",
 ) -> None:
     """Process charts from a board and add to registry.
 
@@ -1450,18 +1515,25 @@ def _process_charts_for_registry(
         sources: Named source config dicts, and `board_cache` this board's folded
             `cache:` layer — an imported chart's queries are normalized here, so
             they need the same cascade layers the `queries:` lane gets.
+        declared_at: The dotted path each name was first declared at.
         board_cache: See `sources`.
+        board_path: This board's dotted path in the file, empty at the root.
 
     Raises:
         CompilationError: If duplicate chart names found
     """
     # Process charts at this level
     for name, chart_def in (board.charts or {}).items():
+        path = prefixed(board_path, f"charts.{name}")
         if name in registry:
-            raise CompilationError(
-                f"Duplicate chart name '{name}'. Chart names must be unique "
-                "within a file (and those that are imported)."
+            raise CompilationError.from_code(
+                ERR_DUPLICATE_CHART_NAME,
+                field_path=path,
+                name=name,
+                first=declared_at[name],
+                second=path,
             )
+        declared_at[name] = path
 
         # Handle cross-file references
         if isinstance(chart_def, ChartRef):
@@ -1517,6 +1589,7 @@ def build_query_registry(
         base_dir=base_dir,
         default_source=default_source,
         sources=sources,
+        declared_at={},
     )
 
 
@@ -1561,6 +1634,7 @@ def build_chart_registry(
         base_dir=base_dir,
         cross_board_queries=cross_board_queries,
         sources=sources,
+        declared_at={},
     )
 
 
@@ -1825,7 +1899,9 @@ def _resolve_cross_board_query(
     qualified_key = _cross_board_query_key(file_relpath, name)
     key_cache[cache_key] = qualified_key
 
-    raw_def = normalize_query_value(queries_section[name])
+    raw_def: Any = queries_section[name]  # type-state: explicit_any — raw YAML
+    if isinstance(raw_def, str):
+        raw_def = normalize_query_value(raw_def)
 
     if isinstance(raw_def, dict) and "ref" in raw_def:
         target_name = raw_def["ref"].rsplit(".queries.", 1)[1]

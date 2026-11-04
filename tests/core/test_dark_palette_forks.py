@@ -77,9 +77,8 @@ def test_table_carve_keeps_stops_legible_for_light_text(name: str):
 
 # --------------------------------------------------------------------------
 # Dark-canvas swap: a pinned light seq/div table palette resolves to its -dark
-# twin when the cell text is light (dark canvas). Mirrors the categorical
-# light/dark model's <name>-dark convention; the trigger is the text_color
-# already threaded into palette(). Light themes (dark text) never swap.
+# twin on a dark canvas tone. Mirrors the categorical light/dark model's
+# <name>-dark convention. A light canvas tone never swaps.
 # --------------------------------------------------------------------------
 
 LIGHT_TO_DARK = [
@@ -92,35 +91,44 @@ _LIGHT_THEME_TEXT = "#222222"  # dark table body text (light theme)
 
 
 @pytest.mark.parametrize(("light_name", "dark_name"), LIGHT_TO_DARK)
-def test_pinned_palette_swaps_to_dark_twin_for_light_text(
+def test_pinned_palette_swaps_to_dark_twin_on_a_dark_canvas(
     light_name: str, dark_name: str
 ):
-    """On a dark canvas (light table text), a pinned seq/div palette resolves to
+    """On a dark canvas, a pinned seq/div palette resolves to
     its -dark twin, so the neutral holds the light text instead of the light
     palette's near-white neutral failing WCAG and dropping the whole chart."""
-    swapped = palette.palette(light_name, surface="table", text_color=_NEON_TEXT)
-    twin = palette.palette(dark_name, surface="table", text_color=_NEON_TEXT)
+    swapped = palette.palette(
+        light_name, surface="table", text_color=_NEON_TEXT, canvas_tone="dark"
+    )
+    twin = palette.palette(
+        dark_name, surface="table", text_color=_NEON_TEXT, canvas_tone="dark"
+    )
     assert swapped == twin, f"{light_name} did not swap to {dark_name}"
     for s in swapped:
         assert palette.wcag_contrast(_NEON_TEXT, s) >= palette._WCAG_TABLE_MIN
 
 
 @pytest.mark.parametrize(("light_name", "_dark_name"), LIGHT_TO_DARK)
-def test_pinned_palette_keeps_light_variant_for_dark_text(
+def test_pinned_palette_keeps_light_variant_on_a_light_canvas(
     light_name: str, _dark_name: str
 ):
-    """Light theme (dark table text): no swap — the light palette resolves as
+    """Light canvas: no swap — the light palette resolves as
     before, keeping its light neutral. Guards the byte-identical light path."""
-    stops = palette.palette(light_name, surface="table", text_color=_LIGHT_THEME_TEXT)
+    stops = palette.palette(
+        light_name, surface="table", text_color=_LIGHT_THEME_TEXT, canvas_tone="light"
+    )
     mid = stops[len(stops) // 2]
-    assert _luma(mid) > 128, f"{light_name} unexpectedly swapped under dark text: {mid}"
+    assert _luma(mid) > 128, f"{light_name} unexpectedly swapped: {mid}"
 
 
 def test_no_double_swap_when_already_dark_twin():
     """A pinned -dark palette on a dark canvas is used as-is, never swapped again
     to a nonexistent <name>-dark-dark."""
     stops = palette.palette(
-        "dbt-div-crimson-green-dark", surface="table", text_color=_NEON_TEXT
+        "dbt-div-crimson-green-dark",
+        surface="table",
+        text_color=_NEON_TEXT,
+        canvas_tone="dark",
     )
     assert stops
     for s in stops:
@@ -129,8 +137,8 @@ def test_no_double_swap_when_already_dark_twin():
 
 def test_swap_only_applies_to_table_surface():
     """The swap is scoped to surface='table'. Chart-fill resolution (surface
-    default) of a light palette is unchanged even when text_color is light."""
-    fill = palette.palette("dbt-div-crimson-green", text_color=_NEON_TEXT)
+    default) of a light palette is unchanged even on a dark canvas."""
+    fill = palette.palette("dbt-div-crimson-green", canvas_tone="dark")
     light_fill = palette.palette("dbt-div-crimson-green")
     assert fill == light_fill
 

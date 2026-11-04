@@ -1,0 +1,3 @@
+kind: Fixes
+body: Long `text:` blocks balance their columns, share one wrap width, and lists now flow across columns.
+time: 2026-10-30T23:42:32.767777-07:00

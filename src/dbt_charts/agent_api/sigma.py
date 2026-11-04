@@ -106,19 +106,21 @@ class _Sigma:
 
     def export_all(
         self, workbook_id: str, jobs: dict[str, dict[str, Any]]
-    ) -> dict[str, bytes]:
+    ) -> tuple[dict[str, bytes], dict[str, str]]:
         """Submit every export, then poll them together; Sigma runs them in parallel.
 
-        ``jobs`` maps a bundle path to the export request body.
+        ``jobs`` maps a bundle path to the export request body. Returns the bytes
+        of each export that finished and the error of each Sigma failed to render.
         """
         pending: dict[str, str] = {}
         for relpath, body in jobs.items():
             reply = self.request("POST", f"workbooks/{workbook_id}/export", body)
             pending[json.loads(reply)["queryId"]] = relpath
         results: dict[str, bytes] = {}
+        failed: dict[str, str] = {}
         for _ in range(POLL_LIMIT):
             if not pending:
-                return results
+                return results, failed
             time.sleep(POLL_SECONDS)
             for query_id, relpath in list(pending.items()):
                 try:
@@ -126,7 +128,9 @@ class _Sigma:
                 except _HttpError as exc:
                     if exc.code in PENDING_STATUSES:
                         continue
-                    raise BundleError(f"Sigma export {relpath} failed: {exc}") from None
+                    failed[relpath] = str(exc)
+                    del pending[query_id]
+                    continue
                 # The download answers 200 with an empty body until the job finishes.
                 if data:
                     results[relpath] = data
@@ -135,7 +139,7 @@ class _Sigma:
             raise BundleError(
                 f"Sigma export {', '.join(pending.values())} did not finish in time"
             )
-        return results
+        return results, failed
 
 
 def parse_ref(ref: str) -> str:
@@ -246,6 +250,7 @@ def _describe(
     by_id: dict[str, dict[str, Any]],
     controls: dict[str, list[str]],
     sql_ids: set[str],
+    uncompiled: dict[str, str],
 ) -> list[str]:
     cols = {c["id"]: c for c in el.get("columns", [])}
 
@@ -264,6 +269,8 @@ def _describe(
     lines = [f"config: {RAW}#elements[{el['id']}]"]
     if el["id"] in sql_ids:
         lines.append(f"sql: queries/{el['id']}.sql")
+    elif el["id"] in uncompiled:
+        lines.append(f"sql: none, Sigma could not compile it: {uncompiled[el['id']]}")
     src = el.get("source", {})
     if el["kind"] == "control":
         vsrc = src
@@ -304,7 +311,14 @@ def _describe(
     if el.get("color"):
         column = col(el["color"]["column"]) if el["color"].get("column") else ""
         lines.append(with_rest(f"color: {column}", el["color"], {"column"}))
-    if el["kind"] != "control" and el.get("value"):
+    # Sigma writes `stacking` only when it is not the default, so a bar or area
+    # chart without the key stacks its series; say so, or it reads as grouped.
+    if el["kind"] in ("bar-chart", "area-chart") and "stacking" not in el:
+        lines.append("stacking: stacked (Sigma's default)")
+    # A progress element's value is a formula, not a column spec.
+    if el["kind"] != "control" and isinstance(el.get("value"), str):
+        lines.append(f"value: {el['value']}")
+    elif el["kind"] != "control" and el.get("value"):
         lines.append(with_rest(f"value: {col(el['value'])}", el["value"], {"columnId"}))
     for f in el.get("filters", []) if el["kind"] != "control" else []:
         state = " (disabled)" if f.get("state") == "disabled" else ""
@@ -317,8 +331,9 @@ def _describe(
     if el.get("columns"):
         lines.append("columns:")
     for c in el.get("columns", []):
-        label = f"{c['name']} = " if c.get("name") else ""
-        head = f"  - {c['id']}: {label}{c['formula']}"
+        head = f"  - {c['id']}: " + " = ".join(
+            part for part in (c.get("name"), c.get("formula")) if part
+        )
         lines.append(with_rest(head, c, {"id", "name", "formula"}))
     if el["kind"] == "control":
         targets = sorted(
@@ -348,6 +363,9 @@ def _outline(
     pages: list[dict[str, Any]],
     positions: dict[str, list[tuple[str, str, str]]],
     sql_ids: set[str],
+    uncompiled: dict[str, str],
+    deleted: list[str],
+    failed_exports: dict[str, str],
 ) -> str:
     elements = workbook["contents"]["elements"]
     by_id = {e["id"]: e for e in elements}
@@ -365,20 +383,44 @@ def _outline(
         f"Path: {workbook['path']}",
         "",
     ]
+
+    def element(el: dict[str, Any], where: str) -> list[str]:
+        return [f"- **{el['kind']}** `{el['id']}` {_title(el)!r}{where}"] + [
+            f"    - {line}"
+            for line in _describe(el, by_id, controls, sql_ids, uncompiled)
+        ]
+
     for page in pages:
         hidden = " (hidden — data prep)" if page.get("hidden") else ""
         lines += [f"## Page: {page['name']}{hidden}", ""]
         for element_id, grid_col, grid_row in positions.get(page["pageId"], []):
-            el = by_id.get(element_id)
-            if el is None:
-                continue
-            lines.append(
-                f"- **{el['kind']}** `{element_id}` {_title(el)!r} "
-                f"— cols {grid_col}, rows {grid_row}"
-            )
-            lines += [
-                f"    - {line}" for line in _describe(el, by_id, controls, sql_ids)
-            ]
+            if element_id in by_id:
+                lines += element(
+                    by_id[element_id], f" — cols {grid_col}, rows {grid_row}"
+                )
+        lines.append("")
+    # Sigma's API returns an empty layout for some workbooks, and a query element
+    # can sit outside every page's grid; its SQL still belongs in the bundle.
+    placed = {element_id for items in positions.values() for element_id, _, _ in items}
+    unplaced = [
+        el
+        for el in elements
+        if el["id"] not in placed and (el["id"] in sql_ids or el["id"] in uncompiled)
+    ]
+    if unplaced:
+        lines += ["## Not placed on any page", ""]
+        for el in unplaced:
+            lines += element(el, "")
+        lines.append("")
+    if deleted:
+        lines += [
+            "Sigma lists queries for elements no longer in the workbook: "
+            f"{', '.join(sorted(deleted))}",
+            "",
+        ]
+    if failed_exports:
+        lines += ["## Not fetched: Sigma failed to export these", ""]
+        lines += [f"- `{path}`: {error}" for path, error in failed_exports.items()]
         lines.append("")
     return "\n".join(lines)
 
@@ -444,8 +486,9 @@ def import_sigma(
     unless ``force``.
 
     Raises:
-        BundleError: on missing credentials or API base, any failed request or
-            export, an unsupported element id, or an incomplete bundle.
+        BundleError: on missing credentials or API base, a failed request for the
+            workbook itself, an unsupported element id, or an incomplete bundle. An
+            export that fails is named in the outline instead.
     """
     sigma = _Sigma(base_url)
     meta = _find_workbook(sigma, ref)
@@ -472,19 +515,32 @@ def _fill_bundle(
     queries: list[dict[str, Any]],
 ) -> None:
     sql_ids: set[str] = set()
+    # Sigma answers an element whose query no longer compiles (a dropped table, a
+    # broken formula) with its error instead of SQL; the outline names it rather than
+    # the whole bundle failing. Its query list also keeps entries, compiled or not,
+    # for elements since deleted from the workbook: the outline lists those and
+    # nothing else is written for them.
+    uncompiled: dict[str, str] = {}
+    elements = {el["id"] for el in workbook["contents"]["elements"]}
+    deleted: list[str] = []
+    seen: set[str] = set()
     for query in queries:
         element_id = _safe_id(query["elementId"])
-        if element_id in sql_ids:
+        if element_id in seen:
             raise BundleError(f"element {element_id} has more than one compiled query")
-        sql_ids.add(element_id)
-        bundle.write(f"queries/{element_id}.sql", query["sql"])
+        seen.add(element_id)
+        if "sql" not in query and "error" not in query:
+            raise BundleError(
+                f"Sigma returned neither SQL nor an error for element {element_id}"
+            )
+        if element_id not in elements:
+            deleted.append(element_id)
+        elif "sql" in query:
+            sql_ids.add(element_id)
+            bundle.write(f"queries/{element_id}.sql", query["sql"])
+        else:
+            uncompiled[element_id] = query["error"]
     positions = _layout_positions(workbook["contents"]["layout"])
-    placed = {element_id for items in positions.values() for element_id, _, _ in items}
-    if unplaced := sql_ids - placed:
-        raise BundleError(
-            f"compiled queries for elements not in the layout: {', '.join(sorted(unplaced))}"
-        )
-    bundle.write("outline.md", _outline(workbook, pages, positions, sql_ids))
 
     jobs: dict[str, dict[str, Any]] = {}
     visible = {p["pageId"] for p in pages if not p.get("hidden")}
@@ -499,9 +555,22 @@ def _fill_bundle(
         for element_id, _, _ in items
     }
     for el in workbook["contents"]["elements"]:
-        if el["kind"] == "kpi-chart" and el["id"] in on_visible:
+        if (
+            el["kind"] == "kpi-chart"
+            and el["id"] in on_visible
+            and el["id"] not in uncompiled
+        ):
             name = f"kpi/{slug(_title(el), fallback='kpi')}-{_safe_id(el['id'])}.csv"
             jobs[name] = {"format": {"type": "csv"}, "elementId": el["id"]}
-    for relpath, data in sigma.export_all(workbook_id, jobs).items():
+    exported, failed_exports = sigma.export_all(workbook_id, jobs)
+    for relpath, data in exported.items():
         bundle.write(relpath, data)
-    bundle.finish()
+    bundle.write(
+        "outline.md",
+        _outline(
+            workbook, pages, positions, sql_ids, uncompiled, deleted, failed_exports
+        ),
+    )
+    bundle.finish(
+        missing_images=[path for path in failed_exports if path.startswith("png/")]
+    )

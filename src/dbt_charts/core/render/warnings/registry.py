@@ -59,10 +59,12 @@ import dbt_charts.core.render.warnings.layered_chart_shared_y_axis_scale_mismatc
 import dbt_charts.core.render.warnings.layout_min_exceeds_height as layout_min_exceeds_height
 import dbt_charts.core.render.warnings.legend_position_width_fallback as legend_position_width_fallback
 import dbt_charts.core.render.warnings.legend_values_unresolved as legend_values_unresolved
+import dbt_charts.core.render.warnings.line_joins_missing_periods as line_joins_missing_periods
 import dbt_charts.core.render.warnings.local_time_label_expr_on_bucketed_axis as local_time_label_expr_on_bucketed_axis
 import dbt_charts.core.render.warnings.low_text_contrast as low_text_contrast
 import dbt_charts.core.render.warnings.normalize_percent_format_reads_raw_value as normalize_percent_format_reads_raw_value
 import dbt_charts.core.render.warnings.palette_unsupported as palette_unsupported
+import dbt_charts.core.render.warnings.pattern_fallback_flat as pattern_fallback_flat
 import dbt_charts.core.render.warnings.pie_dominant_segment as pie_dominant_segment
 import dbt_charts.core.render.warnings.pie_sized_mode_misses_guard as pie_sized_mode_misses_guard
 import dbt_charts.core.render.warnings.pie_total_exceeds_inner_radius as pie_total_exceeds_inner_radius
@@ -81,7 +83,8 @@ import dbt_charts.core.render.warnings.static_pagination_capped as static_pagina
 import dbt_charts.core.render.warnings.support_table_cell_overflow as support_table_cell_overflow
 import dbt_charts.core.render.warnings.table_align_no_visible_effect as table_align_no_visible_effect
 import dbt_charts.core.render.warnings.table_columns_overflow as table_columns_overflow
-import dbt_charts.core.render.warnings.table_cramped as table_cramped
+import dbt_charts.core.render.warnings.table_content_taller_than_wide as table_content_taller_than_wide
+import dbt_charts.core.render.warnings.table_header_extra_wrap as table_header_extra_wrap
 import dbt_charts.core.render.warnings.table_numeric_align_left as table_numeric_align_left
 import dbt_charts.core.render.warnings.table_page_squeezed as table_page_squeezed
 import dbt_charts.core.render.warnings.table_text_truncated as table_text_truncated
@@ -117,6 +120,7 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     layout_min_exceeds_height,
     legend_position_width_fallback,
     low_text_contrast,
+    pattern_fallback_flat,
     pie_sized_mode_misses_guard,
     pie_total_exceeds_inner_radius,
     plot_height_below_minimum,
@@ -129,7 +133,8 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     support_table_cell_overflow,
     table_align_no_visible_effect,
     table_columns_overflow,
-    table_cramped,
+    table_content_taller_than_wide,
+    table_header_extra_wrap,
     table_numeric_align_left,
     table_page_squeezed,
     table_text_truncated,
@@ -149,6 +154,7 @@ _DATA_DETECTORS: list[ModuleType] = [
     layer_data_outside_domain,
     layered_chart_shared_y_axis_scale_mismatch,
     legend_values_unresolved,
+    line_joins_missing_periods,
     local_time_label_expr_on_bucketed_axis,
     normalize_percent_format_reads_raw_value,
     palette_unsupported,

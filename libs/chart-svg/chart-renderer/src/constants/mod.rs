@@ -5,6 +5,8 @@ pub mod bar;
 pub mod color;
 pub mod contrast;
 pub mod estimates;
+pub mod find_queries;
 pub mod layout;
 pub mod marks;
 pub mod pie;
+pub mod semantics;

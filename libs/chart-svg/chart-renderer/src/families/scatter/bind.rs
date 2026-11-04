@@ -140,7 +140,7 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         let refs: Vec<&str> = distinct.iter().map(String::as_str).collect();
         if crate::families::temporal::x_values_are_standard_dates(&refs)
             || crate::families::temporal::x_values_are_temporal_candidates(&refs)
-                && crate::families::temporal::detect_time_unit(&refs).is_some()
+                && crate::families::temporal::detect_time_unit(&crate::time_axis::Dates::read(&distinct)).is_some()
         {
             (true, false)
         } else {
@@ -182,6 +182,33 @@ pub fn bind(payload: &Payload) -> Result<Bound<'_>, Diagnostic> {
         .filter(|_| quantitative_color(&r))
         .map(|field| color_extent(drawn_rows.iter().copied(), field));
     let size_domain = size_scale_domain(&r, &drawn_rows, (x_nominal, x_dates, y_nominal))?;
+    r.legend_view = crate::legend_view::LegendView::of(
+        &prepared,
+        &crate::legend_view::ViewFacts {
+            family: crate::legend_view::Family::Scatter,
+            color: r.color.as_deref(),
+            panel_fields: r.panel_axes.iter().map(|axis| axis.field.as_str()).collect(),
+            wide: !r.wide_measures.is_empty(),
+            normalized: false,
+            layered: !overlays.is_empty(),
+            continuous_color: quantitative_color(&r),
+        },
+    )?;
+    if let Some(narrowed) = r.legend_view.clone().and_then(|view| view.narrowed(&prepared, r.color.as_deref().expect("a legend view needs a color field"))) {
+        if narrowed.refits_axes() {
+            let shown = |field: &str| -> Vec<f64> { narrowed.payload.rows.iter().filter_map(|row| crate::common::row_num(row, field)).collect() };
+            for (axis, field, numeric) in [(&mut r.style.axis_x, r.x.as_str(), !x_nominal && !x_dates), (&mut r.style.axis_y, r.y.as_str(), !y_nominal)] {
+                if numeric {
+                    crate::legend_view::refit(axis, &shown(field), true);
+                } else {
+                    crate::legend_view::unbake(axis, true);
+                }
+            }
+        }
+        r.unviewed = r.legend_view.as_ref().map(|view| view.unviewed(payload));
+        r.whole_rows = Some(narrowed.whole);
+        prepared = Cow::Owned(narrowed.payload);
+    }
     Ok(Bound {
         payload: prepared,
         r,

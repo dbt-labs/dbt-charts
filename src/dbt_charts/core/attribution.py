@@ -81,7 +81,7 @@ _process_surface: dict[str, str] = {}
 # and long-retained. `tool` is per-call, set by the tool dispatcher; like the
 # others it must stay off `connection_identity()`.
 SCOPE_DIMENSIONS = frozenset(
-    {"surface", "board", "query", "target", "actor", "client", "request", "tool"}
+    {"surface", "board", "query", "actor", "client", "request", "tool"}
 )
 
 

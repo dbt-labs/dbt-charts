@@ -18,7 +18,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+)
 
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSort,
@@ -35,6 +39,7 @@ from dbt_charts.core.compile.models.chart.resolved._support_table import (
 from dbt_charts.core.compile.models.primitives import (
     LinkOpen,
     ResolvedFormat,
+    ResolvedPattern,
     VariableDependencies,
 )
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
@@ -218,6 +223,18 @@ class ResolvedTooltipField(BaseModel):
             "How the column's values print: a number or time format for a "
             "numeric or date column, None for a column painted as text."
         ),
+    )
+
+
+class _PatternResolvedFields(BaseModel):
+    """The pattern fills of the families that take a `pattern:` channel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern: ResolvedPattern | None = Field(
+        exclude_if=lambda v: v is None,
+        default=None,
+        description="The `pattern:` channel's field, scale and ink rules; None draws no patterns.",
     )
 
 

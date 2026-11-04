@@ -27,6 +27,9 @@ class TableChart(_SharedChartFields):
         default=None, description="Pivot column dimension fields."
     )
     values: list[str] | None = Field(default=None, description="Pivot measure fields.")
+    row_role: str | None = Field(
+        default=None, description="Query column carrying each row's role."
+    )
     spanners: list[TableSpanner] | None = Field(
         default=None, description="Authored column spanners."
     )

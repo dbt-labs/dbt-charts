@@ -1026,7 +1026,8 @@ class TestAttributionSurvivesTheProfileExpansion:
                 "metricflow": "target/metricflow",
             },
         )
-        assert resolved.metricflow == "target/metricflow"
+        assert resolved.metricflow is not None
+        assert resolved.metricflow.path == "target/metricflow"
 
     def test_absent_metricflow_expands_to_none(self, tmp_path: Path) -> None:
         resolved = self._resolve(

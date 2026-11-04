@@ -17,11 +17,11 @@ def test_a_static_export_carries_the_host_stylesheet_but_no_runtime() -> None:
 
     assert ".dbt-chart text.dbt-table-cell-inert" in page
     assert ".dbt-table-row:hover .dbt-table-row-link" in page
-    assert "dbtControls" not in page
+    assert "window.dbtControls = {" not in page
 
 
 def test_a_live_page_carries_both() -> None:
     page = to_html(render_board_to_svg(), controls=True)
 
     assert ".dbt-chart text.dbt-table-cell-inert" in page
-    assert "dbtControls" in page
+    assert "window.dbtControls = {" in page

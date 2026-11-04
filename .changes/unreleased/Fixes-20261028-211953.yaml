@@ -1,0 +1,3 @@
+kind: Fixes
+body: A support table strip on a categorical axis now compacts its numbers, then hides, instead of printing overlapping values.
+time: 2026-10-28T21:19:53.982109-07:00

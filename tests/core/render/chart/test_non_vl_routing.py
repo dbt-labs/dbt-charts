@@ -99,7 +99,6 @@ def _oracle_callout(
         height=height,
         padding=None,
         board_style=board_style,
-        board_width=width,
     )[0]
 
 

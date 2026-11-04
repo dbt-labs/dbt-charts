@@ -729,8 +729,8 @@ rows:
     assert result.success, result.errors
     svg = render_board_to_svg(board)
     # Axis ladder: a spaced prefix leads the sign, the symbol follows it.
-    assert "US $5mn" in svg
-    assert "US −$5mn" in svg
+    assert "US $5m" in svg
+    assert "US −$5m" in svg
     # support_table: each value's own SI magnitude, same composition.
     assert "US $12.4M" in svg
     assert "US −$3.1M" in svg

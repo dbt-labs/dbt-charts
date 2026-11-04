@@ -22,6 +22,7 @@ _TOOL_TO_CLI: dict[str, str] = {
     "execute_sql": "query",
     "search_files": "search",
     "describe_board": "describe",
+    "describe_semantics": "semantics",
     "list_skills": "skills",
     "get_skill": "skills",
 }
@@ -40,6 +41,9 @@ _EXEMPT_TOOLS: set[str] = {
     # Registry lookups; the CLI prints each error's docs-site URL (`doc_url`) instead.
     "list_diagnostic_codes",
     "get_diagnostic_code",
+    # Lists boards with what the result cache an MCP session has open (DCT_CACHE_PATH)
+    # holds; a shell agent searches and reads boards directly (`dct search`).
+    "find_queries",
 }
 
 

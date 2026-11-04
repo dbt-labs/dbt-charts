@@ -1,0 +1,3 @@
+kind: Fixes
+body: Tables declare their total/summary marker column as chart-level `row_role:`; existing `style.row.role` is migrated automatically.
+time: 2026-11-03T21:46:21.282653348Z

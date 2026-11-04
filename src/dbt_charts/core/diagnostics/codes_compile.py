@@ -31,6 +31,25 @@ ERR_UNKNOWN_VARIABLE = REGISTRY.register(
     )
 )
 
+ERR_DUPLICATE_VARIABLE_NAME = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DUPLICATE-VARIABLE-NAME",
+        domain="compile",
+        title="Two boards declare the same variable",
+        message_template=(
+            "Duplicate variable name {name!r}: declared in {first} and {second}. "
+            "Variables are global to the board, so delete one and read the other "
+            "by name, or rename one if they are separate controls."
+        ),
+        doc=(
+            "Fired when a board and a board nested in it, or an imported board, "
+            "declare the same variable. A board has one variable namespace: a "
+            "nested board reads an outer variable without declaring it."
+        ),
+        docs_topic="variables",
+    )
+)
+
 ERR_TAB_DEFAULT_UNKNOWN = REGISTRY.register(
     ErrorCode(
         code="ERR-TAB-DEFAULT-UNKNOWN",
@@ -46,6 +65,48 @@ ERR_TAB_DEFAULT_UNKNOWN = REGISTRY.register(
             "underscores."
         ),
         docs_topic="layout",
+    )
+)
+
+ERR_DUPLICATE_QUERY_NAME = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DUPLICATE-QUERY-NAME",
+        domain="compile",
+        title="Two boards in a file declare the same query",
+        message_template=(
+            "Duplicate query name {name!r}: declared in {first} and {second}. "
+            "Every board in a file shares one set of query names, so delete one "
+            "if they are the same query, or rename one and update the `query:` "
+            "of each chart that reads it."
+        ),
+        doc=(
+            "Fired when two boards in the same file, a board and one nested in "
+            "it or two nested boards, declare the same query name. A chart on "
+            "any board in the file can read a query declared on any other, so "
+            "one declaration is enough."
+        ),
+        docs_topic="queries",
+    )
+)
+
+ERR_DUPLICATE_CHART_NAME = REGISTRY.register(
+    ErrorCode(
+        code="ERR-DUPLICATE-CHART-NAME",
+        domain="compile",
+        title="Two boards in a file declare the same chart",
+        message_template=(
+            "Duplicate chart name {name!r}: declared in {first} and {second}. "
+            "Every board in a file shares one set of chart names, so delete one "
+            "if they are the same chart, or rename one and update the layouts "
+            "that place it."
+        ),
+        doc=(
+            "Fired when two boards in the same file, a board and one nested in "
+            "it or two nested boards, declare the same chart name. A layout on "
+            "any board in the file can place a chart declared on any other, so "
+            "one declaration is enough."
+        ),
+        docs_topic="charts",
     )
 )
 
@@ -199,6 +260,27 @@ ERR_RETIRED_FIELD = REGISTRY.register(
             "declarations, so every key ever retired stays known."
         ),
         docs_topic="board",
+    )
+)
+
+ERR_HTTP_QUERY_REMOVED = REGISTRY.register(
+    ErrorCode(
+        code="ERR-HTTP-QUERY-REMOVED",
+        domain="compile",
+        title="`type: http` queries were removed",
+        message_template=(
+            "`type: http` queries were removed. Load the data into your "
+            "warehouse (for example with a connector) and query it with SQL, or "
+            "use a committed CSV, JSON or Parquet file source."
+        ),
+        doc=(
+            "Fired when a query authors `type: http`, or a `url:` with no type. "
+            "Load the data into the warehouse, for example with a Fivetran "
+            "connector, or commit the data as a CSV, JSON or Parquet file and "
+            "query it through a file source."
+        ),
+        summary="Fired when a query authors the removed `type: http`.",
+        docs_topic="queries",
     )
 )
 
@@ -516,6 +598,26 @@ ERR_UNRESOLVED_REFERENCE = REGISTRY.register(
     )
 )
 
+ERR_BOARD_IMPORT_CYCLE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-BOARD-IMPORT-CYCLE",
+        domain="compile",
+        title="Board files place each other in a circle",
+        message_template=(
+            "Board files place each other in a circle: {chain}. Remove one of "
+            "these references, or move what they share into a file neither places."
+        ),
+        doc=(
+            "A rows item, or a `charts` fence, can place another board file or "
+            "Markdown page by its path, and that file can place others. When the "
+            "chain comes back to a file already being placed, it would never end, "
+            "so the board stops here and names the files in order."
+        ),
+        summary="Board files place each other in a circle.",
+        docs_topic="board",
+    )
+)
+
 ERR_JINJA_ERROR = REGISTRY.register(
     ErrorCode(
         code="ERR-JINJA-ERROR",
@@ -704,6 +806,78 @@ ERR_BAR_Y_START_KIND = REGISTRY.register(
     )
 )
 
+ERR_LINE_CONNECT_NEEDS_NUMERIC_X = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINE-CONNECT-NEEDS-NUMERIC-X",
+        domain="compile",
+        title="Line connect needs a numeric x",
+        message_template=(
+            "Chart {chart_id!r} (line): connect needs a numeric x, but {x_field!r} "
+            "is not. Connecting points in another column's order is for paths over "
+            "two measures; a category or date x already has an order."
+        ),
+        doc=(
+            "Fired when a line chart sets `connect:` over an x column that is not "
+            "numeric. A connected scatter walks a numeric x out of order; a date or "
+            "category x has its own order."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_LINE_CONNECT_ALONE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINE-CONNECT-ALONE",
+        domain="compile",
+        title="Line connect does not combine with layers or multiples",
+        message_template=(
+            "Chart {chart_id!r} (line): connect draws one path through its own rows, "
+            "so it does not combine with layers or multiples. Remove them, or drop "
+            "connect."
+        ),
+        doc=(
+            "Fired when a line chart sets `connect:` beside `layers:` or "
+            "`multiples:`. A connected scatter is one chart over its own rows."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_LINE_CONNECT_COLUMN_NOT_FOUND = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINE-CONNECT-COLUMN-NOT-FOUND",
+        domain="compile",
+        title="Line connect column not found in the query result",
+        message_template=(
+            "Chart {chart_id!r} (line): connect column {field!r} is not in the "
+            "query result. Available columns: {available}."
+        ),
+        doc=(
+            "Fired when a line chart's `connect:` names a column missing from its "
+            "query result. Check for a typo, or add the column to the query."
+        ),
+        docs_topic="charts",
+    )
+)
+
+ERR_LINE_CONNECT_NULL = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LINE-CONNECT-NULL",
+        domain="compile",
+        title="Line connect column has an empty cell",
+        message_template=(
+            "Chart {chart_id!r} (line): connect column {field!r} is empty in row "
+            "{row}. Every point needs a place in the path."
+        ),
+        doc=(
+            "Fired when a line chart's `connect:` column holds a NULL. A point with "
+            "no order has no place in the path; filter the row out or fill it in the "
+            "query."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_LINE_Y_NOT_NUMERIC = REGISTRY.register(
     ErrorCode(
         code="ERR-LINE-Y-NOT-NUMERIC",
@@ -781,6 +955,27 @@ ERR_AREA_ENCODING_SWAPPED = REGISTRY.register(
     )
 )
 
+ERR_LAYER_AXIS_STYLE_WITHOUT_POSITION = REGISTRY.register(
+    ErrorCode(
+        code="ERR-LAYER-AXIS-STYLE-WITHOUT-POSITION",
+        domain="compile",
+        title="A layer styles a y axis it does not have",
+        message_template=(
+            "{field_path} sets a color or grid style, but no layer on this "
+            "chart pins `axis_y.position`, so every layer shares the base "
+            "chart's y axis. Pin `axis_y.position` on a layer to give it its "
+            "own axis, or style the shared axis under `style.axis_y`."
+        ),
+        doc=(
+            "A layer's `axis_y.color` and its `axis_y.grid` color, width, dash "
+            "and opacity style that layer's own y axis, which exists only once "
+            "some layer pins a side."
+        ),
+        summary="A layer styles its own y axis, but no layer pins a side.",
+        docs_topic="charts",
+    )
+)
+
 ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION = REGISTRY.register(
     ErrorCode(
         code="ERR-LAYER-AXIS-TITLE-WITHOUT-POSITION",
@@ -801,6 +996,27 @@ ERR_LAYER_AXIS_TITLE_WITHOUT_POSITION = REGISTRY.register(
             "side to split the axes, or remove the layer title."
         ),
         summary="Layer `axis_y.title` set on a chart whose layers share one y axis.",
+        docs_topic="charts",
+    )
+)
+
+ERR_AXIS_COLOR_AUTO_NO_INK = REGISTRY.register(
+    ErrorCode(
+        code="ERR-AXIS-COLOR-AUTO-NO-INK",
+        domain="compile",
+        title="Axis color 'auto' has no single series color to take",
+        message_template=(
+            "{field_path} is 'auto', but {reason}, so there is no one color "
+            "for the axis to take. Name a color instead, or give the axis one "
+            "series."
+        ),
+        doc=(
+            "`color: auto` on a y axis paints its grid lines, tick labels and "
+            "title in the color of the one series drawn against it. An axis "
+            "that holds several series, or a series colored by a field, has "
+            "no single color."
+        ),
+        summary="Axis `color: auto` on an axis without exactly one series color.",
         docs_topic="charts",
     )
 )
@@ -1194,6 +1410,25 @@ ERR_AREA_STACKED_STROKE_INCOMPLETE = REGISTRY.register(
     )
 )
 
+ERR_NO_BOARD_FILES = REGISTRY.register(
+    ErrorCode(
+        code="ERR-NO-BOARD-FILES",
+        domain="compile",
+        title="A path holds no board files",
+        message_template=(
+            "No board files found in {path}. Pass a `.yml`, `.yaml` or `.md` board "
+            "file, or a folder that holds one. A `.svg.j2` chart template is not a "
+            "board: validate a board that uses it."
+        ),
+        doc=(
+            "Fired when `dct validate` or `dct describe` is pointed at a path with "
+            "no board under it: a missing or empty folder, or one that holds only "
+            "chart templates."
+        ),
+        docs_topic="board",
+    )
+)
+
 ERR_FILE_NOT_FOUND = REGISTRY.register(
     ErrorCode(
         code="ERR-FILE-NOT-FOUND",
@@ -1576,12 +1811,13 @@ ERR_FONT_REGISTRY = REGISTRY.register(
         message_template="{message}",
         doc=(
             "Fired when `style.fonts` entries extend one another in a cycle "
-            "(`a` extends `b` extends `a`; the message names the path), or "
-            "when the `heading` entry inherits a `size` from the font it "
-            "extends (`heading` takes the `sizes` ramp, never `size`). Break "
-            "the cycle, or extend a font that sets no size."
+            "(`a` extends `b` extends `a`; the message names the path), when "
+            "`heading` or `section` sets or inherits a `size` (they take the "
+            "`sizes` ramp, never `size`), or when any other font sets `sizes`. "
+            "Break the cycle, extend a font that sets no size, or use the field "
+            "the font takes."
         ),
-        summary="Fired when `style.fonts` entries form a cycle or give `heading` a size.",
+        summary="Fired when `style.fonts` entries form a cycle or set the wrong size field.",
         docs_topic="charts",
     )
 )
@@ -1699,8 +1935,8 @@ ERR_QUERY_FORMAT_SPEC = REGISTRY.register(
         title="A query's formats: value is a format spec, not a format name",
         message_template=(
             "Query {query!r} formats.{column} is a format spec ({spec!r}), not a "
-            "format name. Name it in style.formats (for example "
-            "`{column}_format: {spec!r}`) and use the name here."
+            "format name. Add `{column}_format: {spec!r}` under `style.formats`, "
+            "then write `{column}: {column}_format` here."
         ),
         doc=(
             "Fired when a query's `formats:` value is a d3 or strftime spec "
@@ -1881,24 +2117,27 @@ ERR_GEO_PROJECTION_REQUIRED = REGISTRY.register(
     )
 )
 
-ERR_LABELS_LAST_UNSUPPORTED = REGISTRY.register(
+ERR_LABELS_ANCHOR_UNSUPPORTED = REGISTRY.register(
     ErrorCode(
-        code="ERR-LABELS-LAST-UNSUPPORTED",
+        code="ERR-LABELS-ANCHOR-UNSUPPORTED",
         domain="compile",
-        title="`labels.visible: last` needs the chart's own series",
+        title="`labels.visible` anchors need the chart's own series",
         message_template=(
-            "Chart {chart_id!r} sets {field_path} to `last`, which labels "
-            "each series' most recent mark and is not supported on {where}. "
+            "Chart {chart_id!r} sets {field_path} to anchors that pick marks "
+            "from each series, which is not supported on {where}. "
             "Use `true` to label every mark."
         ),
         doc=(
-            "`visible: last` on point, line or bar value labels prints each "
-            "series' most recent mark. A bar chart has a most recent bar "
-            "only on a time axis; a categorical axis has none. A scatter "
-            "chart has no ordered series and a layer has no series of its "
-            "own. Set `visible: true` or remove the key."
+            "`first`, `last`, `min` and `max` on point, line or bar value "
+            "labels print those marks of each series. A scatter chart has no "
+            "ordered series and a layer has no series of its own, so neither "
+            "takes an anchor. A bar chart has a first and last bar only on a "
+            "time axis; a categorical axis takes `min` and `max`. A grouped "
+            "bar takes none, and a stacked bar's anchors need `stack: zero`, "
+            "no `labels.field` and no visible `total_label`. Set "
+            "`visible: true`, use `min` or `max`, or remove the key."
         ),
-        summary="`labels.visible: last` on a scatter chart, a layer, or a categorical bar axis.",
+        summary="`labels.visible` anchors on a scatter chart, a layer, a grouped bar, or `first`/`last` on a categorical bar axis.",
         docs_topic="charts",
     )
 )
@@ -2362,32 +2601,33 @@ WARN_DOUBLE_HEADER = REGISTRY.register(
     )
 )
 
-WARN_H1_BODY_NO_TITLE = REGISTRY.register(
+WARN_BODY_HEADING_NO_TITLE = REGISTRY.register(
     WarningCode(
-        code="WARN-H1-BODY-NO-TITLE",
+        code="WARN-BODY-HEADING-NO-TITLE",
         domain="compile",
-        title="Body opens with a level-1 heading but the board has no title",
+        title="Text opens with a heading but the board has no title",
         message_template=(
-            "Body opens with a level-1 markdown heading {heading!r} and the board "
-            "has no `title:` set; the heading renders as plain body text instead "
-            "of the styled board header."
+            "Text opens with the markdown heading {heading!r} and this board has no "
+            "`title:`, so the heading renders as prose rather than a section title."
         ),
         fix_template=(
-            "Set `title: {heading}` and delete the `# {heading}` line from the "
-            "body text."
+            "Set `title: {heading}` and delete the heading line from the text; "
+            "section titles belong on the board, not in the markdown. If this text "
+            "isn't a new section, it shouldn't be its own row: merge it into the "
+            "text before it."
         ),
         doc=(
-            "Fires when a board has no `title:` and the first block of its body "
-            "markdown is a level-1 heading; the author likely reached for a "
-            "markdown heading instead of the purpose-built `title:` field, so the "
-            "board renders as unstyled prose with no header. Only a literal level-1 "
-            "heading counts; a lower-level heading (`## Overview`) with no title is "
-            "ordinary section structure and does not fire, since there is no title "
-            "text to compare it against. Heading detection uses the same markdown "
-            "parser that renders the text, so a fenced code block opening with a "
-            "`#` comment is not mistaken for a heading. Checked on the board itself, "
-            "not on nested boards; a section card's own opening heading is not "
-            "inspected. Emitted by `compile/validate/board_warnings.py`."
+            "Fires when a board or `rows:` item has no `title:` and its `text:` "
+            "opens with a markdown heading at any level. A prose row is a section, "
+            "and a section's title is the board's `title:`: it renders above the "
+            "columns at the title size and spacing, where a markdown heading renders "
+            "inside the prose. Headings further down a block stay in the markdown. "
+            "A `cols:` or `grid:` cell is not checked, because its opening heading "
+            "titles the card beside its neighbors, and neither is a tab pane's own "
+            "text, which opens under its tab label. Heading detection uses the same "
+            "markdown parser that renders the text, so a fenced code block opening "
+            "with a `#` comment is not mistaken for a heading. "
+            "Emitted by `compile/validate/board_warnings.py`."
         ),
         docs_topic="board",
     )
@@ -2439,26 +2679,23 @@ WARN_SINGLE_CHART_REDUNDANT_TITLE = REGISTRY.register(
         code="WARN-SINGLE-CHART-REDUNDANT-TITLE",
         domain="compile",
         redundant=True,
-        title="Single-chart dashboard has both a board title and a chart title",
+        title="Single-chart board has both a board title and a chart title",
         message_template=(
             "Board title {title!r} sits above a single chart that carries its own "
             "title {chart_title!r}; two headers for one chart."
         ),
-        fix_template=(
-            "Give the board one header: drop the chart's `title:` (the board title "
-            "already heads the board, and it is what listings, search, and nav "
-            "show), or drop the board `title:` and let the chart title stand."
-        ),
+        fix_template="Remove the board's `title:` and keep the chart's `title:`.",
         doc=(
             "Fires when a board's whole content is one chart and both the board and "
             "the chart carry a title, so the board stacks two headers over a single "
-            "piece of content. A single-chart dashboard does not need a separate "
-            "dashboard title. Does not fire when only one of the two is titled, when "
-            "the board holds more than one chart, or when body prose sits between the "
-            "two titles. KPI and callout charts are excluded: a KPI labels itself "
-            "with `label:` and a callout's title is a prose lead-in, so neither "
-            "stacks a chart header under the board's. Checked on the board itself, "
-            "not on nested section boards. Emitted by `compile/validate/board_warnings.py`."
+            "piece of content. A one-chart board is headed by its chart, so the "
+            "board's `title:` is the one to remove. Does not fire when only one of "
+            "the two is titled, when the board holds more than one chart, or when "
+            "body prose sits between the two titles. KPI and callout charts are "
+            "excluded: a KPI labels itself with `label:` and a callout's title is a "
+            "prose lead-in, so neither stacks a chart header under the board's. "
+            "Checked on the board itself, not on nested section boards. Emitted by "
+            "`compile/validate/board_warnings.py`."
         ),
         docs_topic="board",
     )
@@ -2744,6 +2981,33 @@ ERR_LINK_SCHEME_UNANCHORED = REGISTRY.register(
     )
 )
 
+WARN_LINK_TARGET_NOT_FOUND = REGISTRY.register(
+    WarningCode(
+        code="WARN-LINK-TARGET-NOT-FOUND",
+        domain="compile",
+        title="A board link names a board that does not exist",
+        message_template=(
+            "Link {link!r} at {field_path} points at {slug!r}, which is not a "
+            "board in this project."
+        ),
+        fix_template=(
+            "Write the slug of an existing board as a root-relative path, such "
+            "as '/user-360'."
+        ),
+        doc=(
+            "Fired by validation when a chart, table-column or footer `link:` "
+            "resolves to a board that no board file in the project (installed "
+            "packages included) provides. The board still saves and renders, "
+            "but clicking the link lands on a 404. Links to "
+            "other sites, variable-only links, links the built-in data views "
+            "serve, and links whose path holds a `{{ }}` template are not "
+            "checked."
+        ),
+        summary="Fired when a board link points at no board in the project.",
+        docs_topic="charts",
+    )
+)
+
 ERR_VARIABLE_NAME_INVALID = REGISTRY.register(
     ErrorCode(
         code="ERR-VARIABLE-NAME-INVALID",
@@ -2846,14 +3110,17 @@ ERR_MARKDOWN_NOT_BOARD = REGISTRY.register(
         title="Markdown file is not a board",
         message_template=(
             "Not a dbt Charts board file: markdown files outside charts/ must "
-            "declare a top-level 'board:' key in their YAML frontmatter"
+            "declare a top-level 'board:' key in their YAML frontmatter, or "
+            "hold a `charts` fence and be named directly"
         ),
         doc=(
             "Fired when a markdown file outside `charts/` is compiled as a board "
             "but its frontmatter has no top-level `board:` key. Under `charts/` "
-            "every markdown file is a board by path convention; elsewhere the "
-            "`board:` key opts a page in. Add a `board:` block to the frontmatter "
-            "or move the file under `charts/`."
+            "every markdown file is a board by path convention. Elsewhere the "
+            "`board:` key opts a page in, and so does a `charts` fence in a "
+            "file named directly, as in `dct render post.md`; a file found by "
+            "listing a folder needs the `board:` key. Add a `board:` block to the "
+            "frontmatter, name the file, or move it under `charts/`."
         ),
         docs_topic="board",
     )

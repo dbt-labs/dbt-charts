@@ -52,6 +52,8 @@ from dbt_charts.cloud_client.contract import (
     InviteResult,
     MemberAccess,
     MemberList,
+    MemberRoleChanges,
+    MemberRoleFailure,
     MemberSummary,
     OAuthToken,
     OrgList,
@@ -71,6 +73,7 @@ from dbt_charts.cloud_client.contract import (
 )
 from dbt_charts.cloud_client.errors import (
     ApiFailed,
+    CloudError,
     CredentialMissing,
     DeviceLoginFailed,
     InvalidCredential,
@@ -106,6 +109,9 @@ DISCOVERY_PATH = "/.well-known/oauth-authorization-server"
 # RFC 8628's own backoff: a `slow_down` response widens the poll interval by
 # this many seconds, not to a server-chosen value.
 SLOW_DOWN_BACKOFF_SECONDS = 5.0
+# Statuses that answer for the credential or the caller, not for one member, so
+# the next member in a batch would get the same answer.
+BATCH_ENDING = frozenset({401, 403, 429})
 
 
 def _seg(value: str) -> str:
@@ -211,6 +217,42 @@ class CloudClient:
             MemberSummary,
             payload={"role": role},
         )
+
+    def member_emails_with_role(self, org: str, role: str) -> list[str]:
+        return [m.email for m in self.list_members(org).members if m.role == role]
+
+    def set_member_roles(
+        self, org: str, emails: list[str], role: str
+    ) -> MemberRoleChanges:
+        """One request per member, so one refusal leaves the rest to go through.
+
+        A 404 is nothing to change: the API answers it for the caller's own row
+        and for a member removed since the list was read. A failure that is not
+        an answer about this member, such as a lost connection or a dead token,
+        would repeat for everyone left, so it ends the batch and is reported
+        against each of them. Rerunning the same selection picks up whoever
+        still holds the old role.
+        """
+        changes = MemberRoleChanges(selected=emails)
+        for index, email in enumerate(emails):
+            try:
+                self.set_member_role(org, email, role)
+            except CloudError as exc:
+                if not isinstance(exc, ApiFailed) or exc.status_code in BATCH_ENDING:
+                    changes.failed.extend(
+                        MemberRoleFailure(email=left, error=str(exc))
+                        for left in emails[index:]
+                    )
+                    break
+                if exc.status_code == 404:
+                    changes.skipped.append(email)
+                else:
+                    changes.failed.append(
+                        MemberRoleFailure(email=email, error=str(exc))
+                    )
+            else:
+                changes.changed.append(email)
+        return changes
 
     def list_invitations(self, org: str) -> InvitationList:
         return self._request("GET", f"/orgs/{_seg(org)}/invitations", InvitationList)

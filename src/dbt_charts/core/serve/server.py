@@ -92,7 +92,7 @@ from dbt_charts.core.project import (
     board_root_for_relpath,
     board_roots,
     board_slug,
-    posix_relpath,
+    reserves_charts_url,
     resolve_directory_url,
 )
 
@@ -420,7 +420,7 @@ def _synthetic_error(message: str) -> BoardRenderResult:
     )
 
 
-def _url_mount_dir(path: Path, project: FilesystemProject) -> str:
+def _url_mount_dir(relpath: str, project: FilesystemProject) -> str:
     """The board root's own relpath, so lazy_dir_context yields serve-router-
     relative URLs.
 
@@ -430,7 +430,6 @@ def _url_mount_dir(path: Path, project: FilesystemProject) -> str:
     ``board_namespace_for_root``. A path outside every board root mounts at
     the project root (empty string, a no-op for ``_strip_mount_prefix``).
     """
-    relpath = posix_relpath(path, project.root)
     root = board_root_for_relpath(relpath, board_roots(project))
     return root.relpath if root is not None else ""
 
@@ -501,8 +500,8 @@ def _render_board_file(
         serve_storage_prefix=serve_storage_prefix,
     )
 
-    file_fspath = project.root / file_path.relpath
-    url_mount_dir = _url_mount_dir(file_fspath, project)
+    board_name = PurePosixPath(file_path.relpath)
+    url_mount_dir = _url_mount_dir(file_path.relpath, project)
 
     # Compile once, reuse for the nav's theme read and the render — render_dashboard
     # otherwise re-opens the same YAML to recompile it.
@@ -521,7 +520,7 @@ def _render_board_file(
         render_nav_html(
             nav_dir=file_path.parent,
             url_mount_dir=url_mount_dir,
-            current_label=file_fspath.stem,
+            current_label=board_name.stem,
             board_theme=board_theme,
             content_left=nav_content_left(compile_result.board),
             show_download=True,
@@ -574,12 +573,12 @@ def _render_board_file(
     # served error page.
     return _render_structured_errors_html(
         result,
-        request_path=file_fspath.name,
+        request_path=board_name.name,
         error_palette=_error_palette_for_theme(board_theme),
         chrome=_error_nav(
             file_path.parent,
             url_mount_dir,
-            file_fspath.stem,
+            board_name.stem,
             include_nav,
             board_theme,
         ),
@@ -626,24 +625,24 @@ def _render_board_download(
         clock=clock,
     )
 
-    file_fspath = project.root / file_path.relpath
-    url_mount_dir = _url_mount_dir(file_fspath, project)
+    board_name = PurePosixPath(file_path.relpath)
+    url_mount_dir = _url_mount_dir(file_path.relpath, project)
     if result.status == "failed" or not result.data:
         board_theme = _board_theme_name(file_path)
         return _render_structured_errors_html(
             result,
-            request_path=file_fspath.name,
+            request_path=board_name.name,
             error_palette=_error_palette_for_theme(board_theme),
             chrome=_error_nav(
                 file_path.parent,
                 url_mount_dir,
-                file_fspath.stem,
+                board_name.stem,
                 include_nav,
                 board_theme,
             ),
         )
 
-    filename = f"{file_fspath.stem}.{fmt}"
+    filename = f"{board_name.stem}.{fmt}"
     raw = result.data
     if isinstance(raw, bytes):
         body = raw
@@ -952,7 +951,6 @@ def build_serve_registry(
     target: str | None,
     max_workers: int | None,
     read_only: bool = True,
-    allow_mutating_methods: bool = False,
     allow_external_access_in_readonly: bool = False,
     duckdb_config: _DuckDBConfig | None = None,
 ) -> AdapterRegistry:
@@ -964,11 +962,10 @@ def build_serve_registry(
     return build_adapter_registry(
         project,
         read_only=read_only,
-        allow_mutating_methods=allow_mutating_methods,
         allow_external_access_in_readonly=allow_external_access_in_readonly,
         duckdb_config=duckdb_config,
         profile_type=dialect,
-        target=target if target is not None else "dev",
+        target=target,
         max_workers=max_workers,
     )
 
@@ -984,7 +981,6 @@ def create_server(
     max_workers: int | None = None,
     no_cache: bool = False,
     cache_path: Path | None = None,
-    allow_mutating_methods: bool = False,
     clock: Callable[[], datetime] = utc_now,
 ) -> FastAPI:
     """Create unified dbt charts server.
@@ -1003,9 +999,6 @@ def create_server(
             reads them on a private connection, out of band from author SQL.
         duckdb_config: DuckDB config dict; defaults to enable_external_access when
             allow_external_access_in_readonly is True.
-        allow_mutating_methods: Let http sources use POST/PUT/PATCH/DELETE.
-            Only the human-run ``dct serve`` passes True; the embedded
-            preview behind agent sessions keeps GET only.
         no_cache: Skip the query-result cache entirely (Executor runs uncached).
             Explicit override — wins over the project's dbt_charts.yml cache: block.
         cache_path: Persist the query-result cache to this DuckDB file (created
@@ -1037,7 +1030,6 @@ def create_server(
             target=target,
             max_workers=max_workers,
             read_only=read_only,
-            allow_mutating_methods=allow_mutating_methods,
             allow_external_access_in_readonly=allow_external_access_in_readonly,
             duckdb_config=duckdb_config,
         )
@@ -1138,6 +1130,8 @@ def create_server(
             if config_mtime != state.config_mtime:
                 for key in (
                     "config_file",
+                    "boards_dir",
+                    "charts_dir",
                     "sources",
                     "warnings_ignore",
                     "locked_schema_version",
@@ -1333,7 +1327,10 @@ def create_server(
         """
         clean_path = path.strip("/")
 
-        if clean_path == CHARTS_SUBDIR or clean_path.startswith(f"{CHARTS_SUBDIR}/"):
+        if reserves_charts_url(app.state.project, clean_path) or (
+            clean_path == CHARTS_SUBDIR
+            and app.state.project.boards_dir == CHARTS_SUBDIR
+        ):
             raise HTTPException(status_code=404, detail="Not found")
         if ".." in clean_path.split("/"):
             raise HTTPException(
@@ -1445,9 +1442,7 @@ def create_server(
                 resolved,
                 clean_path,
                 project=project,
-                url_mount_dir=_url_mount_dir(
-                    project.root / resolved[0].relpath, project
-                ),
+                url_mount_dir=_url_mount_dir(resolved[0].relpath, project),
                 clock=clock,
                 result_cache=app.state.result_cache,
                 include_nav=app.state.server_nav,

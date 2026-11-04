@@ -24,6 +24,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
+from dbt_charts.core.colors import CanvasTone
 from dbt_charts.core.compile.models.primitives import (
     BorderStyle,
     BoxShadow,
@@ -31,11 +32,13 @@ from dbt_charts.core.compile.models.primitives import (
     ResolvedFontStyle,
     ResolvedFormat,
     SpacingValues,
+    WidthTier,
 )
 from dbt_charts.core.compile.models.style.authored import PaginationConfig
 from dbt_charts.core.compile.models.style.resolved.callout import (
     ResolvedCalloutElementStyle,
     ResolvedCalloutStyle,
+    ResolvedErrorTileStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
@@ -688,13 +691,16 @@ class ResolvedChartDefaults:
     spark: SparkStyle
     spark_bar: SparkBarChartStyle
     support_table: SupportTableStyle
-    callout_error: ResolvedCalloutStyle
+    callout_error: ResolvedErrorTileStyle
 
     # --- Board/board chrome ---
     tooltip: TooltipStyle
     hover_emphasis: HoverEmphasisStyle
     font_family: str | None
     title: TitleStyle
+    # The chart title font each card-width tier gives a healthy chart, keyed by
+    # tier (`typography.width_tier`): a failed chart draws its title in it too.
+    title_fonts: Mapping[WidthTier, ResolvedFontStyle]
     heading_sizes: list[float]
     section_sizes: list[float]
     pagination: PaginationConfig | None
@@ -724,6 +730,9 @@ class ResolvedStyle:
     """
 
     background: str
+    # Light or dark: the tone of the board canvas (`background` composited
+    # over the canvas beneath it). Derived at resolve, never authored.
+    canvas_tone: CanvasTone
     accent: str
     # ``fonts.secondary.color``: the ink the KPI support row falls back to when
     # no conditional, slot, or tone color applies, and the dev server's error
@@ -786,6 +795,7 @@ __all__ = [
     "ResolvedCalloutElementStyle",
     "ResolvedCalloutStyle",
     "ResolvedChartDefaults",
+    "ResolvedErrorTileStyle",
     "ResolvedLegendElementStyle",
     "ResolvedLegendPosition",
     "ResolvedLegendStyle",

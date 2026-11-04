@@ -8,11 +8,9 @@ import pytest
 
 from dbt_charts.core.compile.models.query.normalized import (
     VALID_QUERY_TYPES,
-    HttpQuery,
     SchemaQuery,
     SqlQuery,
     ValuesQuery,
-    is_http_query,
     is_sql_query,
     is_values_query,
 )
@@ -58,40 +56,8 @@ class TestSqlQuery:
 
     def test_other_query_types_construct_without_source(self):
         """Sourceless query types construct without a source, same as SqlQuery."""
-        HttpQuery(url="https://example.com")
         ValuesQuery(rows=[{"a": 1}])
         assert SchemaQuery(source=None).source is None
-
-
-class TestHttpQuery:
-    """Tests for HttpQuery class."""
-
-    def test_create_http_query(self):
-        """Test creating an HTTP query."""
-        query = HttpQuery(url="https://api.example.com/users")
-        assert query.url == "https://api.example.com/users"
-        assert query.method == "GET"  # Default
-        assert query.query_type == "http"
-
-    def test_with_method(self):
-        """Test HTTP query with custom method."""
-        query = HttpQuery(url="https://api.example.com/users", method="POST")
-        assert query.method == "POST"
-
-    def test_with_headers(self):
-        """Test HTTP query with headers."""
-        query = HttpQuery(
-            url="https://api.example.com/users",
-            headers={"Authorization": "Bearer token"},
-        )
-        assert query.headers == {"Authorization": "Bearer token"}
-
-    def test_source_description(self):
-        """Test source description for HTTP query."""
-        query = HttpQuery(url="https://api.example.com/users", method="POST")
-        assert "HTTP:" in query.source_description
-        assert "POST" in query.source_description
-        assert "api.example.com" in query.source_description
 
 
 class TestTypeGuards:
@@ -103,12 +69,7 @@ class TestTypeGuards:
             (
                 is_sql_query,
                 SqlQuery(sql="SELECT 1", source="test_profile"),
-                HttpQuery(url="https://example.com"),
-            ),
-            (
-                is_http_query,
-                HttpQuery(url="https://example.com"),
-                SqlQuery(sql="SELECT 1", source="test_profile"),
+                ValuesQuery(rows=[{"a": 1}]),
             ),
         ],
     )
@@ -153,7 +114,6 @@ class TestValidQueryTypes:
     def test_contains_all_types(self):
         """Test VALID_QUERY_TYPES contains all expected types."""
         assert "sql" in VALID_QUERY_TYPES
-        assert "http" in VALID_QUERY_TYPES
 
     def test_contains_values_type(self):
         """Test VALID_QUERY_TYPES contains values."""
@@ -165,7 +125,6 @@ class TestValidQueryTypes:
             SqlQuery(sql="SELECT 1", source="test_profile").query_type
             in VALID_QUERY_TYPES
         )
-        assert HttpQuery(url="http://x").query_type in VALID_QUERY_TYPES
         assert ValuesQuery(rows=[{"a": 1}]).query_type in VALID_QUERY_TYPES
 
 

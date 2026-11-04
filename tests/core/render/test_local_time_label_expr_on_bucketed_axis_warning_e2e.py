@@ -63,6 +63,7 @@ def _make_executor(
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry

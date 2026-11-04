@@ -10,10 +10,14 @@ both read the answer.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from dbt_charts.cli.filesystem_project import FilesystemProject
+from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import get_theme_style
 from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,
@@ -21,7 +25,14 @@ from dbt_charts.core.compile.models.variable.authored import (
     VariableOptions,
 )
 from dbt_charts.core.compile.resolve.style.board import resolve_style
-from dbt_charts.core.render.variables_resolve import resolve_controls
+from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.render import render
+from dbt_charts.core.render.variables_resolve import (
+    format_variable_display_value,
+    linked_variable_options,
+    resolve_controls,
+)
 
 
 def _vs():
@@ -335,3 +346,368 @@ def test_a_multiselect_current_is_narrowed_to_a_list_at_resolution(
     )
 
     assert resolved[0].current == expected
+
+
+_LINKED_BOARD = """
+variables:
+  metric:
+    input: select
+    options:
+      static: [strict, loose]
+  regions:
+    input: multiselect
+    options:
+      static: [east, west]
+  note:
+    input: select
+    options:
+      static: [a, b]
+queries:
+  rates:
+    columns: [arm, metric, region, rate]
+    values:
+      - [ac, strict, east, 0.3]
+charts:
+  by_metric:
+    query: rates
+    type: bar
+    x: arm
+    y: rate
+    color: metric
+    link: "?metric={{ color }}"
+  by_region:
+    query: rates
+    type: bar
+    x: arm
+    y: rate
+    color: region
+    link: "?regions={{ color }}"
+"""
+
+
+def test_a_variable_a_chart_link_sets_publishes_its_options() -> None:
+    board = compile(_LINKED_BOARD).board
+    assert board is not None
+    options = linked_variable_options(board, None, {})
+    assert options == {
+        "metric": {"options": ["strict", "loose"], "multiple": False},
+        "regions": {"options": ["east", "west"], "multiple": True},
+    }
+
+
+def test_a_chart_no_layout_places_publishes_no_options() -> None:
+    board = compile(_LINKED_BOARD + "rows:\n  - by_metric\n").board
+    assert board is not None
+    assert list(linked_variable_options(board, None, {})) == ["metric"]
+
+
+def test_options_travel_as_authored_not_as_text() -> None:
+    numeric = """
+variables:
+  year:
+    input: select
+    options:
+      static: [2023, 2024]
+queries:
+  q:
+    columns: [arm, year, rate]
+    values:
+      - [ac, 2023, 0.3]
+charts:
+  c:
+    query: q
+    type: bar
+    x: arm
+    y: rate
+    color: year
+    link: "?year={{ color }}"
+"""
+    board = compile(numeric).board
+    assert board is not None
+    assert linked_variable_options(board, None, {}) == {
+        "year": {"options": [2023, 2024], "multiple": False}
+    }
+
+
+@pytest.mark.parametrize(
+    ("link", "published"),
+    [
+        ("?metric={{ color }}", True),
+        ("?metric={{color}}", True),
+        ("?metric={{ x }}", False),
+        ("?metric={{ color }}&arm={{ x }}", False),
+        ("?other={{ color }}", False),
+    ],
+)
+def test_only_a_color_setter_link_publishes_its_options(
+    link: str, published: bool
+) -> None:
+    board = compile(
+        _LINKED_BOARD.replace('link: "?metric={{ color }}"', f'link: "{link}"')
+    ).board
+    assert board is not None
+    assert ("metric" in linked_variable_options(board, None, {})) is published
+
+
+def test_a_chart_in_a_nested_board_publishes_the_options_its_link_sets() -> None:
+    nested = """
+variables:
+  metric:
+    input: select
+    options:
+      static: [strict, loose]
+queries:
+  rates:
+    columns: [arm, metric, rate]
+    values:
+      - [ac, strict, 0.3]
+rows:
+  - title: Section
+    charts:
+      by_metric:
+        query: rates
+        type: bar
+        x: arm
+        y: rate
+        color: metric
+        link: "?metric={{ color }}"
+    rows:
+      - by_metric
+"""
+    assert ">loose<" in _render_strict(nested)
+
+
+def _render_strict(yaml_content: str) -> str:
+    result = compile(yaml_content)
+    assert result.success and result.board is not None, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        query_registry=result.query_registry,
+    )
+    rendered = render(result.board, executor, variables={"metric": "strict"})
+    assert rendered.board_error is None, rendered.board_error
+    assert isinstance(rendered.output, str)
+    svg = rendered.output
+    return svg
+
+
+def test_a_filtered_linked_legend_renders_every_option_in_order() -> None:
+    svg = _render_strict(_LINKED_BOARD)
+    assert 'data-dbt-legend-var="metric"' in svg
+    assert svg.index(">strict<") < svg.index(">loose<")
+
+
+_VIEWED_BOARD = """
+queries:
+  rates:
+    columns: [arm, metric, rate]
+    values:
+      - [ac, strict, 0.3]
+      - [ac, loose, 0.5]
+charts:
+  c:
+    query: rates
+    type: bar
+    x: arm
+    y: rate
+    color: metric
+    style:
+      legend:
+        visible: false
+"""
+
+
+def _render_with(yaml_content: str, variables: dict[str, Any]) -> str:
+    result = compile(yaml_content)
+    assert result.success and result.board is not None, result.errors
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(FilesystemProject(Path.cwd())),
+        query_registry=result.query_registry,
+    )
+    rendered = render(result.board, executor, variables=variables)
+    assert rendered.board_error is None, rendered.board_error
+    assert isinstance(rendered.output, str)
+    return rendered.output
+
+
+def test_a_chart_view_rides_on_its_chart_even_when_it_draws_no_entry() -> None:
+    svg = _render_with(_VIEWED_BOARD, {"_dct_legend_c": ["strict"]})
+
+    chart = re.search(r'<g class="dbt-chart[^>]*>', svg)
+    assert chart is not None
+    assert 'data-dbt-legend-view="_dct_legend_c"' in chart.group()
+    assert 'data-dbt-legend-active="[&quot;strict&quot;]"' in chart.group()
+
+
+@pytest.mark.parametrize("cleared", ["", [], None])
+def test_a_cleared_chart_view_is_not_stamped(cleared: object) -> None:
+    svg = _render_with(_VIEWED_BOARD, {"_dct_legend_c": cleared})
+
+    assert "data-dbt-legend-view" not in svg
+
+
+def _zoom_board(chart_type: str, regions: tuple[str, ...]) -> str:
+    values = {
+        "EMEA": [10, 90, 130, 80],
+        "AMER": [150, 190, 210, 242],
+        "APAC": [110, 160, 120, 205],
+    }
+    rows = "\n".join(
+        f"      - [m{i}, {region}, {value}]"
+        for region in regions
+        for i, value in enumerate(values[region])
+    )
+    orientation = (
+        "\n    style:\n      orientation: vertical" if chart_type == "bar" else ""
+    )
+    return f"""
+queries:
+  q:
+    columns: [month, region, revenue]
+    values:
+{rows}
+charts:
+  c:
+    query: q
+    type: {chart_type}
+    x: month
+    y: revenue
+    color: region{orientation}
+"""
+
+
+def _value_axis(svg: str) -> tuple[str, list[str]]:
+    """The y axis's description and its tick labels."""
+    at = svg.index('data-dct-role="y-axis"')
+    axis = svg[at:]
+    axis = axis[
+        : axis.find("data-dct-role=", 10)
+        if "data-dct-role=" in axis[10:]
+        else len(axis)
+    ]
+    description = re.search(r"values from (\S+) to (\S+?)\"", axis)
+    assert description is not None, axis[:300]
+    labels = re.findall(r"<text[^>]*>([^<]*)</text>", axis)
+    return description.group(0), labels
+
+
+@pytest.mark.parametrize("chart_type", ["bar", "line"])
+def test_a_zoomed_axis_is_the_axis_of_a_chart_holding_only_the_shown_rows(
+    chart_type: str,
+) -> None:
+    zoomed = _render_with(
+        _zoom_board(chart_type, ("EMEA", "AMER", "APAC")),
+        {"_dct_legend_c": ["EMEA"]},
+    )
+    alone = _render_with(_zoom_board(chart_type, ("EMEA",)), {})
+
+    assert _value_axis(zoomed) == _value_axis(alone)
+
+
+def _ranged_board(regions: tuple[str, ...]) -> str:
+    bars = {
+        "EMEA": [(40, 90), (55, 130)],
+        "AMER": [(150, 190), (160, 242)],
+    }
+    rows = "\n".join(
+        f"      - [m{i}, {region}, {low}, {high}]"
+        for region in regions
+        for i, (low, high) in enumerate(bars[region])
+    )
+    return f"""
+queries:
+  q:
+    columns: [month, region, low, high]
+    values:
+{rows}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: high
+    y_start: low
+    color: region
+    style:
+      orientation: vertical
+rows:
+  - c
+"""
+
+
+def _axis_ticks(svg: str) -> tuple[str, list[str]]:
+    description, labels = _value_axis(svg)
+    return description, [label for label in labels if re.match(r"[\d\u2212$]", label)][
+        :9
+    ]
+
+
+def test_a_zoomed_ranged_bar_fits_its_start_values_too() -> None:
+    zoomed = _render_with(_ranged_board(("EMEA", "AMER")), {"_dct_legend_c": ["EMEA"]})
+    alone = _render_with(_ranged_board(("EMEA",)), {})
+
+    assert _axis_ticks(zoomed) == _axis_ticks(alone)
+
+
+def _mixed_sign_board(regions: tuple[str, ...]) -> str:
+    values = {
+        "EMEA": [-410000, -520000, -300000],
+        "AMER": [1500000, 3100000, 2400000],
+    }
+    rows = "\n".join(
+        f"      - [m{i}, {region}, {value}]"
+        for region in regions
+        for i, value in enumerate(values[region])
+    )
+    return f"""
+queries:
+  q:
+    columns: [month, region, revenue]
+    values:
+{rows}
+charts:
+  c:
+    query: q
+    type: line
+    x: month
+    y: revenue
+    color: region
+    style:
+      legend:
+        position: right
+      endpoint_labels:
+        visible: false
+rows:
+  - c
+"""
+
+
+def test_a_zoom_to_negative_series_anchors_its_ruler_as_those_rows_alone_would() -> (
+    None
+):
+    zoomed = _render_with(
+        _mixed_sign_board(("EMEA", "AMER")), {"_dct_legend_c": ["EMEA"]}
+    )
+    alone = _render_with(_mixed_sign_board(("EMEA",)), {})
+
+    assert _axis_ticks(zoomed) == _axis_ticks(alone)
+
+
+def test_a_multiselect_with_several_values_shows_a_count_and_the_first() -> None:
+    """The field shows a summary, not the list: the list is what the menu's
+    "Show only selected" is for, and a joined list is what grew the field. The
+    count leads, so cutting a long first value never cuts the count."""
+    var = Variable(input="multiselect")
+
+    assert (
+        format_variable_display_value(var, ["South", "North", "East"], "multiselect")
+        == "(3) South"
+    )
+
+
+def test_a_multiselect_with_one_value_shows_that_value() -> None:
+    var = Variable(input="multiselect")
+
+    assert format_variable_display_value(var, ["North"], "multiselect") == "North"

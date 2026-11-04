@@ -2,6 +2,7 @@
 # Charles Joseph Minard's 1869 map of Napoleon's Russian campaign of 1812,
 # redrawn with the minard template.
 title: Napoleon's march on Moscow, 1812
+width: 1600
 notes: |
   After Charles Joseph Minard's *Carte figurative des pertes successives en
   hommes de l'Armée Française dans la campagne de Russie 1812-1813* (1869).
@@ -11,8 +12,6 @@ notes: |
   Troop, city, and temperature figures are approximate, as tabulated from
   Minard's map by Leland Wilkinson and Michael Friendly.
 style:
-  frame:
-    width: 1600
   charts:
     category_colors:
       direction:

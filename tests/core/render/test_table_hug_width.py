@@ -212,10 +212,10 @@ def test_focus_on_unpinned_table_that_owns_its_row_matches_board(
 @pytest.mark.parametrize(
     "layout",
     [
-        "style:\n  frame:\n    width: 1200\n" + _ONE_ROW,
+        "width: 1200\n" + _ONE_ROW,
         "rows:\n  - cols:\n      - t\n      - l1\n",
     ],
-    ids=["authored-frame-width", "cols-half"],
+    ids=["authored-width", "cols-half"],
 )
 def test_focus_renders_table_at_its_own_measured_width(
     layout: str, local_project

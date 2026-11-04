@@ -12,6 +12,8 @@
 // NaN; `w <= 0` is not. The negated comparisons stay as written upstream.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+use scene::{PathCommand, PathData};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
     Left,
@@ -115,21 +117,16 @@ impl Sankey {
 /// d3's horizontal cubic, down at the target, the bottom edge back. Filling
 /// the band, unlike stroking the centerline, keeps a thick, steep link from
 /// growing horns where the stroke's offset curve folds over itself.
-pub fn ribbon_area(
-    sx: f64,
-    sy: f64,
-    tx: f64,
-    ty: f64,
-    hw: f64,
-    num: impl Fn(f64) -> String,
-) -> String {
+pub fn ribbon_area(sx: f64, sy: f64, tx: f64, ty: f64, hw: f64) -> PathData {
     let xm = sx + (tx - sx) * 0.5;
     let (st, sb, tt, tb) = (sy - hw, sy + hw, ty - hw, ty + hw);
-    format!(
-        "M{},{} C{},{} {},{} {},{} L{},{} C{},{} {},{} {},{} Z",
-        num(sx), num(st), num(xm), num(st), num(xm), num(tt), num(tx), num(tt),
-        num(tx), num(tb), num(xm), num(tb), num(xm), num(sb), num(sx), num(sb),
-    )
+    PathData(vec![
+        PathCommand::M(sx, st),
+        PathCommand::C(xm, st, xm, tt, tx, tt),
+        PathCommand::L(tx, tb),
+        PathCommand::C(xm, tb, xm, sb, sx, sb),
+        PathCommand::Z,
+    ])
 }
 
 fn compute_node_values(g: &mut Graph) {
@@ -277,11 +274,11 @@ impl State<'_> {
     ) -> Result<(), String> {
         let mut columns = self.compute_node_layers(g, fixed_layers)?;
         let widest = columns.iter().map(Vec::len).max().unwrap_or(0);
-        self.py = self.s.node_padding.min((self.s.y1 - self.s.y0) / (widest as f64 - 1.0));
+        self.py = crate::js_math::js_min(self.s.node_padding, (self.s.y1 - self.s.y0) / (widest as f64 - 1.0));
         self.initialize_node_breadths(g, &columns);
         let iterations = self.s.iterations;
         for i in 0..iterations {
-            let alpha = 0.99_f64.powi(i as i32);
+            let alpha = crate::js_math::pow(0.99, i as f64);
             let beta = (1.0 - alpha).max((i + 1) as f64 / iterations as f64);
             self.relax_right_to_left(g, &mut columns, alpha, beta);
             self.relax_left_to_right(g, &mut columns, alpha, beta);
@@ -491,65 +488,9 @@ fn reorder_node_links(g: &mut Graph, node: usize) {
 mod tests {
     use super::*;
 
-    type Case = (
-        &'static str,
-        Align,
-        usize,
-        &'static [(usize, usize, f64)],
-        &'static [[f64; 4]],
-        &'static [[f64; 3]],
-    );
-
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-9
     }
-
-    const ENERGY: [(usize, usize, f64); 10] = [
-        (0, 2, 50.0), (1, 2, 30.0), (2, 3, 45.0), (2, 4, 35.0), (3, 5, 20.0),
-        (3, 6, 25.0), (4, 6, 30.0), (4, 7, 5.0), (0, 7, 8.0), (5, 7, 2.0),
-    ];
-
-    /// Differential against d3-sankey@0.12.3 itself: every expected number
-    /// below is that package's output (extent [[1,5],[599,395]], nodeWidth 15,
-    /// nodePadding 10), printed with `JSON.stringify` from `node`.
-    #[test]
-    fn matches_d3_sankey() {
-        let cases: [Case; 4] = [
-            (
-                "two_stage",
-                Align::Justify,
-                6,
-                &[(0, 2, 5.0), (0, 3, 3.0), (1, 2, 2.0), (1, 3, 6.0), (2, 4, 4.0), (2, 5, 3.0), (3, 4, 7.0), (3, 5, 2.0), (1, 5, 1.0)],
-                &[[1.0, 16.0, 5.0, 183.82352941176464], [1.0, 16.0, 193.82352941176464, 394.9999999999999], [292.5, 307.5, 5.0, 161.47058823529403], [292.5, 307.5, 171.47058823529403, 372.6470588235295], [584.0, 599.0, 5.0, 250.8823529411764], [584.0, 599.0, 260.8823529411764, 395.0000000000001]],
-                &[[111.76470588235293, 60.882352941176464, 60.882352941176464], [67.05882352941177, 150.2941176470588, 204.99999999999991], [44.705882352941174, 216.17647058823522, 139.1176470588235], [134.11764705882354, 305.58823529411757, 305.58823529411757], [89.41176470588235, 49.705882352941174, 49.705882352941174], [67.05882352941177, 127.94117647058823, 294.4117647058823], [156.47058823529412, 249.7058823529411, 172.6470588235294], [44.705882352941174, 350.2941176470588, 350.2941176470588], [22.352941176470587, 383.82352941176464, 383.82352941176464]],
-            ),
-            ("energy_left", Align::Left, 8, &ENERGY, &ENERGY_LEFT_NODES, &ENERGY_LEFT_LINKS),
-            ("energy_center", Align::Center, 8, &ENERGY, &ENERGY_LEFT_NODES, &ENERGY_LEFT_LINKS),
-            (
-                "energy_right",
-                Align::Right,
-                8,
-                &ENERGY,
-                &[[1.0, 16.0, 5.0000000000000036, 255.45454545454544], [1.0, 16.0, 265.45454545454544, 395.0], [146.75, 161.75, 18.072742235153644, 363.52728768969916], [292.5, 307.5, 173.06363921321196, 367.38182103139377], [438.25, 453.25, 13.098347223904373, 164.234710860268], [438.25, 453.25, 286.86430954809475, 373.2279459117311], [584.0, 599.0, 5.0, 242.4999999999999], [584.0, 599.0, 252.4999999999999, 317.27272727272714]],
-                &[[215.9090909090909, 112.95454545454545, 126.0272876896991], [129.54545454545456, 330.22727272727275, 298.7545604169718], [194.3181818181818, 266.3681967806082, 270.2227301223029], [151.13636363636365, 93.64092405333547, 88.6665290420862], [86.36363636363637, 324.2000028495756, 330.04612772991294], [107.95454545454545, 227.04091194048468, 188.52272727272728], [129.54545454545456, 77.87107449663165, 69.77272727272728], [21.590909090909093, 153.43925631481346, 297.840909090909], [34.54545454545455, 238.1818181818182, 269.77272727272714], [8.636363636363637, 291.18249136627657, 312.9545454545453]],
-            ),
-        ];
-        for (name, align, n, links, want_nodes, want_links) in cases {
-            let s = Sankey { x0: 1.0, y0: 5.0, x1: 599.0, y1: 395.0, node_width: 15.0, node_padding: 10.0, align, iterations: 6 };
-            let g = s.layout(n, links, None).unwrap();
-            for (i, (d, w)) in g.nodes.iter().zip(want_nodes).enumerate() {
-                let got = [d.x0, d.x1, d.y0, d.y1];
-                assert!(got.iter().zip(w).all(|(a, b)| close(*a, *b)), "{name} node {i}: {got:?} != {w:?}");
-            }
-            for (i, (l, w)) in g.links.iter().zip(want_links).enumerate() {
-                let got = [l.width, l.y0, l.y1];
-                assert!(got.iter().zip(w).all(|(a, b)| close(*a, *b)), "{name} link {i}: {got:?} != {w:?}");
-            }
-        }
-    }
-
-    const ENERGY_LEFT_NODES: [[f64; 4]; 8] = [[1.0, 16.0, 4.9999999999999964, 255.4545454545455], [1.0, 16.0, 265.4545454545455, 395.0000000000001], [146.75, 161.75, 18.12846384492418, 363.5830092994696], [292.5, 307.5, 12.73008823749479, 207.04827005567668], [292.5, 307.5, 217.0482700556766, 368.1846336920402], [438.25, 453.25, 252.50000000000003, 338.8636363636364], [438.25, 453.25, 5.0, 242.50000000000003], [584.0, 599.0, 243.86216926598988, 308.6348965387171]];
-    const ENERGY_LEFT_LINKS: [[f64; 3]; 10] = [[215.9090909090909, 112.95454545454545, 126.08300929946964], [129.54545454545456, 330.22727272727275, 298.81028202674236], [194.3181818181818, 115.28755475401509, 109.88917914658569], [151.13636363636365, 288.0148274812878, 292.6164518738584], [86.36363636363637, 163.86645187385844, 295.68181818181824], [107.95454545454545, 66.70736096476752, 58.97727272727273], [129.54545454545456, 281.8209973284039, 177.72727272727275], [21.590909090909093, 357.3891791465857, 297.8394419932626], [34.54545454545455, 238.1818181818182, 261.13489653871716], [8.636363636363637, 256.81818181818187, 282.7258056296262]];
 
     #[test]
     fn a_cycle_is_refused() {

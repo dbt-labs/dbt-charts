@@ -397,3 +397,140 @@ class TestEmptyYamlDocumentDiagnostic:
         assert (
             result.errors[0].message == "Empty YAML document: the given YAML content."
         )
+
+
+_KPI = "{type: kpi, query: q, value: x}"
+_QUERY = "{sql: 'select 1 as x'}"
+_VARIABLE = "{input: select, options: {static: [a]}}"
+
+
+@pytest.mark.parametrize(
+    ("second_board", "second"),
+    [
+        (f"rows:\n  - c\n  - queries:\n      q: {_QUERY}\n    rows: [c]\n", "rows.1"),
+        (f"cols:\n  - c\n  - queries:\n      q: {_QUERY}\n    rows: [c]\n", "cols.1"),
+        (
+            "grid:\n  items:\n    - item: c\n"
+            f"    - item:\n        queries:\n          q: {_QUERY}\n"
+            "        rows: [c]\n",
+            "grid.items.1",
+        ),
+        (
+            "tabs:\n  items:\n    - title: A\n      rows:\n        - c\n"
+            f"        - queries:\n            q: {_QUERY}\n          rows: [c]\n",
+            "tabs.items.0.rows.1",
+        ),
+    ],
+)
+def test_duplicate_query_name_points_at_both_declarations(
+    second_board: str, second: str
+) -> None:
+    result = compile(
+        f"source: db\nqueries:\n  q: {_QUERY}\ncharts:\n  c: {_KPI}\n{second_board}",
+        file="board.yaml",
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-DUPLICATE-QUERY-NAME"
+    assert error.message.startswith("Duplicate query name 'q'")
+    assert "queries.q" in error.message
+    assert f"{second}.queries.q" in error.message
+    assert error.path == f"{second}.queries.q"
+
+
+def test_duplicate_query_name_between_sibling_boards_names_each_position() -> None:
+    result = compile(
+        "source: db\n"
+        f"charts:\n  c: {_KPI}\n"
+        "rows:\n"
+        f"  - queries:\n      q: {_QUERY}\n    rows: [c]\n"
+        f"  - queries:\n      q: {_QUERY}\n    rows: [c]\n",
+        file="board.yaml",
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-DUPLICATE-QUERY-NAME"
+    assert "rows.0.queries.q and rows.1.queries.q" in error.message
+
+
+def test_duplicate_query_name_lands_on_the_second_declaration_line() -> None:
+    result = compile(
+        "source: db\n"
+        "queries:\n"
+        f"  q: {_QUERY}\n"
+        f"charts:\n  c: {_KPI}\n"
+        "rows:\n"
+        "  - queries:\n"
+        f"      q: {_QUERY}\n"
+        "    rows: [c]\n",
+        file="board.yaml",
+    )
+
+    [error] = result.errors
+    assert error.range is not None
+    assert error.range.start_line == 8
+
+
+def test_duplicate_chart_name_points_at_both_declarations() -> None:
+    result = compile(
+        "source: db\n"
+        f"queries:\n  q: {_QUERY}\n"
+        f"charts:\n  c: {_KPI}\n"
+        "rows:\n"
+        "  - c\n"
+        f"  - charts:\n      c: {_KPI}\n    rows: [c]\n",
+        file="board.yaml",
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-DUPLICATE-CHART-NAME"
+    assert error.message.startswith("Duplicate chart name 'c'")
+    assert "charts.c and rows.1.charts.c" in error.message
+    assert error.path == "rows.1.charts.c"
+
+
+def test_duplicate_variable_name_points_at_both_declarations() -> None:
+    result = compile(
+        "source: db\n"
+        f"variables:\n  v: {_VARIABLE}\n"
+        f"queries:\n  q: {_QUERY}\n"
+        f"charts:\n  c: {_KPI}\n"
+        "rows:\n"
+        "  - c\n"
+        f"  - variables:\n      v: {_VARIABLE}\n    rows: [c]\n",
+        file="board.yaml",
+    )
+
+    [error] = result.errors
+    assert error.code == "ERR-DUPLICATE-VARIABLE-NAME"
+    assert error.message.startswith("Duplicate variable name 'v'")
+    assert "variables.v and rows.1.variables.v" in error.message
+    assert error.path == "rows.1.variables.v"
+
+
+def test_duplicate_variable_name_from_an_imported_board_says_so(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    charts = tmp_path / "charts"
+    charts.mkdir()
+    (charts / "_part.yml").write_text(
+        f"variables:\n  v: {_VARIABLE}\nrows:\n  - c\n", encoding="utf-8"
+    )
+    (charts / "board.yml").write_text(
+        f"variables:\n  v: {_VARIABLE}\n"
+        "charts:\n"
+        "  c:\n"
+        "    type: table\n"
+        "    query:\n"
+        "      columns: [x]\n"
+        "      values: [[1]]\n"
+        "rows:\n  - c\n  - ./_part.yml\n",
+        encoding="utf-8",
+    )
+
+    result = compile_file(local_project(tmp_path).path("charts/board.yml").read_board())
+
+    [error] = result.errors
+    assert error.code == "ERR-DUPLICATE-VARIABLE-NAME"
+    assert "variables.v and an imported board" in error.message
+    assert error.path is None

@@ -403,6 +403,21 @@ def test_project_sources_caches_until_refresh(tmp_path: Path) -> None:
         assert "y" in project.sources.sources
 
 
+def test_project_declared_sources_cache_until_refresh(tmp_path: Path) -> None:
+    """refresh() drops declared_sources with sources, so the two never disagree."""
+    dbt_charts_yml = tmp_path / "dbt_charts.yml"
+    dbt_charts_yml.write_text("sources:\n  x:\n    type: duckdb\n    path: x.duckdb\n")
+
+    with ProjectSession.open(tmp_path) as project:
+        assert "x" in project.project.declared_sources.sources
+
+        dbt_charts_yml.write_text(
+            "sources:\n  y:\n    type: duckdb\n    path: y.duckdb\n"
+        )
+        project.refresh()
+        assert "y" in project.project.declared_sources.sources
+
+
 def test_project_warnings_ignore_caches_until_refresh(tmp_path: Path) -> None:
     """warnings_ignore is read at open() time; refresh() re-reads and the value reflects disk."""
     dbt_charts_yml = tmp_path / "dbt_charts.yml"

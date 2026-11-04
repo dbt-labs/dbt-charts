@@ -1,5 +1,5 @@
-"""Detector: WARN_TABLE_TEXT_TRUNCATED — fires when table header labels or cell
-values were clipped with an ellipsis during SVG rendering.
+"""Detector: WARN_TABLE_TEXT_TRUNCATED — fires when table cell values were
+clipped with an ellipsis during SVG rendering.
 
 Detection rule: ``WarningContext.text_truncations`` contains records with
 ``surface == "table_cell"``.  One ``Diagnostic`` fires per

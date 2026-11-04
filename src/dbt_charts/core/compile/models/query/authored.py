@@ -44,7 +44,6 @@ from dbt_charts.core.compile.models.schema_names import FormatAlias, WarningCode
 # QUERY-LEVEL PRIMITIVES (used by both authored and compiled layers)
 # ============================================================================
 
-RestMethod = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
 
 # Every warehouse dialect, one spelling each: the dialect registry's names
 # minus its aliases (postgresql, mssql, mariadb).
@@ -183,56 +182,9 @@ class AuthoredSqlQuery(_BaseQueryFields):
         default=None,
         description="Non-nestable SQL preamble executed before the main query (e.g., CREATE TEMP FUNCTION).",
     )
-    target: str | None = Field(
-        default=None,
-        description="dbt target name for queries against a dbt_profile source (defaults to 'dev').",
-    )
     dialect: QueryDialect | None = Field(
         default=None,
         description="Warehouse dialect the SQL is written in, translated to the source's.",
-    )
-
-
-class AuthoredHttpQuery(_BaseQueryFields):
-    """REST API query.
-
-    Example YAML:
-        queries:
-          api_data:
-            type: http
-            url: https://api.example.com/data
-    """
-
-    type: Literal["http"] = Field(
-        default="http",
-        description="Inferred from the keys present.",
-    )
-    url: str = Field(
-        description="HTTP endpoint URL for REST API queries.",
-    )
-    method: RestMethod | None = Field(
-        default=None,
-        description="Verb the request is sent with (GET, POST, PUT, DELETE, PATCH).",
-    )
-    headers: dict[str, str] | None = Field(
-        default=None,
-        description="Header lines sent with the request, such as auth and content type.",
-    )
-    params: dict[str, Any] | None = Field(
-        default=None,
-        description="Values appended to the URL after the '?'.",
-    )
-    body: dict[str, Any] | str | None = Field(
-        default=None,
-        description="Payload sent with the request, on POST, PUT, and PATCH.",
-    )
-    limit: int | None = Field(
-        default=None,
-        description="Maximum number of rows returned.",
-    )
-    json_path: str | None = Field(
-        default=None,
-        description="JSONPath expression to extract tabular data from the HTTP response.",
     )
 
 
@@ -359,7 +311,6 @@ def _discriminate_authored_query(v: Any) -> str | None:
 
 AuthoredQuery = Annotated[
     Annotated[AuthoredSqlQuery, Tag("sql")]
-    | Annotated[AuthoredHttpQuery, Tag("http")]
     | Annotated[AuthoredValuesQuery, Tag("values_rows")]
     | Annotated[AuthoredCompactValuesQuery, Tag("values_compact")]
     | Annotated[AuthoredSchemaQuery, Tag("schema")],

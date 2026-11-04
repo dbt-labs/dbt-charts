@@ -1,9 +1,7 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Chart families
+width: 1872
 source: examples_db
-style:
-  frame:
-    width: 1872
 queries:
   product_revenue:
     sql: |

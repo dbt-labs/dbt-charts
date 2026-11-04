@@ -130,6 +130,10 @@ struct Resolved {
     pivot_columns: Option<Vec<String>>,
     #[serde(default)]
     values: Option<Vec<String>>,
+    /// Query column carrying the per-row role marker (e.g. "total"/"summary").
+    /// Never a display column, even when `style.columns` doesn't list it.
+    #[serde(default)]
+    row_role: Option<String>,
     // Chart-level `conditional_formatting: {col: {when: [rule, ...]}}` —
     // Keyed by the AUTHORED column
     // name; a pivot leaf looks itself up the same way `ColMeta` looks up
@@ -505,9 +509,6 @@ struct RowTheme {
     // None })`. A board that never authors a stripe resolves the bare
     // `null`, not the object.
     stripe: Option<StripeTheme>,
-    // Query column carrying the per-row role marker (e.g. "total"/"summary").
-    // Never a display column, even when style.columns doesn't list it.
-    role: Option<String>,
     /// The line under each body row — `TableChartStyle.row.divider`.
     divider: TableDivider,
     /// Per-role style (divider, background, font weight) for summary/total
@@ -1046,6 +1047,9 @@ struct ColMeta {
     // (header centered, cell end-anchored, tabular-numeric font) but through
     // its own formatter, never format_numeric_col.
     is_date: bool,
+    // Every non-blank cell is an ISO date or timestamp: the in-page menu sorts
+    // it by date and filters it by a range of days.
+    is_day: bool,
     // This column's chart-level `conditional_formatting` when-rules, empty
     // when none are authored.
     when_rules: Vec<WhenRule>,
@@ -1097,16 +1101,6 @@ struct Cell {
 /// and (`scale_anchor`) its magnitude anchor.
 fn anchor_variant(symbol_anchor: bool, scale_anchor: bool) -> usize {
     2 * usize::from(symbol_anchor) + usize::from(scale_anchor)
-}
-
-/// A coordinate as Python's `str()` writes it: an `Int` prints bare (`81`), a
-/// `Float` always carries its `.0` (`81.0`). Production's `_divider_segment`
-/// interpolates whatever number its caller computed, so the same line is `81`
-/// from `int(...)` arithmetic and `81.0` from a float sum.
-#[derive(Clone, Copy)]
-enum PyNum {
-    Int(f64),
-    Float(f64),
 }
 
 /// Minimum gap between adjacent per-column header rules (`_RULE_GAP`).
@@ -1196,6 +1190,9 @@ struct SparkLayout<'a> {
 struct TableBody<'a> {
     rows: &'a [serde_json::Map<String, Value>],
     row_roles: &'a [RowRole],
+    /// `data_rank[i]`: the data rows before row `i`; summary and total rows
+    /// take no number, so the index and the pager count only these.
+    data_rank: &'a [usize],
     row_heights: &'a [f64],
     summary_gap_unit: f64,
     rows_start_y: f64,
@@ -1309,6 +1306,8 @@ pub(crate) struct EmptyResolved {
     title_style: Option<TableTitleStyle>,
     #[serde(default)]
     columns: Option<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pivot_columns: Option<Vec<String>>,
     style: ResolvedStyle,
 }
 
@@ -1323,6 +1322,9 @@ struct WrappedHeader {
     /// Text was cut (wrap-two past two lines): the full label rides in a
     /// `<title>`.
     truncated: bool,
+    /// Lines the label needs in the column's content area wrapped with no cap,
+    /// whatever the overflow mode drew.
+    needed_lines: usize,
 }
 
 /// The families a table's text is measured in: production's
@@ -1342,6 +1344,8 @@ struct ColumnInputs {
     header_demands: BTreeMap<String, f64>,
     /// The widest unbreakable token, plus both cell paddings.
     word_floors: BTreeMap<String, f64>,
+    /// The columns whose word floor is their header's widest word, by column.
+    header_floor_words: BTreeMap<String, String>,
 }
 
 /// What the size-independent work derives from a table's chart and rows:
@@ -1564,7 +1568,6 @@ pub(crate) mod tests {
             "row": {
                 "height": 32.0,
                 "stripe": {"color": null},
-                "role": null,
                 "divider": table_divider(false, "#222222", 1.0),
                 "roles": {
                     "summary": {"divider": divider(true, "#222222", 1.0)},
@@ -1624,14 +1627,6 @@ pub(crate) mod tests {
         }))
     }
 
-    /// A narrow table can wrap headers under a width shortfall, which sizes
-    /// its WARN-TABLE-CRAMPED fix from the board's width.
-    pub(super) fn on_a_board(mut payload: Payload) -> Payload {
-        payload.board_style =
-            crate::test_board_style(json!({"board_width": 600.0}));
-        payload
-    }
-
     /// The SVG a reader sees in a pooled table: hidden row groups and hidden
     /// pager variants dropped.
     pub(super) fn visible(svg: &str) -> String {
@@ -1675,7 +1670,6 @@ pub(crate) mod tests {
         symbol_mode: &str,
     ) -> Payload {
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(row_role);
         theme["pagination"]["page_rows"] = json!(page_rows);
         theme["symbol_mode"] = json!(symbol_mode);
         let resolved = json!({
@@ -1686,6 +1680,7 @@ pub(crate) mod tests {
             "columns": columns,
             "style": {"table": theme, "title_font": resolved_title_font()},
             "pivot_columns": null,
+            "row_role": row_role,
             "conditional_formatting": null,
         });
         let payload_json = json!({
@@ -1770,17 +1765,17 @@ pub(crate) mod tests {
         assert!(!svg.contains("\u{2007}"), "no decimal pad on a left-anchored column:\n{svg}");
         assert!(!svg.contains("text-anchor=\"end\""), "no end-anchored lane tspan:\n{svg}");
         assert_eq!(
-            svg.matches("<text x=\"312.13554093898847\" text-anchor=\"start\"").count(),
+            svg.split("<text x=\"312.14\" y=\"").filter(|rest| rest.split_once('"').is_some_and(|(_, after)| after.starts_with(" text-anchor=\"start\" font-size"))).count(),
             2,
             "each body run starts at the cell's left padding:\n{svg}"
         );
         assert!(
-            svg.contains("<text x=\"312.13554093898847\" y=\"66.0\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
+            svg.contains("<text x=\"312.14\" y=\"66\" font-size=\"11\" font-weight=\"600\" fill=\"#222222\" text-anchor=\"start\" font-family=\"Inter, sans-serif\">Docs</text>"),
             "the header takes the same left x, start-anchored:\n{svg}"
         );
         assert!(
-            svg.contains("<tspan>1.04</tspan><tspan dx=\"3.0\">K</tspan>")
-                && svg.contains("<tspan>5.8</tspan><tspan dx=\"3.0\">K</tspan>"),
+            svg.contains("<tspan>1.04</tspan><tspan dx=\"3\">K</tspan>")
+                && svg.contains("<tspan>5.8</tspan><tspan dx=\"3\">K</tspan>"),
             "digits and the magnitude suffix flow from the start of the run:\n{svg}"
         );
     }
@@ -1886,7 +1881,7 @@ pub(crate) mod tests {
         let digit_w = test_fonts().measure("10", TAB_FONT, 11.0).unwrap();
         let (lane_left, left_x, codes) =
             docs_digit_left_edges("N", json!({"width": digit_w + 12.0}), "10");
-        assert!((lane_left - left_x).abs() < 1e-6, "{lane_left} vs {left_x}");
+        assert!((lane_left - left_x).abs() <= 2.0 * print::GEOMETRY_TOLERANCE + 1e-9, "{lane_left} vs {left_x}");
         assert!(
             codes.contains(&crate::codes::WARN_TABLE_ALIGN_NO_VISIBLE_EFFECT.id),
             "{codes:?}"
@@ -2139,6 +2134,54 @@ pub(crate) mod tests {
         assert!(svg.contains(">$</tspan>") && svg.contains(">58,396<"), "currency_whole format applied to leaf cell:\n{svg}");
         assert!(!svg.contains(">category<"), "raw pivot-dim field never renders as its own column");
         assert!(svg.contains("East") && svg.contains("West"), "row values render");
+    }
+
+    // A NULL pivot value heads its own column with the null display, never
+    // Python's "None", and stays distinct from a real "Total" column.
+    #[test]
+    fn pivot_null_column_value_headers_with_the_null_display() {
+        let rows = vec![
+            json!({"region": "East", "category": "Tools", "revenue": 1.0}),
+            json!({"region": "East", "category": null, "revenue": 2.0}),
+            json!({"region": "East", "category": "Total", "revenue": 3.0}),
+            json!({"region": null, "category": "Tools", "revenue": 4.0}),
+        ];
+        let columns = json!({"region": {"label": "Region"}, "Tools": {}, "Total": {}});
+        let payload =
+            make_pivot_payload(columns, rows, vec!["region"], vec!["category"], vec!["revenue"]);
+        let fonts = test_fonts();
+        let svg = render(&payload, &fonts).expect("pivot renders");
+        assert!(!svg.contains("None"), "no Python repr leaks:\n{svg}");
+        assert!(svg.contains(">Total<") && svg.contains(">Tools<"), "real headers stay:\n{svg}");
+        assert!(svg.matches(">\u{2014}<").count() >= 2, "null header and null row-dim cell:\n{svg}");
+    }
+
+    #[test]
+    fn pivot_refuses_null_beside_the_literal_null_display() {
+        let rows = vec![
+            json!({"region": "East", "category": null, "revenue": 1.0}),
+            json!({"region": "West", "category": "\u{2014}", "revenue": 2.0}),
+        ];
+        let columns = json!({"region": {}, "\u{2014}": {}});
+        let payload =
+            make_pivot_payload(columns, rows, vec!["region"], vec!["category"], vec!["revenue"]);
+        let err = render(&payload, &test_fonts()).expect_err("would merge two columns");
+        assert!(format!("{err:?}").contains("share one header"), "{err:?}");
+    }
+
+    // A pivot leaf header names a dimension VALUE, which prints as the query
+    // returned it: never slug-split or letter-cased like a field name.
+    #[test]
+    fn pivot_dimension_value_headers_print_verbatim() {
+        let rows = vec![
+            json!({"rep": "Ann", "month": "2026-07", "deals": 3}),
+            json!({"rep": "Ann", "month": "AE", "deals": 4}),
+        ];
+        let columns = json!({"rep": {"label": "Rep"}});
+        let payload = make_pivot_payload(columns, rows, vec!["rep"], vec!["month"], vec!["deals"]);
+        let svg = render(&payload, &test_fonts()).expect("pivot renders");
+        assert!(svg.contains(">2026-07<") && svg.contains(">AE<"), "{svg}");
+        assert!(!svg.contains("2026 07") && !svg.contains(">Ae<"), "{svg}");
     }
 
     // `revenue_units_cross_tab` shape: single pivot dimension, two measures —
@@ -2647,11 +2690,10 @@ pub(crate) mod tests {
         assert_eq!(shape(25, 50), "1 \u{2026} 24 25 26 \u{2026} 50");
     }
 
-    /// `row.role` names a row column holding each row's role, or is itself the
-    /// role every row takes when no column has that name; an unknown value is
-    /// an ordinary row.
+    /// `row_role` names the row column holding each row's role; an unknown
+    /// value is an ordinary row.
     #[test]
-    fn a_row_role_is_a_column_first_and_a_literal_otherwise() {
+    fn a_row_role_is_read_from_its_column() {
         let row = |v: Value| v.as_object().unwrap().clone();
         let rows = vec![
             row(json!({"kind": " Total "})),
@@ -2661,9 +2703,6 @@ pub(crate) mod tests {
         ];
         let by_column = resolve_row_roles(&rows, Some("kind"));
         assert!(matches!(by_column.as_slice(), [RowRole::Total, RowRole::Summary, RowRole::Value, RowRole::Value]));
-        let literal = resolve_row_roles(&rows, Some("total"));
-        assert!(literal.iter().all(|r| matches!(r, RowRole::Total)));
-        assert!(resolve_row_roles(&rows, Some("nonsense")).iter().all(|r| matches!(r, RowRole::Value)));
     }
 
     // column_defaults.format fills only columns that set no format of their own.
@@ -2716,8 +2755,7 @@ pub(crate) mod tests {
             "b": {"label": "B", "max_width": 80},
             "c": {"label": "C"},
         });
-        let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
+        let theme = base_table_theme();
         let payload_json = json!({
             "resolved": {
                 "link_open": "page",
@@ -2951,7 +2989,7 @@ pub(crate) mod tests {
         let mut payload = make_paginated_payload_with_id(id, columns, rows, page_rows, 800.0);
         payload.resolved["style"]["table"]["row"]["stripe"]["color"] = json!("#eeeeee");
         payload.resolved["style"]["table"]["row"]["divider"]["visible"] = json!(true);
-        payload.resolved["style"]["table"]["row"]["role"] = json!("row_role");
+        payload.resolved["row_role"] = json!("row_role");
         payload.interactive_controls = interactive;
         payload
     }
@@ -2962,6 +3000,47 @@ pub(crate) mod tests {
         let after = start + open.len();
         let end = svg[after..].find("<g class=\"dbt-table-row\"").map_or(svg.len(), |e| after + e);
         &svg[start..end]
+    }
+
+    /// A total row the query placed first: the index and the pager count data
+    /// rows only, so the first data row is 1 and the total is the data count.
+    fn leading_total_payload() -> Payload {
+        let mut rows = vec![json!({"product": "Total", "revenue": 99, "row_role": "total"})];
+        rows.extend((0..7).map(|i| json!({"product": format!("Row {i}"), "revenue": i, "row_role": "value"})));
+        let columns = json!({"product": {"label": "Product"}, "revenue": {"label": "Revenue"}});
+        let mut payload = make_paginated_payload_with_id("t1", columns, rows, 3, 800.0);
+        payload.resolved["row_role"] = json!("row_role");
+        payload.resolved["style"]["table"]["row_numbers"] =
+            json!({"visible": true, "header": "#", "align": "right", "font": {"color": "#626366"}});
+        payload
+    }
+
+    #[test]
+    fn row_numbers_skip_a_leading_total_row() {
+        let svg = render(&leading_total_payload(), &test_fonts()).expect("renders");
+        assert!(row_group(&svg, 1).contains("data-col=\"0\">1<"), "{svg}");
+        assert!(!row_group(&svg, 0).contains("data-col=\"0\">"), "{svg}");
+    }
+
+    #[test]
+    fn the_pager_range_counts_data_rows_not_the_total_row() {
+        let svg = render(&leading_total_payload(), &test_fonts()).expect("renders");
+        assert!(svg.contains("1\u{2013}2 / 7<"), "{svg}");
+        assert!(!svg.contains(" / 8<"), "{svg}");
+    }
+
+    #[test]
+    fn a_total_row_draws_no_spark_bar() {
+        let rows = vec![
+            json!({"c": "Alpha", "v": 18, "row_role": "value"}),
+            json!({"c": "Total", "v": 328, "row_role": "total"}),
+        ];
+        let columns = json!({"c": {"label": "C"}, "v": {"label": "V", "spark": {"type": "bar"}}});
+        let payload = make_payload(columns, rows, Some("row_role"), 20);
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(row_group(&svg, 0).contains("<g transform=\"translate("), "{svg}");
+        assert!(!row_group(&svg, 1).contains("<g transform=\"translate("), "{svg}");
+        assert!(row_group(&svg, 1).contains(">328<"), "the total prints its value:\n{svg}");
     }
 
     #[test]
@@ -3047,6 +3126,62 @@ pub(crate) mod tests {
         assert!(tag_of("Note").contains("data-dbt-sort-type=\"text\""), "{svg}");
         let static_svg = render(&pool_payload("t1", 4, 20, false, false), &test_fonts()).expect("renders");
         assert!(!static_svg.contains("data-dbt-sort-type"), "{static_svg}");
+    }
+
+    fn header_tag(svg: &str, label: &str) -> String {
+        let head = svg.split(&format!(">{label}<")).next().unwrap();
+        head[head.rfind("<text").unwrap()..].to_string()
+    }
+
+    #[test]
+    fn pool_mode_a_column_of_iso_days_is_a_date_column_whose_cells_carry_their_day() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut payload = pool_payload("t1", 4, 20, true, false);
+        for (i, row) in payload.rows.iter_mut().enumerate() {
+            row["note"] = json!(format!("2025-09-1{i}"));
+        }
+        payload.rows[1]["note"] = json!("2025-09-11T23:30:00");
+        payload.rows[2]["note"] = Value::Null;
+        payload.rows[3]["note"] = json!("");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(header_tag(&svg, "Note").contains("data-dbt-sort-type=\"date\""), "{svg}");
+        assert!(row_group(&svg, 0).contains("data-dbt-sort=\"2025-09-10\" data-dbt-day=\"2025-09-10\""), "{svg}");
+        assert!(row_group(&svg, 1).contains("data-dbt-day=\"2025-09-11\""), "{svg}");
+        // The root carries the names and first weekday its calendar prints.
+        let root = svg.split("data-dbt-table=").nth(1).expect("pool root");
+        let root = &root[..root.find('>').expect("root tag")];
+        assert!(
+            root.contains(
+                "data-dbt-time-locale=\"{&quot;months&quot;:[&quot;January&quot;,"
+            ),
+            "{root}"
+        );
+        assert!(root.contains("&quot;weekStart&quot;:0}"), "{root}");
+        // A null or blank cell has neither a key nor a day: it sorts last.
+        for blank in [2, 3] {
+            let group = row_group(&svg, blank);
+            assert_eq!(group.matches("data-dbt-sort=").count(), 2, "{group}");
+            assert!(!group.contains("data-dbt-day"), "{group}");
+        }
+        payload.interactive_controls = false;
+        let static_svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(!static_svg.contains("data-dbt-day"), "{static_svg}");
+    }
+
+    #[test]
+    fn pool_mode_a_month_or_mixed_column_sorts_as_text() {
+        let _locale = crate::time_locale::en_us_scope();
+        let mut payload = pool_payload("t1", 4, 20, true, false);
+        for row in payload.rows.iter_mut() {
+            row["note"] = json!("2025-09");
+            row["product"] = json!("2025-09-14");
+        }
+        payload.rows[1]["product"] = json!("2025-09-14 release notes");
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(header_tag(&svg, "Note").contains("data-dbt-sort-type=\"text\""), "{svg}");
+        assert!(header_tag(&svg, "Product").contains("data-dbt-sort-type=\"text\""), "{svg}");
+        assert!(!svg.contains("data-dbt-day"), "{svg}");
+        assert!(!svg.contains("data-dbt-time-locale"), "{svg}");
     }
 
     /// A pool whose revenue column prints `$` under `symbol_mode: anchors`.
@@ -3359,7 +3494,8 @@ pub(crate) mod tests {
             render(&pool_payload("t1", 7, 3, true, false), &test_fonts()).expect("renders")
         });
         let words = pool_words(&svg);
-        assert_eq!(words["sort_ascending"], "Aufsteigend sortieren", "{words}");
+        assert_eq!(words["sort_date_descending"], "Neueste zuerst", "{words}");
+        assert_eq!(words["select_all"], "Alle auswählen", "{words}");
         assert_eq!(words["clear_sort"], "Sortierung aufheben", "{words}");
         assert_eq!(words["search_values"], "Werte durchsuchen", "{words}");
         assert_eq!(words["page_range"], "{first}\u{2013}{last} / {total}", "{words}");
@@ -3443,8 +3579,11 @@ pub(crate) mod tests {
     #[test]
     fn a_slotted_pool_budgets_the_summary_gap() {
         let mut payload = uneven_wrapped_pool(520.0);
+        for row in &mut payload.rows {
+            row.insert("row_role".into(), json!("value"));
+        }
         payload.rows.push(row_of(json!({"product": "Total", "note": "t", "row_role": "total"})));
-        payload.resolved["style"]["table"]["row"]["role"] = json!("row_role");
+        payload.resolved["row_role"] = json!("row_role");
         let svg = render(&payload, &test_fonts()).expect("renders");
         assert!(svg.contains("data-dbt-table=\"t1\""), "{svg}");
         assert!(pager_baseline_y(&svg) <= 520.0, "{svg}");
@@ -3544,9 +3683,9 @@ pub(crate) mod tests {
         rows.push(json!({"product": "Total", "revenue": 15.0, "row_role": "total"}));
         let columns = json!({"product": {"label": "Product"}, "revenue": {"label": "Revenue"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         theme["pagination"]["page_rows"] = json!(3);
         let resolved = json!({
+            "row_role": "row_role",
             "link_open": "page",
             "id": "t2",
             "title": "Test Table",
@@ -3803,7 +3942,7 @@ pub(crate) mod tests {
             "revenue": {"format": "currency"},
         });
         let render_with = |rows: Vec<Value>| -> String {
-            let mut payload = on_a_board(make_payload(columns.clone(), rows, None, 3));
+            let mut payload = make_payload(columns.clone(), rows, None, 3);
             // Narrow enough that "Apex Technologies" wraps (same shape as
             // long_text_cell_wraps_and_grows_its_row); 6 rows > page_rows+2
             // keeps the grow-cap short-circuit off, so the slot paginates.
@@ -4435,26 +4574,6 @@ pub(crate) mod tests {
         );
     }
 
-    // T1: production writes every SVG coordinate as Python's own
-    // `str(float)`: a whole number keeps `.0`, float noise prints in
-    // exponent form, an exact tie rounds half-even. A `{:.1}` emission — table.rs's pre-fix behavior throughout — rounds
-    // every coordinate to 1dp; the reference-ablation in the research ledger
-    // measured that alone as most of three CLOSE table rows (0.525 /
-    // 0.199 / 0.482 pp of `precision_right` / `type_compact` / `conversion`).
-    #[test]
-    fn a_float_coordinate_prints_as_python_str() {
-        let cases = [
-            (61.0, "61.0"),
-            (177.56114144070807, "177.56114144070807"),
-            (236.79999999999998, "236.79999999999998"),
-            (0.1 + 0.2 - 0.3, "5.551115123125783e-17"),
-            (718102875569663.25, "718102875569663.2"),
-        ];
-        for (v, expected) in cases {
-            assert_eq!(PyNum::Float(v).text(), expected, "value {v:e}");
-        }
-    }
-
     // T3: title ascent ratio — title baseline =
     // `round(font_size * 0.8)`, fitted against Vega-Lite's own title
     // baseline at all three width-tiered sizes production can pick
@@ -4495,11 +4614,10 @@ pub(crate) mod tests {
     #[test]
     fn title_baseline_is_round_of_font_size_times_point_eight() {
         let svg = title_svg_at_font_size(14.0);
-        // round(14 * 0.8) = round(11.2) = 11 -> "11.0" (a genuine float,
-        // always carrying its decimal point per T1).
+        // round(14 * 0.8) = round(11.2) = 11.
         assert!(
-            svg.contains("y=\"11.0\""),
-            "title baseline must be round(font_size * 0.8) = 11.0, not the \
+            svg.contains("y=\"11\""),
+            "title baseline must be round(font_size * 0.8) = 11, not the \
              empirical 0.78 ratio's 10.9:\n{svg}"
         );
         assert!(!svg.contains("y=\"10.9\""), "must not fall back to the 0.78 empirical ratio:\n{svg}");
@@ -4509,9 +4627,9 @@ pub(crate) mod tests {
     #[test]
     fn title_baseline_is_round_of_font_size_times_point_eight_at_11px() {
         let svg = title_svg_at_font_size(11.0);
-        // round(11 * 0.8) = round(8.8) = 9 -> "9.0".
+        // round(11 * 0.8) = round(8.8) = 9.
         assert!(
-            svg.contains("y=\"9.0\""),
+            svg.contains("y=\"9\""),
             "title baseline must be round(font_size * 0.8) = 9.0, not the \
              empirical 0.78 ratio's 8.58 (\"8.6\"):\n{svg}"
         );
@@ -4724,8 +4842,8 @@ pub(crate) mod tests {
 
         let (_, right_x, _) = numeric_lane_positions(outer, 50.0, pad, with_minus, 0.0, 0.0, false);
         let (_, wrong_x, _) = numeric_lane_positions(outer, 50.0, pad, without_minus, 0.0, 0.0, false);
-        let right_s = float_repr(right_x);
-        let wrong_s = float_repr(wrong_x);
+        let right_s = print::geometry(right_x);
+        let wrong_s = print::geometry(wrong_x);
         assert!(
             svg.contains(&format!("x=\"{right_s}\" text-anchor=\"end\"")),
             "number lane must measure the unsigned text WITH the U+2212 minus \
@@ -4789,7 +4907,6 @@ pub(crate) mod tests {
             .collect();
         let columns = json!({"a": {"label": "A"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["pagination"]["page_rows"] = json!(20);
         let resolved = json!({
             "link_open": "page",
@@ -4839,7 +4956,6 @@ pub(crate) mod tests {
         let code_w = fonts.measure(label, "Source Code Pro", 11.0).expect("measures");
         assert!(code_w > inter_w + 2.0, "premise: the two fonts must measure apart");
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["font"]["family"] = json!("Source Code Pro");
         let aux_slot = 20.0 * PAGINATOR_AUX_SLOT_RATIO;
         let pager_w = 2.0 * aux_slot + 2.0 * 20.0;
@@ -5125,7 +5241,7 @@ pub(crate) mod tests {
         });
         let payload = make_payload_ext(columns, rows, None, 20, "anchors");
         let svg = render(&payload, &test_fonts()).expect("renders");
-        assert_eq!(svg.matches(">mn</tspan>").count(), 2, "{svg}");
+        assert_eq!(svg.matches(">m</tspan>").count(), 2, "{svg}");
     }
 
     #[test]
@@ -5194,7 +5310,6 @@ pub(crate) mod tests {
             "b": {"label": "B"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5245,7 +5360,6 @@ pub(crate) mod tests {
             "b": {"label": "B"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5292,7 +5406,6 @@ pub(crate) mod tests {
         let rows = vec![json!({"a": "x"})];
         let columns = json!({"a": {"label": "A", "width": "not-a-width"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5328,7 +5441,6 @@ pub(crate) mod tests {
         let rows = vec![json!({"a": "x"})];
         let columns = json!({"a": {"label": "A", "width": 500}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5367,7 +5479,6 @@ pub(crate) mod tests {
             "c": {"label": "C", "width": "50%"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5407,7 +5518,6 @@ pub(crate) mod tests {
             "b": {"label": "B"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5462,7 +5572,6 @@ pub(crate) mod tests {
             "b": {"label": "B"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5518,7 +5627,6 @@ pub(crate) mod tests {
         });
         let mut theme = base_table_theme();
         theme["header"]["font"]["size"] = json!(header_size);
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": "Test Table",
@@ -5547,7 +5655,6 @@ pub(crate) mod tests {
         // Same table at body-size headers fits and renders — the refusal
         // above is the header-size measurement, not the content.
         let mut theme11 = base_table_theme();
-        theme11["row"]["role"] = json!(null);
         let resolved11 = json!({
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -5587,8 +5694,8 @@ pub(crate) mod tests {
             "link": {"label": "Link"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
+            "row_role": null,
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -5622,7 +5729,6 @@ pub(crate) mod tests {
         let rows: Vec<Value> = (0..4).map(|i| json!({"a": format!("row{i}")})).collect();
         let columns = json!({"a": {"label": "A"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         theme["row"]["stripe"] = json!({"color": "#eeeeee"});
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
@@ -5750,10 +5856,10 @@ pub(crate) mod tests {
         ];
         let columns = json!({"a": {"label": "A"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
+            "row_role": "row_role",
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -5809,10 +5915,10 @@ pub(crate) mod tests {
         ];
         let columns = json!({"a": {"label": "A"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
+            "row_role": "row_role",
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -5861,7 +5967,6 @@ pub(crate) mod tests {
         ];
         let columns = json!({"a": {"label": "A", "width": 50}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         let resolved = json!({
             "link_open": "page",
@@ -5891,23 +5996,15 @@ pub(crate) mod tests {
 
         // Content edge: outer(12) + pad(8) .. outer + col_ws(50) - pad(8) = 20..54, width 34.
         let expected_w = 50.0 - 2.0 * 8.0;
-        let expected_w_s = float_repr(expected_w);
+        let expected_w_s = print::geometry(expected_w);
         assert!(
             svg.contains(&format!("width=\"{expected_w_s}\" height=\"1\" fill=\"#222222\"")),
             "row rule must span the pinned column's own content edge (34px), \
              not the 260px table slot:\n{svg}"
         );
         assert!(
-            !svg.contains("width=\"260.0\" height=\"1\" fill=\"#222222\""),
+            !svg.contains("width=\"260\" height=\"1\" fill=\"#222222\""),
             "row rule must not span the table's outer slot:\n{svg}"
-        );
-        // The header divider shares the same content span and color
-        // (`#222222`) — it formats its height as a genuine float (`"1.0"`),
-        // unlike the row divider's bare int (`"1"`), so it needs its own
-        // negative assertion.
-        assert!(
-            !svg.contains("width=\"260.0\" height=\"1.0\" fill=\"#222222\""),
-            "header rule must not span the table's outer slot either:\n{svg}"
         );
     }
 
@@ -5929,10 +6026,10 @@ pub(crate) mod tests {
         ];
         let columns = json!({"a": {"label": "A", "width": 50}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         theme["row"]["stripe"] = json!({"color": "#eeeeee"});
         theme["row"]["roles"]["summary"]["background"] = json!("#dddddd");
         let resolved = json!({
+            "row_role": "row_role",
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -5957,11 +6054,11 @@ pub(crate) mod tests {
         let svg = render(&payload, &fonts).expect("renders");
 
         assert!(
-            svg.contains("width=\"50.0\" height="),
+            svg.contains("width=\"50\" height="),
             "stripe/role-bg rects must span the pinned column's content edge (50px):\n{svg}"
         );
         assert!(
-            !svg.contains("width=\"300.0\" height="),
+            !svg.split("<rect ").any(|rect| rect.contains("width=\"300\" height=") && (rect.contains("#eeeeee") || rect.contains("#dddddd"))),
             "stripe/role-bg rects must not span the canvas's full width (300px):\n{svg}"
         );
         assert!(
@@ -5979,7 +6076,6 @@ pub(crate) mod tests {
         let rows: Vec<Value> = (0..3).map(|i| json!({"a": format!("row{i}")})).collect();
         let columns = json!({"a": {"label": "A"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["row"]["divider"] = table_divider(true, "#222222", 2.5);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let resolved = json!({
@@ -6020,7 +6116,6 @@ pub(crate) mod tests {
         let rows: Vec<Value> = (0..3).map(|i| json!({"a": format!("row{i}")})).collect();
         let columns = json!({"a": {"label": "A"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["row"]["divider"] = table_divider(true, "#cc0000", 1.0);
         theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
         let payload = plain_payload(theme, columns, rows, 300.0, 400.0);
@@ -6046,12 +6141,12 @@ pub(crate) mod tests {
             json!({"a": "4", "row_role": "total"}),
         ];
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         theme["header"]["divider"] = table_divider(true, "#111111", 1.0);
         theme["row"]["divider"] = table_divider(true, "#222222", 1.0);
         theme["row"]["roles"]["summary"]["divider"] = divider(true, "#333333", 1.0);
         theme["row"]["roles"]["total"]["divider"] = divider(true, "#444444", 1.0);
-        let payload = plain_payload(theme, json!({"a": {"label": "A"}}), rows, 300.0, 400.0);
+        let mut payload = plain_payload(theme, json!({"a": {"label": "A"}}), rows, 300.0, 400.0);
+        payload.resolved["row_role"] = json!("row_role");
         let svg = render(&payload, &test_fonts()).expect("renders");
         let count = |color: &str| {
             svg.matches(&format!("fill=\"{color}\" shape-rendering=\"crispEdges\"")).count()
@@ -6073,12 +6168,12 @@ pub(crate) mod tests {
         ];
         let lines = |summary_visible: bool, total_visible: bool| {
             let mut theme = base_table_theme();
-            theme["row"]["role"] = json!("row_role");
             theme["header"]["divider"] = table_divider(false, "#222222", 1.0);
             theme["row"]["roles"]["summary"]["divider"] = divider(summary_visible, "#333333", 1.0);
             theme["row"]["roles"]["total"]["divider"] = divider(total_visible, "#444444", 1.0);
-            let payload =
+            let mut payload =
                 plain_payload(theme, json!({"a": {"label": "A"}}), rows.clone(), 300.0, 400.0);
+            payload.resolved["row_role"] = json!("row_role");
             let svg = render(&payload, &test_fonts()).expect("renders");
             let count = |color: &str| svg.matches(&format!("fill=\"{color}\"")).count();
             (count("#333333"), count("#444444"))
@@ -6099,7 +6194,6 @@ pub(crate) mod tests {
             json!({"a": "3", "row_role": "summary"}),
         ];
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         let mut dashed = table_divider(true, "#0077cc", 2.0);
         dashed["dasharray"] = json!("6 3");
         theme["header"]["divider"] = dashed.clone();
@@ -6109,7 +6203,8 @@ pub(crate) mod tests {
             d.as_object_mut().unwrap().remove("continuous");
             d
         };
-        let payload = plain_payload(theme, json!({"a": {"label": "A"}}), rows, 300.0, 400.0);
+        let mut payload = plain_payload(theme, json!({"a": {"label": "A"}}), rows, 300.0, 400.0);
+        payload.resolved["row_role"] = json!("row_role");
         let svg = render(&payload, &test_fonts()).expect("renders");
         let lines: Vec<&str> = svg
             .match_indices("<line ")
@@ -6117,17 +6212,11 @@ pub(crate) mod tests {
             .filter(|l| l.contains("stroke=\"#0077cc\""))
             .collect();
         assert_eq!(lines.len(), 3, "header, one row line, one summary line:\n{svg}");
-        // Header thickness is `header_rule_width` (a float, `2.0`); the row and
-        // summary thicknesses are `int(...)` (`2`).
-        for (line, width) in lines.iter().zip(["2.0", "2", "2"]) {
+        for (line, width) in lines.iter().zip(["2", "2", "2"]) {
             let stroke = format!("stroke-width=\"{width}\" stroke-dasharray=\"6 3\"/>");
             assert!(line.contains(&stroke), "{line}");
-            assert!(line.contains("x1=\"20.0\"") && line.contains("x2=\"280.0\""), "{line}");
+            assert!(line.contains("x1=\"20\"") && line.contains("x2=\"280\""), "{line}");
         }
-        // Header: band top `int(81 - 2)`-style integer, midpoint a float.
-        let ys: Vec<&str> =
-            lines.iter().map(|l| l.split("y1=\"").nth(1).unwrap().split('"').next().unwrap()).collect();
-        assert!(ys.iter().all(|y| y.ends_with(".0")), "midpoints are floats: {ys:?}");
         assert!(!svg.contains("fill=\"#0077cc\""), "no solid rect for a dashed divider:\n{svg}");
     }
 
@@ -6137,7 +6226,6 @@ pub(crate) mod tests {
     fn a_hidden_table_divider_paints_nothing_whatever_its_width() {
         let rows: Vec<Value> = (0..3).map(|i| json!({"a": format!("row{i}")})).collect();
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["header"]["divider"] = table_divider(false, "#222222", 3.0);
         theme["row"]["divider"] = table_divider(false, "#222222", 3.0);
         let payload = plain_payload(theme, json!({"a": {"label": "A"}}), rows, 300.0, 400.0);
@@ -6193,7 +6281,6 @@ pub(crate) mod tests {
     /// and a numeric one at 132..232, so the cell geometry is known exactly.
     fn per_column_payload(label_a: &str, label_n: &str, dasharray: Option<&str>) -> Payload {
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["header"]["divider"]["continuous"] = json!(false);
         theme["header"]["divider"]["dasharray"] = json!(dasharray);
         let columns = json!({
@@ -6233,8 +6320,8 @@ pub(crate) mod tests {
         assert_eq!(rects.len(), 2, "one rule per column:\n{svg}");
         assert_eq!(rects[0], (20.0, 104.0), "text: cell_x 12 + pad 8, width 120 - 16");
         let (x, w) = rects[1];
-        assert!((w - lane_w).abs() < 1e-9, "numeric rule is the lane width {lane_w}, got {w}");
-        assert!((x + w / 2.0 - 182.0).abs() < 1e-9, "centered on the cell midpoint 182, got {x}");
+        assert!((w - lane_w).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "numeric rule is the lane width {lane_w}, got {w}");
+        assert!((x + w / 2.0 - 182.0).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "centered on the cell midpoint 182, got {x}");
     }
 
     /// A left-aligned numeric column has no lane to center its header rule on:
@@ -6257,8 +6344,8 @@ pub(crate) mod tests {
             .expect("renders");
         let label_w = fonts.measure("Revenue Total", "Inter", 11.0).unwrap();
         let (x, w) = divider_rects(&svg)[1];
-        assert!((w - label_w).abs() < 1e-9, "rule is the label width {label_w}, got {w}");
-        assert!((x + w / 2.0 - 182.0).abs() < 1e-9, "centered on the cell midpoint, got {x}");
+        assert!((w - label_w).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "rule is the label width {label_w}, got {w}");
+        assert!((x + w / 2.0 - 182.0).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "centered on the cell midpoint, got {x}");
     }
 
     /// A wrapped header's rule is sized by `max(lines, key=len)`
@@ -6274,7 +6361,7 @@ pub(crate) mod tests {
         let longest = fonts.measure("Illllllllll", "Inter", 11.0).unwrap();
         assert!(longest < fonts.measure("MMMMMMM", "Inter", 11.0).unwrap());
         let (_, w) = divider_rects(&svg)[1];
-        assert!((w - longest).abs() < 1e-9, "rule {w} vs longest line {longest}");
+        assert!((w - longest).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "rule {w} vs longest line {longest}");
     }
 
     /// `max(lines, key=len)` returns the FIRST of equally long lines
@@ -6289,7 +6376,7 @@ pub(crate) mod tests {
         let first = fonts.measure("MMMMMMM", "Inter", 11.0).unwrap();
         assert!(first > fonts.measure("IIIIIII", "Inter", 11.0).unwrap());
         let (_, w) = divider_rects(&svg)[1];
-        assert!((w - first).abs() < 1e-9, "rule {w} vs first line {first}");
+        assert!((w - first).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "rule {w} vs first line {first}");
     }
 
     /// The segment form is `_divider_segment`'s: a dashed per-column rule is a
@@ -6309,8 +6396,11 @@ pub(crate) mod tests {
         assert_eq!(lines.len(), solid.len(), "{svg}");
         for (line, (x, w)) in lines.iter().zip(&solid) {
             assert!(line.contains("stroke-dasharray=\"4 2\""), "{line}");
-            assert!(line.contains(&format!("x1=\"{}\"", float_repr(*x))), "{line}");
-            assert!(line.contains(&format!("x2=\"{}\"", float_repr(x + w))), "{line}");
+            let end = |name: &str| -> f64 {
+                line.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+            };
+            assert!((end("x1") - x).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "{line}");
+            assert!((end("x2") - (x + w)).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "{line}");
         }
     }
 
@@ -6334,7 +6424,7 @@ pub(crate) mod tests {
         let raw = fonts.measure("days to close", family, 11.0).unwrap();
         assert!((cased - raw).abs() > 0.01, "the probe needs cased and raw widths to differ");
         let (_, w) = divider_rects(&svg)[1];
-        assert!((w - cased).abs() < 1e-9, "rule width {w} vs cased {cased}:\n{svg}");
+        assert!((w - cased).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "rule width {w} vs cased {cased}:\n{svg}");
     }
 
     /// Production measures the row-number column's rule from its internal key,
@@ -6351,7 +6441,6 @@ pub(crate) mod tests {
 
     fn spanner_payload(header_height: f64, hidden: &[&str]) -> Payload {
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         theme["header"]["height"] = json!(header_height);
         let mut columns = json!({"a": {"label": "A"}, "b": {"label": "B"}, "c": {"label": "C"}});
         for h in hidden {
@@ -6379,12 +6468,12 @@ pub(crate) mod tests {
         assert!(label.contains("text-anchor=\"middle\""), "{label}");
         let y: f64 = label.split(" y=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
         // Title band 31 + half a 40px group row + the centered offset.
-        assert_eq!(y, 31.0 + 20.0 + 4.00146484375, "{svg}");
-        assert!(svg.contains("y=\"70.0\" width="), "rule on the row bottom edge:\n{svg}");
+        assert!((y - (31.0 + 20.0 + 4.00146484375)).abs() <= print::GEOMETRY_TOLERANCE + 1e-9, "{svg}");
+        assert!(svg.contains("y=\"70\" width="), "rule on the row bottom edge:\n{svg}");
     }
 
     fn spanner_rule_width(svg: &str) -> f64 {
-        let rule = svg.split("<rect ").find(|r| r.contains("y=\"70.0\"")).expect("span rule");
+        let rule = svg.split("<rect ").find(|r| r.contains("y=\"70\"")).expect("span rule");
         rule.split("width=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
     }
 
@@ -6412,7 +6501,7 @@ pub(crate) mod tests {
         let columns = json!({"c": {"swatch": true, "width": 24}, "n": {"label": "N", "width": 80}});
         let rows = vec![json!({"c": "#3164a3", "n": "x"}), json!({"c": "none", "n": "y"})];
         let svg = render(&plain_payload(theme, columns, rows, 104.0, 0.0), &test_fonts()).expect("renders");
-        assert!(svg.contains("<g transform=\"translate(4, 87.0)\"><rect width=\"14\" height=\"14\" rx=\"3\" fill=\"#3164a3\"/></g>"), "{svg}");
+        assert!(svg.contains("<g transform=\"translate(4,87)\"><rect x=\"0\" y=\"0\" width=\"14\" height=\"14\" rx=\"3\" fill=\"#3164a3\"/></g>"), "{svg}");
         assert!(svg.contains("fill=\"transparent\"/></g>"), "{svg}");
         assert!(!svg.contains("#3164a3<"), "the hex is paint, not text:\n{svg}");
     }
@@ -6468,14 +6557,14 @@ pub(crate) mod tests {
         let columns = json!({"name": {"label": "Name", "width": 60}, "value": {"label": "Value"}});
         let mut theme = base_table_theme();
         theme["wrap"] = json!(false);
-        let payload = on_a_board(plain_payload(theme.clone(), columns.clone(), rows.clone(), 300.0, 400.0));
+        let payload = plain_payload(theme.clone(), columns.clone(), rows.clone(), 300.0, 400.0);
         let svg = render(&payload, &test_fonts()).expect("renders");
         // The header rule starts at outer + the effective padding.
-        assert!(svg.contains("<rect x=\"18.0\""), "padding stepped down before the cut:\n{svg}");
+        assert!(svg.contains("<rect x=\"18\""), "padding stepped down before the cut:\n{svg}");
         assert!(svg.contains('\u{2026}'), "{svg}");
         theme["wrap"] = json!(true);
-        let wrapped = render(&on_a_board(plain_payload(theme, columns, rows, 300.0, 400.0)), &test_fonts()).unwrap();
-        assert!(wrapped.contains("<rect x=\"20.0\""), "a wrapping table's text cells never drive the cascade:\n{wrapped}");
+        let wrapped = render(&plain_payload(theme, columns, rows, 300.0, 400.0), &test_fonts()).unwrap();
+        assert!(wrapped.contains("<rect x=\"20\""), "a wrapping table's text cells never drive the cascade:\n{wrapped}");
     }
 
     /// A title-less table needs no subtitle family.
@@ -6559,7 +6648,7 @@ pub(crate) mod tests {
         // The header divider legitimately paints its own color (`#cc0000`),
         // so the negative check must target the group span
         // rects specifically, not every `shape-rendering="crispEdges"` rect.
-        let span_rects = svg.matches("height=\"1.0\" fill=\"#0055aa\" shape-rendering=\"crispEdges\"").count();
+        let span_rects = svg.matches("height=\"1\" fill=\"#0055aa\" shape-rendering=\"crispEdges\"").count();
         assert_eq!(
             span_rects, 2,
             "both group span rules (Electronics, Tools) paint the 1px header font color whatever the divider (visible={visible}, width={width}):\n{svg}"
@@ -6582,13 +6671,13 @@ pub(crate) mod tests {
             "revenue": {"format": "currency_whole"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!("row_role");
         theme["row"]["roles"] = json!({
             "summary": {"divider": divider(true, "#222222", 1.0)},
             "total": {"divider": divider(true, "#222222", 1.0),
                       "background": "#f0f0f0", "font": {"weight": "700"}},
         });
         let resolved = json!({
+            "row_role": "row_role",
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -6723,7 +6812,7 @@ pub(crate) mod tests {
             "background": "#ffffff",
             "fonts_dir": null,
             "padding": null,
-            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0},"board_width": 600.0, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
+            "board_style": { "text_mark_font": {"family": "sans-serif", "size": 11.0}, "format_locale": crate::number_locale::en_us_wire(), "time_locale": crate::time_locale::en_us_wire()},
         });
         let payload: Payload = crate::test_payload(payload_json);
         let fonts = test_fonts();
@@ -6745,8 +6834,9 @@ pub(crate) mod tests {
 
         // The numeric lane's own text y, in the same (only) row.
         let number_y: f64 = svg
-            .split("<text y=\"")
-            .nth(1)
+            .find("data-col=\"1\"")
+            .map(|at| &svg[svg[..at].rfind("<text").expect("the cell is a text")..])
+            .and_then(|s| s.split(" y=\"").nth(1))
             .and_then(|s| s.split('"').next())
             .and_then(|s| s.parse().ok())
             .expect("numeric cell y parses");
@@ -6955,6 +7045,7 @@ pub(crate) mod tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let row_roles = [
@@ -7044,7 +7135,7 @@ pub(crate) mod tests {
         let got = print(&render_spark_bar(650.0, 812.0, 200.0, 16.0, "#222222", false, "#e5e7eb", 0.0, false));
         assert_eq!(
             got,
-            "<rect x=\"0\" y=\"0\" width=\"160.1\" height=\"16\" fill=\"#222222\" rx=\"0.0\"/>"
+            "<rect x=\"0\" y=\"0\" width=\"160.1\" height=\"16\" fill=\"#222222\"/>"
         );
     }
 
@@ -7056,8 +7147,8 @@ pub(crate) mod tests {
         let got = print(&render_spark_bar(61.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false));
         assert_eq!(
             got,
-            "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\" rx=\"0.0\"/>\
-             <rect x=\"0\" y=\"0\" width=\"130.5\" height=\"16\" fill=\"#23467f\" rx=\"0.0\"/>"
+            "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\"/>\
+             <rect x=\"0\" y=\"0\" width=\"130.5\" height=\"16\" fill=\"#23467f\"/>"
         );
     }
 
@@ -7068,7 +7159,7 @@ pub(crate) mod tests {
         let got = print(&render_spark_bar(0.0, 100.0, 214.0, 16.0, "#23467f", true, "#e5e7eb", 0.0, false));
         assert_eq!(
             got,
-            "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\" rx=\"0.0\"/>"
+            "<rect x=\"0\" y=\"0\" width=\"214\" height=\"16\" fill=\"#e5e7eb\"/>"
         );
     }
 
@@ -7082,14 +7173,14 @@ pub(crate) mod tests {
         let got = print(&render_spark_columns(&values, 228.8, 16.0, "#6366f1", None, &theme.columns));
         assert_eq!(
             got,
-            "<rect x=\"0.0\" y=\"9.1\" width=\"27.7\" height=\"4.9\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"28.7\" y=\"8.9\" width=\"27.7\" height=\"5.1\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"57.5\" y=\"12.2\" width=\"27.7\" height=\"1.8\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"86.2\" y=\"13.0\" width=\"27.7\" height=\"1.0\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"114.9\" y=\"12.6\" width=\"27.7\" height=\"1.4\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"143.6\" y=\"12.9\" width=\"27.7\" height=\"1.1\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"172.4\" y=\"2.0\" width=\"27.7\" height=\"12.0\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"201.1\" y=\"13.0\" width=\"27.7\" height=\"1.0\" fill=\"#6366f1\" rx=\"1.0\"/>"
+            "<rect x=\"0\" y=\"9.1\" width=\"27.7\" height=\"4.9\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"28.7\" y=\"8.9\" width=\"27.7\" height=\"5.1\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"57.5\" y=\"12.2\" width=\"27.7\" height=\"1.8\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"86.2\" y=\"13\" width=\"27.7\" height=\"1\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"114.9\" y=\"12.6\" width=\"27.7\" height=\"1.4\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"143.6\" y=\"12.9\" width=\"27.7\" height=\"1.1\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"172.4\" y=\"2\" width=\"27.7\" height=\"12\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"201.1\" y=\"13\" width=\"27.7\" height=\"1\" rx=\"1\" fill=\"#6366f1\"/>"
         );
     }
 
@@ -7104,10 +7195,10 @@ pub(crate) mod tests {
         let got = print(&render_spark_columns(&values, 100.0, 24.0, "#6366f1", None, &theme.columns));
         assert_eq!(
             got,
-            "<rect x=\"0.0\" y=\"12.0\" width=\"24.2\" height=\"10.0\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"25.2\" y=\"12.0\" width=\"24.2\" height=\"7.5\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"50.5\" y=\"7.0\" width=\"24.2\" height=\"5.0\" fill=\"#6366f1\" rx=\"1.0\"/>\
-             <rect x=\"75.8\" y=\"9.5\" width=\"24.2\" height=\"2.5\" fill=\"#6366f1\" rx=\"1.0\"/>"
+            "<rect x=\"0\" y=\"12\" width=\"24.2\" height=\"10\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"25.2\" y=\"12\" width=\"24.2\" height=\"7.5\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"50.5\" y=\"7\" width=\"24.2\" height=\"5\" rx=\"1\" fill=\"#6366f1\"/>\
+             <rect x=\"75.8\" y=\"9.5\" width=\"24.2\" height=\"2.5\" rx=\"1\" fill=\"#6366f1\"/>"
         );
     }
 
@@ -7228,8 +7319,7 @@ pub(crate) mod tests {
     #[test]
     fn spark_cell_translate_uses_an_integer_x_and_a_bare_float_y() {
         // Paint site: `spark_x = px(cell_x + 4)` (an int),
-        // `spark_y = row_y + (per_row_height - spark_height) / 2` (a
-        // genuine float, T1-law bare interpolation).
+        // `spark_y = row_y + (per_row_height - spark_height) / 2`.
         let rows = vec![json!({"c": "Alpha", "v": 42})];
         let columns =
             json!({"c": {"label": "C"}, "v": {"label": "V", "spark": {"type": "bar", "max": 100.0}}});
@@ -7238,8 +7328,8 @@ pub(crate) mod tests {
         let marker = "<g transform=\"translate(";
         let g_start = svg.find(marker).expect("spark g emitted");
         assert_eq!(
-            &svg[g_start..g_start + marker.len() + "362, 82.0)".len()],
-            "<g transform=\"translate(362, 82.0)",
+            &svg[g_start..g_start + marker.len() + "362,82)".len()],
+            "<g transform=\"translate(362,82)",
             "exact geometry, not just the int-x/float-y format — a cell_x + 8 \
              or row_h-centering mutant must fail this:\n{svg}"
         );
@@ -7402,7 +7492,7 @@ pub(crate) mod tests {
     fn spark_column_is_a_narrow_bottom_anchored_bar() {
         let payload = spark_payload(json!({"type": "column"}), json!(50));
         let svg = render(&payload, &test_fonts()).unwrap();
-        assert!(svg.contains("width=\"16\" height=\"12.0\""), "{svg}");
+        assert!(svg.contains("width=\"16\" height=\"12\""), "{svg}");
     }
 
     /// A column holding a negative detail value draws every bar from its
@@ -7714,6 +7804,22 @@ mod conditional_formatting_tests {
         let stops: Vec<String> = ["#000000", "#ffffff"].iter().map(|s| s.to_string()).collect();
         let err = interpolate_scale_color(0.5, 0.0, 1.0, &stops, Some(0.5), "asymmetric").unwrap_err();
         assert!(err.contains("odd number"), "{err}");
+    }
+
+    /// Production's `int(h[0:2], 16)` raises on a stop that is not `#rgb`/`#rrggbb`; the Rust names it.
+    #[test]
+    fn a_palette_stop_that_is_not_hex_is_an_error_naming_it() {
+        let stops: Vec<String> = ["#000000", "red"].iter().map(|s| s.to_string()).collect();
+        let err = interpolate_scale_color(0.5, 0.0, 1.0, &stops, None, "asymmetric").unwrap_err();
+        assert_eq!(err, "table: scale palette stop \"red\" is not a #rgb or #rrggbb color");
+    }
+
+    /// One stop has no segment to mix across a varying domain.
+    #[test]
+    fn a_single_stop_palette_has_no_segment_to_interpolate() {
+        let stops = vec!["#808080".to_string()];
+        let err = interpolate_scale_color(0.5, 0.0, 1.0, &stops, None, "asymmetric").unwrap_err();
+        assert_eq!(err, "table: scale palette piecewise: 1 values make no segment, need two or more");
     }
 
     // ── resolve_hinge, resolve_palette_stops, compute_scale_domain ─────
@@ -8101,8 +8207,8 @@ mod conditional_formatting_tests {
             }
         }}});
         let mut theme = cf_theme();
-        theme["row"]["role"] = json!("role");
         let resolved = json!({
+            "row_role": "role",
             "link_open": "page",
             "title": "CF Table",
             "title_style": resolved_title_style(),
@@ -8150,8 +8256,8 @@ mod conditional_formatting_tests {
             }
         }}});
         let mut theme = cf_theme();
-        theme["row"]["role"] = json!("role");
         let resolved = json!({
+            "row_role": "role",
             "link_open": "page",
             "title": "T",
             "title_style": resolved_title_style(),
@@ -8193,13 +8299,13 @@ mod conditional_formatting_tests {
         // (x="12") and from the glyph's own nested, x-less inline tspan.
         let payload_plain = cf_payload(columns.clone(), rows.clone(), Value::Null);
         let svg_plain = render(&payload_plain, &test_fonts()).unwrap();
-        let plain_lines = svg_plain.matches("<tspan x=\"20.0\" y=\"").count();
+        let plain_lines = svg_plain.matches("<tspan x=\"20\" y=\"").count();
         assert_eq!(plain_lines, 0, "the label must fit on one line with no glyph:\n{svg_plain}");
 
         let cf = json!({"label": {"when": [{"is_null": false, "glyph": "\u{25cf}\u{25cf}\u{25cf}\u{25cf}\u{25cf}"}]}});
         let payload_glyph = cf_payload(columns, rows, cf);
         let svg_glyph = render(&payload_glyph, &test_fonts()).unwrap();
-        let glyph_lines = svg_glyph.matches("<tspan x=\"20.0\" y=\"").count();
+        let glyph_lines = svg_glyph.matches("<tspan x=\"20\" y=\"").count();
         assert_eq!(
             glyph_lines, 2,
             "the glyph run must narrow the wrap content width enough to force a second line:\n{svg_glyph}"
@@ -8307,7 +8413,7 @@ mod conditional_formatting_tests {
         ];
         let columns = json!({"v": {"label": "V", "scale": {"color": scale_target(None)}}});
         let mut payload = cf_payload(columns, rows, Value::Null);
-        payload.resolved["style"]["table"]["row"]["role"] = json!("kind");
+        payload.resolved["row_role"] = json!("kind");
         let svg = render(&payload, &test_fonts()).unwrap();
         let fills: Vec<String> = svg
             .match_indices(">100<")
@@ -8451,6 +8557,7 @@ mod conditional_formatting_tests {
             cfg: ColConfig::default(),
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let glyph_col = ColMeta {
@@ -8459,6 +8566,7 @@ mod conditional_formatting_tests {
             cfg: ColConfig { glyph: Some("MMMMMMMMMM".to_string()), ..Default::default() },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let plain = column_demand(&cells, &rows, &plain_col, &fonts, &MeasureFonts { body: "Inter", header: "Inter", numeral: "Inter" }, 11.0, 8.0).unwrap();
@@ -8698,15 +8806,14 @@ mod all_pinned_overflow_growth_tests {
     }
 
     #[test]
-    fn tables_sharing_an_id_get_distinct_clips_for_distinct_slots() {
+    fn a_tables_clip_id_derives_from_its_chart_id_not_its_size() {
         let fonts = test_fonts();
         let narrow = render(&pinned_payload(300.0, 900.0), &fonts).unwrap();
         let wide = render(&pinned_payload(400.0, 900.0), &fonts).unwrap();
-        let clip_id = |svg: &str| {
-            let start = svg.find("<clipPath id=\"").unwrap() + 14;
-            svg[start..start + svg[start..].find('"').unwrap()].to_string()
-        };
-        assert_ne!(clip_id(&narrow), clip_id(&wide));
+        for svg in [&narrow, &wide] {
+            assert!(svg.contains("<clipPath id=\"table-clip-same_id\">"), "{svg}");
+            assert!(svg.contains("clip-path=\"url(#table-clip-same_id)\""), "{svg}");
+        }
         assert!(narrow.contains("<rect x=\"0\" y=\"0\" width=\"300\" height="), "{narrow}");
     }
 
@@ -8917,7 +9024,6 @@ mod floor_source_tests {
         let name_col = json!({"name": {"label": "Name", "link_open": "page", "header_link_open": "page"}});
         let revenue_col = json!({"revenue": {"label": "Rev", "format": "currency", "link_open": "page", "header_link_open": "page"}});
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         // The columns' natural widths alone, through the measure the board hug
         // reads (`width::measure_natural_width`).
         let natural_of = |columns: Value| -> f64 {
@@ -8992,7 +9098,7 @@ mod floor_source_tests {
 #[cfg(test)]
 mod cascade_and_lane_tests {
     use super::tests::{resolved_title_font, resolved_title_style};
-    use super::tests::{base_table_theme, on_a_board};
+    use super::tests::base_table_theme;
     use super::*;
     use crate::common::TAB_FONT;
     use serde_json::json;
@@ -9005,7 +9111,6 @@ mod cascade_and_lane_tests {
 
     fn payload_for(columns: Value, rows: Vec<Value>, width: f64) -> Payload {
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": null,
@@ -9053,7 +9158,7 @@ mod cascade_and_lane_tests {
         });
         // Narrow enough that the all-compact over-subscription scale puts
         // the value column below its own content demand -> overflow.
-        let payload = on_a_board(payload_for(columns, rows, 110.0));
+        let payload = payload_for(columns, rows, 110.0);
         let svg = render(&payload, &fonts).unwrap();
         let apex_x = first_x_before(&svg, ">Apex</text>");
         assert!(
@@ -9082,7 +9187,7 @@ mod cascade_and_lane_tests {
             "name": {"label": "Name"},
             "value": {"label": "V", "width": pin},
         });
-        let locale = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "mn", "bn", "trn"]);
+        let locale = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
         let svg = crate::number_locale::with_number_locale(&locale, || {
             render(&payload_for(columns, rows, 500.0), &fonts).unwrap()
         });
@@ -9107,7 +9212,7 @@ mod cascade_and_lane_tests {
             "name": {"label": "Name"},
             "value": {"label": "V", "width": pin},
         });
-        let locale = crate::number_locale::en_us_with_words(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"], ["k", "mn", "bn", "trn"]);
+        let locale = crate::number_locale::en_us_with_words(["\u{a0}k", "\u{a0}M", "\u{a0}Mrd", "\u{a0}Bio"], ["k", "m", "bn", "trn"]);
         let svg = crate::number_locale::with_number_locale(&locale, || {
             render(&payload_for(columns, rows, 500.0), &fonts).unwrap()
         });
@@ -9288,7 +9393,6 @@ mod date_like_tests {
             "q": {"label": "Qtr", "align": "right"},
         });
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": null,
@@ -9359,6 +9463,7 @@ mod demand_affix_tests {
             cfg: ColConfig::default(),
             is_numeric: false,
             is_date: true,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows = vec![
@@ -9391,6 +9496,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"days_since_close": 45.0})]
@@ -9420,6 +9526,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amt": 45.0})]
@@ -9450,6 +9557,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amt": 45.0})]
@@ -9481,6 +9589,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let maps: Vec<serde_json::Map<String, Value>> =
@@ -9565,6 +9674,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let maps: Vec<serde_json::Map<String, Value>> = vec![json!({"amount": 24_730_000.0})]
@@ -9603,7 +9713,6 @@ mod demand_affix_tests {
             json!({"name": "China", "rate": 1500.0}),
         ];
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         let resolved = json!({
             "link_open": "page",
             "title": null,
@@ -9679,6 +9788,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let maps = vec![json!({"amt": 0.67}).as_object().unwrap().clone()];
@@ -9693,6 +9803,7 @@ mod demand_affix_tests {
             cfg: crate::families::table::tests::col_config(config).expect("a column config"),
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         }
     }
@@ -9701,7 +9812,7 @@ mod demand_affix_tests {
     /// default_number=True, shared_scale=ResolvedColumnSharedScale(exponent=6,
     /// mode=REPEAT, digit_spec=",.2~f"), keep_affix_gaps=True)` is `('', '1.23',
     /// 'M')` for `compact` and `('$', '1.23', 'M')` for `currency_compact`, but
-    /// `('', '1.23', 'mn')` for `number`: the analytic notation the two-figure
+    /// `('', '1.23', 'm')` for `number`: the analytic notation the two-figure
     /// names bake in wins over the repeat mode's narrative register
     /// (`format_value.py:319-323`).
     #[test]
@@ -9719,7 +9830,7 @@ mod demand_affix_tests {
         assert_eq!(suffix(compact), (None, "1.23".into(), Some("M".into())));
         let currency_compact = json!({"spec": "$.2~s", "raw": "currency_compact", "notation": "analytic"});
         assert_eq!(suffix(currency_compact), (Some("$".into()), "1.23".into(), Some("M".into())));
-        assert_eq!(suffix(json!({"spec": ".3~s", "raw": "number"})), (None, "1.23".into(), Some("mn".into())));
+        assert_eq!(suffix(json!({"spec": ".3~s", "raw": "number"})), (None, "1.23".into(), Some("m".into())));
     }
 
     /// Oracle: `format_kpi_parts(v, resolve_format_parts("compact"),
@@ -9762,6 +9873,7 @@ mod demand_affix_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let cols = [col("balance", None), col("budget", Some("every"))];
@@ -9817,8 +9929,8 @@ mod link_paint_tests {
     ) -> Payload {
         let mut theme = super::tests::base_table_theme();
         theme["font"]["color"] = json!("#123456");
-        theme["row"]["role"] = json!(row_role);
         let resolved = json!({
+            "row_role": row_role,
             "link_open": "page",
             "title": "Test Table",
             "title_style": resolved_title_style(),
@@ -9863,7 +9975,7 @@ mod link_paint_tests {
         );
         // Cell-scoped: the title paints 500 too, so a whole-SVG
         // `contains` would pass with the link default deleted.
-        let link_idx = svg.find("<text class=\"dbt-table-link-text\"").expect("link text tag");
+        let link_idx = svg[..svg.find("class=\"dbt-table-link-text\"").expect("link text tag")].rfind("<text").unwrap();
         let link_tag = &svg[link_idx..link_idx + svg[link_idx..].find('>').unwrap()];
         assert!(
             link_tag.contains("fill=\"#123456\"") && link_tag.contains("font-weight=\"500\""),
@@ -10317,7 +10429,7 @@ mod row_link_tests {
         let mut payload = row_link_payload(Some("/d/?id={{ id }}"), rows);
         payload.resolved["columns"]["status"]["link"] = json!("/s/{{ status }}");
         let svg = render(&payload, &test_fonts()).unwrap();
-        assert!(svg.contains("<text class=\"dbt-table-link-text\""), "{svg}");
+        assert!(svg.contains("class=\"dbt-table-link-text\""), "{svg}");
         assert_eq!(svg.matches("class=\"dbt-table-cell-inert\"").count(), 1, "only the id cell: {svg}");
     }
 }
@@ -10404,7 +10516,7 @@ mod background_and_font_family_tests {
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(
             svg.contains("><rect x=\"0\" y=\"0\" width=\"200\" height=\"")
-                && svg.contains("fill=\"#112233\" rx=\"4\"/>"),
+                && svg.contains("rx=\"4\" fill=\"#112233\"/>"),
             "authored background rect missing:\n{svg}"
         );
     }
@@ -10422,7 +10534,7 @@ mod background_and_font_family_tests {
         let svg = render(&payload, &test_fonts()).unwrap();
         assert!(
             svg.contains("<rect x=\"-16\" y=\"-16\" width=\"232\" height=\"")
-                && svg.contains("fill=\"#112233\" rx=\"4\"/>"),
+                && svg.contains("rx=\"4\" fill=\"#112233\"/>"),
             "card-padding-reaching background rect missing:\n{svg}"
         );
     }
@@ -10569,7 +10681,7 @@ mod background_and_font_family_tests {
         let mut payload = payload_with(json!({}));
         payload.resolved["style"]["table"]["row_numbers"] =
             json!({"visible": true, "header": "#", "align": "right", "font": {"color": "#626366"}});
-        payload.resolved["style"]["table"]["row"]["role"] = json!("kind");
+        payload.resolved["row_role"] = json!("kind");
         payload.resolved["style"]["table"]["pagination"]["enabled"] = json!(false);
         payload.rows = vec![
             json!({"a": "x", "kind": "value"}),
@@ -10648,6 +10760,24 @@ mod background_and_font_family_tests {
         payload.rows.push(payload.rows[0].clone());
         let err = render(&payload, &test_fonts()).unwrap_err();
         assert_eq!(err.code, "ERR-TABLE-TRANSPOSE-ROW-COUNT");
+    }
+
+    /// `row_role` is checked against the query's own row, before the transpose
+    /// reshapes it into metric/value rows that carry no role column.
+    #[test]
+    fn a_transposed_table_checks_row_role_against_the_query_row() {
+        let mut payload = payload_with(json!({}));
+        payload.height = 400.0;
+        payload.resolved["style"]["table"]["transpose"] = json!(true);
+        payload.resolved["row_role"] = json!("kind");
+        payload.resolved["columns"] = json!({"col_a": {"label": "Alpha", "link_open": "page", "header_link_open": "page"}});
+        payload.rows = vec![json!({"col_a": 10, "kind": "total"}).as_object().unwrap().clone()];
+        let svg = render(&payload, &test_fonts()).unwrap();
+        assert!(svg.contains(">Alpha</text>"), "{svg}");
+        payload.resolved["row_role"] = json!("nope");
+        let err = render(&payload, &test_fonts()).unwrap_err();
+        assert_eq!(err.code, "ERR-TABLE-ROW-ROLE-NOT-FOUND");
+        assert!(format!("{:?}", err.params).contains("kind"), "{:?}", err.params);
     }
 
     /// A sentinel string among magnitudes stays text beside a numeric lane that
@@ -10808,6 +10938,7 @@ mod header_font_tests {
             cfg: ColConfig::default(),
             is_numeric: false,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows = vec![json!({"quarterly": "Al"}).as_object().unwrap().clone()];
@@ -10850,6 +10981,7 @@ mod padded_column_tests {
             },
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         }
     }
@@ -11075,7 +11207,7 @@ mod pivot_shape_tests {
                 json!({"r": "x", "m": "2024-01-01", "v": 3}),
             ],
         );
-        assert_eq!(got, ["2024-01-01", "2024-03-01", "None"]);
+        assert_eq!(got, ["2024-01-01", "2024-03-01", "\u{2014}"]);
     }
 
     /// A sorted outer dimension orders its groups; the unsorted inner one keeps
@@ -11238,7 +11370,7 @@ mod board_format_tests {
         let alias = json!({"spec": ".3~s", "notation": "narrative"});
         let style = json!({"formats": {"number": alias}});
         let svg = render(&board_payload(rows, json!({"v": {}}), style), &fonts()).unwrap();
-        assert!(svg.contains(">mn</tspan>"), "{svg}");
+        assert!(svg.contains(">m</tspan>"), "{svg}");
     }
 
     /// A sub-one value prints the board's own plain-digit sibling, not a
@@ -11270,6 +11402,7 @@ mod board_format_tests {
                 },
                 is_numeric: true,
                 is_date: false,
+                is_day: false,
                 when_rules: Vec::new(),
             };
             let rows = vec![json!({"v": 1.5}).as_object().unwrap().clone()];
@@ -11291,7 +11424,7 @@ mod magnitude_suffix_tests {
     // analytic words are glued, `text/magnitude_words.py:40`); the lane is 'K'.
     #[test]
     fn en_us_analytic_word_is_printed_glued() {
-        let en = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "mn", "bn", "trn"]);
+        let en = crate::number_locale::en_us_with_words(["K", "M", "B", "T"], ["k", "m", "bn", "trn"]);
         crate::number_locale::with_number_locale(&en, || {
             let lanes = crate::common::format_numeric_auto(2540.0).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("2.54", "K", "K"));
@@ -11299,13 +11432,13 @@ mod magnitude_suffix_tests {
     }
 
     // Oracle: `magnitude_suffixes()` under en-US is d3's letters and
-    // `K M B T`, `k mn bn trn`, bare; `m` (milli) and `%` are not in it.
+    // `K M B T`, `k m bn trn`, bare; `%` is not in it.
     #[test]
     fn en_us_words_gate_the_gap() {
-        for word in ["k", "M", "K", "B", "T", "mn", "bn", "trn", "P", " K"] {
+        for word in ["k", "M", "K", "B", "T", "m", "bn", "trn", "P", " K"] {
             assert!(is_magnitude_suffix(word), "{word:?}");
         }
-        for word in ["m", "%", "Mrd", "百万", ""] {
+        for word in ["mn", "%", "Mrd", "百万", ""] {
             assert!(!is_magnitude_suffix(word), "{word:?}");
         }
     }
@@ -11328,7 +11461,7 @@ mod magnitude_suffix_tests {
             assert!(is_magnitude_suffix("百万"));
             let lanes = crate::common::format_numeric_auto(2.5e6).unwrap();
             assert_eq!((lanes.number.as_str(), lanes.suffix.as_str(), lanes.measured_suffix.as_str()), ("2.5", "百万", "百万"));
-            assert!(!is_magnitude_suffix("mn"));
+            assert!(!is_magnitude_suffix("m"));
         });
     }
 }
@@ -11358,6 +11491,7 @@ mod shared_scale_register_tests {
             cfg,
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
@@ -11379,7 +11513,7 @@ mod shared_scale_register_tests {
     #[test]
     fn a_repeat_scale_paints_its_word_on_every_nonzero_row_under_anchors() {
         let got = suffixes_of("repeat", 6, "anchors", &[24.7e6, 8.4e6, 3.1e6]).unwrap();
-        assert_eq!(got, vec![Some("mn".to_string()); 3]);
+        assert_eq!(got, vec![Some("m".to_string()); 3]);
     }
 
     #[test]
@@ -11402,7 +11536,7 @@ mod shared_scale_register_tests {
     #[test]
     fn a_repeat_scale_speaks_the_narrative_register() {
         assert_eq!(suffix_of("repeat", 3, 12_340.0).unwrap().as_deref(), Some("k"));
-        assert_eq!(suffix_of("repeat", 6, 24_730_000.0).unwrap().as_deref(), Some("mn"));
+        assert_eq!(suffix_of("repeat", 6, 24_730_000.0).unwrap().as_deref(), Some("m"));
         assert_eq!(suffix_of("repeat", 9, 3.2e9).unwrap().as_deref(), Some("bn"));
         assert_eq!(suffix_of("repeat", 12, 2.5e12).unwrap().as_deref(), Some("trn"));
     }
@@ -11445,6 +11579,7 @@ mod shared_scale_register_tests {
             cfg,
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
@@ -11514,6 +11649,7 @@ mod shared_scale_register_tests {
                     cfg,
                     is_numeric: true,
                     is_date: false,
+                    is_day: false,
                     when_rules: Vec::new(),
                 };
                 let rows = vec![json!({"amount": value}).as_object().unwrap().clone()];
@@ -11568,6 +11704,7 @@ mod shared_scale_register_tests {
             cfg,
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows = vec![json!({"amount": 24_730_000.0}).as_object().unwrap().clone()];
@@ -11600,6 +11737,7 @@ mod shared_scale_register_tests {
             cfg,
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows: Vec<serde_json::Map<String, Value>> = values
@@ -11644,7 +11782,7 @@ mod shared_scale_register_tests {
     // leads the authored suffix and its gap survives. Non-anchor, the word is
     // gone and the authored text stays in the lane ('$', '8.4', ' gross'), which
     // `table.py:2657-2663` then blanks under `anchors`; a `repeat` scale keeps
-    // its word on every row ('$', '8.4', 'mn gross'), and that suffix survives
+    // its word on every row ('$', '8.4', 'm gross'), and that suffix survives
     // the same strip because it still opens with a magnitude word.
     #[test]
     fn a_shared_scale_column_paints_an_authored_suffix_behind_the_magnitude_word() {
@@ -11658,9 +11796,9 @@ mod shared_scale_register_tests {
         assert_eq!(measured(&cells[1]), (Some("$"), Some("M gross")));
 
         let cells = authored_affix_cells(json!({"suffix": " gross"}), "repeat", "anchors", &[24_730_000.0, 8_400_000.0]);
-        assert_eq!(painted(&cells[0]), (Some("$"), "24.73", Some("mn gross")));
-        assert_eq!(painted(&cells[1]), (None, "8.4", Some("mn gross")));
-        assert_eq!(measured(&cells[1]), (Some("$"), Some("mn gross")));
+        assert_eq!(painted(&cells[0]), (Some("$"), "24.73", Some("m gross")));
+        assert_eq!(painted(&cells[1]), (None, "8.4", Some("m gross")));
+        assert_eq!(measured(&cells[1]), (Some("$"), Some("m gross")));
     }
 
     // Oracle: `format_value(4820000.0, "currency")` under de-DE, what a
@@ -11674,6 +11812,7 @@ mod shared_scale_register_tests {
             cfg,
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows = vec![json!({"amount": 4_820_000.0}).as_object().unwrap().clone()];
@@ -11746,6 +11885,7 @@ mod notation_and_shared_scale_lane_tests {
             cfg,
             is_numeric: true,
             is_date: false,
+            is_day: false,
             when_rules: Vec::new(),
         };
         let rows = vec![json!({"v": value}).as_object().unwrap().clone()];
@@ -11782,7 +11922,7 @@ mod notation_and_shared_scale_lane_tests {
     fn an_authored_notation_picks_the_register_of_an_inline_si_spec_in_en_us() {
         assert_eq!(lanes(si("analytic"), 1_234_567.0), lane("", "1.23", "M", "1.23M"));
         assert_eq!(lanes(si("analytic"), 1500.0), lane("", "1.5", "K", "1.5K"));
-        assert_eq!(lanes(si("narrative"), 1_234_567.0), lane("", "1.23", "mn", "1.23mn"));
+        assert_eq!(lanes(si("narrative"), 1_234_567.0), lane("", "1.23", "m", "1.23m"));
         assert_eq!(lanes(si("narrative"), 1500.0), lane("", "1.5", "k", "1.5k"));
     }
 
@@ -11799,7 +11939,7 @@ mod notation_and_shared_scale_lane_tests {
         let house = json!({"format": "number"});
         let narrative = json!({"format": {"spec": "number", "notation": "narrative"}});
         assert_eq!(lanes(house.clone(), 1_234_567.0), lane("", "1.23", "M", "1.23M"));
-        assert_eq!(lanes(narrative.clone(), 1_234_567.0), lane("", "1.23", "mn", "1.23mn"));
+        assert_eq!(lanes(narrative.clone(), 1_234_567.0), lane("", "1.23", "m", "1.23m"));
         assert_eq!(de(house, 1500.0, "all"), lane("", "1,5", "k", "1,5\u{a0}k"));
         assert_eq!(de(narrative, 1500.0, "all"), lane("", "1,5", "Tsd.", "1,5\u{a0}Tsd."));
     }
@@ -11807,7 +11947,7 @@ mod notation_and_shared_scale_lane_tests {
     #[test]
     fn a_currency_notation_keeps_the_locales_currency_after_the_word() {
         let currency = json!({"format": {"spec": "currency", "notation": "narrative"}});
-        assert_eq!(lanes(currency.clone(), 1_234_567.0), lane("$", "1.23", "mn", "$1.23mn"));
+        assert_eq!(lanes(currency.clone(), 1_234_567.0), lane("$", "1.23", "m", "$1.23m"));
         assert_eq!(
             de(currency, 1_234_567.0, "all"),
             lane("", "1,23", "Mio.\u{a0}\u{20ac}", "1,23\u{a0}Mio.\u{a0}\u{20ac}")
@@ -11846,7 +11986,7 @@ mod notation_and_shared_scale_lane_tests {
     #[test]
     fn a_shared_scale_authored_notation_wins_over_the_modes_register() {
         let narrative = shared(json!({"spec": "$,.0f", "notation": "narrative"}), "anchor");
-        assert_eq!(lanes(narrative, 24_730_000.0).2, "mn");
+        assert_eq!(lanes(narrative, 24_730_000.0).2, "m");
         let analytic = shared(json!({"spec": ",.0f", "notation": "analytic"}), "repeat");
         assert_eq!(lanes(analytic, 24_730_000.0).2, "M");
         let narrative_de = shared(json!({"spec": "$,.0f", "notation": "narrative"}), "anchor");
@@ -11877,7 +12017,6 @@ mod contract_tests {
 
     fn payload_pinned(width: f64, pin: Value) -> Payload {
         let mut theme = base_table_theme();
-        theme["row"]["role"] = json!(null);
         // A bounded slot paginates; the unbounded measure does not, so the
         // layout-at-natural-height laws below hold only without it.
         theme["pagination"]["enabled"] = json!(false);

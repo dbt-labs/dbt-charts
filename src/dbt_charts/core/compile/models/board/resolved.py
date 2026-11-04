@@ -3,6 +3,7 @@
 # ============================================================================
 
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -21,7 +22,13 @@ from dbt_charts.core.compile.models.chart.resolved.callout import (
     ResolvedCalloutChart,
 )
 from dbt_charts.core.compile.models.chart.resolved.kpi import ResolvedKpiChart
-from dbt_charts.core.compile.models.primitives import HtmlPolicy, PieMode, Regional
+from dbt_charts.core.compile.models.primitives import (
+    HtmlPolicy,
+    PieMode,
+    Regional,
+    ResolvedFontStyle,
+    WidthTier,
+)
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.variable.authored import (
@@ -81,6 +88,8 @@ class ChartIdentity:
     magnitude_colored: bool
     # None where the resolved chart carries no canvas (KPI, callout).
     canvas: str | None
+    # The authored title (a KPI's label), which a failed chart's tile keeps.
+    title: str | None
 
     @classmethod
     def from_resolved(cls, chart: ResolvedChart) -> "ChartIdentity":
@@ -96,6 +105,7 @@ class ChartIdentity:
             canvas=None
             if isinstance(chart, ResolvedKpiChart | ResolvedCalloutChart)
             else chart.canvas,
+            title=chart.label if isinstance(chart, ResolvedKpiChart) else chart.title,
         )
 
     @classmethod
@@ -123,6 +133,7 @@ class ChartIdentity:
             variable_dependencies=chart.variable_dependencies,
             magnitude_colored=False,
             canvas=None,
+            title=chart.label if chart.type == "kpi" else chart.title,
         )
 
 
@@ -132,6 +143,9 @@ class ChartResolveFailure:
 
     diagnostic: Diagnostic
     identity: ChartIdentity
+    # The title font each card-width tier gives this chart, with its own
+    # `style.title.font` merged: what a healthy chart's title would have used.
+    title_fonts: Mapping[WidthTier, ResolvedFontStyle]
 
 
 @dataclass(frozen=True)
@@ -212,7 +226,6 @@ class ResolvedBoard:
     base_dir: str | None  # type-state: optional — None is no location
     html_policy: HtmlPolicy
     regional: Regional
-    fiscal_year_start_month: int
     level: int  # Heading level (1 = root board, matches H{level})
 
     # Style (theme + board overrides already merged).
@@ -243,8 +256,9 @@ class ResolvedBoard:
         """Today in the board's zone at ``instant``, with its fiscal year start."""
         return BoardClock(
             self.regional.today(instant),
-            self.fiscal_year_start_month,
+            self.regional.fiscal_year_start_month,
             self.regional.week_start,
+            self.regional.time_zone,
         )
 
     @property

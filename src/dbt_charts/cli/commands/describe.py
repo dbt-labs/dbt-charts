@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,11 +48,7 @@ def describe_command(
         return
 
     with ProjectSession.from_project(project) as project_session:
-        if chart is None:
-            results = project_session.describe_paths(paths)
-        else:
-            (path,) = paths
-            results = [project_session.describe_chart(path, chart)]
+        results = project_session.describe_paths(paths, chart)
     _emit(results, json_output=json_output)
 
 
@@ -171,20 +168,17 @@ def _emit(results: list[DescribeBoardResult], *, json_output: bool) -> None:
 
         if r.queries:
             console.print("[bold]Queries[/bold]")
-            t: Any = Table(
-                show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0)
-            )
-            t.add_column("Name")
-            t.add_column("Type")
-            t.add_column("Summary")
+            # Plain echo, as in _print_overview: SQL must not wrap or be read
+            # as markup.
             for q in r.queries:
-                t.add_row(q.name, q.type, q.summary)
-            console.print(t)
+                typer.echo(f"  {q.name}  {q.type}  {q.summary}")
+                if q.sql:
+                    typer.echo(textwrap.indent(q.sql.rstrip(), "    "))
             console.print()
 
         if r.charts:
             console.print("[bold]Charts[/bold]")
-            t = Table(
+            t: Any = Table(
                 show_header=True, header_style="bold", box=None, padding=(0, 2, 0, 0)
             )
             t.add_column("Name")

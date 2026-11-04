@@ -339,7 +339,7 @@ def smoke_venv_with_extras(built_dbt_charts_wheel: Path) -> Iterator[Path]:
 
 
 @pytest.mark.parametrize("extra", sorted(EXTRA_PROBES))
-def test_extra_probe(smoke_venv_with_extras: Path, extra: str) -> None:
+def test_extra_probe(smoke_venv_with_extras: Path, extra: str, tmp_path: Path) -> None:
     """Each declared extra must do the one thing it exists for, once installed.
 
     Depth is deliberately per-extra: an import is enough where the extra only
@@ -347,7 +347,14 @@ def test_extra_probe(smoke_venv_with_extras: Path, extra: str) -> None:
     because that is exactly where the private-API coupling — and the mcp 2.0
     break — lives.
     """
-    result = _run(smoke_venv_with_extras, "-c", EXTRA_PROBES[extra])
+    # The probe's fresh install can carry a newer DuckDB, whose cache file the
+    # repo's DuckDB cannot read: keep it out of the shared per-user file.
+    result = _run(
+        smoke_venv_with_extras,
+        "-c",
+        EXTRA_PROBES[extra],
+        env={"DCT_CACHE_PATH": str(tmp_path / "cache.duckdb")},
+    )
     assert result.returncode == 0, (
         f"[{extra}] probe failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )

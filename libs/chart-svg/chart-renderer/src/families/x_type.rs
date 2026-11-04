@@ -10,9 +10,10 @@ use crate::common::{py_scalar_key, PyKey};
 use crate::constants::axis::MAX_ORDINAL_BUCKETS;
 
 use super::temporal::{
-    days_from_civil, detect_time_unit, floor_to_bucket_start, infer_vega_type, parse_bucket_string,
+    detect_time_unit, floor_to_bucket_start, infer_vega_type, parse_bucket_string,
     TimePart, TimeUnit, VegaType,
 };
+use d3rs::calendar::{civil_from_days, days_from_civil, days_in_month};
 
 type Row = Map<String, Value>;
 
@@ -117,7 +118,7 @@ pub fn scaffold_rows(rows: &[Row], x_field: &str, panel_fields: &[&str], tu: Tim
     }
     let mut scaffold: Vec<Row> = Vec::new();
     for (_, cells, domain) in &panels {
-        for bucket in super::temporal::complete_buckets(domain, tu, fiscal_start) {
+        for bucket in super::temporal::complete_buckets(&crate::time_axis::Dates::read(domain), tu, fiscal_start).text {
             let mut row = Row::from_iter([(x_field.to_string(), Value::String(bucket))]);
             for (f, cell) in panel_fields.iter().zip(cells) {
                 row.insert((*f).to_string(), cell.clone());
@@ -157,7 +158,7 @@ pub(crate) fn parse_date(s: &str) -> Option<((i32, u8, u8), bool)> {
     let iso = digits(0..4) && b.get(4) == Some(&b'-') && digits(5..7) && b.get(7) == Some(&b'-') && digits(8..10);
     if iso && (b.len() == 10 || matches!(b[10], b'T' | b' ')) {
         let (year, month, day): (i32, u8, u8) = (s[0..4].parse().ok()?, s[5..7].parse().ok()?, s[8..10].parse().ok()?);
-        if year == 0 || !(1..=12).contains(&month) || day == 0 || u32::from(day) > super::temporal::days_in_month(year, u32::from(month)) {
+        if year == 0 || !(1..=12).contains(&month) || day == 0 || u32::from(day) > days_in_month(year, u32::from(month)) {
             return None;
         }
         let sub_daily = if b.len() == 10 { false } else { iso_clock(&s[11..])? };
@@ -165,7 +166,7 @@ pub(crate) fn parse_date(s: &str) -> Option<((i32, u8, u8), bool)> {
             const DAY_MS: i64 = 86_400_000;
             let wall = crate::time_zone::wall_day(crate::time_axis::date_text_day(s)?).ok()?;
             let ms = (wall * DAY_MS as f64).round() as i64;
-            return Some((super::temporal::civil_from_days(ms.div_euclid(DAY_MS)), ms.rem_euclid(DAY_MS) >= 1000));
+            return Some((civil_from_days(ms.div_euclid(DAY_MS)), ms.rem_euclid(DAY_MS) >= 1000));
         }
         return Some(((year, month, day), sub_daily));
     }
@@ -250,9 +251,12 @@ fn detect(cells: &[&Value]) -> Result<Option<TimeUnit>, String> {
     if parsed.iter().any(|(_, sub_daily)| *sub_daily) {
         return Ok(None);
     }
-    let iso: Vec<String> = parsed.iter().map(|((y, m, d), _)| format!("{y:04}-{m:02}-{d:02}")).collect();
-    let refs: Vec<&str> = iso.iter().map(String::as_str).collect();
-    Ok(detect_time_unit(&refs))
+    let dates = crate::time_axis::Dates {
+        text: parsed.iter().map(|((y, m, d), _)| format!("{y:04}-{m:02}-{d:02}")).collect(),
+        day: parsed.iter().map(|&((y, m, d), _)| Some(days_from_civil(y, m, d) as f64)).collect(),
+        date: parsed.iter().map(|&(date, _)| Some(date)).collect(),
+    };
+    Ok(detect_time_unit(&dates))
 }
 
 /// `_bucket_index`: a bucket start's position on its grain's ladder.
@@ -404,7 +408,7 @@ mod tests {
         // a 299-week span synthesize 99, within 200.
         let sparse: Vec<String> = (0..200)
             .map(|i| {
-                let (y, m, d) = super::super::temporal::civil_from_days(days_from_civil(2020, 1, 6) + 7 * (i + i / 2));
+                let (y, m, d) = civil_from_days(days_from_civil(2020, 1, 6) + 7 * (i + i / 2));
                 format!("{y:04}-{m:02}-{d:02}")
             })
             .collect();

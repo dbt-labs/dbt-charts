@@ -21,6 +21,8 @@ from dbt_charts.core.execute.duckdb_cache import (
     compute_variables_hash,
 )
 
+from .._results import rows_schema
+
 
 class TestSourceIdentityStripsSecrets:
     """source_identity must drop every secret-shaped field from dict configs."""
@@ -208,9 +210,11 @@ rows:
             ok = Mock()
             ok.is_success = True
             ok.data = rows
+            ok.schema = rows_schema(ok.data)
             ok.resolved_relations = None
             ok.truncated_reason = None
             registry = Mock()
+            registry.project_file_sources.return_value = {}
             registry.execute.return_value = ok
             return (
                 Executor(

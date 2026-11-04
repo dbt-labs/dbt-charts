@@ -1,0 +1,3 @@
+kind: Fixes
+body: File-source queries on a rendered board now honor the execution.max_rows ceiling, the same as through dct query.
+time: 2026-11-03T23:17:32.000000+00:00

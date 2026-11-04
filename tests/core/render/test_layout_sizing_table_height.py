@@ -46,7 +46,9 @@ _DEFAULT_CONTEXT = resolve_chart_style_context(get_theme_style())
 _DEFAULT_ROW_H = int(_DEFAULT_RESOLVED.chart_defaults.table.row.height)  # 32
 
 
-def _make_table_chart(style_patch: ChartStylePatch | None = None) -> Chart:
+def _make_table_chart(
+    style_patch: ChartStylePatch | None = None, row_role: str | None = None
+) -> Chart:
     # ChartStylePatch is still used at call sites to build the patch via
     # model_validate({"table": {...}}); extract the inner TableChartStylePatch here.
     table_patch: TableChartStylePatch | None = (
@@ -57,6 +59,7 @@ def _make_table_chart(style_patch: ChartStylePatch | None = None) -> Chart:
         query=_BASE_QUERY,
         query_name="q",
         type="table",
+        row_role=row_role,
         style=table_patch,
     )
 
@@ -588,8 +591,6 @@ class TestRendererShrinkToContent:
         """
         import re
 
-        from dbt_charts.core.compile.models.style.authored import ChartStylePatch
-
         from .._engine_render import render_table_svg
 
         rs = resolve_style(get_theme_style())
@@ -603,9 +604,8 @@ class TestRendererShrinkToContent:
             {"col": "Total", "kind": "summary"},
         ]
 
-        # Build a chart with row.role = "kind" so the summary gap fires
-        patch = ChartStylePatch.model_validate({"table": {"row": {"role": "kind"}}})
-        chart_obj = _make_table_chart(patch)
+        # Build a chart with row_role = "kind" so the summary gap fires
+        chart_obj = _make_table_chart(row_role="kind")
         board = rs
         resolved = resolve(chart_obj, data, chart_style_context=_DEFAULT_CONTEXT)
 
@@ -907,7 +907,6 @@ def _drawn_height(chart: Chart, row_count: int, slot_height: float = 0.0) -> flo
         height=slot_height,
         padding=None,
         board_style=_DEFAULT_RESOLVED,
-        board_width=400.0,
     )
     match = re.search(r'<svg[^>]*?\sheight="([\d.]+)"', svg)
     assert match is not None

@@ -28,17 +28,20 @@ import hashlib
 import json
 import logging
 import re
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from functools import cache, partial
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 import sqlglot
 import sqlglot.errors
 import sqlglot.expressions as exp
 import yaml
+from pydantic import ValidationError
+
+from dbt_charts.core.column_types import ColumnType
 
 # Regex that detects __dct_cache_ref__NAME__ sentinels produced by
 # {{ queries.X.cache }} in a composing query's SQL.
@@ -70,7 +73,9 @@ from dbt_charts.core.compile.models.query.normalized import (
 )
 from dbt_charts.core.compile.models.source import (
     DuckDBSourceConfig,
+    ResolvedSourceConfig,
     SQLiteSourceConfig,
+    declared_metricflow,
     parse_source_config,
 )
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
@@ -91,16 +96,22 @@ from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
 from dbt_charts.core.diagnostics.registry import REGISTRY, ErrorCode
 from dbt_charts.core.execute.adapters.base import (
     apply_row_limit_truncation,
+    handle_adapter_error,
     resolve_effective_row_limit,
 )
 from dbt_charts.core.execute.adapters.dbt_utils import source_target_path
 from dbt_charts.core.execute.cache_backend import (
+    BrowsableResultCache,
     CachedQueryFailure,
     CacheRows,
+    ResultRows,
     TruncatedReason,
 )
 from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
-from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+from dbt_charts.core.execute.duckdb_cache import (
+    compute_cache_key,
+    compute_relevant_variables,
+)
 from dbt_charts.core.execute.metricflow import bundle_files, bundle_fingerprint
 from dbt_charts.core.execute.sql_translate import (
     dialect_differs,
@@ -117,7 +128,6 @@ if TYPE_CHECKING:
     from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
     from dbt_charts.core.execute.adapters.base import ResolvedRelation
     from dbt_charts.core.execute.cache_backend import QueryResultCache
-    from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 
 
 def _query_name_for(query: AnyQuery, registry: dict[str, AnyQuery]) -> str | None:
@@ -311,6 +321,11 @@ def _replayed_query_error(failure: CachedQueryFailure, query_name: str) -> Query
     return error
 
 
+# Probes (is_cached, cache_key) must not resolve a source the key does not read,
+# so the cache key takes the resolution as a thunk.
+SourceThunk = Callable[[], ResolvedSourceConfig | None]
+
+
 def _memo_key(
     query: AnyQuery, cache_key: tuple[str, str, str]
 ) -> tuple[str, str, str, str]:
@@ -484,9 +499,8 @@ class Executor:
         query_registry: dict[str, AnyQuery] | None = None,
         use_cache: bool = True,
         result_cache: "QueryResultCache | None" = None,
-        file_materializer: "FileSourceMaterializer | None" = None,
-        file_materializer_factory: "Callable[[], FileSourceMaterializer] | None" = None,
         clock: Callable[[], datetime] = utc_now,
+        board_slug: str | None = None,
     ) -> None:
         """Initialize executor.
 
@@ -504,28 +518,23 @@ class Executor:
                 regardless, because resolve and render must see identical rows
                 (see execute_query's Step 3 comment).
             result_cache: Optional cache backend for persistent caching (Suite context)
-            file_materializer: Optional pre-built materializer for CSV/JSON/Parquet
-                file sources (the injected path — Cloud, registered views). When
-                provided, SqlQuery instances whose source resolves to a file source
-                are routed through the materializer instead of the normal adapter path.
-            file_materializer_factory: Lazy builder for the file-source materializer.
-                Used instead of ``file_materializer`` when the materializer should
-                be created only if a file-source query actually misses the cache —
-                so a fully-cached render never opens a DuckDB. Built at most once and
-                shared across the render's (possibly concurrent) queries. Exactly one
-                of ``file_materializer`` / ``file_materializer_factory`` is set.
             clock: This render's only time source. Read once here for
                 ``rendered_at`` and again as each query's rows come back; pin it
                 and the render's bytes stop depending on when it ran.
+            board_slug: The board's file-identity slug (``board_slug(relpath)``),
+                recorded on every cache entry this render writes so the cache can
+                be listed by board. None for a board with no file (in-memory
+                content), whose entries carry the compiled id instead.
         """
         self.board = board
+        self._board_slug = board_slug
         self._clock = clock
         self.rendered_at = clock()
         self.query_registry = query_registry or {}
         # Keyed by content *plus* the asking query's resolved policy (_memo_key):
         # the slot is warmed from the persistent store, so a content-only key
         # would let one query's policy answer a sibling's read.
-        self._cache: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        self._cache: dict[tuple[str, str, str, str], ResultRows] = {}
         self._provenance_cache: dict[str, list[ResolvedRelation]] = {}
         self._query_errors: dict[str, Exception] = {}
         # Query name -> why its dbt column formats could not be derived; raised
@@ -546,10 +555,6 @@ class Executor:
         self._range_filter_memo: dict[
             tuple[str, str], tuple[str, str | None, list[DateRangeFilter]] | None
         ] = {}
-        self._file_materializer = file_materializer
-        self._file_materializer_factory = file_materializer_factory
-        # Guards lazy build of the shared materializer (concurrent render workers).
-        self._materializer_lock = threading.Lock()
         # Per-render memo of each file source's version token, so the cache key a
         # query writes matches the one a later query in the same render reads even
         # if the file's mtime changes mid-render. Keyed by source name.
@@ -581,13 +586,7 @@ class Executor:
                 cfg, (CsvSourceConfig, JsonSourceConfig, ParquetSourceConfig)
             ):
                 self._file_source_configs[src_name] = cfg
-        # Project-level CSV/JSON/Parquet sources (dbt_charts.yml `sources:`) must
-        # also route through the file materializer — without this they fall
-        # through to the SQL adapter which raises "Unknown dialect 'csv'".
-        if file_materializer is not None or file_materializer_factory is not None:
-            for src_name, cfg in adapter_registry.project_file_sources().items():
-                if src_name not in self._file_source_configs:
-                    self._file_source_configs[src_name] = cfg
+        self._project_file_sources_merged = False
 
     def text_listings(
         self, base_dir: str, calls: frozenset[ListingCall]
@@ -638,12 +637,29 @@ class Executor:
             >>> for row in data:
             ...     print(f"{row['date']}: {row['amount']}")
         """
+        return self.execute_query_result(
+            query_name, variables, use_cache, force_refresh
+        ).rows
+
+    def execute_query_result(
+        self,
+        query_name: str,
+        variables: VariableValues | None = None,
+        use_cache: bool | None = None,
+        force_refresh: bool = False,
+    ) -> ResultRows:
+        """:meth:`execute_query` with the result's declared schema: rows plus the
+        type of each column, the same whether the rows came from a warehouse run,
+        the per-render memo or the persistent cache."""
         # Outside a render nothing scopes the clock a preset literal in the SQL
         # (`filter_date_range('d', 'last_7_days')`) dates on.
         with board_clock(self.board.clock(self.rendered_at)):
-            rows = self._execute_rows(query_name, variables, use_cache, force_refresh)
+            result = self._execute_result(
+                query_name, variables, use_cache, force_refresh
+            )
+        rows = result.rows
         name = query_name.removeprefix("queries.")
-        query = self._get_query(name)
+        query = self.get_query(name)
         if rows:
             for column in missing_format_columns(query.formats, rows[0]):
                 raise QueryError.from_code(
@@ -652,21 +668,24 @@ class Executor:
                     column=column,
                     columns=", ".join(sorted(rows[0])),
                 )
-        return rows
+        return result
 
-    def _execute_rows(
+    def _execute_result(
         self,
         query_name: str,
         variables: VariableValues | None = None,
         use_cache: bool | None = None,
         force_refresh: bool = False,
-    ) -> list[dict[str, Any]]:  # type-state: explicit_any — DB rows
-        """Run (or recall from cache) a query's rows; ``execute_query`` checks them."""
+    ) -> ResultRows:
+        """Run (or recall from cache) a query; ``execute_query_result`` checks it."""
         # Step 1: strip the "queries." prefix, merge variables with board
         # defaults, and look up the query. is_cached shares this exact prologue
         # (via _prepare_call) so its cache-key prediction matches this path.
         query_name, query, variables = self._prepare_call(query_name, variables)
-        self._require_translated_path(query, query_name)
+        # One resolution, taken lazily: a memo or persistent hit must not resolve
+        # (is_cached agrees), and a resolver failure is raised inside the query's
+        # failure boundary below, never out of the board.
+        resolve_source = cache(partial(self._resolve_source, query, query_name))
 
         # ────────────────────────────────────────────────────────────────
         # Step 3: Check cache (use instance default if not explicitly set).
@@ -693,7 +712,7 @@ class Executor:
         should_use_cache = (
             use_cache if use_cache is not None else self._use_cache
         ) and query.cache.enabled
-        cache_key = self._cache_key(query_name, query, variables)
+        cache_key = self._cache_key(query_name, query, variables, resolve_source)
         memo_key = _memo_key(query, cache_key)
 
         # Saved in step 3c when a persistent cache hit is eligible for
@@ -777,7 +796,7 @@ class Executor:
                         # non-incremental query.
                         and self._resolve_file_source(query) is None
                     ):
-                        prior_rows = self._cache[memo_key]
+                        prior_rows = self._cache[memo_key].rows
                         # Raises QueryError if key_col absent or values non-orderable.
                         watermark = _compute_watermark(
                             prior_rows, query.incremental, query_name
@@ -798,6 +817,20 @@ class Executor:
         # The pre-resolution query: its cache policy governs the write-through,
         # and the file-source and cache-ref paths detect on its authored SQL.
         original_query = query
+
+        def fail_query(error: Exception) -> NoReturn:
+            if should_use_cache:
+                self._cache_failure(query_name, query, variables, cache_key, error)
+            self._query_data_ages.append(
+                (query_name, self._clock(), original_query.cache, False)
+            )
+            if isinstance(error, QueryError):
+                raise error
+            raise QueryError(
+                str(error),
+                query_name,
+                code=error.code if isinstance(error, DbtChartsError) else None,
+            ) from error
 
         # ────────────────────────────────────────────────────────────────
         # Step 4b: Cache-ref composition ({{ queries.X.cache }})
@@ -824,11 +857,11 @@ class Executor:
             _prior_rows = None
             _wmark = None
         if is_sql_query(query) and CACHE_REF_JINJA_RE.search(query.sql):
-            composed_rows, cache_ref_reason = self._execute_cache_ref_query(
+            composed, cache_ref_reason = self._execute_cache_ref_query(
                 query, variables, query_name
             )
             result_data = self._enforce_result_limits(
-                composed_rows, query_name, seed_reason=cache_ref_reason
+                composed, query_name, seed_reason=cache_ref_reason
             )
             data_as_of = self._clock()
             self._cache[memo_key] = result_data
@@ -840,6 +873,7 @@ class Executor:
                     original_query,
                     result_data,
                     variables,
+                    cache_key,
                     truncated_reason=truncation.reason if truncation else None,
                 )
             self._query_data_ages.append(
@@ -859,6 +893,12 @@ class Executor:
         # Safety predicate: LIMIT, ORDER BY, or window functions make the
         # tail semantically incorrect — fall back to a full refresh.
         # ────────────────────────────────────────────────────────────────
+        try:
+            source_config = resolve_source()
+            self._require_translated_path(query, source_config, query_name)
+        except Exception as e:  # noqa: BLE001 — a resolver may raise anything (SSRF guard, DNS)
+            fail_query(e)
+
         if _prior_rows is not None and _wmark is not None:
             # Step 3c set _prior_rows/_wmark only when
             # is_sql_query(query) was True; resolve_query_references preserves the subtype.
@@ -868,7 +908,9 @@ class Executor:
             # safety predicate and the tail SQL below must agree with it, or a
             # dialect-specific LIMIT spelling (T-SQL TOP) slips the safety
             # guard and a non-ANSI identifier quote gets silently misread.
-            dialect = self._query_dialect(original_query, query_name)
+            dialect = (
+                None if source_config is None else sqlglot_dialect(source_config.type)
+            )
             reason = _incremental_safety_reason(query.sql, dialect)
             if reason is not None:
                 logger.debug(
@@ -888,87 +930,30 @@ class Executor:
                     prior_rows,
                     watermark,
                     dialect,
+                    source_config,
                 )
-
-        # ────────────────────────────────────────────────────────────────
-        # Step 4c: File source short-circuit
-        # SqlQuery whose source is a file source (CSV/JSON/Parquet) is
-        # executed via the FileSourceMaterializer, not the adapter. Reached only
-        # on a cache miss (steps 3–3d already returned any cached rows), so this
-        # is where the render's shared materializer is lazily built.
-        # ────────────────────────────────────────────────────────────────
-        if self._has_file_support and is_sql_query(query):
-            file_source = self._resolve_file_source(query)
-            if file_source is not None:
-                materializer = self._get_file_materializer()
-                # Type narrower: _has_file_support (checked above) guarantees a
-                # non-None result, but the checker can't connect the two.
-                assert materializer is not None
-                # _resolve_file_source (above) only returns non-None when
-                # query.source is set — the assertion surfaces any future drift.
-                assert query.source is not None
-                try:
-                    result_data, _ = materializer.materialize_and_run(
-                        file_source,
-                        query.sql,
-                        variables or {},
-                        source_name=query.source,
-                    )
-                except Exception as e:
-                    if should_use_cache:
-                        self._cache_failure(query_name, query, variables, e)
-                    self._query_data_ages.append(
-                        (
-                            query_name,
-                            self._clock(),
-                            original_query.cache,
-                            False,
-                        )
-                    )
-                    raise QueryError(
-                        str(e),
-                        query_name,
-                        code=e.code if isinstance(e, DbtChartsError) else None,
-                    ) from e
-                data_as_of = self._clock()
-                # Write through like any other query: the cache key now folds in the
-                # file's version token (Project.file_version), so an edited data file
-                # produces a new key and never a stale hit — while an unchanged file
-                # serves warm renders straight from the cache without materializing.
-                self._cache[memo_key] = result_data
-                if should_use_cache:
-                    self._cache_outcome(
-                        query_name, original_query, result_data, variables
-                    )
-                self._query_data_ages.append(
-                    (query_name, data_as_of, original_query.cache, False)
-                )
-                return result_data
 
         # ────────────────────────────────────────────────────────────────
         # Step 5: Execute via adapter
         # ────────────────────────────────────────────────────────────────
         try:
             result = self.adapter_registry.execute(
-                query, variables, board=self.board, query_name=query_name
+                query,
+                variables,
+                board=self.board,
+                query_name=query_name,
+                source_config=source_config,
             )
-        except Exception as e:
-            if should_use_cache:
-                self._cache_failure(query_name, query, variables, e)
-            self._query_data_ages.append(
-                (query_name, self._clock(), original_query.cache, False)
-            )
-            raise QueryError(
-                str(e),
-                query_name,
-                code=e.code if isinstance(e, DbtChartsError) else None,
-            ) from e
+        except Exception as e:  # noqa: BLE001 — an adapter may raise anything
+            fail_query(e)
 
         if not result.is_success:
             assert result.error is not None
             result.error.fields.setdefault("query_name", query_name)
             if should_use_cache:
-                self._cache_failure(query_name, query, variables, result.error)
+                self._cache_failure(
+                    query_name, query, variables, cache_key, result.error
+                )
             self._query_data_ages.append(
                 (query_name, self._clock(), original_query.cache, False)
             )
@@ -979,7 +964,9 @@ class Executor:
         # ────────────────────────────────────────────────────────────────
         data_as_of = self._clock()
         enforced_data = self._enforce_result_limits(
-            result.data, query_name, seed_reason=result.truncated_reason
+            ResultRows(result.data, result.schema),
+            query_name,
+            seed_reason=result.truncated_reason,
         )
         self._cache[memo_key] = enforced_data
 
@@ -998,6 +985,7 @@ class Executor:
                 query,
                 enforced_data,
                 variables,
+                cache_key,
                 truncated_reason=truncation.reason if truncation else None,
             )
 
@@ -1056,7 +1044,7 @@ class Executor:
             return []
         return self._provenance_cache[query_name]
 
-    def _get_query(self, query_name: str) -> AnyQuery:
+    def get_query(self, query_name: str) -> AnyQuery:
         """Look up a query by name.
 
         Checks board.queries first, then query_registry.
@@ -1103,10 +1091,28 @@ class Executor:
         """
         try:
             with board_clock(self.board.clock(self.rendered_at)):
-                _, query, merged = self._prepare_call(query_name, variables)
-                return self._lookup_cached(query, merged, query_name)
+                name, query, merged = self._prepare_call(query_name, variables)
+                return self._lookup_cached(
+                    query, merged, name, partial(self._resolve_source, query, name)
+                )
         except ExecutionError:
             return False
+
+    def cache_key(
+        self, query_name: str, variables: VariableValues | None = None
+    ) -> tuple[str, str, str]:
+        """The persistent-cache key ``execute_query`` reads and writes for
+        *query_name* under *variables* (board defaults fill the rest).
+
+        Raises:
+            ExecutionError: If the query is not found, or a file source's
+                version cannot be read.
+        """
+        with board_clock(self.board.clock(self.rendered_at)):
+            name, query, merged = self._prepare_call(query_name, variables)
+            return self._cache_key(
+                name, query, merged, partial(self._resolve_source, query, name)
+            )
 
     def _prepare_call(
         self,
@@ -1132,10 +1138,14 @@ class Executor:
             variables or {},  # type-state: silent_fallback — None: no caller overrides
             self.board.clock(self.rendered_at),
         )
-        return query_name, self._get_query(query_name), merged
+        return query_name, self.get_query(query_name), merged
 
     def _cache_key(
-        self, query_name: str, query: AnyQuery, variables: VariableValues | None
+        self,
+        query_name: str,
+        query: AnyQuery,
+        variables: VariableValues | None,
+        resolve_source: SourceThunk,
     ) -> tuple[str, str, str]:
         """Cache key over the SQL as it executes, ``{{ queries.* }}`` expanded.
 
@@ -1154,20 +1164,23 @@ class Executor:
             if is_sql_query(expanded)
             else ()
         )
-        upstream_keys = [
-            self._cache_key(
-                ref_name,
-                self._cache_ref_upstream(query_name, ref_name, all_queries),
-                variables,
+        upstream_keys = []
+        for ref_name in ref_names:
+            upstream = self._cache_ref_upstream(query_name, ref_name, all_queries)
+            upstream_keys.append(
+                self._cache_key(
+                    ref_name,
+                    upstream,
+                    variables,
+                    partial(self._resolve_source, upstream, ref_name),
+                )
             )
-            for ref_name in ref_names
-        ]
         return compute_cache_key(
             expanded,
             variables,
             self.board.sources,
             source_version=self._source_version(query)
-            + self._manifest_version(expanded)
+            + self._manifest_version(expanded, resolve_source)
             + self._semantic_version(query)
             + "".join(f"|{ref_key}" for ref_key in upstream_keys),
         )
@@ -1180,8 +1193,9 @@ class Executor:
 
         Reads the declared ``metricflow:`` rather than resolving the source, for
         the reason ``_database_file_version`` gives, and hashes the files without
-        loading the bundle: a bundle that fails to load, or a path that escapes
-        the project, fails at execution with its own error.
+        loading the bundle: a declaration that does not parse, a bundle that
+        fails to load, or a path that escapes the project fails at execution
+        with its own error, so nothing is cached under this key.
         """
         if not is_sql_query(query) or query.source is None:
             return ""
@@ -1191,15 +1205,20 @@ class Executor:
         raw = self.board.sources.get(
             query.source
         ) or self.adapter_registry.project_sources.sources.get(query.source)
-        relpath = raw.get("metricflow") if raw is not None else None
+        try:
+            bundle = declared_metricflow(raw) if raw is not None else None
+        except ValidationError:
+            bundle = None
         version = ""
-        if isinstance(relpath, str):
+        if bundle is not None:
             try:
-                files = bundle_files(self.adapter_registry.project, relpath)
+                files = bundle_files(self.adapter_registry.project, bundle.path)
             except ValueError:
                 files = None
             if files is not None:
                 version = f"|metricflow:{bundle_fingerprint(files)}"
+                if bundle.required:
+                    version += ":required"
         self._semantic_versions[query.source] = version
         return version
 
@@ -1208,6 +1227,7 @@ class Executor:
         query: AnyQuery,
         variables: VariableValues | None,
         query_name: str,
+        resolve_source: SourceThunk,
     ) -> bool:
         """Return True if rows for (query, variables) are available without executing.
 
@@ -1221,11 +1241,13 @@ class Executor:
             query: The compiled query object (already looked up).
             variables: Merged variable values (board defaults applied).
             query_name: Query name to record in _query_data_ages on a warm.
+            resolve_source: Yields the query's source; called only when the cache key
+                needs it.
 
         Returns:
             True if cached rows exist; False on any miss or cached error.
         """
-        cache_key = self._cache_key(query_name, query, variables)
+        cache_key = self._cache_key(query_name, query, variables, resolve_source)
         if _memo_key(query, cache_key) in self._cache:
             return True
         if not self._use_cache or not query.cache.enabled:
@@ -1300,10 +1322,14 @@ class Executor:
         # the original write's truncation signal so the warning fires even when
         # the data is already under the current ceiling (e.g. ceiling was raised
         # since the write — the data is still legitimately truncated).
-        enforced_rows = self._enforce_result_limits(
-            outcome.rows, query_name, seed_reason=outcome.truncated_reason
+        enforced = self._enforce_result_limits(
+            ResultRows(outcome.rows, outcome.schema),
+            query_name,
+            seed_reason=outcome.truncated_reason,
         )
-        self._cache[_memo_key(query, cache_key)] = enforced_rows
+        self._cache[_memo_key(query, cache_key)] = enforced
+        if isinstance(self._result_cache, BrowsableResultCache):
+            self._result_cache.note_use(*cache_key, self._get_board_slug(), query_name)
         self._query_data_ages.append(
             (query_name, outcome.written_at, query.cache, True)
         )
@@ -1311,7 +1337,30 @@ class Executor:
             self._warehouse_hit_ats.append(outcome.written_at)
         return True
 
-    def _require_translated_path(self, query: AnyQuery, query_name: str) -> None:
+    def _resolve_source(
+        self, query: AnyQuery, query_name: str
+    ) -> ResolvedSourceConfig | None:
+        """The one resolution of a query's source; everything downstream is handed it.
+
+        Raises:
+            QueryError: The source cannot be resolved.
+        """
+        try:
+            return self.adapter_registry.resolve_query_source(
+                query, board=self.board, query_name=query_name
+            )
+        except DbtChartsError as exc:
+            error = handle_adapter_error("Source resolution", exc).error
+            assert error is not None
+            error.fields.setdefault("query_name", query_name)
+            raise error from exc
+
+    @staticmethod
+    def _require_translated_path(
+        query: AnyQuery,
+        source_config: ResolvedSourceConfig | None,
+        query_name: str,
+    ) -> None:
         """Refuse an incremental `dialect:` query that differs from the warehouse."""
         if not (
             is_sql_query(query)
@@ -1319,9 +1368,6 @@ class Executor:
             and isinstance(query.incremental, str)
         ):
             return
-        source_config = self.adapter_registry.resolve_query_source(
-            query, board=self.board, query_name=query_name
-        )
         try:
             if source_config is not None and not dialect_differs(
                 query.dialect, source_config
@@ -1372,22 +1418,6 @@ class Executor:
         except (DbtChartsError, OSError, ValueError, yaml.YAMLError):
             return None
 
-    def _query_dialect(self, query: SqlQuery, query_name: str) -> str | None:
-        """Resolve the sqlglot dialect name for a query's source.
-
-        Used to render incremental-tail SQL (identifier quoting, watermark
-        literals) and to parse the safety predicate — both must see the same
-        dialect the adapter will actually execute against, or an ANSI-quoted
-        identifier or a default-dialect LIMIT check silently misreads
-        MySQL/BigQuery/T-SQL SQL differently than the adapter will.
-        """
-        source_config = self.adapter_registry.resolve_query_source(
-            query, board=self.board, query_name=query_name
-        )
-        if source_config is None:
-            return None
-        return sqlglot_dialect(source_config.type)
-
     def _run_incremental_tail(
         self,
         query_name: str,
@@ -1400,7 +1430,8 @@ class Executor:
         prior_rows: list[dict[str, Any]],  # type-state: explicit_any — cache rows
         watermark: Any,  # type-state: explicit_any — MAX watermark; dialect-typed
         dialect: str | None,
-    ) -> list[dict[str, Any]]:  # type-state: explicit_any — row dict values
+        source_config: ResolvedSourceConfig | None,
+    ) -> ResultRows:
         """Fetch only new rows (>= watermark) and merge with the prior cached set.
 
         On success the merged set overwrites the memo entry and is written back
@@ -1423,7 +1454,11 @@ class Executor:
         tail_query = query.model_copy(update={"sql": tail_sql})
 
         result = self.adapter_registry.execute(
-            tail_query, variables, board=self.board, query_name=query_name
+            tail_query,
+            variables,
+            board=self.board,
+            query_name=query_name,
+            source_config=source_config,
         )
         if not result.is_success:
             assert result.error is not None
@@ -1436,7 +1471,9 @@ class Executor:
 
         merged = _merge_incremental_rows(tail_rows, prior_rows, key_col, query_name)
 
-        enforced = self._enforce_result_limits(merged, query_name)
+        enforced = self._enforce_result_limits(
+            ResultRows(merged, result.schema), query_name
+        )
 
         self._cache[memo_key] = enforced
         if should_use_cache:
@@ -1446,6 +1483,7 @@ class Executor:
                 original_query,
                 enforced,
                 variables,
+                cache_key,
                 truncated_reason=truncation.reason if truncation else None,
             )
 
@@ -1467,6 +1505,15 @@ class Executor:
         their data may have changed since the write."""
         return list(self._warehouse_hit_ats)
 
+    def data_age(self, query_name: str) -> tuple[datetime, bool] | None:
+        """When *query_name*'s rows were produced, and whether the persistent
+        cache served them, as of its latest completion in this executor; None
+        when it has not completed here."""
+        for name, data_as_of, _policy, is_hit in reversed(self._query_data_ages):
+            if name == query_name:
+                return data_as_of, is_hit
+        return None
+
     @property
     def query_data_ages(self) -> list[tuple[str, datetime, CachePolicy]]:
         """Per-query (name, data_as_of, policy) for every query that completed.
@@ -1482,38 +1529,21 @@ class Executor:
         """Return the file SourceConfig if *query* targets a named file source, else None.
 
         Looks up the query's ``source`` name in the pre-parsed file source configs
-        (populated at __init__ time from board.sources). Returns None for database
-        sources, unresolved sources, or non-SQL queries.
+        (board.sources at __init__ time, then the project-level ``sources:`` on the
+        first name the board does not define — the cache key folds in their file
+        version). Returns None for database sources, unresolved sources, or
+        non-SQL queries.
         """
-        if not is_sql_query(query):
+        if not is_sql_query(query) or not query.source:
             return None
-        return self._file_source_configs.get(query.source) if query.source else None
-
-    @property
-    def _has_file_support(self) -> bool:
-        """True when a file-source materializer is wired (injected or lazy)."""
-        return (
-            self._file_materializer is not None
-            or self._file_materializer_factory is not None
-        )
-
-    def _get_file_materializer(self) -> "FileSourceMaterializer | None":
-        """Return the render's shared file-source materializer, building it lazily.
-
-        An injected materializer (Cloud, registered views) is returned directly. A
-        factory-backed one (local serve/render) is built at most once, under a lock
-        so concurrent render workers share a single instance — the first to demand a
-        file source builds it, the rest reuse the same connection. Returns None when
-        the render has no file-source support wired.
-        """
-        if self._file_materializer is not None:
-            return self._file_materializer
-        if self._file_materializer_factory is None:
-            return None
-        with self._materializer_lock:
-            if self._file_materializer is None:
-                self._file_materializer = self._file_materializer_factory()
-        return self._file_materializer
+        if (
+            query.source not in self._file_source_configs
+            and not self._project_file_sources_merged
+        ):
+            for name, cfg in self.adapter_registry.project_file_sources().items():
+                self._file_source_configs.setdefault(name, cfg)
+            self._project_file_sources_merged = True
+        return self._file_source_configs.get(query.source)
 
     def _source_version(self, query: "AnyQuery") -> str:
         """Content version of the files a query's source reads.
@@ -1624,12 +1654,11 @@ class Executor:
         self._source_versions[query.source] = version
         return version
 
-    def _manifest_version(self, query: "AnyQuery") -> str:
+    def _manifest_version(self, query: "AnyQuery", resolve_source: SourceThunk) -> str:
         """Version of the dbt manifest this query's ``ref()`` / ``source()``
         resolve against, read from the resolver that resolves them; folded into
         the cache key beside ``_source_version``. ``""`` for a query without dbt
-        Jinja, or when resolution will raise the specific error itself (so
-        nothing is cached) and ``is_cached`` must not. Memoized per ``target_path``.
+        Jinja, or whose source cannot be resolved. Memoized per ``target_path``.
         """
         if not is_sql_query(query) or not (
             has_dbt_jinja(query.sql)
@@ -1637,15 +1666,14 @@ class Executor:
         ):
             return ""
         try:
-            source_config = self.adapter_registry.resolve_query_source(
-                query, board=self.board
-            )
-            target_path = source_target_path(source_config)
+            target_path = source_target_path(resolve_source())
             if target_path not in self._manifest_versions:
                 self._manifest_versions[target_path] = (
                     self.adapter_registry.dbt_manifest_version(target_path)
                 )
-        except DbtChartsError:
+        except Exception:  # noqa: BLE001 — a resolver may raise anything (SSRF guard, DNS)
+            # Execution re-raises the specific error as this query's failure; a
+            # cache-key probe must not raise it.
             return ""
         return self._manifest_versions[target_path]
 
@@ -1681,7 +1709,7 @@ class Executor:
         query: "AnyQuery",
         variables: dict[str, Any] | None,
         query_name: str,
-    ) -> tuple[CacheRows, Literal["max_rows"] | None]:
+    ) -> tuple[ResultRows, Literal["max_rows"] | None]:
         """Execute a ``{{ queries.X.cache }}`` composing query in an isolated engine.
 
         For each referenced upstream query NAME:
@@ -1704,7 +1732,7 @@ class Executor:
             query_name: Name of the composing query (for error messages).
 
         Returns:
-            Rows from the isolated composition engine, and "max_rows" when the
+            The isolated composition engine's rows with their declared schema, and "max_rows" when the
             composed result came back over the ceiling (rows already sliced to
             it) — mirroring how adapters signal via QueryResult.truncated_reason.
 
@@ -1734,14 +1762,19 @@ class Executor:
             dict.fromkeys(CACHE_REF_JINJA_RE.findall(sql))
         )  # preserve order, dedupe
 
-        # name → upstream rows, registered as isolated-DuckDB tables below.
+        # name → upstream rows, registered as isolated-DuckDB tables below; the
+        # declared schema beside them, so an upstream with no row still gets a
+        # table of the right columns.
         named_rows: dict[str, CacheRows] = {}
+        schemas: dict[str, dict[str, ColumnType]] = {}
 
         for ref_name in ref_names:
             self._cache_ref_upstream(query_name, ref_name, all_queries)
-            # Demand-execute and capture the upstream rows directly (execute_query
-            # returns the rows and also writes them through to the cache).
-            named_rows[ref_name] = self.execute_query(ref_name, variables)
+            # Demand-execute and capture the upstream rows directly (the run
+            # also writes them through to the cache).
+            upstream = self.execute_query_result(ref_name, variables)
+            named_rows[ref_name] = upstream.rows
+            schemas[ref_name] = upstream.schema
 
         # Render inline {{ queries.X }} refs and parameterize {{ variable }}
         # values ($1/$2/…). {{ queries.X.cache }} renders to its sentinel via
@@ -1762,13 +1795,15 @@ class Executor:
         # runs unmodified, so an author's own inline LIMIT in the composing SQL
         # behaves exactly as it would without this ceiling.
         row_fetch_limit = resolve_effective_row_limit(query.limit)
-        rows = compose_over_named_rows(
+        rows, schema = compose_over_named_rows(
             composed_sql,
             named_rows,
             rendered.params,
             limit=row_fetch_limit.fetch_limit,
+            schemas=schemas,
         )
-        return apply_row_limit_truncation(rows, row_fetch_limit)
+        rows, truncated_reason = apply_row_limit_truncation(rows, row_fetch_limit)
+        return ResultRows(rows, schema), truncated_reason
 
     # ─────────────────────────────────────────────────────────────────────
     # Persistent outcome cache (Suite context)
@@ -1778,8 +1813,9 @@ class Executor:
         self,
         query_name: str,
         query: AnyQuery,
-        outcome: CacheRows | Exception,
+        outcome: ResultRows | Exception,
         variables: VariableValues | None,
+        cache_key: tuple[str, str, str],
         truncated_reason: TruncatedReason | None = None,
     ) -> None:
         """Write this query's outcome — its rows or its error — to the cache.
@@ -1805,9 +1841,7 @@ class Executor:
         if not self._result_cache:
             return
 
-        source_hash, query_hash, variables_hash = self._cache_key(
-            query_name, query, variables
-        )
+        source_hash, query_hash, variables_hash = cache_key
         self._result_cache.put(
             source_hash,
             query_hash,
@@ -1821,6 +1855,7 @@ class Executor:
                 else ""
             ),
             truncated_reason=truncated_reason,
+            variables=compute_relevant_variables(query, variables),
         )
 
     def truncations(self) -> dict[str, TruncationInfo]:
@@ -1832,10 +1867,10 @@ class Executor:
 
     def _enforce_result_limits(
         self,
-        rows: CacheRows,
+        result: ResultRows,
         query_name: str,
         seed_reason: TruncatedReason | None = None,
-    ) -> CacheRows:
+    ) -> ResultRows:
         """The one chokepoint every in-scope cache-write call site routes
         through before ``self._cache``/``self._result_cache.put()`` — the
         "never cache an oversized result" guarantee lives entirely here.
@@ -1863,6 +1898,7 @@ class Executor:
         )
 
         reason: TruncatedReason | None = seed_reason
+        rows = result.rows
         max_rows = resolve_max_rows()
         if len(rows) > max_rows:
             rows = rows[:max_rows]
@@ -1884,13 +1920,14 @@ class Executor:
             self._truncations[query_name] = TruncationInfo(
                 query_name=query_name, kept_row_count=len(kept), reason=reason
             )
-        return kept
+        return ResultRows(kept, result.schema)
 
     def _cache_failure(
         self,
         query_name: str,
         query: AnyQuery,
         variables: VariableValues | None,
+        cache_key: tuple[str, str, str],
         exception: Exception,
     ) -> None:
         """Cache a query failure (if a backend is configured). Never raises.
@@ -1924,7 +1961,7 @@ class Executor:
         ):
             return
         try:
-            self._cache_outcome(query_name, query, exception, variables)
+            self._cache_outcome(query_name, query, exception, variables, cache_key)
         except Exception:  # noqa: BLE001
             logger.debug(
                 "Failed to cache query failure for '%s'",
@@ -1933,11 +1970,8 @@ class Executor:
             )
 
     def _get_board_slug(self) -> str:
-        """Get board slug for table naming.
-
-        Returns:
-            Sanitized board slug
-        """
-        # Trust normalizer guarantees - use direct attribute access
-        # Board always has title (may be empty string) and id (always present)
-        return self.board.title or self.board.id or "default"
+        """The board identity a cache entry records: its file slug, or, for a
+        board with no file (a preview from YAML text), its compiled id behind a
+        ``/`` that no file slug starts with, so a draft titled like a stored
+        board never lists or serves as that board."""
+        return self._board_slug if self._board_slug is not None else f"/{self.board.id}"

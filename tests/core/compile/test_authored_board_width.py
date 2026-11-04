@@ -1,6 +1,6 @@
-"""``frame.width`` binds exactly; ``frame.max_width`` bounds the content hug.
+"""Root ``width:`` binds exactly; ``frame.max_width`` bounds the content hug.
 
-Two keys, two contracts. ``width`` authored anywhere in the cascade (board,
+Two keys, two contracts. ``width:`` authored anywhere in the cascade (board,
 extends template, even meta.yml) is the board's exact width — the layout
 distributes it. ``max_width`` (the theme's, or a project meta.yml's) only
 bounds the content hug: with no ``width`` the board measures its charts'
@@ -54,17 +54,12 @@ def _container(style: str, body: str) -> float:
 
 def test_authored_width_wider_than_content_is_honored() -> None:
     """The regression: two default bars measure 1292, but 1800 was authored."""
-    assert _container("style:\n  frame:\n    width: 1800\n", _TWO_BARS) == 1800.0
-
-
-def test_root_width_shorthand_is_honored() -> None:
-    """Root-board ``width:`` normalizes to style.frame.width and binds the same."""
     assert _container("width: 1800\n", _TWO_BARS) == 1800.0
 
 
 def test_authored_width_narrower_than_content_still_binds() -> None:
     """Authored width was already exact in this direction; keep it that way."""
-    assert _container("style:\n  frame:\n    width: 800\n", _TWO_BARS) == 800.0
+    assert _container("width: 800\n", _TWO_BARS) == 800.0
 
 
 def test_unauthored_width_is_still_bounded_by_the_theme() -> None:
@@ -83,7 +78,7 @@ def test_unauthored_narrow_content_still_hugs() -> None:
 
 def test_authored_width_beats_narrow_content() -> None:
     """A lone KPI on an authored-width board fills it rather than hugging."""
-    assert _container("style:\n  frame:\n    width: 1000\n", _ONE_KPI) == 1000.0
+    assert _container("width: 1000\n", _ONE_KPI) == 1000.0
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +121,13 @@ def test_meta_max_width_caps_wide_content(in_memory_project: Callable) -> None:
 
 def test_meta_width_binds_every_board(in_memory_project: Callable) -> None:
     """A project that authors width (not max_width) says exactly-this-wide."""
-    meta = "style:\n  frame:\n    width: 1100\n"
+    meta = "width: 1100\n"
     assert _container_under_meta(_ONE_KPI, meta, in_memory_project, "bind") == 1100.0
 
 
 def test_board_own_width_binds_over_meta_max(in_memory_project: Callable) -> None:
     """The board file's own width wins the merge and binds exactly."""
-    body = f"style:\n  frame:\n    width: 1500\n{_ONE_KPI}"
+    body = f"width: 1500\n{_ONE_KPI}"
     assert _container_under_meta(body, _META_MAX, in_memory_project, "own") == 1500.0
 
 
@@ -150,16 +145,8 @@ rows:
 """
 
 
-def test_negative_frame_width_is_rejected() -> None:
-    """``style.frame.width`` rejects non-positive values like root ``width:`` does.
-
-    The two forms are documented as equivalent; before ``gt=0`` on the theme
-    field, ``frame: {width: -200}`` compiled — and now that authored widths
-    bind, it would have rendered.
-    """
-    result = compile_board(
-        f"title: T\nstyle:\n  frame:\n    width: -200\n{_QUERY}{_ONE_KPI}"
-    )
+def test_negative_width_is_rejected() -> None:
+    result = compile_board(f"title: T\nwidth: -200\n{_QUERY}{_ONE_KPI}")
     assert not result.success
     assert any("width" in str(e.message) for e in result.errors), result.errors
 
@@ -183,9 +170,7 @@ def _chart_slot(board, chart_id: str, local_project: Callable) -> float:
 
 def test_chart_width_pins_slot_in_bound_board(local_project: Callable) -> None:
     """Board width 700, chart width 320: the slot is 320, not the full row."""
-    result = compile_board(
-        f"title: T\nstyle:\n  frame:\n    width: 700\n{_QUERY}{_FIXED_CHART}"
-    )
+    result = compile_board(f"title: T\nwidth: 700\n{_QUERY}{_FIXED_CHART}")
     assert result.success, result.diagnostics
     assert board_container_width(result.board, result.board.variable_defaults) == 700.0
     assert _chart_slot(result.board, "c1", local_project) == 320.0
@@ -206,7 +191,7 @@ def test_percent_rows_item_width_is_half_the_row(local_project: Callable) -> Non
     compound with the split into a quarter-width slot), and it is never a
     silent no-op on a width-bound board.
     """
-    for style in ("", "style:\n  frame:\n    width: 1600\n"):
+    for style in ("", "width: 1600\n"):
         result = compile_board(_percent_rows_board(style))
         assert result.success, result.diagnostics
         board = result.board
@@ -256,12 +241,9 @@ def test_extends_width_binds_like_the_boards_own(in_memory_project: Callable) ->
     """A width declared in an extends: template binds — the author named the file.
 
     This is the task's headline defect one file over: a template's 1800 must
-    not silently lose to a pair of theme-default bars. Both authoring forms
-    are documented as equivalent, so the root width: sugar binds too.
+    not silently lose to a pair of theme-default bars.
     """
-    fragment = "style:\n  frame:\n    width: 1800\n"
-    assert _container_extending(fragment, in_memory_project, "frame") == 1800.0
-    assert _container_extending("width: 1800\n", in_memory_project, "sugar") == 1800.0
+    assert _container_extending("width: 1800\n", in_memory_project, "root") == 1800.0
 
 
 def test_theme_extends_width_still_caps(in_memory_project: Callable) -> None:
@@ -273,12 +255,3 @@ def test_theme_extends_width_still_caps(in_memory_project: Callable) -> None:
     result = compile_file(project.path("charts/board.yml").read_board())
     assert result.success, result.errors
     assert board_container_width(result.board, result.board.variable_defaults) < 600.0
-
-
-def test_width_pair_on_the_root_is_a_validation_error_naming_both_keys() -> None:
-    """Authoring both keys is refused with a validation code, not ERR-INTERNAL."""
-    result = compile_board("width: 900\nstyle:\n  frame:\n    width: 800\nrows: []\n")
-    assert not result.success
-    (error,) = result.errors
-    assert error.code == "ERR-VALIDATION-FIELD"
-    assert "'width:'" in error.message and "'style.frame.width:'" in error.message

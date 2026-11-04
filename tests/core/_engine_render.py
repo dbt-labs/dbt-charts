@@ -49,7 +49,6 @@ def render_kpi_svg(
         height=height or kpi.default_height,
         padding=inset,
         board_style=board_style,
-        board_width=None,
     )
     return svg
 
@@ -72,7 +71,6 @@ def render_spark_bar_svg(
         height=0.0 if height is None else height,
         padding=None,
         board_style=board_style,
-        board_width=None,
         title_shift=title_shift,
     )
     return svg
@@ -87,7 +85,6 @@ def render_table_svg(
     board_style: ResolvedStyle,
     variables: VariableValues | None = None,
     inset: dict[str, float] | None = None,
-    board_width: float | None = None,
 ) -> str:
     slot_width = chart.style.table.preferred_width if width is None else width
     return render_native(
@@ -98,7 +95,6 @@ def render_table_svg(
         padding=inset,
         board_style=board_style,
         variables=variables,
-        board_width=board_width if board_width is not None else slot_width,
     )[0]
 
 

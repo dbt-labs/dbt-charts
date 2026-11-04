@@ -7,6 +7,8 @@ until now only the vertical ruler used.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
@@ -80,10 +82,10 @@ def test_raw_spec_does_not_paint_anchored_unit_in_svg():
     )
     reset_config()
     # A raw spec never anchors: d3 picks its own SI tier per cell ("M"), and
-    # the house "mn" narrative suffix -- only ever emitted by the anchor path
+    # the house "m" narrative suffix -- only ever emitted by the anchor path
     # -- must not appear anywhere.
-    assert "mn" not in svg, (
-        "a raw d3 spec must not anchor; 'mn' should never appear for a raw literal"
+    assert not re.search(r">[^<]*\dm<|>m<", svg), (
+        "a raw d3 spec must not anchor; 'm' should never appear for a raw literal"
     )
 
 
@@ -218,12 +220,12 @@ def test_per_series_label_still_names_a_grouped_bar_column():
     assert "Mine" in _render_per_series_label("horizontal", None)
 
 
-def test_a_hung_suffix_that_collides_with_the_next_cell_records_an_overflow():
-    """22 bands leave ~27px: the bare digits fit, the anchor's hung "%" does not."""
+def test_cells_that_run_together_record_an_overflow():
+    """40 bands leave ~13px: two-digit cells, right-aligned, no longer clear each other."""
     from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
 
     with collect_text_truncations() as sink:
-        _render_share_strip("percent_whole", [0.03] * 22)
+        _render_share_strip("percent_whole", [0.55] * 40)
     assert [t.surface for t in sink["hang_suffix"]] == ["support_table_cell_overflow"]
 
 
@@ -274,10 +276,9 @@ def test_by_measure_label_is_never_rejected(orientation):
         reset_config()
 
 
-def test_a_wide_row_and_a_hung_suffix_in_different_rows_do_not_add_up():
-    """The widest bare cell (an integer row) and the "%" belong to different
-    rows; each cell fits the ~46px band, so nothing collides and nothing warns.
-    Summing the two maxima would demand ~54px.
+def test_a_wide_row_and_a_percent_anchor_in_different_rows_do_not_add_up():
+    """The widest bare cell (an integer row) and the "%" anchor belong to
+    different rows; each row clears its own neighbors, so nothing warns.
     """
     from dbt_charts.core.render.chart.text_truncation import collect_text_truncations
 

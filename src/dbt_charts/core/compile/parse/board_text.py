@@ -4,11 +4,14 @@ The one reading of "what is this board called" for every listing and search
 surface: it never validates, so a board that does not compile is still named.
 """
 
+from pathlib import PurePosixPath
 from typing import NamedTuple
 
 import yaml
 
 from dbt_charts.core.compile.parse.markdown import parse_markdown_board
+from dbt_charts.core.text.case import apply_case
+from dbt_charts.core.text.humanize import slug_to_text
 from dbt_charts.core.utils import YAML_LOADER
 
 RawYaml = dict[str, object]  # type-state: object_annotation — unvalidated YAML
@@ -39,8 +42,14 @@ def _first_text(*values: object) -> str:  # type-state: object_annotation — YA
     )  # type-state: silent_fallback — optional prose
 
 
+def title_from_slug(slug: str) -> str:
+    """The title of a board that has none. Text generated here is ours to case;
+    a title an author typed never comes through this."""
+    return apply_case(slug_to_text(PurePosixPath(slug).name), "title")
+
+
 def parse_yaml_board_text(slug: str, content: str) -> BoardText:
-    """Title and notes of a YAML board; the title falls back to *slug*."""
+    """Title and notes of a YAML board; the title falls back to *slug*'s file name."""
     board: RawYaml = {}
     try:
         loaded = yaml.load(content, Loader=YAML_LOADER)  # noqa: S506 — CSafeLoader, a safe loader
@@ -51,7 +60,7 @@ def parse_yaml_board_text(slug: str, content: str) -> BoardText:
         if isinstance(loaded, dict):
             board = loaded
     return BoardText(
-        title=_first_text(board.get("title"), slug),
+        title=_first_text(board.get("title"), title_from_slug(slug)),
         notes=_first_text(board.get("notes")),
         tags=_tags(board),
         board=board,
@@ -61,7 +70,7 @@ def parse_yaml_board_text(slug: str, content: str) -> BoardText:
 
 def parse_markdown_board_text(slug: str, content: str) -> BoardText:
     """Title and notes of a markdown board: frontmatter, then the board config,
-    then the first ``# `` heading, then *slug*."""
+    then the first ``# `` heading, then *slug*'s file name."""
     parsed: RawYaml = {}
     metadata: RawYaml = {}
     try:
@@ -81,7 +90,7 @@ def parse_markdown_board_text(slug: str, content: str) -> BoardText:
             for line in content.splitlines()
             if line.strip().startswith("# ")
         ),
-        slug,
+        title_from_slug(slug),
     )
     return BoardText(
         title=_first_text(metadata.get("title"), parsed.get("title"), heading),

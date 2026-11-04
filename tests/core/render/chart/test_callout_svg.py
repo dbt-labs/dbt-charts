@@ -58,7 +58,6 @@ def _v2_svg(
         height=0.0,
         padding=None,
         board_style=rs,
-        board_width=resolved.style.preferred_width,
     )
     return svg
 

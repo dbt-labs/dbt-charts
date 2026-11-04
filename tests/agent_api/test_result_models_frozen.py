@@ -128,6 +128,7 @@ FROZEN_RESULT_INSTANCES: list[tuple[BaseModel, str]] = [
             board_path="x",
             file_path="charts/x",
             matched_charts=[],
+            charts=[],
         ),
         "title",
     ),

@@ -7,7 +7,7 @@
 //! - a vertical gradient legend above or below the plot, or a right-hand y
 //!   axis — neither has a probed geometry, and no corpus board draws one
 
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 
 use super::bind::{Bound, Coloring};
 use super::{
@@ -87,7 +87,7 @@ fn y_date_labels(
     let overlap = labels_cfg.overlap.as_ref().ok_or("heatmap: axis_y.labels.overlap absent (theme required)")?;
     let min_gap = labels_cfg.min_gap.ok_or("heatmap: axis_y.labels.min_gap absent (theme required)")?;
     let ladder = resolve_vertical_temporal_labels(
-        &dated,
+        &crate::time_axis::Dates::read(&dated),
         data_tu,
         chart_h * usable_ratio,
         ax_y.fiscal_year_start_month,
@@ -346,13 +346,15 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     // A nominal color's symbol legend: a fill-only square per category. The
     // mirror's ghost rule layer strokes the same color, which turns a
     // numeric gradient into a symbol legend too: a stroked circle per rung.
-    let ladder_symbols = mirror_active && !matches!(bound.coloring, Coloring::Categories(_));
+    // A pattern ramp has no gradient to draw: it reads as stepped swatches.
+    let ramp_legend = r.patterns.spec().is_some_and(|spec| spec.scale != crate::pattern::Scale::Category);
+    let ladder_symbols = (mirror_active || ramp_legend) && !matches!(bound.coloring, Coloring::Categories(_));
     let symbol_entries: Vec<LegendEntry> = match &bound.coloring {
         Coloring::Categories(scale) => category_legend_entries(scale, r.legend.values.as_deref()),
         _ => bound
             .ladder
             .iter()
-            .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::Circle), series_key: None, recede: None })
+            .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(if ramp_legend { LegendSymbol::FilledSquare } else { LegendSymbol::Circle }), series_key: None, recede: None, action: None })
             .collect(),
     };
     let symbol_legend_box = (has_legend && (ladder_symbols || matches!(bound.coloring, Coloring::Categories(_))))
@@ -562,10 +564,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
     }
 
     // ── Cells ─────────────────────────────────────────────────────────────
-    body.push(Node::group(
-        Attrs::new().set("transform", format!("translate({plot_left:.2},{plot_top:.2})")),
-        cell_nodes(&bound.cells, &x_scale, &y_scale, &bound.marks)?,
-    ));
+    body.push(Node::group(Role::Chrome, Attrs::new(), cell_nodes(&bound.cells, &x_scale, &y_scale, &bound.marks)?).translate(plot_left, plot_top));
 
     // ── X axis ────────────────────────────────────────────────────────────
     // The axis group sits at (0.5, plot_h + offset + 0.5); a label keeps its
@@ -589,14 +588,13 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         let mut items = Vec::new();
         if x_tick_visible {
             let xs = (0..x_texts.len()).map(|i| plot_left + (x_scale.position_at(i) + cell_w / 2.0).floor() + AXIS_TRANSLATE);
-            items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (plot_top + x_edge.edge_y(plot_h), x_axis_top + x_sign * x_tick_len), 2)?);
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, None, &[], xs, (plot_top + x_edge.edge_y(plot_h), x_axis_top + x_sign * x_tick_len))?);
         }
         for (i, band_text) in x_texts.iter().enumerate() {
             let center = x_scale.position_at(i) + cell_w / 2.0;
             let label_x = plot_left + center;
             let dy = measure::baseline_shift(x_baseline, x_label_fs);
             let face = LabelFace {
-                places: 2,
                 anchor: svg_text_anchor(x_align),
                 family: x_label_family,
                 size: x_label_fs,
@@ -605,7 +603,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
                 fill: x_label_color,
             };
             items.push(if x_angle == 0.0 {
-                flat_label((label_x, x_label_row + dy), &face, false, band_text)
+                flat_label(Role::Axis, (label_x, x_label_row + dy), &face, false, band_text)
             } else {
                 rotated_label((label_x, x_label_row, x_angle, dy), &face, (band_text, ""), false)
             });
@@ -640,7 +638,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             if y_tick_visible {
                 let tick_y = plot_top + center.floor() + AXIS_TRANSLATE;
                 let tick_x = if edge.right { y_axis_x + y_tick_len } else { y_axis_x - y_tick_len };
-                items.push(tick_line(2, (tick_x, tick_y), (y_axis_x, tick_y), y_tick_color, y_tick_w_px));
+                items.push(tick_line(Role::Axis, (tick_x, tick_y), (y_axis_x, tick_y), y_tick_color, y_tick_w_px));
             }
             if y_labels_hidden {
                 continue;
@@ -648,7 +646,6 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             let row2 = y_dates.as_ref().map(|labels| labels[i].row2.as_str()).unwrap_or("");
             let hidden = y_dates.is_some() && !y_visible[i];
             let face = LabelFace {
-                places: 2,
                 anchor: y_text_anchor,
                 family: y_label_family,
                 size: y_label_fs,
@@ -668,7 +665,7 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
             let row1_y = plot_top + center + measure::baseline_shift("middle", y_label_fs);
             for (text, y) in [(row1, row1_y), (row2, row1_y + vega_fit::label_row_advance(y_label_fs))] {
                 if !text.is_empty() {
-                    items.push(flat_label((y_label_x, y), &face, hidden, text));
+                    items.push(flat_label(Role::Axis, (y_label_x, y), &face, hidden, text));
                 }
             }
         }
@@ -740,6 +737,9 @@ pub fn layout(bound: &Bound, cell: Rect, measure: &Measure) -> Result<Layout, Di
         _ => {}
     }
 
+    if let Some(defs) = r.patterns.finish(true)? {
+        body.insert(0, defs);
+    }
     let canvas = Rect { x: 0.0, y: 0.0, width: frame.view_w, height: frame.h };
     let data_box = Rect { x: plot_left, y: plot_top, width: plot_w, height: plot_h };
     Ok(Layout {

@@ -32,6 +32,10 @@ class BigQueryDialect(SQLDialect):
     escapes_backslashes = True
     uses_named_params = True
 
+    def zoned_date_expr(self, column: str, time_zone: str) -> str:
+        """DATE(ts, zone): the TIMESTAMP's date in `time_zone`."""
+        return f"DATE({column}, '{time_zone}')"
+
     def param(self, index: int) -> str:
         """Generate BigQuery parameter placeholder.
 

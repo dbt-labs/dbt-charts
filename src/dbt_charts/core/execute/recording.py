@@ -11,19 +11,48 @@ turns a registered `ERR-*` code loose on a malformed one instead of a bare
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    PlainValidator,
+    ValidationError,
+    ValidationInfo,
+)
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_render import ERR_BOARD_RECORDING_INVALID
 from dbt_charts.core.execute.adapters.base import ResolvedRelation
-from dbt_charts.core.execute.cache_backend import CacheRows
+from dbt_charts.core.execute.cache_backend import ResultRows
+from dbt_charts.core.execute.result_codec import decode_result, encode_result
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
     from dbt_charts.core.execute.executor import Executor
+
+
+def _decoded(
+    value: Any,  # type-state: explicit_any — a pydantic validator input
+    info: ValidationInfo,
+) -> ResultRows:
+    """The file holds ``result_codec`` documents; code holds ``ResultRows``."""
+    if info.mode != "json":
+        return value
+    try:
+        return decode_result(value)
+    except (KeyError, TypeError, ArithmeticError) as exc:
+        raise DbtChartsError.from_code(
+            ERR_BOARD_RECORDING_INVALID, detail=f"not a result document: {exc!r}"
+        ) from exc
+
+
+_RecordedResult = Annotated[
+    ResultRows, PlainValidator(_decoded), PlainSerializer(encode_result)
+]
 
 
 class BoardRecording(BaseModel):
@@ -53,9 +82,12 @@ class BoardRecording(BaseModel):
             "serve them under any other values."
         ),
     )
-    rows_by_query: dict[str, CacheRows] = Field(
+    results_by_query: dict[str, _RecordedResult] = Field(
         default_factory=dict,
-        description="Recorded rows, keyed by query name (no `queries.` prefix).",
+        description=(
+            "Recorded rows with their declared column types, keyed by query "
+            "name (no `queries.` prefix)."
+        ),
     )
     provenance: dict[str, list[ResolvedRelation]] = Field(
         default_factory=dict,
@@ -78,8 +110,9 @@ def record_board(
     ``recorded_at`` is the executor's own ``rendered_at``, so a replay stamps
     exactly what the live render it records stamped.
     """
-    rows_by_query = {
-        name: executor.execute_query(name, variables) for name in resolved.queries
+    results_by_query = {
+        name: executor.execute_query_result(name, variables)
+        for name in resolved.queries
     }
     provenance = {
         name: relations
@@ -89,7 +122,7 @@ def record_board(
     return BoardRecording(
         recorded_at=executor.rendered_at,
         variables=dict(variables),
-        rows_by_query=rows_by_query,
+        results_by_query=results_by_query,
         provenance=provenance,
     )
 

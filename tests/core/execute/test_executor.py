@@ -100,7 +100,10 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
     )
     query = board.queries["q"]
 
-    before = executor._manifest_version(query)
+    def never_resolved() -> None:
+        raise AssertionError("a query without dbt Jinja must not resolve its source")
+
+    before = executor._manifest_version(query, never_resolved)
     _write_manifest(tmp_path, "t_b")
     executor_after = Executor(
         board,
@@ -109,7 +112,7 @@ def test_query_without_dbt_jinja_ignores_the_manifest(tmp_path: Path) -> None:
         result_cache=cache,
     )
 
-    assert before == "" == executor_after._manifest_version(query)
+    assert before == "" == executor_after._manifest_version(query, never_resolved)
     assert _run(project, board, cache) == 1
 
 

@@ -211,6 +211,7 @@ dependencies = [
  "display-text",
  "jiff",
  "libm",
+ "scene",
  "serde",
  "serde_json",
 ]

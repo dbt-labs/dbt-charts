@@ -1365,9 +1365,9 @@ def _x_days(
 def _year_start(
     value: object,  # type-state: object_annotation — a cell or literal
 ) -> date | None:
-    """January 1 of a year-shaped int, integral Decimal or four-digit string,
-    the same shapes the channel reads as temporal; else None."""
-    if isinstance(value, int | Decimal | str) and is_year_shaped([value]):
+    """January 1 of a year-shaped int, integral Decimal or float, or four-digit
+    string, the same shapes the channel reads as temporal; else None."""
+    if isinstance(value, int | float | Decimal | str) and is_year_shaped([value]):
         return date(int(value), 1, 1)
     return None
 

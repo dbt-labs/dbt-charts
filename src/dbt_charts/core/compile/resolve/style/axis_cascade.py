@@ -70,6 +70,7 @@ from dbt_charts.core.compile.resolve.style.scale import (
 from dbt_charts.core.constants.axis import AUTO_TICK_TARGET
 from dbt_charts.core.font_measure import compose_decimal_units
 from dbt_charts.core.fonts import font_is_tabular
+from dbt_charts.core.numeric import ladder_step
 from dbt_charts.core.text.format_d3 import (
     is_d3_fixed_decimal_spec,
     is_d3_number_spec,
@@ -583,7 +584,7 @@ def build_resolved_axis(
         and tick_values[0] != tick_values[1]
         and axis.labels.expr is None
     ):
-        step = abs(tick_values[1] - tick_values[0])
+        step = ladder_step(tick_values)
         # Prefix-split still applies when there's a currency symbol.
         # Integer place-value alignment is automatic under text-anchor=end;
         # fractional/decimal tail alignment is not -- decimal_pad_table
@@ -671,7 +672,7 @@ def build_resolved_axis(
                 and tick_values[0] != tick_values[1]
             ):
                 mirror_symbol, mirror_digits, _ = non_compacting_tick_format(
-                    mirror_format.spec, abs(tick_values[1] - tick_values[0])
+                    mirror_format.spec, ladder_step(tick_values)
                 )
                 mirror_format = resolve_format_parts(
                     mirror_format,

@@ -16,7 +16,7 @@ from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.diagnostics import ERR_CHART_PAINTED_NO_MARKS
-from dbt_charts.core.diagnostics.codes_render import WARN_TABLE_CRAMPED
+from dbt_charts.core.diagnostics.codes_render import WARN_TABLE_HEADER_EXTRA_WRAP
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
@@ -24,9 +24,8 @@ from dbt_charts.core.render.render_result import RenderResult
 
 _DATA_FORMATS = ("json", "text", "yaml", "data")
 
-# Ten realistic columns need more width than a narrow table gives —
-# reliably fires WARN-TABLE-CRAMPED on svg (see test_table_cramping_capture.py,
-# whose fixture this mirrors).
+# A header pinned into a column too narrow for it needs three lines —
+# reliably fires WARN-TABLE-HEADER-EXTRA-WRAP on svg.
 _WIDE_COLUMNS: list[tuple[str, str]] = [
     ("region", "EMEA"),
     ("product_line", "Ingestion Cloud"),
@@ -41,7 +40,7 @@ _WIDE_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
-def _cramped_table_board() -> str:
+def _header_wrap_table_board() -> str:
     rows = [dict(_WIDE_COLUMNS) for _ in range(4)]
     body = "\n".join(
         "      - {" + ", ".join(f"{k}: '{v}'" for k, v in row.items()) + "}"
@@ -50,7 +49,11 @@ def _cramped_table_board() -> str:
     return (
         "title: T\n"
         "queries:\n  q:\n    type: values\n    rows:\n" + body + "\n"
-        "charts:\n  t: {query: q, type: table, style: {preferred_width: 800}}\n"
+        "charts:\n  t:\n    query: q\n    type: table\n    style:\n"
+        "      preferred_width: 800\n"
+        "      columns:\n"
+        "        fulfillment_status:\n"
+        "          width: 50\n"
         "rows:\n  - t\n"
     )
 
@@ -107,7 +110,7 @@ def test_measurement_warnings_have_parity_across_formats(
     code — not just the set of codes present (WARN-CHART-TITLE-TRUNCATED was
     partially suppressed: present on both sides, but fewer instances on data).
     """
-    result = compile_board(_cramped_table_board())
+    result = compile_board(_header_wrap_table_board())
     assert result.success, result.diagnostics
     board = result.board
     assert board is not None
@@ -123,8 +126,8 @@ def test_measurement_warnings_have_parity_across_formats(
     # warnings (zero rows, query truncation) already reached data formats
     # before render() drew every format, so that guard would pass even if the
     # svg-only measurement family this test targets stayed suppressed.
-    assert WARN_TABLE_CRAMPED.code in svg_codes, (
-        f"fixture must fire WARN-TABLE-CRAMPED on svg, got {svg_codes}"
+    assert WARN_TABLE_HEADER_EXTRA_WRAP.code in svg_codes, (
+        f"fixture must fire WARN-TABLE-HEADER-EXTRA-WRAP on svg, got {svg_codes}"
     )
 
     for format in _DATA_FORMATS:
@@ -181,7 +184,7 @@ def test_render_first_is_unconditional_on_format(
     """``render_first=True`` must reach ``build_resolved_board`` for every
     format, not just the svg family.
 
-    The parity fixtures above are width-driven (WARN-TABLE-CRAMPED), but
+    The parity fixtures above are width-driven (WARN-TABLE-HEADER-EXTRA-WRAP), but
     render-first sizing's whole effect is on measured *heights* (a real
     vl-convert render vs. the static aspect-ratio estimate — e.g. a
     pie/attached-table chart sized 384px in production and 300px on the

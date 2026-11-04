@@ -335,7 +335,10 @@ class TestValidateSelectOnlyRejections:
         # parses as a top-level Select with the DML hidden in a CTE.
         # find_all over the parsed tree must catch the DML descendant.
         sql = f"WITH x AS ({inner}) SELECT * FROM x"
-        with pytest.raises(MutatingSqlError):
+        # Snowflake has no RETURNING, so the DML never parses there and the
+        # guard denies it as unparseable rather than as a mutation.
+        expected = UnparseableSqlError if dialect == "snowflake" else MutatingSqlError
+        with pytest.raises(expected):
             validate_select_only(sql, dialect=dialect)
 
     def test_data_modifying_cte_in_subquery_rejected(self) -> None:
@@ -492,6 +495,35 @@ class TestValidateSelectOnlyDefer:
         with pytest.raises(UnparseableSqlError) as exc_info:
             validate_select_only("WITHasdf x AS (SELECT 1) SELECT * FROM x")
         assert "'(' but" not in str(exc_info.value)
+
+    def test_reference_used_as_a_cte_body_is_named(self) -> None:
+        # `{{ queries.x }}` inlines as `(...) AS x`.
+        sql = "WITH x AS (SELECT 1 AS a) AS x SELECT * FROM x"
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only(sql, dialect="duckdb")
+        message = str(exc_info.value)
+        assert "not a CTE body" in message
+        assert "FROM {{ queries.x }}" in message
+
+    @pytest.mark.parametrize(
+        ("sql", "word"),
+        [
+            ("SELECT select FROM t", "select"),
+            ("SELECT 1 FROM t WHERE x = from", "from"),
+        ],
+    )
+    def test_reserved_word_the_parser_stopped_at_is_named(
+        self, sql: str, word: str
+    ) -> None:
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only(sql, dialect="duckdb")
+        assert f"`{word}` is a reserved word here" in str(exc_info.value)
+
+    @pytest.mark.parametrize("sql", ["SELECT a b c FROM t", "SELECT a FROM t ORDER BY"])
+    def test_a_non_keyword_failure_gets_no_reserved_word_advice(self, sql: str) -> None:
+        with pytest.raises(UnparseableSqlError) as exc_info:
+            validate_select_only(sql, dialect="duckdb")
+        assert "reserved word here" not in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "sql",

@@ -18,7 +18,6 @@
 
 use display_text::language::tr;
 use std::collections::HashMap;
-use std::fmt::Write as _;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -26,12 +25,11 @@ use serde_json::Value;
 use d3rs::sankey::{ribbon_area, Align, Sankey};
 use d3rs::sankey_circular::SankeyCircular;
 
-use crate::common::{emit_title, Font, TitleStyle};
-use crate::contract::{aria_attr, mark_group_close, mark_group_open, ItemRole, MUTED, ROLE_HEADER};
+use crate::common::{plain_title_height, plain_title_node, Font, TitleStyle};
+use crate::contract::{aria_attrs, mark_group, ItemRole, MUTED, ROLE_HEADER};
 use crate::frame::ChartFrame;
-use crate::svg::{num};
-use print::{xml_escape, xml_escape_attr};
 use measure::FontBook;
+use scene::{Attrs, Bounds, Chars, Escape, Node, PathData, Role, Run, Shape};
 use crate::Payload;
 
 #[derive(Deserialize)]
@@ -98,7 +96,7 @@ struct Laid {
     /// `[x0, x1, y0, y1]` and column per node.
     nodes: Vec<([f64; 4], i64)>,
     /// Per flow, in row order: filled band outline, is a loop.
-    links: Vec<(String, bool)>,
+    links: Vec<(PathData, bool)>,
 }
 
 pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
@@ -153,8 +151,9 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
     }
 
     let pad = payload.padding.unwrap_or(crate::Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 });
-    let mut out = String::new();
-    let title_h = emit_title(&mut out, r.title.as_deref(), r.title_style.as_ref(), pad.left, pad.top);
+    let title_nodes: Vec<Node> =
+        r.title.iter().map(|title| plain_title_node(title, r.title_style.as_ref(), pad.left, pad.top)).collect();
+    let title_h = if r.title.is_some() { plain_title_height(r.title_style.as_ref()) } else { 0.0 };
     // Half a label line above the top node and below the bottom one keeps
     // every centered label inside the canvas.
     let half = label_size / 2.0;
@@ -188,7 +187,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         g.fit(x0, y0, x1, y1);
         Laid {
             nodes: g.nodes.iter().map(|n| ([n.x0, n.x1, n.y0, n.y1], n.column)).collect(),
-            links: (0..g.links.len()).map(|l| (g.link_area(l, hw(g.links[l].width), num), g.links[l].circular)).collect(),
+            links: (0..g.links.len()).map(|l| (g.link_area(l, hw(g.links[l].width)), g.links[l].circular)).collect(),
         }
     } else {
         let fixed_layers: Option<Vec<usize>> = r.step.as_ref().map(|_| {
@@ -218,7 +217,7 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
                 .iter()
                 .map(|l| {
                     let (sx, tx) = (g.nodes[l.source].x1, g.nodes[l.target].x0);
-                    (ribbon_area(sx, l.y0, tx, l.y1, hw(l.width), num), false)
+                    (ribbon_area(sx, l.y0, tx, l.y1, hw(l.width)), false)
                 })
                 .collect(),
         }
@@ -264,8 +263,8 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         None => vec![st.single_series_fill.clone(); nodes.len()],
     };
 
-    mark_group_open(&mut out, "path", "sankey-links")?;
-    for (li, (f, (d, looped))) in flows.iter().zip(&laid.links).enumerate() {
+    let mut link_nodes = Vec::with_capacity(flows.len());
+    for (li, (f, (path, looped))) in flows.iter().zip(&laid.links).enumerate() {
         let (s, t) = (&nodes[f.source].name, &nodes[f.target].name);
         let share = crate::number_locale::d3_format(".0%", f.value / outflow[f.source])
             .map_err(|e| format!("sankey: share format: {e}"))?;
@@ -276,18 +275,16 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
             tr("tooltip.share_of", None, &[("node", s)])?
         );
         let color = &colors[if by_target == Some(true) { f.target } else { f.source }];
-        let _ = write!(
-            out,
-            "<path d=\"{d}\" fill=\"{}\" fill-opacity=\"{}\" data-link=\"{li}\"{}{}/>",
-            xml_escape_attr(color),
-            num(st.link_opacity),
-            if *looped { " data-loop=\"true\"" } else { "" },
-            aria_attr(Some(&label), ItemRole::PathMark)?,
-        );
+        let attrs = Attrs::new()
+            .set("fill", color)
+            .num("fill-opacity", st.link_opacity)
+            .set("data-link", li.to_string())
+            .set_if(*looped, "data-loop", "true")
+            .extend(aria_attrs(Some(&label), ItemRole::PathMark)?);
+        link_nodes.push(Node::path(Role::Mark { layer: 0, series: None, datum: Some(li) }, path.clone(), attrs));
     }
-    mark_group_close(&mut out);
 
-    mark_group_open(&mut out, "rect", "sankey-nodes")?;
+    let mut node_nodes = Vec::with_capacity(nodes.len());
     for (ni, ([nx0, nx1, ny0, ny1], _)) in laid.nodes.iter().enumerate() {
         let (has_in, has_out) = (inflow[ni] > 0.0, outflow[ni] > 0.0);
         let mut rows = vec![format!("{ROLE_HEADER}{}", nodes[ni].name)];
@@ -300,55 +297,60 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, String> {
         if has_in && has_out && inflow[ni] != outflow[ni] {
             rows.push(format!("{MUTED}{}: {}", tr("tooltip.difference", None, &[])?, fmt(outflow[ni] - inflow[ni])?));
         }
-        let _ = write!(
-            out,
-            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\" data-node=\"{ni}\"{}/>",
-            num(*nx0),
-            num(*ny0),
-            num(nx1 - nx0),
-            num(ny1 - ny0),
-            xml_escape_attr(&colors[ni]),
-            aria_attr(Some(&rows.join("; ")), ItemRole::RectMark)?,
-        );
+        let attrs = Attrs::new()
+            .set("fill", colors[ni].as_str())
+            .set("data-node", ni.to_string())
+            .extend(aria_attrs(Some(&rows.join("; ")), ItemRole::RectMark)?);
+        node_nodes.push(Node::rect(
+            Role::Mark { layer: 0, series: Some(nodes[ni].name.clone()), datum: Some(ni) },
+            (*nx0, *ny0, nx1 - nx0, ny1 - ny0),
+            attrs,
+        ));
     }
-    mark_group_close(&mut out);
 
-    let _ = write!(out, "<g class=\"sankey-labels\" pointer-events=\"none\">");
+    let mut label_nodes = Vec::with_capacity(nodes.len());
     for (ni, ([_, nx1, ny0, ny1], _)) in laid.nodes.iter().enumerate() {
-        let (x, y) = (nx1 + st.label_gap, (ny0 + ny1) / 2.0);
-        let _ = write!(
-            out,
-            "<text x=\"{}\" y=\"{}\" dy=\"0.35em\" text-anchor=\"start\" font-family=\"{}\" \
-             font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\">{}",
-            num(x),
-            num(y),
-            xml_escape_attr(lf.family_or("sans-serif")),
-            num(label_size),
-            lf.style_attr(),
-            xml_escape_attr(&lf.weight_str()),
-            xml_escape_attr(lf.color.as_deref().ok_or("sankey: style.label.font color missing")?),
-            xml_escape(&nodes[ni].name),
-        );
+        let (x, cy) = (nx1 + st.label_gap, (ny0 + ny1) / 2.0);
+        // Centered on the node: the baseline sits 0.35em below its middle.
+        let attrs = font_attrs(Attrs::new().set("text-anchor", "start"), lf, label_size)
+            .set("fill", lf.color.as_deref().ok_or("sankey: style.label.font color missing")?);
+        let mut runs = vec![Run::Chars(Chars::new(nodes[ni].name.as_str(), Escape::Attr))];
         if show_value {
-            let _ = write!(
-                out,
-                "<tspan font-family=\"{}\" font-size=\"{}\"{} font-weight=\"{}\" fill=\"{}\"> {}</tspan>",
-                xml_escape_attr(vf.family_or("sans-serif")),
-                num(vf.size_or(label_size)),
-                vf.style_attr(),
-                xml_escape_attr(&vf.weight_str()),
-                xml_escape_attr(vf.color.as_deref().ok_or("sankey: style.value_label.font color missing")?),
-                xml_escape(&fmt(inflow[ni].max(outflow[ni]))?),
-            );
+            let size = vf.size_or(label_size);
+            runs.push(Run::Tspan {
+                x: None,
+                y: None,
+                dx: None,
+                dy: None,
+                attrs: font_attrs(Attrs::new(), vf, size)
+                    .set("fill", vf.color.as_deref().ok_or("sankey: style.value_label.font color missing")?),
+                runs: vec![Run::Chars(Chars::new(format!(" {}", fmt(inflow[ni].max(outflow[ni]))?), Escape::Attr))],
+            });
         }
-        out.push_str("</text>");
+        let ink_size = if show_value { label_size.max(vf.size_or(label_size)) } else { label_size };
+        let ink = Bounds { x1: x, y1: cy - ink_size / 2.0, x2: x + label_w[ni], y2: cy + ink_size / 2.0 };
+        label_nodes.push(Node::new(Role::Label, attrs, Shape::Text { at: (x, cy + 0.35 * label_size), bounds: Some(ink), runs }));
     }
-    out.push_str("</g>");
 
-    let mut svg = String::new();
-    ChartFrame::new(payload.width, payload.height, (pad.left, pad.right, pad.top, pad.bottom), &r.background, num)
-        .open(&mut svg);
-    Ok(svg + &out + "</svg>")
+    let labels = Node::group(Role::Chrome, Attrs::new().set("class", "sankey-labels").set("pointer-events", "none"), label_nodes);
+    let body = title_nodes
+        .into_iter()
+        .chain([
+            mark_group("path", "sankey-links", link_nodes)?,
+            mark_group("rect", "sankey-nodes", node_nodes)?,
+            labels,
+        ])
+        .collect();
+    Ok(print::print(&[ChartFrame::at(payload.width, payload.height, payload.padding.as_ref(), &r.background).svg(body)]))
+}
+
+fn font_attrs(attrs: Attrs, font: &Font, size: f64) -> Attrs {
+    let attrs = attrs.set("font-family", font.family_or("sans-serif")).num("font-size", size);
+    let attrs = match &font.style {
+        Some(style) => attrs.set("font-style", style.as_str()),
+        None => attrs,
+    };
+    attrs.set("font-weight", font.weight_str())
 }
 
 /// A label's advance at its painted weight.
@@ -386,7 +388,7 @@ fn check_label_room(
                 "sankey: the label for `{}` runs {}px past the chart's right edge; give the \
                  chart more room, or shorten or remove labels",
                 nodes[i].name,
-                num(li[1] - x_max)
+                print::geometry(li[1] - x_max)
             ));
         }
         for j in 0..nodes.len() {
@@ -622,7 +624,7 @@ mod tests {
         // Free@0, Free@1, Pro@1, Pro@0 → Free and Pro each keep one color.
         let fills: Vec<&str> = svg
             .split("<rect x=")
-            .skip(1)
+            .skip(2)
             .map(|s| s.split("fill=\"").nth(1).unwrap().split('"').next().unwrap())
             .collect();
         assert_eq!(fills, ["#3164a3", "#3164a3", "#779bc9", "#779bc9"]);

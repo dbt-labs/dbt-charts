@@ -205,6 +205,32 @@ class MemberList(ContractModel):
     )
 
 
+class MemberRoleFailure(ContractModel):
+    """A member a bulk role change left as they were."""
+
+    email: str = Field(description="The member's account email.")
+    error: str = Field(description="Why the change did not land.")
+
+
+class MemberRoleChanges(ContractModel):
+    """What `dct cloud member role-all` reports."""
+
+    selected: list[str] = Field(
+        default_factory=list, description="Emails of the members holding the role."
+    )
+    changed: list[str] = Field(
+        default_factory=list, description="Emails whose role changed."
+    )
+    skipped: list[str] = Field(
+        default_factory=list,
+        description="Emails with nothing to change: the caller's own, or a member"
+        " removed since the list was read.",
+    )
+    failed: list[MemberRoleFailure] = Field(
+        default_factory=list, description="Members who could not be changed."
+    )
+
+
 class InviteResult(ContractModel):
     """The answer to inviting one address."""
 
@@ -375,16 +401,17 @@ class ProjectSummary(ContractModel):
     git_host: str | None = Field(
         default=None,
         description=(
-            "Where the repo lives: github, gitlab, bitbucket, or other for any "
-            "plain git URL. ``None`` means this Cloud predates the deploy that "
+            "Where the repo lives: github, gitlab, bitbucket, other for any "
+            "plain git URL, or dbt_charts for a project with no remote, whose "
+            "repo is Cloud's own. ``None`` means this Cloud predates the deploy that "
             "added this field and does not report it yet."
         ),
     )
     git_auth: str | None = Field(
         default=None,
         description=(
-            "How Cloud authenticates to the repo: app (the GitHub App) or "
-            "token. ``None`` means this Cloud predates the deploy that added "
+            "How Cloud authenticates to the repo: app (the GitHub App), "
+            "token, or none for a dbt_charts project. ``None`` means this Cloud predates the deploy that added "
             "this field and does not report it yet."
         ),
     )
@@ -409,6 +436,15 @@ class ConnectionSummary(ContractModel):
     slug: str = Field(description="URL-safe connection identifier.")
     name: str = Field(description="Display name.")
     connection_type: str = Field(description="Warehouse kind, e.g. bigquery.")
+    identity: str | None = Field(
+        description=(
+            "The principal the warehouse sees this connection as, and so the one "
+            "to grant access to: a BigQuery service-account email, a Snowflake or "
+            "Postgres user, a Databricks service principal's application id. Null "
+            "when the credential names no principal (a personal access token, a "
+            "DuckDB file)."
+        )
+    )
     is_active: bool = Field(description="Whether boards may use this connection.")
     last_test_success: bool | None = Field(
         default=None, description="Result of the most recent test; null if untested."

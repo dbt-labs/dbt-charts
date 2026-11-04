@@ -1,4 +1,4 @@
-"""End-to-end: TABLE_COLUMNS_OVERFLOW surfaces from render() for a cramped table,
+"""End-to-end: TABLE_COLUMNS_OVERFLOW surfaces from render() for a narrow table,
 and the overflowing table stays inside its slot.
 
 Proves the full seam — the table renderer records its real slot overflow, then
@@ -43,6 +43,7 @@ def _make_executor(
     ok.resolved_relations = None
     ok.truncated_reason = None
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry
@@ -50,7 +51,7 @@ def _make_executor(
 
 
 _NARROW = """
-title: Cramped table
+title: Narrow table
 charts:
   orgs:
     query: q
@@ -86,7 +87,7 @@ rows:
 """
 
 
-def test_cramped_table_warns() -> None:
+def test_narrow_table_warns() -> None:
     """Five wide columns forced into a 220px tile overflow it — the warning fires."""
     result = compile(_NARROW)
     assert result.success and result.board is not None, result.errors

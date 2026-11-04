@@ -20,11 +20,13 @@ import datetime
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from dbt_charts.core.compile.models.chart.normalized import CalloutChart
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.compile.normalize.variable_input_refinement import (
     RefinedType,
     refine_input_type_from_data,
 )
+from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.compile.resolve.style.board import resolve_cascaded_font
 from dbt_charts.core.compile.template.daterange import (
     current_board_clock,
@@ -34,11 +36,13 @@ from dbt_charts.core.compile.template.daterange import (
 from dbt_charts.core.compile.template.variables import (
     UNSET_MULTISELECT,
     coerce_multiselect,
+    color_link_variable,
     variable_value_is_absent,
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.render.board_variables import (
+    LinkedOptions,
     current_daterange_presets,
 )
 from dbt_charts.core.render.conditions import eval_bool_condition
@@ -47,9 +51,11 @@ from dbt_charts.core.text.case import inferred_display_name
 from dbt_charts.core.text.format_d3 import active_time_locale, board_word
 
 if TYPE_CHECKING:
-    from dbt_charts.core.compile.models.board.normalized import VariableValues
+    from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
+    from dbt_charts.core.compile.models.board.resolved import ResolvedBoard
     from dbt_charts.core.compile.models.style.theme.variables import VariablesStyle
     from dbt_charts.core.compile.models.variable.authored import Variable
+    from dbt_charts.core.execute.cache_backend import CacheRows
     from dbt_charts.core.execute.chart_data_provider import ChartDataProvider
 
 
@@ -89,6 +95,9 @@ class ResolvedControl:
     # second reading of it.
     current: Any
     option_values: tuple[str, ...]
+    # Each option's row count, aligned with `option_values`; empty when the
+    # options carry none (static options, an authored query).
+    option_counts: tuple[int, ...]
     # Ticked state and slider bounds are settled here rather than re-derived by
     # whoever draws them: the chrome and the control mounted over it have to
     # agree, and a display string is not state.
@@ -147,7 +156,9 @@ def resolve_controls(
     for name, var_def in variable_defs.items():
         if not var_def.visible:
             continue
-        option_values = resolve_option_values(name, var_def, executor, current_values)
+        option_values, option_counts = resolve_options(
+            name, var_def, executor, current_values
+        )
         refined = _refine(var_def, option_values)
         low, high, step = _slider_bounds(var_def, refined, variables_style)
         current = current_values.get(name, var_def.default)
@@ -185,6 +196,7 @@ def resolve_controls(
                 ),
                 current=current,
                 option_values=tuple(option_values),
+                option_counts=option_counts,
                 # Ticked state off the value, never off the label drawn for it.
                 checked=(
                     current.strip().lower() in ("true", "yes", "1")
@@ -276,25 +288,87 @@ def resolve_option_values(
     executor: ChartDataProvider | None,
     current_values: VariableValues,
 ) -> list[str]:
-    """Resolve option values from a static list or a query, de-duplicated.
+    """Resolve option values from a static list or a query, de-duplicated, as text."""
+    return list(
+        dict.fromkeys(
+            str(cell)
+            for cell in resolve_option_cells(name, var_def, executor, current_values)
+        )
+    )
+
+
+def resolve_option_cells(
+    name: str,
+    var_def: Variable,
+    executor: ChartDataProvider | None,
+    current_values: VariableValues,
+) -> list[Any]:  # type-state: explicit_any — raw option cells, as authored or queried
+    """Resolve option values from a static list or a query, as authored or queried.
 
     Column-bound options (``options.column`` / ``variable.column``) are promoted
     to synthetic named queries at compile time, so they arrive here via the
     ``options.query`` branch — no separate column-resolution path needed.
     """
+    query = _option_query(var_def)
+    if query is not None and executor is not None:
+        return query_option_cells(name, query, executor, dict(current_values))
     if var_def.options and var_def.options.static:
-        values = [str(opt) for opt in var_def.options.static]
-    elif var_def.options and var_def.options.query and executor:
-        values = resolve_query_options(
-            name, var_def.options.query, executor, dict(current_values)
+        return list(var_def.options.static)
+    return []
+
+
+def _option_query(var_def: Variable) -> str | None:
+    """The query a variable's options come from; None for static or no options."""
+    if var_def.options and var_def.options.static:
+        return None
+    if var_def.options and var_def.options.query:
+        return var_def.options.query
+    if isinstance(var_def.query, str):
+        return var_def.query
+    return None
+
+
+def linked_variable_options(
+    board: Board | ResolvedBoard,
+    executor: ChartDataProvider | None,
+    values: VariableValues,
+) -> dict[str, LinkedOptions]:
+    """The options of each choice variable a chart's link sets from its color.
+
+    Walks the whole board tree, so the sizing pass (compiled board) and the main
+    pass (resolved board) agree, and only the charts a layout places: an
+    undrawn chart's link must not run an options query. A variable whose options are unknown here is
+    left out: its linked legend lists only the series the query returned.
+    """
+    boards: list[Board | ResolvedBoard] = [board]
+    for each in boards:
+        boards.extend(  # noqa: B909 — queue growth: BFS over the board tree
+            item.board for item in each.layout.items if item.board is not None
         )
-    elif isinstance(var_def.query, str) and executor:
-        values = resolve_query_options(
-            name, var_def.query, executor, dict(current_values)
-        )
-    else:
-        return []
-    return list(dict.fromkeys(values))
+    set_by_links = {
+        color_link_variable(item.chart.link)
+        for each in boards
+        for item in each.layout.items
+        if item.chart is not None
+        and not isinstance(item.chart, CalloutChart)
+        and isinstance(item.chart.link, str)
+    }
+    linked: dict[str, LinkedOptions] = {}
+    for each in boards:
+        for name, var in each.variables.items():
+            if name in linked or var.input not in ("select", "radio", "multiselect"):
+                continue
+            if name not in set_by_links:
+                continue
+            options = list(
+                dict.fromkeys(resolve_option_cells(name, var, executor, values))
+            )
+            if options:
+                linked[name] = {
+                    "options": options,
+                    "multiple": var.input == "multiselect",
+                }
+    return linked
 
 
 def resolve_query_options(
@@ -303,7 +377,35 @@ def resolve_query_options(
     executor: ChartDataProvider,
     variables: VariableValues,
 ) -> list[str]:
-    """Resolve variable `name`'s select options from a named query.
+    """Resolve variable `name`'s select options from a named query, as text.
+
+    See ``query_option_cells`` for the failure contract.
+    """
+    return [
+        str(cell) for cell in query_option_cells(name, query_ref, executor, variables)
+    ]
+
+
+def query_option_cells(
+    name: str,
+    query_ref: str,
+    executor: ChartDataProvider,
+    variables: VariableValues,
+) -> list[Any]:  # type-state: explicit_any — raw query cells
+    """Resolve variable `name`'s select options from a named query, as queried.
+
+    See ``query_option_rows`` for the failure contract.
+    """
+    return _option_cells(query_option_rows(name, query_ref, executor, variables))
+
+
+def query_option_rows(
+    name: str,
+    query_ref: str,
+    executor: ChartDataProvider,
+    variables: VariableValues,
+) -> CacheRows:
+    """Run variable `name`'s options query and return its rows.
 
     A failed options query raises rather than drawing an empty dropdown: an
     empty list is indistinguishable from a table with no rows, so a missing
@@ -320,7 +422,7 @@ def resolve_query_options(
     """
     query_name = query_ref.replace("queries.", "")
     try:
-        result = executor.execute_query(query_name, variables)
+        return executor.execute_query(query_name, variables)
     except QueryError as e:
         raise QueryError.from_code(
             ERR_VARIABLE_OPTIONS_FAILED,
@@ -328,15 +430,53 @@ def resolve_query_options(
             query_name=query_name,
             cause=str(e),
         ) from e
-    if not result:
+
+
+def _option_cells(
+    rows: CacheRows,
+) -> list[Any]:  # type-state: explicit_any — raw query cells
+    if not rows:
         return []
-    # Look for 'value' column first, then 'label', then first column
-    first_row = result[0]
-    value_key = next(
-        (key for key in ("value", "label", "name", "id") if key in first_row),
-        next(iter(first_row)),
+    value_key = _option_value_key(rows)
+    return [row[value_key] for row in rows if row.get(value_key) is not None]
+
+
+def _option_value_key(rows: CacheRows) -> str:
+    """The column an options query's values come from: 'value', 'label', 'name'
+    or 'id' if the rows have one, else the first column."""
+    return next(
+        (key for key in ("value", "label", "name", "id") if key in rows[0]),
+        next(iter(rows[0])),
     )
-    return [str(row[value_key]) for row in result if row.get(value_key) is not None]
+
+
+def resolve_options(
+    name: str,
+    var_def: Variable,
+    executor: ChartDataProvider | None,
+    current_values: VariableValues,
+) -> tuple[list[str], tuple[int, ...]]:
+    """The option values as text, de-duplicated, and each one's row count.
+
+    One fetch serves both, so a control's values and counts come from the
+    same rows. The counts are aligned with the values, and empty unless the
+    options query returns ``OPTION_COUNT_COLUMN``: only a column-bound
+    variable's generated query does.
+    """
+    query = _option_query(var_def)
+    if query is None or executor is None:
+        return resolve_option_values(name, var_def, executor, current_values), ()
+    rows = query_option_rows(name, query, executor, dict(current_values))
+    values = list(dict.fromkeys(str(cell) for cell in _option_cells(rows)))
+    if not rows or OPTION_COUNT_COLUMN not in rows[0]:
+        return values, ()
+    value_key = _option_value_key(rows)
+    counts = {
+        str(row[value_key]): int(row[OPTION_COUNT_COLUMN])
+        for row in rows
+        if row.get(value_key) is not None
+    }
+    return values, tuple(counts[value] for value in values)
 
 
 def read_only_unset_label(var_def: Variable, default_id: str) -> str:
@@ -394,7 +534,15 @@ def format_variable_display_value(
         selected = coerce_multiselect(UNSET_MULTISELECT if value is None else value)
         if not selected:
             return read_only_unset_label(var_def, UNSET_SELECT_MESSAGE)
-        return board_word("controls.list_join").join(str(member) for member in selected)
+        # A summary, not the list: the field holds one width, and the menu's
+        # "Show only selected" is where the whole selection is read.
+        if len(selected) == 1:
+            return str(selected[0])
+        return board_word(
+            "controls.selection_summary",
+            first=str(selected[0]),
+            n=str(len(selected)),
+        )
 
     if input_type == "daterange":
         if _daterange_is_unset(value):

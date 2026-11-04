@@ -86,6 +86,7 @@ pub(super) struct NativeTitles {
 pub(super) fn bar_datum_aria(
     tooltip_labels: bool,
     cat: &str,
+    time: Option<&crate::time_axis::TimeAxis>,
     detected_tu: Option<TimeUnit>,
     is_standard_date: bool,
     grain_format: Option<AuthoredTimeFormat>,
@@ -112,16 +113,9 @@ pub(super) fn bar_datum_aria(
         }
         return Ok(Some(label));
     }
-    // `is_standard_date`: line/area's own STRICT `all_temporal` gate
-    // (`x_values_are_standard_dates`) -- a field this strict types
-    // "temporal" even with no detected bucketed grain, so its header still
-    // formats through the continuous fallback rather than the raw ISO
-    // string. Both orientations derive this from their own domain: it's a
-    // STRICTLY broader predicate than `render_horizontal`'s own refusal
-    // gate (`detect_time_unit(...).is_some()`, a DETECTED calendar bucket),
-    // so a standard-date x with no detected bucket reaches this call
-    // without having refused above.
-    let header = crate::contract::tooltip_header_text(cat, detected_tu, is_standard_date, grain_format)?;
+    // `is_standard_date` is broader than `detected_tu.is_some()`: a standard-date x with no detected bucket still
+    // heads its tooltip with its date, never the raw ISO text.
+    let header = crate::contract::tooltip_header_text(cat, time.and_then(|t| t.date(cat)), detected_tu, is_standard_date, grain_format)?;
     let tt = crate::contract::BarTooltip {
         header: &header,
         series,
@@ -141,6 +135,7 @@ pub(super) fn bar_datum_aria(
 pub(super) fn imputed_datum_aria(
     tooltip_labels: bool,
     cat: &str,
+    time: Option<&crate::time_axis::TimeAxis>,
     detected_tu: Option<TimeUnit>,
     is_standard_date: bool,
     grain_format: Option<AuthoredTimeFormat>,
@@ -150,7 +145,7 @@ pub(super) fn imputed_datum_aria(
     if !tooltip_labels {
         return Ok(None);
     }
-    let header = crate::contract::tooltip_header_text(cat, detected_tu, is_standard_date, grain_format)?;
+    let header = crate::contract::tooltip_header_text(cat, time.and_then(|t| t.date(cat)), detected_tu, is_standard_date, grain_format)?;
     Ok(Some(crate::contract::imputed_aria_label(&header, series, order)))
 }
 

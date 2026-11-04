@@ -52,7 +52,7 @@ class TestFormatVariableDisplayValue:
         var = Variable(input="multiselect", placeholder="All plans")
         assert format_variable_display_value(var, None) == "All plans"
         assert format_variable_display_value(var, []) == "All plans"
-        assert format_variable_display_value(var, ["pro", "team"]) == "pro, team"
+        assert format_variable_display_value(var, ["pro", "team"]) == "(2) pro"
 
     def test_daterange_unset(self) -> None:
         var = Variable(input="daterange")

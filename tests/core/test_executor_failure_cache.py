@@ -24,6 +24,8 @@ from dbt_charts.core.execute.duckdb_cache import compute_cache_key
 from dbt_charts.core.execute.executor import _memo_key
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result, rows_schema
+
 BOARD_YAML = """
 title: Test
 queries:
@@ -47,6 +49,7 @@ def _make_executor(result_cache=None, adapter_result=None, adapter_side_effect=N
     """Build an Executor with a mock adapter registry."""
     result = compile(BOARD_YAML)
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     if adapter_side_effect:
         mock_registry.execute.side_effect = adapter_side_effect
     elif adapter_result is not None:
@@ -55,6 +58,7 @@ def _make_executor(result_cache=None, adapter_result=None, adapter_side_effect=N
         ok = Mock()
         ok.is_success = True
         ok.data = [{"value": 1}]
+        ok.schema = rows_schema(ok.data)
         ok.resolved_relations = None
         ok.truncated_reason = None
         mock_registry.execute.return_value = ok
@@ -222,7 +226,10 @@ class TestDbtChartsErrorNotCached:
 
             executor = Executor(
                 result.board,
-                adapter_registry=Mock(execute=Mock(side_effect=raise_policy)),
+                adapter_registry=Mock(
+                    execute=Mock(side_effect=raise_policy),
+                    project_file_sources=Mock(return_value={}),
+                ),
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
@@ -350,7 +357,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
         # The memo is keyed by content *plus* the asking query's policy, so seed
         # it through the production key builder — a raw content key would land in
         # a slot execute_query never reads.
-        executor._cache[_memo_key(query, cache_key)] = valid_rows
+        executor._cache[_memo_key(query, cache_key)] = rows_result(valid_rows)
 
         # …but the persistent write-through failed and stored an error.
         executor._query_errors["good_query"] = RuntimeError("FK constraint violation")
@@ -375,6 +382,7 @@ class TestExecutorForceRefresh:
                 ok = Mock()
                 ok.is_success = True
                 ok.data = [{"value": 42}]
+                ok.schema = rows_schema(ok.data)
                 ok.resolved_relations = None
                 ok.truncated_reason = None
                 return ok
@@ -405,6 +413,7 @@ class TestExecutorForceRefresh:
                 ok = Mock()
                 ok.is_success = True
                 ok.data = [{"value": len(calls)}]
+                ok.schema = rows_schema(ok.data)
                 ok.resolved_relations = None
                 ok.truncated_reason = None
                 return ok

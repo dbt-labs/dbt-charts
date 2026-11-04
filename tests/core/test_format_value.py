@@ -714,13 +714,13 @@ class TestNotationFamilies:
 
     def test_narrative_notation_suffixes(self):
         assert format_d3(1_500, ",.2s", notation="narrative") == "1.5k"
-        assert format_d3(2_500_000, ",.2s", notation="narrative") == "2.5mn"
+        assert format_d3(2_500_000, ",.2s", notation="narrative") == "2.5m"
         assert format_d3(3_500_000_000, ",.2s", notation="narrative") == "3.5bn"
         assert format_d3(4_500_000_000_000, ",.2s", notation="narrative") == "4.5trn"
 
     def test_narrative_notation_negative(self):
         # d3 uses U+2212 minus sign
-        assert format_d3(-1_500_000, ",.2s", notation="narrative") == "−1.5mn"
+        assert format_d3(-1_500_000, ",.2s", notation="narrative") == "−1.5m"
 
     def test_narrative_notation_below_threshold(self):
         assert format_d3(500, ",.2s", notation="narrative") == "500"
@@ -737,15 +737,15 @@ class TestNotationFamilies:
 
     def test_format_value_with_narrative_config(self):
         config = FormatConfig(spec=",.2s", notation="narrative")
-        assert format_value(2_500_000, config) == "2.5mn"
+        assert format_value(2_500_000, config) == "2.5m"
 
     def test_format_value_with_dict_notation(self):
         config = {"spec": ",.2s", "notation": "narrative"}
-        assert format_value(2_500_000, config) == "2.5mn"
+        assert format_value(2_500_000, config) == "2.5m"
 
     def test_format_kpi_parts_with_narrative(self):
         config = FormatConfig(spec=",.2s", notation="narrative")
-        assert format_kpi_parts(2_500_000, config) == ("", "2.5", "mn")
+        assert format_kpi_parts(2_500_000, config) == ("", "2.5", "m")
 
     def test_format_value_dict_no_notation_is_native(self):
         # Dict format without notation= takes the native-d3 path: no substitution.
@@ -762,7 +762,7 @@ class TestNotationFamilies:
         formats = {
             "eur": FormatConfig(spec=".3~s", notation="narrative", prefix="EUR ")
         }
-        assert format_value(1_500_000, "eur", formats) == "EUR 1.5mn"
+        assert format_value(1_500_000, "eur", formats) == "EUR 1.5m"
 
     def test_format_kpi_parts_follows_a_bare_alias_names_own_notation(self):
         formats = {
@@ -770,7 +770,7 @@ class TestNotationFamilies:
         }
         # format_kpi_parts strips its own prefix lane (its 3-part decomposition
         # convention) -- "EUR", not "EUR ".
-        assert format_kpi_parts(1_500_000, "eur", formats) == ("EUR", "1.5", "mn")
+        assert format_kpi_parts(1_500_000, "eur", formats) == ("EUR", "1.5", "m")
 
 
 class TestPercentRangeGuard:
@@ -1045,7 +1045,7 @@ class TestFormatKpiPartsNative:
     substituting them with the house analytic/narrative vocabulary."""
 
     def test_native_true_keeps_raw_d3_suffix(self):
-        """native=True: 1_200_000 with ~s format → suffix "M" (raw d3), not "mn"."""
+        """native=True: 1_200_000 with ~s format → suffix "M" (raw d3), not "m"."""
         prefix, num, suffix = format_kpi_parts(
             1_200_000,
             FormatConfig(spec="~s", notation="narrative"),
@@ -1057,14 +1057,14 @@ class TestFormatKpiPartsNative:
         assert prefix == ""
 
     def test_native_false_uses_narrative_notation(self):
-        """native=False (default): FormatConfig with notation='narrative' → suffix 'mn'."""
+        """native=False (default): FormatConfig with notation='narrative' → suffix 'm'."""
         _, _, suffix = format_kpi_parts(
             1_200_000,
             FormatConfig(spec="~s", notation="narrative"),
             formats={},
             native=False,
         )
-        assert suffix == "mn"
+        assert suffix == "m"
 
     def test_native_true_thousands(self):
         """native=True: 5_000 with ~s format → suffix "k" (raw d3 lowercase)."""

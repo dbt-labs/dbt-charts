@@ -48,7 +48,6 @@ from dbt_charts.core.compile.models.factories import FontSlotBase, _PatchBase
 from dbt_charts.core.compile.models.markers import Facet, SchemaSugar
 from dbt_charts.core.compile.models.query.authored import (
     AuthoredCompactValuesQuery,
-    AuthoredHttpQuery,
     AuthoredQuery,
     AuthoredSchemaQuery,
     AuthoredSqlQuery,
@@ -1228,7 +1227,6 @@ def introspect() -> AuthorableSchema:
         CalloutChart,
         SparkBarChart,
         AuthoredSqlQuery,
-        AuthoredHttpQuery,
         AuthoredValuesQuery,
         AuthoredCompactValuesQuery,
         AuthoredSchemaQuery,
@@ -1283,10 +1281,10 @@ def introspect() -> AuthorableSchema:
     # Query tags are optional in YAML because normalize_query_value infers them
     # from variant-only keys. Keep the synthetic editor/schema node as a union of
     # the concrete shapes instead of flattening their fields; flattening turns a
-    # requirement from one variant (such as HTTP url) into a global requirement.
+    # requirement from one variant (such as a values query's rows) into a
+    # global requirement.
     query_variants = (
         "AuthoredSqlQuery",
-        "AuthoredHttpQuery",
         "AuthoredValuesQuery",
         "AuthoredCompactValuesQuery",
         "AuthoredSchemaQuery",

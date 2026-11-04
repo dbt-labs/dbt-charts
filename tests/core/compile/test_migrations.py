@@ -507,10 +507,9 @@ def test_prepare_mapping_current_schema_patch_takes_fast_path_under_boardpatch(
     """A current-schema, patch-shaped fragment (no charts/layout/title — the
     shape of every theme YAML and meta.yml) must not be treated as a
     migration candidate just because it fails the AuthoredBoard
-    "must have layout/chart/etc" invariant. Passing model=BoardPatch checks
+    "must have layout/chart/etc" invariant. Passing patch=True checks
     currency against a model that admits partial content."""
     from dbt_charts.core.compile.migrations import migrations as _migrations_impl
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
 
     raw: JsonObject = {"style": {"charts": {"axis_x": {"labels": {"format": "auto"}}}}}
 
@@ -522,20 +521,41 @@ def test_prepare_mapping_current_schema_patch_takes_fast_path_under_boardpatch(
 
     monkeypatch.setattr(_migrations_impl, "_board_migration_context", _boom)
 
-    prepared = prepare_board_mapping(raw, model=BoardPatch)
+    prepared = prepare_board_mapping(raw, patch=True)
 
     assert prepared == raw
+
+
+@pytest.mark.parametrize(
+    ("raw", "patch"),
+    [
+        ({"title": "Revenue", "theme": "paper"}, False),
+        ({"theme": "paper"}, True),
+    ],
+)
+def test_prepare_mapping_theme_sugar_takes_fast_path(
+    monkeypatch: pytest.MonkeyPatch, raw: JsonObject, *, patch: bool
+) -> None:
+    """`theme:` is permanent sugar for `extends:`, so a board authoring it is
+    current and must not pay for the migration registry."""
+    from dbt_charts.core.compile.migrations import migrations as _migrations_impl
+
+    def _boom() -> tuple[YamlSchemaCatalog, MigrationRegistry]:
+        raise AssertionError("a board authoring `theme:` is current")
+
+    monkeypatch.setattr(_migrations_impl, "_board_migration_context", _boom)
+
+    assert prepare_board_mapping(raw, patch=patch) == raw
 
 
 def test_prepare_mapping_old_schema_patch_still_migrates_under_boardpatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An old-schema patch fragment (pre-rename field name) must still reach
-    real migration when checked with model=BoardPatch — the fast path must
+    real migration when checked with patch=True — the fast path must
     not swallow genuine migration needs for patch-shaped content."""
     from dbt_charts.core.compile.migrations import migrations as _migrations_impl
     from dbt_charts.core.compile.migrations.migrations import suffix_rename_moves
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
 
     old_schema = _schema_with_axis_field("label")
     new_schema = _schema_with_axis_field("labels")
@@ -556,7 +576,7 @@ def test_prepare_mapping_old_schema_patch_still_migrates_under_boardpatch(
     )
 
     raw: JsonObject = {"axis_x": {"label": "auto"}}
-    prepared = prepare_board_mapping(raw, model=BoardPatch)
+    prepared = prepare_board_mapping(raw, patch=True)
 
     assert prepared == {"axis_x": {"labels": "auto"}}
 
@@ -2906,11 +2926,10 @@ def test_retired_theme_renames_dev_entry_wins_key_collisions(
 def test_prepare_mapping_migrates_style_only_patch_against_real_catalog() -> None:
     """A style-only fragment (meta.yml, extends target) has no board content,
     so the board's cross-field rules must not block its migration."""
-    from dbt_charts.core.compile.models.board.patch import BoardPatch
 
     with pytest.warns(SchemaMigrationWarning, match="migrated this YAML in memory"):
         prepared = prepare_board_mapping(
-            {"style": {"title": {"sizes": [20, 16]}}}, model=BoardPatch
+            {"style": {"title": {"sizes": [20, 16]}}}, patch=True
         )
     style = prepared["style"]
     assert isinstance(style, dict)
@@ -2993,3 +3012,26 @@ def test_frozen_schemas_with_cross_field_rules_still_migrate(
     style = migrated["style"]
     assert isinstance(style, dict)
     assert style["fonts"] == {"heading": {"sizes": [20, 16]}}
+
+
+def test_retired_theme_renames_reads_the_manifest_not_the_live_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every ``extends:`` entry asks for the retired theme names, so a board's
+    first compile pays for whatever this builds. The version chain is all it
+    needs: generating the live schema from the models is half a second of
+    introspection that this lookup never reads."""
+    from dbt_charts.core.compile.migrations.migrations import retired_theme_renames
+    from dbt_charts.core.compile.schema.renderers import yaml_schema_catalog
+
+    expected = retired_theme_renames()
+
+    def _no_live_schema() -> None:
+        raise AssertionError("retired_theme_renames generated the live schema")
+
+    monkeypatch.setattr(yaml_schema_catalog, "compute_current_schema", _no_live_schema)
+    retired_theme_renames.cache_clear()
+    try:
+        assert retired_theme_renames() == expected
+    finally:
+        retired_theme_renames.cache_clear()

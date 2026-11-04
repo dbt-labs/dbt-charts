@@ -2,7 +2,7 @@
 
 use super::cartesian::{cartesian, cartesian_cross, cartesian_normalize_in_place};
 use super::math::{asin, EPSILON, EPSILON2, HALF_PI, PI, QUARTER_PI, TAU};
-use super::Adder;
+use crate::array::Adder;
 
 fn longitude(point: [f64; 2]) -> f64 {
     if point[0].abs() <= PI {

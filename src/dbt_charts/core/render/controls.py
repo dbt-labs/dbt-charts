@@ -69,21 +69,44 @@ _CONTROLS_RUNTIME_WORDS = (
     "next_month",
     "calendar_header",
     "calendar_day",
-    "sort_ascending",
-    "sort_descending",
+    "date",
+    "date_no_year",
+    "range",
+    "range_same_month",
+    "sort_text_ascending",
+    "sort_text_descending",
+    "sort_number_ascending",
+    "sort_number_descending",
+    "sort_date_ascending",
+    "sort_date_descending",
     "clear_sort",
     "search",
     "search_values",
+    "select_all",
+    "selection_summary",
+    "show_all",
+    "show_only_selected",
+    "sort",
+    "sort_count_ascending",
+    "sort_count_descending",
+    "filter_by_range",
+    "filter_by_values",
     "page_range",
 )
 
 
-# The calendar and page-range patterns reach the page unfilled: the runtime puts
-# a date's parts or a page's row numbers into them.
+# The calendar, date, and page-range patterns reach the page unfilled: the
+# runtime puts a date's parts or a page's row numbers into them.
 _PATTERN_PLACEHOLDERS = {
     "calendar_header": ("month", "year"),
     "calendar_day": ("weekday", "day", "month", "year"),
+    "date": ("day", "month", "year"),
+    "date_no_year": ("day", "month"),
+    "range": ("start", "end"),
+    "range_same_month": ("start_day", "end_day", "month", "year"),
     "page_range": ("first", "last", "total"),
+    "show_only_selected": ("n",),
+    "selection_summary": ("first", "n"),
 }
 
 
@@ -97,7 +120,7 @@ def preset_label(preset: DaterangePreset) -> str:
             return board_word(f"controls.this_{unit}")
         case "to_date":
             return board_word(f"controls.{unit}_to_date")
-        case "last" | "previous":
+        case "last" | "previous" | "before_previous":
             return board_word(
                 f"controls.preset_{preset.kind}",
                 duration=board_word(f"duration.{unit}", preset.n),
@@ -122,16 +145,18 @@ def controls_language() -> dict[str, str]:
 
 @cache
 def controls_runtime_source() -> str:
-    """The board runtimes (chart hover, table sort/filter, the link modal, the English controls words, then variable controls) as JS for a host to ship in its page.
+    """The board runtimes (the English controls words, the calendar, chart hover, table sort/filter, the link modal, then variable controls) as JS for a host to ship in its page.
 
     Strips the ``/*{# ... #}*/``-fenced comments — engineering notes with no
     audience once the runtime is shipped. Cached: hosts rebuild this per page
     render, and a packaged asset can't change under a running process.
     """
     # Hover and table first: the controls runtime's mount() hands each board to them.
+    # The calendar before both of its users, the table and date controls.
     return "\n".join(
         [
             _read_script("controls_english.js"),
+            strip_js_comments(_read_script("calendar.js")),
             hover_runtime_source(),
             strip_js_comments(_read_script("table_runtime.js")),
             link_modal_source(),

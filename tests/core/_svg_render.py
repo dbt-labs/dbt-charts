@@ -133,9 +133,7 @@ def legend_label_order(svg: str) -> list[str]:
     """
     labels = []
     for m in re.finditer(r'class="[^"]*\brole-legend-label\b[^"]*"', svg):
-        text_match = re.search(
-            r"<text[^>]*>([^<]*)</text>", svg[m.end() : m.end() + 300]
-        )
+        text_match = re.compile(r"<text[^>]*>([^<]*)</text>").search(svg, m.end())
         if text_match:
             labels.append(text_match.group(1))
     return labels
@@ -277,3 +275,74 @@ def leaf_kind_subtrees(svg: str, kind: str) -> list[str]:
                 out.append(svg[opening.start() : opening.start() + tag.end()])
                 break
     return out
+
+
+_PATH_TOKEN = re.compile(r"[A-Za-z]|[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")
+_PATH_ARITY = {
+    "M": 2,
+    "L": 2,
+    "H": 1,
+    "V": 1,
+    "C": 6,
+    "S": 4,
+    "Q": 4,
+    "T": 2,
+    "A": 7,
+    "Z": 0,
+}
+
+
+def path_commands(d: str) -> list[tuple[str, list[float]]]:
+    """A path's commands as ``(letter, numbers)``, one per drawn segment, in any valid syntax.
+
+    Implicit repeats split into their own entries (``M`` repeats as ``L``) and
+    spacing, commas and sign-separated numbers all read the same, so a test can
+    read geometry without depending on how the renderer prints it.
+    """
+    tokens = _PATH_TOKEN.findall(d)
+    commands: list[tuple[str, list[float]]] = []
+    i = 0
+    while i < len(tokens):
+        letter = tokens[i]
+        assert letter.isalpha(), f"path data {d!r} has a number outside a command"
+        i += 1
+        arity = _PATH_ARITY[letter.upper()]
+        if arity == 0:
+            commands.append((letter, []))
+            continue
+        first = True
+        while i < len(tokens) and not tokens[i].isalpha():
+            numbers = [float(t) for t in tokens[i : i + arity]]
+            assert len(numbers) == arity, f"path data {d!r} ends mid-command"
+            i += arity
+            kind = (
+                letter
+                if first or letter.upper() != "M"
+                else ("l" if letter == "m" else "L")
+            )
+            commands.append((kind, numbers))
+            first = False
+    return commands
+
+
+def path_vertices(d: str) -> list[tuple[float, float]]:
+    """Every endpoint a path visits, in absolute coordinates (relative commands resolved)."""
+    x = y = start_x = start_y = 0.0
+    points: list[tuple[float, float]] = []
+    for letter, n in path_commands(d):
+        relative = letter.islower()
+        match letter.upper():
+            case "Z":
+                x, y = start_x, start_y
+            case "H":
+                x = n[0] + (x if relative else 0.0)
+            case "V":
+                y = n[0] + (y if relative else 0.0)
+            case _:
+                ex, ey = n[-2], n[-1]
+                x, y = (x + ex, y + ey) if relative else (ex, ey)
+        if letter.upper() == "M":
+            start_x, start_y = x, y
+        if letter.upper() != "Z":
+            points.append((x, y))
+    return points

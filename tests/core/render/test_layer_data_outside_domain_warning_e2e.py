@@ -57,6 +57,7 @@ def _warnings(board_yaml: str) -> list:
     ok.resolved_relations = None
     ok.truncated_reason = None
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.return_value = ok
     executor = Executor(
         result.board, adapter_registry=registry, query_registry=result.query_registry

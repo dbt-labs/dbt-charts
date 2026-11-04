@@ -395,8 +395,8 @@ class TestKpiNarrativeDefault:
             height=160,
             board_style=resolve_style(get_theme_style()),
         )
-        # 1,500,000 → "1.5mn" under narrative notation (.2s = 2 sig figs, d3-correct).
-        assert "mn" in svg
+        # 1,500,000 → "1.5m" under narrative notation (.2s = 2 sig figs, d3-correct).
+        assert ">m<" in svg
         assert "1.5" in svg
 
     def test_explicit_analytic_notation_overrides_default(self):
@@ -414,7 +414,7 @@ class TestKpiNarrativeDefault:
         )
         # Analytic register suffixes the magnitude as uppercase "M".
         assert ">M<" in svg
-        assert "mn" not in svg
+        assert ">m<" not in svg
 
     def test_explicit_full_format_disables_compact(self):
         resolved, data = _resolved_kpi(value="revenue", label="Revenue", format=",.0f")
@@ -494,7 +494,7 @@ class TestKpiDigitIntegrity:
         from decimal import Decimal
 
         svg = self._render(Decimal("1500000"))
-        assert "mn" in svg
+        assert ">m<" in svg
         assert "1.5" in svg
 
     def test_authored_notation_without_spec_below_threshold_renders_exact_digits(self):
@@ -904,7 +904,7 @@ class TestKpiValueFontSizeCascade:
             height=200,
             board_style=resolve_style(get_theme_style()),
         )
-        assert 'font-size="33.0"' in svg, (
+        assert 'font-size="33"' in svg, (
             "Theme `kpi.value.font.size` did not reach the rendered SVG."
         )
 
@@ -941,7 +941,7 @@ class TestKpiValueFontSizeCascade:
             height=200,
             board_style=resolve_style(get_theme_style()),
         )
-        assert 'font-size="17.0"' in svg, (
+        assert 'font-size="17"' in svg, (
             "Theme `kpi.glyph.font.size` did not reach the rendered SVG."
         )
 
@@ -1238,7 +1238,6 @@ def _card_geometry(
         height=height,
         padding=None,
         board_style=board_style,
-        board_width=None,
     )
     label_baseline = re.search(
         r'data-authored-kind="label".*?<tspan x="[^"]+" y="([\d.]+)"', svg, re.S

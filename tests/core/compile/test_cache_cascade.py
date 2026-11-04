@@ -726,7 +726,7 @@ def test_project_root_reaches_a_synthetic_variable_query(tmp_path: Path) -> None
 def test_every_query_type_carries_the_cascaded_policy(tmp_path: Path) -> None:
     """A distinctive project-root ttl, unlikely to appear by coincidence,
     propagated onto every query type a real board can declare (sql/values/
-    http/schema — with values_q actually referenced by a chart). Catches a
+    schema — with values_q actually referenced by a chart). Catches a
     stamping miss for any known query type: NEVER_CACHED's ttl is None, so a
     missed stamp would show up here as `ttl != "37m"`, not as an exception."""
     result = _compile_board(
@@ -736,7 +736,6 @@ def test_every_query_type_carries_the_cascaded_policy(tmp_path: Path) -> None:
         queries:
           sql_q: {sql: "SELECT 1", source: db}
           values_q: {type: values, rows: [{a: 1}]}
-          http_q: {type: http, url: "https://example.com/data"}
           schema_q: {type: schema, source: db}
         charts:
           c1: {query: sql_q, type: kpi, value: value}
@@ -745,7 +744,7 @@ def test_every_query_type_carries_the_cascaded_policy(tmp_path: Path) -> None:
         """,
         project_yaml="cache: 37m\n",
     )
-    assert set(result.board.queries) == {"sql_q", "values_q", "http_q", "schema_q"}
+    assert set(result.board.queries) == {"sql_q", "values_q", "schema_q"}
     for query in result.board.queries.values():
         assert query.cache.ttl == "37m"
 
@@ -755,8 +754,7 @@ def test_schema_query_honors_the_source_scope() -> None:
 
     `SchemaQuery` carries a populated `source` and runs through the same
     executor cache path as `SqlQuery`, so scoping the source layer to SQL
-    queries drops a documented cascade scope for it. (`HttpQuery` and
-    `ValuesQuery` have no source and are correctly excluded.)
+    queries drops a documented cascade scope for it. (`ValuesQuery` has no source and is correctly excluded.)
     """
     sources: dict[str, Any] = {
         "live_db": {"type": "duckdb", "path": "warehouse.duckdb", "cache": False}

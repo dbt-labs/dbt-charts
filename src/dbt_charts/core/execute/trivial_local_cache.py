@@ -5,12 +5,10 @@ Purpose: Replace-on-write DuckDB cache for `dct render` and `dct serve`. One
 outcome row per cache key, the result rows stored on it as a single payload —
 no history, no generations.
 
-Payload encoding: zlib-compressed JSON of ``{"types": {...}, "rows": [...]}``.
-JSON holds what a query result holds — nested values, columns of mixed type,
-rows that do not share a key set — and keeps each row's key order. It has no
-date, datetime or Decimal, so ``types`` names each column whose every value is
-one of those, and the read restores them; that is the per-column type tag the
-``QueryResultCache.get`` contract asks a lossy store to carry.
+Payload encoding: zlib-compressed JSON of ``{"schema": [...], "rows": [...]}``
+(``result_codec``). JSON holds what a query result holds, nested values and
+rows that do not share a key set included, and keeps each row's key order; the
+declared schema restores the types it has no name for.
 """
 
 from __future__ import annotations
@@ -18,99 +16,31 @@ from __future__ import annotations
 import json
 import logging
 import zlib
-from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from pathlib import Path  # noqa: TID251 — DuckDB cache file (DCT_CACHE_PATH)
-from typing import Any
 
 from dbt_charts.core.execute._duckdb_cache_base import _DuckDBResultCacheBase
 from dbt_charts.core.execute.cache_backend import (
+    CacheEntry,
     CacheHit,
     CacheOutcome,
-    CacheRows,
+    CacheVariables,
+    ResultRows,
     TruncatedReason,
 )
+from dbt_charts.core.execute.cache_keys import stored_query_hash
+from dbt_charts.core.execute.result_codec import decode_result, encode_result
 
 logger = logging.getLogger(__name__)
 
-_RESTORE: dict[str, Callable[[str], date | Decimal]] = {
-    "date": date.fromisoformat,
-    "datetime": datetime.fromisoformat,
-    "decimal": Decimal,
-}
 
-
-# datetime is a date subclass, so it is tested first.
-_TAGGED_TYPES: tuple[tuple[type, str], ...] = (
-    (datetime, "datetime"),
-    (date, "date"),
-    (Decimal, "decimal"),
-)
-
-
-def _column_types(rows: CacheRows) -> dict[str, str]:
-    """Tag each column whose every non-None value is one restorable type."""
-    seen: dict[str, set[str | None]] = {}
-    for row in rows:
-        for column, value in row.items():
-            if value is not None:
-                seen.setdefault(column, set()).add(
-                    next(
-                        (tag for cls, tag in _TAGGED_TYPES if isinstance(value, cls)),
-                        None,
-                    )
-                )
-    return {
-        column: tag
-        for column, tags in seen.items()
-        if len(tags) == 1 and (tag := next(iter(tags))) is not None
-    }
-
-
-def _json_default(
-    value: Any,  # type-state: explicit_any — json.dumps hands its default hook whatever it could not serialize
-) -> str | float:
-    """Serialize a value JSON has no type for.
-
-    Reached for a tagged column's dates, and for values nothing restores: one
-    nested in a list or dict, or in a column of mixed type, which the cache
-    contract passes through in the store's own form. A Decimal there stays a
-    number.
-    """
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return float(value)
-    return str(value)
-
-
-def _encode(rows: CacheRows) -> bytes:
-    types = _column_types(rows)
-    # float cannot hold every warehouse NUMERIC, so a Decimal column is stored
-    # as text; the default hook would otherwise turn it into a lossy number.
-    exact = {column for column, tag in types.items() if tag == "decimal"}
-    if exact:
-        rows = [
-            {
-                column: str(value) if column in exact and value is not None else value
-                for column, value in row.items()
-            }
-            for row in rows
-        ]
-    document = json.dumps({"types": types, "rows": rows}, default=_json_default)
+def _encode(result: ResultRows) -> bytes:
+    document = json.dumps(encode_result(result))
     return zlib.compress(document.encode(), level=1)
 
 
-def _decode(payload: bytes) -> CacheRows:
-    document = json.loads(zlib.decompress(payload))
-    rows: CacheRows = document["rows"]
-    for column, tag in document["types"].items():
-        restore = _RESTORE[tag]
-        for row in rows:
-            if row.get(column) is not None:
-                row[column] = restore(row[column])
-    return rows
+def _decode(payload: bytes) -> ResultRows:
+    return decode_result(json.loads(zlib.decompress(payload)))
 
 
 class TrivialDuckDBCache(_DuckDBResultCacheBase):
@@ -179,7 +109,7 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
             and (ttl is None or datetime.now(UTC) - written_at <= ttl)
         ):
             try:
-                rows = _decode(slots.payload)
+                result = _decode(slots.payload)
             except (zlib.error, ValueError, KeyError, TypeError, ArithmeticError):
                 logger.warning(
                     "query-result cache: undecodable entry for %s; re-running",
@@ -187,23 +117,57 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                 )
             else:
                 return CacheHit(
-                    rows=rows,
+                    rows=result.rows,
+                    schema=result.schema,
                     written_at=written_at,
                     truncated_reason=slots.truncated_reason,
                 )
         return slots.error
+
+    def listed_key(self, key: tuple[str, str, str]) -> tuple[str, str, str]:
+        source_hash, query_hash, variables_hash = key
+        return source_hash, stored_query_hash(query_hash), variables_hash
+
+    def read(self, key: tuple[str, str, str]) -> CacheHit | None:
+        """The rows under a listed entry's key, as ``entries()`` reports it.
+
+        The key is the stored form, so no re-hashing: a listing already saw
+        the row it wants. An undecodable payload is None, as in ``get()``.
+        """
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT written_at_utc, payload, truncated_reason "
+                "FROM _query_outcomes WHERE source_hash = ? AND query_hash = ? "
+                "AND variables_hash = ? AND payload IS NOT NULL",
+                list(key),
+            ).fetchone()
+        if row is None:
+            return None
+        written_at, payload, truncated_reason = row
+        try:
+            result = _decode(payload)
+        except (zlib.error, ValueError, KeyError, TypeError, ArithmeticError):
+            logger.warning("query-result cache: undecodable entry for %s", key[1])
+            return None
+        return CacheHit(
+            rows=result.rows,
+            schema=result.schema,
+            written_at=written_at.replace(tzinfo=UTC),
+            truncated_reason=truncated_reason,
+        )
 
     def put(
         self,
         source_hash: str,
         query_hash: str,
         variables_hash: str,
-        outcome: CacheRows | Exception,
+        outcome: ResultRows | Exception,
         *,
         board_slug: str,
         query_name: str,
         source_name: str = "",
         truncated_reason: TruncatedReason | None = None,
+        variables: CacheVariables | None = None,
     ) -> None:
         """Record *outcome* in its own slot, leaving the other one alone.
 
@@ -215,6 +179,7 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
         del (
             source_name
         )  # recorded by Cloud's backend; the local cache has no use for it
+        recorded = variables or {}  # type-state: silent_fallback — None: no variables
         if isinstance(outcome, Exception):
             with self._connection() as conn:
                 self._write_error_slot(
@@ -225,6 +190,7 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                     outcome,
                     board_slug,
                     query_name,
+                    recorded,
                 )
             return
         payload = _encode(outcome)
@@ -238,5 +204,12 @@ class TrivialDuckDBCache(_DuckDBResultCacheBase):
                 board_slug,
                 query_name,
                 truncated_reason,
+                len(outcome.rows),
+                list(outcome.schema),
+                recorded,
             )
-        logger.debug("Cached %d rows for %s", len(outcome), query_hash)
+        logger.debug("Cached %d rows for %s", len(outcome.rows), query_hash)
+
+    def entries(self) -> list[CacheEntry]:
+        with self._connection() as conn:
+            return self._read_entries(conn)

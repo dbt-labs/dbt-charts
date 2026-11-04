@@ -23,17 +23,22 @@ from dbt_charts.core.execute.cache_backend import CacheHit
 from dbt_charts.core.execute.cache_keys import stored_query_hash
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from .._results import rows_result
+
 _KEY = ("s" * 16, "q" * 16, "v" * 16)
 
 _CHILD_PUTS_AND_READS = """
 import sys
 from pathlib import Path
+from dbt_charts.core.column_types import ColumnType
+from dbt_charts.core.execute.cache_backend import ResultRows
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 cache = TrivialDuckDBCache(db_path=Path(sys.argv[1]))
 hit = cache.get("s" * 16, "q" * 16, "v" * 16)
 print(hit.rows, flush=True)
-cache.put("s" * 16, "child" * 4, "v" * 16, [{"n": 2}], board_slug="b", query_name="q")
+rows = ResultRows([{"n": 2}], {"n": ColumnType(kind="integer")})
+cache.put("s" * 16, "child" * 4, "v" * 16, rows, board_slug="b", query_name="q")
 cache.close()
 """
 
@@ -46,7 +51,7 @@ time.sleep(float(sys.argv[2]))
 
 
 def _put(cache: TrivialDuckDBCache, rows: list[dict[str, int]]) -> None:
-    cache.put(*_KEY, rows, board_slug="b", query_name="q")
+    cache.put(*_KEY, rows_result(rows), board_slug="b", query_name="q")
 
 
 @pytest.fixture
@@ -183,7 +188,14 @@ class TestMaxAgePrune:
         db_path = tmp_path / "cache.duckdb"
         cache = TrivialDuckDBCache(db_path=db_path)
         _put(cache, [{"n": 1}])
-        cache.put("s" * 16, "fresh" * 4, "v" * 16, [], board_slug="b", query_name="q")
+        cache.put(
+            "s" * 16,
+            "fresh" * 4,
+            "v" * 16,
+            rows_result([]),
+            board_slug="b",
+            query_name="q",
+        )
         cache.close()
         self._age_entries(db_path, 8)
 
@@ -234,7 +246,14 @@ class TestMaxAgePrune:
         db_path = tmp_path / "cache.duckdb"
         cache = TrivialDuckDBCache(db_path=db_path)
         _put(cache, [{"n": 1}])
-        cache.put("s" * 16, "fresh" * 4, "v" * 16, [], board_slug="b", query_name="q")
+        cache.put(
+            "s" * 16,
+            "fresh" * 4,
+            "v" * 16,
+            rows_result([]),
+            board_slug="b",
+            query_name="q",
+        )
         cache.close()
         self._age_entries(db_path, 8)
 
@@ -275,7 +294,14 @@ class TestMaxAgePrune:
             cache = TrivialDuckDBCache(db_path=db_path, max_age=timedelta(days=7))
             for n in range(10):
                 query_hash = f"g{generation}q{n}"
-                cache.put("s", query_hash, "v", rows, board_slug="b", query_name="q")
+                cache.put(
+                    "s",
+                    query_hash,
+                    "v",
+                    rows_result(rows),
+                    board_slug="b",
+                    query_name="q",
+                )
             cache.close()
             for n in range(10):
                 self._age_entries(db_path, 8, f"g{generation}q{n}")

@@ -37,7 +37,9 @@ def test_a_new_format_version_changes_the_stored_hash(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     before = stored_query_hash("abc")
-    monkeypatch.setattr(cache_keys, "RESULT_FORMAT_VERSION", 2)
+    monkeypatch.setattr(
+        cache_keys, "RESULT_FORMAT_VERSION", cache_keys.RESULT_FORMAT_VERSION + 1
+    )
     assert stored_query_hash("abc") != before
     assert len(before) == 16
 

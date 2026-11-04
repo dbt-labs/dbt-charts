@@ -45,7 +45,7 @@ def nested_dirs(temp_project):
         yaml.dump(
             {
                 "source": "production_db",
-                "style": {"frame": {"width": 700}},
+                "width": 700,
                 "queries": {"common_query": "SELECT 1"},
             }
         )
@@ -374,7 +374,7 @@ class TestFindMetaFilesPackageBoards:
         (tmp_path / "charts" / "meta.yml").write_text("source: host_db\n")
         pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
         pkg_charts.mkdir(parents=True)
-        (pkg_charts / "meta.yml").write_text("style: {frame: {width: 700}}\n")
+        (pkg_charts / "meta.yml").write_text("width: 700\n")
         board_path_fs = pkg_charts / "overview.yml"
         board_path_fs.write_text("title: Overview\n")
 
@@ -399,7 +399,7 @@ class TestFindMetaFilesPackageBoards:
         (tmp_path / "charts" / "meta.yml").write_text("source: charts_db\n")
         pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
         pkg_charts.mkdir(parents=True)
-        (pkg_charts / "meta.yml").write_text("style: {frame: {width: 700}}\n")
+        (pkg_charts / "meta.yml").write_text("width: 700\n")
         board_path_fs = pkg_charts / "overview.yml"
         board_path_fs.write_text("title: Overview\n")
 
@@ -420,7 +420,7 @@ class TestFindMetaFilesPackageBoards:
         (tmp_path / "charts").mkdir()
         pkg_charts = tmp_path / "dbt_packages" / "pkg_a" / "charts"
         pkg_charts.mkdir(parents=True)
-        (pkg_charts / "meta.yml").write_text("style: {frame: {width: 700}}\n")
+        (pkg_charts / "meta.yml").write_text("width: 700\n")
         board_path_fs = pkg_charts / "overview.yml"
         board_path_fs.write_text("title: Overview\n")
 
@@ -508,12 +508,10 @@ class TestPackageBoardSourceCascadeCompiles:
     ) -> None:
         (tmp_path / "dbt_charts.yml").write_text(self._SOURCES_CONFIG)
         (tmp_path / "charts").mkdir()
-        (tmp_path / "charts" / "meta.yml").write_text(
-            "source: db\nstyle: {frame: {width: 500}}\n"
-        )
+        (tmp_path / "charts" / "meta.yml").write_text("source: db\nwidth: 500\n")
         self._package_board(tmp_path)
         pkg_meta = tmp_path / "dbt_packages" / "pkg_a" / "charts" / "meta.yml"
-        pkg_meta.write_text("style: {frame: {width: 900}}\n")
+        pkg_meta.write_text("width: 900\n")
 
         project = local_project(tmp_path)
         board = project.path("dbt_packages/pkg_a/charts/overview.yml").read_board()
@@ -521,9 +519,7 @@ class TestPackageBoardSourceCascadeCompiles:
 
         assert result.success, [e.message for e in result.errors]
         assert result.board is not None
-        assert result.board.authored_style is not None
-        assert result.board.authored_style.frame is not None
-        assert result.board.authored_style.frame.width == 900
+        assert result.board.authored_width == 900
 
     def test_no_host_source_yields_source_required_error(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -693,12 +689,10 @@ class TestCompileFileWithMeta:
     def test_board_width_survives_sibling_end_to_end(
         self, temp_project, local_project: Callable[..., FilesystemProject]
     ):
-        """End-to-end: meta frame.width survives a board setting frame.margin,
-        all the way through to the resolved style.
+        """End-to-end: meta width survives a board setting frame.margin,
+        all the way through to the compiled board.
         """
-        (temp_project / "meta.yml").write_text(
-            yaml.dump({"style": {"frame": {"width": 700}}})
-        )
+        (temp_project / "meta.yml").write_text(yaml.dump({"width": 700}))
         board = {
             "title": "T",
             "rows": [{"cols": [{"text": "hi"}]}],
@@ -713,7 +707,7 @@ class TestCompileFileWithMeta:
         )
 
         assert result.success
-        assert result.board.resolved_style.frame.width == 700
+        assert result.board.authored_width == 700
         assert result.board.resolved_style.frame.margin == 33
 
     def test_threads_meta_lint(
@@ -781,7 +775,7 @@ class TestCompileFileWithMeta:
             yaml.dump(
                 {
                     "queries": {"root_query": {"sql": "SELECT 'root'", "source": "db"}},
-                    "style": {"frame": {"width": 700}},
+                    "width": 700,
                 }
             )
         )

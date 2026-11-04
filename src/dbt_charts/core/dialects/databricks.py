@@ -33,6 +33,10 @@ class DatabricksDialect(SQLDialect):
     escapes_backslashes = True
     uses_named_params = True
 
+    def zoned_date_expr(self, column: str, time_zone: str) -> str:
+        """FROM_UTC_TIMESTAMP shifts the instant to `time_zone`'s wall clock."""
+        return f"CAST(FROM_UTC_TIMESTAMP({column}, '{time_zone}') AS DATE)"
+
     def param(self, index: int) -> str:
         """Generate Databricks parameter placeholder.
 

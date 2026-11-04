@@ -3,8 +3,7 @@
 use super::model::{FontStyle, TextStyle};
 use super::place::{TextAnchor, TextBox};
 use crate::diagnostic::Diagnostic;
-use crate::svg::{num};
-use scene::{Attrs, Chars, Escape, Node, TextBlock};
+use scene::{Attrs, Bounds, Chars, Escape, Node, Role, Run, Shape};
 use measure::FontBook;
 
 pub(crate) fn css_family(families: &[String]) -> String {
@@ -22,7 +21,7 @@ pub(crate) fn measure(fonts: &FontBook, text: &str, style: &TextStyle) -> Result
     let font = &style.font;
     // The raw list, not the escaped CSS stack: `FontBook` matches names.
     let family = font.family.join(",");
-    let weight = measure::fonts::css_weight_axis(&num(font.weight))?;
+    let weight = measure::fonts::css_weight_axis(&font.weight.to_string())?;
     let w = fonts.measure_at_weight(text, &family, font.size, weight)?;
     let measurer = fonts.measurer(&family)?;
     Ok(Metrics {
@@ -78,19 +77,13 @@ pub(crate) fn nodes(b: &TextBox, style: &TextStyle, halo: Option<&str>) -> Vec<N
     let mut out = Vec::new();
     let frame = &style.frame;
     if frame.visible {
-        let attrs = Attrs::new()
-            .set("x", num(b.x))
-            .set("y", num(b.y))
-            .set("width", num(b.w))
-            .set("height", num(b.h))
-            .set("rx", num(frame.radius))
-            .set("fill", frame.fill.as_str())
-            .set("opacity", num(frame.opacity));
+        let attrs = Attrs::new().set("fill", frame.fill.as_str()).num("opacity", frame.opacity);
         let attrs = match &frame.stroke {
-            Some(stroke) => attrs.set("stroke", stroke.color.as_str()).set("stroke-width", num(stroke.width)),
+            Some(stroke) => attrs.set("stroke", stroke.color.as_str()).num("stroke-width", stroke.width),
             None => attrs,
         };
-        out.push(Node::Rect(attrs.set("aria-hidden", "true")));
+        let shape = Shape::Rect { x: b.x, y: b.y, w: b.w, h: b.h, rx: frame.radius };
+        out.push(Node::new(Role::Annotation, attrs.set("aria-hidden", "true"), shape));
     }
     let (x, anchor) = match b.anchor {
         TextAnchor::Start => (b.x + b.pad, "start"),
@@ -103,10 +96,11 @@ pub(crate) fn nodes(b: &TextBox, style: &TextStyle, halo: Option<&str>) -> Vec<N
         let paint = Attrs::new()
             .set("fill", canvas)
             .set("stroke", canvas)
-            .set("stroke-width", num(2.0 * style.halo))
+            .num("stroke-width", 2.0 * style.halo)
             .set("stroke-linejoin", "round");
         out.push(Node::group(
-            Attrs::new().set("opacity", num(style.halo_opacity)).set("aria-hidden", "true"),
+            Role::Annotation,
+            Attrs::new().num("opacity", style.halo_opacity).set("aria-hidden", "true"),
             vec![text_element(b, style, (x, anchor), paint)],
         ));
     }
@@ -117,12 +111,10 @@ pub(crate) fn nodes(b: &TextBox, style: &TextStyle, halo: Option<&str>) -> Vec<N
 fn text_element(b: &TextBox, style: &TextStyle, (x, anchor): (f64, &str), paint: Attrs) -> Node {
     let font = &style.font;
     let attrs = Attrs::new()
-        .set("x", num(x))
-        .set("y", num(b.y + b.pad + b.ascent))
         .set("text-anchor", anchor)
         .set("font-family", css_family(&font.family))
-        .set("font-size", num(font.size))
-        .set("font-weight", num(font.weight))
+        .num("font-size", font.size)
+        .num("font-weight", font.weight)
         .set_if(font.style == FontStyle::Italic, "font-style", "italic")
         .extend(paint);
     let runs = b
@@ -130,17 +122,16 @@ fn text_element(b: &TextBox, style: &TextStyle, (x, anchor): (f64, &str), paint:
         .iter()
         .enumerate()
         .map(|(i, line)| {
+            let chars = Run::Chars(Chars::new(line.as_str(), Escape::Attr));
             if i == 0 {
-                Node::Chars(Chars::new(line.as_str(), Escape::Attr))
+                chars
             } else {
-                Node::Tspan(TextBlock {
-                    attrs: Attrs::new().set("x", num(x)).set("dy", num(b.line_h)),
-                    text: Chars::new(line.as_str(), Escape::Attr),
-                })
+                Run::Tspan { x: Some(x), y: None, dx: None, dy: Some(b.line_h), attrs: Attrs::new(), runs: vec![chars] }
             }
         })
         .collect();
-    Node::TextRuns { attrs, children: runs }
+    let bounds = Bounds { x1: b.x, y1: b.y, x2: b.x + b.w, y2: b.y + b.h };
+    Node::new(Role::Annotation, attrs, Shape::Text { at: (x, b.y + b.pad + b.ascent), bounds: Some(bounds), runs })
 }
 
 #[cfg(test)]

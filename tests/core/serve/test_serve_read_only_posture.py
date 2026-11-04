@@ -9,6 +9,7 @@ sources still render because the materializer handles them out-of-band.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -98,5 +99,8 @@ class TestServeStrictReadOnlyDefault:
 
         # read_csv is refused by the external-access-off posture — the served
         # error names the disabled file-system access, and the data never renders.
-        assert "file system operations are disabled" in resp.text
+        # The tile wraps its message across lines: compare the words, not the markup.
+        assert "file system operations are disabled" in " ".join(
+            re.findall(r"(?<=>)([^<]+)(?=<)", resp.text)
+        )
         assert "West" not in resp.text

@@ -767,19 +767,16 @@ impl MarkdownParser {
                     let link_text = groups[0].clone().unwrap();
                     let url = groups[1].clone().unwrap();
                     let title = groups.get(2).cloned().flatten();
-                    spans.push(Span::new(link_text, SpanType::Link, Some(url), title));
+                    spans.extend(link_spans(&link_text, &url, title));
                 }
-                "bold_italic" => {
+                "bold_italic" | "bold" | "italic" => {
                     let inner = groups[0].clone().or(groups[1].clone()).unwrap();
-                    spans.push(Span::new(inner, SpanType::BoldItalic, None, None));
-                }
-                "bold" => {
-                    let inner = groups[0].clone().or(groups[1].clone()).unwrap();
-                    spans.push(Span::new(inner, SpanType::Bold, None, None));
-                }
-                "italic" => {
-                    let inner = groups[0].clone().or(groups[1].clone()).unwrap();
-                    spans.push(Span::new(inner, SpanType::Italic, None, None));
+                    let span_type = match kind {
+                        "bold_italic" => SpanType::BoldItalic,
+                        "bold" => SpanType::Bold,
+                        _ => SpanType::Italic,
+                    };
+                    spans.extend(emphasis_spans(&inner, span_type));
                 }
                 _ => unreachable!(),
             }
@@ -789,6 +786,54 @@ impl MarkdownParser {
 
         spans
     }
+}
+
+/// `parser.py::_link_spans`: the link spans of a *label*, each inline-code run
+/// its own span with `code` set, so the backticks never reach the page.
+fn link_spans(label: &str, url: &str, title: Option<String>) -> Vec<Span> {
+    let link = |text: &str, code: bool| Span {
+        code,
+        ..Span::new(text, SpanType::Link, Some(url.to_string()), title.clone())
+    };
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    for caps in inline_code().captures_iter(label) {
+        let run = caps.get(0).unwrap();
+        if run.start() > cursor {
+            spans.push(link(&label[cursor..run.start()], false));
+        }
+        spans.push(link(&caps[1], true));
+        cursor = run.end();
+    }
+    if cursor < label.len() {
+        spans.push(link(&label[cursor..], false));
+    }
+    spans
+}
+
+/// `parser.py::_emphasis_spans`: the spans of emphasized text, each
+/// inline-code run in it emphasized code.
+fn emphasis_spans(inner: &str, span_type: SpanType) -> Vec<Span> {
+    let bold = matches!(span_type, SpanType::Bold | SpanType::BoldItalic);
+    let italic = matches!(span_type, SpanType::Italic | SpanType::BoldItalic);
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    for caps in inline_code().captures_iter(inner) {
+        let run = caps.get(0).unwrap();
+        if run.start() > cursor {
+            spans.push(Span::new(&inner[cursor..run.start()], span_type, None, None));
+        }
+        spans.push(Span {
+            bold,
+            italic,
+            ..Span::new(&caps[1], SpanType::Code, None, None)
+        });
+        cursor = run.end();
+    }
+    if cursor < inner.len() {
+        spans.push(Span::new(&inner[cursor..], span_type, None, None));
+    }
+    spans
 }
 
 impl Default for MarkdownParser {

@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from dbt_charts.core.compile.models.style.resolved._base import _VLConfig
-from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.style.context import ChartStyleContext
@@ -145,6 +144,9 @@ def style_to_vega_lite(
         data["text"] = text_data
 
     # Title (board/chart title styling)
+    # Deferred: `resolve` imports this module.
+    from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
+
     title = concrete_title_style(chart_style_context)
     title_data: dict[str, Any] = {}
     tf = title.font

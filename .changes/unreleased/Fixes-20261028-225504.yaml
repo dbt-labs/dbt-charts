@@ -1,0 +1,3 @@
+kind: Fixes
+body: A chart that fails to render now shows a quiet striped placeholder with its error code and a link to that error's reference, instead of a red alert card.
+time: 2026-10-28T22:55:04.160469-07:00

@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.markers import (
 )
 from dbt_charts.core.compile.models.primitives import (
     OverlapSpec,
+    PatternStyle,
 )
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _AnnotatedChartStyleMixin,
@@ -126,6 +127,9 @@ class BarChartStyle(
         description="Series names printed on stacked bars instead of in a legend."
     )
     grouped: BarGroupedStyle = Field(description="Band-scale padding for grouped bars.")
+    pattern: PatternStyle = Field(
+        description="How the `pattern:` channel paints fills."
+    )
     marks: Annotated[
         BarChartMarksStyle, InheritSlot(from_path="Style.charts.marks")
     ] = Field(

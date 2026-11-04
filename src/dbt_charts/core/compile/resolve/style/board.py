@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import BaseModel
 
 from dbt_charts import _engine
-from dbt_charts.core.colors import BY_TONE
+from dbt_charts.core.colors import BY_TONE, canvas_tone
 from dbt_charts.core.compile.merge import merge_onto_base, merge_patches
 from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import (
@@ -51,11 +51,13 @@ from dbt_charts.core.compile.models.style.resolved._base import (
 from dbt_charts.core.compile.models.style.resolved.callout import (
     ResolvedCalloutElementStyle,
     ResolvedCalloutStyle,
+    ResolvedErrorTileStyle,
 )
 from dbt_charts.core.compile.models.style.theme import (
     AreaChartStyle,
     BarChartStyle,
     CalloutChartStyle,
+    CalloutElementStyle,
     ChartsStyle,
     ChartTitleStyle,
     GlobalMarksStyle,
@@ -94,6 +96,7 @@ from dbt_charts.core.compile.resolve.style.legend_position import (
 )
 from dbt_charts.core.compile.resolve.style.palette import (
     color,
+    color_from_theme,
     ink_canvas,
     is_translucent,
     mark_ink,
@@ -104,7 +107,10 @@ from dbt_charts.core.compile.resolve.style.tokens import (
     _resolve_self_tokens,
     _resolve_tokens_on_patch,
 )
-from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
+from dbt_charts.core.compile.resolve.style.typography import (
+    concrete_title_style,
+    title_fonts_by_tier,
+)
 from dbt_charts.core.compile.vega_lite.mapping import effective_vega_config
 from dbt_charts.core.fonts import font_is_tabular
 from dbt_charts.core.text.currencies import CurrencyCode
@@ -214,8 +220,11 @@ def _build_resolved_legend(legend: LegendStyle) -> ResolvedLegendStyle:
     )
 
 
-def _build_resolved_callout_chart(
-    callout: CalloutChartStyle, bold_font_weight: str, tone: ToneLiteral
+def build_resolved_callout_chart(
+    callout: CalloutChartStyle,
+    bold_font_weight: str,
+    code_family: str,
+    tone: ToneLiteral,
 ) -> ResolvedCalloutStyle:
     """Resolve a callout style for ``tone``.
 
@@ -242,6 +251,7 @@ def _build_resolved_callout_chart(
         padding=callout.padding,
         section_gap=callout.section_gap,
         bold_font_weight=bold_font_weight,
+        code_family=code_family,
         title=ResolvedCalloutElementStyle(
             font=tone_font(callout.title.font, "solid"),
             y_offset=callout.title.y_offset,
@@ -250,6 +260,49 @@ def _build_resolved_callout_chart(
             font=tone_font(callout.message.font, "text"),
             y_offset=callout.message.y_offset,
         ),
+    )
+
+
+def _build_resolved_error_tile(
+    callout: CalloutChartStyle,
+    bold_font_weight: str,
+    title: ChartTitleStyle,
+    code_family: str,
+    palettes: Mapping[str, str],
+    roles: dict[str, str],
+) -> ResolvedErrorTileStyle:
+    """The tile for a failed chart: the callout's structure in the theme's quiet roles.
+
+    A flat ``panel`` fill with no border and ``stripe`` hairlines over it; all
+    text in the chart title's ink. No tone color: a failed chart is unavailable, not
+    an alarm.
+    """
+
+    def role(name: str) -> str:
+        return color_from_theme(name, palettes=palettes, roles=roles)
+
+    def element(
+        element_style: CalloutElementStyle, ink: str
+    ) -> ResolvedCalloutElementStyle:
+        font = element_style.font.model_copy(update={"color": ink})
+        return ResolvedCalloutElementStyle(
+            font=resolve_cascaded_font(font), y_offset=element_style.y_offset
+        )
+
+    panel = role("panel")
+    ink = settled(title.font.color)
+    return ResolvedErrorTileStyle(
+        preferred_width=callout.preferred_width,
+        tone=callout.tone,
+        background=panel,
+        border=callout.border.model_copy(update={"width": 0.0, "color": panel}),
+        padding=callout.padding,
+        section_gap=callout.section_gap,
+        bold_font_weight=bold_font_weight,
+        code_family=code_family,
+        title=element(callout.title, ink),
+        message=element(callout.message, ink),
+        stripe_color=role("stripe"),
     )
 
 
@@ -304,6 +357,7 @@ def _build_chart_style_context(
         "formats",
         "background",
         "bold_font_weight",
+        "code_family",
         "dashes",
         "palettes",
         "roles",
@@ -381,6 +435,7 @@ def _build_chart_style_context(
     # A translucent echo is not repainted as the card fill: the board already
     # paints it. An opaque echo covers identical pixels, so it stays.
     card_fill = settled(charts.background)
+    code_family = settled(cascaded.text.code.font.family)
     if not card_authored and is_translucent(card_fill):
         card_fill = "transparent"
     return ChartStyleContext(
@@ -403,10 +458,16 @@ def _build_chart_style_context(
         axis_y=charts.axis_y,
         axis_quantitative=charts.axis_quantitative,
         legend=_build_resolved_legend(charts.legend),
-        callout_error=_build_resolved_callout_chart(
-            charts.callout, bold_font_weight, "negative"
+        callout_error=_build_resolved_error_tile(
+            charts.callout,
+            bold_font_weight,
+            title,
+            code_family,
+            palettes,
+            roles,
         ),
         bold_font_weight=bold_font_weight,
+        code_family=code_family,
         font_family=font_family,
         title=title,
         spark=spark,
@@ -766,7 +827,11 @@ def _finalize_style(
     # cascade-only fields (see the class docstring) — every remaining field
     # name matches chart_context 1:1.
     concrete = concrete_family_defaults(chart_context)
-    overridden = {"title", *(f.name for f in dataclasses.fields(concrete))}
+    overridden = {
+        "title",
+        "title_fonts",
+        *(f.name for f in dataclasses.fields(concrete)),
+    }
     chart_defaults = ResolvedChartDefaults(
         **{
             f.name: getattr(chart_context, f.name)
@@ -774,6 +839,7 @@ def _finalize_style(
             if f.name not in overridden
         },
         title=concrete_title_style(chart_context),
+        title_fonts=title_fonts_by_tier(chart_context),
         marks=concrete.marks,
         pie=concrete.pie,
         donut=concrete.donut,
@@ -795,6 +861,7 @@ def _finalize_style(
         "box_shadow",
         "secondary_color",
         "numeral_family",
+        "canvas_tone",
     }
     passthrough = {
         name: getattr(cascaded, name)
@@ -807,6 +874,7 @@ def _finalize_style(
         font=resolved_root_font,
         secondary_color=cascaded.secondary_ink(),
         numeral_family=cascaded.numeral_family(),
+        canvas_tone=canvas_tone(chart_context.board_canvas),
         emoji_mode=cascaded.font.emoji,
         box_shadow=(
             None

@@ -233,10 +233,8 @@ def test_missing_csv_file_code_reaches_chart_error():
     assert result.chart_errors[0].code == ERR_FILE_NOT_FOUND.code
 
 
-def test_callout_error_title_uses_registered_code_title():
-    """The placard title is the registered ErrorCode's title, not a hand-rolled
-    "Query Error: {name}" / "Chart Error: {id}" string — it depends only on
-    the diagnostic code, not on whether a query_name happens to be set."""
+def test_error_placard_headline_is_the_diagnostic_code():
+    """The placard's headline is the diagnostic's code, not a link."""
     from dbt_charts.core.compile.config import get_theme_style
     from dbt_charts.core.compile.resolve.style import resolve_style
     from dbt_charts.core.diagnostics.base import DbtChartsError
@@ -248,12 +246,17 @@ def test_callout_error_title_uses_registered_code_title():
     svg = render_error_placard(
         diagnostic,
         chart_id="c",
+        chart_title=None,
+        title_baseline=0.0,
+        tile_top=0.0,
+        content_left=16.0,
+        title_font=resolve_style(get_theme_style()).chart_defaults.title.font,
         width=400.0,
         height=200.0,
         style=resolve_style(get_theme_style()).chart_defaults.callout_error,
     )
 
-    assert f">{ERR_FILE_NOT_FOUND.title}</text>" in svg
+    assert f">{ERR_FILE_NOT_FOUND.code}</text>" in svg
 
 
 def test_chart_render_error_isolated():
@@ -477,7 +480,9 @@ def test_inline_callout_block_renders_code():
             "code": "ERR-INTERNAL",
             "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
             "hint": None,
-            "doc_url": None,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         chart_id="callout",
@@ -496,7 +501,9 @@ def test_inline_callout_block_renders_hint():
             "code": "ERR-INTERNAL",
             "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
             "hint": "Check your column names",
-            "doc_url": None,
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         },
         style=resolve_style(get_theme_style()).chart_defaults.callout_error,
         chart_id="callout",

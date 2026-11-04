@@ -21,6 +21,7 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.query.normalized import AnyQuery
 from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.models.style.merged import MergedChartStyle
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
 from dbt_charts.core.compile.models.variable.authored import (
     SingleRowBoolProbe,
@@ -473,6 +474,17 @@ class Board(BaseModel):
         default=None,
         description="Authored board style patch (background, padding, border, etc.).",
     )
+    authored_width: float | None = (
+        Field(  # type-state: optional — None is no authored width
+            default=None,
+            description=(
+                "Exact pixel width the root board authored as `width:`, from the "
+                "board, a template it extends, or a project's meta.yml. None sizes "
+                "the board to its content, bounded by style.frame.max_width. Always "
+                "None on a nested board, whose `width:` is placement in its parent."
+            ),
+        )
+    )
     # Board-scoped resolved style — authoritative, produced at compile time.
     resolved_style: ResolvedStyle = Field(
         description="Board-scoped resolved style; produced at compile time. Render reads this instead of re-merging patches.",
@@ -493,6 +505,11 @@ class Board(BaseModel):
     # ResolvedBoard or any mechanical render API.
     chart_style_context: ChartStyleContext = Field(
         description="Board-scoped chart style cascade context for runtime chart resolution.",
+    )
+
+    chart_styles: dict[str, MergedChartStyle] = Field(
+        default_factory=dict,
+        description="Final style of each chart placed on this board, by chart id.",
     )
 
     def placed_charts(self) -> list[Chart]:
@@ -546,16 +563,13 @@ class Board(BaseModel):
         description="Compilation metadata (warnings, diagnostics, source info) populated by the normalizer.",
     )
 
-    @property
-    def fiscal_year_start_month(self) -> int:
-        return self.chart_style_context.axis_x.fiscal_year_start_month
-
     def clock(self, instant: datetime) -> BoardClock:
         """Today in the board's zone at ``instant``, with its fiscal year start."""
         return BoardClock(
             self.regional.today(instant),
-            self.fiscal_year_start_month,
+            self.regional.fiscal_year_start_month,
             self.regional.week_start,
+            self.regional.time_zone,
         )
 
     def set_theme(self, theme: str | None) -> None:

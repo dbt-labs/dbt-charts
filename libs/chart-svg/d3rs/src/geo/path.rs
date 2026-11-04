@@ -5,4 +5,4 @@ pub mod bounds;
 pub mod centroid;
 pub mod index;
 pub mod measure;
-pub mod string;
+pub mod commands;

@@ -26,6 +26,7 @@ import html
 import json
 from typing import TYPE_CHECKING, Literal, TypedDict
 
+from dbt_charts.core.compile.format_value import format_value
 from dbt_charts.core.compile.models.style.theme import font_weight_as_css
 from dbt_charts.core.compile.template.daterange import (
     BoardClock,
@@ -35,7 +36,9 @@ from dbt_charts.core.compile.template.daterange import (
 )
 from dbt_charts.core.font_measure import centered_baseline_offset
 from dbt_charts.core.render.board_variables import (
+    LEGEND_VIEW_PREFIX,
     committed_text,
+    current_overridden_variables,
 )
 from dbt_charts.core.render.controls import (
     controls_are_interactive,
@@ -71,9 +74,14 @@ from dbt_charts.core.text.format_d3 import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from dbt_charts.core.compile.models.primitives import FormatTable
     from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
     from dbt_charts.core.compile.models.style.theme.variables import VariablesStyle
-    from dbt_charts.core.render.variables_layout import ControlBox, VariablesLayout
+    from dbt_charts.core.render.variables_layout import (
+        ControlBox,
+        ResetBox,
+        VariablesLayout,
+    )
     from dbt_charts.core.render.variables_resolve import ResolvedControl
 
 StripAlign = Literal["start", "end"]
@@ -97,9 +105,8 @@ def render_variables_strip_svg(
         controls: Controls settled by ``resolve_controls``, in strip order.
         width: Available width for the strip.
         resolved_style: ResolvedStyle for color and font resolution.
-        align: Which edge the strip packs against. The compact title-inline band
-            packs its controls opposite the title ("end"); every other strip
-            flows from the leading content edge.
+        align: Which edge the strip packs against: "end" beside a title or on an
+            untitled ``title-inline`` board, and the leading content edge otherwise.
         variables_path: Dotted path of the ``variables:`` mapping these controls
             come from, in the file being edited — ``"variables"`` for the root
             board, ``"rows.0.variables"`` for a board nested at ``rows.0``, and
@@ -122,10 +129,22 @@ def render_variables_strip_svg(
     )
 
     offsets = _row_offsets(layout, width, align)
+    formats = resolved_style.chart_defaults.formats
     drawn = [
-        _draw_control(control, box, offsets[box.y], variables_style, variables_path)
+        _draw_control(
+            control, box, offsets[box.y], variables_style, variables_path, formats
+        )
         for control, box in zip(controls, layout.boxes, strict=True)
     ]
+
+    if layout.reset is not None:
+        overridden = current_overridden_variables()
+        enabled = any(control.name in overridden for control in controls) or any(
+            name.startswith(LEGEND_VIEW_PREFIX) for name in overridden
+        )
+        drawn.append(
+            _draw_reset(layout.reset, offsets[layout.reset.y], variables_style, enabled)
+        )
 
     # The anchor sits outside the control group: a host hides the drawn chrome
     # when it swaps in its own, and a display:none element has no rect to
@@ -170,10 +189,11 @@ def _row_offsets(
     purpose (an overrun is visible and debuggable); reversing across the near
     edge just draws two things on top of each other.
     """
+    placed = [*layout.boxes, *([layout.reset] if layout.reset else [])]
     if align != "end":
-        return {box.y: 0.0 for box in layout.boxes}
+        return {box.y: 0.0 for box in placed}
     ends: dict[float, float] = {}
-    for box in layout.boxes:
+    for box in placed:
         ends[box.y] = box.x + box.width
     return {y: max(width - end, 0.0) for y, end in ends.items()}
 
@@ -188,7 +208,7 @@ def _preset_entry(name: str, preset: DaterangePreset, clock: BoardClock) -> Pres
     return {
         "id": name,
         "label": preset_label(preset),
-        "range": [d.isoformat() for d in preset.window(clock)],
+        "range": ["" if d is None else d.isoformat() for d in preset.window(clock)],
     }
 
 
@@ -198,6 +218,7 @@ def _draw_control(
     dx: float,
     variables_style: VariablesStyle,
     variables_path: str,
+    formats: FormatTable | None,
 ) -> str:
     """One control: its label, its field, and whatever ornament marks its type."""
     font_size = _font_size(variables_style)
@@ -321,6 +342,7 @@ def _draw_control(
         locale = active_time_locale()
         names = {
             "months": locale["months"],
+            "shortMonths": locale["shortMonths"],
             "days": locale["days"],
             "shortDays": locale["shortDays"],
             "weekStart": active_week_start(),
@@ -336,7 +358,7 @@ def _draw_control(
         previous_anchored: bool | None = None
         for name in control.presets:
             preset = parse_daterange_preset(name)
-            anchored = preset.kind in ("this", "to_date", "previous")
+            anchored = preset.kind not in ("today", "yesterday", "last")
             if anchored != previous_anchored:
                 groups.append([])
                 previous_anchored = anchored
@@ -361,12 +383,56 @@ def _draw_control(
         if control.option_values and controls_are_interactive()
         else ""
     )
+    # Each count as the number a count sort compares and the text the menu
+    # draws, in the board's `integer` format so its grouping is the board's.
+    counts = ""
+    if control.option_counts and controls_are_interactive():
+        pairs = [
+            [n, format_value(n, "integer", formats)] for n in control.option_counts
+        ]
+        counts = f' data-dbt-option-counts="{escape_attr(json.dumps(pairs))}"'
     return (
         f'<g data-dbt-variable="{escape_attr(box.name)}"{handle} '
-        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{presets}{options} '
+        f'data-dbt-input="{escape_attr(box.input)}"{checked}{disabled}{value_attr}{bounds}{unset}{time_locale}{presets}{options}{counts} '
         f'data-dbt-x="{px(x)}" data-dbt-y="{px(box.y)}" '
         f'data-dbt-width="{px(box.width)}" data-dbt-height="{px(box.height)}">'
         f"{''.join(parts)}</g>"
+    )
+
+
+def _draw_reset(
+    reset: ResetBox, dx: float, variables_style: VariablesStyle, enabled: bool
+) -> str:
+    """The reset item: hidden at rest, revealed on bind like the chevron.
+
+    Always drawn when the layout reserves it, so a static export keeps the same
+    gap a live board fills. Its rect carries no ``data-dbt-field``: that is what
+    the stylesheet strokes, and this item stays borderless. Disabled, in the
+    placeholder ink, while every filter it would reset is at its default.
+    """
+    font_size = _font_size(variables_style)
+    value_font = variables_style.value.font
+    assert value_font.family is not None, _CASCADE_GAP
+    input_style = variables_style.input
+    x = reset.x + dx
+    ink = value_font.color if enabled else variables_style.placeholder.font.color
+    disabled = "" if enabled else ' data-dbt-enabled="false"'
+    field_height = float(input_style.height)
+    field_y = reset.y + (reset.height - field_height) / 2
+    baseline = (
+        reset.y
+        + reset.height / 2
+        + centered_baseline_offset(value_font.family, font_size)
+    )
+    return (
+        f'<g data-dbt-reset="true"{disabled} opacity="0">'
+        f'<rect x="{px(x)}" y="{px(field_y)}" width="{px(reset.width)}" '
+        f'height="{px(field_height)}" rx="{px(float(input_style.border.radius))}" '
+        f'fill="{escape_attr(input_style.background)}" stroke="none"/>'
+        f'<text x="{px(x + float(input_style.padding.left))}" y="{px(baseline)}" '
+        f'font-size="{px(font_size)}" font-family="{escape_attr(str(value_font.family))}" '
+        f'fill="{escape_attr(ink)}">'
+        f"{html.escape(board_word('controls.reset'))}</text></g>"
     )
 
 

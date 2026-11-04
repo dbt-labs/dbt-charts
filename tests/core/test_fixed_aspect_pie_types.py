@@ -17,8 +17,9 @@ def test_alignment_target_caps_fixed_aspect_pie_types(
     chart_type: str, expected: float
 ) -> None:
     chart = SimpleNamespace(id="c", type=chart_type)
-    render_ctx = SimpleNamespace(natural_heights={("c", 400.0): 200.0})
+    item = SimpleNamespace(width=400.0, height=320.0)
+    render_ctx = SimpleNamespace(render_cache={}, natural_heights={("c", 400.0): 200.0})
 
-    target = _effective_alignment_target_for_chart(chart, 400.0, 320.0, render_ctx)
+    target = _effective_alignment_target_for_chart(item, chart, 320.0, render_ctx)
 
     assert target == expected

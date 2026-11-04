@@ -241,6 +241,45 @@ pub fn chart_title_metrics(
     }
 }
 
+/// `typography.py::width_tier`: the card-width ladder a chart title's font
+/// follows. The bounds are columns of the 1128px reference content width
+/// (24 columns of 47px): below 7.5, below 11.5, below 23.5, and up.
+pub fn width_tier(width: f64) -> &'static str {
+    const COLUMN_UNIT: f64 = 1128.0 / 24.0;
+    if width >= 23.5 * COLUMN_UNIT {
+        "wide"
+    } else if width >= 11.5 * COLUMN_UNIT {
+        "medium"
+    } else if width >= 7.5 * COLUMN_UNIT {
+        "narrow"
+    } else {
+        "tiny"
+    }
+}
+
+/// `title_band.py::failed_title_font`: the font a card of `width` gives a
+/// chart's title, out of a `{tier: font}` map.
+pub fn tier_font(title_fonts: &Value, width: f64) -> Result<&Value, String> {
+    let tier = width_tier(width);
+    title_fonts
+        .get(tier)
+        .ok_or_else(|| format!("title fonts carry no {tier} tier"))
+}
+
+/// `title_band.py::failed_title_metrics`: the band geometry of a failed chart's
+/// authored title, laid out as a Vega-Lite title is.
+pub fn failed_title_metrics(font: &Value, card_padding: f64) -> Result<TitleMetrics, String> {
+    let title_size = font
+        .get("size")
+        .and_then(Value::as_f64)
+        .ok_or("a failed chart's title font carries no size")?;
+    let ascent = crate::sizing::title_ascent(title_size);
+    Ok(TitleMetrics {
+        ascent: card_padding + ascent,
+        tail: title_size + VEGA_TITLE_OFFSET - ascent,
+    })
+}
+
 /// The Vega-Lite title block of a resolved chart as `(ascent, tail)`: the top
 /// to the first baseline (`title_ascent`), and that baseline to the body top
 /// (the title's size, one subtitle line plus its padding, `title.offset`).

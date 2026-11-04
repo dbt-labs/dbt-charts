@@ -40,9 +40,16 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedSparkBarChart,
     ResolvedTableChart,
 )
-from dbt_charts.core.compile.models.primitives import FormatConfig, PieMode
+from dbt_charts.core.compile.models.primitives import (
+    FormatConfig,
+    PieMode,
+    ResolvedFontStyle,
+)
 from dbt_charts.core.compile.models.style.resolved import ResolvedStyle
-from dbt_charts.core.compile.models.style.resolved.callout import ResolvedCalloutStyle
+from dbt_charts.core.compile.models.style.resolved.callout import (
+    ResolvedCalloutStyle,
+    ResolvedErrorTileStyle,
+)
 from dbt_charts.core.compile.resolve.style.markdown_style import build_mdsvg_style
 from dbt_charts.core.compile.template.output_budget import (
     TemplateOutputBudgetExceeded,
@@ -62,7 +69,7 @@ from dbt_charts.core.fonts import get_fonts_dir
 from dbt_charts.core.render.board_links import get_link_context, resolve_href
 from dbt_charts.core.render.board_variables import (
     current_board_variables,
-    current_root_board_width,
+    current_variable_options,
 )
 from dbt_charts.core.render.chart.annotation_nothing_drawn import (
     record_annotation_nothing_drawn,
@@ -99,9 +106,8 @@ from dbt_charts.core.render.chart.table_align import (
     reset_table_align,
 )
 from dbt_charts.core.render.chart.table_overflow import (
-    TableCramping,
     TableOverflow,
-    record_table_cramping,
+    TableOverflowCause,
     record_table_overflow,
 )
 from dbt_charts.core.render.chart.table_page_squeeze import (
@@ -281,7 +287,6 @@ def format_locale_wire(locale: HouseLocale) -> JsonDict:
 
 def board_style_envelope(
     board_style: ResolvedStyle,
-    board_width: float | None,
     format_locale: HouseLocale,
     time_locale: TimeLocaleDefinition,
     time_zone: str,
@@ -290,9 +295,7 @@ def board_style_envelope(
 ) -> JsonDict:
     """The board-level style tokens every chart payload carries beyond its own
     style slice (KPI support-row tones, the pie attached-table view height, the
-    placeholder overlay's board font) and
-    the root board width WARN-TABLE-CRAMPED sizes its fix from. `None` is a
-    render with no board; a table that needs the width then errors."""
+    placeholder overlay's board font)."""
     rule = board_style.vega_config.get("rule")
     category_range = board_style.vega_config.get("range")
     palette = (
@@ -307,6 +310,7 @@ def board_style_envelope(
             "recede_contrast": hover_emphasis.recede_contrast,
         },
         "secondary_color": board_style.secondary_color,
+        "canvas_tone": board_style.canvas_tone,
         "numeral_family": board_style.numeral_family,
         "tones": board_style.tones.model_dump(mode="json"),
         "title_case": board_style.title.font.case,
@@ -317,7 +321,6 @@ def board_style_envelope(
         "rule_stroke_width": None if rule is None else rule.get("strokeWidth"),
         "font": board_style.vega_config.get("font"),
         "font_color": board_style.font.color,
-        "board_width": board_width,
         "text_mark_font": {
             "family": board_style.chart_defaults.marks.text.font.family,
             "size": board_style.chart_defaults.marks.text.font.size,
@@ -412,7 +415,6 @@ def build_chart_payload(
     height: float,
     padding: dict[str, float] | None,
     board_style: ResolvedStyle,
-    board_width: float | None,
     variables: VariableValues,
     title_shift: TitleShift,
     is_placeholder: bool,
@@ -474,6 +476,7 @@ def build_chart_payload(
             "datasets": {name: column_types(rows) for name, rows in datasets.items()},
         },
         "variables": variables,
+        "variable_options": dict(current_variable_options()),
         "title_shift": title_shift.model_dump(mode="json"),
         "filter_variables": sorted(get_filter_variables_context()),
         "interactive_controls": controls_are_interactive(),
@@ -485,7 +488,6 @@ def build_chart_payload(
         "padding": padding,
         "board_style": board_style_envelope(
             board_style,
-            board_width,
             active_format_locale(),
             active_time_locale(),
             active_time_zone().key,
@@ -598,8 +600,11 @@ _GEOMETRY_WARNINGS = (
     "WARN-BAR-GROUPED-SERIES-COINCIDE",
     "WARN-FACET-PANEL-WIDTH-BELOW-MINIMUM",
     "WARN-LAYOUT-MIN-EXCEEDS-HEIGHT",
+    "WARN-PATTERN-FALLBACK-FLAT",
     "WARN-POINT-MAP-NEGATIVE-SIZE-VALUES",
     "WARN-POINT-MAP-OUT-OF-PROJECTION",
+    "WARN-TABLE-CONTENT-TALLER-THAN-WIDE",
+    "WARN-TABLE-HEADER-EXTRA-WRAP",
     "WARN-VALUE-LABELS-CROWD-WIDTH",
 )
 
@@ -724,17 +729,9 @@ _WARNING_SINKS: dict[str, Callable[[JsonDict], None]] = {
     "WARN-TABLE-COLUMNS-OVERFLOW": lambda p: record_table_overflow(
         p["chart_id"],
         TableOverflow(
-            required_width=p["needed_width"], available_width=p["available_width"]
-        ),
-    ),
-    "WARN-TABLE-CRAMPED": lambda p: record_table_cramping(
-        p["chart_id"],
-        TableCramping(
             required_width=p["needed_width"],
             available_width=p["available_width"],
-            wrapped_headers=p["wrapped_headers"],
-            column_count=p["column_count"],
-            suggested_width=p["suggested_width"],
+            cause=None if p["cause"] is None else TableOverflowCause(**p["cause"]),
         ),
     ),
     "WARN-TABLE-PAGE-SQUEEZED": lambda p: record_table_page_squeeze(
@@ -762,7 +759,6 @@ def render_native(
     height: float,
     padding: dict[str, float] | None,
     board_style: ResolvedStyle,
-    board_width: float | None = None,
     variables: VariableValues | None = None,
     title_shift: TitleShift = NO_TITLE_SHIFT,
     is_placeholder: bool = False,
@@ -778,7 +774,7 @@ def render_native(
     alone). A `measuring` render is a sizing probe: its `natural_height` is the
     box the layout sizes the slot from.
 
-    `variables` and `board_width` default to the board's current values
+    `variables` defaults to the board's current values
     (`board_variables`); outside a board scope there are none. Warnings are
     recorded into the open sinks. Placement warnings (geometry, axis collision,
     series labels, text truncations) come only from painted renders, never a `measuring` probe, and a
@@ -789,8 +785,6 @@ def render_native(
     if variables is None:
         scoped = current_board_variables()
         variables = {} if scoped is None else scoped
-    if board_width is None:
-        board_width = current_root_board_width()
     payload = build_chart_payload(
         chart,
         {chart.query_name: data} if datasets is None else datasets,
@@ -798,7 +792,6 @@ def render_native(
         height=height,
         padding=padding,
         board_style=board_style,
-        board_width=board_width,
         variables=variables,
         title_shift=title_shift,
         is_placeholder=is_placeholder,
@@ -854,7 +847,6 @@ def decide_pie_mode(
         height=height,
         padding=padding,
         board_style=board_style,
-        board_width=current_root_board_width(),
         variables={} if scoped is None else scoped,
         title_shift=NO_TITLE_SHIFT,
         is_placeholder=False,
@@ -954,14 +946,22 @@ def render_error_placard(
     diagnostic: Diagnostic,
     *,
     chart_id: str,
+    chart_title: str | None,
+    title_font: ResolvedFontStyle,
+    title_baseline: float,
+    tile_top: float,
+    content_left: float,
     width: float,
     height: float,
-    style: ResolvedCalloutStyle,
+    style: ResolvedErrorTileStyle,
 ) -> str:
-    """The tile core paints into the slot of every chart that failed."""
+    """The tile core paints into the slot of every chart that failed.
+
+    The chart's own title, when it has one, stays above the tile in its title
+    font; the tile's text block leads with the error code and ends on a link to
+    that code's entry on the error reference page."""
     return render_callout_card(
         chart_id=chart_id,
-        title=REGISTRY.get(diagnostic.code).title,
         message=display_message(diagnostic),
         style=style,
         width=width,
@@ -970,6 +970,10 @@ def render_error_placard(
             "code": diagnostic.code,
             "code_url": build_doc_url(diagnostic.code),
             "hint": diagnostic.hint,
-            "doc_url": REGISTRY.get(diagnostic.code).doc_url,
+            "chart_title": chart_title,
+            "chart_title_font": title_font.model_dump(mode="json"),
+            "chart_title_baseline": title_baseline,
+            "tile_top": tile_top,
+            "content_left": content_left,
         },
     )

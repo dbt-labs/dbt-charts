@@ -26,9 +26,7 @@ _HEADER = "quarterly"
 _SIZE = 11.0
 
 _BOARD = """\
-style:
-  frame:
-    width: {width}
+width: {width}
 queries:
   rev:
     type: values

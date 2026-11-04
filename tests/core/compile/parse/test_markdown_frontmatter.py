@@ -325,7 +325,7 @@ class TestDiscoveryStaysStrict:
         project = local_project(tmp_path)
         assert project.path("notes/report.md").is_markdown
         assert is_markdown_board_content(
-            md.read_text(), in_boards="charts" in md.parts
+            md.read_text(), in_boards="charts" in md.parts, named=False
         ), "board: key in frontmatter outside charts/ must be a board"
 
     def test_md_in_boards_dir_is_discovered(
@@ -359,7 +359,9 @@ class TestDiscoveryStaysStrict:
         project = local_project(tmp_path)
         assert project.path("notes/research.md").is_markdown
         assert (
-            is_markdown_board_content(p.read_text(), in_boards="charts" in p.parts)
+            is_markdown_board_content(
+                p.read_text(), in_boards="charts" in p.parts, named=False
+            )
             is False
         ), "queries: at top level outside charts/ must not be detected as a board"
 
@@ -375,7 +377,9 @@ class TestDiscoveryStaysStrict:
         project = local_project(tmp_path)
         assert project.path("notes/report.md").is_markdown
         assert (
-            is_markdown_board_content(p.read_text(), in_boards="charts" in p.parts)
+            is_markdown_board_content(
+                p.read_text(), in_boards="charts" in p.parts, named=False
+            )
             is True
         ), "board: key in frontmatter must be detected as a board outside charts/"
 
@@ -475,9 +479,9 @@ class TestDetectCompileAgreement:
 
         # The suffix + content twin sees it as a board (charts/ in the relpath)
         assert board_file.is_markdown
-        assert is_markdown_board_content(md_file.read_text(), in_boards=True), (
-            "is_markdown_board_content must return True for a .md under charts/"
-        )
+        assert is_markdown_board_content(
+            md_file.read_text(), in_boards=True, named=False
+        ), "is_markdown_board_content must return True for a .md under charts/"
 
         # compile must agree — not reject with ERR_MARKDOWN_NOT_BOARD
         result = compile_file(board_file.read_board())

@@ -759,7 +759,7 @@ def test_frame_is_a_group_under_style(targets) -> None:
     — the dotted spelling `_flat` rebuilds is what a write path uses.
     """
     root = _flat(targets[""])
-    assert root["style.frame.width"].widget == "number"
+    assert root["style.frame.max_width"].widget == "number"
     assert {"style.frame.min_height", "style.frame.card_padding"} <= set(root)
     # Its siblings arrive too, which is the point of describing one target.
     assert [key for key in root if key.startswith("style.border.")]
@@ -785,58 +785,26 @@ def test_a_number_control_carries_its_fields_bounds() -> None:
     radius = _flat(targets["rows.0"])["style.inner_radius"]
     assert (radius.minimum, radius.maximum) == (0, 1)
     assert (radius.exclusive_minimum, radius.exclusive_maximum) == (None, None)
-    width = _flat(targets[""])["style.frame.width"]
+    width = _flat(targets[""])["style.frame.max_width"]
     assert (width.exclusive_minimum, width.minimum, width.maximum) == (0, None, None)
 
 
 def test_a_union_mixing_a_string_arm_stays_text() -> None:
-    """`width: str | int` takes `100%`, which a number box cannot hold.
-
-    Read on a nested board: at the root `width` is dropped as sugar for
-    `style.frame.width`, which the compiler forbids authoring alongside it.
-    """
+    """`width: str | int` takes `100%`, which a number box cannot hold."""
     targets = _targets("rows:\n  - title: R\n    width: 300\n")
     assert _flat(targets["rows.0"])["width"].widget == "text"
 
 
-def test_the_root_board_offers_exactly_one_width_control() -> None:
-    """`width:` is sugar for `style.frame.width:` and authoring both raises.
-
-    Flattening `frame` put them side by side on the root target, so setting one
-    control and then the other wrote a board the normalizer refuses — and the
-    panel that broke it degrades to "does not parse". The surface emits whichever
-    one the file authors, and the canonical key when it authors neither.
-    """
-    unset = _flat(_targets("title: T\nrows: []\n")[""])
-    assert "style.frame.width" in unset
-    assert "width" not in unset
-
-    sugar = _flat(_targets("width: 900\nrows: []\n")[""])
-    assert "width" in sugar
-    assert "style.frame.width" not in sugar
-
-    canonical = _targets("style:\n  frame:\n    width: 900\nrows: []\n")[""]
-    assert "style.frame.width" in _flat(canonical)
-    assert "width" not in _flat(canonical)
-
-
-def test_a_nested_board_keeps_its_own_width() -> None:
-    """`width:` on a nested board is layout placement, not frame sugar.
-
-    The equivalence is wired at the root only (`_root_width_style_patch`), so
-    the pair the root must choose between does not exist here — the nested
-    `width` is a real, honored field. Its `style.frame` twin is suppressed for
-    a different reason: a nested board's `FrameStyle` is ignored entirely.
-    """
-    nested = _targets("rows:\n  - title: R\n    width: 300\n")["rows.0"]
-    assert "width" in _flat(nested)
-    assert "style.frame.width" not in _flat(nested)
+def test_the_root_and_a_nested_board_both_offer_width() -> None:
+    """`width:` is the root's own width and a nested board's placement; both are read."""
+    assert "width" in _flat(_targets("title: T\nrows: []\n")[""])
+    assert "width" in _flat(_targets("rows:\n  - title: R\n    width: 300\n")["rows.0"])
 
 
 def test_a_root_only_field_is_not_offered_on_a_nested_target() -> None:
     """`card_gap` raises on a nested board, so a checkbox for it is one click
-    from a board that will not compile — the same class as the width pair, and
-    cheaper to reach, since a checkbox commits on the first tick."""
+    from a board that will not compile, and cheaper to reach, since a checkbox
+    commits on the first tick."""
     targets = _targets("card_gap: true\nrows:\n  - title: Section\n    rows: []\n")
     assert "card_gap" in _flat(targets[""])
     assert "card_gap" not in _flat(targets["rows.0"])
@@ -1432,7 +1400,7 @@ def test_a_nested_board_is_offered_no_frame_controls() -> None:
     parse-based guard above.
     """
     targets = _targets(
-        "style:\n  frame:\n    width: 900\nrows:\n  - title: Section\n    rows: []\n"
+        "style:\n  frame:\n    margin: 12\nrows:\n  - title: Section\n    rows: []\n"
     )
     assert any(key.startswith("style.frame.") for key in _flat(targets[""]))
     nested = _flat(targets["rows.0"])
@@ -2396,6 +2364,7 @@ _CHANNELS_BY_FAMILY = {
         "y",
         "y_start",
         "color",
+        "pattern",
         "support_table",
     },
     "type: line\n    query: q\n    x: month\n    y: revenue\n": {
@@ -2408,9 +2377,15 @@ _CHANNELS_BY_FAMILY = {
         "x",
         "y",
         "color",
+        "pattern",
         "support_table",
     },
-    "type: heatmap\n    query: q\n    x: month\n    y: revenue\n": {"x", "y", "color"},
+    "type: heatmap\n    query: q\n    x: month\n    y: revenue\n": {
+        "x",
+        "y",
+        "color",
+        "pattern",
+    },
     "type: scatter\n    query: q\n    x: spend\n    y: revenue\n": {
         "x",
         "y",
@@ -2418,7 +2393,7 @@ _CHANNELS_BY_FAMILY = {
         "size",
         "shape",
     },
-    "type: pie\n    query: q\n    theta: revenue\n": {"theta", "color"},
+    "type: pie\n    query: q\n    theta: revenue\n": {"theta", "color", "pattern"},
     "type: kpi\n    query: q\n    value: revenue\n": {"value"},
     "type: spark_bar\n    query: q\n    x: month\n    y: revenue\n": {"x", "y"},
     # Pivoting, because `columns` is not a control until the pivot declares one
@@ -3413,11 +3388,9 @@ class TestFontFamilySuggestions:
 # Agreement tests: the constants that copy a compiler rule no sweep can reach.
 #
 # Six of `design.py`'s rule tables are already gated against the compiler, because
-# the two sweeps above call the real validator and a stale table fails them. Five
+# the two sweeps above call the real validator and a stale table fails them. Four
 # are not, each for a structural reason:
 #
-#   - `_design._ROOT_SUGAR` states a rule about a *pair* of keys, and the sweeps set one
-#     key at a time, so nothing ever authors both halves.
 #   - `_design._ROOT_ONLY` and `_design._NESTED_ONLY` name fields the compiler silently discards.
 #     The board parses, renders, and is unchanged — there is no raise to observe.
 #   - `_design._CONDITIONAL_GROUPS` and `_design._ALWAYS_REQUIRED` fire on controls the render
@@ -3480,33 +3453,6 @@ _ROOT = _AGREEMENT_QUERY + (
 )
 
 
-def test_the_width_pair_the_panel_splits_is_the_pair_the_compiler_refuses() -> None:
-    """`_design._ROOT_SUGAR`, asked of the compiler rather than restated.
-
-    The sweeps cannot reach this one: they set a single key per edit, and the
-    rule is about authoring *both*. Worse, the raise is `_root_width_style_patch`'s
-    at normalize — the save endpoint only re-parses, so the panel's own gate is
-    blind to it, and a `_PARSE_FIXTURES` entry does not catch it either.
-
-    Three claims, and the constant is only correct while all three hold: the pair
-    is refused, `width:` really is sugar for the canonical key, and the panel
-    emits one control rather than two.
-    """
-    both = compile("width: 900\nstyle:\n  frame:\n    width: 800\nrows: []\n")
-    assert not both.success, "the compiler no longer refuses the width pair"
-
-    sugar = compile("width: 900\nrows: []\n")
-    assert sugar.success and sugar.board is not None
-    assert sugar.board.resolved_style.frame.width == 900.0, (
-        "`width:` no longer desugars onto `style.frame.width`"
-    )
-
-    offered = _flat(_targets("width: 900\nrows: []\n")[""])
-    assert ("width" in offered) != ("style.frame.width" in offered), (
-        "the panel must offer exactly one half of a pair the compiler refuses"
-    )
-
-
 def test_card_gap_is_read_at_the_root_and_refused_on_a_nested_board() -> None:
     """`_design._ROOT_ONLY`'s loud half — the original defect, and the cheapest to reach,
     since a checkbox commits on its first tick."""
@@ -3532,18 +3478,18 @@ def test_a_nested_boards_frame_changes_nothing_the_reader_can_see() -> None:
     sweep to observe, and a model-level assertion would miss it too.
     """
     assert _render_output(_NESTED) == _render_output(
-        _NESTED + "    style:\n      frame:\n        width: 777\n"
+        _NESTED + "    style:\n      frame:\n        margin: 77\n"
     ), "a nested board's frame now reaches the render — `_design._ROOT_ONLY` is stale"
 
     root_default = compile(_ROOT)
-    root_framed = compile("style:\n  frame:\n    width: 1600\n" + _ROOT)
+    root_framed = compile("style:\n  frame:\n    margin: 77\n" + _ROOT)
     assert root_default.board is not None and root_framed.board is not None
     assert (
-        root_default.board.resolved_style.frame.width
-        != root_framed.board.resolved_style.frame.width
+        root_default.board.resolved_style.frame.margin
+        != root_framed.board.resolved_style.frame.margin
     ), "the root board no longer reads its own frame"
 
-    assert "style.frame.width" not in _flat(_targets(_NESTED)["rows.0"])
+    assert "style.frame.margin" not in _flat(_targets(_NESTED)["rows.0"])
 
 
 def test_height_is_read_on_a_nested_board_and_discarded_at_the_root() -> None:
@@ -3727,8 +3673,6 @@ def test_every_rule_table_names_a_field_that_still_exists() -> None:
         *_design._CHILD_TARGETS,
     ):
         check("board-scoped tables", "AuthoredBoard", dotted)
-    for sugar, canonical in _design._ROOT_SUGAR:
-        check("_design._ROOT_SUGAR", "AuthoredBoard", sugar, canonical)
 
     # `_design._NOT_DESIGN` is by field name across every authored model rather than
     # scoped to one, so the question is only whether some model still has it.

@@ -3,10 +3,8 @@
 //!
 //! An authored callout passes `message`, `title`, `callout_style`, `width`,
 //! `height` and renders both blocks as markdown. The error placard
-//! additionally carries `code`, `hint` and `doc_url` and is not markdown: it arrives as
-//! `resolved.placard`, its text is plain wrapped `<text>` (identifiers and
-//! tracebacks are not markdown), and it records no truncation warning because
-//! it has no authored YAML line to point at.
+//! additionally carries `code`, `code_url` and `hint` as `resolved.placard`
+//! and is drawn by `placard.rs`, not as markdown.
 //!
 //! Markdown (title + message) renders through the `mdsvg` crate — the same
 //! byte-oracle port `title.rs`/`prose.rs` use for the board's own title and
@@ -25,6 +23,8 @@
 
 use std::fmt::Write as _;
 
+mod placard;
+
 use mdsvg::renderer::SVGRenderer;
 use mdsvg::style::Style as MdsvgStyle;
 use serde::Deserialize;
@@ -34,22 +34,19 @@ use crate::codes;
 use crate::common::Font;
 use crate::diagnostic::{warn, Diagnostic};
 use crate::layout::{Insets, IntrinsicWidth, Layout, Rect};
-use crate::svg::py_float_str;
 use crate::Payload;
 use measure::font_files::{font_path, mono_font_path};
+use measure::fonts::{FontSlot, FontSlots};
 use measure::wrap::wrap_plain;
 use measure::{FontBook, Measure};
 use print::print;
-use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 
 const MIN_WIDTH: f64 = 120.0;
 const MIN_HEIGHT: f64 = 60.0;
 const LINE_HEIGHT_RATIO: f64 = 1.35;
 const MAX_MESSAGE_LINES: usize = 12;
 const MAX_TITLE_LINES: usize = 3;
-const MAX_HINT_LINES: usize = 3;
-const CODE_SIZE_RATIO: f64 = 0.75;
-const DOC_LINK_SIZE_RATIO: f64 = 0.85;
 
 #[derive(Deserialize)]
 struct Resolved {
@@ -58,19 +55,7 @@ struct Resolved {
     title: Option<String>,
     style: CalloutStyle,
     #[serde(default)]
-    placard: Option<PlacardData>,
-}
-
-/// `render_callout_svg`'s `code`/`hint`/`doc_url`, plus the badge's own href
-/// (`build_doc_url(code)`): a diagnostic with no registry entry (an engine
-/// refusal) has a badge anchor but no `doc_url`, so there is no "See the
-/// docs" link.
-#[derive(Deserialize)]
-struct PlacardData {
-    code: String,
-    code_url: String,
-    hint: Option<String>,
-    doc_url: Option<String>,
+    placard: Option<placard::Data>,
 }
 
 #[derive(Deserialize)]
@@ -82,8 +67,14 @@ struct CalloutStyle {
     padding: Padding,
     section_gap: f64,
     bold_font_weight: String,
+    /// The theme's code font: markdown code and the error tile's code
+    /// headline paint in it.
+    code_family: String,
     title: ElementStyle,
     message: ElementStyle,
+    /// The color of the error tile's stripes; only an error tile carries one.
+    #[serde(default)]
+    stripe_color: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -123,21 +114,7 @@ pub struct Bound {
     title_color: String,
     message_color: String,
     fonts_dir: String,
-    placard: Option<Placard>,
-}
-
-/// The error placard's own parts. It is plain wrapped text, not markdown, and
-/// records no truncation warning: it has no authored YAML line to point at.
-struct Placard {
-    code: String,
-    code_href: String,
-    hint: Option<String>,
-    doc: Option<DocLink>,
-}
-
-struct DocLink {
-    href: String,
-    text: String,
+    placard: Option<placard::Placard>,
 }
 
 pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
@@ -163,21 +140,7 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
         .ok_or("callout: message.font.color missing")?;
     let placard = r
         .placard
-        .map(|p| -> Result<Placard, Diagnostic> {
-            let doc = match p.doc_url.as_deref() {
-                Some(doc_url) => Some(DocLink {
-                    href: crate::href::checked_href(doc_url)?.to_string(),
-                    text: display_text::language::tr("placard.see_the_docs", None, &[])?,
-                }),
-                None => None,
-            };
-            Ok(Placard {
-                code_href: crate::href::checked_href(&p.code_url)?.to_string(),
-                code: p.code,
-                hint: p.hint.filter(|hint| !hint.is_empty()),
-                doc,
-            })
-        })
+        .map(|data| placard::bind(data, r.style.stripe_color.as_deref(), &r.style.code_family))
         .transpose()?;
     Ok(Bound {
         id: r.id,
@@ -191,11 +154,11 @@ pub fn bind(payload: &Payload) -> Result<Bound, Diagnostic> {
     })
 }
 
-/// `callout.py::_callout_md_renderer`.
 fn callout_md_renderer(
     fonts_dir: &str,
     font: &Font,
     bold_font_weight: &str,
+    code_family: &str,
     text_color: &str,
     link_color: &str,
 ) -> Result<SVGRenderer, String> {
@@ -218,16 +181,28 @@ fn callout_md_renderer(
         heading_color: Some(text_color.to_string()),
         link_color: link_color.to_string(),
         link_underline: true,
+        code_font_family: code_family.to_string(),
         code_color: text_color.to_string(),
         code_background: "rgba(0,0,0,0.07)".to_string(),
         paragraph_spacing: size * 0.5,
         list_item_spacing: 2.0,
         ..Default::default()
     };
-    SVGRenderer::from_font_path(
+    // Bold paints from the same variable file at `bold_font_weight`; without
+    // that slot mdsvg estimates bold by a width ratio and every run after it,
+    // inline-code chips included, lands to the right of its painted glyphs.
+    let regular = FontSlot::new(font_path(fonts_dir, &family));
+    let bold = FontSlot {
+        weight: measure::fonts::css_weight_axis(bold_font_weight)?,
+        ..regular.clone()
+    };
+    SVGRenderer::new(
         style,
-        font_path(fonts_dir, &family),
-        mono_font_path(fonts_dir),
+        FontSlots {
+            bold: Some(bold),
+            mono: Some(FontSlot::new(mono_font_path(fonts_dir))),
+            ..FontSlots::new(regular)
+        },
     )
 }
 
@@ -246,43 +221,6 @@ fn markdown_block(renderer: &SVGRenderer, text: &str, content_width: f64) -> Res
         nodes: mdsvg::indented_nodes(&r.elements),
         styles: mdsvg::indented_nodes(std::slice::from_ref(&r.style)),
         height: r.height,
-    })
-}
-
-/// `callout.py::_plain_block`: `text` wrapped to `max_lines` as plain
-/// `<text>` nodes, so `_name_` and `*args` stay literal.
-fn plain_block(
-    fonts_dir: &str,
-    text: &str,
-    content_width: f64,
-    font: &Font,
-    fill: &str,
-    max_lines: usize,
-) -> Result<Block, String> {
-    let family = font.family_or("Inter Variable, sans-serif");
-    let size = font.size_or(14.0);
-    let lines = wrap_callout(fonts_dir, text, content_width, size, family, max_lines)?;
-    let line_height = size * LINE_HEIGHT_RATIO;
-    let mut nodes = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            nodes.push(Node::Chars(Chars::new("\n  ", Escape::Quick)));
-        }
-        nodes.push(text_line(
-            Attrs::new()
-                .quick("x", "0")
-                .quick("y", py_float_str(size + i as f64 * line_height))
-                .quick("font-size", py_float_str(size))
-                .quick("font-family", family)
-                .quick("fill", fill)
-                .quick("text-anchor", "start"),
-            line,
-        ));
-    }
-    Ok(Block {
-        nodes,
-        styles: Vec::new(),
-        height: lines.len() as f64 * line_height,
     })
 }
 
@@ -315,15 +253,10 @@ struct Composed {
     content_width: f64,
     title: Option<Block>,
     message: Block,
-    hint_lines: Vec<String>,
-    title_size: f64,
-    message_size: f64,
     max_title_height: f64,
     max_message_height: f64,
     title_height: f64,
     message_height: f64,
-    badge_height: f64,
-    hint_height: f64,
     natural_height: f64,
 }
 
@@ -336,59 +269,31 @@ fn compose(bound: &Bound, width: f64) -> Result<Composed, Diagnostic> {
     let w = width.max(MIN_WIDTH);
     let content_width = (w - pad.left - pad.right).max(40.0);
 
-    let (title_block, message_block) = if bound.placard.is_none() {
-        let title_renderer = callout_md_renderer(
-            fonts_dir,
-            &inline.title.font,
-            &inline.bold_font_weight,
-            &bound.title_color,
-            &bound.title_color,
-        )?;
-        let message_renderer = callout_md_renderer(
-            fonts_dir,
-            &inline.message.font,
-            &inline.bold_font_weight,
-            &bound.message_color,
-            &bound.title_color,
-        )?;
-        (
-            bound
-                .title
-                .as_deref()
-                .map(|t| markdown_block(&title_renderer, t, content_width))
-                .transpose()?,
-            markdown_block(&message_renderer, &bound.message, content_width)?,
-        )
-    } else {
-        (
-            bound
-                .title
-                .as_deref()
-                .map(|t| {
-                    plain_block(
-                        fonts_dir,
-                        t,
-                        content_width,
-                        &inline.title.font,
-                        &bound.title_color,
-                        MAX_TITLE_LINES,
-                    )
-                })
-                .transpose()?,
-            plain_block(
-                fonts_dir,
-                &bound.message,
-                content_width,
-                &inline.message.font,
-                &bound.message_color,
-                MAX_MESSAGE_LINES,
-            )?,
-        )
-    };
+    let title_renderer = callout_md_renderer(
+        fonts_dir,
+        &inline.title.font,
+        &inline.bold_font_weight,
+        &inline.code_family,
+        &bound.title_color,
+        &bound.title_color,
+    )?;
+    let message_renderer = callout_md_renderer(
+        fonts_dir,
+        &inline.message.font,
+        &inline.bold_font_weight,
+        &inline.code_family,
+        &bound.message_color,
+        &bound.title_color,
+    )?;
+    let title_block = bound
+        .title
+        .as_deref()
+        .map(|t| markdown_block(&title_renderer, t, content_width))
+        .transpose()?;
+    let message_block = markdown_block(&message_renderer, &bound.message, content_width)?;
 
     let title_size = inline.title.font.size_or(14.0);
     let message_size = inline.message.font.size_or(14.0);
-    let message_family = inline.message.font.family_or("Inter Variable, sans-serif");
     let max_title_height = MAX_TITLE_LINES as f64 * title_size * LINE_HEIGHT_RATIO;
     let max_message_height = MAX_MESSAGE_LINES as f64 * message_size * LINE_HEIGHT_RATIO;
 
@@ -402,64 +307,17 @@ fn compose(bound: &Bound, width: f64) -> Result<Composed, Diagnostic> {
         0.0
     };
 
-    let message_line_height = message_size * LINE_HEIGHT_RATIO;
-    let hint_lines = match bound.placard.as_ref().and_then(|p| p.hint.as_deref()) {
-        Some(hint) => wrap_callout(
-            fonts_dir,
-            hint,
-            content_width,
-            message_size,
-            message_family,
-            MAX_HINT_LINES,
-        )?,
-        None => Vec::new(),
-    };
-    let hint_height = hint_lines.len() as f64 * message_line_height;
-    let has_doc = bound.placard.as_ref().is_some_and(|p| p.doc.is_some());
-    let doc_height = if has_doc {
-        message_size * DOC_LINK_SIZE_RATIO * LINE_HEIGHT_RATIO
-    } else {
-        0.0
-    };
-    let has_code = bound.placard.is_some();
-    let badge_height = if has_code {
-        title_size * CODE_SIZE_RATIO * LINE_HEIGHT_RATIO
-    } else {
-        0.0
-    };
-
-    let natural_height = pad.top
-        + pad.bottom
-        + badge_height
-        + if has_code { section_gap } else { 0.0 }
-        + title_height
-        + title_gap
-        + message_height
-        + if hint_lines.is_empty() {
-            0.0
-        } else {
-            section_gap + hint_height
-        }
-        + if has_doc {
-            section_gap + doc_height
-        } else {
-            0.0
-        };
+    let natural_height = pad.top + pad.bottom + title_height + title_gap + message_height;
 
     Ok(Composed {
         width: w,
         content_width,
         title: title_block,
         message: message_block,
-        hint_lines,
-        title_size,
-        message_size,
         max_title_height,
         max_message_height,
         title_height,
         message_height,
-        badge_height,
-        hint_height,
         natural_height: natural_height.max(MIN_HEIGHT),
     })
 }
@@ -475,6 +333,9 @@ pub fn intrinsic(bound: &Bound, _measure: &Measure) -> Result<Option<IntrinsicWi
 /// slot height is given. Markdown and plain text wrap at `width`, and a font
 /// file that cannot be read fails here as it does in `layout`.
 pub fn height_for_width(bound: &Bound, width: f64, _measure: &Measure) -> Result<f64, Diagnostic> {
+    if bound.placard.is_some() {
+        return Ok(placard::compose(bound, width)?.natural_height);
+    }
     Ok(compose(bound, width)?.natural_height)
 }
 
@@ -487,50 +348,38 @@ fn block_nodes(
     kind: Option<&str>,
 ) -> Vec<Node> {
     let mut nodes = Vec::new();
-    let mut attrs = Attrs::new().quick(
-        "transform",
-        format!("translate({}, {})", py_float_str(x), py_float_str(y)),
-    );
+    let mut attrs = Attrs::new();
     if let Some((id, width, height)) = clip {
-        let rect = Node::Rect(
-            Attrs::new()
-                .quick("x", "0")
-                .quick("y", "0")
-                .quick("width", py_float_str(width))
-                .quick("height", py_float_str(height)),
-        );
-        nodes.push(Node::Defs(vec![Node::ClipPath {
-            attrs: Attrs::new().quick("id", id),
-            children: vec![rect],
-        }]));
+        let rect = Node::rect(Role::Chrome, (0.0, 0.0, width, height), Attrs::new());
+        let clip_path = Node::new(Role::Chrome, Attrs::new().quick("id", id), Shape::ClipPath(vec![rect]));
+        nodes.push(Node::new(Role::Chrome, Attrs::new(), Shape::Defs(vec![clip_path])));
         attrs = attrs.quick("clip-path", format!("url(#{id})"));
     }
     if let Some(kind) = kind {
         attrs = attrs.quick("data-authored-kind", kind);
     }
-    nodes.push(Node::group(attrs, content));
+    nodes.push(Node::group(Role::Chrome, attrs, content).translate(x, y));
     nodes
 }
 
-/// A line of text; `attrs` carry its position.
-fn text_line(attrs: Attrs, text: &str) -> Node {
-    Node::Text(TextBlock {
-        attrs,
-        text: Chars::new(text, Escape::Quick),
-    })
+/// A line of text at `at`.
+fn text_line(role: Role, at: (f64, f64), attrs: Attrs, text: &str) -> Node {
+    let runs = vec![Run::Chars(Chars::new(text, Escape::Quick))];
+    Node::new(role, attrs, Shape::Text { at, bounds: None, runs })
 }
 
 fn link(href: &str, text: Node) -> Node {
-    Node::Link {
-        attrs: Attrs::new().quick("href", href).quick("target", "_blank"),
-        children: vec![text],
-    }
+    let attrs = Attrs::new().quick("href", href).quick("target", "_blank");
+    Node::new(Role::Chrome, attrs, Shape::Link(vec![text]))
 }
 
 /// `callout.py::render_callout_svg`. `cell` is the card as drawn: its width
 /// floors at `MIN_WIDTH`, its height is the caller's (`height_for_width` at
 /// least).
 pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, Diagnostic> {
+    if bound.placard.is_some() {
+        return placard::draw(bound, placard::compose(bound, cell.width)?, cell.height);
+    }
     draw(bound, compose(bound, cell.width)?, cell.height)
 }
 
@@ -545,33 +394,15 @@ fn draw(bound: &Bound, c: Composed, height: f64) -> Result<Layout, Diagnostic> {
     let mut body = Vec::new();
     let mut current_y = pad.top;
 
-    if let Some(placard) = &bound.placard {
-        let size = c.title_size * CODE_SIZE_RATIO;
-        let text = text_line(
-            Attrs::new()
-                .quick("x", py_float_str(pad.left))
-                .quick("y", py_float_str(current_y + size))
-                .quick("font-size", py_float_str(size))
-                .quick("font-weight", "normal")
-                .quick("font-family", "monospace")
-                .quick("fill", bound.message_color.as_str()),
-            &placard.code,
-        );
-        body.push(link(&placard.code_href, text));
-        current_y += c.badge_height + section_gap;
-    }
-
     if let Some(block) = c.title {
         styles.extend(block.styles);
         let translate_y = current_y + inline.title.y_offset;
         let clip_id = if block.height > c.max_title_height {
-            if bound.placard.is_none() {
-                diagnostics.push(truncated(
-                    &bound.id,
-                    "title",
-                    bound.title.as_deref().unwrap_or_default(),
-                ));
-            }
+            diagnostics.push(truncated(
+                &bound.id,
+                "title",
+                bound.title.as_deref().unwrap_or_default(),
+            ));
             Some(format!("title-clip-{}", callout_hash(bound, w)))
         } else {
             None
@@ -591,9 +422,7 @@ fn draw(bound: &Bound, c: Composed, height: f64) -> Result<Layout, Diagnostic> {
     styles.extend(c.message.styles);
     let message_translate_y = current_y + inline.message.y_offset;
     let message_clip_id = if c.message.height > c.max_message_height {
-        if bound.placard.is_none() {
-            diagnostics.push(truncated(&bound.id, "message", &bound.message));
-        }
+        diagnostics.push(truncated(&bound.id, "message", &bound.message));
         Some(format!("msg-clip-{}", callout_hash(bound, w)))
     } else {
         None
@@ -607,68 +436,8 @@ fn draw(bound: &Bound, c: Composed, height: f64) -> Result<Layout, Diagnostic> {
         message_clip,
         None,
     ));
-    current_y += c.message_height;
 
-    let message_family = inline.message.font.family_or("Inter Variable, sans-serif");
-    let message_line_height = c.message_size * LINE_HEIGHT_RATIO;
-    let hint_start_y = current_y + section_gap;
-    for (i, line) in c.hint_lines.iter().enumerate() {
-        body.push(text_line(
-            Attrs::new()
-                .quick("x", py_float_str(pad.left))
-                .quick("y", py_float_str(hint_start_y + i as f64 * message_line_height))
-                .quick("font-size", py_float_str(c.message_size))
-                .quick("font-weight", "normal")
-                .quick("font-style", "italic")
-                .quick("font-family", message_family)
-                .quick("fill", bound.message_color.as_str()),
-            line,
-        ));
-    }
-
-    if let Some(doc) = bound.placard.as_ref().and_then(|p| p.doc.as_ref()) {
-        let after_hint_y = current_y
-            + if c.hint_lines.is_empty() {
-                0.0
-            } else {
-                section_gap + c.hint_height
-            };
-        let text = text_line(
-            Attrs::new()
-                .quick("x", py_float_str(pad.left))
-                .quick("y", py_float_str(after_hint_y + section_gap))
-                .quick("font-size", py_float_str(c.message_size * DOC_LINK_SIZE_RATIO))
-                .quick("font-weight", "normal")
-                .quick("font-family", message_family)
-                .quick("fill", bound.title_color.as_str()),
-            &doc.text,
-        );
-        body.push(link(&doc.href, text));
-    }
-
-    // `callout.py`'s own final return block interpolates `w`/`h`/
-    // `inline.border.width`/`inline.border.radius` as bare Python floats
-    // (`f'width="{w}"'`, never `format_svg_numeric`), so a whole number
-    // keeps its `.0` (`rx="4.0"`, not `rx="4"`): `py_float_str`.
-    let card = crate::common::border_dash_pairs(
-        inline.border.dash_array.as_deref(),
-        inline.border.line_cap.as_deref(),
-        inline.border.dash_offset,
-    )
-    .into_iter()
-    .fold(
-        Attrs::new()
-            .quick("x", "0")
-            .quick("y", "0")
-            .quick("width", py_float_str(w))
-            .quick("height", py_float_str(h))
-            .quick("fill", inline.background.as_str())
-            .quick("stroke", inline.border.color.as_str())
-            .quick("stroke-width", py_float_str(inline.border.width)),
-        |attrs, (name, value)| attrs.quick(name, value),
-    )
-    .quick("rx", py_float_str(inline.border.radius));
-    let mut children = vec![Node::Rect(card)];
+    let mut children = vec![card_rect(inline, w, 0.0, h)];
     children.extend(styles);
     children.extend(body);
 
@@ -678,37 +447,58 @@ fn draw(bound: &Bound, c: Composed, height: f64) -> Result<Layout, Diagnostic> {
         width: c.content_width,
         height: h - pad.top - pad.bottom,
     };
-    let insets = Insets {
-        top: data_box.y,
-        right: w - data_box.x - data_box.width,
-        bottom: pad.bottom,
-        left: data_box.x,
-    };
     Ok(Layout {
+        insets: insets_of(&data_box, w, pad.bottom),
         data_box,
-        insets,
-        nodes: vec![Node::Svg {
-            extent: Extent {
-                width: w,
-                height: h,
-            },
-            attrs: Attrs::new()
-                .quick("xmlns", "http://www.w3.org/2000/svg")
-                .quick("class", "dbt-chart-callout")
-                .quick("width", py_float_str(w))
-                .quick("height", py_float_str(h))
-                .quick("viewBox", format!("0 0 {} {}", py_float_str(w), py_float_str(h))),
-            children,
-        }],
+        nodes: vec![card_svg(w, h, children)],
         diagnostics,
         title_pos: None,
     })
+}
+
+/// The card's rounded rectangle from `top` to the slot's bottom.
+fn card_rect(inline: &CalloutStyle, w: f64, top: f64, h: f64) -> Node {
+    let attrs = crate::common::border_dash_pairs(
+        inline.border.dash_array.as_deref(),
+        inline.border.line_cap.as_deref(),
+        inline.border.dash_offset,
+    )
+    .into_iter()
+    .fold(
+        Attrs::new()
+            .quick("fill", inline.background.as_str())
+            .quick("stroke", inline.border.color.as_str())
+            .num("stroke-width", inline.border.width),
+        |attrs, (name, value)| attrs.quick(name, value),
+    );
+    let rect = Shape::Rect { x: 0.0, y: top, w, h: h - top, rx: inline.border.radius };
+    Node::new(Role::Chrome, attrs, rect)
+}
+
+fn insets_of(data_box: &Rect, w: f64, bottom: f64) -> Insets {
+    Insets {
+        top: data_box.y,
+        right: w - data_box.x - data_box.width,
+        bottom,
+        left: data_box.x,
+    }
+}
+
+fn card_svg(w: f64, h: f64, children: Vec<Node>) -> Node {
+    let extent = Extent { width: w, height: h };
+    Node::new(Role::Chrome, Attrs::new().quick("class", "dbt-chart-callout"), Shape::Svg { extent, children })
 }
 
 /// The SVG and the height it draws at when no slot height is given, which
 /// core's sizing pass reads.
 pub fn render_sized(payload: &Payload) -> Result<(String, f64), Diagnostic> {
     let bound = bind(payload)?;
+    if bound.placard.is_some() {
+        let composed = placard::compose(&bound, payload.width)?;
+        let natural_height = composed.natural_height;
+        let laid_out = placard::draw(&bound, composed, payload.height.max(natural_height))?;
+        return Ok((print(&laid_out.nodes), natural_height));
+    }
     let composed = compose(&bound, payload.width)?;
     let natural_height = composed.natural_height;
     let laid_out = draw(&bound, composed, payload.height.max(natural_height))?;
@@ -721,12 +511,9 @@ pub fn render(payload: &Payload, _fonts: &FontBook) -> Result<String, Diagnostic
     render_sized(payload).map(|(svg, _)| svg)
 }
 
-/// Python's bare `str(x)` on a `str | float` resolved font weight — NOT
-/// `Font::weight_str()`'s normalized form, which drops a float's `.0`
-/// (`weight_str()` mirrors `_callout_md_renderer`'s own weight coercion,
-/// a different function from the hash's raw `str()`). `callout_hash` needs
-/// the unnormalized value or a themed float weight (`400.0`, not `"400"`)
-/// hashes to a different id than production's.
+/// A resolved `str | float` font weight as the hash reads it: a number as
+/// `print` writes it, a string as authored. Unlike `Font::weight_str()` it
+/// invents no default, so a missing weight keys a different id.
 fn hash_weight_str(font: &Font) -> String {
     match &font.weight {
         Some(Value::String(s)) => s.clone(),
@@ -734,7 +521,7 @@ fn hash_weight_str(font: &Font) -> String {
         // produce (`arbitrary_precision` is off in Cargo.toml, so every
         // `Number` is backed by an i64/u64/f64 that always converts) — a
         // silent 400.0 here would be a made-up value, not a real fallback.
-        Some(Value::Number(n)) => py_float_str(
+        Some(Value::Number(n)) => print::number(
             n.as_f64()
                 .expect("serde_json Number without arbitrary_precision always converts"),
         ),
@@ -746,13 +533,11 @@ fn hash_weight_str(font: &Font) -> String {
     }
 }
 
-/// `callout.py`'s own clip-path id hash (lines 179-196): an md5 of every
-/// resolved style input that affects clip geometry, first 8 hex chars —
-/// over-keyed rather than minimal (tone/colors don't move the clip rects,
-/// but hashing them only costs a different id for a same-shaped clip, never
-/// a wrong one). Same input order, same `str()` formatting Python uses:
-/// `py_float_str` for a bare-interpolated float, [`hash_weight_str`] for the
-/// `str | float` weight fields.
+/// The clip and stripe ids' hash: an md5 of every resolved style input that
+/// affects clip geometry, first 8 hex chars, over-keyed rather than minimal
+/// (tone and colors don't move the clip rects, but hashing them only costs a
+/// different id for a same-shaped clip, never a wrong one). Each number
+/// is hashed as `print` writes a number, never as a formatted coordinate.
 fn callout_hash(bound: &Bound, w: f64) -> String {
     use md5::{Digest, Md5};
     let r = bound;
@@ -760,17 +545,17 @@ fn callout_hash(bound: &Bound, w: f64) -> String {
         r.title.as_deref().unwrap_or(""),
         r.message.as_str(),
         r.style.tone.as_str(),
-        &py_float_str(w),
-        &py_float_str(r.style.padding.left),
-        &py_float_str(r.style.padding.right),
-        &py_float_str(r.style.padding.top),
-        &py_float_str(r.style.padding.bottom),
-        &py_float_str(r.style.section_gap),
+        &print::number(w),
+        &print::number(r.style.padding.left),
+        &print::number(r.style.padding.right),
+        &print::number(r.style.padding.top),
+        &print::number(r.style.padding.bottom),
+        &print::number(r.style.section_gap),
         r.style.title.font.family_or(""),
-        &py_float_str(r.style.title.font.size_or(0.0)),
+        &print::number(r.style.title.font.size_or(0.0)),
         &hash_weight_str(&r.style.title.font),
         r.style.message.font.family_or(""),
-        &py_float_str(r.style.message.font.size_or(0.0)),
+        &print::number(r.style.message.font.size_or(0.0)),
         &hash_weight_str(&r.style.message.font),
         &r.title_color,
         &r.message_color,
@@ -820,6 +605,7 @@ mod tests {
                     "padding": {"top": 16.0, "right": 16.0, "bottom": 16.0, "left": 16.0},
                     "section_gap": 8.0,
                     "bold_font_weight": "600",
+                    "code_family": "'Source Code Pro', monospace",
                     "title": {"font": font_json("#0f7b3e", 14.0, "600"), "y_offset": 0.0},
                     "message": {"font": font_json("#1a3d29", 13.0, "400"), "y_offset": 0.0}
                 }
@@ -845,6 +631,30 @@ mod tests {
         assert!(svg.contains("All good."), "{svg}");
         assert!(svg.contains("fill=\"#e6f4ea\""), "{svg}");
         assert!(svg.contains("stroke=\"#0f7b3e\""), "{svg}");
+    }
+
+    #[test]
+    fn a_code_chip_starts_where_the_painted_bold_before_it_ends() {
+        let mut json = callout_payload(None, "**Owner role:** `role_group` rest");
+        json["width"] = serde_json::json!(600.0);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
+        let chip = svg.split("<rect").find(|r| r.contains("rgba(0,0,0,0.07)")).expect("a chip");
+        let x: f64 = chip.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+        let inter = format!("{}/InterVariable.ttf", fonts_dir());
+        let bold = measure::fonts::cached_measurer(&inter, 0, Some(600.0));
+        let regular = measure::fonts::cached_measurer(&inter, 0, None);
+        let chip_left = bold.measure("Owner role:", 13.0) + regular.measure(" ", 13.0);
+        assert!((x - chip_left).abs() < 0.01, "chip x {x}, preceding text ends at {chip_left}");
+    }
+
+    #[test]
+    fn markdown_code_paints_in_the_theme_code_font_it_is_measured_in() {
+        let json = callout_payload(None, "use `x`");
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("callout renders");
+        let code_rule = svg.lines().find(|l| l.contains("-code {")).expect("a code rule");
+        assert!(code_rule.contains("Source Code Pro"), "{code_rule}");
     }
 
     #[test]
@@ -876,21 +686,15 @@ mod tests {
     }
 
     #[test]
-    fn card_rect_keeps_the_decimal_python_never_drops() {
-        // `callout.py`'s own final return block bare-interpolates `w`/`h`/
-        // `inline.border.width`/`inline.border.radius` as Python floats —
-        // a whole number keeps its `.0` (`rx="4.0"`, `stroke-width="1.0"`,
-        // `width="300.0"`), never the `format_svg_numeric` integer-drop
-        // form (`rx="4"`). All four inputs here are whole numbers, so a
-        // regression back to `num_full` would drop every one of them.
+    fn card_rect_prints_whole_numbers_bare() {
         let mut json = callout_payload(Some("Title"), "Message.");
         json["resolved"]["style"]["border"] =
             serde_json::json!({"width": 1.0, "color": "#0f7b3e", "radius": 4.0});
         let payload: Payload = serde_json::from_value(json).unwrap();
         let svg = render(&payload, &test_fonts()).expect("callout renders");
-        assert!(svg.contains("width=\"300.0\""), "{svg}");
-        assert!(svg.contains("stroke-width=\"1.0\""), "{svg}");
-        assert!(svg.contains("rx=\"4.0\""), "{svg}");
+        assert!(svg.contains("width=\"300\""), "{svg}");
+        assert!(svg.contains("stroke-width=\"1\""), "{svg}");
+        assert!(svg.contains("rx=\"4\""), "{svg}");
     }
 
     /// `_callout_md_renderer` builds the renderer with `fetch_image_sizes=False`
@@ -952,20 +756,32 @@ mod tests {
         );
     }
 
-    fn placard_payload(hint: Option<&str>, doc_url: Option<&str>) -> serde_json::Value {
-        let mut json = callout_payload(Some("Chart data error"), "Query returned <0 rows> for _name_.");
+    const CODE_URL: &str = "https://docs.example.com/reference/errors/#err-kpi-no-data";
+
+    fn placard_payload(hint: Option<&str>, code_url: &str) -> serde_json::Value {
+        let mut json = callout_payload(None, "Query returned <0 rows> for _name_.");
         json["resolved"]["placard"] = serde_json::json!({
             "code": "ERR-KPI-NO-DATA",
-            "code_url": "https://docs.example.com/reference/errors/#err-kpi-no-data",
+            "code_url": code_url,
             "hint": hint,
-            "doc_url": doc_url,
+            "chart_title": null,
+            "chart_title_font": font_json("#222222", 16.0, "600"),
+            "chart_title_baseline": 0.0,
+            "tile_top": 0.0,
+            "content_left": 16.0,
         });
+        json["resolved"]["style"]["stripe_color"] = serde_json::json!("#e0e0e0");
         json
     }
 
+    fn placard_svg(json: serde_json::Value) -> String {
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        render(&payload, &test_fonts()).expect("placard renders")
+    }
+
     #[test]
-    fn the_placard_doc_link_speaks_the_board_language() {
-        let mut json = placard_payload(None, Some("https://docs.example.com/reference/errors/"));
+    fn the_placard_link_speaks_the_board_language() {
+        let mut json = placard_payload(None, CODE_URL);
         json["board_style"] = serde_json::json!({
             "font": "Inter", "text_mark_font": {"family": "Inter", "size": 11.0}, "secondary_color": null, "tones": null,
             "title_case": null, "continuous_height": null,
@@ -976,74 +792,177 @@ mod tests {
             render(&payload, &test_fonts())
         })
         .expect("placard renders");
-        assert!(svg.contains(">Zur Dokumentation</text></a>"), "{svg}");
-        assert!(!svg.contains("See the docs"), "{svg}");
+        assert!(svg.contains(">Über diesen Fehler</text></a>"), "{svg}");
+        assert!(!svg.contains("About this error"), "{svg}");
     }
 
     #[test]
     fn a_card_with_no_board_names_its_language_on_the_payload() {
-        let mut json = placard_payload(None, Some("https://docs.example.com/reference/errors/"));
+        let mut json = placard_payload(None, CODE_URL);
         json["language"] = serde_json::json!("de");
         let payload: Payload = serde_json::from_value(json).unwrap();
         let (svg, _) = crate::render_sized(&payload, &test_fonts()).expect("placard renders");
-        assert!(svg.contains(">Zur Dokumentation</text></a>"), "{svg}");
+        assert!(svg.contains(">Über diesen Fehler</text></a>"), "{svg}");
     }
 
     #[test]
-    fn placard_paints_code_badge_plain_message_hint_and_doc_link() {
-        let json = placard_payload(
-            Some("Check the \"query\"."),
-            Some("https://docs.example.com/reference/errors/#err-kpi-no-data"),
-        );
-        let payload: Payload = serde_json::from_value(json).unwrap();
-        let svg = render(&payload, &test_fonts()).expect("placard renders");
+    fn placard_paints_headline_message_hint_and_a_closing_link() {
+        let svg = placard_svg(placard_payload(Some("Check the \"query\"."), CODE_URL));
+        let at = |needle: &str| svg.find(needle).unwrap_or_else(|| panic!("{needle}: {svg}"));
+        // Headline code, message, hint, then the link last.
         assert!(
-            svg.contains(
-                "<a href=\"https://docs.example.com/reference/errors/#err-kpi-no-data\" \
-                 target=\"_blank\"><text x=\"16.0\" y=\"26.5\" font-size=\"10.5\" \
-                 font-weight=\"normal\" font-family=\"monospace\" fill=\"#1a3d29\">\
-                 ERR-KPI-NO-DATA</text></a>"
-            ),
+            at("ERR-KPI-NO-DATA") < at("Query returned")
+                && at("Query returned") < at("Check the")
+                && at("Check the") < at("About this error"),
+            "{svg}"
+        );
+        // The code is mono body ink, neither a link nor underlined.
+        assert!(
+            svg.contains("font-family=\"&apos;Source Code Pro&apos;, monospace\" fill=\"#1a3d29\">ERR-KPI-NO-DATA</text>"),
+            "{svg}"
+        );
+        assert!(!svg.contains("ERR-KPI-NO-DATA</text></a>"), "{svg}");
+        // The one link is underlined ink and ends on the code's own anchor.
+        assert_eq!(svg.matches("<a ").count(), 1, "{svg}");
+        assert!(
+            svg.contains(&format!(
+                "<a href=\"{CODE_URL}\" target=\"_blank\"><text x=\"28\""
+            )) && svg.contains("text-decoration=\"underline\" fill=\"#1a3d29\">About this error</text></a>"),
             "{svg}"
         );
         // Plain text: markdown specials stay literal, quotes use html.escape.
         assert!(svg.contains(">Query returned &lt;0 rows&gt; for _name_.</text>"), "{svg}");
-        assert!(svg.contains("font-style=\"italic\""), "{svg}");
         assert!(svg.contains(">Check the &quot;query&quot;.</text>"), "{svg}");
-        assert!(svg.contains(">See the docs</text></a>"), "{svg}");
-        assert!(!svg.contains("<style"), "{svg}");
+        assert!(!svg.contains("font-style=\"italic\"") && !svg.contains("<style"), "{svg}");
     }
 
     #[test]
-    fn placard_without_hint_or_doc_url_paints_neither() {
-        let payload: Payload = serde_json::from_value(placard_payload(None, None)).unwrap();
-        let svg = render(&payload, &test_fonts()).expect("placard renders");
-        assert!(svg.contains("ERR-KPI-NO-DATA</text></a>"), "{svg}");
-        assert!(!svg.contains("font-style=\"italic\""), "{svg}");
-        assert!(!svg.contains("See the docs"), "{svg}");
+    fn placard_draws_the_warning_glyph_from_primitives() {
+        let svg = placard_svg(placard_payload(None, CODE_URL));
+        assert!(svg.contains("<path d=\"M6.5,0.9L12.3,11.1L0.7,11.1Z\" fill=\"none\""), "{svg}");
+        assert!(svg.contains("<circle"), "{svg}");
+        assert!(!svg.contains('\u{26a0}'), "{svg}");
+    }
+
+    #[test]
+    fn placard_stripes_are_a_static_pattern_the_tile_fills_with() {
+        let svg = placard_svg(placard_payload(None, CODE_URL));
+        assert!(svg.contains("<pattern width=\"8\" height=\"8\" patternTransform=\"rotate(45)\" id=\"err-stripes-"), "{svg}");
+        assert!(svg.contains("patternTransform=\"rotate(45)\""), "{svg}");
+        assert!(svg.contains("fill=\"#e0e0e0\""), "{svg}");
+        assert!(svg.contains("fill=\"url(#err-stripes-"), "{svg}");
+    }
+
+    /// The plate's `(x, y, width, height)`: the one rect with the plate's radius.
+    fn plate_of(svg: &str) -> (f64, f64, f64, f64) {
+        let rect = svg
+            .split("<rect ")
+            .map(|r| r.split("/>").next().unwrap_or(r))
+            .find(|r| r.contains("rx=\"3\""))
+            .unwrap_or_else(|| panic!("plate: {svg}"));
+        let attr = |name: &str| -> f64 {
+            rect.split(&format!(" {name}=\"")).nth(1).or_else(|| rect.strip_prefix(&format!("{name}=\"")))
+                .and_then(|r| r.split('"').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| panic!("{name}: {rect}"))
+        };
+        (attr("x"), attr("y"), attr("width"), attr("height"))
+    }
+
+    #[test]
+    fn placard_plate_sits_inset_in_the_panel_and_its_text_a_padding_further() {
+        let svg = placard_svg(placard_payload(None, CODE_URL));
+        let (x, y, _, _) = plate_of(&svg);
+        assert!(x > 0.0 && y > 0.0, "stripes show left of and above the plate: {svg}");
+        // The glyph starts a plate padding in from the plate's edge.
+        assert!(svg.contains(&format!("translate({},", print::geometry(x + super::placard::PLATE_PAD_X))), "{svg}");
+        assert!(svg.contains("rx=\"3\""), "{svg}");
+    }
+
+    #[test]
+    fn a_short_slot_squeezes_the_inset_before_it_clips_anything() {
+        let tall = placard_svg(placard_payload(None, CODE_URL));
+        let mut json = placard_payload(None, CODE_URL);
+        json["height"] = serde_json::json!(0.0);
+        let bound = bind(&serde_json::from_value::<Payload>(json).unwrap()).unwrap();
+        let measure_fonts = test_fonts();
+        let measure = Measure { fonts: &measure_fonts };
+        let natural = height_for_width(&bound, 300.0, &measure).unwrap();
+        let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: natural - 14.0 };
+        let laid_out = layout(&bound, cell, &measure).unwrap();
+        let short = print(&laid_out.nodes);
+        assert!(plate_of(&short).1 < plate_of(&tall).1, "{short}");
+        assert!(plate_of(&short).1 >= 12.0, "{short}");
+    }
+
+    #[test]
+    fn a_wide_placard_caps_its_text_block_at_a_readable_column() {
+        let mut json = placard_payload(None, CODE_URL);
+        json["resolved"]["message"] = serde_json::json!("word ".repeat(200));
+        json["width"] = serde_json::json!(1200.0);
+        let svg = placard_svg(json);
+        let (_, _, plate, _) = plate_of(&svg);
+        // 40 ch of 13px body text (a "0" is about 0.62em) is well under the tile's width.
+        assert!(plate < 40.0 * 13.0 * 0.7 + 2.0 * 12.0, "{plate}");
+        assert!(plate > 150.0, "{plate}");
+    }
+
+    #[test]
+    fn a_narrow_placard_wraps_the_code_at_its_hyphens_and_never_truncates_it() {
+        let mut json = placard_payload(None, CODE_URL);
+        json["resolved"]["placard"]["code"] = serde_json::json!("ERR-CHART-COLUMN-NOT-IN-RESULT");
+        json["width"] = serde_json::json!(150.0);
+        let svg = placard_svg(json);
+        let code_lines: Vec<&str> = svg
+            .split("font-family=\"&apos;Source Code Pro&apos;, monospace\"")
+            .skip(1)
+            .map(|rest| rest.split('>').nth(1).unwrap().split('<').next().unwrap())
+            .collect();
+        assert!(code_lines.len() > 1, "{svg}");
+        assert!(code_lines[..code_lines.len() - 1].iter().all(|l| l.ends_with('-')), "{code_lines:?}");
+        assert_eq!(code_lines.concat(), "ERR-CHART-COLUMN-NOT-IN-RESULT");
+    }
+
+    #[test]
+    fn placard_keeps_the_chart_title_above_a_tile_that_moves_down_with_it() {
+        let mut json = placard_payload(None, CODE_URL);
+        json["resolved"]["placard"]["chart_title"] = serde_json::json!("revenue by region");
+        json["resolved"]["placard"]["chart_title_baseline"] = serde_json::json!(30.0);
+        json["resolved"]["placard"]["tile_top"] = serde_json::json!(40.0);
+        json["resolved"]["placard"]["chart_title_font"]["case"] = serde_json::json!("title");
+        let titled: Payload = serde_json::from_value(json).unwrap();
+        let bare: Payload = serde_json::from_value(placard_payload(None, CODE_URL)).unwrap();
+        let (svg, titled_height) = render_sized(&titled).unwrap();
+        let (_, bare_height) = render_sized(&bare).unwrap();
+        // The tile starts where the band says, and the title is cased as a healthy one is.
+        assert!((titled_height - bare_height - 40.0).abs() < 1e-9);
+        assert!(svg.contains("y=\"40\""), "{svg}");
+        assert!(svg.contains("x=\"16\" y=\"30\"") && !svg.contains("revenue by region"), "{svg}");
+        assert!(svg.find("Revenue by Region") < svg.find("ERR-KPI-NO-DATA"), "{svg}");
+    }
+
+    #[test]
+    fn placard_without_a_hint_paints_none() {
+        let svg = placard_svg(placard_payload(None, CODE_URL));
+        assert!(!svg.contains("Fix it"), "{svg}");
     }
 
     #[test]
     fn placard_refuses_an_unsafe_href() {
-        let json = placard_payload(None, Some("javascript:alert(1)"));
+        let json = placard_payload(None, "javascript:alert(1)");
         let payload: Payload = serde_json::from_value(json).unwrap();
         let err = render(&payload, &test_fonts()).expect_err("refuses");
         assert!(err.contains("ERR-LINK-SCHEME-UNSAFE-AT-RENDER"), "{err}");
     }
 
     #[test]
-    fn placard_natural_height_counts_every_section() {
-        let bare: Payload = serde_json::from_value(placard_payload(None, None)).unwrap();
-        let full: Payload = serde_json::from_value(placard_payload(
-            Some("Fix it."),
-            Some("https://docs.example.com/x"),
-        ))
-        .unwrap();
+    fn placard_natural_height_counts_the_hint() {
+        let bare: Payload = serde_json::from_value(placard_payload(None, CODE_URL)).unwrap();
+        let full: Payload = serde_json::from_value(placard_payload(Some("Fix it."), CODE_URL)).unwrap();
         let (_, bare_height) = render_sized(&bare).unwrap();
         let (_, full_height) = render_sized(&full).unwrap();
-        // hint: gap 8 + one line 13*1.35; doc link: gap 8 + 13*0.85*1.35.
-        let expected = 8.0 + 13.0 * 1.35 + 8.0 + 13.0 * 0.85 * 1.35;
-        assert!((full_height - bare_height - expected).abs() < 1e-9, "{bare_height} {full_height}");
+        // One more line of body text plus its gap.
+        assert!((full_height - bare_height - (4.0 + 13.0 * 1.35)).abs() < 1e-9, "{bare_height} {full_height}");
     }
 
     #[test]
@@ -1057,23 +976,18 @@ mod tests {
         let (tall_svg, tall_height) = render_sized(&tall).unwrap();
         assert_eq!(small_height, tall_height);
         assert!(small_height >= MIN_HEIGHT);
-        assert!(small_svg.contains(&format!("height=\"{}\"", py_float_str(small_height))));
-        assert!(tall_svg.contains("height=\"500.0\""), "{tall_svg}");
+        assert!(small_svg.contains(&format!("height=\"{}\"", print::number(small_height))));
+        assert!(tall_svg.contains("height=\"500\""), "{tall_svg}");
     }
 
     #[test]
     fn placard_overflow_records_no_truncation_warning() {
         let long = "word ".repeat(400);
-        // At size 12 the 12-line cap (12 * 12 * 1.35) is exceeded by a capped
-        // block's float height, so the clip branch runs and only the placard
-        // guard stops the warning; at size 13 it never runs.
-        let mut json = placard_payload(None, None);
+        let mut json = placard_payload(None, CODE_URL);
         json["resolved"]["message"] = serde_json::json!(long);
-        json["resolved"]["style"]["message"]["font"]["size"] = serde_json::json!(12.0);
         let payload: Payload = serde_json::from_value(json).unwrap();
         let (rendered, warnings) = crate::diagnostic::collect(|| render(&payload, &test_fonts()));
-        let svg = rendered.expect("placard renders");
-        assert!(svg.contains("msg-clip-"), "{svg}");
+        rendered.expect("placard renders");
         assert!(warnings.is_empty(), "{warnings:?}");
 
         let json = callout_payload(None, &long);
@@ -1146,10 +1060,7 @@ mod tests {
             callout_payload(Some("**Checks passed**"), "All good."),
             callout_payload(None, "Just a message."),
             clipped,
-            placard_payload(
-                Some("Fix it."),
-                Some("https://docs.example.com/reference/errors/"),
-            ),
+            placard_payload(Some("Fix it."), CODE_URL),
         ]
     }
 
@@ -1163,7 +1074,7 @@ mod tests {
                 let natural = height_for_width(&bound, width, &measure).unwrap();
                 let cell = Rect { x: 0.0, y: 0.0, width, height: natural };
                 let laid_out = layout(&bound, cell, &measure).unwrap();
-                let [Node::Svg { extent, .. }] = laid_out.nodes.as_slice() else {
+                let Some(extent) = scene::root_extent(&laid_out.nodes) else {
                     panic!("a card is one root");
                 };
                 assert_eq!((extent.width, extent.height), (width, natural));
@@ -1180,7 +1091,7 @@ mod tests {
         let bound = bound_of(callout_payload(Some("Title"), "Message."));
         let cell = Rect { x: 0.0, y: 0.0, width: 300.0, height: 500.0 };
         let laid_out = layout(&bound, cell, &measure).unwrap();
-        assert!(matches!(laid_out.nodes.as_slice(), [Node::Svg { extent, .. }] if extent.height == 500.0));
+        assert!(scene::root_extent(&laid_out.nodes).is_some_and(|extent| extent.height == 500.0));
     }
 
     #[test]

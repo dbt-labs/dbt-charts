@@ -1,0 +1,11 @@
+# Keep eol=lf: packaged schema JSON is sha256-pinned to its LF bytes.
+* text=auto eol=lf
+*.svg  text eol=lf
+*.png  binary
+*.duckdb binary
+*.sqlite binary
+*.ttf  binary
+*.woff2 binary
+*.parquet binary
+*.webp binary
+*.pdf binary

@@ -98,7 +98,7 @@ def _text_format_filter(formats: FormatTable | None) -> Callable[..., str]:
         raise ChartDataError.from_code(ERR_TEXT_FORMAT_USAGE, detail=problem)
 
     def _narrative(spec: str) -> str | FormatConfig:
-        # Prose reads "$4.2mn", not the axis-style "$4.2 M"; an alias that sets
+        # Prose reads "$4.2m", not the axis-style "$4.2 M"; an alias that sets
         # its own notation keeps it.
         alias = formats.aliases.get(spec) if formats is not None else None
         if isinstance(alias, FormatConfig) and alias.notation is not None:

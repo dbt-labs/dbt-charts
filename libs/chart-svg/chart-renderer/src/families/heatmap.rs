@@ -23,7 +23,7 @@ use crate::common::{
 };
 use crate::families::cartesian::BandScale;
 use crate::families::color_scale::{continuous_gradient_def, ContinuousColor};
-use scene::{Attrs, Chars, Escape, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Node, Role, Run, Shape, Transform};
 use print::print;
 use crate::families::heatmap_facet::first_appearance;
 use crate::families::legend::{
@@ -103,6 +103,9 @@ pub(crate) struct HeatmapResolved {
     /// The palette a series color reads: the chart's own, else the board's, else Vega's default.
     #[serde(skip)]
     pub(crate) series_palette: Vec<String>,
+    /// The tiles the cells and legend swatches paint with when the chart opts into patterns.
+    #[serde(skip)]
+    pub(crate) patterns: crate::pattern::PatternPlan,
     /// Board-wide value→slot bindings; one bound to the color field refuses.
     #[serde(default)]
     pub(crate) category_colors: Vec<crate::common::CategoryColorScale>,
@@ -331,6 +334,7 @@ impl HeatmapResolved {
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("heatmap payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
+        r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
         r.link_context = payload.link_context.clone();
         Ok(r)
     }
@@ -363,12 +367,22 @@ pub(crate) fn y_labels_own_side(ax_y: &crate::common::AxisStyle, y_is_date: bool
 /// fill each takes.
 pub(crate) struct CategoryScale {
     pub(crate) domain: Vec<String>,
-    pub(crate) fills: Vec<String>,
+    pub(crate) fills: Vec<crate::pattern::Paint>,
+    /// What each entry's legend swatch fills with: its pattern, never the small-cell tint.
+    pub(crate) swatches: Vec<String>,
     /// Vega keys the domain by each value's text, so a null and the text
     /// `null` are one entry, held by whichever came first. This says it is
     /// the real null; the other kind of cell then matches no entry and
     /// paints no fill.
     pub(crate) null_is_js: bool,
+}
+
+impl CategoryScale {
+    /// A scale whose entries are plain colors: a family with no pattern channel.
+    pub(crate) fn plain(domain: Vec<String>, fills: Vec<String>) -> Self {
+        let paints = fills.iter().cloned().map(crate::pattern::Paint::Color).collect();
+        Self { domain, fills: paints, swatches: fills, null_is_js: false }
+    }
 }
 
 /// The legend's entries for `scale`: an authored `legend.values` picks and
@@ -387,10 +401,11 @@ pub(crate) fn category_legend_entries<'a>(scale: &'a CategoryScale, authored: Op
         .into_iter()
         .map(|i| LegendEntry {
             label: &scale.domain[i],
-            fill: &scale.fills[i],
+            fill: &scale.swatches[i],
             symbol: Some(LegendSymbol::FilledSquare),
             series_key: None,
             recede: None,
+            action: None,
         })
         .collect()
 }
@@ -407,6 +422,7 @@ pub(crate) enum CellFill<'a> {
 /// How a dimension's value heads the cell's tooltip: a date column prints its
 /// bucket (`header_tooltip_field`), anything else its raw text.
 pub(crate) struct HeaderFmt<'a> {
+    time: crate::time_axis::TimeAxis,
     tu: Option<crate::families::temporal::TimeUnit>,
     standard_date: bool,
     format: Option<crate::families::temporal::AuthoredTimeFormat<'a>>,
@@ -416,8 +432,10 @@ impl<'a> HeaderFmt<'a> {
     pub(crate) fn of(rows: &[serde_json::Map<String, Value>], field: &str, axis: &'a AxisStyle) -> Result<Self, String> {
         let domain = first_appearance(rows, field);
         let strs: Vec<&str> = domain.iter().map(String::as_str).collect();
-        let tu = crate::families::temporal::detect_time_unit(&strs);
+        let time = crate::time_axis::TimeAxis::over(&domain);
+        let tu = crate::families::temporal::detect_time_unit(&time.dates(&domain));
         Ok(Self {
+            time,
             tu,
             standard_date: crate::families::temporal::x_values_are_standard_dates(&strs),
             format: crate::families::temporal::AuthoredTimeFormat::parse(
@@ -428,7 +446,7 @@ impl<'a> HeaderFmt<'a> {
     }
 
     fn text(&self, cat: &str) -> Result<String, String> {
-        crate::contract::tooltip_header_text(cat, self.tu, self.standard_date, self.format)
+        crate::contract::tooltip_header_text(cat, self.time.date(cat), self.tu, self.standard_date, self.format)
     }
 }
 
@@ -451,6 +469,7 @@ pub(crate) struct CellPaint<'a> {
     pub(crate) mirror: bool,
     /// A facet panel's rules carry the plain channel titles instead of the cell's structured label.
     pub(crate) ghost_titles: Option<(&'a str, &'a str)>,
+    pub(crate) patterns: &'a crate::pattern::PatternPlan,
 }
 
 /// How a cell's rect draws: its opacity and stroke, and how far the stroke grows its bounds.
@@ -505,7 +524,7 @@ pub(crate) fn tooltip_value_title(r: &HeatmapResolved) -> Result<Option<String>,
 pub(crate) struct Cell {
     pub(crate) x: usize,
     pub(crate) y: usize,
-    pub(crate) fill: String,
+    pub(crate) fill: crate::pattern::Paint,
     /// The `aria-label` of the cell's rect.
     pub(crate) aria: Option<String>,
     pub(crate) href: Option<(String, crate::href::LinkOpen)>,
@@ -543,18 +562,26 @@ pub(crate) fn bind_cells(
         let (fill, cv) = match c.fill {
             CellFill::Gradient { colors, min, max } => {
                 let Some(cv) = row_num(row, c.color_field) else { continue };
-                (colors.at(min, max, cv)?, HeatmapValue::Number(cv))
+                let paint = match c.patterns.spec() {
+                    // A pattern ramp stands for the gradient: inked in the end of it the value leans to.
+                    Some(spec) if spec.scale != crate::pattern::Scale::Category => {
+                        let end = if spec.scale == crate::pattern::Scale::Diverging && cv < 0.0 { min } else { max };
+                        c.patterns.step(c.patterns.step_of(cv, min, max)?, &colors.at(min, max, end)?)?
+                    }
+                    _ => crate::pattern::Paint::Color(colors.at(min, max, cv)?),
+                };
+                (paint, HeatmapValue::Number(cv))
             }
             CellFill::Dates { min, max } => {
                 let Some(day) = row.get(c.color_field).and_then(date_cell_day) else { continue };
                 // The tooltip prints the epoch milliseconds as a number.
-                (date_color(min, max, day), HeatmapValue::Number(day * MS_PER_DAY))
+                (crate::pattern::Paint::Color(date_color(min, max, day)), HeatmapValue::Number(day * MS_PER_DAY))
             }
             CellFill::Categories(scale) => {
                 let null_cell = row.get(c.color_field).is_none_or(Value::is_null);
                 let name = if null_cell { NULL_CATEGORY.to_string() } else { row_str(row, c.color_field) };
                 if name == NULL_CATEGORY && null_cell != scale.null_is_js {
-                    ("none".to_string(), HeatmapValue::Category(NULL_CATEGORY))
+                    (crate::pattern::Paint::Color("none".to_string()), HeatmapValue::Category(NULL_CATEGORY))
                 } else {
                     let slot = scale
                         .domain
@@ -607,17 +634,21 @@ pub(crate) fn cell_nodes(
     let (cell_w, cell_h) = (x_scale.bandwidth(), y_scale.bandwidth());
     let mut nodes = Vec::with_capacity(cells.len() + 1);
     let mut rules = Vec::new();
-    for cell in cells {
+    for (datum, cell) in cells.iter().enumerate() {
         let (cx, cy) = (x_scale.position_at(cell.x), y_scale.position_at(cell.y));
-        let rect = Node::Rect(
+        let paint = cell.fill.for_mark(cell_w.min(cell_h), "none", 0.0);
+        // A patterned cell outlines in its ink in place of the theme's cell stroke.
+        let stroke = match cell.fill {
+            crate::pattern::Paint::Pattern(_) => Attrs::new().set("stroke", &paint.stroke).num("stroke-width", paint.stroke_w),
+            crate::pattern::Paint::Color(_) => marks.stroke.clone(),
+        };
+        let rect = Node::rect(
+            Role::Mark { layer: 0, series: None, datum: Some(datum) },
+            (cx, cy, cell_w, cell_h),
             Attrs::new()
-                .set("x", format!("{cx:.2}"))
-                .set("y", format!("{cy:.2}"))
-                .set("width", format!("{cell_w:.2}"))
-                .set("height", format!("{cell_h:.2}"))
-                .set("fill", cell.fill.as_str())
-                .extend(marks.stroke.clone())
-                .set("opacity", marks.opacity.to_string())
+                .set("fill", &paint.fill)
+                .extend(stroke)
+                .num("opacity", marks.opacity)
                 .extend(aria_attrs(cell.aria.as_deref(), ItemRole::RectMark)?),
         );
         let mark = crate::href::linked(cell.anchor(), rect);
@@ -627,7 +658,7 @@ pub(crate) fn cell_nodes(
                 aria: Some(ghost),
                 x: cx + cell_w / 2.0,
                 y: cy + cell_h / 2.0,
-                stroke: &cell.fill,
+                stroke: cell.fill.color(),
                 anchor: cell.anchor(),
             });
         }
@@ -674,13 +705,10 @@ pub(crate) fn color_categories(
     if null_is_js == Some(true) {
         domain.insert(0, NULL_CATEGORY.to_string());
     }
-    let fills = if infer_vega_type(rows, &r.color) == VegaType::Ordinal {
-        let n = domain.len() as f64;
-        (1..=domain.len())
-            .map(|i| {
-                let (red, green, blue) = d3rs::color::interpolate_rgb_piecewise(&d3rs::vega_schemes::BLUES, i as f64 / (n + 1.0));
-                format!("rgb({red}, {green}, {blue})")
-            })
+    // A pattern names the categories itself, so the ordinal ramp is only the unpatterned default.
+    let fills: Vec<crate::pattern::Paint> = if infer_vega_type(rows, &r.color) == VegaType::Ordinal && !r.patterns.is_active() {
+        (0..domain.len())
+            .map(|i| crate::pattern::Paint::Color(d3rs::color::rgb_text(d3rs::color::quantize_sample(&d3rs::vega_schemes::BLUES, domain.len(), i))))
             .collect()
     } else {
         // The theme's category range wraps past its last swatch, as Vega's
@@ -688,42 +716,43 @@ pub(crate) fn color_categories(
         let scale = crate::common::category_scale_for(&r.category_colors, &r.color);
         domain
             .iter()
-            .map(|name| crate::common::series_color(name, &domain, &r.series_palette, scale))
+            .map(|name| crate::common::series_color(name, &domain, &r.series_palette, scale, &r.patterns))
             .collect::<Result<Vec<_>, _>>()?
     };
-    Ok(CategoryScale { domain, fills, null_is_js: null_is_js == Some(true) })
+    let swatches = fills.iter().map(|fill| fill.swatch("none", 0.0).fill).collect();
+    Ok(CategoryScale { domain, fills, swatches, null_is_js: null_is_js == Some(true) })
 }
 
 /// How Vega prints a null category.
 const NULL_CATEGORY: &str = "null";
 
-/// A rotated tick label: translate to the anchor, rotate, then the baseline shift (Vega's SVG
-/// text transform for a rotated item). `at` is `(x, anchor_y, angle, baseline dy)`; `face` sets
-/// the anchor and font; `(text, row2)` are its rows, and `hidden` writes `opacity="0"`.
+/// A rotated tick label: translate to the anchor, rotate, with the baseline shift as the text's
+/// own `y` (Vega's SVG text transform for a rotated item). `at` is `(x, anchor_y, angle, baseline
+/// dy)`; `face` sets the anchor and font; `(text, row2)` are its rows, and `hidden` writes
+/// `opacity="0"`.
 pub(crate) fn rotated_label(
     (x, anchor_y, angle, dy): (f64, f64, f64, f64),
     face: &LabelFace,
     (text, row2): (&str, &str),
     hidden: bool,
 ) -> Node {
-    let attrs = Attrs::new()
-        .set("text-anchor", face.anchor)
-        .set("transform", format!("translate({x:.p$},{anchor_y:.p$}) rotate({angle}) translate(0,{dy})", p = face.places))
-        .extend(face.font())
-        .set_if(hidden, "opacity", "0");
-    // A second row rides the same rotated block, one line advance below.
-    if row2.is_empty() {
-        return Node::text(attrs, text);
-    }
-    let run = |attrs: Attrs, text: &str| Node::Tspan(TextBlock { attrs, text: Chars::new(text, Escape::Attr) });
-    let second = Attrs::new().set("x", "0").set("dy", vega_fit::label_row_advance(face.size).to_string());
-    Node::TextRuns { attrs, children: vec![run(Attrs::new(), text), run(second, row2)] }
+    let attrs = Attrs::new().set("text-anchor", face.anchor).extend(face.font()).set_if(hidden, "opacity", "0");
+    let at = (0.0, dy);
+    let label = if row2.is_empty() {
+        crate::text::label(Role::Axis, at, attrs, text)
+    } else {
+        // A second row rides the same rotated block, one line advance below.
+        let run = |x, dy, text: &str| Run::Tspan { x, y: None, dx: None, dy, attrs: Attrs::new(), runs: vec![Run::Chars(Chars::new(text, Escape::Attr))] };
+        let runs = vec![run(None, None, text), run(Some(0.0), Some(vega_fit::label_row_advance(face.size)), row2)];
+        Node::new(Role::Axis, attrs, Shape::Text { at, bounds: None, runs })
+    };
+    label
+        .with_transform(Transform::Translate { x, y: anchor_y })
+        .with_transform(Transform::Rotate { deg: angle, about: None })
 }
 
-/// How a tick label is set: its anchor and the face Vega writes on every `<text>`, and the
-/// decimals its coordinates print with.
+/// How a tick label is set: its anchor and the face Vega writes on every `<text>`.
 pub(crate) struct LabelFace<'a> {
-    pub(crate) places: usize,
     pub(crate) anchor: &'a str,
     pub(crate) family: &'a str,
     pub(crate) size: f64,
@@ -737,7 +766,7 @@ impl LabelFace<'_> {
     fn font(&self) -> Attrs {
         Attrs::new()
             .vega("font-family", self.family)
-            .set("font-size", self.size.to_string())
+            .num("font-size", self.size)
             .quick_some("font-style", self.style)
             .set("font-weight", self.weight)
             .set("fill", self.fill)
@@ -745,35 +774,13 @@ impl LabelFace<'_> {
 }
 
 /// An unrotated tick label with its baseline at `(x, y)`.
-pub(crate) fn flat_label((x, y): (f64, f64), face: &LabelFace, hidden: bool, text: &str) -> Node {
-    Node::text(
-        Attrs::new()
-            .set("x", format!("{x:.p$}", p = face.places))
-            .set("y", format!("{y:.p$}", p = face.places))
-            .set("text-anchor", face.anchor)
-            .extend(face.font())
-            .set_if(hidden, "opacity", "0"),
-        text,
-    )
+pub(crate) fn flat_label(role: Role, (x, y): (f64, f64), face: &LabelFace, hidden: bool, text: &str) -> Node {
+    crate::text::label(role, (x, y), Attrs::new().set("text-anchor", face.anchor).extend(face.font()).set_if(hidden, "opacity", "0"), text)
 }
 
-/// An axis tick from `(x1, y1)` to `(x2, y2)`, its coordinates printed to `places` decimals.
-pub(crate) fn tick_line(
-    places: usize,
-    (x1, y1): (f64, f64),
-    (x2, y2): (f64, f64),
-    color: &str,
-    width: f64,
-) -> Node {
-    Node::Line(
-        Attrs::new()
-            .set("x1", format!("{x1:.places$}"))
-            .set("y1", format!("{y1:.places$}"))
-            .set("x2", format!("{x2:.places$}"))
-            .set("y2", format!("{y2:.places$}"))
-            .set("stroke", color)
-            .set("stroke-width", width.to_string()),
-    )
+/// An axis tick from `(x1, y1)` to `(x2, y2)`.
+pub(crate) fn tick_line(role: Role, from: (f64, f64), to: (f64, f64), color: &str, width: f64) -> Node {
+    Node::line(role, from, to, Attrs::new().set("stroke", color).num("stroke-width", width))
 }
 
 /// SVG `text-anchor` for a Vega `align`.
@@ -897,7 +904,8 @@ pub(crate) fn date_legend_ticks(min: f64, max: f64, count: usize, authored: Opti
 /// Vega's date legend label, `%b %d, %Y`: the date on the board zone's wall
 /// clock for an `aware` scale; a `NaN` date prints as d3 formats an invalid one.
 pub(crate) fn legend_date_label(day: f64, aware: bool) -> Result<String, String> {
-    use crate::families::temporal::{civil_from_days, vl_default_format, TimeUnit};
+    use crate::families::temporal::{vl_default_format, TimeUnit};
+    use d3rs::calendar::civil_from_days;
     if day.is_nan() {
         return Ok("NaN, 0NaN".to_string());
     }
@@ -920,7 +928,8 @@ pub(crate) fn interp_color(stops: &[String], domain_min: f64, domain_max: f64, v
         .map(|stop| d3rs::color::parse_hex(stop).ok_or_else(|| format!("heatmap: gradient stop {stop:?} is not a #rrggbb color")))
         .collect::<Result<Vec<_>, _>>()?;
     let t = unit_position(value, domain_min, domain_max).clamp(0.0, 1.0);
-    Ok(d3rs::color::rgb_text(d3rs::color::interpolate_rgb_piecewise(&colors, t)))
+    let mixed = d3rs::color::piecewise(d3rs::color::interpolate_rgb, &colors, t).map_err(|e| format!("heatmap: gradient {e}"))?;
+    Ok(d3rs::color::rgb_text(mixed))
 }
 
 /// The gradient legend's labels. Vega labels a diverging pivot that is no tick
@@ -1367,7 +1376,7 @@ mod tests {
         json["resolved"]["background"] = serde_json::json!("#d9a45b");
         json["background"] = serde_json::json!("#ffffff");
         let svg = render_json(json);
-        assert!(svg.contains("<rect width=\"600\" height=\"432\" fill=\"#d9a45b\"/>"), "{svg}");
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"600\" height=\"432\" fill=\"#d9a45b\"/>"), "{svg}");
     }
 
     /// H1 — the color scale's domain and the gradient legend's ladder are
@@ -2099,7 +2108,7 @@ mod tests {
         let super::bind::Coloring::Gradient { min, max, ticks, .. } = &bound.coloring else { panic!("a measure colors a gradient") };
         assert_eq!((ticks.first(), ticks.last()), (Some(min), Some(max)));
         assert_eq!(bound.gradient_labels.len(), ticks.len());
-        assert!(bound.cells.iter().all(|cell| cell.fill.starts_with("rgb(") && cell.aria.is_some()));
+        assert!(bound.cells.iter().all(|cell| cell.fill.color().starts_with("rgb(") && cell.aria.is_some()));
     }
 
     #[test]
@@ -2144,7 +2153,7 @@ mod tests {
             ]
             .map(|(code, field)| (code, field.to_string()))
         );
-        let [scene::Node::Svg { extent, .. }] = laid.nodes.as_slice() else { panic!("one root") };
+        let Some(extent) = scene::root_extent(&laid.nodes) else { panic!("one root") };
         assert_eq!((extent.width, extent.height), (420.0, 260.0));
         let data = laid.data_box;
         assert!(data.x >= 0.0 && data.y >= 0.0 && data.x + data.width <= 420.0 && data.y + data.height <= 260.0);

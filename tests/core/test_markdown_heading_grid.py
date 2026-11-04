@@ -13,6 +13,7 @@ from typing import Any, Literal
 import pytest
 
 from dbt_charts.core.compile.config import get_theme_style
+from dbt_charts.core.compile.models.style.authored import StylePatch
 from dbt_charts.core.compile.resolve.style.board import resolve_style
 from dbt_charts.core.compile.resolve.style.markdown_style import (
     compact_style_kwargs,
@@ -44,7 +45,7 @@ def test_prose_heading_margins_are_whole_body_lines() -> None:
     assert kw["heading_margin_top_px"] == pytest.approx(2 * line)
     assert kw["minor_heading_margin_top_px"] == pytest.approx(line)
     assert kw["heading_margin_bottom_px"] == 0.0
-    assert kw["h1_margin_bottom_px"] == pytest.approx(line)
+    assert kw["major_heading_margin_bottom_px"] == pytest.approx(line)
     assert kw["heading_grid_px"] == pytest.approx(line)
 
 
@@ -80,20 +81,32 @@ def test_board_titles_keep_chrome_spacing_and_the_unclamped_ramp() -> None:
     chrome_line = float(rs.font.size) * float(rs.font.line_height)
     assert kw["heading_margin_bottom_px"] == pytest.approx(chrome_line)
     assert kw["minor_heading_margin_top_px"] is None
-    assert kw["h1_margin_bottom_px"] is None
+    assert kw["major_heading_margin_bottom_px"] is None
     assert kw["heading_grid_px"] is None
     assert kw["h6_size"] == float(rs.chart_defaults.heading_sizes[5])
 
 
-def test_headings_follow_the_heading_case() -> None:
-    rs = resolve_style(get_theme_style("clarity"))
-    assert rs.title.font.case == "title"
+@pytest.mark.parametrize(
+    ("patch", "expected"),
+    [
+        (None, "the quick brown fox"),
+        ({"title": {"font": {"case": "title"}}}, "The Quick Brown Fox"),
+    ],
+    ids=["as_typed", "theme_sets_title_case"],
+)
+def test_headings_follow_the_heading_case(
+    patch: dict[str, Any] | None, expected: str
+) -> None:
+    rs = resolve_style(
+        get_theme_style("clarity"),
+        None if patch is None else StylePatch.model_validate(patch),
+    )
     blocks = style_prose_headings(
         list(parse("## the quick brown fox\n\nleave this alone")), rs
     )
     heading, paragraph = blocks
     assert isinstance(heading, Heading) and isinstance(paragraph, Paragraph)
-    assert "".join(s.text for s in heading.spans) == "The Quick Brown Fox"
+    assert "".join(s.text for s in heading.spans) == expected
     assert paragraph.spans[0].text == "leave this alone"
 
 
@@ -123,7 +136,11 @@ def test_heading_hugs_the_body_line_below_it(level: int, lines: int) -> None:
     heading_baseline = renderer.first_baseline(blocks, 400)
     body_baseline = renderer.first_baseline(blocks[1:], 400)
     block_height = renderer.measure(blocks[:1], width=400, padding=0).height
-    below = style.h1_margin_bottom_px if level == 1 else style.heading_margin_bottom_px
+    below = (
+        style.major_heading_margin_bottom_px
+        if level <= 2
+        else style.heading_margin_bottom_px
+    )
     assert below is not None
     assert block_height - below == pytest.approx(lines * line)
     assert block_height + body_baseline - heading_baseline == pytest.approx(

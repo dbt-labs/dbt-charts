@@ -1,4 +1,5 @@
-"""Two-tier casing: headings are Title Case, every other label is sentence case.
+"""Two-tier casing: authored headings print as typed unless a theme opts into
+Title Case; derived labels are sentence case.
 
 Rendered end to end through the production paint path.
 """
@@ -124,13 +125,29 @@ def test_authored_labels_render_as_typed() -> None:
     assert texts.count("Revenue By Region") >= 2  # axis title + table header
 
 
-def test_heading_tier_title_cases_chart_titles() -> None:
-    assert "SpaceX Since 2006" in _texts(render_board_to_svg(PROBE))
+_TITLE_CASE_THEME = "style:\n  fonts:\n    heading:\n      case: title\n"
 
 
-def test_tab_labels_are_title_cased_and_the_pane_repeats_no_heading() -> None:
+def test_authored_chart_titles_print_as_typed() -> None:
+    assert "SpaceX since 2006" in _texts(render_board_to_svg(PROBE))
+
+
+def test_a_theme_can_title_case_chart_titles() -> None:
+    texts = _texts(render_board_to_svg(_TITLE_CASE_THEME + PROBE))
+    assert "SpaceX Since 2006" in texts
+
+
+def test_tab_labels_print_as_typed_and_the_pane_repeats_no_heading() -> None:
     texts = _texts(render_board_to_svg(PROBE))
-    assert texts.count("A Tab Label of the Region") == 1  # the tab bar alone
+    assert texts.count("a tab label of the region") == 1  # the tab bar alone
+    assert "A Tab Label of the Region" not in texts
+    assert "second tab" in texts
+
+
+def test_a_theme_can_title_case_tab_labels() -> None:
+    tab_case = "style:\n  layout:\n    tabs:\n      font:\n        case: title\n"
+    texts = _texts(render_board_to_svg(tab_case + PROBE))
+    assert texts.count("A Tab Label of the Region") == 1
     assert "a tab label of the region" not in texts
     assert "Second Tab" in texts
 

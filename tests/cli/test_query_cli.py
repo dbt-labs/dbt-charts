@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from dbt_charts.cli.main import app
 
@@ -714,3 +714,72 @@ def test_dct_query_accepts_a_csv_path_as_its_source(project_dir: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     assert result.output == "n,total\n2,42\n"
+
+
+_LIST_VAR_BOARD = """\
+source: db
+variables:
+  channel:
+    input: multiselect
+    options:
+      static: [email, web, phone]
+  date_range:
+    input: daterange
+queries:
+  kpis:
+    sql: |
+      select count(*) as n
+      from (values
+        ('email', date '2026-01-10'),
+        ('web', date '2026-02-10'),
+        ('phone', date '2026-03-10'),
+        ('email', date '2026-06-10')
+      ) as t(channel, day)
+      where {{ filter('channel', channel) }}
+        and {{ filter_date_range('day', date_range) }}
+charts:
+  c:
+    query: kpis
+    type: table
+rows:
+  - c
+"""
+
+
+class TestQueryCliListVars:
+    """List-valued --var forms reach a multiselect/daterange as typed values."""
+
+    def _invoke(self, board_dir: Path, *var_args: str) -> Result:
+        board = board_dir / "list_vars.yaml"
+        board.write_text(_LIST_VAR_BOARD)
+        argv = ["query", str(board), "kpis", "--project-dir", str(board_dir)]
+        for arg in var_args:
+            argv += ["--var", arg]
+        return runner.invoke(app, argv)
+
+    def _count(self, board_dir: Path, *var_args: str) -> int:
+        result = self._invoke(board_dir, *var_args)
+        assert result.exit_code == 0, result.output
+        return int(result.output.splitlines()[1])
+
+    def test_json_list_selects_the_members(self, board_dir: Path) -> None:
+        count = self._count(
+            board_dir,
+            'channel=["email","web"]',
+            'date_range=["2026-01-01","2026-03-31"]',
+        )
+        assert count == 2
+
+    def test_empty_list_is_all(self, board_dir: Path) -> None:
+        assert self._count(board_dir, "channel=[]", "date_range=[]") == 4
+
+    def test_a_repeated_key_is_a_list(self, board_dir: Path) -> None:
+        assert (
+            self._count(board_dir, "channel=email", "channel=web", "date_range=[]") == 3
+        )
+
+    def test_malformed_json_list_errors(self, board_dir: Path) -> None:
+        result = self._invoke(board_dir, 'channel=["email"', "date_range=[]")
+        assert result.exit_code != 0
+        assert "ERR-VARIABLE-VALUE-INVALID" in result.output
+        assert "channel" in result.output

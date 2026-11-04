@@ -29,6 +29,7 @@ charts:
     query: company_revenue_total
     title: Company Revenue
     subtitle: Minimal — no rules, no bg, uniform weight
+    row_role: row_role
     style:
       columns:
         quarterly_revenue:
@@ -40,7 +41,6 @@ charts:
         margin:
           format: percent
       row:
-        role: row_role
         stripe:
           color: transparent
         roles:
@@ -64,6 +64,7 @@ charts:
     query: company_revenue_total
     title: Company Revenue
     subtitle: BI — apparatus-tier header (11/600/gray)
+    row_role: row_role
     style:
       columns:
         quarterly_revenue:
@@ -74,13 +75,12 @@ charts:
           format: percent
         margin:
           format: percent
-      row:
-        role: row_role
   variant_classic:
     type: table
     query: company_revenue_total
     title: Company Revenue
     subtitle: Classic — Source Serif, per-column rule gaps, no header fill
+    row_role: row_role
     style:
       columns:
         quarterly_revenue:
@@ -101,7 +101,6 @@ charts:
         divider:
           continuous: false
       row:
-        role: row_role
         stripe:
           color: transparent
         roles:

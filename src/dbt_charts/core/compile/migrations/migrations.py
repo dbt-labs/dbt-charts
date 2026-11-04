@@ -738,16 +738,16 @@ def _apply_map_key_deletions_eagerly(
 def prepare_board_mapping(
     mapping: Mapping[str, JsonValue],
     *,
-    model: type[BaseModel] | None = None,
+    patch: bool = False,
     allow_expired: bool = False,
 ) -> JsonObject:
     """Recognize and migrate a raw board-shaped mapping before model validation.
 
-    ``model`` is the currency check: does this mapping already validate
-    against the current schema, so migration can be skipped? Defaults to
-    ``AuthoredBoard`` for a real, standalone board. Callers handling a
-    patch-shaped fragment (a theme YAML's ``style:``-only content, a
-    meta.yml override, an extends target) must pass ``BoardPatch`` —
+    The currency check asks whether this mapping already validates against the
+    current schema, so migration can be skipped. It goes through the authoring
+    input adapters so that sugar such as ``theme:`` counts as current. Callers
+    handling a patch-shaped fragment (a theme YAML's ``style:``-only content, a
+    meta.yml override, an extends target) must pass ``patch=True`` —
     ``AuthoredBoard`` carries a "must have layout/chart/text/title/notes"
     invariant that no patch can ever satisfy, which would make every current
     patch look like a migration candidate.
@@ -763,9 +763,10 @@ def prepare_board_mapping(
     currency check below reliably routes it into ``migrate_mapping``, which
     lazily builds the same (``@cache``d) registry.
     """
-    from dbt_charts.core.compile.models.board.authored import AuthoredBoard
+    from dbt_charts.core.compile.models.board.authored import AUTHORED_BOARD_ADAPTER
+    from dbt_charts.core.compile.models.board.patch import BOARD_PATCH_ADAPTER
 
-    currency_model = model if model is not None else AuthoredBoard
+    currency_adapter = BOARD_PATCH_ADAPTER if patch else AUTHORED_BOARD_ADAPTER
 
     identity_moves_applied = False
     if _theme_value_needs_recheck(mapping):
@@ -800,7 +801,7 @@ def prepare_board_mapping(
             mapping = _apply_identity_moves(mapping, registry, catalog)
 
     try:
-        currency_model.model_validate(mapping, context=AUTHORED_INPUT)
+        currency_adapter.validate_python(mapping, context=AUTHORED_INPUT)
     except ValidationError:
         if not _board_has_historical_schemas():
             return dict(mapping)
@@ -918,23 +919,23 @@ def retired_theme_renames() -> dict[MappedScalar, MappedScalar]:
     ``extends: <retired-theme-name>`` (``merge.py``'s ``_retired_theme_redirect``)
     needs a retired theme name to keep resolving forever, the same as
     ``theme:``'s Move-based rename already does via ``_apply_identity_moves`` --
-    so this walks the same ``catalog.entries`` ``_build_board_migration_context``
+    so this walks the same version chain ``_build_board_migration_context``
     does -- the DEV entry included, an ordinary member with its own
     predecessor -- merging each module's declared table instead of building
-    ``Move``/``Deletion``/``ConditionalMove`` objects.
+    ``Move``/``Deletion``/``ConditionalMove`` objects. It reads the manifest
+    alone: the schemas themselves play no part in a rename table.
 
-    Walked oldest-first (``catalog.entries`` is newest-first) so a newer
-    module's table overrides an older one on a key collision, ending with
-    the DEV entry applied last -- the newest declaration always wins, never
-    the oldest.
+    Walked oldest-first (the manifest's order) so a newer module's table
+    overrides an older one on a key collision, ending with the DEV entry
+    applied last -- the newest declaration always wins, never the oldest.
     """
     from dbt_charts.core.compile.schema.renderers.yaml_schema_catalog import (
-        load_yaml_schema_catalog,
+        PACKAGE_SCHEMA_DIR,
+        load_yaml_schema_manifest,
     )
 
-    catalog = load_yaml_schema_catalog()
     combined: dict[MappedScalar, MappedScalar] = {}
-    for entry in reversed(catalog.entries):
+    for entry in load_yaml_schema_manifest(PACKAGE_SCHEMA_DIR):
         if entry.predecessor is None:
             continue
         dotted = f"dbt_charts.core.compile.migrations.versions.v{entry.version.replace('.', '_')}"
@@ -2893,8 +2894,41 @@ def _apply_move(
             value = parent[int(key)] if isinstance(parent, list) else parent[str(key)]
             if move.rewrite(value) != value:
                 notices.append(move.rewrite_note)
+        source = _move_path(move, move.old_path, bindings)
+        moved = parent[int(key)] if isinstance(parent, list) else parent[str(key)]
         _move_value(mapping, parent, key, destination, move)
+        # The text writer moves a plain scalar as a key removal, which strikes
+        # the mappings it empties; any other shape it leaves behind.
+        if (
+            move.rewrite is None
+            and isinstance(moved, (str, int, float, bool))
+            and source[:-1] != destination[:-1]
+        ):
+            _prune_emptied_ancestors(mapping, source)
     return notices
+
+
+def _prune_emptied_ancestors(mapping: JsonObject, source: Sequence[str]) -> None:
+    """Strike the mappings a moved key left empty, up to the first one still holding keys.
+
+    `set_board_values` removes a key together with the ancestors it empties, so
+    the in-memory result must match or the two diverge. A list item is never
+    struck: it keeps its position.
+    """
+    chain: list[tuple[JsonObject, str]] = []
+    for depth, part in enumerate(source[:-1]):
+        holder = _value_at(mapping, source[:depth])
+        if isinstance(holder, list):
+            chain.clear()
+        elif isinstance(holder, dict) and part in holder:
+            chain.append((holder, part))
+        else:
+            return
+    for holder, part in reversed(chain):
+        child = holder[part]
+        if not isinstance(child, dict) or child:
+            return
+        del holder[part]
 
 
 def _value_at(document: JsonValue, path: Sequence[str]) -> JsonValue:

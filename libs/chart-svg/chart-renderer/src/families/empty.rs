@@ -386,6 +386,7 @@ impl<'a> EmptyLegend<'a> {
                     symbol: Some(glyph(self.glyph, self.canvas, self.canvas)),
                     series_key: None,
                     recede: None,
+                    action: None,
                 })
                 .collect(),
         };
@@ -482,7 +483,7 @@ impl Head {
             series
                 .iter()
                 .map(|name| {
-                    let fill = crate::common::series_color(name, &series, series_palette, None)?;
+                    let fill = crate::common::series_color(name, &series, series_palette, None, &crate::pattern::PatternPlan::default())?.into_color();
                     Ok((crate::common::wide_series_display(name, &labels), fill))
                 })
                 .collect::<Result<_, String>>()?

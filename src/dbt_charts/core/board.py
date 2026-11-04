@@ -57,16 +57,13 @@ from dbt_charts.core.execute import ExecutionError, Executor
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.executor import utc_now
-from dbt_charts.core.execute.file_source_materializer import (
-    FileSourceMaterializer,
-    resolve_local_file_materializer_factory,
-)
 from dbt_charts.core.project import (
     CHARTS_SUBDIR,
     BoardFile,
     Project,
     ProjectDirectory,
     ProjectPath,
+    board_identity,
     board_slug,
     is_package_relpath,
 )
@@ -78,6 +75,7 @@ if TYPE_CHECKING:
 from dbt_charts.core.compile.compiler import validate_compiled_queries
 from dbt_charts.core.compile.image_assets import image_scope
 from dbt_charts.core.dbt_ref_check import check_manifest_refs
+from dbt_charts.core.link_targets import check_link_targets
 from dbt_charts.core.render import RenderError, render
 from dbt_charts.core.render.board_links import LinkContext
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
@@ -302,16 +300,14 @@ def _board_executor(
     adapter_registry: AdapterRegistry,
     use_cache: bool,
     result_cache: QueryResultCache | None,
-    file_materializer: FileSourceMaterializer | None,
     clock: Callable[[], datetime],
+    board_path: ProjectPath | None,
 ) -> Executor:
     """The executor one board's queries run through.
 
-    Use the caller-supplied materializer when provided (e.g. Cloud with
-    Postgres cache). For local `dct serve` / CLI, hand the executor a lazy
-    factory so the in-process DuckDB-backed materializer is built only when a
-    file-source query actually misses the cache — a fully-cached render never
-    opens one.
+    File sources run through ``adapter_registry``, which owns the
+    materializer. A stored board's file slug goes on every cache entry it
+    writes.
     """
     return Executor(
         board,
@@ -319,11 +315,10 @@ def _board_executor(
         query_registry=result.query_registry,
         use_cache=use_cache,
         result_cache=result_cache,
-        file_materializer=file_materializer,
-        file_materializer_factory=resolve_local_file_materializer_factory(
-            project, file_materializer
-        ),
         clock=clock,
+        board_slug=board_identity(board_path.relpath)
+        if board_path is not None
+        else None,
     )
 
 
@@ -335,7 +330,6 @@ def prefetch_dashboard(
     adapter_registry: AdapterRegistry,
     result_cache: QueryResultCache | None,
     max_workers: int | None = None,
-    file_materializer: FileSourceMaterializer | None = None,
     builtin_variables: VariableValues | None = None,
     compile_result: CompileResult | None = None,
     clock: Callable[[], datetime] = utc_now,
@@ -359,8 +353,8 @@ def prefetch_dashboard(
             adapter_registry=adapter_registry,
             use_cache=True,
             result_cache=result_cache,
-            file_materializer=file_materializer,
             clock=clock,
+            board_path=board.path,
         )
         return prefetch_tab_queries(
             result.board,
@@ -390,7 +384,6 @@ def render_dashboard(
     url_mount_dir: str = "",
     max_workers: int | None = None,
     compile_result: CompileResult | None = None,
-    file_materializer: FileSourceMaterializer | None = None,
     builtin_variables: VariableValues | None = None,
     max_rows_per_query: int = NO_ROW_CAP,
     clock: Callable[[], datetime] = utc_now,
@@ -444,6 +437,7 @@ def render_dashboard(
             return _compile_failed(result, ignore_codes, _warnings_ignore)
         validate_compiled_queries(result)
         check_manifest_refs(result, project)
+        check_link_targets(result, project, board.path.relpath)
         if result.errors:
             # Ref/source errors land here: this arm has no execution layer to
             # catch them per chart, and a board that cannot execute must not
@@ -520,6 +514,8 @@ def render_dashboard(
     # execution, which contains them to the failing chart instead of failing the
     # whole board; only WARN-DBT-MANIFEST-MISSING needs the board-level call.
     check_manifest_refs(result, project)
+    if file_path is not None:
+        check_link_targets(result, project, file_path.relpath)
     compiled_board = result.board
     if compiled_board is not None and chart is not None:
         # Reuse-by-reference: render one existing chart (with its dependent
@@ -567,8 +563,8 @@ def render_dashboard(
             adapter_registry=adapter_registry,
             use_cache=use_cache,
             result_cache=result_cache,
-            file_materializer=file_materializer,
             clock=clock,
+            board_path=file_path,
         )
         if scale is not None:
             render_options["scale"] = scale

@@ -18,7 +18,6 @@ from pydantic import TypeAdapter, ValidationError
 
 from dbt_charts.core.compile.models.query.normalized import (
     AnyQuery,
-    HttpQuery,
     SchemaQuery,
     SqlQuery,
     ValuesQuery,
@@ -33,9 +32,6 @@ class TestQueryTypeIsARealField:
     def test_sql_query_type_field(self) -> None:
         assert SqlQuery(sql="SELECT 1").query_type == "sql"
 
-    def test_http_query_type_field(self) -> None:
-        assert HttpQuery(url="https://example.com").query_type == "http"
-
     def test_values_query_type_field(self) -> None:
         assert ValuesQuery(rows=[{"a": 1}]).query_type == "values"
 
@@ -44,7 +40,6 @@ class TestQueryTypeIsARealField:
 
     def test_query_type_is_a_declared_model_field(self) -> None:
         assert "query_type" in SqlQuery.model_fields
-        assert "query_type" in HttpQuery.model_fields
         assert "query_type" in ValuesQuery.model_fields
         assert "query_type" in SchemaQuery.model_fields
 
@@ -74,12 +69,6 @@ class TestRoundTrip:
         q = SqlQuery(sql="SELECT 1", source="db")
         back = _adapter.validate_json(_adapter.dump_json(q, warnings="error"))
         assert isinstance(back, SqlQuery)
-        assert back == q
-
-    def test_http_query_round_trips(self) -> None:
-        q = HttpQuery(url="https://example.com", method="POST", body={"x": 1})
-        back = _adapter.validate_json(_adapter.dump_json(q, warnings="error"))
-        assert isinstance(back, HttpQuery)
         assert back == q
 
     def test_values_query_round_trips(self) -> None:

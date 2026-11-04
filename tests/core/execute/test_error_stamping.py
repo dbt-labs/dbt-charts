@@ -46,8 +46,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("adapters/dbt_adapter_factory.py", "import_adapter_module"),
         # adapters/duckdb_adapter.py
         ("adapters/duckdb_adapter.py", "DuckDBAdapter._connect"),
-        # adapters/http_adapter.py
-        ("adapters/http_adapter.py", "_resolve_json_path"),
         # cache_backend.py — a naive timestamp from a backend is an implementer
         # contract breach, not an authoring mistake: no board YAML, CLI flag, or
         # variable value can produce it, so there is no author-facing diagnostic
@@ -55,8 +53,6 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("cache_backend.py", "_require_aware"),
         # cache_backend.py — an unknown truncated_reason is the same contract breach
         ("cache_backend.py", "CacheHit.__post_init__"),
-        # cache_composition.py
-        ("cache_composition.py", "compose_over_named_rows"),
         # chart_resolution.py — _LayerRows is a Mapping, so __getitem__ must raise
         # KeyError for an absent key (`in` and .get() depend on it).
         ("chart_resolution.py", "_LayerRows.__getitem__"),
@@ -75,6 +71,7 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # arrow_ingest.py: TypeError/ValueError are the row-to-Arrow contract;
         # composition wraps them, and the cache's rows are pre-coerced to fit.
         ("arrow_ingest.py", "_kind"),
+        ("arrow_ingest.py", "_decimal_shape"),
         ("arrow_ingest.py", "_decimal_type"),
         ("arrow_ingest.py", "infer_type"),
         ("arrow_ingest.py", "_unscaled"),

@@ -398,8 +398,9 @@ class TestATableKeepsItsNaturalWidth:
 
         monkeypatch.setattr(SVGRenderer, "measure_blocks", counting)
         render(self.TABLE, 1096.0)
-        # the natural probe, at most three span candidates, and the block itself
-        assert len(calls) <= 5
+        # The natural probe, at most three span candidates, then the block's prose
+        # and table passes, once at the span and once as a lone column widens.
+        assert len(calls) <= 7
 
 
 class TestMultiColumnWithInlineImage:

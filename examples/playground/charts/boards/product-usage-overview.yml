@@ -6,6 +6,7 @@
 # charted as shares or distributions, never as absolute totals.
 
 title: Product usage
+width: 1440
 notes: |
   Signups, sessions, documents, templates, and signatures across Dundersign
   — a dense chart wall covering the product's day-to-day usage, not its
@@ -13,10 +14,6 @@ notes: |
 theme: neon
 
 source: db
-
-style:
-  frame:
-    width: 1440
 
 queries:
   signups_by_month_plan:

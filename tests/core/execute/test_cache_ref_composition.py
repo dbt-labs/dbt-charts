@@ -183,6 +183,26 @@ class TestCacheRefComposition:
         assert rows[0]["y"] == 2
         assert rows[0]["z"] == 3
 
+    def test_an_upstream_with_no_rows_is_a_table_of_its_columns(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        """A cached result with columns but no row still composes: the table is
+        declared from the schema instead of inferred from rows it lacks."""
+        cache = TrivialDuckDBCache()
+        board = _build_board(
+            {
+                "empty": "SELECT 1 AS x, 'a' AS label WHERE false",
+                "composed": "SELECT count(*) AS n, max(x) AS top FROM {{ queries.empty.cache }}",
+            },
+            chart_query="empty",
+        )
+        executor = _executor_with_cache(board, cache, local_project)
+
+        assert executor.execute_query("composed") == [{"n": 0, "top": None}]
+        # The same over the warm cache, where the rows come back from the store.
+        again = _executor_with_cache(board, cache, local_project)
+        assert again.execute_query("composed") == [{"n": 0, "top": None}]
+
     def test_inline_ref_and_cache_ref_yield_same_result(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
@@ -660,8 +680,7 @@ class TestCacheRefMaxRowsEnforcement:
         rows = executor.execute_query("composed")
         assert len(rows) == 3
 
-        query = board.queries["composed"]
-        key = executor._cache_key("composed", query, {})
+        key = executor.cache_key("composed", {})
         cached = cache.get(*key, ttl=None)
         assert cached is not None
         assert len(cached.rows) == 3, (
@@ -676,9 +695,8 @@ class TestCacheRefMaxRowsEnforcement:
         resolve_effective_row_limit with the four adapters, which resolves
         the author's own Query.limit the same way they do.
 
-        `limit:` is not an authorable YAML field on a `type: sql` query
-        today (only http queries carry it in the authored
-        schema), so this sets it directly on the compiled query — the same
+        `limit:` is not an authorable YAML field on any query, so this sets
+        it directly on the compiled query — the same
         way a non-YAML producer (e.g. the Looker migrator's inline-UDF-script
         queries) would."""
         cache = TrivialDuckDBCache()
@@ -736,7 +754,7 @@ class TestCacheRefMaxRowsEnforcement:
         monkeypatch.setattr(duckdb.DuckDBPyConnection, "fetchmany", spy_fetchmany)
         monkeypatch.setattr(duckdb.DuckDBPyConnection, "fetchall", spy_fetchall)
 
-        rows = compose_over_named_rows(
+        rows, schema = compose_over_named_rows(
             sql="SELECT * FROM t",
             named_rows={"t": [{"n": i} for i in range(20)]},
             params=[],
@@ -744,5 +762,6 @@ class TestCacheRefMaxRowsEnforcement:
         )
 
         assert len(rows) == 4
+        assert list(schema) == ["n"]
         assert fetchmany_args == [4]
         assert not fetchall_called

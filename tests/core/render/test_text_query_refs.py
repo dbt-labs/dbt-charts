@@ -110,7 +110,7 @@ def test_root_board_scalar_is_formatted_with_the_injected_format(
         ),
         local_project,
     )
-    assert "$4.21mn" in text
+    assert "$4.21m" in text
 
 
 def test_full_example_renders_every_form(
@@ -136,9 +136,9 @@ Leading: {{ queries.top_regions.rows | map(attribute='region') | join(', ') }}.
         ),
         local_project,
     )
-    assert "Net $4.21mn, ahead of plan by 4.2%" in text
+    assert "Net $4.21m, ahead of plan by 4.2%" in text
     assert "Churn: not available." in text
-    assert "EMEA : $1.8mn" in text or "EMEA: $1.8mn" in text
+    assert "EMEA : $1.8m" in text or "EMEA: $1.8m" in text
     assert "Leading: EMEA, AMER, APAC." in text
     assert "3 regions; EMEA leads." in text
 
@@ -399,9 +399,9 @@ _ALIASES: dict[str, str | FormatConfig] = {
 @pytest.mark.parametrize(
     ("value", "spec", "expected"),
     [
-        (4210000.5, "currency", "$4.21mn"),
+        (4210000.5, "currency", "$4.21m"),
         (910000, "number", "910k"),
-        (4210000.5, "$.3~s", "$4.21mn"),
+        (4210000.5, "$.3~s", "$4.21m"),
         (0.042, "percent", "4.2%"),
         (1234.5, ",.0f", "1,235"),
         (1234.5, "mine", "$1.23k"),

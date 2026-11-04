@@ -137,7 +137,7 @@ def render_board_from_artifact(
             query the artifact needs, was captured under different variable
             values, or the board's text lists boards.
     """
-    missing = sorted(set(resolved.queries) - set(recording.rows_by_query))
+    missing = sorted(set(resolved.queries) - set(recording.results_by_query))
     if missing:
         raise DbtChartsError.from_code(
             ERR_BOARD_RECORDING_MISMATCH,
@@ -168,14 +168,16 @@ def render_board_from_artifact(
         for chart in board.charts.values():
             if not isinstance(chart, ResolvedPieChart) or chart.query_name is None:
                 continue
-            rows = recording.rows_by_query[chart.query_name]
+            rows = recording.results_by_query[chart.query_name].rows
             if pie_presentation_fingerprint(rows) != chart.presentation_fingerprint:
                 raise DbtChartsError.from_code(
                     ERR_RESOLVED_PIE_DATA_MISMATCH,
                     chart_id=chart.id,
                 )
     provider = ReplayDataProvider(
-        rows_by_query=recording.rows_by_query,
+        rows_by_query={
+            name: result.rows for name, result in recording.results_by_query.items()
+        },
         recorded_at=recording.recorded_at,
         variables=recording.variables,
     )

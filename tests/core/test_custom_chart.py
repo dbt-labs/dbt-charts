@@ -16,7 +16,10 @@ import pytest
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import raise_on_dashboard_failure  # noqa: F401
 from dbt_charts.core.compile import compile
-from dbt_charts.core.compile.template.output_budget import template_output_budget
+from dbt_charts.core.compile.template.output_budget import (
+    remaining_template_output_bytes,
+    template_output_budget,
+)
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.render import render
@@ -1010,7 +1013,7 @@ class TestDrawingBox:
             """The card's padded box (`dbt-box-inner`) and the body the template
             drew into, each as ``(x, y, height)``."""
             body = re.search(
-                r'<g transform="translate\(([\d.]+), ([\d.]+)\)"[^>]*>'
+                r'<g transform="translate\(([\d.]+),\s*([\d.]+)\)"[^>]*>'
                 r'<rect height="([\d.]+)"/>',
                 svg,
             )
@@ -1054,8 +1057,12 @@ class TestReviewRegressions:
             adapter_registry=build_adapter_registry(project),
             query_registry=result.query_registry,
         )
-        # One chart's output fits; two do not.
-        with template_output_budget(800):
+        unbounded = 10**9
+        with template_output_budget(unbounded):
+            render(result.board, executor, format="svg")
+            both_charts = unbounded - remaining_template_output_bytes()
+        # Everything but the last byte: the first chart fits, the second does not.
+        with template_output_budget(both_charts - 1):
             out = render(result.board, executor, format="svg")
         assert [d.code for d in out.chart_errors] == ["ERR-CUSTOM-RENDER"]
         assert "exceeded" in out.chart_errors[0].message

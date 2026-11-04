@@ -47,7 +47,7 @@ pub struct MeasurePayload {
     /// The board's number locale: the formatted cell text is what is measured.
     pub format_locale: crate::number_locale::NumberLocale,
     /// The board's time locale: a date cell's month and day names.
-    pub time_locale: crate::time_locale::TimeLocale,
+    pub time_locale: d3rs::time_format::Locale,
     /// The board's time zone: an aware date cell prints its wall clock there.
     #[serde(default = "crate::time_zone::utc", deserialize_with = "crate::time_zone::deserialize")]
     pub time_zone: jiff::tz::TimeZone,

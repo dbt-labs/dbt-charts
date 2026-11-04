@@ -11,18 +11,18 @@ use crate::contract::AxisChannel;
 use crate::families::axis_caption::{vega_axis_format, AxisCaption, CaptionScale, NumericScale};
 use crate::diagnostic::Diagnostic;
 use crate::families::bar::axes::{flush_edge, flush_threshold, format_tick_labels};
-use crate::families::cartesian::{vl_default_tick_count, LinearScale};
+use crate::families::cartesian::{vl_default_tick_count};
+use d3rs::scale::Continuous;
 use crate::families::empty::{Head, LegendKind};
 use crate::families::layers::{LayerSide, OverlayLayer, YSides};
-use crate::families::heatmap::{svg_text_anchor, tick_line};
+use crate::families::heatmap::{flat_label, rotated_label, svg_text_anchor, tick_line, LabelFace};
 use crate::families::legend::{
     drawn_symbol_legend, legend_fit_bounds, legend_origin, slide_block, stack_legends, vega_legend,
     LegendConfig, LegendEntry, LegendSymbol, VegaLegend, VEGA_LEGEND_OFFSET,
 };
 use crate::families::scatter_shape::{ShapeLegend, SymbolFill};
 use crate::frame::ChartFrame;
-use crate::svg::{num_full};
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 use measure::FontBook;
 use crate::vega_fit;
 use crate::common::VALUE_AXIS_BREATHING_ROOM;
@@ -116,9 +116,9 @@ struct ValueAxisPlan {
 impl ValueAxisPlan {
     fn pos(&self, value: f64, pw: f64, ph: f64) -> f64 {
         match (self.point, self.horizontal) {
-            (true, _) => LinearScale::new(self.domain.0, self.domain.1, 0.0, ph).position(value),
-            (false, true) => LinearScale::new(self.domain.0, self.domain.1, 0.0, pw).position(value),
-            (false, false) => LinearScale::new(self.domain.0, self.domain.1, ph, 0.0).position(value),
+            (true, _) => Continuous::linear([self.domain.0, self.domain.1], [0.0, ph]).scale(value),
+            (false, true) => Continuous::linear([self.domain.0, self.domain.1], [0.0, pw]).scale(value),
+            (false, false) => Continuous::linear([self.domain.0, self.domain.1], [ph, 0.0]).scale(value),
         }
     }
 
@@ -351,7 +351,7 @@ pub(crate) fn render(
     // category values). A horizontal axis reaches 0 (`zero: true`); a descending
     // horizontal pair is not forwarded.
     let point_labels: Option<Vec<String>> = pins_point_domain.map(|pins| match ax_y.authored_continuous_domain() {
-        Some((lo, hi)) if pins => std::iter::once(lo).chain((hi != lo).then_some(hi)).map(num_full).collect(),
+        Some((lo, hi)) if pins => std::iter::once(lo).chain((hi != lo).then_some(hi)).map(print::number).collect(),
         _ => Vec::new(),
     });
     let stacked_wide = !horizontal && head.stacked() && !head.wide_measures().is_empty();
@@ -374,7 +374,7 @@ pub(crate) fn render(
                 return (0.0, 1.0);
             }
             let spread = rail.gap_px * (rail.series.len() - 1) as f64 / plot_h;
-            crate::families::cartesian::d3_nice_domain(0.0, spread, 10)
+            d3rs::ticks::d3_nice(0.0, spread, 10)
         })
     };
     let pinned_static = match &point_labels {
@@ -399,7 +399,7 @@ pub(crate) fn render(
     let base_pad = if moved { 2.0 } else { st.pad };
     let gutter = if side_right && !away && baked {
         let measure_family = measure::stand_in_family(st.family);
-        let drawn = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, false, if horizontal { "x" } else { "y" })?;
+        let drawn = format_tick_labels(&crate::common::drawn_tick_values(ax_y), ax_y, false, if horizontal { "x" } else { "y" }, fonts)?;
         let widest = drawn.iter().try_fold(0.0_f64, |acc, s| fonts.measure(s, measure_family, st.size).map(|w| acc.max(w)))?;
         widest.min(st.limit) + VALUE_AXIS_BREATHING_ROOM
     } else if side_right && !away {
@@ -458,7 +458,7 @@ pub(crate) fn render(
     // Each layer's own axis beside the base's, overlaying it on a shared side.
     let mut layer_axes: Vec<ValueAxisPlan> = Vec::new();
     if !horizontal && facet.is_none() && (ysides.is_some() || family == "scatter") {
-        let zero_label = format_tick_labels(&[0.0], ax_y, false, "y")?.remove(0);
+        let zero_label = format_tick_labels(&[0.0], ax_y, false, "y", fonts)?.remove(0);
         let zero_width = fonts.measure_shaped(&zero_label, st.family, st.size)?;
         for (i, layer) in layers.iter().enumerate() {
             let layer_side = ysides.as_ref().map_or(side, |s| if s.layers[i] == LayerSide::Right { 1.0 } else { -1.0 });
@@ -517,7 +517,7 @@ pub(crate) fn render(
         };
         let texts = match &point_labels {
             Some(labels) => labels.clone(),
-            None => format_tick_labels(&rungs, ax_y, normalized_rail, if horizontal { "x" } else { "y" })?,
+            None => format_tick_labels(&rungs, ax_y, normalized_rail, if horizontal { "x" } else { "y" }, fonts)?,
         };
         let labels = texts
             .iter()
@@ -671,7 +671,7 @@ pub(crate) fn render(
         } else {
             crate::families::cartesian::unbaked_ticks(ax_y, 0.0, 1.0, vl_default_tick_count(payload.height))
         };
-        format_tick_labels(&rungs, ax_y, head.normalized(), "y")?
+        format_tick_labels(&rungs, ax_y, head.normalized(), "y", fonts)?
             .iter()
             .map(|label| fonts.measure_shaped(label, st.family, st.size))
             .collect::<Result<Vec<_>, _>>()?
@@ -761,23 +761,20 @@ pub(crate) fn render(
                 let value = rail.gap_px * i as f64 / m.plot_h;
                 let y = m.plot_h * (1.0 - value / top) + measure::baseline_shift("middle", *size);
                 Node::text(
+                    Role::Label,
+                    (0.0, y),
                     Attrs::new()
-                        .set("x", "0")
-                        .set("y", format!("{y:.3}"))
                         .set("text-anchor", "start")
                         .vega("font-family", family.as_str())
-                        .set("font-size", size.to_string())
-                        .set("font-weight", weight.as_str())
+                        .num("font-size", *size)
                         .set("font-style", style.as_str())
+                        .set("font-weight", weight.as_str())
                         .set("fill", ink.as_str()),
                     name.as_str(),
                 )
             })
             .collect();
-        body.push(Node::group(
-            Attrs::new().set("transform", format!("translate({:.3},{plot_top:.3})", plot_left + m.plot_w + rail.offset)),
-            labels,
-        ));
+        body.push(Node::group(Role::Label, Attrs::new(), labels).translate(plot_left + m.plot_w + rail.offset, plot_top));
     }
 
     let (stack_x, stack_y) = legend_xy.get();
@@ -812,45 +809,32 @@ fn axes_nodes(
     paint_value_axes: bool,
     paint_category: bool,
 ) -> Result<Vec<Node>, String> {
-    let grid_dash = match ax_y.grid.dash.as_deref() {
-        None | Some([]) => None,
-        Some(dash) => Some(dash.iter().map(f64::to_string).collect::<Vec<_>>().join(",")),
-    };
+    let grid_dash = ax_y.grid.dasharray();
     let grid_opacity = ax_y.grid.opacity.filter(|&o| o != 1.0);
-    let line = |(x1, y1, x2, y2): (f64, f64, f64, f64), color: &str, width: f64| tick_line(2, (x1, y1), (x2, y2), color, width);
+    let line = |(x1, y1, x2, y2): (f64, f64, f64, f64), color: &str, width: f64| tick_line(Role::Axis, (x1, y1), (x2, y2), color, width);
     let axis_x0 = |axis: &ValueAxisPlan| if axis.side > 0.0 { m.plot_w + axis.offset + 0.5 } else { 0.5 - axis.offset };
     // Gridlines belong to the plot; the axes' own ink follows in their groups.
     let mut grid = Vec::new();
     if paint_value_axes {
         for axis in axes.iter().filter(|axis| axis.grid) {
             for &value in &axis.rungs {
-                let at = axis.pos(value, m.plot_w, m.plot_h).round() + 0.5;
+                let at = crate::common::tick_round(axis.pos(value, m.plot_w, m.plot_h));
                 // The 0.5 edge is the one coordinate Vega's gridline writes unpadded.
-                let (x1, y1, x2, y2) = if horizontal {
-                    (format!("{at:.2}"), "0.5".to_string(), format!("{at:.2}"), format!("{:.2}", m.plot_h + 0.5))
-                } else {
-                    ("0.5".to_string(), format!("{at:.2}"), format!("{:.2}", m.plot_w + 0.5), format!("{at:.2}"))
-                };
+                let (from, to) = if horizontal { ((at, 0.5), (at, m.plot_h + 0.5)) } else { ((0.5, at), (m.plot_w + 0.5, at)) };
                 let color = ax_y.grid.color.as_deref().ok_or_else(|| format!("{family}: axis_y.grid.color absent (theme required)"))?;
                 let width = ax_y.grid.width.ok_or_else(|| format!("{family}: axis_y.grid.width absent (theme required)"))?;
-                let mut attrs = Attrs::new()
-                    .set("x1", x1)
-                    .set("y1", y1)
-                    .set("x2", x2)
-                    .set("y2", y2)
-                    .set("stroke", color)
-                    .set("stroke-width", width.to_string());
+                let mut attrs = Attrs::new().set("stroke", color).num("stroke-width", width);
                 if let Some(dash) = &grid_dash {
                     attrs = attrs.set("stroke-dasharray", dash.as_str());
                 }
                 if let Some(opacity) = grid_opacity {
-                    attrs = attrs.set("stroke-opacity", opacity.to_string());
+                    attrs = attrs.num("stroke-opacity", opacity);
                 }
-                grid.push(Node::Line(attrs));
+                grid.push(Node::line(Role::Grid, from, to, attrs));
             }
         }
     }
-    let mut nodes = vec![Node::group(Attrs::new().set("transform", format!("translate({plot_left:.2},{plot_top:.2})")), grid)];
+    let mut nodes = vec![Node::group(Role::Grid, Attrs::new(), grid).translate(plot_left, plot_top)];
 
     // Vega's description of an axis over this empty scale: no category, or the degenerate domain.
     let described = |title: &Option<Title>, style: &AxisTitle, axis: &AxisStyle, scale: CaptionScale| match title {
@@ -892,7 +876,7 @@ fn axes_nodes(
         if axis.tick_len > 0.0 {
             let ticks = &ax_y.ticks;
             for &value in &axis.rungs {
-                let at = axis.pos(value, m.plot_w, m.plot_h).round() + 0.5;
+                let at = crate::common::tick_round(axis.pos(value, m.plot_w, m.plot_h));
                 let (x1, y1, x2, y2) = if horizontal {
                     let y = plot_top + m.plot_h + axis.offset + 0.5;
                     (plot_left + at, y, plot_left + at, y + axis.tick_len)
@@ -916,22 +900,21 @@ fn axes_nodes(
                 } else {
                     (plot_left + axis_x0(axis) + axis.label_dx(), plot_top + along + 0.5)
                 };
-                let position = if st.angle == 0.0 {
-                    Attrs::new().set("x", format!("{anchor_x:.2}")).set("y", format!("{:.2}", anchor_y + shift))
-                } else {
-                    Attrs::new().set("transform", format!("translate({anchor_x:.2},{anchor_y:.2}) rotate({}) translate(0,{shift})", st.angle))
-                };
                 let fill = ax_y.labels.font.color.as_deref().ok_or_else(|| format!("{family}: axis_y.labels.font.color absent (theme required)"))?;
-                ink.push(Node::text(
-                    position
-                        .set("text-anchor", svg_text_anchor(align))
-                        .vega("font-family", st.family)
-                        .set("font-size", st.size.to_string())
-                        .quick_some("font-style", ax_y.labels.font.style.as_deref())
-                        .set("font-weight", ax_y.labels.font.weight_str())
-                        .set("fill", fill),
-                    label.as_str(),
-                ));
+                let weight = ax_y.labels.font.weight_str();
+                let face = LabelFace {
+                    anchor: svg_text_anchor(align),
+                    family: st.family,
+                    size: st.size,
+                    weight: &weight,
+                    style: ax_y.labels.font.style.as_deref(),
+                    fill,
+                };
+                ink.push(if st.angle == 0.0 {
+                    flat_label(Role::Axis, (anchor_x, anchor_y + shift), &face, false, label)
+                } else {
+                    rotated_label((anchor_x, anchor_y, st.angle, shift), &face, (label, ""), false)
+                });
             }
         }
         if let Some(t) = &axis.title {

@@ -230,3 +230,54 @@ def test_tooltip_style_blob_shadow_is_bool():
 def test_tooltip_style_blob_padding_has_four_sides():
     blob = _tooltip_style_blob(_get_resolved_style())
     assert {"top", "bottom", "left", "right"} <= blob["padding"].keys()
+
+
+def test_tooltip_style_blob_carries_row_cutoffs():
+    """The x-unified bubble's cutoffs ride the blob from the theme."""
+    tooltip = _get_resolved_style().chart_defaults.tooltip
+    blob = _tooltip_style_blob(_get_resolved_style())
+    assert (blob["maxRows"], blob["groupLimit"]) == (
+        tooltip.max_rows,
+        tooltip.group_limit,
+    )
+
+
+@pytest.mark.parametrize("field", ["max_rows", "group_limit"])
+def test_tooltip_row_cutoffs_reject_zero(field):
+    from dbt_charts.core.compile.config import get_theme_style
+
+    tooltip = get_theme_style("stark").charts.tooltip.model_dump()
+    tooltip[field] = 0
+    with pytest.raises(ValidationError, match=field):
+        type(get_theme_style("stark").charts.tooltip).model_validate(tooltip)
+
+
+def test_board_style_sets_tooltip_row_cutoffs():
+    """`style.charts.tooltip.max_rows` / `group_limit` reach the published blob."""
+    import html
+
+    from ._svg_render import render_board_to_svg
+
+    svg = render_board_to_svg(
+        """
+title: Cutoffs
+style:
+  charts:
+    tooltip:
+      max_rows: 3
+      group_limit: 30
+queries:
+  q:
+    type: values
+    rows:
+      - {month: Jan, region: North, revenue: 100}
+      - {month: Jan, region: South, revenue: 40}
+charts:
+  a: {query: q, type: bar, x: month, y: revenue, color: region}
+rows: [a]
+"""
+    )
+    match = re.search(r'data-dbt-tooltip-style="([^"]*)"', svg)
+    assert match
+    blob = json.loads(html.unescape(match.group(1)))
+    assert (blob["maxRows"], blob["groupLimit"]) == (3, 30)

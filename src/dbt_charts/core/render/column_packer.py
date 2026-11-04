@@ -125,7 +125,8 @@ class PackUnit:
     """One placeable line, or one whole unsplittable block.
 
     An unsplittable block reports itself as a single unit whose ``advance`` is
-    its full height, so the packer treats every input the same way.
+    its full height, so the packer treats every input the same way. A list item
+    is one whole unit too, but the units of a list may part.
     """
 
     advance: float
@@ -135,10 +136,21 @@ class PackUnit:
     line_total: int
     splittable: bool
     keep_with_next: bool
+    leading_margin: float
+    whole_item: bool
 
     @property
     def height(self) -> float:
         return self.advance + self.space_before
+
+    @property
+    def collapse(self) -> float:
+        """Height this unit sheds by opening a column.
+
+        The painter draws neither the gap above it nor the whitespace it draws
+        above itself, so a column is costed at what is painted.
+        """
+        return self.space_before + self.leading_margin
 
 
 def _break_penalty(units: list[PackUnit], i: int) -> float:
@@ -153,11 +165,13 @@ def _break_penalty(units: list[PackUnit], i: int) -> float:
         return _FORBIDDEN
     if here.keep_with_next:
         return _FORBIDDEN
-    if i >= 1 and units[i - 1].keep_with_next:
-        return _FORBIDDEN  # only one line would follow the heading
 
     if here.block_id != nxt.block_id:
         return _BLOCK_BREAK_PENALTY
+    if here.whole_item:
+        return _INTERIOR_BREAK_PENALTY
+    if i >= 1 and units[i - 1].keep_with_next:
+        return _FORBIDDEN  # only one line of the block would follow the heading
 
     # Same paragraph: how many of its lines fall either side of the break?
     before = here.line_index + 1
@@ -169,11 +183,12 @@ def _break_penalty(units: list[PackUnit], i: int) -> float:
     return _INTERIOR_BREAK_PENALTY
 
 
-def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
+def pack_columns(units: list[PackUnit], columns: int) -> list[int] | None:
     """Assign each unit to a column index, minimizing total cost.
 
-    Returns a list parallel to ``units``. Assignments are non-decreasing: a
-    column never contains a unit that precedes one in an earlier column.
+    Returns a list parallel to ``units``, or None when every arrangement breaks
+    somewhere forbidden. Assignments are non-decreasing: a column never contains
+    a unit that precedes one in an earlier column.
     """
     n = len(units)
     if n == 0:
@@ -184,7 +199,7 @@ def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
     prefix = [0.0]
     for u in units:
         prefix.append(prefix[-1] + u.height)
-    target = prefix[n] / columns
+    target = (prefix[n] - units[0].collapse) / columns
 
     penalty = [_break_penalty(units, i) for i in range(n)]
 
@@ -205,7 +220,7 @@ def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
                 brk = 0.0 if j == 0 else penalty[j - 1]
                 if brk == inf:
                     continue
-                height = prefix[i] - prefix[j]
+                height = prefix[i] - prefix[j] - units[j].collapse
                 deviation = height - target
                 normalizer = target * target
                 cost = prior + brk
@@ -223,12 +238,8 @@ def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
                     best[k][i] = cost
                     take[k][i] = j
 
-    # Recover the split. If every arrangement was forbidden, fall back to an
-    # even division rather than failing -- a rendered board beats an exception,
-    # and the penalties have already been given their chance.
     if best[columns][n] == inf:
-        per = math.ceil(n / columns)
-        return [min(i // per, columns - 1) for i in range(n)]
+        return None
 
     bounds = [n]
     i = n
@@ -242,3 +253,32 @@ def pack_columns(units: list[PackUnit], columns: int) -> list[int]:
         for idx in range(bounds[col], bounds[col + 1]):
             assignment[idx] = col
     return assignment
+
+
+def _painted_heights(
+    units: list[PackUnit], assignment: list[int], columns: int
+) -> list[float]:
+    """Height drawn in each column of ``assignment``."""
+    heights = [0.0] * columns
+    for i, (unit, column) in enumerate(zip(units, assignment, strict=True)):
+        opens = i == 0 or assignment[i - 1] != column
+        heights[column] += unit.height - (unit.collapse if opens else 0.0)
+    return heights
+
+
+def pack_earned(units: list[PackUnit], spans: int, line_height: float) -> list[int]:
+    """Pack into the most columns, up to ``spans``, that each earn the line floor.
+
+    The total only bounds the count: a list parts between items and a code block
+    not at all, so a column can land short of what an even division promises.
+    One column is always available.
+    """
+    total = math.fsum(u.height for u in units) - units[0].collapse
+    for columns in range(columns_earned(round(total / line_height), spans), 1, -1):
+        assignment = pack_columns(units, columns)
+        if assignment is not None and all(
+            round(height / line_height) >= MIN_LINES_PER_COLUMN
+            for height in _painted_heights(units, assignment, columns)
+        ):
+            return assignment
+    return [0] * len(units)

@@ -24,7 +24,7 @@ For no border, omit `border`; `border: none` is rejected.
 - `formats` (map of text|{spec, prefix, suffix, notation, sign_placement, repeat}): Format alias map; None means no aliases at this cascade level
 - `palettes` (map of name): Theme palette role assignments: role name to a built-in palette name, never a color. Custom colors go in ``charts.color.categorical.palette: [hex, ...]``. Default seed: chrome, info, negative, positive, warning, category, sequence, diverge
 - `border` (text|{radius, color, width, dash_array, line_cap, dash_offset}): Frame drawn around the whole board: `{width, color, radius}` or `'2px solid #333'`. Omit the key for no border
-- `frame` ({width, max_width, min_height, margin, card_padding, card_gap}): Board-level structural frame dimensions
+- `frame` ({max_width, min_height, margin, card_padding, card_gap}): Board-level structural frame dimensions
 - `title` (mapping): Typography for every heading
 - `text` (mapping): Markdown and plain text content style
 - `footer` (mapping): Page footer chrome visibility
@@ -32,7 +32,6 @@ For no border, omit `border`; `border: none` is rejected.
 Also exist: `box_shadow`, `opacity`, `placeholder`, `annotations`, `layout`, `variables`, `timestamp`, `tones`, `roles`, `padding`, `margin`, `gap`.
 
 `style.frame`:
-- `width` (number): Exact board width in pixels
 - `max_width` (number): Widest a board without an exact width may grow, in pixels
 - `margin` (number): Board outer margin in pixels
 - `card_padding` (number): Padding added to each card side in pixels
@@ -63,7 +62,7 @@ Also exist: `link`, `font`, `y_offset`, `brand_weight`.
 - `spec`: D3 format string (`,.0f`; `.2s` writes 1.2M), preset name (e.g., 'currency'), or Excel pattern. A format is this string alone, or a mapping with `spec`. A date also takes strftime (`%b '%y`)
 - `prefix`: Text placed before the formatted value (e.g., '$')
 - `suffix`: Text placed after the formatted value (e.g., ' USD', '%')
-- `notation` (analytic|narrative): Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1mn)
+- `notation` (analytic|narrative): Notation style: 'analytic' for SI-prefix (1B, 1M) or 'narrative' for prose-style (1bn, 1m)
 Also exist: `sign_placement`, `repeat`.
 
 `style.variables`: `visible`, `position`, `title_inline_band_bottom_pad`, `gap`, `label_position`, `title_inline_title_max_width`, `font`, `label`, `value`, `placeholder`, `container_height`, `border`, `control_gap`, `input`, `presets`.
@@ -92,7 +91,7 @@ Also exist: `legend`, `preferred_width`, `padding`, `background`, `aspect_ratio`
 - `stack` (none|zero|normalize|center): Default stack mode for bar charts; none renders side-by-side columns
 - `orientation` (horizontal|vertical|auto): Preferred bar orientation
 - `endpoint_labels` ({visible, label_offset, height}): Series names printed on stacked bars instead of in a legend
-Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`.
+Also exist: `annotations`, `axis_quantitative`, `title`, `preferred_width`, `min_height`, `max_height`, `axis`, `axis_band`, `support_table`, `overlap`, `stack_order`, `grouped`, `pattern`.
 
 ### Axes
 
@@ -131,7 +130,7 @@ Also exist: `log`, `pow`, `symlog`.
 Also exist: `padding`, `size`, `gap`, `min_size`, `max_size`, `opacity`.
 
 `marks.bar.labels`:
-- `visible` (bool|last): Show numeric value labels on each mark
+- `visible` (bool|last): Show numeric value labels on every mark or on listed anchors
 - `format` (name|text|{spec, prefix, suffix, notation, sign_placement, repeat}): Value label format: a name or d3 spec. Without one it takes the axis format, also when `field` names another column
 - `position` (above|top|middle|middle_aligned|bottom): Label position: `above` (past the bar's end, outside), `top` (inside the end), `middle`, `middle_aligned` (all at one height), `bottom` (inside the start)
 - `field`: Column whose text labels each mark; `''` where unlabeled, never NULL. Default: the y column
@@ -199,7 +198,7 @@ Also exist: `font`, `format`, `glyph`.
 `a table's style`:
 - `wrap` (bool): Allow cell text wrapping; false clips to single line
 - `header` (mapping): Table header row style
-- `row` ({height, stripe: {}, divider: {}, role, roles: {}}): Table body row style
+- `row` ({height, stripe: {}, divider: {}, roles: {}}): Table body row style
 - `pagination` ({enabled, page_rows}): Client-side pagination defaults for table charts
 - `column_defaults` ({width, align, format, background, font: {}}): Table-level column defaults applied to every column; None means no defaults authored
 - `columns` (map of mapping): Per-column display configuration keyed by column name (label, format, width, etc.)
@@ -211,7 +210,6 @@ Also exist: `title`, `preferred_width`, `padding`, `background`, `font`, `border
 `table style.row`:
 - `height` (number): Body row height in pixels
 - `stripe` ({color}): Alternating row stripe style; None means no stripe
-- `role`: Default row role assignment; None means plain body row
 Also exist: `divider`, `roles`.
 
 `table style.pagination`: `enabled`, `page_rows`.

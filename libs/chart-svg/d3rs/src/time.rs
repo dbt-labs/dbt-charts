@@ -24,6 +24,9 @@ pub enum Unit {
     Minute,
     Hour,
     Day,
+    /// d3's `unixDay`: a UTC day whose `every(step)` keeps the days whose epoch day number divides the step
+    /// (it has no calendar field), the day rung of `utcTicks`.
+    EpochDay,
     /// The week that starts on this weekday, 0 = Sunday (`timeSunday` .. `timeSaturday`).
     Week(u8),
     Month,
@@ -86,6 +89,7 @@ impl Unit {
                 Ok(t - ms - i64::from(wall.second()) * SECOND - i64::from(wall.minute()) * MINUTE)
             }
             Unit::Day => midnight(zone, local(zone, t)?.date()),
+            Unit::EpochDay => Ok(t.div_euclid(DAY) * DAY),
             Unit::Week(start) => {
                 let date = local(zone, t)?.date();
                 let back = (i64::from(date.weekday().to_sunday_zero_offset()) + 7 - i64::from(start)) % 7;
@@ -110,6 +114,7 @@ impl Unit {
             Unit::Minute => Ok(t + step * MINUTE),
             Unit::Hour => Ok(t + step * HOUR),
             Unit::Day => shifted(add_days),
+            Unit::EpochDay => Ok(t + step * DAY),
             Unit::Week(_) => shifted(|date, step| add_days(date, step * 7)),
             Unit::Month => shifted(|date, step| {
                 js_date(i64::from(date.year()), i64::from(date.month()) - 1 + step, i64::from(date.day()))
@@ -129,6 +134,7 @@ impl Unit {
             Unit::Minute => i64::from(wall()?.minute()),
             Unit::Hour => i64::from(wall()?.hour()),
             Unit::Day => i64::from(wall()?.day()) - 1,
+            Unit::EpochDay => t.div_euclid(DAY),
             Unit::Month => i64::from(wall()?.month()) - 1,
             Unit::Week(_) => {
                 let (start, end) = (self.floor(zone, 0)?, self.floor(zone, t)?);
@@ -195,6 +201,15 @@ impl Interval {
         self.floor(self.next(self.floor(t - 1)?)?)
     }
 
+    /// d3-scale's `nice(domain, interval)`: the domain floored at its low end and ceiled at its high end.
+    pub fn nice(&self, domain: [i64; 2]) -> Result<[i64; 2], String> {
+        let (low, high) = if domain[1] < domain[0] { (1, 0) } else { (0, 1) };
+        let mut niced = domain;
+        niced[low] = self.floor(domain[low])?;
+        niced[high] = self.ceil(domain[high])?;
+        Ok(niced)
+    }
+
     /// `interval.range(start, stop)`: every boundary in `[start, stop)`.
     pub fn range(&self, start: i64, stop: i64) -> Result<Vec<i64>, String> {
         let mut out = Vec::new();
@@ -216,6 +231,17 @@ impl Interval {
 /// d3-time `timeTickInterval(start, stop, count)` with the week rung starting on `week_start` (0 = Sunday;
 /// d3's own is `timeSunday`). `None` where d3 returns null.
 pub fn tick_interval(start: i64, stop: i64, count: usize, zone: &TimeZone, week_start: u8) -> Option<Interval> {
+    ladder(start, stop, count, zone, Unit::Week(week_start), Unit::Day)
+}
+
+/// d3-time `utcTickInterval(start, stop, count)`: `timeTickInterval` in UTC, whose day rung is `unixDay`.
+pub fn utc_tick_interval(start: i64, stop: i64, count: usize) -> Option<Interval> {
+    ladder(start, stop, count, &TimeZone::UTC, Unit::Week(0), Unit::EpochDay)
+}
+
+/// d3-time's `ticker`: bisect the rungs on the target span, then keep whichever neighbor is the smaller stretch
+/// of it; past the last rung the years step by `tickStep`.
+fn ladder(start: i64, stop: i64, count: usize, zone: &TimeZone, week: Unit, day: Unit) -> Option<Interval> {
     let rungs: [(Unit, f64, i64); 18] = [
         (Unit::Second, 1.0, SECOND),
         (Unit::Second, 5.0, 5 * SECOND),
@@ -229,9 +255,9 @@ pub fn tick_interval(start: i64, stop: i64, count: usize, zone: &TimeZone, week_
         (Unit::Hour, 3.0, 3 * HOUR),
         (Unit::Hour, 6.0, 6 * HOUR),
         (Unit::Hour, 12.0, 12 * HOUR),
-        (Unit::Day, 1.0, DAY),
-        (Unit::Day, 2.0, 2 * DAY),
-        (Unit::Week(week_start), 1.0, WEEK),
+        (day, 1.0, DAY),
+        (day, 2.0, 2 * DAY),
+        (week, 1.0, WEEK),
         (Unit::Month, 1.0, MONTH),
         (Unit::Month, 3.0, 3 * MONTH),
         (Unit::Year, 1.0, YEAR),
@@ -252,10 +278,10 @@ pub fn tick_interval(start: i64, stop: i64, count: usize, zone: &TimeZone, week_
     Interval::every(unit, step, zone)
 }
 
-/// d3-time `timeTicks(start, stop, count)`: the boundaries of [`tick_interval`] in `[start, stop]`.
-pub fn ticks(start: i64, stop: i64, count: usize, zone: &TimeZone, week_start: u8) -> Result<Vec<i64>, String> {
+/// `ticker`'s ticks: the boundaries of `interval` in `[start, stop]`, in the order the domain runs.
+fn ticks_of(start: i64, stop: i64, interval_of: impl FnOnce(i64, i64) -> Option<Interval>) -> Result<Vec<i64>, String> {
     let (lo, hi) = (start.min(stop), start.max(stop));
-    let mut out = match tick_interval(lo, hi, count, zone, week_start) {
+    let mut out = match interval_of(lo, hi) {
         Some(interval) => interval.range(lo, hi + 1)?,
         None => Vec::new(),
     };
@@ -263,4 +289,14 @@ pub fn ticks(start: i64, stop: i64, count: usize, zone: &TimeZone, week_start: u
         out.reverse();
     }
     Ok(out)
+}
+
+/// d3-time `timeTicks(start, stop, count)`: the boundaries of [`tick_interval`] in `[start, stop]`.
+pub fn ticks(start: i64, stop: i64, count: usize, zone: &TimeZone, week_start: u8) -> Result<Vec<i64>, String> {
+    ticks_of(start, stop, |lo, hi| tick_interval(lo, hi, count, zone, week_start))
+}
+
+/// d3-time `utcTicks(start, stop, count)`: the boundaries of [`utc_tick_interval`] in `[start, stop]`.
+pub fn utc_ticks(start: i64, stop: i64, count: usize) -> Result<Vec<i64>, String> {
+    ticks_of(start, stop, |lo, hi| utc_tick_interval(lo, hi, count))
 }

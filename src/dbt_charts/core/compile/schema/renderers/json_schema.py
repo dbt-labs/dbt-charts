@@ -55,6 +55,8 @@ def _schema_for_token(
     """
     if token in _PRIMITIVES:
         return _PRIMITIVES[token]
+    if token.startswith("one of: '"):
+        return {"enum": [v.strip("'") for v in token[len("one of: ") :].split(", ")]}
     if token.startswith(("list[", "set[", "frozenset[")):
         item_repr = token[token.index("[") + 1 : -1]
         return _container_schema("array", "items", _map_type_repr(item_repr, keywords))

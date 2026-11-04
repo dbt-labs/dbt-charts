@@ -28,7 +28,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 _DBT_CHARTS_DIR = Path(__file__).resolve().parents[1]
 SOURCE_DIR = Path(__file__).resolve().parent / "skill_pages"
 SKILLS_DIR = _DBT_CHARTS_DIR / "src" / "dbt_charts" / "ai" / "skills"
-PAGES = ("chart", "styling")
+PAGES = ("chart", "styling", "chart-recipes")
 
 # Generated spans are wrapped in these so the byte share can be measured.
 _OPEN, _CLOSE = "\x02", "\x03"
@@ -250,14 +250,18 @@ class Generator:
         return (
             "{{#if_surface tool}}"
             "| Tool | What it does |\n|---|---|\n"
-            "| `execute_sql(source=SOURCE, sql=SQL)` | Run SQL against a source; "
-            "the result is CSV under a byte budget, so bound rows with SQL LIMIT. |\n"
+            "| `execute_sql(source=SOURCE, sql=SQL)` | Run SQL on a source; "
+            "CSV under a byte budget, so use LIMIT. |\n"
             "| `render_board(yaml_content=YAML)` | Run the board's queries and return what "
             "each chart draws (values, ranges, value labels), any problems, and the "
             "board's preview URL. |\n"
             '{{#if_tool search_files}}| `search_files(text="")` | List the project\'s boards; a keyword '
             "searches them; each hit's `board_path` is what `render_board` takes "
             "as `path`. |\n{{/if_tool}}"
+            "{{#if_tool find_queries}}| `find_queries(text)` | First for a data question: "
+            "boards, queries, cached rows (age); `execute_sql(board=PATH, "
+            'sql="… FROM {{ queries.NAME.cache }}")` reads them free. |\n'
+            "{{/if_tool}}"
             "{{#if_tool write_file}}"
             "| Your host's file tools | Read, write and change board files; "
             "`render_board(path=BOARD)` then checks the saved file. |\n"
@@ -364,6 +368,38 @@ class Generator:
             for n in _nested_models(field)
         ]
         return self._wrap(_names(tags))
+
+    def _recipes(self) -> dict[str, list[str]]:
+        """Allowlisted recipe text to every noun that names it, in allowlist order."""
+        from dbt_charts.core.compile.parse.yaml_error_formatter import (
+            _CHART_SHAPE_RECIPES,
+        )
+
+        nouns: dict[str, list[str]] = {}
+        for noun, recipe in _CHART_SHAPE_RECIPES.items():
+            nouns.setdefault(recipe, []).append(noun.replace("_", " "))
+        unknown = [n for n in self.cfg["recipes"] if n not in _CHART_SHAPE_RECIPES]
+        if unknown:
+            raise KeyError(
+                f"recipes: no recipe named {unknown}; have {list(_CHART_SHAPE_RECIPES)}"
+            )
+        return {
+            _CHART_SHAPE_RECIPES[n]: nouns[_CHART_SHAPE_RECIPES[n]]
+            for n in self.cfg["recipes"]
+        }
+
+    def recipe_names(self) -> str:
+        """The allowlisted noun of each named-shape recipe."""
+        self._recipes()
+        return self._wrap(_names([n.replace("_", " ") for n in self.cfg["recipes"]]))
+
+    def recipes(self) -> str:
+        """Every named-shape recipe, its nouns joined, as the chart-type error spells it."""
+        lines = [
+            f"- {', '.join(nouns)}: {recipe}"
+            for recipe, nouns in self._recipes().items()
+        ]
+        return self._wrap("\n".join(lines))
 
     def rules(self, name: str) -> str:
         """Cross-field rules a model declares, as the validator states them."""

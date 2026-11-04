@@ -1,10 +1,11 @@
-"""Tests for the dbt charts superfences handlers.
+"""Tests for the dbt Charts Python-Markdown extension.
 
-``fence_dbt_charts`` renders inline YAML or file references to SVG/HTML.
-``fence_dbt_charts_example`` renders code-plus-render example layouts.
+``charts`` fences render as ``dct`` reads them; ``charts-example`` fences
+draw a board beside its YAML.
 """
 
 import logging
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,13 +18,14 @@ from dbt_charts.core.board import (
     render_dashboard as real_render_dashboard,
 )
 from dbt_charts.integrations.markdown import (
+    _EXAMPLE_CSS,
     _SOURCE_NOT_FOUND_RE,
+    ChartFenceError,
+    DbtChartsExtension,
+    _example_html,
     _inline_playground_queries,
     _playground_url,
     _resolve_project_dir,
-    fence_dbt_charts,
-    fence_dbt_charts_example,
-    project_dir_override,
 )
 
 from .._paths import DBT_CHARTS_DIR
@@ -34,249 +36,237 @@ def _ok(svg: str) -> BoardRenderResult:
     return BoardRenderResult(status="ok", data=svg)
 
 
-def _patch_project_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Patch _resolve_project_dir to return tmp_path for the duration of a test."""
-    monkeypatch.setattr(
-        "dbt_charts.integrations.markdown._resolve_project_dir",
-        lambda: tmp_path,
+_BAR = """\
+```charts
+type: bar
+title: {title}
+query:
+  columns: [month, revenue]
+  values:
+    - [Jan, 100]
+    - [Feb, 150]
+x: month
+y: revenue
+```
+"""
+
+_SHARED_QUERY = """\
+```charts
+queries:
+  sales:
+    columns: [month, revenue]
+    values:
+      - [Jan, 100]
+charts:
+  first:
+    type: bar
+    query: sales
+    x: month
+    y: revenue
+rows:
+  - first
+```
+
+Then the same query as a line.
+
+```charts
+type: line
+query: sales
+x: month
+y: revenue
+```
+"""
+
+_EXAMPLE_BOARD = (
+    "charts:\n  c:\n    type: bar\n    query:\n      columns: [a, b]\n"
+    "      values:\n        - [x, 1]\n    x: a\n    y: b\nrows:\n  - c\n"
+)
+
+
+def _md(text: str, project_dir: Path, *extensions: str, **config: object) -> str:
+    return markdown.markdown(
+        text,
+        extensions=[
+            DbtChartsExtension(project_dir=str(project_dir), **config),
+            *extensions,
+        ],
     )
 
 
-# ---------------------------------------------------------------------------
-# fence_dbt_charts — render-only handler
-# ---------------------------------------------------------------------------
+class TestExtension:
+    """Real renders, inline data, no project."""
 
-
-class TestFenceDbtCharts:
-    """Test the render-only superfences handler."""
-
-    def test_renders_inline_yaml(self, tmp_path, monkeypatch):
-        """Inline YAML source is rendered via render_dashboard."""
-
-        _patch_project_dir(monkeypatch, tmp_path)
-        source = "charts:\n  c1:\n    type: bar\n    x: a\n    y: b\n"
-        fake_svg = "<svg>ok</svg>"
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok(fake_svg),
-        ):
-            result = fence_dbt_charts(source, "dbt-charts", "dbt-charts", {}, None)
-
-        assert "dbt-charts-embed" in result
-        assert fake_svg in result
-
-    def test_renders_file_reference(self, tmp_path, monkeypatch):
-        """file=path option reads from disk and renders via render_dashboard."""
-        board = tmp_path / "test.yml"
-        board.write_text("charts:\n  c1:\n    type: bar\n")
-        fake_svg = "<svg>file</svg>"
-
-        _patch_project_dir(monkeypatch, tmp_path)
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok(fake_svg),
-        ):
-            result = fence_dbt_charts(
-                "", "dbt-charts", "dbt-charts", {"file": "test.yml"}, None
-            )
-
-        assert fake_svg in result
-
-    def test_reads_file_option_from_superfences_attrs(self, tmp_path, monkeypatch):
-        """Render-only fences should also honor attr-list ``file=...`` input."""
-        board = tmp_path / "test.yml"
-        board.write_text("charts:\n  c1:\n    type: bar\n")
-
-        _patch_project_dir(monkeypatch, tmp_path)
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok("<svg>ok</svg>"),
-        ):
-            result = fence_dbt_charts(
-                "",
-                "dbt-charts",
-                "dbt-charts",
-                {},
-                None,
-                attrs={"file": "test.yml"},
-            )
-
-        assert "<svg>ok</svg>" in result
-
-    def test_renders_markdown_board_in_boards_dir(self, tmp_path, monkeypatch):
-        """A ``.md`` board under ``charts/`` is translated to YAML before rendering."""
-        boards_dir = tmp_path / "charts"
-        boards_dir.mkdir()
-        (boards_dir / "report.md").write_text("# Title\n\nSome prose.\n")
-
-        _patch_project_dir(monkeypatch, tmp_path)
-        captured: dict[str, object] = {}
-
-        def fake_render_dashboard(*, board, **_kwargs):
-            captured["yaml_content"] = board.content
-            return _ok("<svg>md</svg>")
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            side_effect=fake_render_dashboard,
-        ):
-            result = fence_dbt_charts(
-                "", "dbt-charts", "dbt-charts", {"file": "charts/report.md"}, None
-            )
-
-        assert "dbt-charts-embed" in result
-        assert "<svg>md</svg>" in result
-        # Markdown was converted to a board mapping, not passed through raw.
-        yaml_out = str(captured["yaml_content"])
-        assert "rows:" in yaml_out or "text:" in yaml_out
-
-    def test_markdown_outside_boards_without_board_key_errors(
-        self, tmp_path, monkeypatch
-    ):
-        """A ``.md`` file outside ``charts/`` with no ``board:`` key is not a board."""
-        (tmp_path / "notes.md").write_text("# Just notes\n\nNot a board.\n")
-
-        _patch_project_dir(monkeypatch, tmp_path)
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok("<svg>unused</svg>"),
-        ):
-            result = fence_dbt_charts(
-                "", "dbt-charts", "dbt-charts", {"file": "notes.md"}, None
-            )
-
-        assert "dbt-charts-error" in result
-        assert "must declare a" in result  # ERR_MARKDOWN_NOT_BOARD
-
-    def test_markdown_not_board_when_project_under_charts_ancestor(
-        self, tmp_path, monkeypatch
-    ):
-        """in_charts is project-relative: an ancestor dir named ``charts`` must not
-        turn a root-level markdown file into a board.
-
-        Regression for the absolute-path check ``"charts" in <abs path>.parts``,
-        which false-positived whenever the project checkout itself lived under a
-        path segment named ``charts``.
-        """
-        project_dir = tmp_path / "charts" / "myproj"
-        project_dir.mkdir(parents=True)
-        (project_dir / "notes.md").write_text("# Just notes\n\nNot a board.\n")
-
-        _patch_project_dir(monkeypatch, project_dir)
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok("<svg>unused</svg>"),
-        ):
-            result = fence_dbt_charts(
-                "", "dbt-charts", "dbt-charts", {"file": "notes.md"}, None
-            )
-
-        assert "dbt-charts-error" in result
-        assert "must declare a" in result  # ERR_MARKDOWN_NOT_BOARD
-
-    def test_retries_file_backed_docs_examples_against_examples_dir(
-        self, tmp_path, monkeypatch
-    ):
-        """File-backed fences should retry from the shared ``examples/`` root."""
-        docs_board = tmp_path / "docs" / "test.yml"
-        docs_board.parent.mkdir()
-        docs_board.write_text(
-            "charts:\n  c1:\n    query: _doc_examples.yaml#sales\n    type: bar\n"
+    def test_loads_by_module_name(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        html = markdown.markdown(
+            _BAR.format(title="Revenue"),
+            extensions=["dbt_charts.integrations.markdown"],
         )
+        assert '<div class="dbt-charts-embed"><svg' in html
 
-        examples_dir = tmp_path / "examples"
-        examples_dir.mkdir()
+    def test_a_bare_chart_renders_in_place(self, tmp_path):
+        html = _md(f"Before.\n\n{_BAR.format(title='Revenue')}\nAfter.\n", tmp_path)
+        assert html.index("<p>Before.</p>") < html.index("<svg") < html.index("After.")
 
-        _patch_project_dir(monkeypatch, tmp_path)
+    def test_fences_share_a_query(self, tmp_path):
+        html = _md(_SHARED_QUERY, tmp_path)
+        assert html.count('<div class="dbt-charts-embed"><svg') == 2
 
-        calls: list[tuple[object, object]] = []
+    def test_fonts_are_embedded_once_per_page(self, tmp_path):
+        page = _BAR.format(title="One") + "\n" + _BAR.format(title="Two")
+        html = _md(page, tmp_path)
+        payloads = re.findall(r"data:font/woff2;base64,([A-Za-z0-9+/]{64})", html)
 
-        def fake_render_dashboard(
-            *,
-            board,
-            project,
-            adapter_registry,
-            result_cache,
-            builtin_variables,
-            format,
-        ):
-            calls.append((project.root, builtin_variables["this_dir"]["name"]))
-            if project.root == tmp_path:
-                # The real compile's error for the missing `file#q` file.
-                return real_render_dashboard(
-                    board=board,
-                    project=project,
-                    adapter_registry=adapter_registry,
-                    result_cache=result_cache,
-                    builtin_variables=builtin_variables,
-                    format=format,
-                )
-            assert project.root == examples_dir
-            assert builtin_variables["this_dir"]["name"] == examples_dir.name
-            return _ok("<svg>ok</svg>")
+        assert payloads
+        assert len(payloads) == len(set(payloads)) == html.count("@font-face")
+        assert html.count("<style>\n@font-face") == 1
+        assert "/static/fonts/" not in html
 
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            side_effect=fake_render_dashboard,
-        ):
-            result = fence_dbt_charts(
-                "",
-                "dbt-charts",
-                "dbt-charts",
-                {"file": "docs/test.yml"},
-                None,
+    def test_hosted_fonts_when_embedding_is_off(self, tmp_path):
+        html = _md(_BAR.format(title="One"), tmp_path, embed_fonts=False)
+        assert "/static/fonts/" in html
+        assert "data:font/" not in html
+
+    def test_a_broken_fence_fails_naming_its_line(self, tmp_path):
+        with pytest.raises(ChartFenceError, match="line 3"):
+            _md("Intro.\n\n```charts\ntype: bar\ncolour: red\n```\n", tmp_path)
+
+    def test_a_query_error_fails_the_page(self, tmp_path):
+        page = _BAR.format(title="x").replace("y: revenue", "y: no_such_column")
+        with pytest.raises(ChartFenceError):
+            _md(page, tmp_path)
+
+    def test_a_fence_shown_in_a_longer_fence_stays_code(self, tmp_path):
+        html = _md(f"````markdown\n{_BAR.format(title='x')}````\n", tmp_path)
+        assert "<svg" not in html
+        assert "```charts" in html
+
+    def test_a_page_with_no_fences_is_untouched(self, tmp_path):
+        page = "# Hi\n\n```yaml\na: 1\n```\n"
+        assert _md(page, tmp_path) == markdown.markdown(page)
+
+    def test_an_example_in_a_tab_renders_inside_it(self, tmp_path):
+        indented = "".join(f"    {line}\n" for line in _EXAMPLE_BOARD.splitlines())
+        page = (
+            '=== "One"\n\n    ```charts-example {format=render-only}\n'
+            f"{indented}    ```\n"
+        )
+        html = _md(page, tmp_path, "pymdownx.tabbed", "pymdownx.superfences")
+        tab = html[html.index('class="tabbed-content"') :]
+
+        assert tab.index(
+            '<div class="dbt-charts-example dbt-charts-example--render-only"'
+        ) < (tab.index("<svg"))
+        assert "<p><style>" not in html
+
+    def test_an_example_shows_its_yaml_beside_the_board(self, tmp_path):
+        html = _md(f"```charts-example\n{_EXAMPLE_BOARD}```\n", tmp_path)
+        assert 'class="dbt-charts-example-code"' in html
+        assert 'class="dbt-charts-example-board"><svg' in html
+
+    def test_an_example_page_carries_the_example_css_once(self, tmp_path):
+        stacked = _EXAMPLE_BOARD.replace("[x, 1]", "[y, 2]")
+        page = (
+            f"```charts-example\n{_EXAMPLE_BOARD}```\n\n"
+            f"```charts-example {{format=stacked}}\n{stacked}```\n"
+        )
+        html = _md(page, tmp_path)
+
+        assert html.count(_EXAMPLE_CSS) == 1
+        assert html.index(_EXAMPLE_CSS) < html.index('class="dbt-charts-example')
+
+    def test_the_example_css_does_not_depend_on_embedded_fonts(self, tmp_path):
+        page = f"```charts-example {{format=yaml-only}}\n{_EXAMPLE_BOARD}```\n"
+        assert _EXAMPLE_CSS in _md(page, tmp_path, embed_fonts=False)
+
+    def test_a_page_of_charts_alone_carries_no_example_css(self, tmp_path):
+        assert _EXAMPLE_CSS not in _md(_BAR.format(title="One"), tmp_path)
+
+    def test_client_side_highlighters_leave_the_example_yaml_alone(self, tmp_path):
+        html = _md(f"```charts-example\n{_EXAMPLE_BOARD}```\n", tmp_path)
+        code = html[
+            html.index('class="dbt-charts-example-code"') : html.index(
+                'class="dbt-charts-example-render"'
             )
-
-        assert calls == [
-            (tmp_path, docs_board.parent.name),
-            (examples_dir, examples_dir.name),
         ]
-        assert "<svg>ok</svg>" in result
 
-    def test_render_error_produces_error_div(self, tmp_path, monkeypatch):
-        """Render failures produce an error div, not a crash."""
+        assert '<code class="nohighlight">' in code
+        assert "language-" not in code
 
-        _patch_project_dir(monkeypatch, tmp_path)
-        source = "charts:\n  c1:\n    type: bar\n"
+    def test_a_tab_example_hides_its_yaml_in_a_drawer_under_the_board(self, tmp_path):
+        html = _md(f"```charts-example {{format=tab}}\n{_EXAMPLE_BOARD}```\n", tmp_path)
+        board = html.index('class="dbt-charts-example-board"><svg')
+        drawer = html.index('<details class="dbt-charts-example-drawer">')
 
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            side_effect=ValueError("bad data"),
-        ):
-            result = fence_dbt_charts(source, "dbt-charts", "dbt-charts", {}, None)
+        assert board < drawer < html.index('class="dbt-charts-example-code"')
+        assert "See the YAML" in html[drawer:]
 
-        assert "dbt-charts-error" in result
-        assert "bad data" in result
+    def test_an_example_may_show_a_failed_query(self, tmp_path):
+        board = _EXAMPLE_BOARD.replace("y: b", "y: no_such_column")
+        page = f"```charts-example {{allow-chart-errors=true}}\n{board}```\n"
+        with pytest.raises(ChartFenceError):
+            _md(page.replace(" {allow-chart-errors=true}", ""), tmp_path)
 
-    def test_empty_source_no_file_gives_error(self, tmp_path, monkeypatch):
-        """No source and no file option produces an error."""
+        assert 'class="dbt-charts-example-board"><svg' in _md(page, tmp_path)
 
-        _patch_project_dir(monkeypatch, tmp_path)
-        result = fence_dbt_charts("", "dbt-charts", "dbt-charts", {}, None)
-        assert "dbt-charts-error" in result
+    def test_a_broken_example_fails_naming_its_line(self, tmp_path):
+        with pytest.raises(ChartFenceError, match="line 3"):
+            _md(
+                "Intro.\n\n```charts-example\ncharts:\n  c:\n    type: nope\n```\n",
+                tmp_path,
+            )
 
-    def test_path_traversal_rejected(self, tmp_path, monkeypatch):
-        """Paths escaping project_dir produce an error div."""
 
-        _patch_project_dir(monkeypatch, tmp_path)
-        result = fence_dbt_charts(
-            "",
-            "dbt-charts",
-            "dbt-charts",
-            {"file": "../../etc/passwd"},
-            None,
+_RANDOM_BOARD = """\
+charts:
+  draw:
+    type: table
+    query:
+      sql: SELECT 'drawn' || CAST(CAST(floor(random() * 1e9) AS BIGINT) AS VARCHAR) AS v
+      source: mem
+rows:
+  - draw
+"""
+
+
+class TestQueryCache:
+    @pytest.fixture(autouse=True)
+    def _no_cache_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("DCT_CACHE_PATH", raising=False)
+
+    def _project(self, tmp_path: Path) -> Path:
+        (tmp_path / "dbt_charts.yml").write_text(
+            "sources:\n  mem:\n    type: duckdb\n    path: ':memory:'\n"
+            "cache:\n  path: cache/results.duckdb\n"
         )
-        assert "dbt-charts-error" in result
-        assert "escapes project directory" in result
+        return tmp_path
+
+    def _drawn(self, html: str) -> str:
+        (value,) = set(re.findall(r"drawn\d+", html))
+        return value
+
+    @pytest.mark.parametrize("fence", ["charts", "charts-example"])
+    def test_a_rebuild_reuses_the_query_result(
+        self, tmp_path: Path, fence: str
+    ) -> None:
+        project = self._project(tmp_path)
+        page = f"```{fence}\n{_RANDOM_BOARD}```\n"
+        assert self._drawn(_md(page, project)) == self._drawn(_md(page, project))
+
+    @pytest.mark.parametrize("fence", ["charts", "charts-example"])
+    def test_dct_cache_path_beats_the_project_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fence: str
+    ) -> None:
+        project = self._project(tmp_path)
+        chosen = tmp_path / "chosen.duckdb"
+        monkeypatch.setenv("DCT_CACHE_PATH", str(chosen))
+        _md(f"```{fence}\n{_RANDOM_BOARD}```\n", project)
+        assert chosen.exists()
+        assert not (project / "cache").exists()
 
 
 # ---------------------------------------------------------------------------
-# fence_dbt_charts_example — code+render handler
+# _example_html — code + render
 # ---------------------------------------------------------------------------
 
 
@@ -289,154 +279,89 @@ class TestFenceDbtChartsExample:
         yaml_source = "charts:\n  c1:\n    type: bar\n    x: a\n    y: b\n"
         board.write_text(yaml_source)
 
-        _patch_project_dir(monkeypatch, tmp_path)
-
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
             return_value=_ok("<svg>ok</svg>"),
         ):
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {"file": "test.yml"},
-                None,
-            )
+            result = _example_html("", {"file": "test.yml"}, tmp_path, False)
 
-        assert "example-container" in result
-        assert "example-code" in result
-        assert "example-render" in result
-        assert 'data-example-modal-trigger="true"' in result
+        assert "dbt-charts-example" in result
+        assert "dbt-charts-example-code" in result
+        assert "dbt-charts-example-render" in result
         assert "<svg>ok</svg>" in result
 
     def test_stacked_layout(self, tmp_path, monkeypatch):
-        """format=stacked adds the example-stacked CSS class."""
+        """format=stacked adds the dbt-charts-example--stacked CSS class."""
         board = tmp_path / "test.yml"
         board.write_text("charts:\n  c1:\n    type: bar\n")
-
-        _patch_project_dir(monkeypatch, tmp_path)
 
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
             return_value=_ok("<svg/>"),
         ):
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {"file": "test.yml", "format": "stacked"},
-                None,
+            result = _example_html(
+                "", {"file": "test.yml", "format": "stacked"}, tmp_path, False
             )
 
-        assert "example-stacked" in result
+        assert "dbt-charts-example--stacked" in result
 
     def test_yaml_only_does_not_render(self, tmp_path, monkeypatch):
         """format=yaml-only should not call render_dashboard."""
         board = tmp_path / "test.yml"
         board.write_text("charts:\n  c1:\n    type: bar\n")
 
-        _patch_project_dir(monkeypatch, tmp_path)
-
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
         ) as mock_render:
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {"file": "test.yml", "format": "yaml-only"},
-                None,
+            result = _example_html(
+                "", {"file": "test.yml", "format": "yaml-only"}, tmp_path, False
             )
 
         mock_render.assert_not_called()
-        assert "example-yaml-only" in result
-        assert "example-render" not in result
+        assert "dbt-charts-example--yaml-only" in result
+        assert "dbt-charts-example-render" not in result
 
     def test_render_only_no_code(self, tmp_path, monkeypatch):
         """format=render-only should not include code panel."""
         board = tmp_path / "test.yml"
         board.write_text("charts:\n  c1:\n    type: bar\n")
 
-        _patch_project_dir(monkeypatch, tmp_path)
-
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
             return_value=_ok("<svg/>"),
         ):
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {"file": "test.yml", "format": "render-only"},
-                None,
+            result = _example_html(
+                "", {"file": "test.yml", "format": "render-only"}, tmp_path, False
             )
 
-        assert "example-render-only" in result
-        assert "example-code" not in result
+        assert "dbt-charts-example--render-only" in result
+        assert "dbt-charts-example-code" not in result
 
     def test_playground_link_present(self, tmp_path, monkeypatch):
         """Example output includes a playground link."""
         board = tmp_path / "test.yml"
         board.write_text("charts:\n  c1:\n    type: bar\n")
 
-        _patch_project_dir(monkeypatch, tmp_path)
-
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
             return_value=_ok("<svg/>"),
         ):
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {"file": "test.yml"},
-                None,
-            )
+            result = _example_html("", {"file": "test.yml"}, tmp_path, False)
 
-        assert "playground-link" in result
+        assert "dbt-charts-playground-link" in result
 
     def test_inline_yaml_example(self, tmp_path, monkeypatch):
         """Inline YAML works for examples too."""
 
-        _patch_project_dir(monkeypatch, tmp_path)
         source = "charts:\n  c1:\n    type: bar\n    x: a\n    y: b\n"
 
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
             return_value=_ok("<svg>ok</svg>"),
         ):
-            result = fence_dbt_charts_example(
-                source,
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {},
-                None,
-            )
+            result = _example_html(source, {}, tmp_path, False)
 
-        assert "example-container" in result
-
-    def test_reads_file_option_from_superfences_attrs(self, tmp_path, monkeypatch):
-        """MkDocs passes fence attributes in ``kwargs['attrs']``."""
-        board = tmp_path / "test.yml"
-        board.write_text("charts:\n  c1:\n    type: bar\n")
-
-        _patch_project_dir(monkeypatch, tmp_path)
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok("<svg>ok</svg>"),
-        ):
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {},
-                None,
-                attrs={"file": "test.yml", "format": "stacked"},
-            )
-
-        assert "example-stacked" in result
-        assert "<svg>ok</svg>" in result
+        assert "dbt-charts-example" in result
 
     def test_retries_inline_docs_examples_against_examples_dir(
         self, tmp_path, monkeypatch
@@ -444,8 +369,6 @@ class TestFenceDbtChartsExample:
         """Inline doc examples can fall back to the shared ``examples/`` root."""
         examples_dir = tmp_path / "examples"
         examples_dir.mkdir()
-
-        _patch_project_dir(monkeypatch, tmp_path)
 
         calls: list[object] = []
 
@@ -457,6 +380,7 @@ class TestFenceDbtChartsExample:
             result_cache,
             builtin_variables,
             format,
+            standalone,
         ):
             calls.append(project.root)
             if project.root == tmp_path:
@@ -468,6 +392,7 @@ class TestFenceDbtChartsExample:
                     result_cache=result_cache,
                     builtin_variables=builtin_variables,
                     format=format,
+                    standalone=standalone,
                 )
             assert project.root == examples_dir
             assert builtin_variables["this_dir"]["name"] == examples_dir.name
@@ -477,12 +402,11 @@ class TestFenceDbtChartsExample:
             "dbt_charts.integrations.markdown.render_dashboard",
             side_effect=fake_render_dashboard,
         ):
-            result = fence_dbt_charts_example(
+            result = _example_html(
                 "charts:\n  c1:\n    query: _doc_examples.yaml#sales\n    type: bar\n",
-                "dbt-charts-example",
-                "dbt-charts-example",
                 {},
-                None,
+                tmp_path,
+                False,
             )
 
         assert calls == [tmp_path, examples_dir]
@@ -498,8 +422,6 @@ class TestFenceDbtChartsExample:
             "sources:\n  dundersign_db:\n    type: duckdb\n    path: dundersign.duckdb\n"
         )
 
-        _patch_project_dir(monkeypatch, tmp_path)
-
         calls: list[object] = []
 
         def fake_render_dashboard(
@@ -510,6 +432,7 @@ class TestFenceDbtChartsExample:
             result_cache,
             builtin_variables,
             format,
+            standalone,
         ):
             calls.append(project.root)
             assert project.root == examples_dir
@@ -520,7 +443,7 @@ class TestFenceDbtChartsExample:
             "dbt_charts.integrations.markdown.render_dashboard",
             side_effect=fake_render_dashboard,
         ):
-            result = fence_dbt_charts_example(
+            result = _example_html(
                 "source: dundersign_db\n"
                 "charts:\n"
                 "  c1:\n"
@@ -531,83 +454,86 @@ class TestFenceDbtChartsExample:
                 "queries:\n"
                 "  q:\n"
                 "    sql: SELECT 1 AS a, 2 AS b\n",
-                "dbt-charts-example",
-                "dbt-charts-example",
                 {},
-                None,
+                tmp_path,
+                False,
             )
 
         assert calls == [examples_dir]
         assert "<svg>ok</svg>" in result
 
-    def test_superfences_markdown_round_trip_keeps_file_attr(
-        self, tmp_path, monkeypatch
-    ):
-        """A real Markdown parse should pass ``file=...`` through to the handler."""
+    def test_a_render_error_raises(self, tmp_path):
         board = tmp_path / "test.yml"
         board.write_text("charts:\n  c1:\n    type: bar\n")
 
-        _patch_project_dir(monkeypatch, tmp_path)
+        with (
+            patch(
+                "dbt_charts.integrations.markdown.render_dashboard",
+                side_effect=ValueError("data error"),
+            ),
+            pytest.raises(ValueError, match="data error"),
+        ):
+            _example_html("", {"file": "test.yml"}, tmp_path, False)
 
+    @pytest.mark.parametrize(
+        ("options", "layout"),
+        [
+            ({}, "side-by-side"),
+            ({"format": "stacked"}, "stacked"),
+            ({"format": "render-only"}, "render-only"),
+            ({"format": "yaml-only"}, "yaml-only"),
+            ({"format": "tab"}, "tab"),
+        ],
+    )
+    def test_each_layout_names_its_container(
+        self, tmp_path: Path, options: dict[str, str], layout: str
+    ) -> None:
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok("<svg>ok</svg>"),
+            return_value=_ok("<svg/>"),
         ):
-            html = markdown.markdown(
-                "```dbt-charts-example {file=test.yml format=stacked}\n```\n",
-                extensions=["attr_list", "pymdownx.superfences"],
-                extension_configs={
-                    "pymdownx.superfences": {
-                        "custom_fences": [
-                            {
-                                "name": "dbt-charts-example",
-                                "class": "dbt-charts-example",
-                                "format": fence_dbt_charts_example,
-                            }
-                        ]
-                    }
-                },
-            )
+            result = _example_html(_EXAMPLE_BOARD, options, tmp_path, False)
 
-        assert "example-stacked" in html
-        assert "<svg>ok</svg>" in html
-        assert "example-code" in html
-
-    def test_render_error_still_shows_code(self, tmp_path, monkeypatch):
-        """When rendering fails, code panel is still shown."""
-        board = tmp_path / "test.yml"
-        board.write_text("charts:\n  c1:\n    type: bar\n")
-
-        _patch_project_dir(monkeypatch, tmp_path)
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            side_effect=ValueError("data error"),
-        ):
-            result = fence_dbt_charts_example(
-                "",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {"file": "test.yml"},
-                None,
-            )
-
-        assert "example-code" in result
-        assert "dbt-charts-error" in result
-
-    def test_invalid_format_rejected(self, tmp_path, monkeypatch):
-        """Unknown format= option produces an error div."""
-
-        _patch_project_dir(monkeypatch, tmp_path)
-        result = fence_dbt_charts_example(
-            "charts:\n  c1:\n    type: bar\n",
-            "dbt-charts-example",
-            "dbt-charts-example",
-            {"format": "invalid-layout"},
-            None,
+        assert result.startswith(
+            f'<div class="dbt-charts-example dbt-charts-example--{layout}"'
         )
-        assert "dbt-charts-error" in result
-        assert "unknown format" in result
+
+    @pytest.mark.parametrize(
+        "layout", ["side-by-side", "stacked", "render-only", "yaml-only", "tab"]
+    )
+    def test_every_class_outside_the_board_and_yaml_is_prefixed(
+        self, tmp_path: Path, layout: str
+    ) -> None:
+        """The page carries the stylesheet onto other people's sites, so a
+        generic class name would catch the host's own rules, and theirs ours."""
+        with patch(
+            "dbt_charts.integrations.markdown.render_dashboard",
+            return_value=_ok("<svg/>"),
+        ):
+            result = _example_html(_EXAMPLE_BOARD, {"format": layout}, tmp_path, False)
+        wrapper = re.sub(r"<code[^>]*>.*?</code>", "", result, flags=re.DOTALL)
+        classes = {
+            name
+            for value in re.findall(r'class="([^"]*)"', wrapper)
+            for name in value.split()
+        }
+
+        assert classes
+        assert {c for c in classes if not c.startswith("dbt-charts-")} == set()
+
+    def test_invalid_format_raises(self, tmp_path):
+        with pytest.raises(ChartFenceError, match="unknown format"):
+            _example_html("type: bar\n", {"format": "invalid-layout"}, tmp_path, False)
+
+    def test_unknown_option_raises(self, tmp_path):
+        with pytest.raises(ChartFenceError, match="'formt'"):
+            _example_html("type: bar\n", {"formt": "stacked"}, tmp_path, False)
+
+    def test_a_missing_file_names_the_path_as_written(self, tmp_path):
+        with pytest.raises(FileNotFoundError) as raised:
+            _example_html("", {"file": "charts/nope.yml"}, tmp_path, False)
+
+        assert str(raised.value) == "File not found: charts/nope.yml"
 
     def test_playground_link_inlines_external_queries(self, tmp_path, monkeypatch):
         """Docs examples should hand the playground a self-contained YAML payload."""
@@ -621,8 +547,6 @@ class TestFenceDbtChartsExample:
             "      values:\n"
             "        - [Widget, 10]\n"
         )
-
-        _patch_project_dir(monkeypatch, tmp_path)
 
         captured: dict[str, str] = {}
 
@@ -640,17 +564,16 @@ class TestFenceDbtChartsExample:
                 side_effect=fake_playground_url,
             ),
         ):
-            result = fence_dbt_charts_example(
+            result = _example_html(
                 "charts:\n"
                 "  ranked_products:\n"
                 "    query: _doc_examples.yaml#sales_by_product\n"
                 "    type: bar\n"
                 "    x: product\n"
                 "    y: revenue\n",
-                "dbt-charts-example",
-                "dbt-charts-example",
                 {},
-                None,
+                tmp_path,
+                False,
             )
 
         assert "http://localhost:5001/?y=test" in result
@@ -666,7 +589,7 @@ class TestFenceDbtChartsExample:
 
 
 class TestFenceResolvesSharedPlaygroundSource:
-    """Docs ``dbt-charts-example`` fences resolve ``examples_db`` from the shipped gallery.
+    """Docs ``charts-example`` fences resolve ``examples_db`` from the shipped gallery.
 
     The docs examples declare ``source: examples_db`` and query the
     ``ecommerce_orders`` table — both live in ``examples/playground``
@@ -675,7 +598,7 @@ class TestFenceResolvesSharedPlaygroundSource:
     ``render_dashboard`` mock): a mocked test can't catch source-wiring drift.
     """
 
-    def test_inline_docs_example_resolves_examples_db(self, caplog):
+    def test_inline_docs_example_resolves_examples_db(self, caplog, tmp_path):
         """A repo-rooted docs example runs its query with zero source-not-found warnings."""
         example = (
             "source: examples_db\n"
@@ -692,13 +615,8 @@ class TestFenceResolvesSharedPlaygroundSource:
             "    y: revenue\n"
         )
 
-        with (
-            project_dir_override(DBT_CHARTS_DIR),
-            caplog.at_level(logging.WARNING, logger="dbt-charts"),
-        ):
-            result = fence_dbt_charts_example(
-                example, "dbt-charts-example", "dbt-charts-example", {}, None
-            )
+        with caplog.at_level(logging.WARNING, logger="dbt-charts"):
+            result = _example_html(example, {}, DBT_CHARTS_DIR, False)
 
         source_warnings = [
             r.getMessage()
@@ -706,7 +624,6 @@ class TestFenceResolvesSharedPlaygroundSource:
             if _SOURCE_NOT_FOUND_RE.search(r.getMessage())
         ]
         assert source_warnings == [], source_warnings
-        assert "dbt-charts-error" not in result
         assert "<svg" in result
 
 
@@ -715,8 +632,8 @@ class TestFenceResolvesSharedPlaygroundSource:
 # ---------------------------------------------------------------------------
 
 
-class TestFenceDbtChartsClosesAdapterRegistry:
-    """fence_dbt_charts builds an adapter registry directly and closes it after rendering."""
+class TestExampleClosesAdapterRegistry:
+    """_example_html builds an adapter registry directly and closes it after rendering."""
 
     @pytest.fixture
     def registry_spy(self):
@@ -734,49 +651,20 @@ class TestFenceDbtChartsClosesAdapterRegistry:
         ):
             yield fake_registry, build_calls
 
-    def test_fence_dbt_charts_closes_registry(
-        self, tmp_path, monkeypatch, registry_spy
-    ):
-        """fence_dbt_charts builds an adapter registry and closes it once rendering finishes."""
+    def test_example_closes_registry(self, tmp_path, monkeypatch, registry_spy):
+        """An example builds an adapter registry and closes it once rendering finishes."""
 
-        _patch_project_dir(monkeypatch, tmp_path)
         fake_registry, build_calls = registry_spy
 
         with patch(
             "dbt_charts.integrations.markdown.render_dashboard",
             return_value=_ok("<svg>ok</svg>"),
         ):
-            result = fence_dbt_charts(
+            result = _example_html(
                 "charts:\n  c1:\n    type: bar\n    x: a\n    y: b\n",
-                "dbt-charts",
-                "dbt-charts",
                 {},
-                None,
-            )
-
-        assert build_calls, "build_adapter_registry was never called"
-        assert isinstance(build_calls[0], FilesystemProject)
-        assert fake_registry.close.call_count > 0, "adapter registry was never closed"
-        assert "<svg>ok</svg>" in result
-
-    def test_fence_dbt_charts_example_closes_registry(
-        self, tmp_path, monkeypatch, registry_spy
-    ):
-        """fence_dbt_charts_example builds an adapter registry and closes it once rendering finishes."""
-
-        _patch_project_dir(monkeypatch, tmp_path)
-        fake_registry, build_calls = registry_spy
-
-        with patch(
-            "dbt_charts.integrations.markdown.render_dashboard",
-            return_value=_ok("<svg>ok</svg>"),
-        ):
-            result = fence_dbt_charts_example(
-                "charts:\n  c1:\n    type: bar\n    x: a\n    y: b\n",
-                "dbt-charts-example",
-                "dbt-charts-example",
-                {},
-                None,
+                tmp_path,
+                False,
             )
 
         assert build_calls, "build_adapter_registry was never called"
@@ -829,7 +717,8 @@ class TestInlinePlaygroundQueries:
 
 
 class TestResolveProjectDir:
-    """_resolve_project_dir walks find_dct_root → find_repo_root → cwd."""
+    """_resolve_project_dir takes the configured dir, else walks find_dct_root →
+    find_repo_root → cwd."""
 
     def test_prefers_dct_root_over_git_root(self, tmp_path, monkeypatch) -> None:
         git_root = tmp_path
@@ -841,7 +730,7 @@ class TestResolveProjectDir:
         nested.mkdir()
         monkeypatch.chdir(nested)
 
-        assert _resolve_project_dir() == dct_root.resolve()
+        assert _resolve_project_dir("") == dct_root.resolve()
 
     def test_falls_back_to_git_root_when_no_dct_marker(
         self, tmp_path, monkeypatch
@@ -853,13 +742,13 @@ class TestResolveProjectDir:
         nested.mkdir()
         monkeypatch.chdir(nested)
 
-        assert _resolve_project_dir() == tmp_path.resolve()
+        assert _resolve_project_dir("") == tmp_path.resolve()
 
     def test_falls_back_to_cwd_when_no_marker(self, tmp_path, monkeypatch) -> None:
         monkeypatch.chdir(tmp_path)
-        assert _resolve_project_dir() == tmp_path.resolve()
+        assert _resolve_project_dir("") == tmp_path.resolve()
 
-    def test_override_wins_over_walk(self, tmp_path, monkeypatch) -> None:
+    def test_configured_dir_wins_over_walk(self, tmp_path, monkeypatch) -> None:
         (tmp_path / "dbt_charts.yml").write_text("name: x\n")
         pinned = tmp_path / "pinned"
         pinned.mkdir()
@@ -867,14 +756,13 @@ class TestResolveProjectDir:
         nested.mkdir()
         monkeypatch.chdir(nested)
 
-        with project_dir_override(pinned):
-            assert _resolve_project_dir() == pinned.resolve()
+        assert _resolve_project_dir(str(pinned)) == pinned.resolve()
 
 
 class TestPlaygroundUrlIgnoresEnv:
     """The playground link always targets the hosted playground — no override."""
 
-    def test_fence_dbt_charts_example_ignores_dct_playground_url_env(
+    def test_example_ignores_dct_playground_url_env(
         self, tmp_path, monkeypatch
     ) -> None:
         (tmp_path / "dbt_charts.yml").write_text("name: x\n")
@@ -886,31 +774,7 @@ class TestPlaygroundUrlIgnoresEnv:
             "dbt_charts.integrations.markdown._render_with_fallback",
             return_value="<svg/>",
         ):
-            result = fence_dbt_charts_example(
-                source, "dbt-charts-example", "dbt-charts-example", {}, None
-            )
+            result = _example_html(source, {}, tmp_path, False)
 
         assert "https://play.dbtcharts.com/?y=" in result
         assert "should-not-be-read" not in result
-
-
-def test_fence_sends_the_post_an_http_source_declares(tmp_path, monkeypatch):
-    """Docs authors write the fences, so the renderer keeps POST http sources."""
-    _patch_project_dir(monkeypatch, tmp_path)
-    source = (
-        "queries:\n  hits:\n    type: http\n"
-        "    url: https://api.example.com/search\n    method: POST\n"
-        "    json_path: $.hits\n"
-        "charts:\n  t:\n    query: hits\n    type: table\nrows:\n  - t\n"
-    )
-    response = MagicMock()
-    response.json.return_value = {"hits": [{"title": "a"}]}
-
-    with patch(
-        "dbt_charts.core.execute.adapters.http_adapter.httpx.Client"
-    ) as mock_client:
-        post = mock_client.return_value.__enter__.return_value.post
-        post.return_value = response
-        fence_dbt_charts(source, "dbt-charts", "dbt-charts", {}, None)
-
-    post.assert_called_once()

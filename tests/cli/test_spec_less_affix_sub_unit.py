@@ -107,11 +107,7 @@ def test_values_at_or_above_one_still_compact(tmp_path: Path) -> None:
     """A spec-less affix on
     values >= $1 still compacts through the engine's predefined SI spec."""
     text = _text_node_content(_render_inline_board(_ABOVE_ONE_BOARD, tmp_path))
-    milli_hits = _MILLI_PATTERN.findall(text)
-    assert not milli_hits, (
-        f"milli-prefixed digits found for a >= $1 value: {milli_hits}"
-    )
-    assert "£12.4mn" in text, text
+    assert "£12.4m" in text, text
 
 
 _NO_AFFIX_BOARD = """

@@ -32,6 +32,7 @@ def isolated_profile_search(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
     monkeypatch.delenv("DBT_PROFILE", raising=False)
+    monkeypatch.delenv("DBT_TARGET", raising=False)
 
 
 def _dbt_project(root: Path, *, charts_yml: str | None = None) -> Path:
@@ -250,3 +251,63 @@ def test_resolve_source_config_follows_the_same_sourceless_rule(
     with pytest.raises(DbtChartsError) as exc_info:
         plain.resolve_source_config(None)
     assert exc_info.value.code is ERR_SOURCE_NOT_NAMED
+
+
+def _two_target_project(root: Path, *, charts_yml: str | None = None) -> Path:
+    """A dbt project whose default target ``dev`` holds 42 and ``alt`` holds 7."""
+    _dbt_project(root, charts_yml=charts_yml)
+    alt_path = root / "alt.duckdb"
+    conn = duckdb.connect(str(alt_path))
+    conn.execute("CREATE TABLE numbers (n INTEGER)")
+    conn.execute("INSERT INTO numbers VALUES (7)")
+    conn.close()
+    profiles = yaml.safe_load((root / "profiles.yml").read_text())
+    profiles["shop_profile"]["outputs"]["alt"] = {
+        "type": "duckdb",
+        "path": str(alt_path),
+        "threads": 1,
+    }
+    (root / "profiles.yml").write_text(yaml.safe_dump(profiles))
+    return root
+
+
+def test_dbt_target_env_selects_the_implicit_source_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _two_target_project(tmp_path / "shop")
+    monkeypatch.setenv("DBT_TARGET", "alt")
+
+    with ProjectSession.open(root) as session:
+        result = session.execute_query("SELECT n FROM numbers")
+
+    assert result.success, result.errors
+    assert result.data == [{"n": 7}]
+
+
+def test_registry_target_selects_the_implicit_source_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _two_target_project(tmp_path / "shop")
+    monkeypatch.setenv("DBT_TARGET", "dev")
+
+    registry = build_adapter_registry(FilesystemProject(root), target="alt")
+    result = registry.execute(_SOURCELESS)
+
+    assert result.error is None, result.error
+    assert result.data == [{"n": 7}]
+
+
+def test_a_source_that_names_its_target_keeps_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _two_target_project(
+        tmp_path / "shop",
+        charts_yml="sources:\n  pinned:\n    type: dbt_profile\n    target: dev\n",
+    )
+    monkeypatch.setenv("DBT_TARGET", "alt")
+
+    registry = build_adapter_registry(FilesystemProject(root), target="alt")
+    result = registry.execute(SqlQuery(sql="SELECT n FROM numbers", source="pinned"))
+
+    assert result.error is None, result.error
+    assert result.data == [{"n": 42}]

@@ -210,9 +210,9 @@ charts:
         board = _compile_board(
             """
 title: Margin Test
+width: 120
 style:
   frame:
-    width: 120
     margin: 10
     card_padding: 5
 text: Hello
@@ -245,7 +245,7 @@ text: Hello
         and the two heights come out equal.
 
         Width is the asymmetric arm: it is already padding-inclusive
-        (layout.width is the container), so it tracks frame.width, not content.
+        (layout.width is the container), so it tracks the board width, not content.
         """
         from dbt_charts.core.render.renderer import render
 
@@ -253,9 +253,9 @@ text: Hello
             board = _compile_board(
                 f"""
 title: Margin Test
+width: {width}
 style:
   frame:
-    width: {width}
     margin: {margin}
     card_padding: 5
 text: Hello
@@ -271,7 +271,7 @@ text: Hello
         wide_w, wide_h = _viewbox(160, 30)
 
         assert wide_h - narrow_h == 40.0, "each extra margin px adds 2px of height"
-        assert (narrow_w, wide_w) == (120.0, 160.0), "total_width is frame.width"
+        assert (narrow_w, wide_w) == (120.0, 160.0), "total_width is the board width"
 
     def test_nested_board_border_dash_array_emits_svg_dasharray(self):
         """A nested board's own style.border.dash_array reaches its stroked

@@ -8,10 +8,10 @@ from pydantic import Field
 
 from dbt_charts.core.compile.models.style.authored import HeatmapChartStylePatch
 
-from ._base import _CartesianChartFields
+from ._base import _CartesianChartFields, _PatternField
 
 
-class HeatmapChart(_CartesianChartFields):
+class HeatmapChart(_CartesianChartFields, _PatternField):
     """Normalized heatmap chart."""
 
     type: Literal["heatmap"]

@@ -45,6 +45,7 @@ from dbt_charts.core.compile.resolve.style.palette import (
     ToneAsPaletteError,
     UnknownColorError,
     palette,
+    palette_family,
     tone_colors,
 )
 from dbt_charts.core.compile.resolve.style.tokens import _resolve_color_tokens
@@ -148,8 +149,11 @@ def _style_tree(context: ChartStyleContext) -> dict[str, JsonValue]:
             legend_node["position"] = _decided_position(
                 general.position, legend, radial=name == "pie"
             )
+    # A pattern palette names fills, not color stops: a template reads colors.
     concrete["palettes"] = {
-        role: _palette_value(name) for role, name in context.palettes.items()
+        role: _palette_value(name)
+        for role, name in context.palettes.items()
+        if palette_family(name) != "pattern"
     }
     return concrete
 

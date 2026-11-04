@@ -37,7 +37,7 @@ _BY_LANGUAGE: dict[str, _Registers] = {
     "cs": (_nbsp("k", "M", "mld", "bil"), _nbsp("tis.", "mil.", "mld.", "bil.")),
     "da": (_nbsp("k", "M", "mia", "bio"), _nbsp("t", "mio.", "mia.", "bio.")),
     "de": (_nbsp("k", "M", "Mrd", "Bio"), _nbsp("Tsd.", "Mio.", "Mrd.", "Bio.")),
-    "en": (("K", "M", "B", "T"), ("k", "mn", "bn", "trn")),
+    "en": (("K", "M", "B", "T"), ("k", "m", "bn", "trn")),
     "es": _both(_nbsp("mil", "M", "mil\u00a0M", "B")),
     "fi": (_nbsp("k", "M", "mrd", "bilj"), _nbsp("t.", "milj.", "mrd.", "bilj.")),
     "fr": _both(_nbsp("k", "M", "Md", "Bn")),

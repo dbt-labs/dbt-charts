@@ -721,13 +721,7 @@ charts:
 
         registry = build_adapter_registry(project)
         cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project)
-        executor = Executor(
-            board,
-            registry,
-            result_cache=cache,
-            file_materializer=mat,
-        )
+        executor = Executor(board, registry, result_cache=cache)
 
         rows = executor.execute_query("monthly")
         assert len(rows) == 3
@@ -779,8 +773,7 @@ charts:
 
         # First render — v1 content
         cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project)
-        executor = Executor(board, registry, result_cache=cache, file_materializer=mat)
+        executor = Executor(board, registry, result_cache=cache)
         rows_v1 = executor.execute_query("monthly")
         assert rows_v1[0]["revenue"] == 1000
 
@@ -789,9 +782,12 @@ charts:
 
         # Second render — same persistent cache, new file content.
         # Must return v2 rows, not stale v1 rows.
-        mat2 = FileSourceMaterializer(project)
         executor2 = Executor(
-            board, registry, result_cache=cache, file_materializer=mat2
+            board,
+            build_adapter_registry(
+                project, file_materializer=FileSourceMaterializer(project)
+            ),
+            result_cache=cache,
         )
         rows_v2 = executor2.execute_query("monthly")
         assert rows_v2[0]["revenue"] == 9999, (
@@ -905,8 +901,7 @@ charts:
 
         registry = build_adapter_registry(project)
         cache = TrivialDuckDBCache()
-        mat = FileSourceMaterializer(project)
-        executor = Executor(board, registry, result_cache=cache, file_materializer=mat)
+        executor = Executor(board, registry, result_cache=cache)
 
         rows = executor.execute_query("q")
         assert len(rows) == 2, f"Expected 2 rows, got error or wrong count: {rows}"

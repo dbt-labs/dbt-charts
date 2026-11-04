@@ -12,15 +12,21 @@ concern — the engine's ``support_table_strip.rs`` measures and draws it.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any, Literal
 
+from d3_format import parse as d3_parse
+from d3_format.errors import D3FormatError
 from dbt_charts.core.compile.errors import CompilationError
 from dbt_charts.core.compile.format import (
     column_format,
     declared_column_format,
+    inferred_number_format,
     reject_native,
     resolve_format_parts,
+    sub_unit_spec_for_value,
 )
 from dbt_charts.core.compile.models.chart.authored import (
     ChartSupportTable,
@@ -40,6 +46,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
 from dbt_charts.core.compile.models.markers import AUTO
 from dbt_charts.core.compile.models.primitives import (
     AuthoredFormat,
+    FormatConfig,
     FormatTable,
     ResolvedFormat,
     resolved_as,
@@ -282,14 +289,16 @@ def resolve_support_table(
     y: str | list[str] | None,
     query_formats: Mapping[str, str] | None,
     *,
-    stamp_number: bool,
     header_inks: Mapping[str, str],
 ) -> ResolvedSupportTable:
     """Bake every entry's format, and a `source:` entry's header ink.
 
-    A sub-$1-floor or spec-less-affix format votes its spec over the entry's
-    values and then reads as native digits, not house. With ``stamp_number``,
-    an entry reading ``y`` with no format takes the engine's ``number``.
+    A support table reads like a legend, so its numbers are compact
+    (`laws-support-table.md`, "A strip's numbers are compact"): a numeric entry with
+    no format takes its column's declared one, the format its type infers, or
+    ``number``; a full-digit format prints its three-digit SI name
+    (`_compact_counterpart`); a row with a value below 1 takes the shared sub-unit
+    law's spec for its smallest value.
     """
     entries: list[ResolvedSupportTableEntry] = []
     for entry in support_table.entries:
@@ -300,37 +309,143 @@ def resolve_support_table(
         )
         # A per_series entry votes over the chart's y column(s), not its own.
         voted_columns = y if isinstance(entry, ChartSupportTablePerSeries) else column
+        fields = (
+            voted_columns
+            if isinstance(voted_columns, list)
+            else [voted_columns]
+            if voted_columns is not None
+            else []
+        )
+        # A count paints row counts, never its column's values.
+        values = (
+            [v for f in fields for v in _column_numeric_values(data, f)]
+            if _keeps_column_unit(entry)
+            else []
+        )
+        authored = entry.format
+        declared = (
+            declared_column_format(query_formats, column, formats, time=False)
+            if authored is None and _keeps_column_unit(entry)
+            else None
+        )
         fmt: ResolvedFormat | None = None
-        if entry.format is not None:
-            fmt = resolve_format_parts(entry.format, formats)
-            if fmt.is_spec_less_affix or fmt.raw in PREDEFINED_SUB_UNIT_FALLBACK:
-                fields = (
-                    voted_columns
-                    if isinstance(voted_columns, list)
-                    else [voted_columns]
-                    if voted_columns is not None
-                    else []
-                )
-                voted = column_format(
-                    "number",
-                    formats,
-                    entry.format,
-                    values=[v for f in fields for v in _column_numeric_values(data, f)],
-                )
-                if voted.spec != fmt.spec:
-                    fmt = voted.model_copy(update={"raw": None})
-        elif _keeps_column_unit(entry) and declared_column_format(
-            query_formats, column, formats, time=False
-        ):
+        if declared is not None:
             fmt = column_format(
                 "number", formats, query_formats=query_formats, columns=column
             )
-        elif stamp_number and column == y:
-            fmt = resolve_format_parts(PredefinedNumberFormat.number, formats)
+        elif authored is None and not _keeps_column_unit(entry):
+            authored = PredefinedNumberFormat.number
+        elif authored is None and _column_is_numeric(data, column):
+            authored = (
+                inferred_number_format(
+                    column, (_whole(row.get(column)) for row in data)
+                )
+                or PredefinedNumberFormat.number
+            )
+        if authored is not None:
+            fmt = resolve_format_parts(authored, formats)
+        compact = (
+            None
+            if fmt is None or _board_defines(authored or declared, formats)
+            else _compact_counterpart(fmt)
+        )
+        if compact is not None:
+            authored, fmt = compact, resolve_format_parts(compact, formats)
+        if (
+            authored is not None
+            and fmt is not None
+            and (fmt.is_spec_less_affix or fmt.raw in PREDEFINED_SUB_UNIT_FALLBACK)
+        ):
+            voted = column_format("number", formats, authored, values=values)
+            if voted.spec != fmt.spec:
+                fmt = voted.model_copy(update={"raw": None})
+        smallest = min((abs(v) for v in values if 0 < abs(v) < 1), default=None)
+        if (
+            fmt is not None
+            and fmt.raw in PREDEFINED_SUB_UNIT_FALLBACK
+            and smallest is not None
+        ):
+            # The strip paints one spec per row: the one the shared sub-unit law
+            # picks for its smallest value prints every value of the row legibly.
+            spec = sub_unit_spec_for_value(fmt.raw, fmt.spec, smallest, formats)
+            fmt = resolve_format_parts(
+                FormatConfig(spec=spec, repeat=fmt.repeat), formats
+            )
         if fmt is not None:
             reject_native(fmt, f"support_table[{len(entries)}].format")
         entries.append(_with_resolved_format(entry, fmt, header_inks))
     return ResolvedSupportTable(entries=entries)
+
+
+def _board_defines(name: AuthoredFormat | None, formats: FormatTable | None) -> bool:
+    """A name the board defined prints exactly its own spec, never a compact one."""
+    spelled = name.spec if isinstance(name, FormatConfig) else name
+    return formats is not None and spelled is not None and spelled in formats
+
+
+def _compact_counterpart(fmt: ResolvedFormat) -> FormatConfig | None:
+    """The engine's three-digit SI name a grouped whole or fixed-point format
+    compacts to (``$,.0f`` prints ``currency``, ``,d`` prints ``number``), its
+    ``repeat`` carried over; ``None`` for any other format.
+
+    A format with an authored affix, notation, sign placement, sign or pad width
+    is kept: its author decided how the value reads.
+    """
+    if fmt.has_affix or fmt.sign_placement is not None:
+        return None
+    try:
+        parts = d3_parse(fmt.spec)
+    except D3FormatError:
+        return None
+    if (
+        not parts.comma
+        or parts.type not in ("d", "f")
+        or parts.sign != "-"
+        or parts.width is not None
+    ):
+        return None
+    name = (
+        PredefinedNumberFormat.currency
+        if parts.symbol == "$"
+        else PredefinedNumberFormat.number
+    )
+    return FormatConfig(spec=name.value, repeat=fmt.repeat)
+
+
+def _whole(
+    value: Any,  # type-state: explicit_any — query-row boundary value
+) -> Any:  # type-state: explicit_any — passes a non-whole cell through unchanged
+    """A whole `Decimal` or float as the `int` it is (`EXTRACT(YEAR ...)` arrives as
+    `Decimal("2024")` on some warehouses), so type inference reads it as one. A NaN
+    or infinite cell has no `int` and passes through."""
+    finite = (isinstance(value, Decimal) and value.is_finite()) or (
+        isinstance(value, float) and math.isfinite(value)
+    )
+    if finite and value == int(value):
+        return int(value)
+    return value
+
+
+def _column_is_numeric(
+    data: list[dict[str, Any]],  # type-state: explicit_any — query-row boundary values
+    field: str,
+) -> bool:
+    """True when the column has values and every non-null one is a number the
+    engine reads as one (a ``Decimal`` included).
+
+    Gates the default ``number``: a d3 numeric format on a string (category
+    labels, numeric-looking strings) yields NaN and the cell renders ``-``
+    instead of the label. Bools (an ``int`` subclass) are labels.
+    """
+    seen = False
+    for row in data:
+        raw = row.get(field)
+        if raw is None:
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, Decimal)):
+            return False
+        seen = True
+    return seen
 
 
 def _keeps_column_unit(entry: ChartSupportTableEntry) -> bool:

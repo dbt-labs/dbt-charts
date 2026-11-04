@@ -22,9 +22,8 @@ def test_table_style_accepts_row():
     """TableChartStylePatch.row accepts row style overrides."""
     from dbt_charts.core.compile.models.style.authored import TableChartStylePatch
 
-    ts = TableChartStylePatch.model_validate({"row": {"role": "kind", "height": 20}})
+    ts = TableChartStylePatch.model_validate({"row": {"height": 20}})
     assert ts.row is not None
-    assert ts.row.role == "kind"
     assert ts.row.height == 20
 
 
@@ -105,8 +104,8 @@ class TestTableRowStyleRendering:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
-        es = self._style_with_row(role="kind")
+        chart = make_chart("table", x=None, y=None, row_role="kind")
+        es = self._style_with_row()
         chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
         svg = render_table_svg(
             chart,
@@ -125,9 +124,8 @@ class TestTableRowStyleRendering:
         """roles.total.font.weight overrides default summary weight for total rows."""
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="kind")
         es = self._style_with_row(
-            role="kind",
             roles={
                 "summary": {"font": {"weight": "500"}},
                 "total": {"font": {"weight": "700"}},
@@ -149,9 +147,8 @@ class TestTableRowStyleRendering:
         """roles.total.background renders a fill rect behind the total row."""
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="kind")
         es = self._style_with_row(
-            role="kind",
             roles={
                 "total": {"background": "#F0F0F0"},
             },
@@ -169,9 +166,8 @@ class TestTableRowStyleRendering:
         """roles.summary.background renders a fill rect behind summary rows."""
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="kind")
         es = self._style_with_row(
-            role="kind",
             roles={
                 "summary": {"background": "#E0E0FF"},
             },
@@ -234,9 +230,8 @@ class TestTableRowStyleRendering:
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="kind")
         es = self._style_with_row(
-            role="kind",
             roles={"total": {"background": "not-a-color"}},
         )
         chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
@@ -252,9 +247,8 @@ class TestTableRowStyleRendering:
         """Invalid font.weight in roles falls back to default 500."""
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="kind")
         es = self._style_with_row(
-            role="kind",
             roles={"total": {"font": {"weight": "bold-invalid"}}},
         )
         chart = resolve(chart, self._data_with_roles(), chart_style_context=es)
@@ -277,18 +271,17 @@ class TestTableRowStyleRendering:
 class TestMergePrecedence:
     """When both flat and nested fields are set, nested wins in SVG output."""
 
-    def test_nested_role_wins_over_flat_row_role(self, make_chart):
-        """row.role is the sole role selector (flat row_role no longer exists)."""
+    def test_row_role_drives_role_resolution(self, make_chart):
+        """The chart-root row_role is the sole role selector."""
         import re
 
         from ._engine_render import render_table_svg
 
-        chart = make_chart("table", x=None, y=None)
+        chart = make_chart("table", x=None, y=None, row_role="kind")
         es = resolve_chart_style_context(get_theme_style())
         tc = es.table
         new_row = tc.row.model_copy(
             update={
-                "role": "kind",
                 "roles": tc.row.roles.model_copy(
                     update={
                         "summary": tc.row.roles.summary.model_copy(
@@ -326,7 +319,7 @@ class TestMergePrecedence:
         )
         # Total row should get font-weight="500"
         total_weighted = re.findall(r'<text[^>]*font-weight="500"[^>]*>[^<]*Total', svg)
-        assert len(total_weighted) >= 1, "row.role should drive role resolution"
+        assert len(total_weighted) >= 1, "row_role should drive role resolution"
 
     def test_nested_height_wins_over_flat_row_height(self, make_chart):
         """row.height is the sole height source in TableChartStyle."""

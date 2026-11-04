@@ -111,7 +111,7 @@ impl Expr {
     }
 
     /// The text one tick paints: its lines joined by [`measure::LINE_SEP`], which a painter measures by the
-    /// widest line and the SVG finishes as a `tspan` each.
+    /// widest line and layout paints as a `tspan` each.
     pub fn eval(&self, tick: &Tick) -> Res<String> {
         let sep = measure::LINE_SEP.to_string();
         // A line holding the separator itself paints the noncharacter beside it, which looks the same.

@@ -8,28 +8,14 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use serde::Deserialize;
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TimeLocale {
-    pub date_time: String,
-    pub date: String,
-    pub time: String,
-    pub periods: [String; 2],
-    /// Sunday first, as d3 lists them.
-    pub days: [String; 7],
-    pub short_days: [String; 7],
-    pub months: [String; 12],
-    pub short_months: [String; 12],
-}
+use d3rs::time_format::Locale;
 
 thread_local! {
-    static ACTIVE: RefCell<Option<Rc<TimeLocale>>> = const { RefCell::new(None) };
+    static ACTIVE: RefCell<Option<Rc<Locale>>> = const { RefCell::new(None) };
     static WEEK_START: Cell<u8> = const { Cell::new(0) };
 }
 
-struct Restore(Option<Rc<TimeLocale>>);
+struct Restore(Option<Rc<Locale>>);
 
 impl Drop for Restore {
     fn drop(&mut self) {
@@ -38,7 +24,7 @@ impl Drop for Restore {
 }
 
 /// Run `render` with `locale` as the active time locale.
-pub fn with_time_locale<T>(locale: &TimeLocale, render: impl FnOnce() -> T) -> T {
+pub fn with_time_locale<T>(locale: &Locale, render: impl FnOnce() -> T) -> T {
     let previous = ACTIVE.with(|active| active.replace(Some(Rc::new(locale.clone()))));
     let _restore = Restore(previous);
     render()
@@ -64,7 +50,7 @@ pub fn active_week_start() -> u8 {
 }
 
 /// The active time locale.
-pub fn active_time_locale() -> Result<Rc<TimeLocale>, String> {
+pub fn active_time_locale() -> Result<Rc<Locale>, String> {
     ACTIVE
         .with(|active| active.borrow().clone())
         .ok_or_else(|| {
@@ -75,7 +61,7 @@ pub fn active_time_locale() -> Result<Rc<TimeLocale>, String> {
 }
 
 #[cfg(test)]
-pub(crate) fn en_us() -> TimeLocale {
+pub(crate) fn en_us() -> Locale {
     serde_json::from_str(include_str!("../data/time_locale_en_us.json"))
         .expect("data/time_locale_en_us.json is a valid time locale")
 }
@@ -92,7 +78,7 @@ pub fn en_us_wire() -> serde_json::Value {
 }
 
 #[cfg(test)]
-pub(crate) fn de_de() -> TimeLocale {
+pub(crate) fn de_de() -> Locale {
     serde_json::from_str(include_str!("../data/time_locale_de_de.json"))
         .expect("data/time_locale_de_de.json is a valid time locale")
 }
@@ -106,7 +92,7 @@ mod tests {
         let mut wire: serde_json::Value =
             serde_json::from_str(include_str!("../data/time_locale_en_us.json")).unwrap();
         wire["months"].as_array_mut().unwrap().pop();
-        assert!(serde_json::from_value::<TimeLocale>(wire).is_err());
+        assert!(serde_json::from_value::<Locale>(wire).is_err());
     }
 
     #[test]

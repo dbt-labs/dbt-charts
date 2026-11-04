@@ -11,7 +11,7 @@ from dbt_charts.core.compile.models.constraints import (
     Constraint,
     NotNull,
 )
-from dbt_charts.core.compile.models.markers import DisplayText, Format
+from dbt_charts.core.compile.models.markers import AUTO, Color, DisplayText, Format
 from dbt_charts.core.compile.models.primitives import (
     CHANNEL_COLUMN,
     NON_BLANK,
@@ -52,10 +52,23 @@ class LayerAxisYTicks(BaseModel):
 class LayerAxisYGrid(BaseModel):
     """Per-layer y-axis grid patch."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     visible: bool | None = Field(
         default=None, description="Whether to show grid lines on this layer's y axis."
+    )
+    color: Annotated[str | None, Color()] = Field(
+        default=None, description="Grid line color on this layer's y axis."
+    )
+    width: float | None = Field(
+        default=None, description="Grid line width on this layer's y axis, in pixels."
+    )
+    dash: list[float] | None = Field(
+        default=None,
+        description="Grid line dash pattern on this layer's y axis; [] is solid.",
+    )
+    opacity: float | None = Field(
+        default=None, description="Grid line opacity on this layer's y axis, 0 to 1."
     )
 
 
@@ -81,6 +94,10 @@ class LayerAxisYStyle(BaseModel):
     title: Annotated[str | None, DisplayText()] = Field(
         default=None,
         description="Title on this layer's own y axis; defaults to the layer's label.",
+    )
+    color: Annotated[str | None, Color(keywords=(AUTO,))] = Field(
+        default=None,
+        description="Color of this axis's grid lines, tick labels and title; 'auto' uses the layer's color.",
     )
     scale: LayerAxisYScale | None = Field(
         default=None,

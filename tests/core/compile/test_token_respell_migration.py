@@ -30,7 +30,6 @@ from dbt_charts.core.compile.migrations.versions.v0_9_0 import (
     RETIRED_PALETTE_ROLE_KEYS,
     RETIRED_TOKEN_VALUE_MAP,
 )
-from dbt_charts.core.compile.models.board.patch import BoardPatch
 
 _QUERIES = textwrap.dedent(
     """\
@@ -144,7 +143,7 @@ class TestRetiredTokensRespellInMemory:
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = prepare_board_mapping(dict(patch), model=BoardPatch)
+            result = prepare_board_mapping(dict(patch), patch=True)
 
         assert result == {"style": {"palettes": {"category": "vivid-10"}}}
         assert any("category_dark" in str(w.message) for w in caught)

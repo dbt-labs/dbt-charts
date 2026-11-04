@@ -319,6 +319,86 @@ class TestDescribePaths:
         assert results[1].path == "second.yml"
 
 
+class TestDescribeByBoardTitle:
+    """describe_paths names a board by its title when no file has that path."""
+
+    @staticmethod
+    def _project(tmp_path: Path, boards: dict[str, str]) -> FilesystemProject:
+        charts = tmp_path / "charts"
+        charts.mkdir()
+        for name, title in boards.items():
+            (charts / name).write_text(_BOARD_YAML.replace("Sales Dashboard", title))
+        return FilesystemProject(tmp_path)
+
+    def test_a_unique_title_resolves_ignoring_case(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {"sales.yml": "Sales Dashboard"})
+
+        (result,) = describe_paths([Path("sales dashboard")], project=project)
+
+        assert result.success is True, result.errors
+        assert result.path == "charts/sales.yml"
+
+    def test_a_title_takes_a_chart(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {"sales.yml": "Sales Dashboard"})
+
+        (result,) = describe_paths(
+            [Path("Sales Dashboard")], project=project, chart="trend"
+        )
+
+        assert result.success is True, result.errors
+        assert [c.name for c in result.charts] == ["trend"]
+
+    def test_shared_title_names_every_board(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(
+            tmp_path, {"a.yml": "Sales Dashboard", "b.yml": "Sales Dashboard"}
+        )
+
+        (result,) = describe_paths([Path("Sales Dashboard")], project=project)
+
+        assert result.success is False
+        (err,) = result.errors
+        assert err.code == "ERR-TOOL-ARGUMENTS-INVALID"
+        assert "charts/a.yml" in err.message
+        assert "charts/b.yml" in err.message
+
+    def test_an_existing_path_wins_over_a_title(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(
+            tmp_path, {"sales.yml": "Revenue", "other.yml": "Sales"}
+        )
+
+        (result,) = describe_paths([Path("sales")], project=project)
+
+        assert result.path == "charts/sales.yml"
+
+    def test_no_title_match_keeps_file_not_found(self, tmp_path: Path) -> None:
+        from dbt_charts.agent_api.describe import describe_paths
+
+        project = self._project(tmp_path, {"sales.yml": "Sales Dashboard"})
+
+        (result,) = describe_paths([Path("Nope.yml")], project=project)
+
+        assert result.errors[0].code == "ERR-FILE-NOT-FOUND"
+
+    def test_describe_board_reads_only_a_path(self, tmp_path: Path) -> None:
+        """A host gates describe_board on the path it passes, so a title must
+        not reach a board the gate never saw."""
+        from dbt_charts.agent_api.describe import describe_board
+
+        project = self._project(tmp_path, {"sales.yml": "Sales Dashboard"})
+
+        result = describe_board(Path("Sales Dashboard"), project=project)
+
+        assert result.errors[0].code == "ERR-FILE-NOT-FOUND"
+
+
 class TestDescribePathsDispatchDriftOnNoSuffixMissingPath:
     """Deliberate drift (owner-approved): pure-suffix (``is_yaml``) dispatch
     walks a no-suffix, nonexistent argv path as an empty directory instead of
@@ -335,7 +415,8 @@ class TestDescribePathsDispatchDriftOnNoSuffixMissingPath:
         )
         assert len(results) == 1
         assert results[0].success is False
-        assert "No board files found" in results[0].errors[0].message
+        assert results[0].errors[0].code == "ERR-NO-BOARD-FILES"
+        assert "No board files found in missing" in results[0].errors[0].message
 
 
 class TestDescribeBoardPathTypes:
@@ -670,3 +751,33 @@ class TestDescribeTemplates:
         assert result.charts[0].template is None
         assert result.charts[0].inline_template is True
         assert result.charts[0].template_description is None
+
+
+def test_chart_scope_resolves_a_nested_board_query(
+    tmp_path: Path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    from dbt_charts.agent_api.describe import describe_board
+
+    board = _write_board(
+        tmp_path,
+        """
+title: Nested
+rows:
+  - queries:
+      nested:
+        columns: [a]
+        values:
+          - [1]
+    charts:
+      nested_chart:
+        query: nested
+        type: table
+    rows: [nested_chart]
+""",
+    )
+    result = describe_board(
+        board, project=local_project(tmp_path), chart="nested_chart"
+    )
+
+    assert result.success is True, result.errors
+    assert [q.name for q in result.queries] == ["nested"]

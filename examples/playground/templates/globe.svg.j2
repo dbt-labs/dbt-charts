@@ -1,0 +1,56 @@
+{#---
+description: Places on a globe, one dot per row, drawn on an orthographic projection turned to face the center of the places. A place on the far side of the globe is not drawn.
+channels:
+  x:
+    description: Column holding each place's longitude in degrees.
+  y:
+    description: Column holding each place's latitude in degrees.
+  color:
+    description: Column naming each place; each gets a color and a label.
+options:
+  point_radius:
+    type: number
+    default: 4
+    description: Radius of each place's dot.
+---#}
+{% set lon_col = channels.x %}
+{% set lat_col = channels.y %}
+{% set name_col = channels.color %}
+{% if not rows %}{{ raise_error("A globe needs at least one place.") }}{% endif %}
+{# The center of the places: the mean latitude, and the circular mean longitude so places on both sides of the antimeridian do not average to the far side. #}
+{% set n = rows | length %}
+{% set lat0 = (rows | map(attribute=lat_col) | map("float") | sum) / n %}
+{% set c = namespace(x=0, y=0) %}
+{% for r in rows %}
+  {% set a = (r[lon_col] | float) * math.pi / 180 %}
+  {% set c.x = c.x + math.cos(a) %}{% set c.y = c.y + math.sin(a) %}
+{% endfor %}
+{% set lon0 = math.atan2(c.y, c.x) * 180 / math.pi %}
+{% set radius = ([width, height] | min) / 2 - 1 %}
+{% set globe = d3.geo_orthographic().rotate([-1 * lon0, -1 * lat0]).translate([width / 2, height / 2]).scale(radius) %}
+{% set path = d3.geo_path(globe, point_radius=options.point_radius) %}
+{# A graticule every 30 degrees, as one MultiLineString: the projection clips the far side away. #}
+{% set grid = namespace(lines=[]) %}
+{% for lon in range(-180, 180, 30) %}
+  {% set line = namespace(pts=[]) %}
+  {% for lat in range(-90, 91, 5) %}{% set line.pts = line.pts + [[lon, lat]] %}{% endfor %}
+  {% set grid.lines = grid.lines + [line.pts] %}
+{% endfor %}
+{% for lat in range(-60, 61, 30) %}
+  {% set line = namespace(pts=[]) %}
+  {% for lon in range(-180, 181, 5) %}{% set line.pts = line.pts + [[lon, lat]] %}{% endfor %}
+  {% set grid.lines = grid.lines + [line.pts] %}
+{% endfor %}
+<path d="{{ path({"type": "Sphere"}) }}" fill="none" stroke="{{ style.fonts.secondary.color }}" stroke-width="1"/>
+<path d="{{ path({"type": "MultiLineString", "coordinates": grid.lines}) }}" fill="none" stroke="{{ style.charts.axis.grid.color }}" stroke-width="0.5"/>
+<g font-family="{{ style.font.family }}" font-size="{{ style.font.size }}" fill="{{ style.font.color }}">
+{% for r in rows %}
+  {% set lon = r[lon_col] | float %}{% set lat = r[lat_col] | float %}{% set name = r[name_col] | string %}
+  {% set dot = path({"type": "Point", "coordinates": [lon, lat]}) %}
+  {% if dot %}
+    {% set xy = globe([lon, lat]) %}
+    <path d="{{ dot }}" fill="{{ color_for(name, name_col) }}"><title>{{ name }}: {{ lat | format(".1f") }}°, {{ lon | format(".1f") }}°</title></path>
+    <text x="{{ (xy[0] + options.point_radius + 3) | round(1) }}" y="{{ xy[1] | round(1) }}" dy="0.35em">{{ name }}</text>
+  {% endif %}
+{% endfor %}
+</g>

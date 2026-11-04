@@ -317,7 +317,8 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     let x_layers = XLayers { all: &layers, payload };
     // The one chart-level legend spans the card, not a panel.
     let legend_w = payload.view_width(if horizontal { crate::ViewScale::Continuous } else { crate::ViewScale::Discrete })?;
-    let render_pass = |pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<Vec<(String, PanelGeometry)>, Diagnostic> {
+    let render_pass = |pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<Vec<PanelGeometry>, Diagnostic> {
+        r.patterns.reset_fallbacks();
         panels
             .iter()
             .enumerate()
@@ -344,7 +345,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                         title_boxes,
                         legend_w,
                     };
-                    let (svg, facet_panel) = render_horizontal_panel(
+                    let (_, facet_panel) = render_horizontal_panel(
                         payload.chart_id()?,
                         None,
                         &panel.rows,
@@ -363,7 +364,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                     let HorizontalFacetPanel { geometry, row_axis } =
                         facet_panel.expect("a facet call returns its panel geometry");
                     row_axis_placement.replace(row_axis);
-                    return Ok((print::print(&[svg.svg]), geometry));
+                    return Ok(geometry);
                 }
                 // Real Vega's `row_footer`/`row_header` (the shared value
                 // axis) appears ONCE PER ROW, at that row's own LAST
@@ -387,7 +388,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                 // structurally SEPARATE from every row's own `cell`, painted
                 // ONCE by the composer below (`paint_shared_x_axis`), never
                 // squeezed into any one panel's own canvas.
-                if let Some((svg, geom)) = render_vertical_continuous_x_panel(
+                if let Some((_, geom)) = render_vertical_continuous_x_panel(
                     &panel.rows,
                     &payload.rows,
                     pw,
@@ -407,7 +408,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                     left_primary,
                     Some(title_boxes),
                 )? {
-                    return Ok((print::print(&[svg.svg]), geom.expect("a facet panel is drawn with its geometry")));
+                    return Ok(geom.expect("a facet panel is drawn with its geometry"));
                 }
                 let facet_opts = BarFacetPanelOpts {
                     title_boxes,
@@ -434,7 +435,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                     panel_key: &panel_key,
                     panel_ordinal: panel_i,
                 };
-                let (svg, geom, _composed) = render_vertical_panel(
+                let (_, geom, _composed) = render_vertical_panel(
                     &panel.rows,
                     pw,
                     ph,
@@ -449,11 +450,9 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                     Some(&facet_opts),
                 )?;
                 let geom = geom.expect("a facet panel is drawn with its geometry");
-                Ok((
-                    print::print(&[svg.svg]),
+                Ok(
                     PanelGeometry {
-                        content_start: geom.content_start,
-                        svg_end: geom.svg_end,
+                        content: geom.content,
                         ink: geom.ink,
                         axis_w_overhang: geom.axis_w_overhang,
                         // `geom.plot_left` is `m.left` alone (this call
@@ -482,7 +481,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
                         legend: geom.facet_legend,
                         value_axis: geom.value_axis,
                     },
-                ))
+                )
             })
             .collect()
     };
@@ -533,7 +532,7 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
             if horizontal { crate::ViewScale::Continuous } else { crate::ViewScale::Discrete },
         )?;
         let naive_h = payload.height / panel_rows_n as f64;
-        render_pass(naive_w, naive_h, 0.0)?.into_iter().next().and_then(|(_, g)| g.legend)
+        render_pass(naive_w, naive_h, 0.0)?.into_iter().next().and_then(|g| g.legend)
     } else {
         None
     };
@@ -559,19 +558,18 @@ pub(super) fn render_facet(bound: super::bind::Bound<'_>, fonts: &FontBook) -> R
     let chrome = facet_compose::FacetChrome {
         title: title_plan.as_ref().map(|plan| facet_compose::TitleChrome {
             ink: plan.ink.clone(),
-            paint: Box::new(|svg, x, y| plan.paint(&title_src, svg, x, y)),
+            paint: Box::new(|x, y| plan.nodes(&title_src, x, y)),
         }),
         legends: facet_legend.as_ref().map(|lg| facet_compose::LegendChrome {
             edge: legend_edge,
             width: Box::new(|_, _| lg.box_w),
             height: Box::new(|_| lg.box_h),
-            paint: Box::new(|svg, x, y, _, _| {
-                svg.push_str(&print::print(&[lg.placed(x, y)]));
-            }),
+            paint: Box::new(|x, y, _, _| vec![lg.placed(x, y)]),
         }).into_iter().collect(),
     };
     let chrome = (chrome.title.is_some() || !chrome.legends.is_empty()).then_some(chrome);
     let svg = facet_compose::compose_facet_full(payload, fonts, &spec, chrome.as_ref(), row_axis_spec.as_ref(), &render_pass)?;
+    let svg = facet_compose::with_pattern_defs(print::print(&[svg]), &r.patterns)?;
     if horizontal {
         return Ok(svg);
     }

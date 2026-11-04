@@ -27,7 +27,6 @@ from dbt_charts.core.compile.models.chart.normalized import (
 )
 from dbt_charts.core.compile.models.primitives import FormatConfig
 from dbt_charts.core.compile.models.query.normalized import (
-    HttpQuery,
     Query,
     SqlQuery,
     ValuesQuery,
@@ -133,11 +132,6 @@ class TestQueryTypeDescriptions:
         base_fields = set(Query.model_fields)
         missing = _fields_missing_description(SqlQuery, exemptions=base_fields)
         assert not missing, f"SqlQuery fields missing description: {missing}"
-
-    def test_http_query_all_fields_have_descriptions(self) -> None:
-        base_fields = set(Query.model_fields)
-        missing = _fields_missing_description(HttpQuery, exemptions=base_fields)
-        assert not missing, f"HttpQuery fields missing description: {missing}"
 
     def test_values_query_all_fields_have_descriptions(self) -> None:
         base_fields = set(Query.model_fields)

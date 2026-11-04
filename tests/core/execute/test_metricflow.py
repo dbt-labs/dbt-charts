@@ -19,6 +19,8 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from dbt_charts.agent_api.query import execute_query
+from dbt_charts.agent_api.semantics import describe_semantics, semantic_diagnostics
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -26,9 +28,12 @@ from dbt_charts.core.compile.models.source import (
     CsvSourceConfig,
     DbtProfileSourceConfig,
     DuckDBSourceConfig,
+    MetricFlowConfig,
 )
-from dbt_charts.core.execute import Executor
+from dbt_charts.core.execute import Executor, metricflow
 from dbt_charts.core.execute.adapters import build_adapter_registry
+from dbt_charts.core.execute.metricflow import SemanticLayer
+from dbt_charts.core.execute.semantic_bundle import SemanticDataset
 
 FRAGMENT = """\
 schema_version: v1
@@ -109,7 +114,12 @@ variables:
 """
 
 
-def _project(tmp_path: Path, metricflow: str | None = "semantics") -> FilesystemProject:
+REQUIRED = {"path": "semantics", "required": True}
+
+
+def _project(
+    tmp_path: Path, metricflow: str | dict[str, Any] | None = "semantics"
+) -> FilesystemProject:
     con = duckdb.connect(str(tmp_path / "warehouse.duckdb"))
     con.execute("CREATE TABLE accounts (id VARCHAR, industry VARCHAR)")
     con.execute("INSERT INTO accounts VALUES ('a1', 'retail'), ('a2', 'media')")
@@ -313,18 +323,123 @@ def test_source_without_a_bundle_never_loads_the_library(
     assert rows == [(3,)]
 
 
-@needs_metricflow
-def test_the_layer_is_reused_while_the_bundle_is_unchanged(tmp_path: Path) -> None:
-    project = _project(tmp_path)
-    registry = build_adapter_registry(project)
-    source = registry.resolve_query_source(SqlQuery(sql="SELECT 1", source="db"))
-    assert source is not None
-    first = registry.semantic_layer(source)
-    assert first is registry.semantic_layer(source)
+@pytest.fixture
+def registry_builds(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every MetricFlow registry built while the test runs."""
+    from metricflow_sql.registry import memory
+
+    built: list[Any] = []
+
+    class CountingRegistry(memory.InMemoryRegistry):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            built.append(self)
+
+    monkeypatch.setattr(memory, "InMemoryRegistry", CountingRegistry)
+    return built
+
+
+def _edit_bundle(tmp_path: Path, version: int) -> None:
     (tmp_path / "semantics" / "fragment.yaml").write_text(
-        FRAGMENT.replace("name: invoice_count", "name: invoice_rows")
+        FRAGMENT.replace("name: invoice_count", f"name: invoice_rows_{version}")
     )
-    assert registry.semantic_layer(source) is not first
+
+
+@needs_metricflow
+def test_the_layer_is_reused_while_the_bundle_is_unchanged(
+    tmp_path: Path, registry_builds: list[Any]
+) -> None:
+    project = _project(tmp_path)
+
+    def layer() -> Any:
+        registry = build_adapter_registry(project)
+        source = registry.resolve_query_source(SqlQuery(sql="SELECT 1", source="db"))
+        assert source is not None
+        return registry.semantic_layer(source)
+
+    first = layer()
+    assert layer() is first
+    assert len(registry_builds) == 1
+    _edit_bundle(tmp_path, 1)
+    assert layer() is not first
+    assert len(registry_builds) == 2
+
+
+@needs_metricflow
+def test_every_agent_call_shares_one_load_of_an_unchanged_bundle(
+    tmp_path: Path, registry_builds: list[Any]
+) -> None:
+    project = _project(tmp_path)
+
+    describe_semantics(project, "db")
+    describe_semantics(project, "db")
+    semantic_diagnostics(project, "SELECT 1", "db", None)
+
+    assert len(registry_builds) == 1
+
+
+@needs_metricflow
+def test_an_edit_to_the_bundle_reaches_the_next_describe(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+
+    def calculations() -> set[str]:
+        invoices = describe_semantics(project, "db", name="invoices")
+        assert isinstance(invoices, SemanticDataset)
+        return {c.name for c in invoices.calculations}
+
+    assert "invoice_count" in calculations()
+    _edit_bundle(tmp_path, 1)
+    assert "invoice_rows_1" in calculations()
+    assert "invoice_count" not in calculations()
+
+
+@needs_metricflow
+def test_the_same_files_in_another_project_share_the_layer(
+    tmp_path: Path, registry_builds: list[Any]
+) -> None:
+    first_root, second_root = tmp_path / "first", tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    declared = MetricFlowConfig(path="semantics")
+
+    first = SemanticLayer.load(_project(first_root), declared)
+    second = SemanticLayer.load(_project(second_root), declared)
+
+    assert second is first
+    assert len(registry_builds) == 1
+
+
+@needs_metricflow
+def test_shared_files_keep_the_required_flag_each_declaration_sets(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path)
+
+    optional = SemanticLayer.load(project, MetricFlowConfig(path="semantics"))
+    required = SemanticLayer.load(
+        project, MetricFlowConfig(path="semantics", required=True)
+    )
+
+    assert (optional.required, required.required) == (False, True)
+
+
+@needs_metricflow
+def test_only_the_most_recently_used_layers_are_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(metricflow, "_LAYER_CACHE_SIZE", 2)
+    project = _project(tmp_path)
+    declared = MetricFlowConfig(path="semantics")
+
+    def load(version: int) -> SemanticLayer:
+        _edit_bundle(tmp_path, version)
+        return SemanticLayer.load(project, declared)
+
+    oldest, middle, newest = load(1), load(2), load(3)
+
+    assert load(3) is newest
+    assert load(2) is middle
+    assert load(1) is not oldest
 
 
 def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:
@@ -342,7 +457,7 @@ def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:
             adapter_registry=build_adapter_registry(project),
             query_registry=result.query_registry,
         )
-        return executor._cache_key("q", result.board.queries["q"], {})
+        return executor.cache_key("q", {})
 
     before = key()
     assert before == key()
@@ -353,17 +468,136 @@ def test_a_changed_bundle_changes_the_cache_key(tmp_path: Path) -> None:
 
 
 def test_metricflow_is_accepted_on_warehouse_sources_only() -> None:
-    assert (
-        DuckDBSourceConfig(
-            type="duckdb", path="w.duckdb", metricflow="semantics"
-        ).metricflow
-        == "semantics"
-    )
-    assert (
-        DbtProfileSourceConfig(
-            type="dbt_profile", metricflow="target/metricflow"
-        ).metricflow
-        == "target/metricflow"
-    )
+    duck = DuckDBSourceConfig(type="duckdb", path="w.duckdb", metricflow="semantics")
+    assert duck.metricflow is not None and duck.metricflow.path == "semantics"
+    dbt = DbtProfileSourceConfig(type="dbt_profile", metricflow="target/metricflow")
+    assert dbt.metricflow is not None and dbt.metricflow.path == "target/metricflow"
     with pytest.raises(ValidationError, match="metricflow"):
         CsvSourceConfig(type="csv", files={"t": "t.csv"}, metricflow="semantics")
+
+
+def test_metricflow_short_form_is_the_mapping_form_without_required() -> None:
+    short = DuckDBSourceConfig(type="duckdb", path="w.duckdb", metricflow="semantics")
+    assert short.metricflow == MetricFlowConfig(path="semantics", required=False)
+    long = DuckDBSourceConfig(type="duckdb", path="w.duckdb", metricflow=REQUIRED)
+    assert long.metricflow == MetricFlowConfig(path="semantics", required=True)
+    with pytest.raises(ValidationError, match="path"):
+        DuckDBSourceConfig(
+            type="duckdb", path="w.duckdb", metricflow={"required": True}
+        )
+    with pytest.raises(ValidationError, match="strict"):
+        DuckDBSourceConfig(
+            type="duckdb", path="w.duckdb", metricflow={"path": "s", "strict": True}
+        )
+
+
+@needs_metricflow
+def test_required_source_compiles_semantic_queries(tmp_path: Path) -> None:
+    rows = _rows(
+        _run(
+            _project(tmp_path, metricflow=REQUIRED),
+            "SELECT account.industry AS industry, AGG(invoiced_total) AS total\n"
+            "FROM invoices GROUP BY 1",
+        )
+    )
+    assert rows == [("media", 10.0), ("retail", 150.0)]
+
+
+@needs_metricflow
+def test_required_source_refuses_a_board_query_outside_the_bundle(
+    tmp_path: Path,
+) -> None:
+    result = _run(
+        _project(tmp_path, metricflow=REQUIRED), "SELECT COUNT(*) AS n FROM raw_events"
+    )
+    assert result.error is not None
+    assert result.error.code.code == "ERR-METRICFLOW-OUTSIDE-BUNDLE"
+    assert "raw_events" in str(result.error)
+    assert "requires" in str(result.error)
+
+
+@needs_metricflow
+def test_required_source_refuses_the_agent_execute_sql_path(tmp_path: Path) -> None:
+    registry = build_adapter_registry(_project(tmp_path, metricflow=REQUIRED))
+    result = execute_query(
+        "SELECT COUNT(*) AS n FROM raw_events", source="db", adapter_registry=registry
+    )
+    assert not result.success
+    assert result.error_code == "ERR-METRICFLOW-OUTSIDE-BUNDLE"
+    assert "raw_events" in result.errors[0]
+    ok = execute_query(
+        "SELECT AGG(invoiced_total) AS total FROM invoices",
+        source="db",
+        adapter_registry=registry,
+    )
+    assert ok.success, ok.errors
+    assert ok.data == [{"total": 160.0}]
+
+
+@needs_metricflow
+def test_required_source_names_a_foreign_table_joined_to_a_dataset(
+    tmp_path: Path,
+) -> None:
+    result = _run(
+        _project(tmp_path, metricflow=REQUIRED),
+        "SELECT AGG(invoiced_total) FROM invoices JOIN main.raw_events ON TRUE",
+    )
+    assert result.error is not None
+    assert result.error.code.code == "ERR-METRICFLOW-OUTSIDE-BUNDLE"
+    assert "reads `main.raw_events`, which" in str(result.error)
+
+
+@needs_metricflow
+def test_required_source_does_not_mistake_a_cte_for_a_warehouse_table(
+    tmp_path: Path,
+) -> None:
+    rows = _rows(
+        _run(
+            _project(tmp_path, metricflow=REQUIRED),
+            "WITH totals AS (SELECT AGG(invoiced_total) AS total FROM invoices)\n"
+            "SELECT total FROM totals",
+        )
+    )
+    assert rows == [(160.0,)]
+
+
+@needs_metricflow
+def test_optional_source_still_passes_a_plain_query_through(tmp_path: Path) -> None:
+    rows = _rows(
+        _run(
+            _project(tmp_path, metricflow={"path": "semantics", "required": False}),
+            "SELECT COUNT(*) AS n FROM raw_events",
+        )
+    )
+    assert rows == [(3,)]
+
+
+def test_a_changed_required_flag_changes_the_cache_key(tmp_path: Path) -> None:
+    """Rows a plain query produced while the bundle was optional must not be
+    replayed once every query has to go through it."""
+    project = _project(tmp_path)
+
+    def key(project: FilesystemProject) -> tuple[str, str, str]:
+        result = _board(project, "SELECT COUNT(*) AS n FROM raw_events")
+        executor = Executor(
+            result.board,
+            adapter_registry=build_adapter_registry(project),
+            query_registry=result.query_registry,
+        )
+        return executor.cache_key("q", {})
+
+    before = key(project)
+    (tmp_path / "dbt_charts.yml").write_text(
+        yaml.safe_dump(
+            {
+                "sources": {
+                    "db": {
+                        "type": "duckdb",
+                        "path": "warehouse.duckdb",
+                        "metricflow": REQUIRED,
+                    }
+                }
+            }
+        )
+    )
+    assert key(FilesystemProject(tmp_path)) != before

@@ -6,15 +6,13 @@
 # product, customer, and pipeline data.
 
 title: Series and small multiples
+width: 1872
 source: examples_db
 notes: |
   Series-count, small-multiples, raggedness, null-gap, label-length, density, and
   temporal-cadence idioms, each shown with real business data instead of synthetic
   series.
 theme: stark
-style:
-  frame:
-    width: 1872
 text: |
   A chart might carry two series or two dozen, and the same shape can repeat once
   per category with `multiples:`. This board walks through both, along with how

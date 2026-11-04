@@ -45,13 +45,14 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     _base_kwargs,
     _resolve_text,
     _shared_kwargs,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._palette import (
     _with_color_tokens,
 )
 from dbt_charts.core.compile.resolve.chart.channel import kpi_support_rule_column
 from dbt_charts.core.compile.resolve.style.board import (
-    _build_resolved_callout_chart,
+    build_resolved_callout_chart,
     unset_auto_support_ink,
 )
 from dbt_charts.core.compile.resolve.style.chart_context import (
@@ -287,7 +288,9 @@ def _resolve_spark_bar(
         chart_style_context, normalized
     )
     primary = _with_color_tokens(normalized.style, chart_style_context)
-    spark_bar = merge_unset(chart_style_context.spark_bar, primary)
+    spark_bar = merge_unset(
+        board_family_style(chart_style_context, normalized), primary
+    )
     channels = _channels_for(normalized, data)
     # y is str | list[str] | None on normalized; ResolvedSparkBarChart only takes str | None.
     # Spark bar is single-series — multi-series y is a configuration error.
@@ -335,11 +338,14 @@ def _resolve_callout(
     display_text: ChartDisplayText = None,
 ) -> ResolvedCalloutChart:
     callout = merge_unset(
-        chart_style_context.callout,
+        board_family_style(chart_style_context, normalized),
         _with_color_tokens(normalized.style, chart_style_context),
     )
-    resolved_callout = _build_resolved_callout_chart(
-        callout, chart_style_context.bold_font_weight, callout.tone
+    resolved_callout = build_resolved_callout_chart(
+        callout,
+        chart_style_context.bold_font_weight,
+        chart_style_context.code_family,
+        callout.tone,
     )
     message = _resolve_text(
         normalized.message,

@@ -15,12 +15,21 @@ fn sets_floor(token: &str) -> bool {
 }
 
 impl Measure<'_> {
-    /// The widest whitespace token of `text` that [`sets_floor`] admits.
-    pub fn widest_token(&self, text: &str, family: &str, size: f64) -> Result<f64, String> {
-        let mut widest = 0.0_f64;
+    /// The widest whitespace token of `text` that [`sets_floor`] admits, and
+    /// its width; `("", 0.0)` when none qualifies.
+    pub fn widest_word<'t>(&self, text: &'t str, family: &str, size: f64) -> Result<(f64, &'t str), String> {
+        let mut widest = (0.0_f64, "");
         for token in text.split_whitespace().filter(|t| sets_floor(t)) {
-            widest = widest.max(self.fonts.measure(token, family, size)?);
+            let width = self.fonts.measure(token, family, size)?;
+            if width > widest.0 {
+                widest = (width, token);
+            }
         }
         Ok(widest)
+    }
+
+    /// The width of [`Self::widest_word`].
+    pub fn widest_token(&self, text: &str, family: &str, size: f64) -> Result<f64, String> {
+        Ok(self.widest_word(text, family, size)?.0)
     }
 }

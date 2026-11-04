@@ -377,7 +377,7 @@ rows:
     # the click/hover falls through to the row band. A bare presentation
     # attribute would lose that cascade, so assert the class + the rule, not an
     # attribute. The wired "Open" cell keeps events and is inked as a link.
-    assert re.search(r'<text class="dbt-table-cell-inert"[^>]*>T1</text>', svg)
+    assert re.search(r'<text [^>]*class="dbt-table-cell-inert"[^>]*>T1</text>', svg)
     assert ".dbt-chart text.dbt-table-cell-inert" not in svg
     assert re.search(
         r"\.dbt-chart text\.dbt-table-cell-inert[^{]*\{[^}]*pointer-events:\s*none",
@@ -451,7 +451,7 @@ rows:
     # click/hover on the value reach the row band in the composed page. (No
     # browser lane exists in this package; the real composed-page interaction
     # was verified manually against `dct serve`.)
-    assert '<text class="dbt-table-cell-inert"' in svg
+    assert re.search(r'<text [^>]*class="dbt-table-cell-inert"', svg)
     assert re.search(
         r"\.dbt-chart text\.dbt-table-cell-inert[^{]*\{[^}]*pointer-events:\s*none",
         controls_stylesheet(),
@@ -544,7 +544,7 @@ rows:
         )
 
     def _band_x(svg: str) -> float:
-        xs = re.findall(rf'<rect class="{_ROW_LINK_CLASS}"[^>]*? x="([0-9.]+)"', svg)
+        xs = re.findall(rf'<rect x="([0-9.]+)"[^>]*? class="{_ROW_LINK_CLASS}"', svg)
         assert len(xs) == 2, svg
         return float(xs[0])
 
@@ -678,7 +678,7 @@ rows:
     )
 
     bands = re.findall(
-        rf'<rect class="{_ROW_LINK_CLASS}" fill="transparent" style="--dbt-link: (#[0-9A-Fa-f]{{6}})"',
+        rf'<rect [^>]*class="{_ROW_LINK_CLASS}" fill="transparent" style="--dbt-link: (#[0-9A-Fa-f]{{6}})"',
         svg,
     )
     assert bands, "no row-link band carrying --dbt-link"

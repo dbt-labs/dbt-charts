@@ -41,7 +41,7 @@ use crate::common::{
 };
 use crate::contract;
 use crate::diagnostic::{warn, Diagnostic};
-use crate::families::color_scale::{js_number_string, ContinuousColor, GradientAt};
+use crate::families::color_scale::{ContinuousColor, GradientAt};
 use crate::families::legend::{
     color_channel_title, fold_symbol_limit, legend_fit_bounds, legend_origin, stack_legends, symbol_legend, vega_default_legend,
     vega_legend, LegendConfig, LegendEntry, LegendSymbol, SizeLegend, SizePaint, SizeRows, VEGA_LEGEND_SYMBOL_LIMIT,
@@ -51,7 +51,7 @@ use crate::families::temporal::{infer_vega_type, VegaType};
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::href::LinkOpen;
 use crate::layout::{Layout, Rect};
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathData, Role, Shape};
 use print::print;
 use measure::FontBook;
 use crate::vega_fit::Bounds;
@@ -778,7 +778,7 @@ fn bind_color(
                 let palette = payload.series_palette(&r.palette);
                 // The board's slots apply only to a chart that carries its own palette.
                 let scale = if r.palette.is_empty() { None } else { category_scale_for(&r.category_colors, field) };
-                labels.iter().map(|v| series_color(v, &labels, &palette, scale)).collect::<Result<Vec<_>, _>>()?
+                labels.iter().map(|v| series_color(v, &labels, &palette, scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)).collect::<Result<Vec<_>, _>>()?
             };
             let slots = rows.iter().map(|row| domain.iter().position(|d| js_cell::same_value(d, &row[field]))).collect();
             Ok((Coloring::Categories { domain: labels, fills, title }, slots))
@@ -786,12 +786,9 @@ fn bind_color(
     }
 }
 
-/// The circle's path at `area`, as Vega's `circle` symbol draws it.
-fn circle_path(area: f64) -> Result<String, String> {
-    if area == 0.0 {
-        return Ok("M0,0".into());
-    }
-    crate::families::scatter_shape::path("circle", crate::common::symbol_radius(area))
+/// The circle at `area` (Vega's `size`), as Vega's `circle` symbol draws it.
+fn circle_glyph(area: f64) -> PathData {
+    crate::families::scatter_shape::glyph(d3rs::vega_symbol::VegaSymbol::Circle, crate::common::symbol_radius(area))
 }
 
 /// Fit the bound map to the frame: the plot rect, the basemap, the circles, the legends.
@@ -831,14 +828,14 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let has_layers = !fit_layers.is_empty();
     let fitter = projection::Fitter::new(&r.geo_projection_type, r.geo_projection_params.as_ref(), fit_layers);
 
-    let grad_id = format!("geo_grad-{}", contract::safe_svg_id(&r.id));
+    let grad_id = format!("geo_grad-{}", contract::scoped_id(&r.id));
     let folded_label;
     let symbol_entries: Vec<LegendEntry> = match &bound.coloring {
         Some(Coloring::Categories { domain, fills, .. }) => {
             let mut entries: Vec<LegendEntry> = domain
                 .iter()
                 .zip(fills)
-                .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::FilledCircle), series_key: None, recede: None })
+                .map(|(label, fill)| LegendEntry { label, fill, symbol: Some(LegendSymbol::FilledCircle), series_key: None, recede: None, action: None })
                 .collect();
             if let Some((kept, label)) = fold_symbol_limit(entries.len(), VEGA_LEGEND_SYMBOL_LIMIT as usize) {
                 folded_label = label;
@@ -862,8 +859,8 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             let glyphs = s
                 .areas
                 .iter()
-                .map(|&area| crate::families::scatter_shape::path("circle", crate::common::symbol_radius(area)))
-                .collect::<Result<_, _>>()?;
+                .map(|&area| circle_glyph(area))
+                .collect();
             let rows = SizeRows { labels: s.labels.clone(), glyphs, areas: s.areas.clone(), label_ws };
             let glyph = crate::families::scatter_shape::half_extents("circle", 1.0);
             SizeLegend::new(&s.title, rows, (SYMBOL_LABEL_OFFSET, false), glyph, &legend_cfg, fonts)
@@ -937,7 +934,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             },
         })
         .collect::<Result<_, String>>()?;
-    let basemap_paths: Vec<Option<String>> = match &bound.basemap {
+    let basemap_paths: Vec<Option<PathData>> = match &bound.basemap {
         Some(features) => {
             let path = fitter.at((plot_w, plot_h))?.into_path();
             features.iter().map(|f| path.path(f)).collect::<Result<_, _>>()?
@@ -945,8 +942,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         None => Vec::new(),
     };
 
-    let dim = frame.dim;
-    let safe = contract::safe_svg_id(&r.id);
+    let safe = contract::scoped_id(&r.id);
     let layered = bound.basemap.is_some();
     let clip_ids = ["geo-clip-0", "geo-clip-1"].map(|id| format!("{id}-{safe}"));
     let group = |name: &str, kind: &str, clip: Option<&str>, role: &str, children: Vec<Node>| -> Result<Node, Diagnostic> {
@@ -955,50 +951,51 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             attrs = attrs.set("clip-path", format!("url(#{id})"));
         }
         let container = display_text::language::tr(&format!("aria.container_{kind}"), None, &[])?;
-        Ok(Node::group(attrs.set("role", role).set("aria-roledescription", container), children))
+        Ok(Node::group(Role::Chrome, attrs.set("role", role).set("aria-roledescription", container), children))
     };
 
     let mut layers = Vec::new();
     if layered {
         let shapes = basemap_paths
             .iter()
-            .flatten()
-            .map(|d| {
-                let mut attrs = Attrs::new().set("transform", "translate(0,0)").set("d", d.as_str());
-                attrs = attrs.set("fill", r.basemap_fill.as_deref().expect("checked in bind"));
+            .enumerate()
+            .filter_map(|(i, d)| d.as_ref().map(|d| (i, d)))
+            .map(|(i, d)| {
+                let mut attrs = Attrs::new().set("fill", r.basemap_fill.as_deref().expect("checked in bind"));
                 if let Some(stroke) = &r.basemap_stroke {
                     attrs = attrs.set("stroke", stroke.as_str());
                 }
-                Node::Path(attrs)
+                Node::path(Role::Mark { layer: 0, series: None, datum: Some(i) }, d.clone(), attrs).translate(0.0, 0.0)
             })
             .collect();
         // Vega-Lite clips a basemap whose projection the author placed.
         layers.push(group("layer_0_marks", "shape", (!fit).then_some(clip_ids[0].as_str()), "graphics-symbol", shapes)?);
     }
-    let opacity = js_number_string(r.style.point_mark.opacity);
     let mut circles = Vec::new();
-    for (p, xy) in bound.points.iter().zip(&placed) {
+    for (i, (p, xy)) in bound.points.iter().zip(&placed).enumerate() {
+        // A pole projects to an infinite position, which Vega writes as `translate(x,Infinity)` and draws
+        // nowhere; a coordinate cannot print it, so that circle is left out.
+        if !xy.iter().all(|c| c.is_finite()) {
+            continue;
+        }
         let attrs = Attrs::new()
             .set("aria-label", p.label.as_str())
             .set("role", "graphics-symbol")
-            .set("aria-roledescription", "circle")
-            .set("transform", format!("translate({},{})", js_number_string(xy[0]), js_number_string(xy[1])))
-            .set("d", circle_path(p.area)?);
+            .set("aria-roledescription", "circle");
         // A cell the color scale does not know gets no fill attribute.
         let attrs = match &p.fill {
             Some(fill) => attrs.set("fill", fill.as_str()),
             None => attrs,
         };
-        let attrs = attrs
-            .set("stroke-width", "2")
-            .set("opacity", opacity.as_str());
-        let path = Node::Path(attrs);
+        let attrs = attrs.num("stroke-width", 2.0).num("opacity", r.style.point_mark.opacity);
+        let role = Role::Mark { layer: usize::from(layered), series: None, datum: Some(i) };
+        let path = Node::path(role, circle_glyph(p.area), attrs).translate(xy[0], xy[1]);
         circles.push(match &p.href {
             Some(url) => {
                 let attrs = Attrs::new().set("href", url.as_str());
                 let attrs = r.link_open.open_attr().map_or(attrs.clone(), |open| attrs.set("data-dbt-link-open", open));
                 let attrs = r.link_open.target().map_or(attrs.clone(), |target| attrs.set("target", target));
-                Node::Link { attrs, children: vec![path] }
+                Node::new(Role::Chrome, attrs, Shape::Link(vec![path]))
             }
             _ => path,
         });
@@ -1011,10 +1008,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         "graphics-object",
         circles,
     )?);
-    let mut nodes = vec![Node::group(
-        Attrs::new().set("transform", format!("translate({plot_left:.2},{plot_top:.2})")),
-        layers,
-    )];
+    let mut nodes = vec![Node::group(Role::Chrome, Attrs::new(), layers).translate(plot_left, plot_top)];
 
     // Legends: color, then size, stacked a margin apart at the right.
     let blocks = blocks_at(plot_w, plot_h)?;
@@ -1046,18 +1040,16 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         nodes.extend(legend.nodes(&legend_cfg, paint, leg_x, leg_y + off));
     }
 
-    let clip = |id: &String| Node::ClipPath {
-        attrs: Attrs::new().set("id", id.as_str()),
-        children: vec![Node::Rect(
-            Attrs::new().set("x", "0").set("y", "0").set("width", dim(plot_w)).set("height", dim(plot_h)),
-        )],
+    let clip = |id: &String| {
+        let area = Node::rect(Role::Chrome, (0.0, 0.0, plot_w, plot_h), Attrs::new());
+        Node::new(Role::Chrome, Attrs::new().set("id", id.as_str()), Shape::ClipPath(vec![area]))
     };
     let mut defs = Vec::new();
     if layered && !fit {
         defs.push(clip(&clip_ids[0]));
     }
     defs.push(clip(points_clip));
-    nodes.push(Node::Defs(defs));
+    nodes.push(Node::new(Role::Chrome, Attrs::new(), Shape::Defs(defs)));
 
     let data_box = Rect { x: plot_left, y: plot_top, width: plot_w, height: plot_h };
     let cell = Rect { x: 0.0, y: 0.0, width: frame.view_w, height: frame.h };
@@ -1131,8 +1123,8 @@ mod tests {
 
     #[test]
     fn a_zero_area_circle_is_an_empty_path() {
-        assert_eq!(circle_path(0.0).unwrap(), "M0,0");
-        assert_eq!(circle_path(60.0).unwrap(), "M3.873,0A3.873,3.873,0,1,1,-3.873,0A3.873,3.873,0,1,1,3.873,0");
+        assert_eq!(print::path_d(&circle_glyph(0.0)), "M0,0");
+        assert_eq!(print::path_d(&circle_glyph(60.0)), "M3.87,0A3.87,3.87,0,1,1,-3.87,0A3.87,3.87,0,1,1,3.87,0");
     }
 
     #[test]

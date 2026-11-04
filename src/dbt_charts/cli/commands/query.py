@@ -322,9 +322,7 @@ def query_command(
     # All branches open a ProjectSession so relationship context is available for
     # validate paths (raw-SQL validate-only was previously a stateless short-
     # circuit; it now routes through project_session.validate_query for calibrated severity).
-    with ProjectSession.from_project(
-        project, allow_mutating_methods=True
-    ) as project_session:
+    with ProjectSession.from_project(project) as project_session:
         if not validate:
             # Execute path — keep the named-query branch as a direct query_board call so
             # that file-not-found and compile errors are returned as structured JSON

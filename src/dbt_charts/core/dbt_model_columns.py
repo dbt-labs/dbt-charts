@@ -49,7 +49,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import sqlglot.expressions as exp
-from sqlglot.dialects.dialect import Dialect as SqlglotDialect
 
 from dbt_charts.core.column_refs import (
     extract_base_column_refs,
@@ -58,6 +57,7 @@ from dbt_charts.core.column_refs import (
 from dbt_charts.core.compile.models.query.normalized import is_sql_query
 from dbt_charts.core.compile.sql_guard import (
     SKELETON_PLACEHOLDER_PREFIX,
+    is_sqlglot_dialect,
     sqlglot_dialect,
 )
 from dbt_charts.core.dbt_manifest import LoadedManifest, load_manifest
@@ -129,7 +129,7 @@ def resolve_model_output_columns(loaded: LoadedManifest) -> dict[str, ModelColum
         "metadata", {}
     ).get("adapter_type")
     dialect = sqlglot_dialect(adapter_type) if isinstance(adapter_type, str) else None
-    if dialect not in SqlglotDialect.classes:
+    if not is_sqlglot_dialect(dialect):
         dialect = None
     out: dict[str, ModelColumns] = {}
     for node in loaded.raw.get(

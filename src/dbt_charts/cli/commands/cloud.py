@@ -119,6 +119,7 @@ from dbt_charts.cloud_client.contract import (
     LoginResult,
     MemberAccess,
     MemberList,
+    MemberRoleChanges,
     OAuthToken,
     OrgList,
     OrgStatus,
@@ -427,6 +428,25 @@ def _confirm_destructive(kind: str, coordinate: str, yes: bool) -> None:
     if typed != coordinate:
         err_console.print("[red]Confirmation did not match; nothing was deleted.[/red]")
         raise typer.Exit(1)
+
+
+def _confirm_role_changes(org: str, emails: list[str], change: str, yes: bool) -> None:
+    """Name every member before changing them, ``--yes`` included, and refuse to
+    guess when nobody can answer, as ``_confirm_destructive`` does."""
+    err_console.print(
+        f"This changes {_member_count(emails)} of [bold]{escape(org)}[/bold]"
+        f" from {change}:"
+    )
+    for email in emails:
+        err_console.print(f"  {escape(email)}", soft_wrap=True)
+    if yes:
+        return
+    if _non_interactive():
+        raise typer.BadParameter(
+            "pass --yes to confirm non-interactively, or --dry-run to look first.",
+            param_hint="--yes",
+        )
+    typer.confirm("Change them?", abort=True, err=True)
 
 
 def _fail(exc: CloudError, as_json: bool, exit_code: int = 1) -> NoReturn:
@@ -1406,6 +1426,47 @@ def member_role(
         print_json_result(result)
         return
     typer.echo(f"{result.email} is now {result.role}.")
+
+
+class MemberRole(StrEnum):
+    ADMIN = "admin"
+    CREATOR = "creator"
+    VIEWER = "viewer"
+
+
+@member_app.command("role-all")
+def member_role_all(
+    role: Annotated[MemberRole, typer.Argument(help="New role")],
+    from_role: Annotated[
+        MemberRole, typer.Option("--from", help="Change every member holding this role")
+    ],
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="List who would change; change nobody")
+    ] = False,
+    org: RefusingOrgOption = None,
+    yes: YesOption = False,
+    host: HostOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Change every member holding one role to another. Your own role stays."""
+    if role is from_role:
+        raise typer.BadParameter(
+            f"these members are already {role}.", param_hint="--from"
+        )
+    with _cloud(host, as_json) as (client, config):
+        org_slug = _org(client, config, org, refuse_default=REFUSE_DEFAULT_DESTRUCTIVE)
+        emails = client.member_emails_with_role(org_slug, from_role)
+        if dry_run or not emails:
+            result = MemberRoleChanges(selected=emails)
+        else:
+            _confirm_role_changes(org_slug, emails, f"{from_role} to {role}", yes)
+            result = client.set_member_roles(org_slug, emails, role)
+    if as_json:
+        print_json_result(result)
+    else:
+        _print_role_changes(result, from_role, role, dry_run)
+    if result.failed:
+        raise typer.Exit(1)
 
 
 @member_app.command("show")
@@ -3070,9 +3131,11 @@ def render(
 
 
 def _table(*columns: str) -> Table:
+    """A listing an agent reads and copies from: a value that overruns its
+    column folds onto the next line rather than losing its tail to an ellipsis."""
     table = Table(show_edge=False, pad_edge=False, box=None)
     for column in columns:
-        table.add_column(column)
+        table.add_column(column, overflow="fold")
     return table
 
 
@@ -3126,7 +3189,7 @@ def _print_connections(result: ConnectionList) -> None:
             "No connections yet. Create one: dct cloud connection create --type …"
         )
         return
-    table = _table("SLUG", "TYPE", "LAST TEST")
+    table = _table("SLUG", "TYPE", "IDENTITY", "LAST TEST")
     for connection in result.connections:
         if connection.last_test_success is None:
             outcome = "never tested"
@@ -3134,7 +3197,12 @@ def _print_connections(result: ConnectionList) -> None:
             outcome = "passed"
         else:
             outcome = f"failed: {connection.last_test_error}"
-        table.add_row(connection.slug, connection.connection_type, outcome)
+        table.add_row(
+            connection.slug,
+            connection.connection_type,
+            connection.identity or "",
+            outcome,
+        )
     dct_console().print(table)
 
 
@@ -3212,6 +3280,32 @@ def _print_access_check(result: AccessCheck) -> None:
         typer.echo(f"  {source.role} on {source.place}, {source.how}")
     for note in result.notes:
         typer.echo(f"  {note}")
+
+
+def _member_count(emails: list[str]) -> str:
+    return f"{len(emails)} member{'' if len(emails) == 1 else 's'}"
+
+
+def _print_role_changes(
+    result: MemberRoleChanges, from_role: str, role: str, dry_run: bool
+) -> None:
+    if not result.selected:
+        typer.echo(f"No members are {from_role}.")
+        return
+    if dry_run:
+        count = _member_count(result.selected)
+        typer.echo(f"Would change {count} from {from_role} to {role}:")
+        for email in result.selected:
+            typer.echo(f"  {email}")
+        return
+    typer.echo(f"Changed {_member_count(result.changed)} to {role}.")
+    for email in result.skipped:
+        typer.echo(f"Skipped {email}: your own role, or no longer a member.")
+    for failure in result.failed:
+        err_console.print(
+            f"[red]Failed:[/red] {escape(failure.email)}: {escape(failure.error)}",
+            soft_wrap=True,
+        )
 
 
 def _print_member_access(result: MemberAccess) -> None:

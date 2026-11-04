@@ -44,6 +44,7 @@ def _make_executor(board: object, query_registry: object, truncated_reason: str 
     ok.resolved_relations = None
     ok.truncated_reason = truncated_reason
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.return_value = ok
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry

@@ -10,6 +10,7 @@ from dbt_charts.core.compile.models.markers import (
     InheritSlot,
     SkipInheritSlots,
 )
+from dbt_charts.core.compile.models.primitives import PatternStyle
 from dbt_charts.core.compile.models.style.theme._chart_base import (
     _CartesianChartStyle,
 )
@@ -42,6 +43,9 @@ class HeatmapChartStyle(_CartesianChartStyle):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     cell_padding: float = Field(description="Padding between heatmap cells in pixels.")
+    pattern: PatternStyle = Field(
+        description="How the `pattern:` channel paints fills."
+    )
     marks: Annotated[
         HeatmapChartMarksStyle, InheritSlot(from_path="Style.charts.marks")
     ] = Field(

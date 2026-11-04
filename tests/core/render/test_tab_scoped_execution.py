@@ -346,3 +346,43 @@ def test_hidden_tab_visibility_probe_is_not_executed(
     assert rendered.board_error is None
     assert "flags" not in seen
     assert {"flags", "hidden"} <= rendered.prefetch_query_names
+
+
+def test_hidden_tab_with_nested_board_queries_renders(
+    local_project: LocalProject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    board_yaml = """
+queries:
+  shown:
+    columns: [x, y]
+    values:
+      - [p, 1]
+charts:
+  shown_chart:
+    query: shown
+    type: bar
+    x: x
+    y: y
+tabs:
+  items:
+    - title: One
+      rows: [shown_chart]
+    - title: Two
+      rows:
+        - queries:
+            nested:
+              columns: [a]
+              values:
+                - [1]
+          charts:
+            nested_chart:
+              query: nested
+              type: table
+          rows: [nested_chart]
+"""
+    rendered, _seen, _board, _executor = _spied_render(
+        board_yaml, local_project, monkeypatch, format="svg"
+    )
+
+    assert rendered.board_error is None
+    assert rendered.prefetch_query_names == frozenset()

@@ -105,12 +105,7 @@ pub(crate) fn layout_title(
 }
 
 impl TitlePlan {
-    /// Paints the title group at the absolute `(x, y)` of its origin.
-    pub(crate) fn paint(&self, src: &TitleSource, svg: &mut String, x: f64, y: f64) {
-        svg.push_str(&print::print(&self.nodes(src, x, y)));
-    }
-
-    /// [`Self::paint`] as nodes.
+    /// The title group at the absolute `(x, y)` of its origin.
     pub(crate) fn nodes(&self, src: &TitleSource, x: f64, y: f64) -> Vec<Node> {
         let eff_title_style = src.effective_style();
         let style = eff_title_style.as_ref().or(src.title_style);

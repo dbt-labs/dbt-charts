@@ -2,7 +2,7 @@
 
 The table hug may shrink a board far below 800, so each element that needs a
 minimum (title on one line, footer row, prose words, paginator row) lifts the
-floor only when it is present; an authored ``frame.width`` still wins.
+floor only when it is present; an authored ``width:`` still wins.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ def _title_height(resolved: ResolvedBoard, width: float) -> float:
 def test_a_title_stays_on_one_line_on_a_board_authored_wide_enough(
     local_project,
 ) -> None:
-    wide = "style:\n  frame:\n    width: 900\n  footer:\n    visible: false\n"
+    wide = "width: 900\nstyle:\n  footer:\n    visible: false\n"
     wide += "  timestamp:\n    visible: false\n"
     resolved = _resolved(_TITLE + wide + _QUERY + _TABLE + _ROWS, local_project)
     chrome = 2 * resolved.page_padding + 2 * resolved.card_padding
@@ -138,7 +138,7 @@ def test_title_longer_than_max_width_is_capped_and_wraps_at_words(
 
 
 def test_authored_width_beats_title_floor(local_project) -> None:
-    yaml = _TITLE + "style:\n  frame:\n    width: 300\n" + _QUERY + _TABLE + _ROWS
+    yaml = _TITLE + "width: 300\n" + _QUERY + _TABLE + _ROWS
     assert _resolved(yaml, local_project).width == 300
 
 
@@ -215,7 +215,7 @@ def test_focus_drops_the_board_title_width_floor(layout: str) -> None:
     view_width = board_container_width(board, board.variable_defaults)
     assert view_width > 300 + margin  # the title, not the KPI, sets the board
     focused = focus_on_chart(board, "k")
-    assert focused.resolved_style.frame.width is None
+    assert focused.authored_width is None
     assert board_container_width(focused, focused.variable_defaults) < view_width
 
 
@@ -250,8 +250,8 @@ def _columns(svg: str) -> int:
 
 
 def test_a_twenty_line_yaml_text_block_still_flows_into_columns(local_project) -> None:
-    wide = "style:\n  frame:\n    width: 1200\n"
-    yaml = wide + _QUIET.replace("style:\n", "", 1) + f"text: |\n{_TWENTY_LINES}\n"
+    wide = "width: 1200\n"
+    yaml = wide + _QUIET + f"text: |\n{_TWENTY_LINES}\n"
     assert _columns(_svg(yaml, local_project)) >= 2
 
 

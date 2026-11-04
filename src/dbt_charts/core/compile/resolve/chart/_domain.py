@@ -56,7 +56,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_LOG_SCALE_REQUIRES_POSITIVE_X_DATA,
     ERR_TICKS_COUNT_REQUIRES_NON_LOG_SCALE,
 )
-from dbt_charts.core.numeric import nice_tick_values
+from dbt_charts.core.numeric import ladder_step, nice_tick_values
 from dbt_charts.core.utils import numeric_column_values
 
 # Approximate Vega-Lite tick count on a ladder-less measure axis (height-derived,
@@ -635,6 +635,39 @@ def _authored_tick_ladder(ay: AxisYStyle) -> tuple[float, ...] | None:
     return tuple(float(v) for v in ay.scale.values)
 
 
+def _clip_ladder_to_authored_domain(
+    ticks: tuple[float, ...], authored: tuple[float, float]
+) -> tuple[float, ...]:
+    """Keep only the rungs inside the authored domain, plus both authored ends.
+
+    ``nice_tick_values`` rounds its extent outward, so a wide domain like
+    ``[20, 1]`` yields a rung at 0 that sits outside it; the authored domain is
+    exact, so that rung is dropped and the ends themselves are ticked. The
+    ladder keeps the order ``nice_tick_values`` gave it (descending for a
+    reversed domain).
+
+    Tick formatting reads the ladder's regular step (``ladder_step``), so an
+    end is added only when it sits on the grid of the step's magnitude (``1``
+    for a step of 5, ``1e6`` for 5e6): a finer end would print rounded (10.5 as
+    "11") or break SI compaction. An interior rung under half a step from an
+    added end is dropped so the two labels don't crowd.
+    """
+    lo, hi = min(authored), max(authored)
+    inside = [t for t in ticks if lo <= t <= hi]
+    if len(inside) < 2:
+        return tuple(inside)
+    step = ladder_step(inside)
+    unit = 10.0 ** math.floor(math.log10(step))
+    ends = [
+        e
+        for e in (lo, hi)
+        if e not in inside and abs(e / unit - round(e / unit)) < 1e-9
+    ]
+    kept = [t for t in inside if all(abs(t - e) >= step / 2 for e in ends)]
+    merged = sorted([*kept, *ends], reverse=authored[0] > authored[1])
+    return tuple(merged)
+
+
 def _resolve_cartesian_ticks(
     chart_id: str,
     ay: AxisYStyle,
@@ -827,6 +860,8 @@ def _resolve_cartesian_ticks(
             return _CartesianTickResolution((), None, negative_floor)
         return _CartesianTickResolution((), domain_max, domain_min)
     ticks = tuple(nice_tick_values(tick_min, tick_max, target_count, min_step=min_step))
+    if authored is not None:
+        ticks = _clip_ladder_to_authored_domain(ticks, authored)
     if mixed_sign_floor is not None and min_step is not None and ticks:
         # Compare against the UNFLOORED pick, not the raw data: nice
         # rounding always extends a ladder's bottom rung past the data by
@@ -1053,6 +1088,8 @@ def _resolve_stacked_bar_ticks(
     ticks: tuple[float, ...] = tuple(
         nice_tick_values(tick_min, tick_max, target_count, min_step=min_step)
     )
+    if authored is not None:
+        ticks = _clip_ladder_to_authored_domain(ticks, authored)
     if authored is None and min_step is not None and tick_min < 0:
         # A stack pins its floor from ticks[0], which the format floor can
         # round below the real data. Bake nothing then; the floor reaches

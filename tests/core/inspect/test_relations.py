@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from dbt_charts.core.compile.models.query.normalized import (
-    HttpQuery,
     SchemaQuery,
     SqlQuery,
     ValuesQuery,
@@ -138,14 +137,9 @@ def test_the_same_relation_read_twice_is_returned_once() -> None:
     assert read.relations == frozenset({Relation(schema="analytics", name="orders")})
 
 
-def test_http_and_values_queries_contribute_nothing() -> None:
-    """Neither touches a warehouse, so neither has a relation to probe."""
-    read = relations_read_by(
-        {
-            "h": HttpQuery(url="https://example.com/data.json"),
-            "v": ValuesQuery(values=[[1], [2]], columns=["x"]),
-        }
-    )
+def test_a_values_query_contributes_nothing() -> None:
+    """It touches no warehouse, so it has no relation to probe."""
+    read = relations_read_by({"v": ValuesQuery(values=[[1], [2]], columns=["x"])})
 
     assert read.relations == frozenset()
     assert read.undetermined == ()

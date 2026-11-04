@@ -1,0 +1,3 @@
+kind: Fixes
+body: Fix dct validate and dct serve failing on Windows with "sha256 does not match its manifest".
+time: 2026-10-29T12:50:36.787516-07:00

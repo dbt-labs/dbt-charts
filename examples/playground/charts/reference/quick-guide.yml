@@ -132,7 +132,7 @@ text: |
   dbt charts has just four core elements:
 
   - **boards** — containers that define layout and structure
-  - **queries** — fetch data via SQL, CSV, dbt, or HTTP
+  - **queries**: fetch data with SQL
   - **charts** — visualize data from queries
   - **variables** — user inputs that filter and update the dashboard
 
@@ -293,7 +293,7 @@ rows:
           source: my_postgres
       ```
 
-      dbt charts supports multiple types of queries: **SQL**, **CSV**, **dbt**, **HTTP APIs**, and more. You can even reference queries from other files.
+      Queries run against sources: **SQL** warehouses, **CSV** files, **dbt** models, and more. You can even reference queries from other files.
 
   # ==========================================================================
   # QUERIES DEMO

@@ -238,6 +238,30 @@ class TestDftRenderFormatValueClass:
         )
         assert result.exit_code == 0, result.output + (result.stderr or "")
 
+    def test_render_board_through_symlinked_local_package(self, tmp_path: Path) -> None:
+        package = tmp_path / "package"
+        shutil.copytree(
+            _FIXTURE_DIR / "no-warehouse-board" / "charts", package / "charts"
+        )
+        host = package / "integration_tests"
+        (host / "dbt_packages").mkdir(parents=True)
+        (host / "dbt_charts.yml").write_text("# project marker\n")
+        (host / "dbt_packages" / "pkg").symlink_to(package, target_is_directory=True)
+
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "dbt_packages/pkg/charts/board.yml",
+                "--format",
+                "json",
+                "--project-dir",
+                str(host),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output + (result.stderr or "")
+
     def test_render_data_format_prints_flat_queries_and_charts(
         self, tmp_path: Path
     ) -> None:
@@ -980,7 +1004,7 @@ class TestDftRenderFormatChoice:
         assert result.exit_code == 0
         combined = result.output + result.stderr
         assert (
-            "<svg|html|png|pdf|thumbnail|terminal|json|text|text-data|yaml|data>"
+            "<svg|html|png|pdf|thumbnail|terminal|json|text|text-data|yaml|data|md>"
             in combined
         )
 
@@ -1874,3 +1898,147 @@ def test_render_help_example_validates(tmp_path: Path) -> None:
         input=board_yaml,
     )
     assert result.exit_code == 0, result.output
+
+
+_POST = (
+    "# Post\n\nBefore.\n\n```charts\ntype: bar\ntitle: Revenue\nquery:\n"
+    "  columns: [month, revenue]\n  values:\n    - [Jan, 100]\n    - [Feb, 150]\n"
+    "x: month\ny: revenue\n```\n\nAfter.\n"
+)
+
+
+class TestRenderMarkdownPage:
+    """A markdown file named directly renders when it holds a chart fence."""
+
+    def _project(self, tmp_path: Path) -> Path:
+        (tmp_path / "dbt_charts.yml").write_text("# project marker\n")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "post.md").write_text(_POST)
+        return tmp_path
+
+    def test_a_note_outside_charts_renders(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path)
+
+        result = runner.invoke(
+            app,
+            ["render", "docs/post.md", "-o", "-", "--project-dir", str(project)],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout.lstrip().startswith("<svg")
+
+    def test_md_writes_the_page_and_an_svg_per_fence(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                str(project / "docs" / "post.md"),
+                "--output",
+                str(project / "site" / "blog.md"),
+                "--project-dir",
+                str(project),
+            ],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        page = (project / "site" / "blog.md").read_text()
+        assert page == _POST.replace(
+            _POST[_POST.index("```charts") : _POST.index("\n\nAfter.")],
+            "![Revenue](blog-1.svg)",
+        )
+        svg = (project / "site" / "blog-1.svg").read_text()
+        assert svg.startswith("<svg")
+        assert "data:font/woff2;base64," in svg
+
+    def test_md_refuses_a_yaml_board(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path)
+        (project / "board.yml").write_text("title: x\n")
+
+        result = runner.invoke(
+            app,
+            ["render", "board.yml", "--format", "md", "--project-dir", str(project)],
+        )
+
+        assert result.exit_code == 2
+        assert "is not one" in result.stderr
+
+    def test_md_passes_variables_to_the_charts(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path)
+        (project / "docs" / "post.md").write_text(
+            "---\nboard:\n  variables:\n    region:\n      input: select\n"
+            "      default: US\n      options:\n        static: [US, EU]\n---\n"
+            + _POST.replace("title: Revenue", 'title: "Revenue in {{ region }}"')
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "docs/post.md",
+                "--format",
+                "md",
+                "--var",
+                "region=EU",
+                "--project-dir",
+                str(project),
+            ],
+        )
+
+        assert result.exit_code == 0, result.stderr
+        assert "Revenue in EU" in (project / "renders" / "post-1.svg").read_text()
+
+    @pytest.mark.parametrize(
+        ("args", "message"),
+        [
+            (["-o", "-"], "not stdout"),
+            (["--chart", "c"], "drop --chart"),
+        ],
+    )
+    def test_md_refuses_options_it_cannot_honor(
+        self, tmp_path: Path, args: list[str], message: str
+    ) -> None:
+        project = self._project(tmp_path)
+
+        result = runner.invoke(
+            app,
+            [
+                "render",
+                "docs/post.md",
+                "--format",
+                "md",
+                *args,
+                "--project-dir",
+                str(project),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert message in result.stderr
+
+    def test_md_refuses_stdin(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path)
+
+        result = runner.invoke(
+            app,
+            ["render", "-", "--format", "md", "--project-dir", str(project)],
+            input="title: x\n",
+        )
+
+        assert result.exit_code == 2
+        assert "stdin is read as board YAML" in result.stderr
+
+    def test_an_inferred_md_format_says_where_it_came_from(
+        self, tmp_path: Path
+    ) -> None:
+        project = self._project(tmp_path)
+        (project / "board.yml").write_text("title: x\n")
+
+        result = runner.invoke(
+            app,
+            ["render", "board.yml", "-o", "README.md", "--project-dir", str(project)],
+        )
+
+        assert result.exit_code == 2
+        assert "from --output README.md" in result.stderr

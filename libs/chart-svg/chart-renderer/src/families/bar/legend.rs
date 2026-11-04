@@ -22,7 +22,7 @@ pub(crate) fn numeric_legends_of<'a>(
             })
         })),
         legend,
-        &format!("layer_grad-{}", crate::contract::safe_svg_id(chart_id)),
+        &format!("layer_grad-{}", crate::contract::scoped_id(chart_id)),
     )?;
     legends.unlisted_line = layers
         .into_iter()
@@ -122,7 +122,7 @@ impl LayeredBarLegend {
     } else if self.shown && self.bar_layer_colors.iter().any(|c| c.is_none() || c.as_deref() != self.color_field.as_deref()) {
         // A bar-type layer's own legend entry paints the SAME square glyph
         // as the base's (`emit_bar_layer`'s legend law: square, never
-        // stroke) — `symbol: None` falls back to `emit_vega_legend`'s own
+        // stroke) — `symbol: None` falls back to `drawn_symbol_legend`'s own
         // default `Square(swatch_stroke)`, the mark's real border color,
         // since a bar+bar legend never triggers the mixed-mark
         // `symbolStrokeColor` self-stroke rule (that rule only fires once
@@ -140,6 +140,7 @@ impl LayeredBarLegend {
                 symbol: None,
                 series_key: None,
                 recede: None,
+                action: None,
             }]
         } else {
             self.displayed
@@ -150,6 +151,7 @@ impl LayeredBarLegend {
                     symbol: None,
                     series_key: None,
                     recede: None,
+                    action: None,
                 })
                 .collect()
         };
@@ -161,6 +163,7 @@ impl LayeredBarLegend {
                     symbol: None,
                     series_key: None,
                     recede: None,
+                    action: None,
                 });
             }
         }
@@ -177,6 +180,7 @@ impl LayeredBarLegend {
                 symbol: circle.then_some(ring),
                 series_key: None,
                 recede: None,
+                action: None,
             })
             .collect()
     } else {
@@ -188,6 +192,7 @@ impl LayeredBarLegend {
                 symbol: None,
                 series_key: None,
                 recede: None,
+                action: None,
             })
             .collect()
     };
@@ -277,6 +282,7 @@ pub(super) fn build_legend_state(
     field_labels: &crate::common::FieldLabels,
     wide_labels: &HashMap<String, String>,
     numeric: bool,
+    patterns: &crate::pattern::PatternPlan,
 ) -> Result<LegendState, String> {
     let shown = legend.visible && (!color_domain.is_empty() || extra_admit) && !suppress;
     let entries: Vec<(String, String)> = if shown && !color_domain.is_empty() && !numeric {
@@ -286,7 +292,7 @@ pub(super) fn build_legend_state(
             } else {
                 stack_order.to_vec()
             };
-            stacked_legend_entries(&order, palette_domain, palette, category_scale, wide_labels)?
+            stacked_legend_entries(&order, palette_domain, palette, category_scale, wide_labels, patterns)?
         } else {
             stacked_legend_entries(
                 &grouped_legend_domain(color_domain, legend, wide_labels),
@@ -294,6 +300,7 @@ pub(super) fn build_legend_state(
                 palette,
                 category_scale,
                 wide_labels,
+                patterns,
             )?
         }
     } else {
@@ -385,11 +392,12 @@ pub(super) fn stacked_legend_entries(
     palette: &[String],
     scale: Option<&crate::common::CategoryColorScale>,
     wide_labels: &HashMap<String, String>,
+    patterns: &crate::pattern::PatternPlan,
 ) -> Result<Vec<(String, String)>, String> {
     legend_domain
         .iter()
         .map(|s| {
-            let fill = crate::common::series_color(s, palette_domain, palette, scale)?;
+            let fill = crate::common::series_color(s, palette_domain, palette, scale, patterns)?.swatch("none", 0.0).fill;
             Ok((crate::common::wide_series_display(s, wide_labels), fill))
         })
         .collect()

@@ -718,7 +718,7 @@ def test_column_is_numeric_gates_number_inheritance():
     # (category labels), empty column, bool column, or mixed column is NOT —
     # grafting a d3 numeric format onto it would emit format(<string>, '.3~s')
     # → NaN → the cell renders "-" instead of the label.
-    from dbt_charts.core.compile.resolve.chart._kwargs import _column_is_numeric
+    from dbt_charts.core.compile.support_table import _column_is_numeric
 
     assert _column_is_numeric([{"v": 1.0}, {"v": 2}, {"v": None}], "v") is True
     assert _column_is_numeric([{"v": "Alpha"}, {"v": "Beta"}], "v") is False
@@ -852,3 +852,191 @@ def test_chart_support_table_rejects_non_string_non_mapping_entry():
     # not a new one carved out for the bare-string arm.
     with pytest.raises(ValidationError):
         _support_table_adapter.validate_python([123])
+
+
+def _resolved_formats(
+    entries: list[dict[str, object]], data: list[dict[str, object]]
+) -> list[tuple[str | None, str | None]]:
+    """Each resolved entry's (raw, spec) on a bar of ``revenue`` by ``month``."""
+    from dbt_charts.core.compile.config import get_default_theme_name, get_theme_style
+    from dbt_charts.core.compile.models.chart.normalized import BarChart
+    from dbt_charts.core.compile.models.query.normalized import SqlQuery
+    from dbt_charts.core.compile.resolve import resolve
+    from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
+
+    board_style = resolve_chart_style_context(get_theme_style(get_default_theme_name()))
+    chart = BarChart(
+        id="t",
+        type="bar",
+        x="month",
+        y="revenue",
+        query=SqlQuery(sql="SELECT 1", source="test"),
+        query_name="q",
+        support_table=ChartSupportTable.model_validate({"entries": entries}),
+    )
+    resolved = resolve(chart, data, board_style)
+    assert resolved.support_table is not None
+    return [
+        (None, None) if e.format is None else (e.format.raw, e.format.spec)
+        for e in resolved.support_table.entries
+    ]
+
+
+_ROWS = [
+    {"month": "Jan", "revenue": 279890, "orders": 206, "product": "A", "price": 1358.7},
+    {"month": "Feb", "revenue": 284742, "orders": 211, "product": "B", "price": 1382.4},
+]
+
+
+def test_a_support_table_row_with_no_format_takes_the_engines_number():
+    """A support table reads like a legend: a numeric row with no format of its
+    own takes the engine's compact ``number``, a count counts rows, and a text
+    column still prints its values as they are."""
+    formats = _resolved_formats(
+        [
+            {"source": "orders"},
+            {"source": "product", "aggregate": "count"},
+            {"source": "product"},
+        ],
+        _ROWS,
+    )
+    assert formats == [("number", ".3~s"), ("number", ".3~s"), (None, None)]
+
+
+@pytest.mark.parametrize(
+    ("authored", "expected"),
+    [
+        ("currency_whole", ("currency", "$.3~s")),
+        ("currency_full", ("currency", "$.3~s")),
+        (",d", ("number", ".3~s")),
+        ("integer", ("number", ".3~s")),
+        ("percent", ("percent", ".1%")),
+        ("currency_compact", ("currency_compact", "$.2~s")),
+    ],
+)
+def test_a_full_digit_format_compacts_to_the_engines_three_digit_name(
+    authored: str, expected: tuple[str, str]
+):
+    """A grouped whole or fixed-point format prints the engine's three-digit SI
+    name instead, the way a legend or axis would; a format with no grouped
+    digits to compact is kept."""
+    assert _resolved_formats([{"source": "price", "format": authored}], _ROWS) == [
+        expected
+    ]
+
+
+@pytest.mark.parametrize(
+    "authored",
+    [
+        {"spec": ",.0f", "suffix": " USD"},
+        {"spec": ",.0f", "prefix": "US$"},
+        {"spec": "$,.0f", "sign_placement": "after_prefix"},
+        "+,d",
+        "*>$10,.0f",
+    ],
+)
+def test_an_authored_affix_sign_or_pad_keeps_its_digits(authored: object):
+    """An author who decided how the unit, sign or padding reads also decided the
+    digits."""
+    raw, spec = _resolved_formats([{"source": "price", "format": authored}], _ROWS)[0]
+    assert spec is not None and "s" not in spec, (raw, spec)
+
+
+def test_a_compacted_row_below_one_prints_plain_digits():
+    """Compacting to an SI name never prints a sub-unit prefix (`$400m` for 40
+    cents): the name's own sub-unit fallback votes over the row's values."""
+    rows = [
+        {"month": "Jan", "revenue": 1.0, "price": 0.4},
+        {"month": "Feb", "revenue": 2.0, "price": 0.65},
+    ]
+    raw, spec = _resolved_formats(
+        [{"source": "price", "format": "currency_whole"}], rows
+    )[0]
+    assert spec is not None and not spec.endswith("s"), (raw, spec)
+
+
+@pytest.mark.parametrize("authored", [None, ",.2f", "number"])
+def test_a_non_money_row_below_one_prints_plain_digits(authored: str | None):
+    """A rate of 0.4 never reads ``400m``: an SI row with values below 1 prints
+    plain digits, whatever its unit."""
+    rows = [
+        {"month": "Jan", "revenue": 1.0, "rate": 0.4},
+        {"month": "Feb", "revenue": 2.0, "rate": 0.65},
+    ]
+    entry = (
+        {"source": "rate"}
+        if authored is None
+        else {"source": "rate", "format": authored}
+    )
+    raw, spec = _resolved_formats([entry], rows)[0]
+    assert spec is not None and not spec.endswith("s"), (raw, spec)
+
+
+def test_a_year_column_with_no_format_prints_its_year():
+    rows = [
+        {"month": "Jan", "revenue": 1.0, "fiscal_year": 2024},
+        {"month": "Feb", "revenue": 2.0, "fiscal_year": 2025},
+    ]
+    assert _resolved_formats([{"source": "fiscal_year"}], rows) == [("year", "d")]
+
+
+def test_a_decimal_column_with_no_format_takes_the_engines_number():
+    """A cursor-path adapter hands resolve ``Decimal`` cells, which the engine
+    reads as numbers: they default like any other numeric column."""
+    from decimal import Decimal
+
+    rows = [
+        {"month": "Jan", "revenue": 1.0, "price": Decimal("1358.70")},
+        {"month": "Feb", "revenue": 2.0, "price": Decimal("1382.40")},
+    ]
+    assert _resolved_formats([{"source": "price"}], rows) == [("number", ".3~s")]
+
+
+@pytest.mark.parametrize("authored", [None, "currency"])
+def test_a_row_below_the_sub_unit_floor_keeps_its_digits(authored: str | None):
+    """A conversion rate of 0.003 or 0.0004 keeps its own digits: the shared
+    sub-unit law prints a value under the floor in significant digits."""
+    from dbt_charts.core.text.format_d3 import format_d3
+
+    rows = [
+        {"month": "Jan", "revenue": 1.0, "rate": 0.003},
+        {"month": "Feb", "revenue": 2.0, "rate": 0.0004},
+    ]
+    entry = (
+        {"source": "rate"}
+        if authored is None
+        else {"source": "rate", "format": authored}
+    )
+    _, spec = _resolved_formats([entry], rows)[0]
+    assert spec is not None
+    for value in (0.003, 0.0004):
+        assert format_d3(value, spec).strip("$") not in ("0", "0.00"), (spec, value)
+
+
+def test_a_decimal_year_column_prints_its_year():
+    """`EXTRACT(YEAR ...)` arrives as a whole `Decimal` on some warehouses."""
+    from decimal import Decimal
+
+    rows = [
+        {"month": "Jan", "revenue": 1.0, "fiscal_year": Decimal("2024")},
+        {"month": "Feb", "revenue": 2.0, "fiscal_year": Decimal("2025")},
+    ]
+    assert _resolved_formats([{"source": "fiscal_year"}], rows) == [("year", "d")]
+
+
+def test_a_non_finite_cell_resolves_its_row_to_the_engines_number():
+    """A NaN or infinite cell (`IEEE_DIVIDE(0, 0)`, a numeric `NaN`) is a value the
+    engine paints; type inference passes it through rather than failing resolve."""
+    from decimal import Decimal
+
+    rows = [
+        {
+            "month": "Jan",
+            "revenue": 1.0,
+            "rate": float("nan"),
+            "big": Decimal("Infinity"),
+        },
+        {"month": "Feb", "revenue": 2.0, "rate": 1500.0, "big": Decimal("2500")},
+    ]
+    formats = _resolved_formats([{"source": "rate"}, {"source": "big"}], rows)
+    assert formats == [("number", ".3~s"), ("number", ".3~s")]

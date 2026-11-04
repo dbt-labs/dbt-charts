@@ -105,6 +105,24 @@ class TestWarehouseValidateDuckDB:
         assert r.success is False
         assert "ERR-WAREHOUSE-QUERY-INVALID" in {e.code for e in r.errors}
 
+    _DIALECTED = _HEALTHY_BOARD.replace(
+        "  my_query: SELECT id, revenue FROM orders\n",
+        "  my_query:\n    sql: SELECT id, SAFE_CAST(revenue AS FLOAT64) AS revenue "
+        "FROM orders\n    dialect: bigquery\n",
+    )
+
+    def test_dialect_query_is_checked_not_skipped(self, tmp_path):
+        r = _validate(
+            tmp_path, *_setup_duckdb_project(tmp_path, board_yml=self._DIALECTED)
+        )
+        assert r.success is True
+        assert "WARN-WAREHOUSE-CHECK-UNAVAILABLE" not in {w.code for w in r.warnings}
+
+    def test_dialect_query_defect_fails_the_run(self, tmp_path):
+        broken = self._DIALECTED.replace("SAFE_CAST(revenue", "SAFE_CAST(missing_col")
+        r = _validate(tmp_path, *_setup_duckdb_project(tmp_path, board_yml=broken))
+        assert "ERR-WAREHOUSE-QUERY-INVALID" in {e.code for e in r.errors}
+
     def test_chart_channel_absent_from_result_produces_err(self, tmp_path):
         """The query returns id + revenue; the chart asks for missing_col."""
         project, registry = _setup_duckdb_project(

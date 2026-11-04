@@ -8,11 +8,11 @@ from pydantic import ConfigDict, Field
 
 from dbt_charts.core.compile.models.style.authored import PieChartStylePatch
 
-from ._base import _RadialChartFields
+from ._base import _PatternChannelField, _RadialChartFields
 from ._tooltip import _TooltipFields
 
 
-class PieChart(_RadialChartFields, _TooltipFields):
+class PieChart(_PatternChannelField, _RadialChartFields, _TooltipFields):
     """Authored patch for pie and donut charts; donut defaults `style.inner_radius` to 0.6.
 
     Pie charts use theta (angular) and color (segment) channels.

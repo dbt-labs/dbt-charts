@@ -49,7 +49,7 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
             ),
             "less than or equal to 1",
         ),
-        (_board({"frame": {"width": -5}}), "greater than 0"),
+        (_board({"frame": {"max_width": -5}}), "greater than 0"),
         (
             _board({"title": {"level": 0}}),
             "title.level must be 'auto' or a positive integer, got 0",
@@ -81,7 +81,7 @@ def _board(style: dict[str, Any]) -> dict[str, Any]:
     ids=[
         "legend-symbol-limit",
         "pie-inner-radius",
-        "frame-width",
+        "frame-max-width",
         "title-level",
         "bold-weight",
         "code-theme",

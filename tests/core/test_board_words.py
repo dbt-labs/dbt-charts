@@ -99,7 +99,7 @@ def test_the_controls_strip_carries_its_words_for_the_page() -> None:
     with (
         language_scope("de"),
         interactive_controls(True),
-        board_clock(BoardClock(datetime.date(2026, 10, 20), 1, 1)),
+        board_clock(BoardClock(datetime.date(2026, 10, 20), 1, 1, "UTC")),
     ):
         svg, _ = render_variables_strip_svg(
             controls, 600.0, style, "start", variables_path="variables"

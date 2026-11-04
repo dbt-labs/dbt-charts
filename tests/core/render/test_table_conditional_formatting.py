@@ -36,6 +36,7 @@ from dbt_charts.core.compile.resolve.style.board import (
     resolve_chart_style_context,
     resolve_style,
 )
+from dbt_charts.core.compile.resolve.style.palette import palette
 from dbt_charts.core.render.chart.table_support import (
     compute_scale_domain,
     interpolate_scale_color,
@@ -716,6 +717,7 @@ class TestRowRuleZOrderAndFillAlignment:
         chart = make_chart(
             "table",
             title="M6 Scale With Total",
+            row_role="row_role",
             style={
                 "table": {
                     "columns": {
@@ -724,12 +726,11 @@ class TestRowRuleZOrderAndFillAlignment:
                                 "background": {
                                     "palette": ["#ffffff", "#2563eb"],
                                     "min": 0,
-                                    "max": 100000,
+                                    "max": 80000,
                                 }
                             },
                         }
                     },
-                    "row": {"role": "row_role"},
                 }
             },
         )
@@ -902,6 +903,35 @@ class TestWcagTableInkCarve:
         assert default_stops is not None
         assert static_stops != default_stops
 
+    @pytest.mark.parametrize(
+        ("background", "expected"),
+        [("#101820", "dbt-seq-blue-dark"), (None, "dbt-seq-blue")],
+    )
+    def test_the_charts_own_canvas_picks_the_dark_twin(
+        self, make_chart, background: str | None, expected: str
+    ) -> None:
+        """On a light board, a table on its own dark card resolves a pinned
+        palette to its `-dark` twin; the same table on the board's canvas
+        keeps the light ramp."""
+        chart = make_chart(
+            "table",
+            style={
+                **({"background": background} if background else {}),
+                "table": {
+                    "columns": {
+                        "v": {"scale": {"background": {"palette": "dbt-seq-blue"}}}
+                    },
+                    "color": {"static": "#ffffff"},
+                },
+            },
+        )
+        resolved = resolve(
+            chart, [{"v": 0}, {"v": 100}], chart_style_context=_BOARD_STYLE
+        )
+        assert resolved.columns["v"].scale.background.resolved_stops == tuple(
+            palette(expected, surface="table", text_color="#ffffff")
+        )
+
     def test_invalid_static_color_falls_back_to_font_color(self, make_chart) -> None:
         """An invalid/empty style.color.static must fall back to
         table.font.color rather than reach the WCAG carve as an unparseable
@@ -943,6 +973,7 @@ class TestPivotColumnTotalRowStyling:
         chart = make_chart(
             "table",
             title="Pivot With Totals",
+            row_role="_df_row_role",
             rows=["region"],
             columns=["quarter"],
             values=["revenue"],
@@ -957,7 +988,6 @@ class TestPivotColumnTotalRowStyling:
             update={
                 "row": base_row.model_copy(
                     update={
-                        "role": "_df_row_role",
                         "roles": base_row.roles.model_copy(
                             update={
                                 "total": base_row.roles.total.model_copy(
@@ -1040,16 +1070,13 @@ class TestPivotColumnTotalRowStyling:
         chart = make_chart(
             "table",
             title="All Totals",
+            row_role="_df_row_role",
             rows=["region"],
             columns=["quarter"],
             values=["revenue"],
         )
 
         es = resolve_chart_style_context(get_theme_style())
-        new_table = es.table.model_copy(
-            update={"row": es.table.row.model_copy(update={"role": "_df_row_role"})}
-        )
-        es = dataclasses.replace(es, table=new_table)
 
         data = [
             {
@@ -1083,20 +1110,15 @@ class TestPivotColumnTotalRowStyling:
         assert "Row Role" not in svg, "role marker column must not render"
 
     def test_flat_table_role_column_never_renders(self, make_chart: Any) -> None:
-        """The role-strip is NOT pivot-only: `row.role` cascades from the
-        theme/board, so a flat table (no `columns:`) with a board-wide
-        `row.role: _df_row_role` must also drop the role column from its derived
+        """The role-strip is NOT pivot-only: `row_role` is a chart field,
+        so a flat table (no `columns:`) with `row_role: _df_row_role` must also drop the role column from its derived
         headers, not render it as a "Row Role" column — pivot and flat must not
         diverge here."""
         from .._engine_render import render_table_svg
 
-        chart = make_chart("table", title="Flat With Roles")
+        chart = make_chart("table", title="Flat With Roles", row_role="_df_row_role")
 
         es = resolve_chart_style_context(get_theme_style())
-        new_table = es.table.model_copy(
-            update={"row": es.table.row.model_copy(update={"role": "_df_row_role"})}
-        )
-        es = dataclasses.replace(es, table=new_table)
 
         data = [
             {"region": "US", "revenue": 100, "_df_row_role": "value"},

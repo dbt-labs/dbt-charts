@@ -13,34 +13,18 @@ deduplicated — a file imported via multiple paths appears once.
 
 from __future__ import annotations
 
-import re
-from typing import TYPE_CHECKING, Any
-
-import yaml
+from typing import TYPE_CHECKING
 
 from dbt_charts.core.board_listings import listing_dependencies
 from dbt_charts.core.compile.errors import CompilationError
-from dbt_charts.core.compile.file_refs import RefKind, resolve_ref
-from dbt_charts.core.compile.models.refs import (
-    CHART_REF_RE,
-    QUERY_REF_RE,
-    VAR_REF_RE,
-)
-from dbt_charts.core.compile.parse.parser import load_yaml_text
+from dbt_charts.core.compile.file_refs import resolve_ref
 from dbt_charts.core.compile.template.custom_template import (
     TEMPLATE_FILE_SUFFIX,
     TEMPLATES_DIR,
 )
-from dbt_charts.core.utils import YAML_LOADER
 
 if TYPE_CHECKING:
     from dbt_charts.core.project import ProjectDirectory, ProjectPath
-
-_DOTTED_REF_RES: tuple[tuple[re.Pattern[str], RefKind], ...] = (
-    (QUERY_REF_RE, "queries"),
-    (CHART_REF_RE, "charts"),
-    (VAR_REF_RE, "variables"),
-)
 
 
 def board_import_closure(board_path: ProjectPath) -> list[ProjectPath]:
@@ -76,139 +60,22 @@ def board_import_closure(board_path: ProjectPath) -> list[ProjectPath]:
         add(path)
         resolving.add(relpath)
 
-        content = path.read_text()
-        data = _load_board_yaml(content, relpath)
-
-        if isinstance(data, dict):
-            extends: list[tuple[str, RefKind]] = []
-            _collect_extends(data, extends)
-            for ref, kind in extends:
-                walk(resolve_ref(ref, path.parent, kind), listing_dir)
-            for ref, kind in _extract_imports(data):
-                target = resolve_ref(ref, path.parent, kind)
-                walk(target, target.parent)
-            leaves = [
-                path.project.path(f"{TEMPLATES_DIR}/{name}{TEMPLATE_FILE_SUFFIX}")
-                for name in _custom_template_names(data)
-            ]
-            for text in _listing_texts(data):
-                leaves.extend(listing_dependencies(text, listing_dir))
-            for leaf in leaves:
-                add(leaf)
+        refs = path.project.import_refs(relpath)
+        for ref in refs.extends:
+            walk(resolve_ref(ref, path.parent, "file"), listing_dir)
+        for ref, kind in refs.imports:
+            target = resolve_ref(ref, path.parent, kind)
+            walk(target, target.parent)
+        leaves = [
+            path.project.path(f"{TEMPLATES_DIR}/{name}{TEMPLATE_FILE_SUFFIX}")
+            for name in refs.template_names
+        ]
+        for text in refs.listing_texts:
+            leaves.extend(listing_dependencies(text, listing_dir))
+        for leaf in leaves:
+            add(leaf)
 
         resolving.discard(relpath)
 
     walk(board_path, board_path.parent)
     return result
-
-
-def _load_board_yaml(content: str, relpath: str) -> Any:
-    """Parse board content to a Python object.
-
-    Handles ``.md`` boards via their frontmatter YAML (not the raw markdown text,
-    which contains two YAML documents and raises ``ComposerError``).
-    A YAML syntax error raises ``ERR-YAML-SYNTAX``; a markdown board's
-    frontmatter failure raises a plain ``CompilationError``, so callers see one
-    declared exception type.
-    """
-    if relpath.endswith((".md",)):
-        from dbt_charts.core.compile.parse.markdown import parse_markdown_board
-
-        try:
-            content, _metadata = parse_markdown_board(content)
-        except (ValueError, yaml.YAMLError) as exc:
-            raise CompilationError(f"Parse error in '{relpath}': {exc}") from exc
-    return load_yaml_text(content, source=relpath, loader=YAML_LOADER)
-
-
-def _custom_template_names(data: dict[str, Any]) -> list[str]:
-    """The ``template:`` names of every ``type: custom`` chart in the file.
-
-    A template is read at compile, so an edit to it changes the render the
-    way a board edit does; the closure is what a host keys its cache on. A
-    chart sits under ``charts:``, inline in a layout list, or in a nested
-    board's own ``charts:``, so the whole document is walked.
-    """
-    names: list[str] = []
-
-    def walk(obj: Any) -> None:
-        if isinstance(obj, dict):
-            if obj.get("type") == "custom" and isinstance(obj.get("template"), str):
-                names.append(obj["template"])
-            for value in obj.values():
-                walk(value)
-        elif isinstance(obj, list):
-            for item in obj:
-                walk(item)
-
-    walk(data)
-    return names
-
-
-def _listing_texts(data: Any) -> list[str]:
-    """Every ``text:`` value in the document that may call a listing function."""
-    if isinstance(data, dict):
-        own = data.get("text")
-        texts = [own] if isinstance(own, str) and "glob_" in own else []
-        return texts + [t for v in data.values() for t in _listing_texts(v)]
-    if isinstance(data, list):
-        return [t for v in data for t in _listing_texts(v)]
-    return []
-
-
-def _extract_imports(data: dict[str, Any]) -> list[tuple[str, RefKind]]:
-    """Collect every file ref but ``extends:`` (and how it names its file) in a
-    board mapping."""
-    refs: list[tuple[str, RefKind]] = []
-    _scan_dict({k: v for k, v in data.items() if k != "extends"}, refs)
-    return refs
-
-
-def _collect_extends(data: dict[str, Any], refs: list[tuple[str, RefKind]]) -> None:
-    """Extract .yml/.yaml file refs from the top-level extends: key.
-
-    extends: can be a scalar or a list. Built-in theme names (cream, editorial,
-    etc.) do not end in .yml/.yaml and are skipped automatically.
-    """
-    extends = data.get("extends")
-    entries = extends if isinstance(extends, list) else [extends]
-    refs.extend(
-        (entry, "file")
-        for entry in entries
-        if isinstance(entry, str) and entry.endswith((".yml", ".yaml"))
-    )
-
-
-def _dotted_ref(value: str, refs: list[tuple[str, RefKind]]) -> None:
-    """Anchored grammar (models/refs.py): prose like 'style.charts.callout' is
-    not a ref, and misreading it disables invalidation for the board."""
-    for regex, section in _DOTTED_REF_RES:
-        if regex.fullmatch(value):
-            refs.append((value, section))
-            return
-
-
-def _scan_dict(obj: dict[str, Any], refs: list[tuple[str, RefKind]]) -> None:
-    ref = obj.get("ref")
-    if isinstance(ref, str):
-        _dotted_ref(ref, refs)
-        return  # ref dict is terminal — don't recurse into its siblings
-    for v in obj.values():
-        if isinstance(v, str):
-            # Bare-string cross-file refs: the authored form per refs.py is a
-            # plain string like "_shared.yml.queries.rev", coerced to {ref: ...}
-            # at Pydantic parse time. We read authored YAML, so detect the
-            # bare-string form here.
-            _dotted_ref(v, refs)
-        elif isinstance(v, list):
-            _scan_list(v, refs)
-        elif isinstance(v, dict):
-            _scan_dict(v, refs)
-
-
-def _scan_list(items: list[Any], refs: list[tuple[str, RefKind]]) -> None:
-    for item in items:
-        if isinstance(item, str) and item.endswith((".yml", ".yaml")):
-            refs.append((item, "file"))
-        elif isinstance(item, dict):
-            _scan_dict(item, refs)

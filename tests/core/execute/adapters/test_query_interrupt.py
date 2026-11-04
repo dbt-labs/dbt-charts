@@ -219,9 +219,16 @@ def test_an_interrupted_query_is_not_cached_as_a_failure() -> None:
     executor = MagicMock()
     query = _query("SELECT 1")
     Executor._cache_failure(
-        executor, "q", query, None, QueryError.from_code(ERR_QUERY_INTERRUPTED)
+        executor,
+        "q",
+        query,
+        None,
+        ("s", "q", "v"),
+        QueryError.from_code(ERR_QUERY_INTERRUPTED),
     )
     executor._cache_outcome.assert_not_called()
 
-    Executor._cache_failure(executor, "q", query, None, QueryError("rejected"))
+    Executor._cache_failure(
+        executor, "q", query, None, ("s", "q", "v"), QueryError("rejected")
+    )
     executor._cache_outcome.assert_called_once()

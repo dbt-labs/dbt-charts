@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -12,19 +12,14 @@ from dbt_charts.agent_api._paths import (
     resolve_board_path,
 )
 from dbt_charts.core.compile import compile_file
-from dbt_charts.core.compile.compiler import CompileResult
 from dbt_charts.core.compile.models.board.normalized import Board
 from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
-from dbt_charts.core.compile.models.variable.authored import Variable
 from dbt_charts.core.compile.normalize.queries import is_file_source_ref
 from dbt_charts.core.compile.sql_guard import source_dialect
 from dbt_charts.core.compile.template.daterange import board_clock
-from dbt_charts.core.compile.template.jinja import extract_sql_variable_dependencies
 from dbt_charts.core.compile.template.variables import (
     check_variable_overrides,
-    coerce_variable_values,
-    parse_variable_json_strings,
-    resolve_daterange_presets,
+    variables_from_query_pairs as variables_from_query_pairs,
 )
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import (
@@ -33,7 +28,6 @@ from dbt_charts.core.diagnostics.codes_compile import (
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BOARD_FILE_UNREADABLE,
     ERR_BOARD_QUERY_NOT_FOUND,
-    ERR_VARIABLE_UNBOUND,
 )
 from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.diagnostic import Diagnostic
@@ -105,7 +99,7 @@ def variables_to_dict(
 
 
 @dataclass(frozen=True)
-class _BoardFailure:
+class BoardFailure:
     path: PurePosixPath
     errors: list[str]
     error_code: str
@@ -113,54 +107,70 @@ class _BoardFailure:
 
 
 @dataclass(frozen=True)
-class _LoadedQuery:
+class LoadedBoard:
     path: PurePosixPath
     board: Board
-    compile_result: CompileResult
+    query_registry: dict[str, AnyQuery]
+    default_source: str | None
+    # Root queries plus every nested board's, resolved as the executor does.
+    all_queries: dict[str, AnyQuery]
 
 
-def _load_board_query(
-    name: str, path: Path, project: Project
-) -> _LoadedQuery | _BoardFailure:
-    """Resolve, read and compile the board at *path* and find its query *name*.
+def load_board(path: Path, project: Project) -> LoadedBoard | BoardFailure:
+    """Resolve, read and compile the board at *path*.
 
-    The one prelude of ``query_board`` and ``lookup_board_query_sql``. Only the
-    board's own text is read under the unreadable-file arm: a sibling the
-    compile reads (``meta.yml``, an ``extends:`` base) fails as it always has.
+    The one prelude of ``query_board``, ``lookup_board_query_sql`` and
+    ``execute_board_sql``. Only the board's own text is read under the
+    unreadable-file arm: a sibling the compile reads (``meta.yml``, an
+    ``extends:`` base) fails as it always has.
     """
     try:
         file_path = resolve_board_path(path, project)
     except ValueError as exc:
         rejected = resolution_error_diagnostic(exc)
-        return _BoardFailure(PurePosixPath(path), [rejected.message], rejected.code)
+        return BoardFailure(PurePosixPath(path), [rejected.message], rejected.code)
     display = PurePosixPath(file_path.relpath)
     if not file_path.exists():
-        return _BoardFailure(display, [_file_missing(display)], ERR_FILE_NOT_FOUND.code)
-    board_file = file_path.read_board()
+        return BoardFailure(display, [_file_missing(display)], ERR_FILE_NOT_FOUND.code)
+    board_file = file_path.read_board(named=True)
     try:
         board_file.content  # noqa: B018 — force the read of the board's own file
     except (UnicodeDecodeError, OSError):
-        return _BoardFailure(
+        return BoardFailure(
             display, [_board_unreadable(display)], ERR_BOARD_FILE_UNREADABLE.code
         )
     compile_result = compile_file(board_file)
     if not compile_result.success:
-        return _BoardFailure(
+        return BoardFailure(
             display,
             [e.message for e in compile_result.errors],
             compile_result.errors[0].code,
         )
     board = compile_result.board
     assert board is not None  # compile_result.success guarantees this
-    if name not in board.queries:
-        available = sorted(board.queries.keys())
-        return _BoardFailure(
-            display,
-            [_query_not_found(display, name, available)],
-            ERR_BOARD_QUERY_NOT_FOUND.code,
-            available,
-        )
-    return _LoadedQuery(display, board, compile_result)
+    return LoadedBoard(
+        display,
+        board,
+        compile_result.query_registry,
+        compile_result.default_source,
+        {**compile_result.query_registry, **board.queries},
+    )
+
+
+def _load_board_query(
+    name: str, path: Path, project: Project
+) -> LoadedBoard | BoardFailure:
+    """``load_board``, then find the query *name* in it."""
+    loaded = load_board(path, project)
+    if isinstance(loaded, BoardFailure) or name in loaded.all_queries:
+        return loaded
+    available = sorted(loaded.all_queries)
+    return BoardFailure(
+        loaded.path,
+        [_query_not_found(loaded.path, name, available)],
+        ERR_BOARD_QUERY_NOT_FOUND.code,
+        available,
+    )
 
 
 class BoardQueryLookupResult(BaseModel):
@@ -201,16 +211,16 @@ def lookup_board_query_sql(
     from dbt_charts.core.execute.executor import resolve_query_references
 
     loaded = _load_board_query(name, path, project)
-    if isinstance(loaded, _BoardFailure):
+    if isinstance(loaded, BoardFailure):
         return BoardQueryLookupResult(
             success=False,
             errors=loaded.errors,
             error_code=loaded.error_code,
             available_queries=loaded.available,
         )
-    board, compile_result = loaded.board, loaded.compile_result
+    board = loaded.board
 
-    query = board.queries[name]
+    query = loaded.all_queries[name]
     if not isinstance(query, SqlQuery):
         return BoardQueryLookupResult(
             success=False,
@@ -225,7 +235,7 @@ def lookup_board_query_sql(
     # file source); this preview then falls to the default dialect rather than
     # refusing.
     from dbt_charts.core.compile.models.source import is_file_source
-    from dbt_charts.core.compile.normalize.queries import dialect_for_source
+    from dbt_charts.core.compile.sql_guard import dialect_for_source
     from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.executor import merge_board_variables, utc_now
     from dbt_charts.core.execute.source_resolver import (
@@ -260,7 +270,7 @@ def lookup_board_query_sql(
             # the single variable render instead of never.
             expanded_query = resolve_query_references(
                 query,
-                all_queries={**board.queries, **compile_result.query_registry},
+                all_queries=loaded.all_queries,
                 query_name=name,
             )
             assert isinstance(expanded_query, SqlQuery)
@@ -296,7 +306,7 @@ def lookup_board_query_sql(
                         query.dialect,
                         engine,
                         merged_vars,
-                        board.queries,
+                        loaded.all_queries,
                         not query.lenient_variables,
                         dbt_refs,
                         target_path,
@@ -313,12 +323,16 @@ def lookup_board_query_sql(
                         source=query.source,
                     )
             resolved_sql, _relations = dbt_refs.resolve(expanded_query.sql, target_path)
+            # A source whose warehouse is only knowable at execute previews in the
+            # default dialect's spelling rather than refusing.
+            spelling = warehouse if warehouse is not None else get_dialect("postgres")
             rendered = render_parameterized_with_queries(
                 resolved_sql,
                 merged_vars,
-                queries=board.queries,
+                queries=loaded.all_queries,
+                dialect=INLINE_PLACEHOLDERS,
                 strict=not query.lenient_variables,
-                warehouse=warehouse,
+                warehouse=spelling,
             )
             # Same second resolve pass execution's own SqlAdapter.prepare_sql runs:
             # `resolve_query_references`'s dependency-graph short-circuit only
@@ -334,19 +348,24 @@ def lookup_board_query_sql(
             success=False, errors=[str(exc)], error_code=error_code_of(exc)
         )
 
-    return BoardQueryLookupResult(success=True, sql=composed_sql, source=query.source)
+    # Offline SQL has no parameter list to travel with it, so the values go into the
+    # text as literals, quoted the way the helpers above were spelled.
+    sql = inline_params_for_dialect(
+        composed_sql, list(rendered.params), INLINE_PLACEHOLDERS, spelling
+    )
+    return BoardQueryLookupResult(success=True, sql=sql, source=query.source)
 
 
 class ExecuteQueryArgs(BaseModel):
-    """Run a query and return its rows as CSV. Give exactly one of two forms: raw SQL (`sql` + `source`), or one named query from a stored board (`board` + `query`). Prefer `sql` to explore data or answer a question. Prefer the named form to see what a board's query produces, for example when debugging a chart error like 'unknown column foo': it runs the query as the board's author wrote it, including Jinja variable substitution (declared defaults apply) and non-SQL query types (values, http). The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
+    """Run a query and return its rows as CSV. Three forms. `sql` + `board` runs the SQL as a query of that board: it uses the board's source and variables, and `{{ queries.<name>.cache }}` reads the rows that board query last cached with no warehouse call, while `{{ queries.<name> }}` runs the board's definition fresh on the warehouse. `sql` + `source` runs SQL directly on a data source. `board` + `query` runs one named query exactly as the board's author wrote it, which helps when debugging a chart error like 'unknown column foo'. Prefer the board form for a question a board's queries already answer: the cached rows are the governed answer as of their age, so a period that had closed by then is answered from `{{ queries.<name>.cache }}`, and re-running the same SQL on the warehouse only costs more for the same numbers; a question cut off before the rows were cached, inside a period still open then, runs fresh with its cutoff. The result says where it ran (`ran_on`) and, per `.cache` reference, whether the rows were cached and how old. The result is CSV bounded at about 25,000 tokens; page in SQL with LIMIT and OFFSET."""
 
     sql: str | None = Field(
         None,
-        description="SQL to execute. Use {{ variable_name }} for parameterized values, bound by 'variables'. Not with 'board'/'query'.",
+        description="SQL to execute. Use {{ variable_name }} for parameterized values, bound by 'variables'. With 'board', it may reference the board's queries as {{ queries.<name>.cache }} (cached rows, no warehouse call) or {{ queries.<name> }} (fresh). Not with 'query'.",
     )
     board: Path | None = Field(
         None,
-        description="Path to the board YAML file holding the named query. Use with 'query', not with 'sql'.",
+        description="Path to the board YAML file. With 'sql', the SQL runs as a query of this board; with 'query', that named query runs.",
     )
     query: str | None = Field(
         None,
@@ -356,6 +375,7 @@ class ExecuteQueryArgs(BaseModel):
         None,
         description=(
             "Variable values to substitute, as an array of {name, value} pairs. "
+            "A board query's variable left out runs as the board renders it. "
             'Example: [{"name": "region", "value": "US"}, {"name": "year", "value": 2024}]'
         ),
     )
@@ -363,13 +383,14 @@ class ExecuteQueryArgs(BaseModel):
         None,
         description=(
             "Data source name, or a CSV/JSON/Parquet file path (table name = "
-            "file stem), to execute against ('sql' only). Required unless the "
-            "project declares no `sources:`, where SQL runs on its dbt profile."
+            "file stem), to execute against ('sql' without 'board'). Required "
+            "unless the project declares no `sources:`, where SQL runs on its "
+            "dbt profile."
         ),
     )
     lenient_variables: bool = Field(
         False,
-        description="When True, undefined Jinja variables degrade gracefully (useful for iterative chart editing where not all variables are set). 'sql' only.",
+        description="When True, undefined Jinja variables degrade gracefully (useful for iterative chart editing where not all variables are set). 'sql' without 'board'.",
     )
     # Display only — never reaches execute_query(). Ad-hoc SQL is the one query
     # surface with no author to describe it: a named board query carries the
@@ -391,16 +412,41 @@ class ExecuteQueryArgs(BaseModel):
     @model_validator(mode="after")
     def _exactly_one_form(self) -> Self:
         if self.sql is not None:
-            if self.board is not None or self.query is not None:
-                raise ValueError("takes either 'sql' or 'board' + 'query', not both")
+            if self.query is not None:
+                raise ValueError(
+                    "'query' names a board query and takes no 'sql'; to run SQL on "
+                    "a board pass 'sql' + 'board'"
+                )
+            if self.board is not None and (self.source or self.lenient_variables):
+                raise ValueError(
+                    "'source' and 'lenient_variables' do not apply to 'sql' + "
+                    "'board': the SQL uses the board's own source and variables"
+                )
         elif self.board is None or self.query is None:
-            raise ValueError("needs either 'sql', or both 'board' and 'query'")
+            raise ValueError(
+                "needs 'sql', 'sql' + 'board', or both 'board' and 'query'"
+            )
         elif self.source is not None or self.lenient_variables or self.description:
             raise ValueError(
                 "'source', 'lenient_variables' and 'description' apply to 'sql' only; "
                 "a board query names its own source"
             )
         return self
+
+
+class CacheRef(BaseModel):
+    """One ``{{ queries.<name>.cache }}`` the SQL read."""
+
+    model_config = ConfigDict(frozen=True)
+
+    query: str
+    hit: bool = Field(
+        description="True when the rows were already cached; false when the "
+        "query had to run on the warehouse first."
+    )
+    age_seconds: int | None = Field(
+        default=None, description="Age of the cached rows; absent on a miss."
+    )
 
 
 class ExecuteQueryResult(BaseModel):
@@ -419,6 +465,18 @@ class ExecuteQueryResult(BaseModel):
     )
     row_count: int
     truncated: bool
+    ran_on: Literal["cache", "warehouse"] = Field(
+        default="warehouse",
+        description=(
+            "`cache` when the SQL read only cached rows (no warehouse call); "
+            "`warehouse` when any part of it ran there."
+        ),
+    )
+    cache_refs: list[CacheRef] = Field(
+        default_factory=list,
+        description="Each `{{ queries.<name>.cache }}` the SQL read, with whether "
+        "it was cached and how old.",
+    )
     diagnostics: list[QueryDiagnostic] = Field(
         default_factory=list,
         description=(
@@ -601,35 +659,6 @@ def _fail(
     )
 
 
-_VALUE_HINTS = {
-    "daterange": 'a JSON string like \'["2024-01-01", "2024-01-31"]\' or a preset like "last_90_days"',
-    "multiselect": 'a list of strings like ["COMMERCIAL"], or [] to select none',
-}
-
-
-def _unbound_variable_errors(
-    query: AnyQuery, registry: dict[str, Variable], bound: set[str], query_name: str
-) -> list[str]:
-    """One error per variable the query uses that the board declares without a
-    default and the caller did not pass: binding it to null for them would be a
-    guess, and Jinja's own failure names neither its input type nor the fix."""
-    if not isinstance(query, SqlQuery) or query.lenient_variables:
-        return []
-    needed = extract_sql_variable_dependencies(query.sql, query.setup_sql)
-    return [
-        str(
-            DbtChartsError.from_code(
-                ERR_VARIABLE_UNBOUND,
-                query_name=query_name,
-                variable=var,
-                input=registry[var].input,
-                value_hint=_VALUE_HINTS.get(registry[var].input, "a plain value"),
-            )
-        )
-        for var in sorted(needed & registry.keys() - bound)
-    ]
-
-
 def query_board(
     name: str,
     path: Path,
@@ -640,12 +669,16 @@ def query_board(
     adapter_registry: AdapterRegistry,
 ) -> QueryBoardResult:
     """Run one named query from a compiled board and return its sample rows."""
-    from dbt_charts.core.execute.executor import resolve_query_references, utc_now
+    from dbt_charts.core.execute.executor import (
+        merge_board_variables,
+        resolve_query_references,
+        utc_now,
+    )
 
     limit = min(limit, MAX_QUERY_LIMIT)
 
     loaded = _load_board_query(name, path, project)
-    if isinstance(loaded, _BoardFailure):
+    if isinstance(loaded, BoardFailure):
         return _fail(
             name,
             loaded.path,
@@ -653,30 +686,16 @@ def query_board(
             loaded.error_code,
             loaded.available,
         )
-    board, compile_result, resolved_display = (
-        loaded.board,
-        loaded.compile_result,
-        loaded.path,
-    )
+    board, resolved_display = loaded.board, loaded.path
 
     clock = board.clock(utc_now())
     try:
-        registry = board.variable_registry or {}
-        check_variable_overrides(registry, vars or {})
-        merged_vars = resolve_daterange_presets(
-            coerce_variable_values(
-                parse_variable_json_strings(
-                    {**board.variable_defaults, **(vars or {})}
-                ),
-                registry,
-            ),
-            registry,
-            clock,
-        )
+        check_variable_overrides(board.variable_registry or {}, vars or {})
+        merged_vars = merge_board_variables(board, vars or {}, clock)
     except ExecutionError as exc:
         return _fail(name, resolved_display, [str(exc)], error_code_of(exc))
 
-    query = board.queries[name].model_copy(update={"limit": limit + 1})
+    query = loaded.all_queries[name].model_copy(update={"limit": limit + 1})
     sql = query.sql if isinstance(query, SqlQuery) else None
     noted = query.notes
 
@@ -694,23 +713,12 @@ def query_board(
             # inline.
             query = resolve_query_references(
                 query,
-                all_queries={**board.queries, **compile_result.query_registry},
+                all_queries=loaded.all_queries,
                 query_name=name,
             )
-            if unbound := _unbound_variable_errors(
-                query, board.variable_registry or {}, set(merged_vars), name
-            ):
-                return _fail(
-                    name,
-                    resolved_display,
-                    unbound,
-                    ERR_VARIABLE_UNBOUND.code,
-                    sql=sql,
-                    notes=noted,
-                )
         with board_clock(clock):
             exec_result = adapter_registry.execute(
-                query, variables=merged_vars or None, board=board, query_name=name
+                query, variables=merged_vars, board=board, query_name=name
             )
     except Exception as e:  # noqa: BLE001
         return _fail(

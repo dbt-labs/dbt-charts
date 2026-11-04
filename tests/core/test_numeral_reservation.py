@@ -48,7 +48,7 @@ _ALL_SUFFIX_CASES: list[tuple[int, SuffixMode]] = [
     (3, SuffixMode.ANCHOR),  # " K"
     (3, SuffixMode.REPEAT),  # "k"
     (6, SuffixMode.ANCHOR),  # " M"
-    (6, SuffixMode.REPEAT),  # "mn"
+    (6, SuffixMode.REPEAT),  # "m"
     (9, SuffixMode.ANCHOR),  # " B"
     (9, SuffixMode.REPEAT),  # "bn"
     (12, SuffixMode.ANCHOR),  # " T"

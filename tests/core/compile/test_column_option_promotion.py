@@ -20,6 +20,7 @@ import pytest
 
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.normalize.variables import OPTION_COUNT_COLUMN
 from dbt_charts.core.diagnostics.codes_execute import ERR_VARIABLE_OPTIONS_FAILED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute import Executor
@@ -79,7 +80,7 @@ _INVALID_COLUMN_ONLY_YAML = _board_with_column_ref("name")
 
 class TestNormalizerPromotion:
     def test_options_column_produces_synthetic_query(self) -> None:
-        """options.column → _var_{name}_options in board.queries with SELECT DISTINCT."""
+        """options.column → _var_{name}_options in board.queries, counting each value."""
         result = compile_with_board_sources(_OPTIONS_COLUMN_YAML)
         assert result.success, f"Compilation failed: {result.errors}"
         board = result.board
@@ -87,9 +88,9 @@ class TestNormalizerPromotion:
         assert "_var_options_region" in board.queries
         q = board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
-        assert "SELECT DISTINCT" in q.sql.upper()
+        assert "GROUP BY name" in q.sql
         assert "regions" in q.sql
-        assert "name" in q.sql
+        assert OPTION_COUNT_COLUMN in q.sql
         assert "ORDER BY" in q.sql.upper()
 
     def test_options_column_pointer_rewritten(self) -> None:
@@ -111,7 +112,7 @@ class TestNormalizerPromotion:
         assert "_var_options_region" in board.queries
         q = board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
-        assert "SELECT DISTINCT" in q.sql.upper()
+        assert "GROUP BY name" in q.sql
         assert "regions" in q.sql
 
     def test_top_level_column_pointer_rewritten(self) -> None:
@@ -143,13 +144,17 @@ class TestNormalizerPromotion:
 
         assert [e.code for e in result.errors] == ["ERR-VALIDATION-FIELD"]
 
-    def test_sql_is_select_distinct_col_from_tbl_order_by(self) -> None:
-        """Synthesized SQL matches canonical form: SELECT DISTINCT col FROM tbl ORDER BY col."""
+    def test_sql_counts_each_value_in_value_order(self) -> None:
+        """One row per value with its row count, ordered by value — the menu's
+        listed order, and what its count sorts reorder."""
         result = compile_with_board_sources(_OPTIONS_COLUMN_YAML)
         assert result.success
         q = result.board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
-        expected = "SELECT DISTINCT name FROM regions ORDER BY name"
+        expected = (
+            f"SELECT name, COUNT(*) AS {OPTION_COUNT_COLUMN} "
+            "FROM regions GROUP BY name ORDER BY name"
+        )
         assert q.sql.strip() == expected
 
 
@@ -173,7 +178,8 @@ class TestSchemaQualifiedColumnRef:
         q = result.board.queries["_var_options_region"]
         assert isinstance(q, SqlQuery)
         assert q.sql.strip() == (
-            "SELECT DISTINCT property_type FROM gis.fact_sales ORDER BY property_type"
+            f"SELECT property_type, COUNT(*) AS {OPTION_COUNT_COLUMN} "
+            "FROM gis.fact_sales GROUP BY property_type ORDER BY property_type"
         )
 
     def test_three_part_table_compiles(self) -> None:
@@ -291,6 +297,7 @@ class TestColumnOptionUsesNamedQueryCache:
         assert result.success
 
         registry = Mock()
+        registry.project_file_sources.return_value = {}
         registry.execute.return_value = QueryResult(
             data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
         )
@@ -349,6 +356,7 @@ class TestFailingColumnOptionQuery:
         result = compile_with_board_sources(_FAILING_OPTIONS_YAML)
         assert result.success
         registry = Mock()
+        registry.project_file_sources.return_value = {}
         registry.database_file_version.return_value = ""
         executor = Executor(board=result.board, adapter_registry=registry)
         executor._query_errors["_var_options_region"] = QueryError(
@@ -378,6 +386,7 @@ class TestFailingColumnOptionQuery:
             )
 
         registry = Mock()
+        registry.project_file_sources.return_value = {}
         registry.execute.side_effect = adapter_execute
         registry.database_file_version.return_value = ""
         executor = Executor(board=result.board, adapter_registry=registry)

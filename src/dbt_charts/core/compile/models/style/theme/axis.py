@@ -26,6 +26,7 @@ from dbt_charts.core.compile.models.constraints import (
     ValueIn,
 )
 from dbt_charts.core.compile.models.markers import (
+    AUTO,
     Absent,
     AutoUnset,
     Color,
@@ -954,6 +955,22 @@ class TooltipStyle(BaseModel):
             "provides this."
         )
     )
+    max_rows: int = Field(
+        ge=1,
+        description=(
+            "Series rows a multi-row (x-unified) tooltip shows before folding "
+            "the rest into '+N'. One series past the cap shows as its own row "
+            "instead of '+1'. Theme always provides this."
+        ),
+    )
+    group_limit: int = Field(
+        ge=1,
+        description=(
+            "Series count at one x above which the tooltip shows only the "
+            "hovered series and its total instead of every series. Theme "
+            "always provides this."
+        ),
+    )
 
 
 class AxisMirrorStyle(ConstrainedModel):
@@ -1140,7 +1157,7 @@ class AxisXStyle(BaseAxisStyle):
 class AxisYStyle(BaseAxisStyle):
     """Measure axis style. Theme slot: axis_y.
 
-    Adds measure-only fields: mirror. Grid style is the shared
+    Adds measure-only fields: mirror, color. Grid style is the shared
     BaseAxisGridStyle inherited from BaseAxisStyle — its ``threshold``
     sub-block is not y-only, see that class's docstring. x-axis-only fields
     (fill, time_unit, type, tilt_increments, labels.values) are structurally
@@ -1158,6 +1175,11 @@ class AxisYStyle(BaseAxisStyle):
             default=None,
             description="Y-axis position; auto flips when endpoint labels are on the right.",
         )
+    )
+    # y-axis only, never cascaded: resolve paints it into grid/labels/title.
+    color: Annotated[str | None, Color(keywords=(AUTO,)), SkipInheritSlots()] = Field(
+        default=None,
+        description="Color of the grid lines, tick labels and title; 'auto' uses the series color.",
     )
     # y-axis only: draw the y-scale on both edges.
     mirror: Annotated[bool | AxisMirrorStyle | None, SkipInheritSlots()] = Field(

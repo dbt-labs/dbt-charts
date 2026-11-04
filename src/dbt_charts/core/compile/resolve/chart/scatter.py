@@ -61,6 +61,7 @@ from dbt_charts.core.compile.resolve.chart._kwargs import (
     AutomaticLinkCandidate,
     _base_kwargs,
     _cartesian_kwargs,
+    board_family_style,
 )
 from dbt_charts.core.compile.resolve.chart._layers import (
     _check_layers_y_domain,
@@ -166,7 +167,7 @@ def _resolve_scatter(
         temporal_band_axes=frozenset(),
     )
     primary = plan.primary
-    scatter = merge_unset(chart_style_context.scatter, primary)
+    scatter = merge_unset(board_family_style(chart_style_context, normalized), primary)
     channels = plan.channels
     channels, wide_measure_series = resolve_wide_measure_channels(
         normalized, channels, "scatter", has_layers=bool(normalized.layers)

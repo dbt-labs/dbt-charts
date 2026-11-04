@@ -25,6 +25,7 @@ def _identity(chart_type: str = "bar", chart_id: str = "rev") -> ChartIdentity:
         variable_dependencies=frozenset(),
         magnitude_colored=False,
         canvas=None,
+        title=None,
     )
 
 

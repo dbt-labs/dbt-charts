@@ -36,10 +36,8 @@ from dbt_charts.core.diagnostics import ERR_FILE_NOT_FOUND, Diagnostic
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.file_source_materializer import (
-    default_local_materializer_factory,
-)
 from dbt_charts.core.execute.recording import load_board_recording, record_board
+from dbt_charts.core.project import board_identity
 from dbt_charts.core.render.board_replay import (
     dump_board_artifact,
     load_board_artifact,
@@ -119,16 +117,14 @@ def emit_board_artifact(
         check_variable_overrides(board.variable_registry or {}, variables or {})
     except ExecutionError as exc:
         return EmitBoardArtifactResult(success=False, errors=[exc.to_diagnostic()])
+    assert located.path is not None  # resolved from a path, so it has one
     executor = Executor(
         board,
         adapter_registry=adapter_registry,
         query_registry=compile_result.query_registry,
         use_cache=use_cache,
         result_cache=result_cache,
-        # emit_board_artifact takes no file_materializer of its own — no host
-        # calls it with an injected one — so this is always the local
-        # DuckDB-backed factory, not a routing decision.
-        file_materializer_factory=default_local_materializer_factory(project),
+        board_slug=board_identity(located.path.relpath),
     )
     # `emit-board` merges its own variables — it never goes through `render()`,
     # whose prologue does this — and this dict is both rendered from and stored
@@ -178,7 +174,7 @@ def emit_board_artifact(
         success=True,
         artifact_path=artifact_path,
         recording_path=recording_path,
-        query_count=len(recording.rows_by_query),
+        query_count=len(recording.results_by_query),
     )
 
 

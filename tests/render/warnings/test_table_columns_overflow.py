@@ -19,7 +19,10 @@ from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.diagnostics import WARN_TABLE_COLUMNS_OVERFLOW
-from dbt_charts.core.render.chart.table_overflow import TableOverflow
+from dbt_charts.core.render.chart.table_overflow import (
+    TableOverflow,
+    TableOverflowCause,
+)
 from dbt_charts.core.render.warnings import (
     WarningContext,
     table_columns_overflow as detector,
@@ -55,7 +58,9 @@ def test_fires_when_table_overflows_slot() -> None:
     ctx = ctx.model_copy(
         update={
             "table_overflows": {
-                chart_id: TableOverflow(required_width=479.0, available_width=220.0)
+                chart_id: TableOverflow(
+                    required_width=479.0, available_width=220.0, cause=None
+                )
             }
         }
     )
@@ -80,10 +85,55 @@ def test_one_warning_per_table() -> None:
     ctx = ctx.model_copy(
         update={
             "table_overflows": {
-                chart_id: TableOverflow(required_width=479.0, available_width=220.0),
-                "other": TableOverflow(required_width=300.0, available_width=150.0),
+                chart_id: TableOverflow(
+                    required_width=479.0, available_width=220.0, cause=None
+                ),
+                "other": TableOverflow(
+                    required_width=300.0, available_width=150.0, cause=None
+                ),
             }
         }
     )
     warnings = detector.detect(ctx)
     assert {w.chart for w in warnings} == {chart_id, "other"}
+
+
+def _overflow_message(cause: TableOverflowCause | None) -> str:
+    chart_id, ctx = _table_board()
+    ctx = ctx.model_copy(
+        update={
+            "table_overflows": {
+                chart_id: TableOverflow(
+                    required_width=479.0, available_width=220.0, cause=cause
+                )
+            }
+        }
+    )
+    (warning,) = detector.detect(ctx)
+    return warning.message
+
+
+def test_a_header_word_floor_is_named_with_its_word() -> None:
+    message = _overflow_message(
+        TableOverflowCause(
+            column="org_id", word_width=131.4, header_word="Incomprehensibilities"
+        )
+    )
+    assert message.endswith(
+        " The 'org_id' column cannot go below 131px: "
+        "the word 'Incomprehensibilities' in its header cannot be broken."
+    )
+
+
+def test_a_cell_word_floor_names_the_column_and_never_a_value() -> None:
+    message = _overflow_message(
+        TableOverflowCause(column="org_id", word_width=131.4, header_word=None)
+    )
+    assert message.endswith(
+        " The 'org_id' column cannot go below 131px: "
+        "a word in its cells cannot be broken."
+    )
+
+
+def test_no_cause_adds_nothing() -> None:
+    assert _overflow_message(None).endswith("220px available.")

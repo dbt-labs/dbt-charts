@@ -27,6 +27,7 @@ from enum import Enum
 
 from d3_format import FormatSpec, parse as _d3_parse
 from d3_format.errors import D3FormatError
+from dbt_charts.core.numeric import ladder_step
 from dbt_charts.core.text.format_d3 import (
     Notation,
     active_format_locale,
@@ -203,7 +204,7 @@ def shared_scale_for_ladder(ticks: list[float]) -> SharedScale | None:
     if len(ticks) < 2:
         return None
 
-    step = abs(ticks[1] - ticks[0])
+    step = ladder_step(ticks)
     tier = _largest_tier_dividing(step)
     if tier is None:
         return None
@@ -351,7 +352,10 @@ def shared_scale_for_column(values: list[float]) -> SharedScale | None:
     "no tier". Among tiers tied for the majority with no ``None`` in the tie,
     the higher one wins, which also makes the result independent of row
     order. Compacts only when the extreme value, written out in plain
-    digits, reaches the compaction digit threshold.
+    digits, reaches the compaction digit threshold, and only while the
+    extreme still reads in a few digits at the majority tier: a column that
+    has outgrown its tier ("2,659 K" beside "631 K") gets no shared scale, so
+    each row prints at its own magnitude.
     """
     tally = Counter(_natural_tier(v) for v in values if v != 0)
     if not tally:
@@ -367,10 +371,9 @@ def shared_scale_for_column(values: list[float]) -> SharedScale | None:
     if _integer_digit_count(extreme) < _COMPACTION_DIGIT_THRESHOLD:
         return None
 
-    return SharedScale(
-        exponent=majority_tier,
-        mode=_mode_for_scaled_extreme(extreme / (10.0**majority_tier)),
-    )
+    if _mode_for_scaled_extreme(extreme / (10.0**majority_tier)) is SuffixMode.REPEAT:
+        return None
+    return SharedScale(exponent=majority_tier, mode=SuffixMode.ANCHOR)
 
 
 def decimal_reservation_pad(

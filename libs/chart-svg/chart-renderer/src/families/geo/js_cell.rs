@@ -5,7 +5,7 @@
 use serde_json::{Map, Value};
 
 use crate::common::js_string_to_number;
-use crate::families::color_scale::js_number_string;
+use d3rs::js_math::js_number_string;
 
 /// `normalize_data_types`: a mapping cell is Python's `str(value)`; a list keeps its elements as they are.
 pub(super) fn normalized(row: &Map<String, Value>) -> Map<String, Value> {

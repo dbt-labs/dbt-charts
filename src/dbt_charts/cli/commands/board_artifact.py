@@ -10,7 +10,7 @@ import typer
 from dbt_charts.agent_api import Project
 from dbt_charts.cli._console import dct_console
 from dbt_charts.cli._error_format import print_diagnostics
-from dbt_charts.cli._parsing import parse_kv_pairs
+from dbt_charts.cli._parsing import parse_var_options
 from dbt_charts.cli._project import with_project
 
 console = dct_console()
@@ -33,11 +33,9 @@ def emit_board_command(
     boards_dir = board_path.parent / "boards"
     artifact_path = artifact or boards_dir / f"{board_path.stem}.board.json"
     recording_path = recording or boards_dir / f"{board_path.stem}.recording.json"
-    variables = parse_kv_pairs(var or [], "--var")
+    variables = parse_var_options(var or [])
 
-    with ProjectSession.from_project(
-        project, allow_mutating_methods=True
-    ) as project_session:
+    with ProjectSession.from_project(project) as project_session:
         result = project_session.emit_board(
             board_path,
             artifact_path,

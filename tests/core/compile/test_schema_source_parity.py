@@ -104,7 +104,6 @@ def test_parse_source_config_accepts_all_union_member_types():
         "csv": {"files": {"data": "x.csv"}},
         "parquet": {"files": {"data": "x.parquet"}},
         "json": {"files": {"data": "x.json"}},
-        "http": {"url": "https://api.example.com"},
         "dbt_profile": {"profile": "my_profile"},
     }
     # One type, one variant per auth method: the variant is chosen by `method`.
@@ -161,7 +160,7 @@ def test_source_config_names_in_prompt_matches_union():
 
 
 def test_valid_query_types_matches_authored_query_literal():
-    """VALID_QUERY_TYPES must be exactly the four authored query types.
+    """VALID_QUERY_TYPES must be exactly the three authored query types.
 
     Pinned as an explicit literal set: VALID_QUERY_TYPES is itself derived from
     the AuthoredQuery union, so deriving the expectation from the same union
@@ -172,7 +171,6 @@ def test_valid_query_types_matches_authored_query_literal():
 
     expected = {
         "sql",
-        "http",
         "values",
         "schema",
     }

@@ -9,6 +9,7 @@ by both the execute and render stages.
 
 import json
 import math
+import re
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, datetime
 from typing import Any
@@ -24,9 +25,20 @@ from dbt_charts.core.compile.template.daterange import (
 )
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_UNKNOWN_VARIABLE_OVERRIDE,
+    ERR_VARIABLE_VALUE_INVALID,
     ERR_VARIABLE_VALUE_NOT_IN_OPTIONS,
 )
 from dbt_charts.core.diagnostics.execution import ExecutionError
+
+# `?name={{ color }}`: the one link shape whose click sets exactly one variable
+# from the clicked series. The engine's `selected::setter` accepts the same text.
+_COLOR_SETTER = re.compile(r"\?([^=&#{}]+)=\{\{\s*color\s*\}\}")
+
+
+def color_link_variable(link: str) -> str | None:
+    """The variable a chart link sets from its color channel, else ``None``."""
+    setter = _COLOR_SETTER.fullmatch(link)
+    return setter.group(1) if setter else None
 
 
 def variables_from_query_pairs(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
@@ -181,6 +193,7 @@ def coerce_variable_values(
             continue
         kind = var.input
         if kind == "multiselect":
+            _require_parsed_list(name, value)
             # Ahead of the None check below: an unset multiselect is [], not None.
             members = coerce_multiselect(UNSET_MULTISELECT if value is None else value)
             member_type = choice_member_type(var)
@@ -209,9 +222,8 @@ def coerce_variable_values(
                 result[name] = value
                 continue
             if not isinstance(value, (list, tuple)) or len(value) != 2:
-                raise ExecutionError(
-                    f"Variable '{name}': daterange value must be [start, end], "
-                    f"got {value!r}"
+                raise _invalid_value(
+                    name, f"daterange value must be [start, end], got {value!r}"
                 )
             # Each endpoint is None or an empty string (both unset), or a
             # date/ISO-string. Inlined so the element type is inferred from the
@@ -288,6 +300,8 @@ def check_option_values(
         options = options_of(name, var)
         if not options:
             continue
+        if var.input == "multiselect":
+            _require_parsed_list(name, value)
         members = coerce_multiselect(value) if var.input == "multiselect" else [value]
         for member in members:
             if not _is_option(member, options):
@@ -323,11 +337,29 @@ def check_variable_overrides(
     )
 
 
+def _invalid_value(name: str, problem: str) -> ExecutionError:
+    return ExecutionError.from_code(
+        ERR_VARIABLE_VALUE_INVALID, variable=name, problem=problem
+    )
+
+
+def _require_parsed_list(name: str, value: _MultiselectRaw) -> None:
+    """Refuse a bracketed string for a multiselect.
+
+    ``parse_variable_json_strings`` leaves a string it could not parse as it
+    was, which would otherwise filter on one bogus member.
+    """
+    if isinstance(value, str) and value.lstrip().startswith("["):
+        raise _invalid_value(
+            name, f"multiselect value must be a JSON list, got {value!r}"
+        )
+
+
 def _require_preset(name: str, value: str) -> None:
     try:
         parse_daterange_preset(value)
     except ValueError as e:
-        raise ExecutionError(f"Variable '{name}': {e}") from None
+        raise _invalid_value(name, f"{e}") from None
 
 
 def resolve_daterange_presets(
@@ -462,9 +494,10 @@ def _coerce_date(name: str, value: _Coercible) -> date:
     Callers handle the empty-string-is-unset case before reaching here.
     """
     if isinstance(value, datetime):
-        raise ExecutionError(
-            f"Variable '{name}': date value must be a calendar date, not a "
-            f"datetime with a time component, got {value!r}"
+        raise _invalid_value(
+            name,
+            f"date value must be a calendar date, not a "
+            f"datetime with a time component, got {value!r}",
         )
     if isinstance(value, date):
         return value
@@ -472,28 +505,25 @@ def _coerce_date(name: str, value: _Coercible) -> date:
         try:
             return parse_iso_date(value)
         except ValueError:
-            raise ExecutionError(
-                f"Variable '{name}': date value must be an ISO date "
-                f"(YYYY-MM-DD), got {value!r}"
+            raise _invalid_value(
+                name, f"date value must be an ISO date (YYYY-MM-DD), got {value!r}"
             ) from None
-    raise ExecutionError(
-        f"Variable '{name}': date value must be a string, got {type(value).__name__}"
+    raise _invalid_value(
+        name, f"date value must be a string, got {type(value).__name__}"
     )
 
 
 def _coerce_number(name: str, value: _Coercible) -> int | float:
     if isinstance(value, bool):
-        raise ExecutionError(
-            f"Variable '{name}': number value must be numeric, got a boolean"
-        )
+        raise _invalid_value(name, "number value must be numeric, got a boolean")
     if isinstance(value, int):
         return value
     if isinstance(value, float):
         return _require_finite(name, value)
     if isinstance(value, str):
         return _parse_number(name, value.strip())
-    raise ExecutionError(
-        f"Variable '{name}': number value must be numeric, got {type(value).__name__}"
+    raise _invalid_value(
+        name, f"number value must be numeric, got {type(value).__name__}"
     )
 
 
@@ -505,17 +535,15 @@ def _parse_number(name: str, text: str) -> int | float:
     try:
         parsed = float(text)
     except ValueError:
-        raise ExecutionError(
-            f"Variable '{name}': number value must be numeric, got {text!r}"
+        raise _invalid_value(
+            name, f"number value must be numeric, got {text!r}"
         ) from None
     return _require_finite(name, parsed)
 
 
 def _require_finite(name: str, value: float) -> float:
     if not math.isfinite(value):
-        raise ExecutionError(
-            f"Variable '{name}': number value must be finite, got {value!r}"
-        )
+        raise _invalid_value(name, f"number value must be finite, got {value!r}")
     return value
 
 
@@ -528,9 +556,7 @@ def _coerce_bool(name: str, value: _Coercible) -> bool:
             return True
         if text in _BOOL_FALSE:
             return False
-    raise ExecutionError(
-        f"Variable '{name}': checkbox value must be a boolean, got {value!r}"
-    )
+    raise _invalid_value(name, f"checkbox value must be a boolean, got {value!r}")
 
 
 __all__ = [

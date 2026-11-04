@@ -17,10 +17,9 @@ use crate::codes;
 use crate::common::{tag_at, CellRow, CellTag, Font};
 use crate::diagnostic::{py_repr, warn, Diagnostic};
 use crate::layout::{IntrinsicWidth, Layout, Rect};
-use crate::svg::py_float_str;
 use measure::{FontBook, Measure};
 use print::print;
-use scene::{Attrs, Chars, Escape, Extent, Node, TextBlock};
+use scene::{Attrs, Chars, Escape, Extent, Node, Role, Run, Shape};
 use crate::{Payload, PlaceholderStyle, SparkBarTitle, TitleShift};
 
 // Engine constants for the "+ N more" row and the text rhythm.
@@ -645,23 +644,19 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
     };
     let bar_area_width = (chart_width - left_padding - right_padding).max(20.0);
 
-    let fixed1 = |v: f64| format!("{v:.1}");
-    let text = |x: String, y: String, attrs: Attrs, body: String| {
-        Node::Text(TextBlock {
-            attrs: Attrs::new().quick("x", x).quick("y", y).extend(attrs),
-            text: Chars::new(body, Escape::Quick),
-        })
+    let text = |role: Role, at: (f64, f64), attrs: Attrs, body: String| {
+        let runs = vec![Run::Chars(Chars::new(body, Escape::Quick))];
+        Node::new(role, attrs, Shape::Text { at, bounds: None, runs })
     };
-    let newline = || Node::Chars(Chars::new("\n", Escape::Quick));
-    let mut content = vec![newline()];
+    let mut content = Vec::new();
 
     if let Some(display) = title {
         let title_baseline_y = title_baseline + shift.title_dy;
         content.push(text(
-            "0".into(),
-            py_float_str(title_baseline_y),
+            Role::Title,
+            (0.0, title_baseline_y),
             Attrs::new()
-                .quick("font-size", title_size.to_string())
+                .num("font-size", title_size as f64)
                 .quick_some("font-style", bound.title_font.style.as_deref())
                 .quick("font-weight", bound.title_font.weight.as_str())
                 .quick("fill", bound.text_color.as_str())
@@ -671,10 +666,10 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
         ));
         if let Some(subtitle) = subtitle {
             content.push(text(
-                "0".into(),
-                py_float_str(title_baseline_y + title_size as f64),
+                Role::Title,
+                (0.0, title_baseline_y + title_size as f64),
                 Attrs::new()
-                    .quick("font-size", py_float_str(subtitle.size))
+                    .num("font-size", subtitle.size)
                     .quick_some("font-style", subtitle.style.as_deref())
                     .quick("fill", subtitle.color.as_str())
                     .quick("font-family", bound.body_family.as_str())
@@ -685,14 +680,7 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
     }
 
     let mut truncated_labels = 0;
-    let bar_height = sc.bar.height as i64;
-    let radius = py_float_str(sc.border.radius);
-    // `max(chart_width - ..., 20)`: the floor is the int 20, which prints bare.
-    let track_width = if bar_area_width > 20.0 {
-        py_float_str(bar_area_width)
-    } else {
-        "20".to_string()
-    };
+    let bar_height = (sc.bar.height as i64) as f64;
     // Production hands the row renderer int(bar_height) — baselines derive from
     // the truncated height, not the raw theme float.
     let baseline_h = sc.bar.height.trunc();
@@ -733,42 +721,32 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
         let baseline_y = row_y + baseline_h / 2.0 + TEXT_BASELINE_OFFSET;
         if sc.label.visible {
             content.push(text(
-                "0".into(),
-                fixed1(baseline_y),
+                Role::Label,
+                (0.0, baseline_y),
                 Attrs::new()
-                    .quick("font-size", py_float_str(font_size))
+                    .num("font-size", font_size)
                     .quick("fill", bound.text_color.as_str())
                     .quick("font-family", bound.body_family.as_str()),
                 display_label,
             ));
         }
 
-        let bar = |x: String, width: String, fill: &str| {
-            Node::Rect(
-                Attrs::new()
-                    .quick("x", x)
-                    .quick("y", fixed1(row_y))
-                    .quick("width", width)
-                    .quick("height", bar_height.to_string())
-                    .quick("fill", fill)
-                    .quick("rx", radius.as_str()),
-            )
+        let bar = |role: Role, x: f64, width: f64, fill: &str| {
+            let rect = Shape::Rect { x, y: row_y, w: width, h: bar_height, rx: sc.border.radius };
+            Node::new(role, Attrs::new().quick("fill", fill), rect)
         };
-        content.push(bar(
-            (left_padding as i64).to_string(),
-            track_width.clone(),
-            &sc.bar.background,
-        ));
+        content.push(bar(Role::Chrome, (left_padding as i64) as f64, bar_area_width, &sc.bar.background));
         if bar_width > 0.0 {
-            content.push(bar(fixed1(fill_x), fixed1(bar_width), &sc.bar.color));
+            let fill = Role::Mark { layer: 0, series: None, datum: Some(i) };
+            content.push(bar(fill, fill_x, bar_width, &sc.bar.color));
         }
 
         if let Some(count) = &row.count {
             content.push(text(
-                fixed1(chart_width - SIDE_PADDING),
-                fixed1(baseline_y),
+                Role::Label,
+                (chart_width - SIDE_PADDING, baseline_y),
                 Attrs::new()
-                    .quick("font-size", py_float_str(font_size))
+                    .num("font-size", font_size)
                     .quick("fill", bound.text_color.as_str())
                     .quick("text-anchor", "end")
                     .quick("font-family", bound.body_family.as_str())
@@ -792,10 +770,10 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
 
     if let Some(more_rows) = &bound.more_rows {
         content.push(text(
-            py_float_str(chart_width / 2.0),
-            fixed1(more_y),
+            Role::Label,
+            (chart_width / 2.0, more_y),
             Attrs::new()
-                .quick("font-size", py_float_str(more_rows.size))
+                .num("font-size", more_rows.size)
                 .quick("fill", more_rows.color.as_str())
                 .quick("text-anchor", "middle")
                 .quick("font-style", more_rows.style.as_str())
@@ -804,13 +782,11 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
             format!("+{}", bound.more_count),
         ));
     }
-    content.push(newline());
 
     let extent = Extent {
         width: chart_width,
         height: chart_height,
     };
-    let (width_attr, height_attr) = (py_float_str(extent.width), py_float_str(extent.height));
     let children = match &bound.placeholder {
         Some(Placeholder {
             style,
@@ -825,24 +801,13 @@ pub fn layout(bound: &Bound, cell: Rect, _measure: &Measure) -> Result<Layout, D
                 weight.clone(),
             );
             vec![
-                Node::group(
-                    Attrs::new().quick("opacity", py_float_str(style.opacity)),
-                    content,
-                ),
+                Node::group(Role::Chrome, Attrs::new().num("opacity", style.opacity), content),
                 overlay,
             ]
         }
         None => content,
     };
-    let root = Node::Svg {
-        attrs: Attrs::new()
-            .quick("xmlns", "http://www.w3.org/2000/svg")
-            .quick("width", width_attr.as_str())
-            .quick("height", height_attr.as_str())
-            .quick("viewBox", format!("0 0 {width_attr} {height_attr}")),
-        extent,
-        children,
-    };
+    let root = Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent, children });
     let data_box = Rect {
         x: left_padding,
         y: current_y,
@@ -955,12 +920,12 @@ mod tests {
             &fonts(),
         )
         .expect("renders");
-        assert!(svg.contains("<rect x=\"80\" y=\"0.0\" width=\"38.0\" height=\"18\" fill=\"#e5e7eb\" rx=\"8.0\"/>"), "bar track:\n{svg}");
-        assert!(svg.contains("width=\"30.6\" height=\"18\" fill=\"#203c65\""), "East fill scales to max:\n{svg}");
-        assert!(svg.contains("y=\"33.0\""), "second row baseline at 20 + 9 + 4:\n{svg}");
+        assert!(svg.contains("<rect x=\"80\" y=\"0\" width=\"38\" height=\"18\" rx=\"8\" fill=\"#e5e7eb\"/>"), "bar track:\n{svg}");
+        assert!(svg.contains("width=\"30.61\" height=\"18\" rx=\"8\" fill=\"#203c65\""), "East fill scales to max:\n{svg}");
+        assert!(svg.contains("y=\"33\""), "second row baseline at 20 + 9 + 4:\n{svg}");
         assert!(svg.contains(">812,000</text>"), "grouped count:\n{svg}");
-        assert!(svg.contains("x=\"164.0\""), "count end-anchored at width - side_padding:\n{svg}");
-        assert!(svg.contains("height=\"82.0\""), "explicit slot height wins:\n{svg}");
+        assert!(svg.contains("x=\"164\""), "count end-anchored at width - side_padding:\n{svg}");
+        assert!(svg.contains("height=\"82\""), "explicit slot height wins:\n{svg}");
     }
 
     // max_bars truncation paints the "+ N more" indicator and rewrites the
@@ -979,7 +944,7 @@ mod tests {
         // more_y = 10*20 + 12 = 212; height = 212 + 8 = 220 — the slot's 82
         // is overwritten exactly as production does.
         assert!(
-            svg.contains("height=\"220.0\""),
+            svg.contains("height=\"220\""),
             "indicator bottom edge rewrites the canvas height past the slot:\n{svg}"
         );
     }
@@ -1031,12 +996,12 @@ mod tests {
             "board title_case transforms the title (minor word lowercase):\n{svg}"
         );
         assert!(
-            svg.contains("y=\"27.0\"") && svg.contains("fill=\"#626366\""),
+            svg.contains("y=\"27\"") && svg.contains("fill=\"#626366\""),
             "subtitle at title_baseline 16 + title size 11, slot ink:\n{svg}"
         );
         // title_height 24 + title size 11 = 35 -> first label baseline 35 + 9 + 4.
         assert!(
-            svg.contains("y=\"48.0\""),
+            svg.contains("y=\"48\""),
             "rows shift below the subtitled title band:\n{svg}"
         );
     }
@@ -1050,9 +1015,9 @@ mod tests {
         p.board_style.as_mut().unwrap().spark_bar_title =
             Some(crate::SparkBarTitle { height: 40.0, baseline_y: 30.0 });
         let svg = render(&p, &fonts()).expect("renders");
-        assert!(svg.contains("<text x=\"0\" y=\"30.0\""), "title baseline: {svg}");
+        assert!(svg.contains("<text x=\"0\" y=\"30\""), "title baseline: {svg}");
         // First label baseline: title_height 40 + 9 + 4.
-        assert!(svg.contains("y=\"53.0\""), "rows start below the title block: {svg}");
+        assert!(svg.contains("y=\"53\""), "rows start below the title block: {svg}");
     }
 
     // A placeholder fades the chart and lays the overlay over it, closing the SVG.
@@ -1066,9 +1031,9 @@ mod tests {
         let content = rest.strip_suffix("</svg>").unwrap();
         assert!(svg.starts_with(&format!("{open}<g opacity=\"0.4\">{content}</g><g class=\"placeholder-overlay\">")), "{svg}");
         assert!(svg.ends_with(
-            "font-size=\"16.0\" font-weight=\"500.0\" fill=\"#666666\">add data</text></g></svg>"
+            "font-size=\"16\" font-weight=\"500.0\" fill=\"#666666\">add data</text></g></svg>"
         ), "{svg}");
-        assert!(svg.contains("<rect class=\"dbt-pointer-inert\" x=\"0\" y=\"0\" width=\"168.0\" height=\"82.0\" fill=\"rgba(255, 255, 255, 0.5)\"/>"), "{svg}");
+        assert!(svg.contains("<rect x=\"0\" y=\"0\" width=\"168\" height=\"82\" class=\"dbt-pointer-inert\" fill=\"rgba(255, 255, 255, 0.5)\"/>"), "{svg}");
     }
 
     // The first numeric column is x, a non-finite cell included.
@@ -1110,8 +1075,8 @@ mod tests {
         .expect("renders");
         // bar area 38 wide at x=80: midline 99, half 19; West fills 19 right
         // of it, East half that, ending at the midline.
-        assert!(svg.contains("<rect x=\"99.0\" y=\"0.0\" width=\"19.0\""), "{svg}");
-        assert!(svg.contains("<rect x=\"89.5\" y=\"20.0\" width=\"9.5\""), "{svg}");
+        assert!(svg.contains("<rect x=\"99\" y=\"0\" width=\"19\""), "{svg}");
+        assert!(svg.contains("<rect x=\"89.5\" y=\"20\" width=\"9.5\""), "{svg}");
     }
 
     // A non-finite value draws no bar and prints d3's text for it.
@@ -1329,7 +1294,7 @@ mod tests {
             "title paints the baked title_font:\n{svg}"
         );
         assert!(
-            svg.contains("y=\"30.0\" font-size=\"9.0\" fill=\"#626366\""),
+            svg.contains("y=\"30\" font-size=\"9\" fill=\"#626366\""),
             "subtitle at baseline 16 + title size 14, subtitle.font.size 9:\n{svg}"
         );
     }
@@ -1373,7 +1338,7 @@ mod tests {
                 let height = height_for_width(&bound, width, &measure).unwrap();
                 let cell = Rect { x: 0.0, y: 0.0, width, height };
                 let laid_out = layout(&bound, cell, &measure).unwrap();
-                assert!(matches!(laid_out.nodes.as_slice(), [Node::Svg { extent, .. }] if extent.height == height));
+                assert!(scene::root_extent(&laid_out.nodes).is_some_and(|extent| extent.height == height));
                 assert_eq!(height, root_height(&render(&payload, &fonts).unwrap()));
             }
         }

@@ -21,7 +21,9 @@ from typing import TYPE_CHECKING, Any
 from dbt_charts.core.project import (
     ALL_FILES_GLOB,
     CHARTS_SUBDIR,
+    DBT_PACKAGES_SUBDIR,
     PROJECT_CONFIG_NAME,
+    PROJECT_ROOT_FILES,
     SKIP_SCAN_DIRS,
     GrepHit,
     Project,
@@ -30,17 +32,47 @@ from dbt_charts.core.project import (
     ProjectPath,
     ascii_lower,
     assert_relpath,
+    canonical_in_listing,
+    canonical_listing,
+    canonical_relpath,
     glob_literal_prefix,
     glob_to_regex,
     is_package_relpath,
     package_board_roots,
     posix_relpath,
+    stored_relpath,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dbt_charts.core.compile.config import ProjectSourcesConfig
+
+
+def symlinked_package_path(root: Path, path: Path) -> Path | None:
+    """The logical ``root``-relative form of *path* iff it is read through a
+    ``dbt_packages/<pkg>`` symlink and stays inside that package's target."""
+    logical = Path(os.path.normpath(path.absolute()))
+    # *root* is resolved; *path* may be spelled through a symlinked ancestor
+    # (/tmp -> /private/tmp), so find the ancestor that is the root, outermost first.
+    for ancestor in reversed((logical, *logical.parents)):
+        if ancestor.resolve() == root:
+            break
+    else:
+        return None
+    candidate = root / logical.relative_to(ancestor)
+    parts = candidate.relative_to(root).parts
+    if len(parts) < 2 or parts[0] != DBT_PACKAGES_SUBDIR:
+        return None
+    package = root / parts[0] / parts[1]
+    if package.is_symlink() and candidate.resolve().is_relative_to(package.resolve()):
+        return candidate
+    return None
+
+
+# What dct keeps in a checkout, such as the board index. It exists only on disk, so
+# walking past it is this class's concern, not ``SKIP_SCAN_DIRS``'s.
+LOCAL_STATE_DIR = ".dct"
 
 
 class FilesystemFileQueries(ProjectFileQueries):
@@ -129,8 +161,45 @@ class FilesystemProject(Project):
         return self.dbt_project
 
     @cached_property
+    def boards_dir(self) -> str:
+        """The folder that holds boards (``boards_dir:`` in ``dbt_charts.yml``).
+
+        Every path this project takes or yields is canonical (``charts/...``);
+        the storage methods below translate to and from where files really are.
+        Reading the config itself never needs the translation: it is not a
+        board path. A config that never spells the key cannot set it, so it is
+        not parsed: a project whose config fails to parse can still read its boards.
+        """
+        config = self.root / PROJECT_CONFIG_NAME
+        if not config.exists() or "boards_dir" not in config.read_text(
+            encoding="utf-8"
+        ):
+            return CHARTS_SUBDIR
+        # Lazy import avoids a cycle: compile/config.py imports Project at top-level.
+        from dbt_charts.core.compile.config import get_project_boards_dir
+
+        return get_project_boards_dir(self)
+
+    def _stored(self, relpath: str) -> str:
+        """Where the file at canonical, normalized *relpath* really is; raises
+        ``FileNotFoundError`` for a path that names nothing (``stored_relpath``)."""
+        if relpath in PROJECT_ROOT_FILES:
+            return relpath
+        return stored_relpath(relpath, self.boards_dir)
+
+    def _stored_for_write(self, relpath: str) -> str:
+        """``_stored`` for a write or delete, which refuses with ``ValueError``.
+        An absolute path under the root is its own location."""
+        if Path(relpath).is_absolute():
+            return relpath
+        try:
+            return self._stored(assert_relpath(relpath))
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from None
+
+    @cached_property
     def charts_dir(self) -> Path:
-        return self.root / CHARTS_SUBDIR
+        return self.root / self._stored(CHARTS_SUBDIR)
 
     def package_charts_dirs(self) -> list[Path]:
         """Absolute paths of every installed package's ``charts/`` directory.
@@ -169,6 +238,23 @@ class FilesystemProject(Project):
         return ProjectDirectory(self, self._relpath_for_fspath(path))
 
     def _relpath_for_fspath(self, path: Path) -> str:
+        """Resolve an absolute path to a canonical project-relative path string.
+
+        Raises ValueError if the path is outside the project root, or inside a
+        ``charts/`` folder that ``boards_dir`` displaced.
+        """
+        stored = self._stored_relpath_for_fspath(path)
+        if stored in PROJECT_ROOT_FILES:
+            return stored
+        relpath = canonical_relpath(stored, self.boards_dir)
+        if relpath is None:
+            raise ValueError(
+                f"Path {path!r} is in a charts/ folder that boards_dir "
+                f"{self.boards_dir!r} displaced"
+            )
+        return relpath
+
+    def _stored_relpath_for_fspath(self, path: Path) -> str:
         """Resolve an absolute path to a project-relative path string.
 
         Tries two containment checks in order:
@@ -207,31 +293,36 @@ class FilesystemProject(Project):
         deliberate cross-project relative path (e.g. a shared dev database)
         is a legitimate use.
 
+        A canonical ``charts/...`` path resolves to where ``boards_dir`` keeps it.
+
         Not part of the pluggable file-content interface
         (``read_text``/``read_bytes``/``exists``/``iter_files``) — filesystem
         only, which is why it lives here rather than on ``Project``.
         """
-        return (self.root / relpath).resolve()
+        return (self.root / self._stored(relpath)).resolve()
 
     def exists(self, relpath: str) -> bool:
         """Raises ValueError if *relpath* is absolute, empty/blank, or escapes
         above the project root."""
-        assert_relpath(relpath)
-        return (self.root / relpath).exists()
+        try:
+            stored = self._stored(assert_relpath(relpath))
+        except FileNotFoundError:
+            return False
+        return (self.root / stored).exists()
 
     def read_text(self, relpath: str) -> str:
         """Raises FileNotFoundError if the path does not exist, or ValueError
         if *relpath* is absolute, empty/blank, or escapes above the project
         root."""
-        assert_relpath(relpath)
-        return (self.root / relpath).read_text(encoding="utf-8")
+        return (self.root / self._stored(assert_relpath(relpath))).read_text(
+            encoding="utf-8"
+        )
 
     def read_bytes(self, relpath: str) -> bytes:
         """Raises FileNotFoundError if the path does not exist, or ValueError
         if *relpath* is absolute, empty/blank, or escapes above the project
         root."""
-        assert_relpath(relpath)
-        return (self.root / relpath).read_bytes()
+        return (self.root / self._stored(assert_relpath(relpath))).read_bytes()
 
     def file_version(self, relpath: str) -> str:
         """Stat signature (``mtime_ns:size``) — no file read on the common path.
@@ -240,8 +331,7 @@ class FilesystemProject(Project):
         reliable "did this file change?" signal for the local edit-refresh loop,
         for tracked, dirty, and untracked files alike, and costs one ``stat``.
         """
-        assert_relpath(relpath)
-        st = (self.root / relpath).stat()
+        st = (self.root / self._stored(assert_relpath(relpath))).stat()
         return f"{st.st_mtime_ns}:{st.st_size}"
 
     def iter_files(
@@ -262,10 +352,30 @@ class FilesystemProject(Project):
         existing caller passes no ``onerror``, so this is additive only;
         ``list_boards`` is the first to use it.
         """
-        subtree = self.root if under == "." else self.root / under
+        boards_dir = self.boards_dir
+        subtree_relpath = self._stored(under)
+        subtree = self.root if subtree_relpath == "." else self.root / subtree_relpath
         if not subtree.is_dir():
             return
 
+        def _report(stored: str, exc: OSError) -> None:
+            shown = canonical_in_listing(under, boards_dir, stored)
+            if onerror is not None and shown is not None:
+                onerror(shown, exc)
+
+        yield from canonical_listing(
+            under,
+            boards_dir,
+            self._walk(subtree, recursive, _report if onerror is not None else None),
+        )
+
+    def _walk(
+        self,
+        subtree: Path,
+        recursive: bool,
+        onerror: Callable[[str, OSError], None] | None,
+    ) -> Iterator[str]:
+        """Stored project-relative paths of the files under *subtree*, sorted."""
         if recursive:
             candidates = []
 
@@ -279,7 +389,9 @@ class FilesystemProject(Project):
             for root_str, dirs, files in os.walk(
                 subtree, topdown=True, onerror=walk_onerror
             ):
-                dirs[:] = sorted(d for d in dirs if d not in SKIP_SCAN_DIRS)
+                dirs[:] = sorted(
+                    d for d in dirs if d not in SKIP_SCAN_DIRS and d != LOCAL_STATE_DIR
+                )
                 root_path = Path(root_str)
                 for name in files:
                     candidates.append(posix_relpath(root_path / name, self.root))
@@ -296,36 +408,53 @@ class FilesystemProject(Project):
         sandbox guard: an entry whose resolved target lands outside the
         project root is excluded (e.g. a ``charts/tasks -> ../../tasks``
         symlink), even though ``os.scandir`` itself would happily follow it.
+        The one exception is a symlinked ``dbt_packages/<pkg>`` (see
+        ``symlinked_package_path``).
         """
-        subtree = self.root if under == "." else self.root / under
+        boards_dir = self.boards_dir
+        stored_under = self._stored(under)
+        subtree = self.root if stored_under == "." else self.root / stored_under
         if not subtree.is_dir():
             return
 
-        dirs: list[os.DirEntry[str]] = []
-        files: list[os.DirEntry[str]] = []
+        dirs: list[str] = []
+        files: list[str] = []
         with os.scandir(subtree) as it:
             for entry in it:
                 if entry.name.startswith("."):
                     continue
-                try:
-                    Path(entry.path).resolve().relative_to(self.root)
-                except ValueError:
+                # An entry the boards folder moved elsewhere (or the config file
+                # sitting in a boards folder that is the project root) is not a
+                # child of *under*.
+                child = entry.name if under == "." else f"{under}/{entry.name}"
+                stored_child = (
+                    entry.name
+                    if stored_under == "."
+                    else f"{stored_under}/{entry.name}"
+                )
+                if canonical_in_listing(under, boards_dir, stored_child) != child:
+                    continue
+                entry_path = Path(entry.path)
+                if (
+                    not entry_path.resolve().is_relative_to(self.root)
+                    and symlinked_package_path(self.root, entry_path) is None
+                ):
                     continue
                 if entry.is_dir():
                     if entry.name in SKIP_SCAN_DIRS:
                         continue
-                    dirs.append(entry)
+                    dirs.append(entry.name)
                 else:
-                    files.append(entry)
+                    files.append(entry.name)
 
-        dirs.sort(key=lambda e: e.name.lower())
-        files.sort(key=lambda e: e.name.lower())
-        for entry in dirs:
-            child = entry.name if under == "." else f"{under}/{entry.name}"
-            yield ProjectDirectory(self, child)
-        for entry in files:
-            child = entry.name if under == "." else f"{under}/{entry.name}"
-            yield ProjectPath(self, child)
+        # The boards folder is `charts` at the canonical root, wherever it is.
+        if under == "." and boards_dir != CHARTS_SUBDIR:
+            if (self.root / boards_dir).is_dir():
+                dirs.append(CHARTS_SUBDIR)
+
+        for names, handle in ((dirs, ProjectDirectory), (files, ProjectPath)):
+            for name in sorted(names, key=str.lower):
+                yield handle(self, name if under == "." else f"{under}/{name}")
 
     def write_text(self, relpath: str, content: str) -> None:
         """Write *content* under the project root, creating parent directories.
@@ -344,7 +473,7 @@ class FilesystemProject(Project):
         that guard while ``resolve()`` still collapsed it back onto the
         package file underneath.
         """
-        candidate = Path(relpath)
+        candidate = Path(self._stored_for_write(relpath))
         candidate = candidate if candidate.is_absolute() else self.root / candidate
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:
@@ -363,7 +492,7 @@ class FilesystemProject(Project):
         ``dbt_packages/`` path is refused outright — see ``write_text`` for why
         the check runs against the resolved path, not the raw *relpath*.
         """
-        candidate = Path(relpath)
+        candidate = Path(self._stored_for_write(relpath))
         candidate = candidate if candidate.is_absolute() else self.root / candidate
         resolved = candidate.resolve()
         if resolved != self.root and self.root not in resolved.parents:
@@ -378,3 +507,9 @@ class FilesystemProject(Project):
         from dbt_charts.core.compile.config import load_project_sources
 
         return load_project_sources(self)
+
+    @cached_property
+    def declared_sources(self) -> ProjectSourcesConfig:
+        from dbt_charts.core.compile.config import load_declared_sources
+
+        return load_declared_sources(self)

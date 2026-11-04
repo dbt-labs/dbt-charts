@@ -137,7 +137,7 @@ mod tests {
     /// The path of the point at longitude 0, latitude 0.
     fn origin_path(path: &GeoPath<VegaProjection>) -> String {
         let point = GeoJson::Geometry(Geometry::Point { coordinates: vec![0.0, 0.0] });
-        path.path(&point).unwrap().unwrap()
+        print::path_d(&path.path(&point).unwrap().unwrap())
     }
 
     fn params(value: Value) -> Map<String, Value> {
@@ -213,7 +213,8 @@ mod tests {
         let p = params(json!({"scale": 100, "pointRadius": 2}));
         let path = Fitter::new("mercator", Some(&p), vec![]).at((10.0, 10.0)).unwrap().into_path();
         let point = GeoJson::Geometry(Geometry::Point { coordinates: vec![0.0, 0.0] });
-        assert!(path.path(&point).unwrap().unwrap().contains("a2,2"));
+        let circle = path.path(&point).unwrap().unwrap();
+        assert!(circle.commands().iter().any(|c| matches!(c, scene::PathCommand::A { rx, ry, .. } if *rx == 2.0 && *ry == 2.0)));
     }
 
     #[test]

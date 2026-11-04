@@ -22,15 +22,27 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
 
     for chart_id, overflow in ctx.table_overflows.items():
+        message = WARN_TABLE_COLUMNS_OVERFLOW.message_template.format(
+            chart_id=chart_id,
+            needed_width=overflow.required_width,
+            available_width=overflow.available_width,
+        )
+        cause = overflow.cause
+        if cause is not None:
+            word = (
+                f"the word {cause.header_word!r} in its header"
+                if cause.header_word is not None
+                else "a word in its cells"
+            )
+            message += (
+                f" The {cause.column!r} column cannot go below "
+                f"{cause.word_width:.0f}px: {word} cannot be broken."
+            )
         warnings.append(
             Diagnostic.from_code(
                 WARN_TABLE_COLUMNS_OVERFLOW,
                 chart=chart_id,
-                message=WARN_TABLE_COLUMNS_OVERFLOW.message_template.format(
-                    chart_id=chart_id,
-                    needed_width=overflow.required_width,
-                    available_width=overflow.available_width,
-                ),
+                message=message,
                 fix=WARN_TABLE_COLUMNS_OVERFLOW.fix_template,
             )
         )

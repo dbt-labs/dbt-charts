@@ -81,6 +81,11 @@ from dbt_charts.core.compile.resolve.chart._palette import (
     _effective_single_series_fill,
     _resolved_series_label,
 )
+from dbt_charts.core.compile.resolve.chart._pattern import (
+    inked_palette,
+    pattern_series,
+    resolve_pattern,
+)
 from dbt_charts.core.compile.resolve.chart._plan import (
     build_cartesian_axes,
     plan_cartesian,
@@ -256,6 +261,8 @@ def _resolve_area(
     rendered_at: datetime | None,
     display_text: ChartDisplayText = None,
 ) -> ResolvedAreaChart:
+    authored_color = normalized.color
+    normalized = pattern_series(normalized, normalized.x, normalized.y)
     data = dataset.all_rows()
     multiples_scale = (
         normalized.multiples.scale if normalized.multiples is not None else "shared"
@@ -716,12 +723,24 @@ def _resolve_area(
         line_mark_merged, resolved_area_line_labels
     )
     _tf = resolve_title_font(chart_local_style_context, title_width)
+    pattern = resolve_pattern(
+        normalized.pattern,
+        authored_color,
+        data,
+        chart_style_context,
+        area.pattern,
+        single_series_fill,
+        primary,
+    )
+    eff_palette = inked_palette(
+        _effective_palette(chart_style_context, primary), pattern
+    )
     bkw = _base_kwargs(
         normalized,
         chart_style_context,
         channels,
         area.legend,
-        _effective_palette(chart_style_context, primary),
+        eff_palette,
         requested_alias_palette=_effective_requested_alias_palette(
             chart_style_context, primary
         ),
@@ -772,6 +791,7 @@ def _resolve_area(
     return ResolvedAreaChart(
         **bkw,
         **_ck,
+        pattern=pattern,
         tooltip=resolve_tooltip(normalized, data, chart_style_context.formats),
         x_date_range=x_date_range,
         wide_measures=wide_measures,
@@ -780,7 +800,7 @@ def _resolve_area(
         style=ResolvedAreaStyle(
             series_label=_resolved_series_label(
                 chart_style_context,
-                primary,
+                eff_palette,
                 width,
                 chart_local_style_context.ink_canvas,
             ),

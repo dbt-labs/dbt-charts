@@ -57,6 +57,7 @@ from dbt_charts.cloud_client.contract import (
     InvitationList,
     LoginResult,
     MemberList,
+    MemberRoleChanges,
     OrgList,
     OrgStatus,
     ProjectConnectStarted,
@@ -94,6 +95,7 @@ def _connection(slug: str = "acme-bigquery") -> dict[str, object]:
         "slug": slug,
         "name": slug,
         "connection_type": "bigquery",
+        "identity": "svc@acme-gcp.iam.gserviceaccount.com",
         "is_active": True,
         "last_test_success": True,
         "last_test_error": "",
@@ -3683,6 +3685,40 @@ class TestConnections:
         assert "acme-bigquery" in result.output
         assert "bigquery" in result.output
 
+    def test_lists_the_identity_to_grant(self, api: FakeApi) -> None:
+        """A warehouse "Access Denied" is fixed by granting the principal the
+        connection authenticates as; the table names it beside the slug so
+        nobody has to open the web form to learn it."""
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/connections",
+            {"connections": [_connection()]},
+        )
+        result = runner.invoke(app, ["cloud", "connections", "--org", "acme-data"])
+        assert result.exit_code == 0, out(result)
+        assert "IDENTITY" in result.output
+        assert "svc@acme-gcp.iam.gserviceaccount.com" in result.output
+
+    def test_a_long_identity_is_never_cut_short(self, api: FakeApi) -> None:
+        """The column exists to be copied into a grant, so an 80-column
+        terminal folds a long service-account email onto a second line
+        rather than eliding its tail."""
+        wide = _connection("warehouse-production-reporting-replica")
+        wide["identity"] = (
+            "dbt-charts-read-only@acme-gcp-analytics.iam.gserviceaccount.com"
+        )
+        wide["last_test_success"] = None
+        api.add("GET", "/api/orgs/acme-data/connections", {"connections": [wide]})
+        result = runner.invoke(app, ["cloud", "connections", "--org", "acme-data"])
+        assert result.exit_code == 0, out(result)
+        assert "…" not in result.output
+        header, *rows = result.output.splitlines()
+        start, end = header.index("IDENTITY"), header.index("LAST TEST")
+        assert (
+            "".join(row[start:end].strip() for row in rows)
+            == "dbt-charts-read-only@acme-gcp-analytics.iam.gserviceaccount.com"
+        )
+
     def test_json_is_the_contract_model(self, api: FakeApi) -> None:
         api.add(
             "GET", "/api/orgs/acme-data/connections", {"connections": [_connection()]}
@@ -4763,6 +4799,220 @@ class TestMembers:
         }
 
 
+def _member(email: str, role: str) -> dict[str, object]:
+    return {
+        "email": email,
+        "name": "",
+        "role": role,
+        "joined_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def _role_post(email: str) -> str:
+    return f"/api/orgs/acme-data/members/{email}/role"
+
+
+ROLE_ALL = [
+    "cloud",
+    "member",
+    "role-all",
+    "creator",
+    "--from",
+    "viewer",
+    "--org",
+    "acme-data",
+]
+
+
+class TestMemberRoleAll:
+    @pytest.fixture
+    def members(self, api: FakeApi) -> FakeApi:
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/members",
+            {
+                "members": [
+                    _member("boss@example.com", "admin"),
+                    _member("made@example.com", "creator"),
+                    _member("sam@example.com", "viewer"),
+                    _member("zoe@example.com", "viewer"),
+                ]
+            },
+        )
+        return api
+
+    def _posted(self, api: FakeApi) -> list[str]:
+        return [path for method, path, _body in api.calls if method == "POST"]
+
+    def test_changes_only_the_members_holding_the_named_role(
+        self, members: FakeApi
+    ) -> None:
+        for email in ("sam@example.com", "zoe@example.com"):
+            members.add("POST", _role_post(email), _member(email, "creator"))
+
+        result = runner.invoke(app, [*ROLE_ALL, "--yes"])
+
+        assert result.exit_code == 0, out(result)
+        assert self._posted(members) == [
+            _role_post("sam@example.com"),
+            _role_post("zoe@example.com"),
+        ]
+        assert members.body("POST", _role_post("sam@example.com")) == {
+            "role": "creator"
+        }
+        assert "Changed 2 members to creator" in result.output
+
+    def test_names_every_member_before_changing_them(self, members: FakeApi) -> None:
+        for email in ("sam@example.com", "zoe@example.com"):
+            members.add("POST", _role_post(email), _member(email, "creator"))
+
+        result = runner.invoke(app, [*ROLE_ALL, "--yes"])
+
+        assert "from viewer to creator" in out(result)
+        assert "sam@example.com" in out(result)
+        assert "zoe@example.com" in out(result)
+        assert "boss@example.com" not in out(result)
+
+    def test_requires_naming_the_role_to_change_from(self, members: FakeApi) -> None:
+        result = runner.invoke(
+            app, ["cloud", "member", "role-all", "creator", "--org", "acme-data"]
+        )
+
+        assert result.exit_code != 0
+        assert members.calls == []
+
+    def test_an_unknown_role_changes_nothing(self, members: FakeApi) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "member",
+                "role-all",
+                "creator",
+                "--from",
+                "veiwer",
+                "--org",
+                "acme-data",
+                "--yes",
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert members.calls == []
+
+    def test_changing_a_role_to_itself_is_refused(self, members: FakeApi) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "cloud",
+                "member",
+                "role-all",
+                "viewer",
+                "--from",
+                "viewer",
+                "--org",
+                "acme-data",
+                "--yes",
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert members.calls == []
+
+    def test_dry_run_names_the_members_and_changes_nobody(
+        self, members: FakeApi
+    ) -> None:
+        result = runner.invoke(app, [*ROLE_ALL, "--dry-run"])
+
+        assert result.exit_code == 0, out(result)
+        assert "Would change 2 members from viewer to creator" in result.output
+        assert "sam@example.com" in result.output
+        assert "boss@example.com" not in result.output
+        assert self._posted(members) == []
+
+    def test_dry_run_json_is_the_contract_model(self, members: FakeApi) -> None:
+        result = runner.invoke(app, [*ROLE_ALL, "--dry-run", "--json"])
+
+        changes = MemberRoleChanges.model_validate_json(result.stdout)
+        assert changes.selected == ["sam@example.com", "zoe@example.com"]
+        assert changes.changed == []
+
+    def test_refuses_without_yes_when_nobody_can_answer(self, members: FakeApi) -> None:
+        result = runner.invoke(app, ROLE_ALL)
+
+        assert result.exit_code != 0
+        assert "--yes" in out(result)
+        assert self._posted(members) == []
+
+    def test_no_member_holding_the_role_is_said_plainly(self, api: FakeApi) -> None:
+        api.add(
+            "GET",
+            "/api/orgs/acme-data/members",
+            {"members": [_member("boss@example.com", "admin")]},
+        )
+
+        result = runner.invoke(app, ROLE_ALL)
+
+        assert result.exit_code == 0, out(result)
+        assert "No members are viewer" in result.output
+
+    def test_a_refused_member_does_not_stop_the_batch(self, members: FakeApi) -> None:
+        members.add(
+            "POST",
+            _role_post("sam@example.com"),
+            {"code": "conflict", "message": "Cannot demote the sole admin."},
+            status=409,
+        )
+        members.add(
+            "POST", _role_post("zoe@example.com"), _member("zoe@example.com", "creator")
+        )
+
+        result = runner.invoke(app, [*ROLE_ALL, "--yes"])
+
+        assert result.exit_code == 1
+        assert "Cannot demote the sole admin." in out(result)
+        assert "Changed 1 member to creator" in result.output
+        assert _role_post("zoe@example.com") in self._posted(members)
+
+    def test_the_callers_own_row_is_not_a_failure(self, members: FakeApi) -> None:
+        members.add(
+            "POST",
+            _role_post("sam@example.com"),
+            {"code": "not_found", "message": "Not found."},
+            status=404,
+        )
+        members.add(
+            "POST", _role_post("zoe@example.com"), _member("zoe@example.com", "creator")
+        )
+
+        result = runner.invoke(app, [*ROLE_ALL, "--yes", "--json"])
+
+        assert result.exit_code == 0, out(result)
+        changes = MemberRoleChanges.model_validate_json(result.stdout)
+        assert changes.changed == ["zoe@example.com"]
+        assert changes.skipped == ["sam@example.com"]
+        assert changes.failed == []
+
+    def test_json_lists_each_failure_and_exits_non_zero(self, members: FakeApi) -> None:
+        members.add(
+            "POST",
+            _role_post("sam@example.com"),
+            {"code": "conflict", "message": "Refused."},
+            status=409,
+        )
+        members.add(
+            "POST", _role_post("zoe@example.com"), _member("zoe@example.com", "creator")
+        )
+
+        result = runner.invoke(app, [*ROLE_ALL, "--yes", "--json"])
+
+        assert result.exit_code == 1
+        changes = MemberRoleChanges.model_validate_json(result.stdout)
+        assert [(f.email, f.error) for f in changes.failed] == [
+            ("sam@example.com", "Refused.")
+        ]
+
+
 class TestInvites:
     def test_lists_invitations(self, api: FakeApi) -> None:
         api.add(
@@ -5386,6 +5636,7 @@ class TestDestructiveConfirm:
         "argv",
         [
             ["member", "remove", "bob@acme.com"],
+            ["member", "role-all", "creator", "--from", "viewer", "--yes"],
             ["invite", "revoke", "bob@acme.com"],
             ["grant", "revoke", "grant-1"],
             ["access", "revoke", "--who", "bob@acme.com"],

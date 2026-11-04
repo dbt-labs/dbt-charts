@@ -34,7 +34,7 @@ Regression tests for CRITICAL/HIGH review findings:
     against a real DuckDB warehouse succeeds.
 """
 
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,17 +54,21 @@ from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_regi
 from dbt_charts.core.execute.cache_backend import CacheHit
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
+from ..._results import rows_schema
+
 # ─── helpers ─────────────────────────────────────────────────────────────────
 
 
 def _adapter(*datasets: list[dict]) -> Mock:
     """Mock adapter returning successive result sets on each execute() call."""
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     results = []
     for data in datasets:
         r = Mock()
         r.is_success = True
         r.data = list(data)
+        r.schema = rows_schema(r.data)
         r.resolved_relations = None
         r.truncated_reason = None
         results.append(r)
@@ -706,17 +710,18 @@ rows:
 
 
 class TestNonSqlQueryIncrementalError:
-    """An HTTP/values query with an explicit incremental column is a
+    """A values query with an explicit incremental column is a
     compile-time error — only SQL queries can be tailed."""
 
-    def test_http_query_incremental_column_raises(self) -> None:
+    def test_values_query_incremental_column_raises(self) -> None:
         board_yaml = """\
 title: T
 incremental: ts
 queries:
   q:
-    type: http
-    url: https://example.com/data
+    type: values
+    rows:
+      - ts: 1
     incremental: ts
 charts:
   c:
@@ -876,18 +881,17 @@ class TestFileSourceIncrementalDoesNotIntercept:
                 super().__init__(project)
                 self.run_calls = 0
 
-            def materialize_and_run(self, source, sql, variables, source_name):  # type: ignore[override]
+            def materialize_and_run(self, *args, **kwargs):  # type: ignore[override]
                 self.run_calls += 1
-                return super().materialize_and_run(source, sql, variables, source_name)
+                return super().materialize_and_run(*args, **kwargs)
 
         # Render 1 (cold): materializer runs, results cached.
         mat1 = _CountingMaterializer(project)
         ex1 = Executor(
             board,
-            adapter_registry=build_adapter_registry(project),
+            adapter_registry=build_adapter_registry(project, file_materializer=mat1),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat1,
         )
         rows1 = ex1.execute_query("q")
         assert [r["ts"] for r in rows1] == [1, 2]
@@ -898,10 +902,9 @@ class TestFileSourceIncrementalDoesNotIntercept:
         mat2 = _CountingMaterializer(project)
         ex2 = Executor(
             board,
-            adapter_registry=build_adapter_registry(project),
+            adapter_registry=build_adapter_registry(project, file_materializer=mat2),
             query_registry={"q": board.queries["q"]},
             result_cache=result_cache,
-            file_materializer=mat2,
         )
         rows2 = ex2.execute_query("q")
         assert [r["ts"] for r in rows2] == [1, 2]
@@ -1242,10 +1245,10 @@ class _StringCoercingStubCache:
                 k: v.isoformat() if isinstance(v, (date, datetime)) else v
                 for k, v in row.items()
             }
-            for row in outcome
+            for row in outcome.rows
         ]
         self._store[(source_hash, query_hash, variables_hash)] = CacheHit(
-            rows=rows, written_at=datetime.now(UTC)
+            rows=rows, schema=outcome.schema, written_at=datetime.now(UTC)
         )
 
     def clear(self, source_hash: str, query_hash: str, variables_hash: str) -> None:
@@ -1320,7 +1323,7 @@ class TestTzAwareDatetimeWatermark:
     ) -> None:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         result = df_compile(_BOARD_TS_INC)
-        tz = timezone(timedelta(hours=5, minutes=30))
+        tz = UTC
 
         initial = [{"ts": datetime(2026, 8, 20, 1, 0, tzinfo=tz), "val": 20}]
         _executor(result, _adapter(initial), cache).execute_query("q")

@@ -239,7 +239,7 @@ class TestSparkBarDimensions:
 
         svg = render_spark_bar_svg(chart, data, width=300, board_style=_BOARD_STYLE)
 
-        assert 'width="300.0"' in svg
+        assert 'width="300"' in svg
 
     def test_spark_bar_auto_height(self, make_chart) -> None:
         """Height auto-calculates based on number of bars."""
@@ -846,6 +846,6 @@ def test_spark_bar_subtitle_font_size_reads_directly_from_theme(make_chart):
 
     svg = render_spark_bar_svg(resolved, data, board_style=_BOARD_STYLE)
 
-    assert f'font-size="{distinctive_size}"' in svg, (
+    assert f'font-size="{distinctive_size:g}"' in svg, (
         f"Expected subtitle font-size={distinctive_size} verbatim in SparkBar SVG"
     )

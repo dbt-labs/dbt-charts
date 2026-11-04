@@ -62,7 +62,7 @@ def test_table_subtitle_font_size_reads_directly_from_theme():
         board_style=custom_rs,
     )
 
-    assert f'font-size="{distinctive_size}' in svg, (
+    assert f'font-size="{distinctive_size:g}"' in svg, (
         f"Expected subtitle font-size={distinctive_size} verbatim in Table SVG"
     )
 

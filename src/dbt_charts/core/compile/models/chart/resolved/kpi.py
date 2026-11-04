@@ -96,7 +96,7 @@ class ResolvedKpiChart(_BaseResolvedChartFields):
         description=(
             "True when the authored format was a literal d3 SI spec (not a theme "
             "alias), so render should pass it straight to the formatter and keep "
-            "raw d3 SI suffixes (M, k) instead of the house narrative forms (mn, k)."
+            "raw d3 SI suffixes (M, k) instead of the house narrative forms (m, k)."
         ),
     )
     style: ResolvedKpiStyle = Field(

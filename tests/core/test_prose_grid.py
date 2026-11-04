@@ -601,3 +601,304 @@ def test_a_query_backed_visible_counts_as_drawn() -> None:
     head = "visible:\n      query: flags\n      column: show"
     svg = render_board_to_svg(_conditional_board(head, probe=True))
     assert widest(svg, "ONE") <= 55
+
+
+def lines_from(svg: str, marker: str) -> list[tuple[float, float, str]]:
+    """Text lines from ``marker``'s line down to the card row, in reading order."""
+    lines = text_lines(svg)
+    top = min(y for _, y, t in lines if t.startswith(marker))
+    bottom = min((y for _, y, t in lines if t == "Label" and y > top), default=1e9)
+    return sorted(
+        (line for line in lines if top - 0.5 <= line[1] < bottom - 0.5),
+        key=lambda c: (c[1], c[0]),
+    )
+
+
+def columns_of(lines: list[tuple[float, float, str]]) -> dict[float, list[float]]:
+    """Baselines of each column, keyed by its left edge."""
+    columns: dict[float, list[float]] = defaultdict(list)
+    for x, y, _ in lines:
+        columns[round(x, 1)].append(y)
+    return dict(columns)
+
+
+class TestAHeadingTitlesItsColumns:
+    """A heading that opens a block sits across its columns, not inside the first."""
+
+    def test_columns_start_level_under_the_heading(self) -> None:
+        marker = "TITLE"
+        svg = render_board_to_svg(
+            board(1200, prose_row(f"## {marker}\n\n" + passage("BODY", 1400)), cards(3))
+        )
+        heading_y = next(y for _, y, t in text_lines(svg) if t == marker)
+        columns = columns_of(
+            [line for line in lines_from(svg, marker) if line[1] > heading_y + 0.5]
+        )
+        assert len(columns) == 3
+        tops = [min(ys) for ys in columns.values()]
+        assert max(tops) - min(tops) == pytest.approx(0.0, abs=0.5)
+        assert min(tops) > heading_y
+
+    def test_the_columns_end_within_a_line_of_each_other(self) -> None:
+        """The heading's height is out of the flow, so it cannot unbalance column one."""
+        marker = "TITLE"
+        svg = render_board_to_svg(
+            board(1200, prose_row(f"## {marker}\n\n" + passage("BODY", 1400)), cards(3))
+        )
+        heading_y = next(y for _, y, t in text_lines(svg) if t == marker)
+        columns = columns_of(
+            [line for line in lines_from(svg, marker) if line[1] > heading_y + 0.5]
+        )
+        counts = [len(ys) for ys in columns.values()]
+        assert max(counts) - min(counts) <= 1
+
+    def test_a_heading_that_only_wraps_in_a_column_reserves_one_line(self) -> None:
+        """A heading is measured across the columns it is painted across."""
+        title = "HEADING wide enough to wrap inside one column of the three"
+        svg = render_board_to_svg(
+            board(1200, prose_row(f"## {title}\n\n" + passage("BODY", 1400)), cards(3))
+        )
+        lines = text_lines(svg)
+        heading = [y for _, y, t in lines if t.startswith("HEADING")]
+        body = min(y for _, y, t in lines if t.startswith("BODY"))
+        assert len({y for _, y, t in lines if y < body and y >= heading[0]}) == 1
+        assert body - heading[0] == pytest.approx(2 * 19.6)
+
+    def test_a_single_column_keeps_its_heading_on_the_column(self) -> None:
+        marker = "TITLE"
+        svg = render_board_to_svg(
+            board(1200, prose_row(f"## {marker}\n\n" + passage("BODY", 90)), cards(3))
+        )
+        assert list(columns_of(lines_from(svg, marker))) == [
+            pytest.approx(card_edges(svg, 3)[0], abs=0.5)
+        ]
+
+
+class TestAListFlowsLikeProse:
+    """A list earns columns by its lines and breaks between items."""
+
+    @staticmethod
+    def long_items(count: int) -> str:
+        return "\n".join(f"- {passage(f'ITEM{i}', 260)}" for i in range(count))
+
+    def test_a_long_list_earns_columns(self) -> None:
+        svg = render_board_to_svg(board(1200, prose_row(self.long_items(6)), cards(3)))
+        starts = sorted({x for x, _, t in text_lines(svg) if t.startswith("ITEM")})
+        assert len(starts) >= 2
+
+    def test_no_item_is_cut_across_a_column(self) -> None:
+        svg = render_board_to_svg(board(1200, prose_row(self.long_items(6)), cards(3)))
+        lines = lines_from(svg, "ITEM0")
+        openers = {x for x, _, t in lines if t.startswith("ITEM")}
+        by_item = sorted(
+            (x, y) for x, y, t in lines if t.startswith("ITEM") and x in openers
+        )
+        for x in openers:
+            top = min(y for ix, y in by_item if ix == x)
+            first_line_of_column = next(t for lx, y, t in lines if lx == x and y == top)
+            assert first_line_of_column.startswith("ITEM")
+
+    def test_numbering_continues_across_columns(self) -> None:
+        items = "\n".join(f"{i + 1}. {passage(f'ITEM{i}', 260)}" for i in range(6))
+        svg = render_board_to_svg(board(1200, prose_row(items), cards(3)))
+        numbers = {t for _, _, t in text_lines(svg) if t.rstrip(".").isdigit()}
+        assert {f"{i + 1}." for i in range(6)} <= numbers
+
+    def test_a_short_list_stays_one_column(self) -> None:
+        items = "\n".join(f"- item {i}" for i in range(3))
+        svg = render_board_to_svg(
+            board(
+                1200,
+                prose_row(passage("READOUT", 1400)),
+                prose_row(items),
+                cards(3),
+            )
+        )
+        assert len({x for x, _, t in text_lines(svg) if t.startswith("item")}) == 1
+
+
+class TestATableStaysOutOfTheMeasure:
+    """A table takes its own width; the prose around it keeps the run's."""
+
+    TABLE = (
+        "| Column one holds a long label | Column two holds a long label | "
+        "Column three holds a long label | Column four holds a long label |\n"
+        "|---|---|---|---|\n"
+        "| a value that is reasonably long | a value that is reasonably long | "
+        "a value that is reasonably long | a value that is reasonably long |"
+    )
+
+    TWO_SPAN_TABLE = (
+        "| Column one holds a long label | Column two holds a long label | "
+        "Column three holds a label |\n"
+        "|---|---|---|\n"
+        "| a value | a value | a value |"
+    )
+
+    def test_a_table_does_not_change_how_the_prose_beside_it_wraps(self) -> None:
+        """The paragraph wraps the same lines with or without the table in its block."""
+        text = passage("AROUND", 300)
+        wide = passage("READOUT", 1400)
+        alone = render_board_to_svg(
+            board(1200, prose_row(wide), prose_row(text), cards(3))
+        )
+        beside = render_board_to_svg(
+            board(1200, prose_row(wide), prose_row(f"{text}\n\n{self.TABLE}"), cards(3))
+        )
+
+        def wrapped(svg: str) -> list[str]:
+            lines = text_lines(svg)
+            top = min(y for _, y, t in lines if t.startswith("AROUND"))
+            return [t for _, y, t in sorted(lines, key=lambda c: c[1]) if y >= top][:5]
+
+        assert wrapped(beside) == wrapped(alone)
+
+    def test_long_prose_over_a_table_flows_in_columns(self) -> None:
+        svg = render_board_to_svg(
+            board(
+                1200,
+                prose_row(f"{passage('ABOVE', 1000)}\n\n{self.TABLE}"),
+                cards(3),
+            )
+        )
+        lines = text_lines(svg)
+        table_top = min(y for _, y, t in lines if t.startswith("Column one"))
+        above = {round(x, 1) for x, y, _ in lines if y < table_top - 0.5}
+        assert len(above) >= 2
+
+    def test_a_table_that_fits_a_column_flows_with_the_prose(self) -> None:
+        """Only a table wider than a column has a reason to leave the flow."""
+        small = "| Region | Units |\n|---|---|\n| West | 812 |\n| East | 654 |"
+        svg = render_board_to_svg(
+            board(
+                1200,
+                prose_row(
+                    f"{passage('ABOVE', 300)}\n\n{small}\n\n{passage('BELOW', 500)}"
+                ),
+                cards(3),
+            )
+        )
+        lines = text_lines(svg)
+        above = min(x for x, _, t in lines if t.startswith("ABOVE"))
+        below = min(x for x, _, t in lines if t.startswith("BELOW"))
+        assert below > above
+
+    def test_a_centered_table_centers_on_the_card_a_lone_column_widened_to(
+        self,
+    ) -> None:
+        svg = render_board_to_svg(
+            board(
+                1200,
+                prose_row(f"{passage('ABOVE', 90)}\n\n{self.TWO_SPAN_TABLE}"),
+                cards(3),
+                style="style:\n  text:\n    align: center\n",
+            )
+        )
+        left = min(x for x, _, t in text_lines(svg) if t.startswith("Column one"))
+        assert left > card_edges(svg, 3)[0] + 16
+
+    def test_prose_after_a_table_starts_below_it(self) -> None:
+        svg = render_board_to_svg(
+            board(
+                1200,
+                prose_row(
+                    f"{passage('ABOVE', 1000)}\n\n{self.TABLE}\n\n"
+                    f"{passage('BELOW', 200)}"
+                ),
+                cards(3),
+            )
+        )
+        lines = text_lines(svg)
+        cell = max(y for _, y, t in lines if t.startswith("a value"))
+        below = min(y for _, y, t in lines if t.startswith("BELOW"))
+        assert below > cell
+
+
+class TestColumnsShareAFirstBaseline:
+    """The first line of every column in a stretch sits on one baseline."""
+
+    @staticmethod
+    def first_line(svg: str, marker: str) -> tuple[float, float]:
+        x, y, _ = next(line for line in text_lines(svg) if marker in line[2])
+        return x, y
+
+    def test_sections_opening_columns_line_up_from_the_first(self) -> None:
+        text = "\n\n".join(
+            f"## {name}\n\n{passage(name.upper(), 700)}"
+            for name in ("Alpha", "Beta", "Gamma")
+        )
+        svg = render_board_to_svg(board(1200, prose_row(text), cards(3)))
+
+        heads = [self.first_line(svg, name) for name in ("Alpha", "Beta", "Gamma")]
+        bodies = [self.first_line(svg, m) for m in ("ALPHA", "BETA", "GAMMA")]
+        assert len({x for x, _ in heads}) == 3, "each section opens its own column"
+        assert len({y for _, y in heads}) == 1
+        assert len({y for _, y in bodies}) == 1
+        assert bodies[0][1] > heads[0][1], "each heading stays above its text"
+
+    def test_a_heading_opening_a_column_meets_the_paragraph_beside_it(self) -> None:
+        text = "\n\n".join(
+            (
+                passage("INTRO", 700),
+                f"## Beta\n\n{passage('BETA', 700)}",
+                f"## Gamma\n\n{passage('GAMMA', 700)}",
+            )
+        )
+        svg = render_board_to_svg(board(1200, prose_row(text), cards(3)))
+
+        intro, heading = self.first_line(svg, "INTRO"), self.first_line(svg, "Beta")
+        assert heading[0] > intro[0], "the heading opens the next column"
+        assert heading[1] == pytest.approx(intro[1], abs=1)
+
+    def test_a_lone_opening_heading_still_titles_the_columns(self) -> None:
+        text = f"## Alpha\n\n{passage('ALPHA', 1400)}"
+        svg = render_board_to_svg(board(1200, prose_row(text), cards(3)))
+
+        heading = self.first_line(svg, "Alpha")
+        beside = [y for x, y, _ in text_lines(svg) if x > heading[0]]
+        assert min(beside) > heading[1] + 10, "every column opens below the heading"
+
+
+class TestAWideTableKeepsItsSurroundings:
+    TABLE = TestATableStaysOutOfTheMeasure.TABLE
+
+    def test_a_heading_stays_with_the_table_it_heads(self) -> None:
+        text = f"{passage('LONG', 1400)}\n\n## Results\n\n{self.TABLE}"
+        svg = render_board_to_svg(board(1200, prose_row(text), cards(3)))
+
+        lines = text_lines(svg)
+        long_x = min(x for x, _, t in lines if t.startswith("LONG"))
+        x, y, _ = next(line for line in lines if "Results" in line[2])
+        table_y = min(y_ for _, y_, t in lines if "Column one" in t)
+        prose_bottom = max(
+            y_
+            for _, y_, t in lines
+            if not any(w in t for w in ("Results", "Column")) and y_ < table_y
+        )
+        assert x == long_x, "the heading sits at the table's left edge"
+        assert prose_bottom < y < table_y
+
+    def test_a_heading_ending_a_block_stays_with_the_next_row(self) -> None:
+        text = f"{passage('LONG', 1400)}\n\n## Results"
+        svg = render_board_to_svg(
+            board(1200, prose_row(text), prose_row(self.TABLE), cards(3))
+        )
+
+        lines = text_lines(svg)
+        long_x = min(x for x, _, t in lines if t.startswith("LONG"))
+        x, y, _ = next(line for line in lines if "Results" in line[2])
+        table_y = min(y_ for _, y_, t in lines if "Column one" in t)
+        assert x == long_x
+        assert max(y_ for _, y_, t in lines if y_ < y) < y < table_y
+
+    @pytest.mark.parametrize("chars", [200, 1400])
+    def test_the_gap_above_a_table_ignores_how_the_text_split(self, chars: int) -> None:
+        def gap(length: int) -> float:
+            text = f"{passage('LEAD', length)}\n\n{self.TABLE}"
+            lines = text_lines(
+                render_board_to_svg(board(1200, prose_row(text), cards(3)))
+            )
+            table_y = min(y for _, y, t in lines if "Column one" in t)
+            return table_y - max(y for _, y, _ in lines if y < table_y)
+
+        assert gap(chars) == pytest.approx(gap(300), abs=1.5)

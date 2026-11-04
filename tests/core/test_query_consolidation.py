@@ -233,6 +233,7 @@ class TestPreExecutionCacheHits:
 def _mock_executor(board_result: Any) -> tuple[Any, Mock]:
     """Return (executor, mock_registry) with mock adapter that returns a single-row result."""
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.return_value = QueryResult(
         data=[{"v": 1}], schema=literal_schema([{"v": 1}])
     )

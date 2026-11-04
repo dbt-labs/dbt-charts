@@ -8,11 +8,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from dbt_charts.core.compile.models.query.normalized import (
-    HttpQuery,
-    SqlQuery,
-    ValuesQuery,
-)
+from dbt_charts.core.compile.models.query.normalized import SqlQuery, ValuesQuery
 
 
 def test_sql_query_rejects_unknown_key():
@@ -29,11 +25,6 @@ def test_sql_query_rejects_profile_field():
 def test_values_query_rejects_unknown_key():
     with pytest.raises(ValidationError, match="bogus_key"):
         ValuesQuery(rows=[{"a": 1}], bogus_key="x")
-
-
-def test_http_query_rejects_unknown_key():
-    with pytest.raises(ValidationError, match="bogus_key"):
-        HttpQuery(url="http://example.com", bogus_key="x")
 
 
 def test_normalize_query_skips_source_propagation_for_values_query():
@@ -58,12 +49,10 @@ def test_normalize_query_skips_source_propagation_for_values_query():
 
 
 class TestFiltersAndLimitOffTheBase:
-    """Declarative filters: is removed; filters/limit live per-family, not on the base.
+    """Declarative filters: and limit: are not authorable on any query.
 
     The authored base holds identity/plumbing only (source, description, cache,
-    ignore). limit:
-    survives only on the families whose query language cannot express it in-band
-    (http).
+    ignore).
     """
 
     def test_authored_sql_query_rejects_filters(self) -> None:
@@ -83,11 +72,6 @@ class TestFiltersAndLimitOffTheBase:
 
         with pytest.raises(ValidationError, match="limit"):
             AuthoredValuesQuery(rows=[{"a": 1}], limit=5)
-
-    def test_limit_survives_on_http(self) -> None:
-        from dbt_charts.core.compile.models.query.authored import AuthoredHttpQuery
-
-        assert AuthoredHttpQuery(url="https://api.example.com", limit=20).limit == 20
 
     def test_board_level_sql_filters_rejected_at_parse(self) -> None:
         """The user-visible surface: filters: on a sql query in board YAML fails to compile."""

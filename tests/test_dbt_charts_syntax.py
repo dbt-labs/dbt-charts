@@ -16,10 +16,7 @@ from typing import get_args, get_origin
 import pytest
 
 from dbt_charts.core.compile.models.chart.authored import AUTHORED_CHART_TYPE_TAGS
-from dbt_charts.core.compile.models.query.authored import (
-    RestMethod,
-    _BaseQueryFields,
-)
+from dbt_charts.core.compile.models.query.authored import _BaseQueryFields
 from dbt_charts.core.compile.models.variable.authored import VariableInputType
 from dbt_charts.core.compile.parse.yaml_error_formatter import (
     _CHART_SHAPE_RECIPES,
@@ -72,15 +69,6 @@ def test_variable_input_type_documented_in_syntax(value: str) -> None:
     assert value in _SYNTAX_TEXT, (
         f"VariableInputType {value!r} is not documented in dbt_charts/DBT_CHARTS_SYNTAX.md. "
         "Add it to the ## Variables section."
-    )
-
-
-@pytest.mark.parametrize("value", sorted(set(get_args(RestMethod))))
-def test_rest_method_documented_in_syntax(value: str) -> None:
-    """Every RestMethod literal must appear in DBT_CHARTS_SYNTAX.md."""
-    assert value in _SYNTAX_TEXT, (
-        f"RestMethod {value!r} is not documented in dbt_charts/DBT_CHARTS_SYNTAX.md. "
-        "Add it to the ## Queries section (HTTP)."
     )
 
 

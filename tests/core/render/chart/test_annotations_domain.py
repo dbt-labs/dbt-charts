@@ -15,6 +15,8 @@ from dbt_charts.core.compile.resolve import resolve
 from dbt_charts.core.compile.resolve.style.board import resolve_style_and_context
 from dbt_charts.core.render.chart.session import BoardRenderSession
 
+from ..._svg_render import path_vertices
+
 _MONTHS = [
     {"month": f"{2024 + i // 12}-{i % 12 + 1:02d}-01", "revenue": 10.0 + i}
     for i in range(24)
@@ -106,11 +108,14 @@ def test_a_numeric_line_x_past_the_data_widens_the_domain() -> None:
 
 def _bar_centers(svg: str) -> dict[str, float]:
     bars = re.findall(
-        r'<path d="M ([\d.]+),[^"]* ([\d.]+),[\d.]+ V [\d.]+ Z"[^>]*data-dct-role="bar" '
-        r'aria-label="\W*(\w+ \d{4});',
+        r'<path d="([^"]*)"[^>]*data-dct-role="bar" aria-label="\W*(\w+ \d{4});',
         svg,
     )
-    return {month: (float(lo) + float(hi)) / 2 for lo, hi, month in bars}
+    centers = {}
+    for d, month in bars:
+        xs = [x for x, _ in path_vertices(d)]
+        centers[month] = (min(xs) + max(xs)) / 2
+    return centers
 
 
 def _assert_even_slots(centers: dict[str, float]) -> None:

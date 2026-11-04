@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 # Names this release retired, each pointing at the successor that means what it
 # meant. Diagnostic data, not vocabulary: nothing in the format system reads
@@ -254,6 +254,20 @@ def _suggest_close_match(value: str, available: Sequence[str]) -> str | None:
     if matches:
         return f"Did you mean {matches[0]!r}?"
     return None
+
+
+def suggest_close_board(slug: str, available: Collection[str]) -> str | None:
+    """Return a 'Did you mean /X?' hint for a link slug that names no board.
+
+    A slug that ends in a real board's slug (``a/b/user-360``) suggests the
+    longest such tail before a spelling match is tried.
+    """
+    parts = slug.split("/")
+    for start in range(1, len(parts)):
+        tail = "/".join(parts[start:])
+        if tail in available:
+            return f"Did you mean '/{tail}'?"
+    return _suggest_close_match(f"/{slug}", [f"/{s}" for s in available])
 
 
 def suggest_close_source(

@@ -43,16 +43,6 @@ def test_typo_sql_query_rejects_at_parse_time() -> None:
     assert "sqll" in errors
 
 
-def test_typo_http_query_rejects_at_parse_time() -> None:
-    """path: is not a known field — separate from url:."""
-    result = compile(
-        _board("    type: http\n    url: https://api.example.com\n    path: /data\n")
-    )
-    assert not result.success
-    errors = " ".join(e.message for e in result.errors)
-    assert "path" in errors
-
-
 def test_typo_values_query_rejects_at_parse_time() -> None:
     """rowss: is not a known field on values queries."""
     result = compile(_board("    type: values\n    rowss:\n      - a: 1\n"))
@@ -65,18 +55,6 @@ def test_typo_values_query_rejects_at_parse_time() -> None:
 # Valid subtype-specific fields that were missing from AuthoredQuery
 # (these were rejected before the fix due to missing fields in AuthoredQuery)
 # ---------------------------------------------------------------------------
-
-
-def test_json_path_on_http_query_compiles_ok() -> None:
-    """json_path is a valid HttpQuery field — must compile without error."""
-    result = compile(
-        _board(
-            "    type: http\n"
-            "    url: https://api.example.com/data\n"
-            "    json_path: $.results\n"
-        )
-    )
-    assert result.success, [e.message for e in result.errors]
 
 
 def test_schema_with_schema_alias_compiles_ok() -> None:

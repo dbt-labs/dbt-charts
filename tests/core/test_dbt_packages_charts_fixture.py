@@ -1,8 +1,8 @@
 """Enumeration + slug mapping against the committed
 ``tests/fixtures/dbt_packages_charts/`` project — the end-to-end fixture for
-package-board discovery (host boards, a package's own boards, and the three
-exclusions: schema.yml/README.md within a package, a symlinked ``local:``
-package, and a package with no ``charts/``).
+package-board discovery (host boards, a package's own boards, a symlinked
+``local:`` package, and the two exclusions: schema.yml/README.md within a
+package and a package with no ``charts/``).
 """
 
 from __future__ import annotations
@@ -20,15 +20,16 @@ def _project() -> FilesystemProject:
 
 
 class TestFixtureBoardRoots:
-    def test_board_roots_is_host_plus_pkg_a_only(self) -> None:
+    def test_board_roots_is_host_plus_pkg_a_and_symlinked_pkg_b(self) -> None:
         assert board_roots(_project()) == [
             BoardRoot("charts", ""),
             BoardRoot("dbt_packages/pkg_a/charts", "pkg_a"),
+            BoardRoot("dbt_packages/pkg_b/charts", "pkg_b"),
         ]
 
 
 class TestFixtureEnumeration:
-    def test_iter_boards_yields_exactly_home_and_pkg_a_overview(self) -> None:
+    def test_iter_boards_yields_exactly_home_and_package_boards(self) -> None:
         """iter_boards() is the low-level enumerator — meta.yml cascade
         fragments pass its suffix/underscore filter too (real consumers like
         list_boards additionally drop ``pf.is_meta``, which this asserts
@@ -37,6 +38,7 @@ class TestFixtureEnumeration:
         assert relpaths == {
             "charts/home.yml",
             "dbt_packages/pkg_a/charts/overview.yml",
+            "dbt_packages/pkg_b/charts/x.yml",
         }
 
     def test_meta_files_are_excluded_by_is_meta_not_by_enumeration(self) -> None:
@@ -54,9 +56,9 @@ class TestFixtureEnumeration:
         relpaths = {pf.relpath for pf in _project().iter_boards()}
         assert not any(r.endswith("README.md") for r in relpaths)
 
-    def test_symlinked_pkg_b_never_enumerates(self) -> None:
+    def test_symlinked_pkg_b_enumerates(self) -> None:
         relpaths = {pf.relpath for pf in _project().iter_boards()}
-        assert not any("pkg_b" in r for r in relpaths)
+        assert "dbt_packages/pkg_b/charts/x.yml" in relpaths
 
     def test_pkg_c_with_no_charts_dir_contributes_no_root(self) -> None:
         namespaces = {r.namespace for r in board_roots(_project())}

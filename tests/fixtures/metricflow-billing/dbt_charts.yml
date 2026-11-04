@@ -1,0 +1,14 @@
+sources:
+  db:
+    type: duckdb
+    path: warehouse.duckdb
+    metricflow: semantics
+  plain:
+    type: duckdb
+    path: warehouse.duckdb
+  governed:
+    type: duckdb
+    path: warehouse.duckdb
+    metricflow:
+      path: semantics
+      required: true

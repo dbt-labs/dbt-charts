@@ -139,6 +139,47 @@ fn test_link_with_title() {
     assert_eq!(link_span.title.as_deref(), Some("Title"));
 }
 
+fn link_spans(md: &str) -> Vec<(String, bool, Option<String>, Option<String>)> {
+    let doc = parse(md);
+    let AnyBlock::Paragraph(p) = &doc[0] else {
+        panic!("expected paragraph")
+    };
+    p.spans
+        .iter()
+        .filter(|s| s.span_type == SpanType::Link)
+        .map(|s| (s.text.clone(), s.code, s.url.clone(), s.title.clone()))
+        .collect()
+}
+
+#[test]
+fn inline_code_in_a_link_label_is_a_code_link() {
+    assert_eq!(
+        link_spans("See [`file.yml`](docs/file.yml) now"),
+        [("file.yml".to_string(), true, Some("docs/file.yml".to_string()), None)]
+    );
+}
+
+#[test]
+fn a_label_mixing_text_and_code_splits_into_link_spans() {
+    let (u, t) = (Some("u".to_string()), Some("T".to_string()));
+    assert_eq!(
+        link_spans(r#"[open `a.yml` now](u "T")"#),
+        [
+            ("open ".to_string(), false, u.clone(), t.clone()),
+            ("a.yml".to_string(), true, u.clone(), t.clone()),
+            (" now".to_string(), false, u, t),
+        ]
+    );
+}
+
+#[test]
+fn a_plain_label_is_not_a_code_link() {
+    assert_eq!(
+        link_spans("[here](u)"),
+        [("here".to_string(), false, Some("u".to_string()), None)]
+    );
+}
+
 // --- TestLists ---
 
 #[test]
@@ -763,4 +804,33 @@ fn nested_list_content_is_dedented_by_characters() {
         panic!("expected a nested list: {doc:?}");
     };
     assert_eq!(item_text(&nested.items[0]), "b c");
+}
+
+#[test]
+fn code_inside_emphasis_is_emphasized_code() {
+    for (markdown, bold, italic) in [
+        ("**`message`**", true, false),
+        ("*`message`*", false, true),
+        ("***`message`***", true, true),
+    ] {
+        let doc = parse(markdown);
+        let AnyBlock::Paragraph(p) = &doc[0] else { panic!("{markdown}") };
+        let [span] = &p.spans[..] else { panic!("{markdown}: {:?}", p.spans) };
+        assert_eq!(
+            (span.span_type, span.text.as_str(), span.bold, span.italic),
+            (SpanType::Code, "message", bold, italic),
+            "{markdown}"
+        );
+    }
+}
+
+#[test]
+fn emphasis_mixing_text_and_code_splits_into_spans() {
+    let doc = parse("**set `tone` here**");
+    let AnyBlock::Paragraph(p) = &doc[0] else { panic!() };
+    let got: Vec<_> = p.spans.iter().map(|s| (s.span_type, s.text.as_str(), s.bold)).collect();
+    assert_eq!(
+        got,
+        [(SpanType::Bold, "set ", false), (SpanType::Code, "tone", true), (SpanType::Bold, " here", false)]
+    );
 }

@@ -586,6 +586,7 @@ def test_create_connection_sends_the_binding_only_when_given() -> None:
                     "slug": "wh",
                     "name": "wh",
                     "connection_type": "postgres",
+                    "identity": "reader",
                     "is_active": True,
                 },
             },
@@ -606,3 +607,53 @@ def test_create_connection_sends_the_binding_only_when_given() -> None:
             "map_sources": ["db"],
         },
     ]
+
+
+def test_a_lost_connection_ends_a_bulk_role_change() -> None:
+    """The first member is changed, the second drops the connection: nobody
+    after it is tried, and each one left is reported rather than lost."""
+    posted: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.url.path)
+        if len(posted) == 2:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(
+            200,
+            json={
+                "email": "a@example.com",
+                "name": "",
+                "role": "creator",
+                "joined_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    emails = ["a@example.com", "b@example.com", "c@example.com"]
+    with client(handler) as cloud:
+        changes = cloud.set_member_roles("acme", emails, "creator")
+
+    assert len(posted) == 2
+    assert changes.changed == ["a@example.com"]
+    assert [failure.email for failure in changes.failed] == emails[1:]
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(401, "unauthenticated"), (403, "insufficient_scope"), (429, "rate_limited")],
+)
+def test_a_refusal_of_the_caller_ends_a_bulk_role_change(
+    status: int, code: str
+) -> None:
+    """The answer is about the token, so the next member would get it too."""
+    posted: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.url.path)
+        return httpx.Response(status, json={"code": code, "message": "Token refused."})
+
+    emails = ["a@example.com", "b@example.com"]
+    with client(handler) as cloud:
+        changes = cloud.set_member_roles("acme", emails, "creator")
+
+    assert len(posted) == 1
+    assert [failure.email for failure in changes.failed] == emails

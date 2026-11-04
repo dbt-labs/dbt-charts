@@ -229,9 +229,9 @@ _NOT_DESIGN_PATHS = ("style.charts", "style.color.gradient")
 # out gets one of the two wrong.
 # GATED — the render sweep walks every Variable control in full. `histogram`'s
 # entry is a field one `type:` of a shared model refuses outright: `BarChart`
-# declares `y_start` for both tags, and `_validate_y_start` refuses it on a
-# histogram, whose bars count from zero — no value a text box can produce
-# compiles there.
+# declares `y_start` and `pattern` for both tags, and the histogram rules refuse
+# them, since its bars count from zero and bin rows — no value a text box can
+# produce compiles there.
 # GATED (histogram) — the parse sweep (`histogram-no-x`, `histogram-multi-metric`).
 _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
     "Variable": (
@@ -240,7 +240,15 @@ _NOT_DESIGN_ON: dict[str, tuple[tuple[str, str | None], ...]] = {
         ("options.column", "options.query"),
         ("options.label_column", "options.query"),
     ),
-    "histogram": (("y_start", None),),
+    "histogram": (
+        ("y_start", None),
+        ("pattern", None),
+        ("style.pattern.color", None),
+        ("style.pattern.inverse", None),
+        ("style.pattern.steps", None),
+        ("style.pattern.palette", None),
+        ("style.pattern.ground", None),
+    ),
 }
 
 # A layout container earns a design entry only once it carries content of its
@@ -496,20 +504,10 @@ _ROOT_ONLY = ("card_gap", "style.frame", "extends")
 # from `normalize_layout`'s layout-item branch, so at the root a save succeeds,
 # the value is discarded, the board is unchanged, and the panel renders it back
 # as authored — the `card_gap` shape without the raise that caught it, which
-# the parse gate is structurally unable to see. (`width` is not here: the root
-# desugars it, and `_ROOT_SUGAR` already picks one of that pair.)
+# the parse gate is structurally unable to see. (`width` is not here: it is the
+# root's own width and a nested board's placement, both honored.)
 # AGREED — `test_height_is_read_on_a_nested_board_and_discarded_at_the_root`.
 _NESTED_ONLY = ("height",)
-
-# On the root board only, `width:` is sugar for `style.frame.width:` and
-# authoring both raises (`dispatch._root_width_style_patch`). Offering the
-# pair as two independent controls is two clicks from a board that will not
-# compile, so the surface emits exactly one. On a nested board `width:` is
-# layout placement instead — a different field with a different meaning — so
-# the pair is legitimate there.
-# AGREED — `test_the_width_pair_the_panel_splits_is_the_pair_the_compiler_refuses`.
-# A rule about authoring *both* keys, which a one-key-at-a-time sweep cannot reach.
-_ROOT_SUGAR = (("width", "style.frame.width"),)
 
 
 class DesignProperty(BaseModel):
@@ -823,14 +821,8 @@ def _drills_into(field: SchemaField) -> str | None:
     return model if union_arms(field.type_repr) - sugar == {model} else None
 
 
-def _suppressed(
-    node: Any, is_root: bool, writes_at: str, authored: frozenset[str]
-) -> tuple[str, ...]:
+def _suppressed(node: Any, is_root: bool) -> tuple[str, ...]:
     """Dotted keys this target does not offer, as exact matches or prefixes.
-
-    Root sugar is decided from the source map rather than from the built
-    properties: whichever of an aliased pair the file authors is the one kept,
-    and when it authors neither the canonical key wins.
 
     The two model-keyed tables are here rather than beside their mirror in
     `_takes_a_list` because they withhold controls the walk reaches four levels
@@ -883,10 +875,7 @@ def _suppressed(
         )
     if not is_root:
         return (*_NOT_DESIGN_PATHS, *_ROOT_ONLY, *withheld)
-    drop: list[str] = [*_NOT_DESIGN_PATHS, *_NESTED_ONLY, *withheld]
-    for sugar, canonical in _ROOT_SUGAR:
-        drop.append(canonical if _absolute(writes_at, sugar) in authored else sugar)
-    return tuple(drop)
+    return (*_NOT_DESIGN_PATHS, *_NESTED_ONLY, *withheld)
 
 
 def _variable_accepts(var: Variable, **edit: Any) -> bool:
@@ -1455,8 +1444,8 @@ def _sql_output_columns(sql: str) -> tuple[tuple[str, ...], bool]:
 def _query_columns(query: Any) -> tuple[tuple[str, ...], bool]:
     """The output columns one authored query declares, where they are static.
 
-    HTTP and schema queries answer only at execution time; a cross-file ref is
-    authored elsewhere. All degrade to no suggestions rather than a guess. The
+    Schema queries answer only at execution time; a cross-file ref is
+    authored elsewhere. Both degrade to no suggestions rather than a guess. The
     second return says whether the columns name every output — heterogeneous
     values rows and unnameable SQL projections make the offer partial.
     """
@@ -1736,7 +1725,7 @@ def build_design(yaml_text: str, path: str) -> tuple[DesignTarget, dict[str, Any
         "",
         writes_at,
         authored,
-        _suppressed(node, target_path == "", writes_at, authored),
+        _suppressed(node, target_path == ""),
         frozenset({model_name}),
         aliases,
         *_channel_columns(node, queries),

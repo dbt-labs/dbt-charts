@@ -9,7 +9,7 @@ refs pass through untouched: nothing here fetches over the network.
 from __future__ import annotations
 
 import base64
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -28,7 +28,7 @@ from dbt_charts.core.text.format_d3 import board_word
 from dbt_charts.core.utils import IMAGE_SUFFIXES
 from mdsvg import MarkdownParser, parse as parse_markdown
 from mdsvg.images import get_image_size
-from mdsvg.types import AnyBlock, ImageBlock, SpanType
+from mdsvg.types import AnyBlock, ImageBlock, Paragraph, Span, SpanType
 
 if TYPE_CHECKING:
     from dbt_charts.core.diagnostics.diagnostic import Diagnostic
@@ -113,24 +113,40 @@ def resolve_image_ref(ref: str, base_dir: str | None) -> str:
 def rewrite_markdown_images(
     blocks: list[AnyBlock],
     base_dir: str | None,
+    on_unresolved: Callable[[CompilationError], str]
+    | None = None,  # type-state: optional — only board prose degrades, others raise
 ) -> list[AnyBlock]:
     """Resolve every image in *blocks* (see ``resolve_image_ref``).
 
     Rewrites the parsed blocks rather than mapping mdsvg's emitted href:
     mdsvg sizes an image from its URL before painting, so a mapper applied
     after would measure one image and embed another.
+
+    A bad image raises, unless *on_unresolved* is given: it receives the error
+    and the text it returns stands where that image was.
     """
 
-    def run(spans: SpanRun) -> SpanRun:
-        return tuple(
-            replace(s, url=resolve_image_ref(s.url, base_dir))
-            if s.span_type is SpanType.IMAGE and s.url is not None
-            else s
-            for s in spans
-        )
+    def marker(exc: CompilationError) -> str:
+        if on_unresolved is None:
+            raise exc
+        return on_unresolved(exc)
 
-    def image(block: ImageBlock) -> ImageBlock:
-        return replace(block, url=resolve_image_ref(block.url, base_dir))
+    def span(s: Span) -> Span:
+        if s.span_type is not SpanType.IMAGE or s.url is None:
+            return s
+        try:
+            return replace(s, url=resolve_image_ref(s.url, base_dir))
+        except CompilationError as exc:
+            return Span(text=marker(exc))
+
+    def run(spans: SpanRun) -> SpanRun:
+        return tuple(span(s) for s in spans)
+
+    def image(block: ImageBlock) -> AnyBlock:
+        try:
+            return replace(block, url=resolve_image_ref(block.url, base_dir))
+        except CompilationError as exc:
+            return Paragraph(spans=(Span(text=marker(exc)),))
 
     return map_span_runs(blocks, run, image)
 
@@ -179,16 +195,20 @@ def rewrite_board_markdown_images(
     *rendered*, the Jinja rendering of *authored*, which must write out every
     project image it names (``check_images_written_out``).
 
-    A bad image degrades that one block to its error message instead of
-    failing the board. *error_collector* receives the diagnostic; the sizing
-    pass passes ``None`` so the paint pass alone reports it.
+    A bad image is replaced by an error marker where it stood and the rest
+    of the text renders; one that fails the written-out check degrades its whole
+    block, since no image in it can be trusted. *error_collector* receives every
+    diagnostic; the sizing pass passes ``None`` so the paint pass alone reports
+    them.
     """
-    try:
-        check_images_written_out(authored, rendered)
-        return rewrite_markdown_images(blocks, base_dir)
-    except CompilationError as exc:
+
+    def report(exc: CompilationError) -> str:
         if error_collector is not None:
             error_collector.append(exc.to_diagnostic())
-        return list(
-            parse_markdown(board_word("placard.image_error", message=exc.message))
-        )
+        return board_word("placard.image_error", message=exc.message)
+
+    try:
+        check_images_written_out(authored, rendered)
+    except CompilationError as exc:
+        return list(parse_markdown(report(exc)))
+    return rewrite_markdown_images(blocks, base_dir, report)

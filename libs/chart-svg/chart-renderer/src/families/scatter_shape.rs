@@ -3,7 +3,8 @@
 //! for a shape encoding that carries no legend config.
 
 use crate::families::legend::{legend_grid, LegendGrid, LegendSymbol};
-use scene::{Attrs, Node};
+use d3rs::vega_symbol::{Extents, VegaSymbol};
+use scene::{Attrs, Node, PathData, Role};
 use measure::FontBook;
 use crate::Payload;
 use measure::baseline_shift;
@@ -22,31 +23,12 @@ const RANGE_SYMBOL: [&str; 8] = [
     "triangle-left",
 ];
 
-/// `HalfSqrt3` of `vega-scenegraph/src/util/constants.js:5`.
-const HALF_SQRT_3: f64 = 0.866_025_403_784_438_6;
-
 /// The symbol the shape scale gives the `index`-th category of its domain: a
 /// d3 ordinal scale cycles its range (`range[i % range.length]`, d3-scale
 /// `ordinal.js`).
 pub fn symbol_for(index: usize) -> &'static str {
     RANGE_SYMBOL[index % RANGE_SYMBOL.len()]
 }
-
-/// A number the way `vega-scenegraph` prints a path coordinate: three
-/// decimals, trailing zeros trimmed.
-fn num(v: f64) -> String {
-    let s = format!("{v:.3}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" {
-        "0".into()
-    } else {
-        s.into()
-    }
-}
-
-/// `tan(30deg)`, the offset that lifts `triangle` and `wedge` onto their
-/// centroid (`vega-scenegraph/src/path/symbols.js`).
-const TAN_30: f64 = 0.577_350_269_189_625_7;
 
 /// A symbol's bounds around its origin: the half width and the reach above and
 /// below it (`triangle` and `wedge` sit on their centroid, so they reach higher
@@ -60,19 +42,20 @@ pub struct Bounds {
     pub sharp: bool,
 }
 
-/// The bounds of `symbol` drawn at radius `r` (`sqrt(size) / 2`).
+/// The area of the bounding square of a symbol of radius `r`: Vega's `size`, of which `sqrt(size) / 2` is the radius.
+fn size_of(r: f64) -> f64 {
+    4.0 * r * r
+}
+
+/// A Vega symbol by name; any other name would be a custom SVG path, which has no port.
+fn named(symbol: &str) -> Result<VegaSymbol, String> {
+    VegaSymbol::from_name(symbol).ok_or_else(|| format!("scatter: shape symbol {symbol:?} is no Vega symbol (resolver required)"))
+}
+
+/// The bounds of `symbol` drawn at radius `r` (`sqrt(size) / 2`). Only `wedge`, whose tip is a sharp corner,
+/// needs the miter limit.
 pub fn half_extents(symbol: &str, r: f64) -> Bounds {
-    let h = HALF_SQRT_3 * r;
-    let o = h - r * TAN_30;
-    let (x, up, down) = match symbol {
-        "triangle-up" | "triangle-down" => (r, h, h),
-        "triangle-right" | "triangle-left" => (h, r, r),
-        "triangle" => (r, h + o, h - o),
-        "wedge" => (r / 4.0, h + o, h - o),
-        "arrow" => (r / 2.5, r, r),
-        "stroke" => (r, 0.0, 0.0),
-        _ => (r, r, r),
-    };
+    let Extents { x, up, down } = named(symbol).expect("the resolver checks a shape symbol's name").extents(size_of(r));
     Bounds { x, up, down, sharp: symbol == "wedge" }
 }
 
@@ -81,60 +64,14 @@ pub fn miter_limit(bounds: Bounds) -> Option<&'static str> {
     bounds.sharp.then_some("10")
 }
 
-/// The SVG path `vega-scenegraph/src/path/symbols.js` draws for `symbol` at
-/// radius `r` (`sqrt(size) / 2`), centered on the origin.
-pub fn path(symbol: &str, r: f64) -> Result<String, String> {
-    let h = HALF_SQRT_3 * r;
-    let o = h - r * TAN_30;
-    let poly = |pts: &[(f64, f64)]| {
-        let mut d = String::new();
-        for (i, (x, y)) in pts.iter().enumerate() {
-            d.push(if i == 0 { 'M' } else { 'L' });
-            d.push_str(&format!("{},{}", num(*x), num(*y)));
-        }
-        d.push('Z');
-        d
-    };
-    Ok(match symbol {
-        "circle" => {
-            let r = num(r);
-            format!("M{r},0A{r},{r},0,1,1,-{r},0A{r},{r},0,1,1,{r},0")
-        }
-        "square" => {
-            let w = num(2.0 * r);
-            format!("M{},{}h{w}v{w}h-{w}Z", num(-r), num(-r))
-        }
-        "cross" => {
-            let s = r / 2.5;
-            poly(&[
-                (-r, -s),
-                (-r, s),
-                (-s, s),
-                (-s, r),
-                (s, r),
-                (s, s),
-                (r, s),
-                (r, -s),
-                (s, -s),
-                (s, -r),
-                (-s, -r),
-                (-s, -s),
-            ])
-        }
-        "diamond" => poly(&[(-r, 0.0), (0.0, -r), (r, 0.0), (0.0, r)]),
-        "triangle-up" => poly(&[(0.0, -h), (-r, h), (r, h)]),
-        "triangle-down" => poly(&[(0.0, h), (-r, -h), (r, -h)]),
-        "triangle-right" => poly(&[(h, 0.0), (-h, -r), (-h, r)]),
-        "triangle-left" => poly(&[(-h, 0.0), (h, -r), (h, r)]),
-        "triangle" => poly(&[(0.0, -h - o), (-r, h - o), (r, h - o)]),
-        "wedge" => poly(&[(0.0, -h - o), (-r / 4.0, h - o), (r / 4.0, h - o)]),
-        "arrow" => {
-            let (s, t, v) = (r / 7.0, r / 2.5, r / 8.0);
-            poly(&[(-s, r), (s, r), (s, -v), (t, -v), (0.0, -r), (-t, -v), (-s, -v)])
-        }
-        "stroke" => format!("M{},0L{},0", num(-r), num(r)),
-        other => return Err(format!("scatter: shape symbol {other:?} is no Vega symbol (resolver required)")),
-    })
+/// The path `vega-scenegraph` draws for `symbol` at radius `r` (`sqrt(size) / 2`), centered on the origin.
+pub fn path(symbol: &str, r: f64) -> Result<PathData, String> {
+    Ok(glyph(named(symbol)?, r))
+}
+
+/// [`path`] for a symbol already known to be Vega's.
+pub fn glyph(symbol: VegaSymbol, r: f64) -> PathData {
+    symbol.draw(size_of(r))
 }
 
 /// How a shape legend's symbols are filled (`vega-lite compile/legend/
@@ -159,7 +96,7 @@ pub enum SymbolFill<'a> {
 pub struct ShapeLegend {
     title: String,
     labels: Vec<String>,
-    paths: Vec<String>,
+    paths: Vec<PathData>,
     family: String,
     grid: LegendGrid,
     /// The legend's ink width, ceiled, and its height.
@@ -218,12 +155,7 @@ impl ShapeLegend {
         })
     }
 
-    /// Paints the legend at `(x, y)` with `opacity` the mark's own.
-    pub fn paint(&self, svg: &mut String, x: f64, y: f64, fill: SymbolFill, opacity: f64) {
-        svg.push_str(&print::print(&self.nodes(x, y, fill, opacity)));
-    }
-
-    /// [`Self::paint`] as nodes.
+    /// The legend at `(x, y)` with `opacity` the mark's own.
     pub fn nodes(&self, x: f64, y: f64, fill: SymbolFill, opacity: f64) -> Vec<Node> {
         let symbol_fill = |attrs: Attrs| match fill {
             SymbolFill::Static(color) => attrs.set("fill", color),
@@ -237,11 +169,11 @@ impl ShapeLegend {
             }
         };
         let mut nodes = vec![Node::text(
+            Role::Legend,
+            (x, y + baseline_shift("top", TITLE_SIZE)),
             Attrs::new()
-                .set("x", format!("{x:.2}"))
-                .set("y", format!("{:.2}", y + baseline_shift("top", TITLE_SIZE)))
                 .vega("font-family", self.family.as_str())
-                .set("font-size", TITLE_SIZE.to_string())
+                .num("font-size", TITLE_SIZE)
                 .set("font-weight", "bold")
                 .set("fill", INK),
             self.title.as_str(),
@@ -250,22 +182,12 @@ impl ShapeLegend {
         let c = self.grid.size / 2.0;
         for (i, (label, path)) in self.labels.iter().zip(&self.paths).enumerate() {
             let row_y = entries_y + self.grid.row_y[i];
-            nodes.push(Node::Path(
-                symbol_fill(
-                    Attrs::new()
-                        .set("transform", format!("translate({:.2},{:.2})", x + c, row_y + c))
-                        .set("d", path.as_str()),
-                )
-                .set("stroke-width", SYMBOL_STROKE_WIDTH.to_string())
-                .set("opacity", opacity.to_string()),
-            ));
+            let glyph = symbol_fill(Attrs::new()).num("stroke-width", SYMBOL_STROKE_WIDTH).num("opacity", opacity);
+            nodes.push(Node::path(Role::Legend, path.clone(), glyph).translate(x + c, row_y + c));
             nodes.push(Node::text(
-                Attrs::new()
-                    .set("x", format!("{:.2}", x + self.grid.label_x))
-                    .set("y", format!("{:.2}", row_y + c + baseline_shift("middle", LABEL_SIZE)))
-                    .vega("font-family", self.family.as_str())
-                    .set("font-size", LABEL_SIZE.to_string())
-                    .set("fill", INK),
+                Role::Legend,
+                (x + self.grid.label_x, row_y + c + baseline_shift("middle", LABEL_SIZE)),
+                Attrs::new().vega("font-family", self.family.as_str()).num("font-size", LABEL_SIZE).set("fill", INK),
                 label.as_str(),
             ));
         }
@@ -278,34 +200,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paths_match_the_vega_scenegraph_output() {
-        assert_eq!(
-            path("square", 3.873).unwrap(),
-            "M-3.873,-3.873h7.746v7.746h-7.746Z"
-        );
-        assert_eq!(
-            path("triangle-up", 3.873).unwrap(),
-            "M0,-3.354L-3.873,3.354L3.873,3.354Z"
-        );
-        assert_eq!(
-            path("triangle-up", 5.0).unwrap(),
-            "M0,-4.33L-5,4.33L5,4.33Z"
-        );
+    fn an_unknown_symbol_is_refused_by_name() {
+        let err = path("hexagon", 3.873).unwrap_err();
+        assert!(err.contains("\"hexagon\""), "{err}");
     }
 
+    /// A radius is the square root of the size over two, so a size's path is its radius's.
     #[test]
-    fn the_centroid_symbols_and_the_arrow_match_the_vega_scenegraph_output() {
-        assert_eq!(path("arrow", 3.873).unwrap(), "M-0.553,3.873L0.553,3.873L0.553,-0.484L1.549,-0.484L0,-3.873L-1.549,-0.484L-0.553,-0.484Z");
-        assert_eq!(path("wedge", 3.873).unwrap(), "M0,-4.472L-0.968,2.236L0.968,2.236Z");
-        assert_eq!(path("triangle", 3.873).unwrap(), "M0,-4.472L-3.873,2.236L3.873,2.236Z");
-        assert_eq!(path("stroke", 3.873).unwrap(), "M-3.873,0L3.873,0");
-        assert!(path("hexagon", 3.873).is_err());
+    fn a_radius_draws_the_symbol_of_its_size() {
+        assert_eq!(path("square", 5.0).unwrap(), VegaSymbol::Square.draw(100.0));
+        assert_eq!(path("circle", 3.873).unwrap(), VegaSymbol::Circle.draw(size_of(3.873)));
     }
 
     #[test]
     fn a_centroid_symbol_reaches_further_up_than_down() {
         let b = half_extents("wedge", 5.0);
-        assert!((b.up - b.down - 2.0 * (HALF_SQRT_3 * 5.0 - 5.0 * TAN_30)).abs() < 1e-9);
+        assert!(b.up > b.down);
         assert!(b.sharp && !half_extents("triangle", 5.0).sharp);
     }
 }

@@ -22,7 +22,7 @@ from dbt_charts.cli.filesystem_project import (
     FilesystemProject,  # tach-ignore(core->cli: host-type guard; needs a non-cli signal on Project — deferred)
 )
 from dbt_charts.core.attribution import attribute
-from dbt_charts.core.compile.config import ProjectSourcesConfig, get_theme_style
+from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 from dbt_charts.core.compile.models.primitives import Regional
 from dbt_charts.core.compile.models.query.normalized import (
@@ -143,10 +143,8 @@ def build_adapter_registry(
     project: Project,
     *,
     read_only: bool = True,
-    allow_mutating_methods: bool = False,
-    allowed_types: set[str] | None = None,
     profile_type: str = "duckdb",
-    target: str = "dev",
+    target: str | None = None,
     duckdb_config: dict[str, Any] | None = None,
     resolver: SourceResolver | None = None,
     allow_external_access_in_readonly: bool = False,
@@ -171,14 +169,9 @@ def build_adapter_registry(
             ``build_cloud_adapter_registry``, not this function, but the
             fallback keeps this function itself host-agnostic.)
         read_only: Whether SQL adapters should be read-only (default True).
-        allow_mutating_methods: Let http sources use POST/PUT/PATCH/DELETE
-            (default False: GET only). A host that runs human-authored
-            boards (a CLI, an app, a docs renderer) passes True; agent surfaces
-            leave it off so their read-only tool hints hold.
-        allowed_types: If set, only register adapters whose supported_types
-            intersect with this set. None means register all.
         profile_type: SQL dialect (default "duckdb").
-        target: dbt target name (default: "dev").
+        target: dbt target for every ``dbt_profile`` source that names none
+            (``--target``). None: ``$DBT_TARGET``, then the profile's default.
         duckdb_config: Optional DuckDB config dict passed to the default
             connection. When read_only=True (the default) and
             allow_external_access_in_readonly=False, enable_external_access is
@@ -200,26 +193,24 @@ def build_adapter_registry(
             default. Serve passes its resolved max_workers so the persisted
             registry's pool matches the render-time parallelism.
         file_materializer: Pre-built materializer for CSV/JSON/Parquet file
-            sources. A plain pass-through — this function invents no local
-            default when it is None; the caller (ProjectSession, a host's own
-            composition root) decides via
-            ``file_source_materializer.resolve_local_file_materializer_factory``.
+            sources (a host's shared one, e.g. Cloud's).
         file_materializer_factory: Lazy builder for the file-source
-            materializer, used instead of ``file_materializer`` when it should
-            be built only on first use. Exactly one of the two is normally
-            set; passing neither leaves file-source queries refused by
-            ``AdapterRegistry.execute``.
+            materializer, built on first use. When neither argument is given,
+            the registry lazily builds the local in-process materializer, so a
+            fully-cached render never opens one.
         extra_adapters: Host-supplied adapters registered before every
             standard adapter, so each wins first-match-wins for whatever source
-            it claims. ``allowed_types`` gates these too. The registry owns
+            it claims. The registry owns
             them: ``close()`` closes any that define it.
     """
     from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
     from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-    from dbt_charts.core.execute.adapters.http_adapter import HttpAdapter
     from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
     from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
     from dbt_charts.core.execute.adapters.values_adapter import ValuesAdapter
+    from dbt_charts.core.execute.file_source_materializer import (
+        resolve_local_file_materializer_factory,
+    )
 
     registry = AdapterRegistry(
         project=project,
@@ -227,15 +218,15 @@ def build_adapter_registry(
         resolver=resolver,
         observers=observers,
         file_materializer=file_materializer,
-        file_materializer_factory=file_materializer_factory,
+        file_materializer_factory=(
+            file_materializer_factory
+            if file_materializer_factory is not None
+            else resolve_local_file_materializer_factory(project, file_materializer)
+        ),
     )
 
-    def _should_register(types: set[str]) -> bool:
-        return allowed_types is None or bool(types & allowed_types)
-
     for adapter in extra_adapters if extra_adapters is not None else []:
-        if _should_register(adapter.supported_types):
-            registry.register(adapter)
+        registry.register(adapter)
 
     # Relative DuckDB/SQLite paths root against the project directory — only a
     # FilesystemProject has one. Any other host (Cloud's git-blob store, an
@@ -247,7 +238,7 @@ def build_adapter_registry(
     resolved_dbt_path = linked_dbt_path(project)
 
     # DbtAdapter first (handles SQL queries with dbt features, takes priority)
-    if resolved_dbt_path is not None and _should_register({"sql"}):
+    if resolved_dbt_path is not None:
         registry.register(
             DbtAdapter(
                 project=project,
@@ -260,47 +251,39 @@ def build_adapter_registry(
     # Its own source_config is fixed to :memory: — DuckDB remains a valid *named*
     # source type (dbt_charts.yml `sources: {name: {type: duckdb, ...}}`), but there
     # is no build-time default connection for a sourceless query to fall back to.
-    if _should_register({"sql"}):
-        registry.register(
-            DuckDBAdapter(
-                source_config=DuckDBSourceConfig(type="duckdb", path=":memory:"),
-                data_dir=data_dir,
-                read_only=read_only,
-                duckdb_config=duckdb_config,
-                allow_external_access_in_readonly=allow_external_access_in_readonly,
-                dbt_project_path=str(resolved_dbt_path) if resolved_dbt_path else None,
-                project=project,
-            )
+    registry.register(
+        DuckDBAdapter(
+            source_config=DuckDBSourceConfig(type="duckdb", path=":memory:"),
+            data_dir=data_dir,
+            read_only=read_only,
+            duckdb_config=duckdb_config,
+            allow_external_access_in_readonly=allow_external_access_in_readonly,
+            dbt_project_path=str(resolved_dbt_path) if resolved_dbt_path else None,
+            project=project,
         )
+    )
 
     # SqlAdapter (dbt-warehouse path: postgres, snowflake, bigquery, etc.)
-    if _should_register({"sql"}):
-        registry.register(
-            SqlAdapter(
-                project=project,
-                dbt_project_path=str(resolved_dbt_path) if resolved_dbt_path else None,
-                profile_type=profile_type,
-                max_workers=max_workers,
-            )
+    registry.register(
+        SqlAdapter(
+            project=project,
+            dbt_project_path=str(resolved_dbt_path) if resolved_dbt_path else None,
+            profile_type=profile_type,
+            max_workers=max_workers,
         )
+    )
 
     # SqliteAdapter (filesystem-fd; local projects only)
-    if _should_register({"sql"}):
-        registry.register(SqliteAdapter(data_dir=data_dir, project=project))
+    registry.register(SqliteAdapter(data_dir=data_dir, project=project))
 
     # Lazy adapters — zero cost until actually called
-    if _should_register({"http"}):
-        registry.register(HttpAdapter(allow_mutating_methods=allow_mutating_methods))
+    registry.register(ValuesAdapter())
 
-    if _should_register({"values"}):
-        registry.register(ValuesAdapter())
+    from dbt_charts.core.execute.adapters.schema_adapter import (
+        SchemaAdapter,
+    )
 
-    if _should_register({"schema"}):
-        from dbt_charts.core.execute.adapters.schema_adapter import (
-            SchemaAdapter,
-        )
-
-        registry.register(SchemaAdapter(registry))
+    registry.register(SchemaAdapter(registry))
 
     # When the execute path opts into external file access under read-only,
     # cold schema introspection must open DuckDB with the same config.
@@ -310,15 +293,35 @@ def build_adapter_registry(
     return registry
 
 
+def _file_source_dialect_refusal(dialect: str) -> QueryResult:
+    return handle_adapter_error(
+        "File-source execution",
+        dialect_unsupported(
+            dialect,
+            "duckdb",
+            "queries on a file source are not translated, so write the SQL in duckdb",
+        ),
+    )
+
+
 def ad_hoc_board_clock(instant: datetime) -> BoardClock:
     """The clock of a query that belongs to no board: UTC, with the default
     theme's fiscal year and the default locale's week."""
     regional = Regional()
     return BoardClock(
         regional.today(instant),
-        get_theme_style().charts.axis_x.fiscal_year_start_month,
+        regional.fiscal_year_start_month,
         regional.week_start,
+        regional.time_zone,
     )
+
+
+class Unresolved:
+    """Type of ``UNRESOLVED``: ``None`` is a valid resolved source, so it cannot
+    also mean "not resolved yet"."""
+
+
+UNRESOLVED = Unresolved()
 
 
 class AdapterRegistry:
@@ -376,8 +379,6 @@ class AdapterRegistry:
         self._type_index: dict[str, list[BaseAdapter]] = {}
         self._project = project
         self._dbt_refs = DbtRefResolver(project)
-        # Loaded MetricFlow bundles by directory, reused while their files match.
-        self._semantic_layers: dict[str, SemanticLayer] = {}
         self._sources = SourceRegistry(project_sources=project_sources)
         self._resolver: SourceResolver = (
             resolver if resolver is not None else DefaultSourceResolver(project)
@@ -446,11 +447,12 @@ class AdapterRegistry:
     def _get_file_materializer(self) -> FileSourceMaterializer | None:
         """Return the registry's file-source materializer, building it lazily.
 
-        Mirrors ``Executor._get_file_materializer``: an injected materializer
-        is returned directly; a factory-backed one is built at most once,
-        under a lock, so concurrent callers share a single instance. Returns
-        None when neither was supplied — the registry has no file-source
-        support wired.
+        The one owner of the file-source materializer, shared by every
+        executor and ad-hoc query that runs through this registry. An injected
+        materializer is returned directly; a factory-backed one is built at
+        most once, under a lock, so concurrent render workers share a single
+        instance. Returns None when neither was supplied — the registry has
+        no file-source support wired.
         """
         if self._file_materializer is not None:
             return self._file_materializer
@@ -528,7 +530,10 @@ class AdapterRegistry:
 
         for adapter in self._adapters:
             if isinstance(adapter, DbtAdapter):
-                return DbtContext(dbt_project_path=adapter.dbt_project_path)
+                return DbtContext(
+                    dbt_project_path=adapter.dbt_project_path,
+                    target=adapter.target_name,
+                )
         return None
 
     def execute(
@@ -540,6 +545,7 @@ class AdapterRegistry:
         board: Board | None = None,
         dbt_context: DbtContext | None = None,
         query_name: str = AD_HOC_QUERY_NAME,
+        source_config: ResolvedSourceConfig | None | Unresolved = UNRESOLVED,
     ) -> QueryResult:
         """Execute a query using the appropriate adapter.
 
@@ -562,18 +568,31 @@ class AdapterRegistry:
                 messages. Callers executing a synthetic query (schema
                 introspection, bulk profiling, ad-hoc SQL) have none to give;
                 the default documents that explicitly.
+            source_config: The query's already-resolved source (None is a
+                legitimate resolution: a source-less non-SQL query). A caller
+                that resolved it passes it so the source is resolved once;
+                UNRESOLVED resolves it here.
 
         Returns:
             QueryResult with data or error
         """
+        if isinstance(source_config, Unresolved):
+            try:
+                source_config = self.resolve_query_source(
+                    query, board=board, dbt_context=dbt_context, query_name=query_name
+                )
+            except DbtChartsError as exc:
+                # handle_adapter_error keeps the resolver's typed identity, so
+                # ERR-SOURCE-NOT-FOUND et al. don't flatten to ERR-INTERNAL.
+                return handle_adapter_error("Source resolution", exc)
         if board_clock_in_scope():
             return self._execute(
-                query, variables, params, board, dbt_context, query_name
+                query, variables, params, board, source_config, query_name
             )
         now = datetime.now(UTC)
         with board_clock(board.clock(now) if board else ad_hoc_board_clock(now)):
             return self._execute(
-                query, variables, params, board, dbt_context, query_name
+                query, variables, params, board, source_config, query_name
             )
 
     def _execute(
@@ -582,18 +601,9 @@ class AdapterRegistry:
         variables: VariableValues | None,
         params: QueryParams,
         board: Board | None,
-        dbt_context: DbtContext | None,
+        source_config: ResolvedSourceConfig | None,
         query_name: str,
     ) -> QueryResult:
-        try:
-            source_config = self.resolve_query_source(
-                query, board=board, dbt_context=dbt_context, query_name=query_name
-            )
-        except DbtChartsError as exc:
-            # handle_adapter_error keeps the resolver's typed identity, so
-            # ERR-SOURCE-NOT-FOUND et al. don't flatten to ERR-INTERNAL.
-            return handle_adapter_error("Source resolution", exc)
-
         # SqlQuery and SchemaQuery are the two query types that can carry a
         # source (resolve_query_source returns None for anything else) — the
         # isinstance below narrows to read `.source`, not a second condition.
@@ -616,15 +626,7 @@ class AdapterRegistry:
             if query.dialect is not None and dialect_differs(
                 query.dialect, source_config
             ):
-                return handle_adapter_error(
-                    "File-source execution",
-                    dialect_unsupported(
-                        query.dialect,
-                        "duckdb",
-                        "queries on a file source are not translated, so write "
-                        "the SQL in duckdb",
-                    ),
-                )
+                return _file_source_dialect_refusal(query.dialect)
             materializer = self._get_file_materializer()
             if materializer is None:
                 return adapter_unavailable(
@@ -716,8 +718,6 @@ class AdapterRegistry:
             scope = {"query": query_name}
             if board is not None:
                 scope["board"] = board.id
-            if is_sql_query(query) and query.target:
-                scope["target"] = query.target
             # The source's own attribution rides this per-call scope, not the pooled
             # adapter: pools are shared by connection identity, so two sources on one
             # warehouse would otherwise both get whichever one built the pool.
@@ -771,8 +771,7 @@ class AdapterRegistry:
         row_fetch_limit = resolve_effective_row_limit(query.limit)
         status = "error"
         start = time.perf_counter()
-        # No bindings is a valid state, not a caller bug — mirrors Executor's
-        # own Step 4c call.
+        # No bindings is a valid state, not a caller bug.
         bound_variables = variables or {}  # type-state: silent_fallback — see above
         try:
             scope = {"query": query_name}
@@ -963,6 +962,50 @@ class AdapterRegistry:
             return plain_error(str(exc))
         return query.model_copy(update={"sql": sql}), translated_params
 
+    def translate_query(
+        self,
+        query: SqlQuery,
+        *,
+        board: Board,
+        variables: VariableValues,
+        source_config: ResolvedSourceConfig,
+    ) -> SqlQuery | QueryResult:
+        """The query as its source's engine would receive it, values inlined.
+
+        For a caller that must put text of its own around the SQL, like a
+        ``EXPLAIN`` prefix, and so cannot let ``execute`` translate afterwards.
+        The query must carry a ``dialect:``; the result carries none. One
+        already in its source's dialect comes back unchanged. A translation
+        failure comes back as the error ``execute`` would have returned.
+        """
+        assert query.dialect is not None
+        try:
+            differs = dialect_differs(query.dialect, source_config)
+        except DbtChartsError as exc:
+            return handle_adapter_error("Dialect translation", exc)
+        if not differs:
+            return query
+        if is_file_source(source_config):
+            return _file_source_dialect_refusal(query.dialect)
+        try:
+            semantic = self.semantic_layer(source_config)
+        except DbtChartsError as exc:
+            return handle_adapter_error("MetricFlow", exc)
+        composed = self._compose_translated(
+            query, variables, None, board, source_config, INLINE_PLACEHOLDERS, semantic
+        )
+        if isinstance(composed, QueryResult):
+            return composed
+        translated, params = composed
+        assert is_sql_query(translated) and params is not None
+        sql = inline_params_for_dialect(
+            translated.sql,
+            params,
+            INLINE_PLACEHOLDERS,
+            get_dialect(engine_dialect(query.dialect, source_config)),
+        )
+        return translated.model_copy(update={"sql": sql, "dialect": None})
+
     def semantic_layer(
         self, source_config: ResolvedSourceConfig
     ) -> (
@@ -981,12 +1024,7 @@ class AdapterRegistry:
             or source_config.metricflow is None
         ):
             return None
-        relpath = source_config.metricflow
-        layer = SemanticLayer.load(
-            self._project, relpath, self._semantic_layers.get(relpath)
-        )
-        self._semantic_layers[relpath] = layer
-        return layer
+        return SemanticLayer.load(self._project, source_config.metricflow)
 
     def prepare_sql(
         self,
@@ -1275,7 +1313,7 @@ class AdapterRegistry:
         invisible to it — so anything that needs to know where a query will run
         (execution, the ``--warehouse`` check) must come through here instead.
 
-        Returns None for a source-less non-SQL query (inline values, http,
+        Returns None for a source-less non-SQL query (inline values,
         schema list-all): those have no connection and must not be gated on one.
 
         SQL that names no source runs against the project's implicit dbt source

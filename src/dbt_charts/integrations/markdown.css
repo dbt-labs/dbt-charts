@@ -1,0 +1,337 @@
+/* charts-example layouts. Inlined once per page, after the site's own
+   stylesheets; the !important declarations hold the code pane against a
+   theme's own pre and code rules. */
+.dbt-charts-example {
+    position: relative;
+    display: block;
+    margin: 20px 0;
+    width: 100%;
+    padding: 0;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background-color: #f8f8f8;
+    overflow: visible;
+}
+
+.dbt-charts-example-code {
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    background-color: #f8f8f8;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border: none;
+    border-radius: 0;
+    overflow-x: auto;
+    overflow-y: visible;
+}
+
+.dbt-charts-example-code,
+.dbt-charts-example-code > *,
+.dbt-charts-example-code *,
+.dbt-charts-example-code pre,
+.dbt-charts-example-code code,
+.dbt-charts-example-code .dbt-charts-example-yaml,
+.dbt-charts-example-code .dbt-charts-example-yaml * {
+    background-color: #f8f8f8 !important;
+    box-sizing: border-box;
+}
+
+.dbt-charts-example-code pre {
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    height: auto;
+    width: 100%;
+    overflow: visible !important;
+    box-sizing: border-box;
+    background-color: #f8f8f8 !important;
+}
+
+.dbt-charts-example-code .dbt-charts-example-yaml {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100%;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: visible !important;
+}
+
+.dbt-charts-example-code .dbt-charts-example-yaml pre {
+    margin: 0 !important;
+    padding: 1em !important;
+    border-radius: 0 !important;
+    flex: 1;
+    width: 100%;
+    box-sizing: border-box;
+    background-color: #f8f8f8 !important;
+    min-height: auto;
+    overflow: visible !important;
+}
+
+.dbt-charts-example-code .dbt-charts-example-yaml pre code {
+    display: block;
+    width: 100%;
+    background-color: #f8f8f8 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    white-space: pre;
+}
+
+.dbt-charts-example-code code {
+    background-color: #f8f8f8 !important;
+    padding: 0 !important;
+}
+
+.dbt-charts-example-code,
+.dbt-charts-example-code .dbt-charts-example-yaml,
+.dbt-charts-example-code pre,
+.dbt-charts-example-code code {
+    color: #333 !important;
+}
+
+.dbt-charts-example-code .nt {
+    color: #C24A02 !important;
+}
+
+.dbt-charts-example-code .s,
+.dbt-charts-example-code .s1,
+.dbt-charts-example-code .s2,
+.dbt-charts-example-code .sb,
+.dbt-charts-example-code .sc,
+.dbt-charts-example-code .sh,
+.dbt-charts-example-code .sx {
+    color: #047857 !important;
+}
+
+.dbt-charts-example-code .m,
+.dbt-charts-example-code .mi,
+.dbt-charts-example-code .mf,
+.dbt-charts-example-code .mh,
+.dbt-charts-example-code .mo,
+.dbt-charts-example-code .mb,
+.dbt-charts-example-code .il {
+    color: #9A4F00 !important;
+}
+
+/* SQL keywords inside sql: blocks. */
+.dbt-charts-example-code .k {
+    color: #0369A1 !important;
+    font-weight: 600;
+}
+
+.dbt-charts-example-code .kc {
+    color: #7C3AED !important;
+}
+
+.dbt-charts-example-code .c,
+.dbt-charts-example-code .c1,
+.dbt-charts-example-code .cm,
+.dbt-charts-example-code .cs,
+.dbt-charts-example-code .ch,
+.dbt-charts-example-code .cp,
+.dbt-charts-example-code .cpf {
+    color: #6B7280 !important;
+    font-style: italic;
+}
+
+.dbt-charts-example-code .p {
+    color: #4B5563 !important;
+}
+
+.dbt-charts-example-code .n,
+.dbt-charts-example-code .no,
+.dbt-charts-example-code .nx {
+    color: #374151 !important;
+}
+
+.dbt-charts-example-code .si {
+    color: #0E7490 !important;
+}
+
+.dbt-charts-example-code .nv {
+    color: #6D28D9 !important;
+}
+
+.dbt-charts-example-render {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+/* side-by-side floats the board over the code's upper right. */
+.dbt-charts-example--side-by-side .dbt-charts-example-render {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: min(520px, 44%);
+    max-width: 520px;
+    z-index: 3;
+}
+
+.dbt-charts-example-board {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.16);
+}
+
+.dbt-charts-example-board svg {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+}
+
+.dbt-charts-playground-link {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: white;
+    text-decoration: none;
+    border-radius: 50%;
+    font-size: 0.75rem;
+    transition: all 0.2s ease;
+    z-index: 1;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.dbt-charts-playground-link:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    text-decoration: none;
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.dbt-charts-playground-link:visited {
+    color: white;
+}
+
+.dbt-charts-playground-icon {
+    font-size: 0.75rem;
+    line-height: 1;
+}
+
+/* tab: the board, then a <details> drawer whose summary hangs under it as a
+   tab; column-reverse opens the YAML between the board and the tab. Themes
+   draw every <details> as a collapsible note, so the drawer clears their box,
+   icon and chevron. */
+.dbt-charts-example--tab {
+    border: 0;
+    background-color: transparent;
+}
+
+.dbt-charts-example-drawer {
+    position: relative;
+    display: flex !important;
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    color: inherit !important;
+    font-size: inherit !important;
+    overflow: visible !important;
+}
+
+.dbt-charts-example-drawer > summary {
+    display: block !important;
+    min-height: 0 !important;
+    margin: 0 1rem 0 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    font-size: 0.75rem !important;
+    font-weight: normal !important;
+    overflow: visible !important;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+.dbt-charts-example-drawer > summary::before,
+.dbt-charts-example-drawer > summary::after {
+    content: none !important;
+}
+
+.dbt-charts-example-drawer > summary::-webkit-details-marker {
+    display: none;
+}
+
+.dbt-charts-example-drawer-tab {
+    display: inline-block;
+    padding: 0.2rem 0.65rem 0.25rem;
+    border: 1px solid #e0e0e0;
+    border-top: 0;
+    border-radius: 0 0 5px 5px;
+    background-color: #f8f8f8;
+    color: #6b7079;
+}
+
+.dbt-charts-example-drawer-tab::after {
+    content: " \25BE";
+}
+
+.dbt-charts-example-drawer[open] .dbt-charts-example-drawer-tab::after {
+    content: " \25B4";
+}
+
+.dbt-charts-example-drawer > summary:hover .dbt-charts-example-drawer-tab {
+    background-color: #eeeeee;
+    color: #2a2725;
+}
+
+.dbt-charts-example-drawer::details-content {
+    width: 100%;
+    height: 0;
+    overflow: clip;
+    transition: height 0.25s ease, content-visibility 0.25s allow-discrete;
+}
+
+.dbt-charts-example-drawer[open]::details-content {
+    height: auto;
+}
+
+@supports (interpolate-size: allow-keywords) {
+    .dbt-charts-example-drawer {
+        interpolate-size: allow-keywords;
+    }
+}
+
+.dbt-charts-example-drawer .dbt-charts-example-code {
+    width: auto;
+    max-height: 32rem;
+    margin: 0 1rem !important;
+    overflow: auto;
+    border: 1px solid #e0e0e0;
+    border-top: 0;
+}
+
+/* Narrow screens: side-by-side stacks the board under the code. */
+@media (max-width: 768px) {
+    .dbt-charts-example--side-by-side .dbt-charts-example-render {
+        position: relative;
+        top: auto;
+        right: auto;
+        width: 100%;
+        max-width: none;
+        margin-top: 16px;
+    }
+}

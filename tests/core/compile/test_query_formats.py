@@ -214,6 +214,7 @@ def test_a_table_column_keeps_its_own_options_over_the_declared_spec() -> None:
     resolved = _with_resolved_scale_stops(
         columns,
         None,
+        "light",
         formats,
         "Arial",
         [{"revenue": 1234567}],
@@ -425,7 +426,10 @@ def test_a_spec_as_a_value_is_rejected_with_a_hint_to_name_it(spec: str) -> None
     error = result.errors[0]
     assert error.code == "ERR-QUERY-FORMAT-SPEC"
     assert "not a format name" in error.message
-    assert "style.formats" in error.message
+    assert (
+        f"Add `revenue_format: {spec!r}` under `style.formats`, "
+        "then write `revenue: revenue_format` here."
+    ) in error.message
 
 
 def test_a_values_query_naming_an_absent_column_errors_at_compile() -> None:
@@ -465,6 +469,7 @@ def _executor(rows: list[dict[str, int]]) -> Executor:
         truncated_reason=None,
     )
     registry = Mock()
+    registry.project_file_sources.return_value = {}
     registry.execute.return_value = ok
     return Executor(
         compiled.board,

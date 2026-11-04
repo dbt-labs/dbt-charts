@@ -103,7 +103,7 @@ def test_metricflow_rides_the_resolved_source(
 ) -> None:
     result = _resolve(tmp_path, _TARGET, monkeypatch, metricflow="semantics")
     assert isinstance(result, TrinoSourceConfig)
-    assert result.metricflow == "semantics"
+    assert result.metricflow is not None and result.metricflow.path == "semantics"
 
 
 def test_a_key_the_trino_source_does_not_know_is_refused_without_its_values(
@@ -138,3 +138,21 @@ def test_a_project_whose_own_target_is_trino_needs_a_declared_source(
     with pytest.raises(ExecutionError) as excinfo:
         adapter._get_dbt_adapter()
     assert excinfo.value.code is ERR_DBT_TARGET_NEEDS_SOURCE
+
+
+def test_needs_source_error_names_the_profile_default_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
+    monkeypatch.delenv("DBT_TARGET", raising=False)
+    _write_profile(tmp_path, _TARGET)
+    (tmp_path / "dbt_project.yml").write_text("name: analytics\nprofile: analytics\n")
+    adapter = DbtAdapter(
+        project=FilesystemProject(tmp_path),
+        dbt_project_path=tmp_path,
+        target_name=None,
+    )
+    with pytest.raises(ExecutionError) as excinfo:
+        adapter._get_dbt_adapter()
+    assert "target: dev" in str(excinfo.value)
+    assert "None" not in str(excinfo.value)

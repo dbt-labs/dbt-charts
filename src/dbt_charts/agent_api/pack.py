@@ -12,6 +12,7 @@ All business logic lives in ``dbt_charts.core.pack``.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,7 +25,7 @@ from dbt_charts.core.inspect.resolver import LayeredSchemaResolver
 from dbt_charts.core.pack.models import PackProposal, ProposedDashboard
 from dbt_charts.core.pack.planner import SourceEntry, plan_pack
 from dbt_charts.core.pack.proposal_store import dump_proposal
-from dbt_charts.core.project import CHARTS_SUBDIR
+from dbt_charts.core.project import CHARTS_SUBDIR, is_board_relpath
 
 if TYPE_CHECKING:
     from dbt_charts.cli.filesystem_project import FilesystemProject
@@ -329,13 +330,18 @@ def _require_bare_filename(value: str, label: str) -> None:
         raise ValueError(f"{label} must be a bare filename: {value!r}")
 
 
-def _charts_target(project_dir: Path, *parts: str, label: str) -> tuple[Path, Path]:
-    """Resolve a scaffold target and verify it stays under project_dir/charts."""
-    charts_dir = (project_dir / CHARTS_SUBDIR).resolve()
-    target = project_dir.joinpath(*parts).resolve()
-    if not target.is_relative_to(charts_dir):
-        raise ValueError(f"{label} must stay inside charts/: {target}")
-    return target, target.relative_to(project_dir)
+def _charts_target(
+    project: FilesystemProject, *parts: str, label: str
+) -> tuple[Path, Path]:
+    """Resolve the canonical ``charts/...`` scaffold target *parts* to where the
+    project keeps it, and verify it stays inside the boards folder."""
+    relpath = posixpath.normpath("/".join(parts))
+    target = project.data_path(relpath)
+    if not is_board_relpath(relpath) or not target.is_relative_to(
+        project.charts_dir.resolve()
+    ):
+        raise ValueError(f"{label} must stay inside charts/: {relpath}")
+    return target, target.relative_to(project.root)
 
 
 def _check_duplicate_data_urls(proposal: PackProposal) -> None:
@@ -361,7 +367,7 @@ def _check_duplicate_data_urls(proposal: PackProposal) -> None:
 
 def _validate_scaffold_targets(
     proposal: PackProposal,
-    project_dir: Path,
+    project: FilesystemProject,
 ) -> tuple[
     list[tuple[str, Path, Path]],
     list[tuple[str, Path, Path]],
@@ -379,7 +385,7 @@ def _validate_scaffold_targets(
             partial_filename = f"_{partial_filename}"
         _require_bare_filename(partial_filename, "partial filename")
         partial_path, rel = _charts_target(
-            project_dir,
+            project,
             CHARTS_SUBDIR,
             "partials",
             partial_filename,
@@ -388,12 +394,12 @@ def _validate_scaffold_targets(
         partial_targets.append((partial_filename, partial_path, rel))
 
     for folder in proposal.folders:
-        _charts_target(project_dir, folder.path, label="folder path")
+        _charts_target(project, folder.path, label="folder path")
         if folder.landing != "index.yml":
             raise ValueError(f"folder landing must be index.yml: {folder.landing!r}")
         _require_bare_filename(folder.landing, "folder landing")
         landing_path, rel_landing = _charts_target(
-            project_dir,
+            project,
             folder.path,
             folder.landing,
             label="folder landing",
@@ -403,7 +409,7 @@ def _validate_scaffold_targets(
         for dashboard in folder.dashboards:
             _require_bare_filename(dashboard.name, "dashboard name")
             dash_path, rel_dash = _charts_target(
-                project_dir,
+                project,
                 folder.path,
                 f"{dashboard.name}.yml",
                 label="dashboard name",
@@ -451,7 +457,7 @@ def apply_proposal(
     validated_paths: list[Path] = []
     partial_targets, landing_targets, dashboard_targets = _validate_scaffold_targets(
         proposal,
-        project.root,
+        project,
     )
 
     # Ensure base dirs exist

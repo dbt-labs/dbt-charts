@@ -185,6 +185,14 @@ fn acronym_callback(word: &str) -> Option<String> {
     None
 }
 
+/// One whitespace-free token in capitals, punctuation allowed (`SQL,`, `TL;DR`,
+/// `R&D`): an acronym or initialism, written as the author wants it shown.
+fn is_all_caps_token(token: &str) -> bool {
+    !token.contains(char::is_whitespace)
+        && token.chars().any(char::is_uppercase)
+        && token.chars().all(|c| !c.is_lowercase())
+}
+
 /// titlecase's `PUNCT` class — the only characters `CAPFIRST` steps over
 /// on its way to a token's first letter.
 const PUNCT: &str =
@@ -342,7 +350,7 @@ fn process_line(small: &Small, line: &str, small_first_last: bool) -> String {
     // (word, is_immutable) — immutable words bypass first/last capitalization.
     let mut tc: Vec<(String, bool)> = Vec::with_capacity(words.len());
 
-    for word in words {
+    'words: for word in words {
         if word.is_empty() {
             tc.push((String::new(), false));
             continue;
@@ -395,23 +403,24 @@ fn process_line(small: &Small, line: &str, small_first_last: bool) -> String {
         // BEFORE the hyphen split): a slash-joined token title-cases each
         // side independently and rejoins with "/".
         // URL-shaped words (`//`) are path-like and caught by the callback earlier.
-        if word.contains('/') {
-            let joined = word
-                .split('/')
-                .map(|part| process_line(small, part, false))
-                .collect::<Vec<_>>()
-                .join("/");
-            tc.push((joined, false));
-            continue;
-        }
-        if word.contains('-') {
-            let joined = word
-                .split('-')
-                .map(|part| process_line(small, part, false))
-                .collect::<Vec<_>>()
-                .join("-");
-            tc.push((joined, false));
-            continue;
+        // A multi-letter all-caps part (`SQL,` in `text-to-SQL,`) keeps its capitals
+        // unless the whole line is all caps; a lone capital (`A/B`) is still cased.
+        for separator in ['/', '-'] {
+            if word.contains(separator) {
+                let joined = word
+                    .split(separator)
+                    .map(|part| {
+                        if !all_caps && part.chars().count() > 1 && is_all_caps_token(part) {
+                            part.to_string()
+                        } else {
+                            process_line(small, part, false)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(&separator.to_string());
+                tc.push((joined, false));
+                continue 'words;
+            }
         }
         let mut w = word.to_string();
         if all_caps {
@@ -485,10 +494,7 @@ fn title_case(small: &Small, text: &str) -> String {
     if let Some((label, title)) = split_numbered_label(text) {
         return format!("{label}{}", title_case(small, title));
     }
-    let is_alpha = !text.is_empty() && text.chars().all(char::is_alphabetic);
-    let is_upper =
-        is_alpha && text.chars().all(|c| !c.is_lowercase()) && text.chars().any(char::is_uppercase);
-    if is_alpha && !text.contains(' ') && is_upper {
+    if is_all_caps_token(text) {
         return text.to_string();
     }
     let titled = LINE_BREAKS
@@ -737,6 +743,51 @@ mod inline_period_tests {
         ] {
             assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
         }
+    }
+
+    #[test]
+    fn an_all_caps_part_of_a_hyphen_or_slash_word_keeps_its_case_in_a_mixed_line() {
+        for (input, expected) in [
+            ("evaluating text-to-SQL systems", "Evaluating Text-to-SQL Systems"),
+            ("a text-to-SQL benchmark", "A Text-to-SQL Benchmark"),
+            ("text-to-SQL", "Text-to-SQL"),
+            ("the ETL-to-BI gap", "The ETL-to-BI Gap"),
+            ("the SQL/dbt bridge", "The SQL/dbt Bridge"),
+            ("pie/DONUT table", "Pie/DONUT Table"),
+            ("reading text-to-SQL, again", "Reading Text-to-SQL, Again"),
+            ("a text-to-SQL: survey", "A Text-to-SQL: Survey"),
+            ("a (text-to-SQL) survey", "A (Text-to-SQL) Survey"),
+            ("a text-to-TL;DR survey", "A Text-to-TL;DR Survey"),
+            ("the R&D-to-GTM handoff", "The R&D-to-GTM Handoff"),
+            ("see SQL/dbt.", "See SQL/dbt."),
+        ] {
+            assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn a_single_all_caps_token_with_punctuation_stays_as_written() {
+        for (input, expected) in [
+            ("TL;DR", "TL;DR"),
+            ("tl;dr of the results", "Tl;dr of the Results"),
+            ("the TL;DR section", "The TL;DR Section"),
+            ("Q&A", "Q&A"),
+            ("R&D", "R&D"),
+        ] {
+            assert_eq!(apply_case(input, "title").unwrap(), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn a_wholly_all_caps_sentence_is_still_title_cased() {
+        assert_eq!(
+            apply_case("TOTAL SALES, BY REGION", "title").unwrap(),
+            "TOTAL Sales, BY REGION"
+        );
+        assert_eq!(
+            apply_case("DATA-TO-SQL, BY REGION", "title").unwrap(),
+            "DATA-TO-Sql, BY REGION"
+        );
     }
 
     #[test]

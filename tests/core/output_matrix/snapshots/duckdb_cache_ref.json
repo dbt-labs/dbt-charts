@@ -1,0 +1,31 @@
+{
+  "q": {
+    "calls": [
+      {
+        "params": [],
+        "sql": "SELECT region, sum(amount) AS total FROM t GROUP BY region"
+      },
+      {
+        "params": [],
+        "sql": "SELECT region, total * 2 AS doubled FROM base ORDER BY region",
+        "tables": [
+          "base"
+        ]
+      }
+    ],
+    "rows": [
+      {
+        "doubled": 10.0,
+        "region": "N'orth"
+      },
+      {
+        "doubled": 21.0,
+        "region": "North"
+      },
+      {
+        "doubled": 40.0,
+        "region": "South"
+      }
+    ]
+  }
+}

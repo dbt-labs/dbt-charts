@@ -32,6 +32,7 @@ rows:
         "WARN-LIKELY-CURRENCY-OR-PERCENT-MISSING-FORMATTER",
         "WARN-REDUNDANT-AUTHORED-DEFAULT",
         "WARN-REDUNDANT-AUTHORED-LABEL",
+        "WARN-TABLE-CRAMPED",
     ],
 )
 def test_ignoring_a_retired_warning_loads_and_reports_a_diagnostic(code: str) -> None:

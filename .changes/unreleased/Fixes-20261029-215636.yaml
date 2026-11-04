@@ -1,0 +1,5 @@
+kind: Fixes
+body: 'A tabs layout with `position: left` now draws its tabs as a vertical rail beside the content instead of a bar across the top, with long labels wrapped onto two lines.'
+time: 2026-10-29T21:56:36.737933-05:00
+custom:
+    DbtChartsIssue: "81"

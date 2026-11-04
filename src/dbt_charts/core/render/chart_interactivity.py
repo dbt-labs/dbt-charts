@@ -48,6 +48,8 @@ def _build_tooltip_style_dict(resolved_style: "ResolvedStyle") -> dict[str, Any]
         "shadow": {"visible": t.shadow.visible},
         "swatch": {"size": t.swatch.size, "radius": t.swatch.radius},
         "activeMarker": t.active_marker,
+        "maxRows": t.max_rows,
+        "groupLimit": t.group_limit,
     }
 
 

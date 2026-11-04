@@ -50,8 +50,8 @@ pub fn baseline_shift(baseline: &str, font_size: f64) -> f64 {
 }
 
 /// Joins the lines of a label that paints on several (an array a `labels.expr` returns): a noncharacter, so no
-/// text meets it by accident. Measuring takes the widest line; the SVG finishes as Vega's `tspan` per line
-/// (`chart-renderer`'s `text::expand_lines`).
+/// text meets it by accident. Measuring takes the widest line; layout paints a `tspan` per line
+/// (`chart-renderer`'s `text::label`), so the separator never reaches print.
 pub const LINE_SEP: char = '\u{FDD0}';
 
 pub struct Face {

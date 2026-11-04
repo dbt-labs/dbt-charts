@@ -41,14 +41,14 @@ use crate::js_math::js_truthy;
 use resample::resample;
 
 /// A raw projection: λ and φ in radians to planar coordinates.
-pub trait RawProjection {
+pub trait RawProjection: Send + Sync {
     fn forward(&self, lambda: f64, phi: f64) -> [f64; 2];
     fn invert(&self, x: f64, y: f64) -> Option<[f64; 2]>;
 }
 
-type ProjectAt = Box<dyn Fn(&[f64]) -> Box<dyn RawProjection>>;
-type Preclip = Box<dyn for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a>>;
-type Postclip = Box<dyn for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a>>;
+type ProjectAt = Box<dyn Fn(&[f64]) -> Box<dyn RawProjection> + Send + Sync>;
+type Preclip = Box<dyn for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a> + Send + Sync>;
+type Postclip = Box<dyn for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a> + Send + Sync>;
 
 /// `scaleTranslate` and `scaleTranslateRotate`: d3 returns a different closure when `alpha` is falsy.
 #[derive(Clone, Copy)]
@@ -194,7 +194,7 @@ pub fn projection(project: impl RawProjection + Clone + 'static) -> Projection {
 
 /// `projectionMutator(projectAt)` called once with `args`; [`Projection::reproject`] calls it again.
 pub fn projection_mutator(
-    project_at: impl Fn(&[f64]) -> Box<dyn RawProjection> + 'static,
+    project_at: impl Fn(&[f64]) -> Box<dyn RawProjection> + Send + Sync + 'static,
     args: &[f64],
 ) -> Projection {
     let project = project_at(args);
@@ -266,7 +266,7 @@ impl Projection {
 
     pub fn set_preclip(
         &mut self,
-        preclip: impl for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a> + 'static,
+        preclip: impl for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a> + Send + Sync + 'static,
     ) -> &mut Self {
         self.preclip = Box::new(preclip);
         self.theta = f64::NAN;
@@ -275,7 +275,7 @@ impl Projection {
 
     pub fn set_postclip(
         &mut self,
-        postclip: impl for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a> + 'static,
+        postclip: impl for<'a> Fn(Box<dyn GeoStream + 'a>) -> Box<dyn GeoStream + 'a> + Send + Sync + 'static,
     ) -> &mut Self {
         self.postclip = Box::new(postclip);
         self.clip_extent = None;

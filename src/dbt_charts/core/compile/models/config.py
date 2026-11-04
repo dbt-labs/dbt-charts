@@ -32,6 +32,9 @@ from dbt_charts.core.compile.models.constraints import (
 )
 from dbt_charts.core.compile.models.primitives import HtmlPolicy
 
+# tach-ignore(pre-existing compile<->project coupling — accepted debt, see AGENTS.md)
+from dbt_charts.core.project import assert_relpath
+
 # The shape `published_to:` must take. Cloud mounts a project at
 # `/<org>/<project>/`, and the trailing slash is what makes the recorded URL
 # a page rather than a 404. `cloud_client.published_to.EXPECTED_FORM` states
@@ -411,6 +414,10 @@ class Config(ConfigMappingBase):
     # Canonical public URL for dct render exports (e.g. "https://dashboards.example.com").
     # When set, rendered links are fully-qualified. Empty string means root-relative (default).
     public_url: str
+    # The project-relative folder that holds boards ("." = the project root).
+    # Hosts that store files themselves read it raw per project
+    # (``read_boards_dir``); boards keep the canonical ``charts/...`` identity.
+    boards_dir: str
     # Where this project is published in dbt charts Cloud, e.g.
     # "https://dbtcharts.com/acme-data/analytics/" -- written by
     # `dct cloud project connect`, read by context resolution
@@ -437,6 +444,16 @@ class Config(ConfigMappingBase):
     locked_schema_version: str | None = None
     # None = exposure emission not configured; `dct exposures` refuses to run.
     exposures: ExposuresConfig | None = None
+
+    @field_validator("boards_dir")
+    @classmethod
+    def _validate_boards_dir(cls, value: str) -> str:
+        try:
+            return assert_relpath(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"boards_dir must be a project-relative folder: {exc}"
+            ) from None
 
     @field_validator("published_to")
     @classmethod

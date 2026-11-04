@@ -2,6 +2,7 @@
 # Florence Nightingale's "Diagram of the causes of mortality in the army in the
 # East" (1858), redrawn with the nightingale_rose template.
 title: Causes of mortality in the army in the East
+width: 1400
 source: examples_db
 notes: |
   After Florence Nightingale's diagram in *Notes on Matters Affecting the
@@ -11,8 +12,6 @@ notes: |
   proportional to the rate. Deaths and army strength are the figures she
   published; the query turns them into rates.
 style:
-  frame:
-    width: 1400
   charts:
     category_colors:
       series:

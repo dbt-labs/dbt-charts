@@ -39,6 +39,7 @@ charts:
     query: company_revenue_total
     title: Company Revenue
     subtitle: Minimal — no rules, no bg, uniform weight
+    row_role: row_role
     style:
       columns:
         company:
@@ -53,7 +54,6 @@ charts:
           label: Margin
           format: percent
       row:
-        role: row_role
         stripe:
           color: transparent
         divider:
@@ -79,6 +79,7 @@ charts:
     query: company_revenue_total
     title: Company Revenue
     subtitle: BI — apparatus-tier header (11/600/gray)
+    row_role: row_role
     style:
       columns:
         company:
@@ -97,13 +98,12 @@ charts:
           size: 11
           weight: '600'
           color: '#313233'
-      row:
-        role: row_role
   variant_classic:
     type: table
     query: company_revenue_total
     title: Company Revenue
     subtitle: Classic — Source Serif, per-column rule gaps, no header fill
+    row_role: row_role
     style:
       columns:
         company:
@@ -129,7 +129,6 @@ charts:
           continuous: false
           visible: true
       row:
-        role: row_role
         stripe:
           color: transparent
         divider:

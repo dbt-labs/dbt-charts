@@ -154,8 +154,8 @@ The locale fixture (`tests/fixtures/locale_parity.json`) comes from the d3-forma
 
 dbt charts wraps this library in `dbt-charts/src/dbt_charts/core/compile/format_value.py` to add:
 
-- **`bi` notation**: d3's SI `k/M/G/T` suffixes are remapped to `K/M/B/T` with no separator (e.g. `"1.5G"` → `"1.5B"`). The `B`-for-billion convention is dbt charts-specific; this library emits `G` per the SI standard.
-- **`editorial` notation**: SI suffixes remapped to `k/mn/bn/tr` (journalistic abbreviations, no space).
+- **`analytic` notation**: d3's SI `k/M/G/T` suffixes are remapped to `K/M/B/T` with no separator (e.g. `"1.5G"` → `"1.5B"`). The `B`-for-billion convention is dbt charts-specific; this library emits `G` per the SI standard.
+- **`narrative` notation**: SI suffixes remapped to `k/m/bn/trn` (journalistic abbreviations, no space).
 - **`None` value**: rendered as `"—"` (em dash) regardless of spec.
 
 These extensions are specific to the dbt charts product surface.

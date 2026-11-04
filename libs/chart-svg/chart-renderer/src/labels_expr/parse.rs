@@ -49,7 +49,7 @@ struct Lexer {
 impl Lexer {
     fn skip_space(&mut self) -> Res<()> {
         while let Some(&c) = self.chars.get(self.at) {
-            if super::val::is_js_space(c) {
+            if d3rs::js_math::is_js_space(c) {
                 self.at += 1;
             } else {
                 break;

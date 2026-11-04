@@ -97,13 +97,13 @@ fn run_board(args: &[String]) {
     // internally — see size_board's doc) purely so board_sweep.py can diff
     // Rust's own boxes against production's SIZED board without reading
     // them back out of the composed SVG.
-    let (boxes, container, overrides, _fresh_render) =
+    let (boxes, container, _fresh_render) =
         board::size_board(&payload, &fonts).unwrap_or_else(|e| {
             eprintln!("render error: {e}");
             std::process::exit(1);
         });
     let items =
-        board::size_board_items_json(&payload, &fonts, &boxes, &overrides).unwrap_or_else(|e| {
+        board::size_board_items_json(&payload, &fonts, &boxes).unwrap_or_else(|e| {
             eprintln!("render error: {e}");
             std::process::exit(1);
         });
@@ -370,6 +370,7 @@ fn run_png(args: &[String]) {
     let fonts_dir = flag_value(args, "--fonts-dir");
 
     let svg_data = normalize_for_rasterization(read_svg_input(svg_arg));
+    let scale = pattern_safe_scale(&svg_data, scale);
     let mut opt = usvg::Options::default();
     *opt.fontdb_mut() = build_fontdb(fonts_dir).unwrap_or_else(|e| {
         eprintln!("error: {e}");
@@ -390,6 +391,17 @@ fn run_png(args: &[String]) {
     resvg::render(&tree, transform, &mut pixmap.as_mut());
     let png_bytes = pixmap.encode_png().expect("encode png");
     write_output(out_arg, &png_bytes);
+}
+
+/// Tiles are multiples of 4 px, so at a scale that is a multiple of 0.25 every tile edge lands
+/// on a whole device pixel; at any other scale the repeat blurs across a pixel boundary. An SVG
+/// that carries a `<pattern>` is rasterized at the nearest such scale.
+fn pattern_safe_scale(svg: &[u8], scale: f32) -> f32 {
+    if svg.windows(8).any(|window| window == b"<pattern") {
+        ((scale * 4.0).round() / 4.0).max(0.25)
+    } else {
+        scale
+    }
 }
 
 /// MEDIUM: production's own PNG dimension law (`vlc.svg_to_png`, resvg
@@ -600,6 +612,19 @@ fn report(label: &str, times: &mut [f64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_patterned_svg_snaps_the_export_scale_to_a_quarter() {
+        let patterned = br#"<svg><defs><pattern id="p" width="8" height="8"/></defs></svg>"#;
+        assert_eq!(pattern_safe_scale(patterned, 1.3), 1.25);
+        assert_eq!(pattern_safe_scale(patterned, 2.0), 2.0);
+        assert_eq!(pattern_safe_scale(patterned, 0.1), 0.25, "a scale never snaps to nothing");
+    }
+
+    #[test]
+    fn an_svg_without_a_pattern_keeps_the_scale_it_was_given() {
+        assert_eq!(pattern_safe_scale(b"<svg><rect/></svg>", 1.3), 1.3);
+    }
 
     #[test]
     fn flag_value_finds_the_argument_right_after_the_flag_name() {

@@ -102,7 +102,8 @@ After setup, your AI assistant has access to these tools:
 | Tool | Purpose |
 |------|---------|
 | `render_board` | Compile, execute queries, and generate visual HTML/text output |
-| `execute_sql` | Run ad-hoc SQL, or one named query from a saved board, and inspect columns/sample rows |
+| `execute_sql` | Run ad-hoc SQL, SQL as a query of a saved board, or one named board query, and inspect columns/sample rows |
+| `find_queries` | Find the boards and queries that answer a question, with each query's columns, variables and cached rows (how fresh); `execute_sql(board=…, sql=…)` then reads cached rows with `{{ queries.NAME.cache }}` and no warehouse call; needs `DCT_CACHE_PATH` set for `dct mcp serve` |
 | `list_skills` / `get_skill` | Discover and read packaged dbt charts authoring skills — `get_skill` returns the full body including example YAML |
 
 ## Available Resources

@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from dbt_charts.core.compile.models.board.normalized import VariableValues
 
@@ -50,29 +50,55 @@ def board_variables(values: VariableValues) -> Generator[None]:
         _BOARD_VARIABLES.reset(token)
 
 
-_ROOT_BOARD_WIDTH: ContextVar[float | None] = ContextVar(
-    "dct_root_board_width", default=None
+def current_board_variables() -> VariableValues | None:
+    """The board's variable values for the render pass in progress, if any."""
+    return _BOARD_VARIABLES.get()
+
+
+def held_legend_view(chart_id: str) -> tuple[str, str] | None:
+    """A chart's view param and its value as JSON, when the board holds one.
+
+    The chart carries it whether or not it draws an entry or a label to change
+    it (``legend_view.rs::held_view``); an empty value is a cleared view.
+    """
+    param = f"{LEGEND_VIEW_PREFIX}{chart_id}"
+    variables = current_board_variables()
+    value = variables.get(param) if variables is not None else None
+    if value is None or value == "" or value == []:
+        return None
+    return param, json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+class LinkedOptions(TypedDict):
+    """A choice variable's options, for a chart whose link sets it."""
+
+    # As authored or queried: the engine prints each the way a row's cell prints.
+    options: list[Any]  # type-state: explicit_any — raw option cells
+    multiple: bool
+
+
+_VARIABLE_OPTIONS: ContextVar[Mapping[str, LinkedOptions]] = ContextVar(
+    "dct_variable_options", default=MappingProxyType({})
 )
 
 
 @contextmanager
-def root_board_width(width: float) -> Generator[None]:
-    """Scope the root board's width: the engine sizes a table's width fix from it."""
-    token = _ROOT_BOARD_WIDTH.set(width)
+def variable_options(options: Mapping[str, LinkedOptions]) -> Generator[None]:
+    """Scope the options of the variables chart links set, for one render pass.
+
+    A linked legend draws every option of its variable, not only the series
+    the filtered query returned.
+    """
+    token = _VARIABLE_OPTIONS.set(MappingProxyType(dict(options)))
     try:
         yield
     finally:
-        _ROOT_BOARD_WIDTH.reset(token)
+        _VARIABLE_OPTIONS.reset(token)
 
 
-def current_root_board_width() -> float | None:
-    """The root board's width for the render pass in progress, if any."""
-    return _ROOT_BOARD_WIDTH.get()
-
-
-def current_board_variables() -> VariableValues | None:
-    """The board's variable values for the render pass in progress, if any."""
-    return _BOARD_VARIABLES.get()
+def current_variable_options() -> Mapping[str, LinkedOptions]:
+    """The options of the variables chart links set, for the render pass in progress."""
+    return _VARIABLE_OPTIONS.get()
 
 
 _BOARD_DATA_PROVIDER: ContextVar[ChartDataProvider | None] = ContextVar(
@@ -113,6 +139,33 @@ def daterange_presets(presets: Mapping[str, str]) -> Generator[None]:
 def current_daterange_presets() -> Mapping[str, str]:
     """Variable name to committed preset id, for the render in progress."""
     return _DATERANGE_PRESETS.get()
+
+
+# A chart's legend view lives in the variable `_dct_legend_<chart-id>`; the engine
+# (`legend_view.rs`) reads it, and a board's Reset clears it.
+LEGEND_VIEW_PREFIX = "_dct_legend_"
+
+# The names the caller set, as opposed to defaults the render merged in: a
+# strip's Reset has something to undo only when one of its filters or a chart's
+# legend view is here.
+_OVERRIDDEN_VARIABLES: ContextVar[frozenset[str]] = ContextVar(
+    "dct_overridden_variables", default=frozenset()
+)
+
+
+@contextmanager
+def overridden_variables(names: frozenset[str]) -> Generator[None]:
+    """Scope the variable names the caller supplied values for."""
+    token = _OVERRIDDEN_VARIABLES.set(names)
+    try:
+        yield
+    finally:
+        _OVERRIDDEN_VARIABLES.reset(token)
+
+
+def current_overridden_variables() -> frozenset[str]:
+    """Variable names the caller set, for the render in progress."""
+    return _OVERRIDDEN_VARIABLES.get()
 
 
 def committed_text(

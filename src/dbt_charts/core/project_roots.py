@@ -349,6 +349,17 @@ def resolve_dbt_profile_name(explicit: str | None, project_dir: Path | None) -> 
     )
 
 
+def resolve_dbt_target_name(explicit: str | None) -> str | None:
+    """The dbt target to connect with, in dbt's own precedence.
+
+    ``explicit`` (``--target``), then ``$DBT_TARGET``. None means the profile's
+    own default target, which only profiles.yml can name.
+    """
+    if explicit is not None:
+        return explicit
+    return os.environ.get("DBT_TARGET") or None  # noqa: TID251 — dbt-convention parity
+
+
 def infer_dialect_from_dbt(
     project_dir: Path,
     target_name: str | None = None,
@@ -388,7 +399,7 @@ def infer_dialect_from_dbt(
     default_target = profile.get(
         "target", "dev"
     )  # type-state: silent_fallback — as _read_target_dict
-    target_config = outputs.get(target_name or default_target)
+    target_config = outputs.get(resolve_dbt_target_name(target_name) or default_target)
     if not isinstance(target_config, dict):
         return None
     adapter_type = target_config.get("type")

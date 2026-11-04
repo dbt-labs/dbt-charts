@@ -80,6 +80,28 @@ def test_a_preset_outside_the_grammar_fails_compile(bad: str) -> None:
     assert bad in str(result.errors)
 
 
+def test_fiscal_last_and_before_forms_compile_as_menu_entries() -> None:
+    result = _compile(
+        "input: daterange\n    presets:\n"
+        "      - last_4_fiscal_quarters\n"
+        "      - before_previous_4_fiscal_quarters\n"
+    )
+
+    assert result.success, result.errors
+    assert result.board.variable_registry["span"].presets == (
+        "last_4_fiscal_quarters",
+        "before_previous_4_fiscal_quarters",
+    )
+
+
+@pytest.mark.parametrize("bad", ["last_0_months", "before_previous_quarters"])
+def test_a_bad_last_or_before_form_fails_compile(bad: str) -> None:
+    result = _compile(f"input: daterange\n    presets:\n      - {bad}\n")
+
+    assert not result.success
+    assert bad in str(result.errors)
+
+
 def test_a_bad_style_menu_entry_fails_compile() -> None:
     result = _compile(
         "input: daterange",
@@ -104,7 +126,20 @@ def test_an_empty_menu_fails_compile() -> None:
     assert not result.success
 
 
-def test_the_board_clock_carries_the_axis_fiscal_start_month() -> None:
+def test_the_board_clock_carries_the_regional_fiscal_start_month() -> None:
+    from datetime import UTC, datetime
+
+    result = _compile(
+        "input: daterange",
+        "regional:\n  fiscal_year_start_month: 7\n",
+    )
+
+    assert result.success, result.errors
+    clock = result.board.clock(datetime(2026, 10, 20, 12, tzinfo=UTC))
+    assert (clock.today.isoformat(), clock.fiscal_start_month) == ("2026-10-20", 7)
+
+
+def test_the_axis_fiscal_start_month_does_not_move_the_board_clock() -> None:
     from datetime import UTC, datetime
 
     result = _compile(
@@ -114,4 +149,16 @@ def test_the_board_clock_carries_the_axis_fiscal_start_month() -> None:
 
     assert result.success, result.errors
     clock = result.board.clock(datetime(2026, 10, 20, 12, tzinfo=UTC))
-    assert (clock.today.isoformat(), clock.fiscal_start_month) == ("2026-10-20", 7)
+    assert clock.fiscal_start_month == 1
+
+
+@pytest.mark.parametrize("month", [0, 13])
+def test_a_regional_fiscal_start_month_outside_1_to_12_fails_compile(
+    month: int,
+) -> None:
+    result = _compile(
+        "input: daterange", f"regional:\n  fiscal_year_start_month: {month}\n"
+    )
+
+    assert not result.success
+    assert "fiscal_year_start_month" in str(result.errors)

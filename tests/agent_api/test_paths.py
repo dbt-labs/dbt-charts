@@ -255,6 +255,85 @@ def test_build_board_render_context_outside_project_root_raises(
         build_board_render_context(board, project)
 
 
+def test_build_board_render_context_accepts_symlinked_package_board(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.agent_api._paths import build_board_render_context
+
+    package = tmp_path / "package"
+    (package / "charts").mkdir(parents=True)
+    (package / "charts" / "overview.yml").write_text(_VALID_BOARD)
+    project = package / "integration_tests"
+    (project / "dbt_packages").mkdir(parents=True)
+    (project / "dbt_packages" / "zendesk").symlink_to(package, target_is_directory=True)
+
+    ctx = build_board_render_context(
+        Path("dbt_packages/zendesk/charts/overview.yml"), project
+    )
+
+    assert ctx.scoped_path == Path("dbt_packages/zendesk/charts/overview.yml")
+    assert ctx.board_file == project / "dbt_packages/zendesk/charts/overview.yml"
+
+
+def test_build_board_render_context_rejects_dotdot_that_lands_outside_package(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.agent_api._paths import build_board_render_context
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.yml").write_text(_VALID_BOARD)
+    package = tmp_path / "package"
+    (package / "deep" / "a").mkdir(parents=True)
+    (package / "inner").symlink_to(package / "deep" / "a", target_is_directory=True)
+    (package / "x.yml").symlink_to(outside / "x.yml")
+    project = tmp_path / "project"
+    (project / "dbt_packages").mkdir(parents=True)
+    (project / "dbt_packages" / "p").symlink_to(package, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="is outside project_dir"):
+        build_board_render_context(project / "dbt_packages/p/inner/../x.yml", project)
+
+
+def test_build_board_render_context_absolute_path_through_symlinked_parent(
+    tmp_path: Path,
+) -> None:
+    """The project root is resolved (/tmp -> /private/tmp on macOS); an absolute
+    board path spelled through the symlinked parent still lands in the package."""
+    from dbt_charts.agent_api._paths import build_board_render_context
+
+    package = tmp_path / "package"
+    (package / "charts").mkdir(parents=True)
+    (package / "charts" / "x.yml").write_text(_VALID_BOARD)
+    project = tmp_path / "real" / "project"
+    (project / "dbt_packages").mkdir(parents=True)
+    (project / "dbt_packages" / "p").symlink_to(package, target_is_directory=True)
+    (tmp_path / "link").symlink_to(tmp_path / "real", target_is_directory=True)
+
+    ctx = build_board_render_context(
+        tmp_path / "link" / "project" / "dbt_packages" / "p" / "charts" / "x.yml",
+        project,
+    )
+
+    assert ctx.scoped_path == Path("dbt_packages/p/charts/x.yml")
+
+
+def test_build_board_render_context_rejects_non_package_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    from dbt_charts.agent_api._paths import build_board_render_context
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.yml").write_text(_VALID_BOARD)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "linked").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="is outside project_dir"):
+        build_board_render_context(Path("linked/x.yml"), project)
+
+
 def test_build_board_render_context_absolute_outside_cwd_project_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

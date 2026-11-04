@@ -76,6 +76,7 @@ def _make_executor(board: object, query_registry: object, layer_rows: list[dict]
         return ok
 
     mock_registry = Mock()
+    mock_registry.project_file_sources.return_value = {}
     mock_registry.execute.side_effect = _execute
     return Executor(
         board, adapter_registry=mock_registry, query_registry=query_registry

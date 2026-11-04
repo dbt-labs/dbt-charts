@@ -29,8 +29,21 @@ class ResolvedCalloutStyle(BaseModel):
     padding: PaddingStyle
     section_gap: float
     bold_font_weight: str
+    # The theme's code font: markdown code paints in it, as it is measured.
+    code_family: str
     title: ResolvedCalloutElementStyle
     message: ResolvedCalloutElementStyle
 
 
-__all__ = ["ResolvedCalloutElementStyle", "ResolvedCalloutStyle"]
+class ResolvedErrorTileStyle(ResolvedCalloutStyle):
+    """The tile core paints for a failed chart: a callout (its `tone` is inherited
+    and paints nothing) plus the stripes' color."""
+
+    stripe_color: str
+
+
+__all__ = [
+    "ResolvedCalloutElementStyle",
+    "ResolvedCalloutStyle",
+    "ResolvedErrorTileStyle",
+]

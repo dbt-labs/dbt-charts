@@ -100,7 +100,8 @@ def _kind(value: Any) -> str:  # type-state: explicit_any — one Python cell va
     raise TypeError(f"{type(value).__name__} has no Arrow type here")
 
 
-def _decimal_type(values: list[Decimal]) -> na.Schema:
+def _decimal_shape(values: list[Decimal], strip_zeros: bool) -> tuple[int, int]:
+    """(precision, scale) of the narrowest DECIMAL holding every value."""
     scale = 0
     integer_digits = 1
     for value in values:
@@ -108,9 +109,26 @@ def _decimal_type(values: list[Decimal]) -> na.Schema:
             raise ValueError(f"{value} has no Arrow decimal representation")
         _, digits, exponent = value.as_tuple()
         assert isinstance(exponent, int)
+        text = "".join(map(str, digits))
+        if strip_zeros:
+            # Counted in text: Decimal.normalize() rounds at its context's 28 digits.
+            kept = text.rstrip("0")
+            if not kept:
+                continue
+            exponent += len(text) - len(kept)
+            text = kept
         scale = max(scale, -exponent)
-        integer_digits = max(integer_digits, len(digits) + exponent)
-    precision = integer_digits + scale
+        integer_digits = max(integer_digits, len(text) + exponent)
+    return integer_digits + scale, scale
+
+
+def _decimal_type(values: list[Decimal]) -> na.Schema:
+    precision, scale = _decimal_shape(values, strip_zeros=False)
+    if precision > _MAX_DECIMAL_PRECISION:
+        # The column keeps the scale the values carry unless that is too wide:
+        # a BigQuery BIGNUMERIC pads every value to 38 places, and those
+        # trailing zeros carry no value.
+        precision, scale = _decimal_shape(values, strip_zeros=True)
     if precision > _MAX_DECIMAL_PRECISION:
         raise ValueError(
             f"Decimal needs precision {precision}, more than the "
@@ -129,7 +147,7 @@ def infer_type(
 
     Raises:
         TypeError: The column mixes kinds, or holds a type with no Arrow form.
-        ValueError: A Decimal column needs precision above 38.
+        ValueError: A Decimal column needs more than 38 significant digits.
     """
     present = [value for value in values if value is not None]
     kinds = {_kind(value) for value in present}
@@ -269,7 +287,6 @@ def rows_to_arrow(
 
     Raises:
         TypeError: A column mixes kinds.
-        ValueError: A Decimal column needs precision above 38.
     """
     names = list(rows[0]) if rows else []
     columns = [

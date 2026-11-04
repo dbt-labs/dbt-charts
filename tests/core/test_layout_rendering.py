@@ -4,6 +4,7 @@ Tests the dbt_charts.core.render.layouts module for rendering different layout t
 """
 
 import importlib
+import re
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock
@@ -569,7 +570,9 @@ rows:
 
         card_padding = float(get_theme_style().frame.card_padding)
         # Vega-family: must NOT have outer translate wrapper
-        assert f'<g transform="translate({card_padding}' not in svg, (
+        assert not re.search(
+            rf'<g transform="translate\({card_padding}, [\d.]+\)">', svg
+        ), (
             f"Vega chart must NOT have outer translate({card_padding}, ...) — "
             "card_pad is now Vega's internal padding"
         )
@@ -636,6 +639,6 @@ rows:
         # The board item itself should NOT be wrapped in card_padding translate.
         # However, its inner chart children SHOULD have card_padding.
         # Check that the outermost SVG element is NOT a card_padding translate group.
-        assert not svg.startswith(f'<g transform="translate({card_padding}'), (
-            "Board item SVG should NOT start with card_padding translate"
-        )
+        assert not re.search(
+            rf'<g transform="translate\({card_padding}, [\d.]+\)">', svg
+        ), "Board item SVG should NOT start with card_padding translate"

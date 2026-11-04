@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-from .._svg_render import render_board_to_svg
+from .._svg_render import path_commands, render_board_to_svg
 
 
 def _board(chart: str, rows: str, style: str = "") -> str:
@@ -44,7 +44,16 @@ def test_a_stacks_inner_joins_are_square_and_each_segment_strokes_once() -> None
         )
         assert len(segments) == 6, svg
         assert len(re.findall(r'fill="none" stroke="#FFFFFF"', svg)) == 0
-        assert sum("A 2.00,2.00" in segment for segment in segments) == 2
+        rounded = [
+            [
+                numbers[0]
+                for letter, numbers in path_commands(d.group(1))
+                if letter == "A"
+            ]
+            for segment in segments
+            if (d := re.search(r' d="([^"]*)"', segment))
+        ]
+        assert [radii for radii in rounded if radii] == [[2.0, 2.0]] * 2
 
 
 def test_a_one_color_palette_gives_every_endpoint_label_the_same_ink() -> None:

@@ -4,6 +4,7 @@
 # against the Dundersign silver layer (no invented dimensions).
 
 title: Quarterly business review
+width: 1440
 notes: |
   A written report on Dundersign's trailing quarter — bookings, the
   installed base, pipeline, signups, and support — with charts embedded
@@ -11,10 +12,6 @@ notes: |
 theme: paper
 
 source: dundersign_db
-
-style:
-  frame:
-    width: 1440
 
 queries:
   # ── The anchor ──────────────────────────────────────────────────────────

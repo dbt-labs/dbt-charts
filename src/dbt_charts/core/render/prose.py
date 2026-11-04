@@ -8,6 +8,11 @@ thirds or the halves of the board -- chosen once by :func:`plan_board_prose`
 and handed to both callers through ``ProsePlan``; each block then takes as many
 of the grid's spans as its text earns.
 
+A block is a sequence of stretches. A table wider than a column holds its own
+width and a heading that opens a stretch titles the columns under it, so both sit
+across the columns; everything between them flows through the columns at the one
+measure of the span, balanced on what is painted.
+
 This lives outside ``boards.py`` because it is no longer part of board rendering.
 ``get_markdown_text_height`` reserves the height a board's prose will occupy and
 ``_render_text_svg`` draws it, and the two must agree exactly -- a disagreement
@@ -19,6 +24,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from itertools import groupby
 from typing import TYPE_CHECKING, Literal
 
 from dbt_charts.core.compile.models.board.authored import LayoutType
@@ -30,9 +36,10 @@ from dbt_charts.core.compile.resolve.style.markdown_style import (
 )
 from dbt_charts.core.compile.sizing import card_row_gap, prose_slot_widths
 from dbt_charts.core.render.column_packer import (
+    PackUnit,
     choose_grid,
-    columns_earned,
     grid_span,
+    pack_earned,
     span_boxes,
 )
 from dbt_charts.core.render.conditions import item_is_drawn
@@ -162,6 +169,127 @@ def _prose_typography(
     return family, style, fonts, char_px
 
 
+@dataclass(frozen=True)
+class _Stretch:
+    """Blocks ``first`` up to ``stop`` of a block's text, which lay out alike.
+
+    Flowing, ``assignment`` gives each of ``units`` its column; spanning, the
+    blocks sit across the columns and it is empty.
+    """
+
+    first: int
+    stop: int
+    spanning: bool
+    units: tuple[PackUnit, ...]
+    assignment: tuple[int, ...]
+
+    @property
+    def n_cols(self) -> int:
+        return max(self.assignment, default=0) + 1
+
+
+def _spanning(blocks: list[AnyBlock], wide_tables: bool) -> list[bool]:
+    """Which blocks sit across the columns rather than flow through them.
+
+    A table only when it is wider than a column; one that fits is one more
+    unsplittable block of the flow. A heading goes with what is under it, wherever
+    the flow would have left it: the table it titles, or at the end of the text,
+    the next row.
+    """
+    spanning: list[bool] = []
+    opens = True
+    for block in blocks:
+        wide = wide_tables and isinstance(block, Table)
+        opens = wide or (opens and isinstance(block, Heading))
+        spanning.append(opens)
+    for index in reversed(range(len(blocks))):
+        led = index == len(blocks) - 1 or spanning[index + 1]
+        if led and isinstance(blocks[index], Heading):
+            spanning[index] = True
+    return spanning
+
+
+def _a_later_column_opens_with_a_heading(
+    stretch: _Stretch, blocks: list[AnyBlock]
+) -> bool:
+    openers: dict[int, PackUnit] = {}
+    for unit, column in zip(stretch.units, stretch.assignment, strict=True):
+        openers.setdefault(column, unit)
+    return any(
+        column > 0 and isinstance(blocks[unit.block_id], Heading)
+        for column, unit in openers.items()
+    )
+
+
+def _pack_units(
+    metrics: tuple[BlockMetrics, ...], first: int, stop: int
+) -> tuple[PackUnit, ...]:
+    return tuple(
+        PackUnit(
+            advance=advance,
+            space_before=metrics[block_id].space_before
+            if line_index == 0
+            else metrics[block_id].item_gap,
+            block_id=block_id,
+            line_index=line_index,
+            line_total=len(metrics[block_id].line_advances),
+            splittable=metrics[block_id].splittable,
+            keep_with_next=metrics[block_id].keep_with_next,
+            leading_margin=metrics[block_id].column_lift if line_index == 0 else 0.0,
+            whole_item=metrics[block_id].whole_items,
+        )
+        for block_id in range(first, stop)
+        for line_index, advance in enumerate(metrics[block_id].line_advances)
+    )
+
+
+def _measured(
+    blocks: list[AnyBlock],
+    renderer: SVGRenderer,
+    measure: float,
+    table_measure: float | None,
+    ceiling: int,
+) -> tuple[tuple[BlockMetrics, ...], tuple[_Stretch, ...]]:
+    """Metrics at ``measure``, tables at their own, and the stretches they flow into."""
+    # Every column is equal width, so a block wraps identically wherever it
+    # lands -- the line list is sliced, never re-flowed.
+    metrics = renderer.measure_blocks(blocks, width=measure)
+    if table_measure is not None and table_measure != measure:
+        at_table_width = renderer.measure_blocks(blocks, width=table_measure)
+        metrics = tuple(
+            at_table_width[i] if isinstance(b, Table) else m
+            for i, (b, m) in enumerate(zip(blocks, metrics, strict=True))
+        )
+    line_height = renderer.style.base_font_size * renderer.style.line_height
+    spanning = _spanning(blocks, table_measure is not None and table_measure > measure)
+
+    def stretches_of(spanning: list[bool]) -> tuple[_Stretch, ...]:
+        stretches: list[_Stretch] = []
+        for spans, indices in groupby(range(len(blocks)), key=spanning.__getitem__):
+            members = list(indices)
+            first, stop = members[0], members[-1] + 1
+            if spans:
+                stretches.append(_Stretch(first, stop, True, (), ()))
+                continue
+            units = _pack_units(metrics, first, stop)
+            assignment = tuple(pack_earned(list(units), ceiling, line_height))
+            stretches.append(_Stretch(first, stop, False, units, assignment))
+        return tuple(stretches)
+
+    stretches = stretches_of(spanning)
+    # Sections flowing side by side are peers: the first heading joins them on the
+    # one baseline rather than titling columns that open with titles of their own.
+    if (
+        len(stretches) > 1
+        and stretches[0].spanning
+        and all(isinstance(b, Heading) for b in blocks[: stretches[0].stop])
+        and _a_later_column_opens_with_a_heading(stretches[1], blocks)
+    ):
+        spanning[: stretches[0].stop] = [False] * stretches[0].stop
+        stretches = stretches_of(spanning)
+    return metrics, stretches
+
+
 def _columns_of(
     blocks: list[AnyBlock],
     renderer: SVGRenderer,
@@ -175,43 +303,34 @@ def _columns_of(
 ) -> tuple[
     tuple[tuple[float, float], ...],
     float,
-    float,
+    tuple[float, float],
+    float | None,
     tuple[BlockMetrics, ...],
-    list[Table],
-    int,
+    tuple[_Stretch, ...],
 ]:
-    """Boxes, prose and table measures, metrics, tables and columns of one block.
+    """Boxes, prose measure, table box and measure, metrics and stretches of one block.
 
     The render pass and the board-level plan both decide how many columns a
     block earns through this, at the block's real slot ``width``. Tables alone
     take the width that holds them unwrapped; every other block keeps the
-    capped reading measure, so a wide table never stretches its paragraphs.
+    span's reading measure, so a wide table never stretches its paragraphs.
     """
     boxes = span_boxes(width + 2 * pad, board_width, grid, gap)
-    tables = [b for b in blocks if isinstance(b, Table)]
-    table_measure: float | None = None
-    if tables:
-        boxes, table_measure = _fit_tables(
-            renderer, tables, boxes, pad, col.max_chars, char_px, width
-        )
     # Columns share one measure, so a box a hair short of its span sets it.
     measure = _measure(
         min(box_width for _, box_width in boxes) - 2 * pad, col.max_chars, char_px
     )
-    # Every column is equal width, so a block wraps identically wherever it
-    # lands -- the line list is sliced, never re-flowed.
-    metrics = renderer.measure_blocks(blocks, width=measure)
-    if table_measure is not None and table_measure != measure:
-        at_table_width = renderer.measure_blocks(blocks, width=table_measure)
-        metrics = tuple(
-            at_table_width[i] if isinstance(b, Table) else m
-            for i, (b, m) in enumerate(zip(blocks, metrics, strict=True))
+    tables = [b for b in blocks if isinstance(b, Table)]
+    table_box = boxes[0]
+    table_measure: float | None = None
+    if tables:
+        group, table_measure = _fit_tables(
+            renderer, tables, boxes, pad, col.max_chars, char_px, width
         )
-    spans = len(boxes)
-    ceiling = spans if col.max_number is None else min(spans, col.max_number)
-    n_cols = columns_earned(sum(len(m.line_advances) for m in metrics), ceiling)
-    table_width = measure if table_measure is None else table_measure
-    return boxes, measure, table_width, metrics, tables, n_cols
+        table_box = group[0]
+    ceiling = len(boxes) if col.max_number is None else min(len(boxes), col.max_number)
+    metrics, stretches = _measured(blocks, renderer, measure, table_measure, ceiling)
+    return boxes, measure, table_box, table_measure, metrics, stretches
 
 
 @dataclass(frozen=True)
@@ -225,11 +344,18 @@ class _ProseFlow:
     pad: float
     boxes: tuple[tuple[float, float], ...]
     measure: float
-    table_measure: float
-    tables_differ: bool
+    table_box: tuple[float, float]
+    table_measure: float | None
     metrics: tuple[BlockMetrics, ...]
+    stretches: tuple[_Stretch, ...]
     n_cols: int
+    spanning_measure: float
     align: Literal["left", "center", "right"]
+
+    @property
+    def paints_whole(self) -> bool:
+        """One column at one width draws in one piece, without ever flowing."""
+        return self.n_cols <= 1 and self.table_measure in (None, self.measure)
 
 
 def _prose_flow(
@@ -265,7 +391,7 @@ def _prose_flow(
     )
 
     pad = float(resolved_style.frame.card_padding)
-    boxes, measure, table_measure, metrics, tables, n_cols = _columns_of(
+    boxes, measure, table_box, table_measure, metrics, stretches = _columns_of(
         blocks,
         renderer,
         width,
@@ -276,8 +402,7 @@ def _prose_flow(
         plan.board_width,
         plan.gap,
     )
-    tables_differ = table_measure != measure
-    if n_cols == 1 and not tables and not plan.snap:
+    if not plan.snap and all(s.n_cols == 1 for s in stretches):
         # Columns are for text long enough to earn them. On a board where no
         # block goes multi-column, a lone column wraps at least as wide as sizing
         # asked for, so a line that fits stays one line; once it outgrows its
@@ -290,6 +415,28 @@ def _prose_flow(
         if wanted > measure:
             measure = wanted
             boxes = ((0.0, width + 2 * pad),)
+            table_box = boxes[0]
+            if table_measure is not None:
+                table_measure = max(table_measure, measure)
+            # Without a table of another width the block paints in one piece and
+            # never reads its metrics.
+            if table_measure not in (None, measure):
+                metrics, stretches = _measured(
+                    blocks, renderer, measure, table_measure, 1
+                )
+
+    # A heading wraps at the columns it titles, so it is measured there too.
+    n_cols = max((s.n_cols for s in stretches), default=1)
+    spanning_measure = measure
+    if n_cols > 1:
+        last_x, last_width = boxes[n_cols - 1]
+        spanning_measure = last_x + last_width - boxes[0][0] - 2 * pad
+        at_span = renderer.measure_blocks(blocks, width=spanning_measure)
+        spanning = {i for s in stretches if s.spanning for i in range(s.first, s.stop)}
+        metrics = tuple(
+            at_span[i] if i in spanning and isinstance(blocks[i], Heading) else m
+            for i, m in enumerate(metrics)
+        )
 
     return _ProseFlow(
         effective_family=effective_family,
@@ -298,10 +445,12 @@ def _prose_flow(
         pad=pad,
         boxes=boxes,
         measure=measure,
+        table_box=table_box,
         table_measure=table_measure,
-        tables_differ=tables_differ,
         metrics=metrics,
+        stretches=stretches,
         n_cols=n_cols,
+        spanning_measure=spanning_measure,
         align=text_style.align,
     )
 
@@ -337,7 +486,11 @@ def prose_first_baseline(
     )
     if not flow.blocks or not isinstance(flow.blocks[0], Heading):
         return None
-    return flow.renderer.first_baseline(flow.blocks, flow.measure)
+    if flow.paints_whole or flow.stretches[0].spanning:
+        return flow.renderer.first_baseline(flow.blocks, flow.spanning_measure)
+    m = flow.metrics[0]
+    baseline = flow.renderer.first_baseline(flow.blocks, flow.measure)
+    return baseline - (m.column_lift - m.leading_margin)
 
 
 def render_prose_svg(
@@ -376,7 +529,6 @@ def render_prose_svg(
     assert plan is not None, (
         "board text must be planned (plan_board_prose) before it is sized or drawn"
     )
-    from dbt_charts.core.render.column_packer import PackUnit, pack_columns
     from dbt_charts.core.render.font_selection import record_painted_faces
 
     flow = _prose_flow(
@@ -396,8 +548,8 @@ def render_prose_svg(
         flow.blocks,
     )
     pad, boxes, measure = flow.pad, flow.boxes, flow.measure
-    metrics, n_cols, align = flow.metrics, flow.n_cols, flow.align
-    table_measure, tables_differ = flow.table_measure, flow.tables_differ
+    metrics, align = flow.metrics, flow.align
+    table_measure = flow.table_measure
     col = text_style.column
 
     # Alignment belongs to the span the reader sees, not to a width the renderer chose.
@@ -406,7 +558,7 @@ def render_prose_svg(
         for box_x, box_width in boxes
     ]
 
-    if n_cols <= 1 and not tables_differ:
+    if flow.paints_whole:
         result = renderer.render_content(blocks, width=measure, padding=0.0)
         inset = insets[0]
         w = format_svg_numeric(width)
@@ -423,99 +575,114 @@ def render_prose_svg(
         record_painted_faces(effective_family, renderer.used_faces)
         return svg, result.height
 
-    def block_measure(block: AnyBlock) -> float:
-        return table_measure if isinstance(block, Table) else measure
-
-    units: list[PackUnit] = []
-    origin: list[tuple[int, int]] = []  # (block index, line index) per unit
-    for block_index, m in enumerate(metrics):
-        line_total = len(m.line_advances)
-        for line_index, advance in enumerate(m.line_advances):
-            units.append(
-                PackUnit(
-                    advance=advance,
-                    space_before=m.space_before if line_index == 0 else 0.0,
-                    block_id=block_index,
-                    line_index=line_index,
-                    line_total=line_total,
-                    splittable=m.splittable,
-                    keep_with_next=m.keep_with_next,
-                )
-            )
-            origin.append((block_index, line_index))
-
-    assignment = pack_columns(units, n_cols)
-
-    # Collapse per-line assignments back into one window per (column, block).
-    windows: dict[int, list[tuple[int, int, int]]] = {c: [] for c in range(n_cols)}
-    for unit_index, column in enumerate(assignment):
-        block_index, line_index = origin[unit_index]
-        current = windows[column]
-        if current and current[-1][0] == block_index:
-            current[-1] = (block_index, current[-1][1], line_index)
-        else:
-            current.append((block_index, line_index, line_index))
-
-    # Taken off the first rendered window rather than the renderer's private
-    # accessor: mdsvg is published separately, so only its public surface is a
-    # contract we can hold it to.
+    # Taken off the first rendered window: mdsvg's public surface is the contract.
     style_block = ""
-    column_parts: list[str] = []
-    column_heights: list[float] = []
 
-    for ci in range(n_cols):
-        y = 0.0
-        col_elements: list[str] = []
-        for position, (block_index, first, last) in enumerate(windows[ci]):
-            m = metrics[block_index]
-            # A block opening a column sits at the top: both the gap that would
-            # separate it from preceding text and the whitespace it draws above
-            # itself collapse, exactly as they do at the top of the board.
-            opens_column = position == 0
-            if not opens_column:
-                y += m.space_before
-            lift = m.leading_margin if opens_column else 0.0
-            block_width = block_measure(blocks[block_index])
-            rendered = renderer.render_block_window(
-                blocks[block_index],
-                width=block_width,
-                start=first,
-                count=last - first + 1,
-            )
-            if not style_block:
-                style_block = rendered.style_block
-            # A block narrower or wider than the column's measure re-aligns
-            # itself within the span; the column itself is placed by `measure`.
-            dx = _measure_offset(
-                align, boxes[ci][1] - 2 * pad, block_width
-            ) - _measure_offset(align, boxes[ci][1] - 2 * pad, measure)
-            col_elements.append(
-                translate_group(px(dx), px(y - lift), rendered.elements)
-            )
-            y += math.fsum(m.line_advances[first : last + 1]) - lift
-        column_heights.append(y)
-        if col_elements:
-            column_parts.append(
-                translate_group(px(insets[ci]), 0, "".join(col_elements))
-            )
+    def window(block: AnyBlock, block_width: float, **lines: int) -> str:
+        nonlocal style_block
+        rendered = renderer.render_block_window(block, width=block_width, **lines)
+        style_block = style_block or rendered.style_block
+        return rendered.elements
 
-    actual_col_height = max(column_heights) if column_heights else 0.0
+    def flowed(stretch: _Stretch) -> tuple[str, float]:
+        """A flowing stretch's columns, and the height of the tallest."""
+        windows: dict[int, list[tuple[int, int, int]]] = {
+            c: [] for c in range(stretch.n_cols)
+        }
+        for unit, column in zip(stretch.units, stretch.assignment, strict=True):
+            current = windows[column]
+            if current and current[-1][0] == unit.block_id:
+                current[-1] = (unit.block_id, current[-1][1], unit.line_index)
+            else:
+                current.append((unit.block_id, unit.line_index, unit.line_index))
 
-    if col.divider.visible:
-        for x, box_width in boxes[: n_cols - 1]:
-            # Midway through the card gap between this span's box and the next;
-            # boxes are container-relative and the slot starts `pad` inside it.
-            column_parts.append(
-                _column_divider_line(
-                    x + box_width + plan.gap / 2 - pad, actual_col_height, col.divider
+        parts: list[str] = []
+        heights: list[float] = []
+        for ci in range(stretch.n_cols):
+            y = 0.0
+            elements: list[str] = []
+            for position, (block_index, first, last) in enumerate(windows[ci]):
+                m = metrics[block_index]
+                # A block opening a column sits at the top: both the gap that
+                # would separate it from preceding text and the whitespace it
+                # draws above itself collapse, and a heading rises to the first
+                # baseline the other columns open on.
+                opens_column = position == 0
+                if not opens_column:
+                    y += m.space_before
+                lift = m.column_lift if opens_column else 0.0
+                elements.append(
+                    translate_group(
+                        0,
+                        px(y - lift),
+                        window(
+                            blocks[block_index],
+                            measure,
+                            start=first,
+                            count=last - first + 1,
+                        ),
+                    )
                 )
+                y += (
+                    math.fsum(m.line_advances[first : last + 1])
+                    + m.item_gap * (last - first)
+                    - lift
+                )
+            heights.append(y)
+            parts.append(translate_group(px(insets[ci]), 0, "".join(elements)))
+
+        height = max(heights)
+        if col.divider.visible:
+            for x, box_width in boxes[: stretch.n_cols - 1]:
+                # Midway through the card gap between this span's box and the next;
+                # boxes are container-relative and the slot starts `pad` inside it.
+                parts.append(
+                    _column_divider_line(
+                        x + box_width + plan.gap / 2 - pad, height, col.divider
+                    )
+                )
+        return "".join(parts), height
+
+    table_x = 0.0
+    if table_measure is not None:
+        table_x = flow.table_box[0] + _measure_offset(
+            align, flow.table_box[1] - 2 * pad, table_measure
+        )
+    spanning_measure = flow.spanning_measure
+    heading_x = boxes[0][0] + _measure_offset(
+        align,
+        max(boxes[0][1] - 2 * pad, spanning_measure),
+        spanning_measure,
+    )
+
+    y = 0.0
+    painted: list[str] = []
+    for stretch in flow.stretches:
+        if not stretch.spanning:
+            y += metrics[stretch.first].space_before
+            columns, height = flowed(stretch)
+            painted.append(translate_group(0, px(y), columns))
+            y += height
+            continue
+        for index in range(stretch.first, stretch.stop):
+            block, m = blocks[index], metrics[index]
+            y += m.space_before
+            lift = m.leading_margin if index == 0 else 0.0
+            if isinstance(block, Table):
+                assert table_measure is not None
+                x, block_width = table_x, table_measure
+            else:
+                x, block_width = heading_x, spanning_measure
+            painted.append(
+                translate_group(px(x), px(y - lift), window(block, block_width))
             )
+            y += math.fsum(m.line_advances) - lift
 
     w = format_svg_numeric(width)
-    h = format_svg_numeric(actual_col_height)
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(w)}" height="{escape_attr(h)}">{style_block}{"".join(column_parts)}</svg>'
+    h = format_svg_numeric(y)
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{escape_attr(w)}" height="{escape_attr(h)}">{style_block}{"".join(painted)}</svg>'
     record_painted_faces(effective_family, renderer.used_faces)
-    return svg, actual_col_height
+    return svg, y
 
 
 def _column_divider_line(x: float, height: float, divider: DividerStyle) -> str:
@@ -707,10 +874,10 @@ def _goes_multi_column(
         prose_blocks(text, block.text, block.base_dir, None, rs.text), rs
     )
     pad = float(rs.frame.card_padding)
-    *_, n_cols = _columns_of(
+    *_, stretches = _columns_of(
         blocks, renderer, slot, pad, rs.text.column, char_px, grid, board_width, gap
     )
-    return n_cols > 1
+    return any(s.n_cols > 1 for s in stretches)
 
 
 def _drawn_text(board: Board, variable_values: VariableValues) -> set[int]:

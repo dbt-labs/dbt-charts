@@ -613,10 +613,10 @@ class TestStyleFrameKey:
     def test_style_frame_key_accepted(self):
         board = normalize_board(
             AuthoredBoard.model_validate(
-                {"style": {"frame": {"width": 900}}, "text": "hello"}
+                {"style": {"frame": {"margin": 9}}, "text": "hello"}
             )
         )
-        assert board.resolved_style.frame.width == 900.0
+        assert board.resolved_style.frame.margin == 9.0
 
     def test_style_board_key_rejected(self):
         with pytest.raises(ValidationError):
@@ -626,11 +626,11 @@ class TestStyleFrameKey:
 
 
 class TestRootBoardWidth:
-    """Root-level ``width:`` is sugar for ``style.frame.width`` — same effect.
+    """Root-level ``width:`` is the board's own exact width, in ``Board.authored_width``.
 
-    ``width:`` is normally read only when a board is nested (LayoutItem.user_width
-    in normalize/layout.py); on the root board it must set the board's own width
-    instead, since there is no parent layout to place it into.
+    ``width:`` is placement when a board is nested (LayoutItem.user_width in
+    normalize/layout.py); on the root board there is no parent layout to place
+    it into.
     """
 
     def test_root_width_sets_board_width(self):
@@ -639,7 +639,7 @@ class TestRootBoardWidth:
                 {"width": 900, "text": "hello"},
             )
         )
-        assert board.resolved_style.frame.width == 900.0
+        assert board.authored_width == 900.0
 
     def test_root_width_px_string_sets_board_width(self):
         board = normalize_board(
@@ -647,7 +647,7 @@ class TestRootBoardWidth:
                 {"width": "900px", "text": "hello"},
             )
         )
-        assert board.resolved_style.frame.width == 900.0
+        assert board.authored_width == 900.0
 
     def test_root_width_percent_is_rejected(self):
         from dbt_charts.core.compile.errors import CompilationError
@@ -682,30 +682,14 @@ class TestRootBoardWidth:
             )
         assert exc.value.code is ERR_VALIDATION_FIELD
 
-    def test_root_width_conflicting_with_board_width_style_is_rejected(self):
-        from dbt_charts.core.compile.errors import CompilationError
-
-        with pytest.raises(CompilationError, match="Cannot specify both") as exc:
-            normalize_board(
-                AuthoredBoard.model_validate(
-                    {
-                        "width": 900,
-                        "style": {"frame": {"width": 700}},
-                        "text": "hello",
-                    }
-                )
-            )
-        assert exc.value.code is ERR_VALIDATION_FIELD
-        assert "style.frame.width" in str(exc.value)
-
     def test_root_width_survives_set_theme(self):
-        """width: sugar must survive set_theme like style.frame.width does."""
+        """The width is not part of the theme cascade set_theme re-runs."""
         board = normalize_board(
             AuthoredBoard.model_validate({"width": 900, "text": "hello"})
         )
-        assert board.resolved_style.frame.width == 900.0
+        assert board.authored_width == 900.0
         board.set_theme("paper")
-        assert board.resolved_style.frame.width == 900.0
+        assert board.authored_width == 900.0
 
     def test_nested_board_width_still_means_layout_width_not_board_width(self):
         """A nested board's width: is layout placement, untouched by this fix."""
@@ -724,10 +708,8 @@ class TestRootBoardWidth:
         left_item = board.layout.items[0]
         assert left_item.user_width == "30%"
         assert left_item.board is not None
-        assert (
-            left_item.board.resolved_style.frame.width
-            == board.resolved_style.frame.width
-        )
+        assert board.authored_width is None
+        assert left_item.board.authored_width is None
 
 
 # ---------------------------------------------------------------------------

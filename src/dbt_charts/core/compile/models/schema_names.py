@@ -188,6 +188,7 @@ def _color_count(entry: PaletteIndexEntry) -> int:
 _palettes = build_palette_index(_DEFAULTS_DIR / "palettes")
 _tones = {name for name, entry in _palettes.items() if entry["family"] == "tone"}
 _categorical = [n for n, e in _palettes.items() if e["family"] == "categorical"]
+_patterns = {name for name, entry in _palettes.items() if entry["family"] == "pattern"}
 
 # Built-in theme stems minus the private `_base` completeness floor and the
 # diagnostic-only themes.
@@ -201,8 +202,14 @@ _theme_names = [
 _palette_names = sorted(
     {*_palettes, *(f"{name}.{tier}" for name in _categorical for tier in VARIANT_WORDS)}
 )
-# A tone resolves to no stops: `palette()` refuses every one.
-_stops_palette_names = sorted(set(_palette_names) - _tones)
+# A tone or a pattern palette resolves to no stops: `palette()` refuses every one.
+_stops_palette_names = sorted(set(_palette_names) - _tones - _patterns)
+# `style.pattern.palette` takes a pattern palette or one of the theme's pattern
+# roles, which the theme's `palettes:` map binds to one.
+_pattern_roles = ("pattern_category", "pattern_sequential", "pattern_diverging")
+_pattern_palette_names = sorted({*_patterns, *_pattern_roles})
+# `style.pattern.ground` takes these words or a color palette's name besides a color.
+PATTERN_GROUND_KEYWORDS = ("background", "tint", *sorted(_categorical))
 # VEGA_SCHEME_NAMES includes "rainbow", a hard-fail anti-pattern; offering it
 # would promote the exact name the resolver refuses.
 _scale_palette_names = sorted(
@@ -232,6 +239,7 @@ if TYPE_CHECKING:
     ThemeName: TypeAlias = str
     PaletteName: TypeAlias = str
     StopsPaletteName: TypeAlias = str
+    PatternPaletteName: TypeAlias = str
     ScalePaletteName: TypeAlias = str
     FormatAlias: TypeAlias = str
     CategorySlotToken: TypeAlias = str
@@ -244,6 +252,8 @@ else:
     PaletteName = Literal[tuple(_palette_names)]
     # PaletteName minus the tone family — the names a `palette:` field takes.
     StopsPaletteName = Literal[tuple(_stops_palette_names)]
+    # The names `style.pattern.palette` takes: a pattern palette or a pattern role.
+    PatternPaletteName = Literal[tuple(_pattern_palette_names)]
     # StopsPaletteName plus the Vega scheme names ScaleTargetConfig.palette
     # forwards to VL's scale.scheme, minus anti-pattern names.
     ScalePaletteName = Literal[tuple(_scale_palette_names)]

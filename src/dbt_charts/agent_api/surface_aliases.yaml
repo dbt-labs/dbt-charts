@@ -33,6 +33,10 @@ render_board:
   tool: "render_board"
   dct: "dct render"
 
+describe_semantics:
+  tool: "describe_semantics"
+  dct: "dct semantics SOURCE"
+
 # ---- Inline skill-pointer references --------------------------------------
 
 skill_chart:
@@ -52,6 +56,10 @@ page_only_below:
 page_styling:
   tool: "the styling page (`get_skill('styling')`)"
   dct: "the styling page (`dct skills styling`)"
+
+page_recipes:
+  tool: "the recipes page (`get_skill('chart-recipes')`)"
+  dct: "the recipes page (`dct skills chart-recipes`)"
 
 page_commands_heading:
   tool: "Tools"
@@ -74,8 +82,8 @@ style_recheck:
   dct: "run `dct serve --detach --port 8080` and fix what it prints until no board shows errors."
 
 finish_reply:
-  tool: "Hand over the board YAML and the preview URL `render_board` returned for it, if it returned one (never a server root), plus a line on what the data says and what you assumed."
-  dct: "Hand over `http://localhost:8080/<board>/` (that board URL, never the server root) plus a line on what the data says and what you assumed."
+  tool: "Hand over every board you wrote, a dark variant included: the preview URL `render_board` returned for it (never a server root), plus a line on what the data says and what you assumed."
+  dct: "Hand over `http://localhost:8080/<board>/` for every board you wrote, a dark variant included (each board URL, never the server root), plus a line on what the data says and what you assumed."
 
 # ---- Code-block examples (whole fenced block, surface-specific) -----------
 

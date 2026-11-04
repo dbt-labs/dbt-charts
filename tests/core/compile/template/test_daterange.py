@@ -12,7 +12,7 @@ from dbt_charts.core.compile.template.daterange import (
 )
 
 _TODAY = date(2026, 10, 20)  # a Tuesday
-_CLOCK = BoardClock(today=_TODAY, fiscal_start_month=1, week_start=1)
+_CLOCK = BoardClock(today=_TODAY, fiscal_start_month=1, week_start=1, time_zone="UTC")
 
 
 def _window(
@@ -22,7 +22,7 @@ def _window(
     week_start: int = 1,
 ) -> tuple:
     return resolve_daterange_preset(
-        preset, BoardClock(today, fiscal_start_month, week_start)
+        preset, BoardClock(today, fiscal_start_month, week_start, "UTC")
     )
 
 
@@ -33,7 +33,7 @@ def _window(
         ("last_7_days", date(2026, 10, 14)),
         ("last_28_days", date(2026, 9, 23)),
         ("last_90_days", date(2026, 7, 23)),
-        ("last_12_months", date(2025, 10, 21)),
+        ("last_12_months", date(2025, 11, 1)),
         ("month_to_date", date(2026, 10, 1)),
         ("year_to_date", date(2026, 1, 1)),
     ],
@@ -48,10 +48,13 @@ def test_the_original_presets_keep_their_windows(preset: str, start: date) -> No
         ("yesterday", (date(2026, 10, 19), date(2026, 10, 19))),
         ("last_1_day", (_TODAY, _TODAY)),
         ("last_30_days", (date(2026, 9, 21), _TODAY)),
-        ("last_2_weeks", (date(2026, 10, 7), _TODAY)),
-        ("last_3_months", (date(2026, 7, 21), _TODAY)),
-        ("last_2_quarters", (date(2026, 4, 21), _TODAY)),
-        ("last_13_months", (date(2025, 9, 21), _TODAY)),
+        ("last_2_weeks", (date(2026, 10, 12), _TODAY)),
+        ("last_1_month", (date(2026, 10, 1), _TODAY)),
+        ("last_3_months", (date(2026, 8, 1), _TODAY)),
+        ("last_2_quarters", (date(2026, 7, 1), _TODAY)),
+        ("last_13_months", (date(2025, 10, 1), _TODAY)),
+        ("last_4_quarters", (date(2026, 1, 1), _TODAY)),
+        ("last_1_year", (date(2026, 1, 1), _TODAY)),
         ("previous_3_days", (date(2026, 10, 17), date(2026, 10, 19))),
         ("previous_1_week", (date(2026, 10, 12), date(2026, 10, 18))),
         ("previous_3_months", (date(2026, 7, 1), date(2026, 9, 30))),
@@ -136,12 +139,69 @@ def test_fiscal_forms_follow_the_fiscal_start_month() -> None:
 
 
 @pytest.mark.parametrize(
+    ("preset", "window"),
+    [
+        # Open lower bound: everything before the start of previous_<N>_<unit>.
+        ("before_previous_1_month", (None, date(2026, 8, 31))),
+        ("before_previous_2_quarters", (None, date(2026, 3, 31))),
+        ("before_previous_1_year", (None, date(2024, 12, 31))),
+        ("before_previous_1_week", (None, date(2026, 10, 11))),
+        ("before_previous_1_day", (None, date(2026, 10, 18))),
+    ],
+)
+def test_last_and_before_forms(preset: str, window: tuple) -> None:
+    assert _window(preset) == window
+
+
+def test_last_and_before_forms_cross_year_boundaries() -> None:
+    assert _window("last_3_months", today=date(2026, 1, 15)) == (
+        date(2025, 11, 1),
+        date(2026, 1, 15),
+    )
+    assert _window("before_previous_1_quarter", today=date(2026, 2, 3)) == (
+        None,
+        date(2025, 9, 30),
+    )
+
+
+def test_last_and_before_forms_follow_the_fiscal_start_month() -> None:
+    # Fiscal year opens in July; today sits in the quarter Oct-Dec 2026.
+    assert _window("last_4_fiscal_quarters", fiscal_start_month=7) == (
+        date(2026, 1, 1),
+        _TODAY,
+    )
+    assert _window("last_2_fiscal_years", fiscal_start_month=7) == (
+        date(2025, 7, 1),
+        _TODAY,
+    )
+    assert _window("before_previous_4_fiscal_quarters", fiscal_start_month=7) == (
+        None,
+        date(2025, 9, 30),
+    )
+    assert _window("before_previous_1_fiscal_year", fiscal_start_month=2) == (
+        None,
+        date(2025, 1, 31),
+    )
+
+
+def test_a_before_preset_is_an_open_ended_authored_range() -> None:
+    assert resolve_daterange_preset_iso("before_previous_1_month", _CLOCK) == [
+        "",
+        "2026-08-31",
+    ]
+
+
+@pytest.mark.parametrize(
     "name",
     [
+        "this_and_previous_2_months",
+        "before_previous_0_days",
+        "before_previous_quarters",
+        "before_4_quarters",
         "last_0_days",
         "last_days",
         "last_3_fortnights",
-        "last_2_fiscal_years",
+        "last_2_fiscal_months",
         "this_fiscal_month",
         "this_day",
         "day_to_date",

@@ -1,0 +1,3 @@
+kind: Features
+body: Boards warn when text opens with a heading and no `title:`, as `WARN-BODY-HEADING-NO-TITLE`, replacing `WARN-H1-BODY-NO-TITLE`.
+time: 2026-10-31T18:13:08.255329-07:00

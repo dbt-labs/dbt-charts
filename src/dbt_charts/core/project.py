@@ -16,7 +16,9 @@ from dbt_charts.core.utils import IMAGE_SUFFIXES, UniqueKeyLoader
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.config import ProjectSourcesConfig
+    from dbt_charts.core.compile.import_refs import ImportRefs
     from dbt_charts.core.compile.models.config import ProjectCacheConfig
+    from dbt_charts.core.compile.parse.board_text import BoardText
 
 # The conventional subtree under the project root that holds board files.
 CHARTS_SUBDIR = "charts"
@@ -202,9 +204,8 @@ def package_board_roots(project: Project) -> list[BoardRoot]:
     every implementation already provides. Only once the directory is known
     to exist does this read ``Project.iter_dir(DBT_PACKAGES_SUBDIR)`` -- one
     directory listing, not a recursive walk — so it shares ``iter_dir``'s
-    symlink-escape exclusion (a `local:`-installed package is a symlink
-    outside the project root and is silently excluded, the same guard
-    ``FilesystemProject.iter_dir`` already applies) and its
+    symlink-escape exclusion (``FilesystemProject`` carves out a
+    `local:`-installed package, a ``dbt_packages/<pkg>`` symlink) and its
     dotfile/SKIP_SCAN_DIRS filtering for free. A package with no ``charts/``
     subdirectory contributes no root.
     """
@@ -258,6 +259,124 @@ def _split_board_root(relpath: str) -> tuple[str, tuple[str, ...]]:
     raise ValueError(f"{relpath!r} is not under a board root")
 
 
+# Files at the project root that belong to the project, never to a boards folder
+# that is the project root itself. ``profiles.yml`` holds warehouse credentials.
+PROJECT_ROOT_FILES = frozenset({PROJECT_CONFIG_NAME, "dbt_project.yml", "profiles.yml"})
+
+
+def is_board_relpath(relpath: str) -> bool:
+    """True iff *relpath* is ``charts`` or inside it — the canonical board path."""
+    return relpath == CHARTS_SUBDIR or relpath.startswith(f"{CHARTS_SUBDIR}/")
+
+
+def stored_relpath(relpath: str, boards_dir: str) -> str:
+    """Where a store keeps canonical project-relative *relpath*.
+
+    Boards are identified as ``charts/<rest>`` whatever folder holds them
+    (``boards_dir:`` in ``dbt_charts.yml``); a host calls this at its storage
+    seam. A path outside ``charts/`` is stored where it says. *relpath* must
+    already be normalized (``assert_relpath``), so no ``..`` survives into the
+    stored path.
+
+    A board has exactly one name, so two canonical paths name nothing: the
+    project's own root files spelled as boards (``charts/dbt_charts.yml`` when
+    the project root is the boards folder), and a board spelled by its stored
+    location (``notes/a.md`` when ``notes`` is the boards folder; it is
+    ``charts/a.md``). Both raise ``FileNotFoundError``, so a read fails and a
+    host's ``exists`` is False.
+    """
+    if boards_dir == CHARTS_SUBDIR:
+        return relpath
+    if not is_board_relpath(relpath):
+        inside = boards_dir == "." or relpath.startswith(f"{boards_dir}/")
+        if (
+            inside
+            and PurePosixPath(relpath).suffix in BOARD_CANDIDATE_SUFFIXES
+            and relpath not in PROJECT_ROOT_FILES
+            and not is_package_relpath(relpath)
+        ):
+            raise FileNotFoundError(
+                f"{relpath!r} is inside boards_dir {boards_dir!r}: "
+                f"its board path is {canonical_relpath(relpath, boards_dir)!r}"
+            )
+        return relpath
+    if boards_dir == "." and relpath[len(CHARTS_SUBDIR) + 1 :] in PROJECT_ROOT_FILES:
+        raise FileNotFoundError(
+            f"{relpath!r} is the project's own file at the project root, "
+            "not a board: boards_dir is '.'"
+        )
+    rest = relpath[len(CHARTS_SUBDIR) + 1 :]
+    if not rest:
+        return boards_dir
+    return rest if boards_dir == "." else f"{boards_dir}/{rest}"
+
+
+def canonical_relpath(stored: str, boards_dir: str) -> str | None:
+    """The canonical identity of the stored path *stored*; ``None`` when none.
+
+    The inverse of ``stored_relpath`` for enumeration. A path under *boards_dir*
+    is ``charts/<rest>``, except the project root, its own root files and
+    installed packages, which stay put. A real ``charts/`` folder that *boards_dir*
+    displaced has no identity, so it never enumerates.
+    """
+    if (
+        boards_dir == CHARTS_SUBDIR
+        or stored == "."
+        or stored in PROJECT_ROOT_FILES
+        or is_package_relpath(stored)
+    ):
+        return stored
+    if stored == boards_dir:
+        return CHARTS_SUBDIR
+    if boards_dir == ".":
+        return f"{CHARTS_SUBDIR}/{stored}"
+    if stored.startswith(f"{boards_dir}/"):
+        return f"{CHARTS_SUBDIR}/{stored[len(boards_dir) + 1 :]}"
+    return None if is_board_relpath(stored) else stored
+
+
+def canonical_in_listing(under: str, boards_dir: str, stored: str) -> str | None:
+    """The path a host lists for the stored file *stored* when listing *under*; ``None``
+    for a file that has no path.
+
+    Listing a board path gives canonical paths inside it. Any other listing gives
+    each file's stored path, except a board file whose stored location is unreadable
+    (``stored_relpath``) or reads as another file, such as a note filed in a
+    ``charts/`` folder of the boards folder: it comes back as its board path. A real
+    ``charts/`` folder that *boards_dir* displaced has no path.
+    """
+    if boards_dir == CHARTS_SUBDIR:
+        return stored
+    canonical = canonical_relpath(stored, boards_dir)
+    if canonical is None:
+        return None
+    if is_board_relpath(under):
+        inside = canonical == under or canonical.startswith(f"{under}/")
+        return canonical if inside else None
+    try:
+        return stored if stored_relpath(stored, boards_dir) == stored else canonical
+    except FileNotFoundError:
+        return canonical
+
+
+def canonical_listing(
+    under: str, boards_dir: str, stored_paths: Iterable[str]
+) -> Iterator[str]:
+    """The paths a host lists for the stored files it found *under* a folder, sorted."""
+    listed = (canonical_in_listing(under, boards_dir, p) for p in stored_paths)
+    yield from sorted(path for path in listed if path is not None)
+
+
+def reserves_charts_url(project: Project, clean_path: str) -> bool:
+    """True iff a board URL under ``charts/`` is refused: it would spell the
+    canonical path, which a default project serves at ``/``. A project whose
+    boards live elsewhere has no such alias, so ``/charts/x`` is the board
+    ``charts/x`` (a note filed in a folder named ``charts``)."""
+    return project.boards_dir == CHARTS_SUBDIR and clean_path.startswith(
+        f"{CHARTS_SUBDIR}/"
+    )
+
+
 def board_namespace_for_root(root_relpath: str) -> str:
     """The namespace a board root's own relpath carries (see ``BoardRoot``)."""
     namespace, tail = _split_board_root(root_relpath)
@@ -291,6 +410,18 @@ def board_slug(relpath: str) -> str:
         tail_parts = (*tail_parts[:-1], PurePosixPath(tail_parts[-1]).stem)
     parts = ((namespace,) if namespace else ()) + tail_parts
     return "/".join(parts)
+
+
+def board_identity(relpath: str) -> str:
+    """The name a cache entry records for a stored board: its ``board_slug``
+    under a board root, else (a board rendered from outside every root) its
+    relpath, suffix kept, behind a ``/``. No slug starts with ``/``, and a
+    path-less board's ``/<id>`` holds no dot, so neither form can be listed
+    or served as a stored board's, nor as each other."""
+    try:
+        return board_slug(relpath)
+    except ValueError:
+        return f"/{relpath}"
 
 
 def unshadowed_boards(relpaths: Iterable[str]) -> Iterator[str]:
@@ -587,10 +718,11 @@ class ProjectPath:
     def read_yaml(self) -> Any:
         return self._project.read_yaml(self._relpath)
 
-    def read_board(self) -> BoardFile:
+    def read_board(self, named: bool = False) -> BoardFile:
         """Return this path as a store-backed ``BoardFile`` (content read lazily
-        from the store; raises on access if the file is absent)."""
-        return _StoredBoard(self)
+        from the store; raises on access if the file is absent). *named*: see
+        ``BoardFile.named``."""
+        return _StoredBoard(self, named)
 
     @property
     def parent(self) -> ProjectDirectory:
@@ -655,9 +787,14 @@ class BoardFile:
     leaks a fabricated leaf into errors or preview URLs. ``content`` is a
     property, so a stored board reads lazily while in-memory content supplies a
     buffer.
+
+    ``named`` is true when the user named the file directly. A markdown file
+    named that way is a board when it holds a chart fence, wherever it lives; one
+    reached through a folder listing needs ``charts/`` or a ``board:`` key.
     """
 
     path: ProjectPath | None = None
+    named: bool = False
 
     @property
     def content(self) -> str:
@@ -670,8 +807,9 @@ class _StoredBoard(BoardFile):
 
     path: ProjectPath
 
-    def __init__(self, path: ProjectPath) -> None:
+    def __init__(self, path: ProjectPath, named: bool) -> None:
         self.path = path
+        self.named = named
 
     @property
     def content(self) -> str:
@@ -743,6 +881,17 @@ class Project(ABC):
         """
         return yaml.load(self.read_text(relpath), Loader=UniqueKeyLoader)
 
+    def import_refs(self, relpath: str) -> ImportRefs:
+        """The files the board file at *relpath* names, for the import closure.
+
+        Default: read and parse the file. A host that already holds a file's
+        parse overrides this to answer from
+        that. Raises ``CompilationError`` when the file cannot be parsed.
+        """
+        from dbt_charts.core.compile.import_refs import parse_import_refs
+
+        return parse_import_refs(self.read_text(relpath), relpath)
+
     def config_document(self) -> tuple[str, Any] | None:
         """Return ``(filename, raw parsed YAML)`` for this host's project
         config file, or ``None`` if this host exposes no project config file
@@ -756,6 +905,13 @@ class Project(ABC):
         overrides this to probe ``dbt_charts.yml``.
         """
         return None
+
+    @cached_property
+    def boards_dir(self) -> str:
+        """The folder that holds this project's boards (``boards_dir:`` in its
+        config): ``charts`` unless a host that reads project config says otherwise.
+        Paths stay canonical (``charts/...``) whatever it is."""
+        return CHARTS_SUBDIR
 
     def manifest_project(self) -> Project:
         """Return the ``Project`` whose file seam holds the linked dbt project
@@ -905,31 +1061,13 @@ class Project(ABC):
         Parses each board. A host that can answer from stored metadata
         overrides this so a listing costs no per-board read; it must keep this
         contract: every ``iter_boards`` file except ``meta.yml`` fragments,
-        markdown boards included, an unparseable or unreadable board named by its slug.
+        markdown boards included, an unparseable or unreadable board named from its file.
         """
-        from dbt_charts.core.compile.parse.board_text import parse_board_text
-        from dbt_charts.core.diagnostics.execution import ExecutionError
-
-        labels: list[BoardLabel] = []
-        for pf in sorted(self.iter_boards(), key=lambda p: p.relpath):
-            if pf.is_meta:
-                continue
-            slug = board_slug(pf.relpath)
-            try:
-                content = pf.read_text()
-            except (OSError, UnicodeDecodeError, ExecutionError):
-                content = ""  # not readable as text: listed by its slug, as Cloud does
-            text = parse_board_text(slug, content, is_markdown=pf.is_markdown)
-            labels.append(
-                BoardLabel(
-                    pf.relpath,
-                    f"{slug}{PurePosixPath(pf.relpath).suffix}",
-                    text.title,
-                    text.notes,
-                    text.tags,
-                )
-            )
-        return labels
+        return [
+            read_board_text(path).label
+            for path in sorted(self.iter_boards(), key=lambda p: p.relpath)
+            if not path.is_meta
+        ]
 
     def path(self, relpath: str) -> ProjectPath:
         """Return a ProjectPath handle for a project-relative path."""
@@ -967,6 +1105,15 @@ class Project(ABC):
     def sources(self) -> ProjectSourcesConfig:
         """Return the project's source registry."""
         raise NotImplementedError("Project subclasses must implement `sources`.")
+
+    @cached_property
+    def declared_sources(self) -> ProjectSourcesConfig:
+        """The source registry for a verb that never connects: names and types.
+
+        Holds no value that needs rendering, so nothing built on this can reach
+        a warehouse. A ``sources`` that renders nothing can serve as is.
+        """
+        return self.sources
 
     # Same cached_property + abstractmethod enforcement shape as `sources`:
     # constructs without an override, fails loudly on first access. Pyright
@@ -1015,6 +1162,38 @@ class Project(ABC):
         from dbt_charts.core.compile.config import get_project_cache_root
 
         return get_project_cache_root(self)
+
+
+class BoardRead(NamedTuple):
+    """One board file as read from its project."""
+
+    label: BoardLabel
+    text: BoardText
+    #: False when the file could not be read as text: it is named from its path,
+    #: with nothing in it, and that says nothing about what the file holds.
+    readable: bool
+
+
+def read_board_text(path: ProjectPath) -> BoardRead:
+    from dbt_charts.core.compile.parse.board_text import parse_board_text
+    from dbt_charts.core.diagnostics.execution import ExecutionError
+
+    slug = board_slug(path.relpath)
+    readable = True
+    try:
+        content = path.read_text()
+    except (OSError, UnicodeDecodeError, ExecutionError):
+        content = ""
+        readable = False
+    text = parse_board_text(slug, content, is_markdown=path.is_markdown)
+    label = BoardLabel(
+        path.relpath,
+        f"{slug}{PurePosixPath(path.relpath).suffix}",
+        text.title,
+        text.notes,
+        text.tags,
+    )
+    return BoardRead(label, text, readable)
 
 
 def iter_dir_from_relpaths(
@@ -1105,7 +1284,7 @@ def resolve_directory_url(
         root_index = folder_index_board(project.directory())
         if root_index is not None:
             return root_index
-    if clean_path.startswith(f"{CHARTS_SUBDIR}/"):
+    if reserves_charts_url(project, clean_path):
         return []
     roots = board_roots(project)
     directories = [

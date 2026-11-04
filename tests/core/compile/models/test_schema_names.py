@@ -61,7 +61,8 @@ def test_palette_name_excludes_hard_fail_and_warn_alias_names():
 
 
 def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
-    """`palette()` raises `ToneAsPaletteError` on every tone name, so a
+    """`palette()` raises `ToneAsPaletteError` on every tone name (and
+    `PatternAsPaletteError` on every pattern palette), so a
     `palette:` field naming one parses and dies at resolve with
     ERR-PALETTE-UNKNOWN. Offering them was a completion whose every use breaks
     the board — and the design panel turns a completion into a control.
@@ -70,9 +71,10 @@ def test_stops_palette_name_holds_only_names_that_resolve_to_stops():
     sources, and `_base.yaml` binds `info: info`.
     """
     tones = set(list_palettes("tone"))
+    patterns = set(list_palettes("pattern"))
     names = set(_names(StopsPaletteName))
-    assert not (names & tones)
-    assert set(_names(PaletteName)) - names == tones
+    assert not (names & (tones | patterns))
+    assert set(_names(PaletteName)) - names == tones | patterns
     for name in names:
         palette(name)
 

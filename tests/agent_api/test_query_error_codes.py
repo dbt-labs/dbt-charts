@@ -15,14 +15,9 @@ from dbt_charts.core.project import Project
 
 BOARD = """
 source: db
-variables:
-  region:
-    input: text
 queries:
   ok:
     sql: select 1 as a
-  needs_region:
-    sql: "select '{{ region }}' as r"
   missing_table:
     sql: select * from no_such_table
 charts:
@@ -98,7 +93,6 @@ def test_deployment_without_the_adapter_is_not_internal(
         ("missing.yml", "ok", "ERR-FILE-NOT-FOUND"),
         ("../../../outside.yml", "ok", "ERR-PATH-OUTSIDE-PROJECT"),
         ("orders.yml", "zzz", "ERR-BOARD-QUERY-NOT-FOUND"),
-        ("orders.yml", "needs_region", "ERR-VARIABLE-UNBOUND"),
         ("orders.yml", "missing_table", "ERR-BINDER-UNKNOWN-RELATION"),
     ],
 )

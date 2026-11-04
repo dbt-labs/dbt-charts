@@ -101,7 +101,7 @@ def query_target_paths(
     wanted = set(query_names)
     return {
         name: named_source_target_path(
-            query.source, board_sources, project.sources.sources
+            query.source, board_sources, project.declared_sources.sources
         )
         for name, query in compile_result.query_registry.items()
         if name in wanted and is_sql_query(query)

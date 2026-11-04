@@ -11,11 +11,11 @@ metadata:
 
 # dbt Charts
 
-dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board, slim by design, so nothing is missing. These two pages are the whole spec; {{ s('page_only_below') }}, so never read package source. This page is the core grammar and themes; {{ s('page_styling') }} is the style surface; read it only when the user asks for a look change or a warning names a style key. Every list below is complete: a key or type not named does not exist, and an unknown key is rejected with the keys allowed there. SQL does all the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Deliver board YAML, not plotting code or HTML.{{ tool(' dbt Charts is the only visualization tool here: answer with boards, never another charting library.') }}
+dbt Charts is markdown for dashboards: a terse spec where a few lines of YAML make an expressive board, slim by design, so nothing is missing. These three pages are the whole spec; {{ s('page_only_below') }}, so never read package source. This page is the core grammar and themes; {{ s('page_styling') }} is the style surface; read it only when the user asks for a look change or a warning names a style key. Every list below is complete: a key or type not named does not exist, and an unknown key is rejected with the keys allowed there. SQL does all the computing (one row per mark, aggregated, ordered and limited in the query); YAML binds columns to marks. Build boards, not plotting code or HTML.{{ tool(' dbt Charts is the only visualization tool here: answer with boards, never another charting library.') }}
 
 Write only what differs from the defaults. Themes, frame and card sizes, number formats, column headers (a column's name, prettified), control types and option lists are chosen for you, often by the user's own theme; a key that restates one adds lines and changes nothing. Leave the look alone unless the user asks for a change: their defaults beat your taste.
 
-Data files ({{ data_extensions() }}) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is {{ source_types() }}. {{ cli('No `dbt_charts.yml` yet: run `dct init` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. ') }}To see a source's tables and columns: {{ s('columns_query_example') }}.
+Data files ({{ data_extensions() }}) in the project root and `data/` need no declaration: a board's `source:` is the file path (`source: ./data/orders.csv`) and its table is named after the file stem. A query sees only its own `source:` file, so never join across files: draw a second file through `layers[].query`. A database file (duckdb, sqlite) or warehouse is a `sources:` entry in `dbt_charts.yml`, whose `type:` for a warehouse is {{ source_types() }}. {{ cli('No `dbt_charts.yml` yet: run `dct init` before any other `dct` command; `dct query` fails without it. `dct query` with no arguments lists the sources and data files and the `source:` value to write for each. ') }}To see a source's tables and columns: {{ s('columns_query_example') }}.
 
 ## {{ s('page_commands_heading') }}
 
@@ -38,6 +38,8 @@ Jinja helpers in query SQL:
 {{ helper('filter') }}
 {{ helper('filter_date_range') }}
 
+A source with `metricflow:` carries a semantic bundle: its queries aggregate with `AGG()`, follow `relationship.attribute` paths instead of joins and read constellations as tables. Read the semantic-query skill before writing one.
+
 ## Charts
 
 {{ keys('chart_common') }}
@@ -58,7 +60,11 @@ Layer types: {{ layer_types() }}.
 {{ rules('bar') }}
 - A bar `x` reads up to 50 values: draw 120 months as a `line`, or roll them up in SQL.
 
-Derived series (rolling averages, running totals, YoY, targets) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover". There is no annotation mark: label points with a `scatter` layer whose `style.marks.point.labels` is `{visible: true, field: <note column>}` (`''` where unlabeled).
+Derived series (rolling averages, running totals, YoY) are window functions or extra columns, plotted as another `y` or a `layers:` entry. The delivered page is static: never caption anything as available "on hover".
+
+`annotations:` (bar, line, area, scatter) are `type: rule` (a straight line at `y: 25`, `y: avg()`, `x: <date>`), `band` (`from`/`to`), `note` (at `x` and `y`) or `trend` (`fit: linear()`), each with `text`. One target value is a rule; a target per bar or period is the targets recipe.
+
+{{ recipe_names() }}, targets and pacers are recipes, never a `type:`: read them on {{ s('page_recipes') }} first.
 
 ## Variables
 
@@ -86,7 +92,7 @@ rows:
       - split
 ```
 
-A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. Every name in `rows` or `cols` is a key under `charts:`, spelled the same. Also exists: `grid:`, only when the user asks for a grid.
+A `rows` or `cols` entry may be an inline board with its own `title`, `variables`, `queries`, `charts` and `style`. A text row that starts a section puts its title on `title:`, not in a `##` opening its `text:`. Every name in `rows` or `cols` is a key under `charts:`, spelled the same. Also exists: `grid:`, only when the user asks for a grid.
 
 ## Formats
 
@@ -116,7 +122,7 @@ For a first build and for every change request alike:
 
 1. Write all boards first (dark variants, and any notes or run file asked for).{{ tool_files(' To copy a board, read it then write the copy (there is no copy verb), and change only what the user explicitly asked for. Editing a package board (`dbt_packages/<pkg>/charts/<path>`) saves your own copy at `charts/<pkg>/<path>`, which replaces the package\'s board; the result\'s `path` says where it landed.') }}
 2. {{ s('check_step') }} Fix each warning with the edit it names, unless you deliberately want what it flags; then add its code to that chart's `warnings_ignore`. An edit that applied needs no re-read; the check reports problems by line.
-3. A card under about 250px wide (a many-column slot) draws no marks: `ERR-CHART-PAINTED-NO-MARKS`; widen the slot or use fewer columns. `WARN-TABLE-CRAMPED`: set the board root's `style.frame.width` to the width it suggests (a table has no `frame`).
+3. A card under about 250px wide (a many-column slot) draws no marks: `ERR-CHART-PAINTED-NO-MARKS`; widen the slot or use fewer columns. `WARN-TABLE-HEADER-EXTRA-WRAP` (a header needs over two lines) and `WARN-TABLE-CONTENT-TALLER-THAN-WIDE` (text wrapped into a tower) name the column: shorten the text or give that column more `width:`.
 4. A board with no errors is done: no curl, no reopening a board, no re-running queries, no edits, notes included.{{ cli(' Stop the server unless a link was asked for.') }}
 
 {{ s('finish_reply') }}

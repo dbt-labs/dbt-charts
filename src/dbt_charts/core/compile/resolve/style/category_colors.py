@@ -15,6 +15,7 @@ from __future__ import annotations
 import itertools
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from dbt_charts.core.compile.models.chart.normalized.geoshape import GeoshapeChart
@@ -144,13 +145,18 @@ def plan_category_colors(
     observations: Sequence[ChartFieldValues],
     authored: Mapping[str, CategoryColorBinding],
     palette: Sequence[str],
+    seeded: Mapping[str, Sequence[str]] = MappingProxyType({}),
 ) -> dict[str, CategoryColorScale]:
     """Return one scale per bound field.
 
     A field binds when it is authored (explicit intent, so the chart count
     does not matter) or when at least two charts encode it. Slots go out in
-    authored order first, then to values discovered in the data in first-seen
-    order across ``observations``.
+    authored order first, then to the values ``seeded`` lists for the field
+    (the options of a variable a chart's link sets from it, so a series keeps
+    its swatch whichever options a filter leaves rows for), in that order, then
+    to values discovered in the data in first-seen order across
+    ``observations``. Seeding never binds a field on its own, and never costs one:
+    options the palette cannot seat alongside the pins are left unseeded.
 
     This decides *which slot a value owns*, never the order charts display
     their values in — display order stays wherever each emitter already put
@@ -170,36 +176,45 @@ def plan_category_colors(
     which raises instead (see ``_build_scale``).
     """
     chart_counts: Counter[str] = Counter()
+
     # Seeded with every authored field so the lookups below are total: an
     # authored field whose values never appear in the data still has an entry.
-    discovered: dict[str, list[str]] = {field: [] for field in authored}
+    observed: dict[str, list[str]] = {field: [] for field in authored}
     for chart in observations:
         for field, values in chart.items():
             chart_counts[field] += 1
-            if field not in discovered:
-                discovered[field] = []
-            seen = discovered[field]
+            seen = observed.setdefault(field, [])
             for value in values:
                 if value not in seen:
                     seen.append(value)
 
+    def seats_for(
+        field: str, values: Sequence[str]
+    ) -> tuple[dict[str, str], dict[str, str], list[str], int]:
+        pinned = dict(authored[field].values) if field in authored else {}
+        seatable = _seatable_pins(pinned, values)
+        domain = _domain_for(seatable, values)
+        unseen = {v: c for v, c in pinned.items() if v not in seatable}
+        return seatable, unseen, domain, _seats_needed(seatable, domain, palette)
+
     scales: dict[str, CategoryColorScale] = {}
     for field in {**chart_counts, **authored}:
         is_authored = field in authored
-        pinned = dict(authored[field].values) if is_authored else {}
         if not is_authored and chart_counts[field] < _MIN_CHARTS_FOR_BINDING:
             continue
-        if not discovered[field]:
+        options = list(seeded[field]) if field in seeded else []
+        discovered = options + [v for v in observed[field] if v not in options]
+        if not discovered:
             # Nothing on screen encodes this field, so there is no scale to
             # build and no observed values to check the pins against.
             # `dct render --chart X` narrows the layout without narrowing the
             # board's pins, which is the ordinary way to get here.
             continue
-        seatable = _seatable_pins(pinned, discovered[field])
-        unseen = {v: c for v, c in pinned.items() if v not in seatable}
-        pinned = seatable
-        domain = _domain_for(pinned, discovered[field])
-        seats = _seats_needed(pinned, domain, palette)
+        pinned, unseen, domain, seats = seats_for(field, discovered)
+        if seats > len(palette) and options:
+            # Seeding is an enhancement on top of binding: options that do not
+            # fit leave the field to the values the data holds, as before.
+            pinned, unseen, domain, seats = seats_for(field, observed[field])
         if seats > len(palette):
             # Binding is an enhancement the engine volunteers; when the
             # palette cannot seat every value needing a swatch it declines — the same way the

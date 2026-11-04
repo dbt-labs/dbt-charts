@@ -15,7 +15,11 @@ from dbt_charts.core.compile.models.primitives import (
 from dbt_charts.core.compile.models.style.resolved import ResolvedPieStyle
 from dbt_charts.core.compile.models.style.theme import LegendAlign, LegendEdge
 
-from ._base import _PieResolvedChartFields, _TooltipResolvedField
+from ._base import (
+    _PatternResolvedFields,
+    _PieResolvedChartFields,
+    _TooltipResolvedField,
+)
 from .table import ResolvedTableChart
 
 
@@ -41,7 +45,9 @@ class PieAttachment(BaseModel):
     )
 
 
-class ResolvedPieChart(_PieResolvedChartFields, _TooltipResolvedField):
+class ResolvedPieChart(
+    _PieResolvedChartFields, _PatternResolvedFields, _TooltipResolvedField
+):
     """Render-ready pie or donut chart."""
 
     chart_type: Literal["pie"] = Field(

@@ -34,7 +34,8 @@ use crate::common::{
 };
 use crate::contract;
 use crate::diagnostic::Diagnostic;
-use crate::families::color_scale::{js_number_string, ContinuousColor};
+use crate::families::color_scale::ContinuousColor;
+use d3rs::js_math::js_number_string;
 use crate::families::heatmap::{category_legend_entries, CategoryScale};
 use crate::families::color_scale::GradientAt;
 use crate::families::legend::{
@@ -44,7 +45,7 @@ use crate::families::legend::{
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::href::LinkOpen;
 use crate::layout::{Layout, Rect};
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, PathData, Role, Shape};
 use print::print;
 use measure::FontBook;
 use crate::vega_fit::Bounds;
@@ -377,7 +378,7 @@ fn bind_choropleth(
             }
         }
         let scale = category_scale_for(&r.category_colors, value_field);
-        let fills = domain.iter().map(|v| series_color(v, &domain, &r.palette, scale)).collect::<Result<Vec<_>, _>>()?;
+        let fills = domain.iter().map(|v| series_color(v, &domain, &r.palette, scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)).collect::<Result<Vec<_>, _>>()?;
         for i in 0..features.len() {
             let (fill, value, row) = match row_of(i) {
                 Some(row) => match row.get(value_field) {
@@ -398,7 +399,7 @@ fn bind_choropleth(
             };
             overlay.push(Overlay { feature: i, fill, label });
         }
-        Coloring::Categories(CategoryScale { domain, fills, null_is_js: false })
+        Coloring::Categories(CategoryScale::plain(domain, fills))
     };
     Ok(Choropleth { coloring, overlay, title: legend_title_text(value_field, &r.legend, &r.field_labels)? })
 }
@@ -484,7 +485,7 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         vec![GeoJson::FeatureCollection(FeatureCollection { features: bound.decoded.features.clone() })],
     );
 
-    let grad_id = format!("geo_grad-{}", contract::safe_svg_id(&r.id));
+    let grad_id = format!("geo_grad-{}", contract::scoped_id(&r.id));
     let legend_visible = r.legend.visible;
     // An authored `symbol_shape` takes the mark's stroke; a mark with none draws the shape fill-only.
     let default_symbol = match (r.legend.symbol_shape.as_deref(), mark.stroke.as_ref().and_then(|s| s.color.as_deref())) {
@@ -558,30 +559,25 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
     let (plot_left, plot_top) = frame.origin(&m);
     let (plot_w, plot_h) = (m.plot_w, m.plot_h);
     let path = fitter.at((plot_w, plot_h))?.into_path();
-    let paths: Vec<Option<String>> =
+    let paths: Vec<Option<PathData>> =
         bound.decoded.features.iter().map(|f| path.path(&GeoJson::Feature(f.clone()))).collect::<Result<_, _>>()?;
 
-    let dim = frame.dim;
-    let clip_ids = ["geo-clip-0", "geo-clip-1"].map(|id| format!("{id}-{}", contract::safe_svg_id(&r.id)));
+    let clip_ids = ["geo-clip-0", "geo-clip-1"].map(|id| format!("{id}-{}", contract::scoped_id(&r.id)));
     let link_attrs = bound.href.as_deref().map(|url| {
         let attrs = Attrs::new().set("href", url);
         let attrs = r.link_open.open_attr().map_or(attrs.clone(), |open| attrs.set("data-dbt-link-open", open));
         r.link_open.target().map_or(attrs.clone(), |target| attrs.set("target", target))
     });
     // A feature the projection draws nothing of (an `albersUsa` territory outside its insets) is
-    // still a mark, with no `d`.
+    // still a mark, printed with an empty `d`.
     let item_role = display_text::language::tr("aria.role_geoshape", None, &[])?;
-    let shape = |d: Option<&str>, label: Option<&str>, fill: Option<&str>| {
+    let shape = |layer: usize, feature: usize, d: Option<&PathData>, label: Option<&str>, fill: Option<&str>| {
         let mut attrs = Attrs::new();
         if let Some(label) = label {
             attrs = attrs
                 .set("aria-label", label)
                 .set("role", "graphics-symbol")
                 .set("aria-roledescription", item_role.as_str());
-        }
-        attrs = attrs.set("transform", "translate(0,0)");
-        if let Some(d) = d {
-            attrs = attrs.set("d", d);
         }
         if let Some(fill) = fill {
             attrs = attrs.set("fill", fill);
@@ -590,13 +586,14 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
             if let Some(color) = &stroke.color {
                 attrs = attrs.set("stroke", color.as_str());
                 if let Some(width) = stroke.width {
-                    attrs = attrs.set("stroke-width", width.to_string());
+                    attrs = attrs.num("stroke-width", width);
                 }
             }
         }
-        let path = Node::Path(attrs);
+        let role = Role::Mark { layer, series: None, datum: Some(feature) };
+        let path = Node::path(role, d.cloned().unwrap_or_default(), attrs).translate(0.0, 0.0);
         match &link_attrs {
-            Some(attrs) => Node::Link { attrs: attrs.clone(), children: vec![path] },
+            Some(attrs) => Node::new(Role::Chrome, attrs.clone(), Shape::Link(vec![path])),
             None => path,
         }
     };
@@ -608,28 +605,26 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         }
         let role = if described { "graphics-object" } else { "graphics-symbol" };
         let container = display_text::language::tr("aria.container_shape", None, &[])?;
-        Ok(Node::group(attrs.set("role", role).set("aria-roledescription", container), children))
+        Ok(Node::group(Role::Chrome, attrs.set("role", role).set("aria-roledescription", container), children))
     };
     let background = bound
         .decoded
         .features
         .iter()
         .zip(&paths)
-        .map(|(_, d)| shape(d.as_deref(), None, mark.fill.as_deref()))
+        .enumerate()
+        .map(|(i, (_, d))| shape(0, i, d.as_ref(), None, mark.fill.as_deref()))
         .collect();
     let mut layers = vec![group(if layered { "layer_0_marks" } else { "marks" }, Some(&clip_ids[0]), false, background)?];
     if let Some(choropleth) = &bound.choropleth {
         let overlay = choropleth
             .overlay
             .iter()
-            .map(|o| shape(paths[o.feature].as_deref(), Some(&o.label), o.fill.as_deref()))
+            .map(|o| shape(1, o.feature, paths[o.feature].as_ref(), Some(&o.label), o.fill.as_deref()))
             .collect();
         layers.push(group("layer_1_marks", Some(&clip_ids[1]), true, overlay)?);
     }
-    let mut nodes = vec![Node::group(
-        Attrs::new().set("transform", format!("translate({plot_left:.2},{plot_top:.2})")),
-        layers,
-    )];
+    let mut nodes = vec![Node::group(Role::Chrome, Attrs::new(), layers).translate(plot_left, plot_top)];
 
     let (leg_x, leg_y) = (plot_left + legend_xy.0, plot_top + legend_xy.1);
     let slide = |size: (f64, f64)| slide_block(&r.id, &r.legend.position, size, (plot_w, plot_h));
@@ -647,14 +642,12 @@ pub fn layout(bound: &Bound, frame: &ChartFrame, title: &FrameTitle, fonts: &Fon
         None => {}
     }
     if !fit {
-        let clip = |id: &String| Node::ClipPath {
-            attrs: Attrs::new().set("id", id.as_str()),
-            children: vec![Node::Rect(
-                Attrs::new().set("x", "0").set("y", "0").set("width", dim(plot_w)).set("height", dim(plot_h)),
-            )],
+        let clip = |id: &String| {
+            let area = Node::rect(Role::Chrome, (0.0, 0.0, plot_w, plot_h), Attrs::new());
+            Node::new(Role::Chrome, Attrs::new().set("id", id.as_str()), Shape::ClipPath(vec![area]))
         };
         let used = if layered { &clip_ids[..] } else { &clip_ids[..1] };
-        nodes.push(Node::Defs(used.iter().map(clip).collect()));
+        nodes.push(Node::new(Role::Chrome, Attrs::new(), Shape::Defs(used.iter().map(clip).collect())));
     }
 
     let data_box = Rect { x: plot_left, y: plot_top, width: plot_w, height: plot_h };

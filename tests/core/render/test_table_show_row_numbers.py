@@ -101,9 +101,9 @@ class TestRowNumbersSchema:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_table(make_chart_fn: Any, data: Any) -> Any:
+def _resolve_table(make_chart_fn: Any, data: Any, **chart_fields: Any) -> Any:
     """Return a base ResolvedTableChart with default style."""
-    chart = make_chart_fn("table", x=None, y=None)
+    chart = make_chart_fn("table", x=None, y=None, **chart_fields)
     return resolve(chart, data, chart_style_context=_BOARD_STYLE)
 
 
@@ -425,12 +425,11 @@ class TestSummaryRowsBlank:
         from dbt_charts.core.compile.models.style.authored import PaginationConfig
         from dbt_charts.core.compile.models.style.theme import TableRowNumbersStyle
 
-        resolved_base = _resolve_table(make_chart, data)
+        resolved_base = _resolve_table(make_chart, data, row_role="kind")
         ink = resolve_style(get_theme_style()).secondary_color
         chart = _modify_table(
             resolved_base,
             row_numbers=TableRowNumbersStyle(visible=True, font=FontStyle(color=ink)),
-            row=resolved_base.style.table.row.model_copy(update={"role": "kind"}),
             pagination=PaginationConfig(enabled=False),
         )
         svg = render_table_svg(

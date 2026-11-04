@@ -155,6 +155,15 @@ pg_cluster = factories.postgresql_proc(
 )
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--snapshot-update",
+        action="store_true",
+        default=False,
+        help="Rewrite golden snapshot files (visual SVGs, execute output matrix)",
+    )
+
+
 def pytest_sessionfinish() -> None:
     shutil.rmtree(_PG_SOCKET_DIR, ignore_errors=True)
 
@@ -276,6 +285,21 @@ def disable_usage_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
     subprocesses inherit. ``tests/telemetry/`` unsets it to test emission.
     """
     monkeypatch.setenv("DO_NOT_TRACK", "1")
+
+
+@pytest.fixture(autouse=True)
+def isolate_semantic_layer_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test an empty MetricFlow layer cache.
+
+    Layers are shared process-wide by bundle content, and tests copy the same
+    fixture bundles into fresh directories. A layer one test cached would answer
+    for the next, hiding a missing library or a patched registry build.
+    """
+    from collections import OrderedDict
+
+    from dbt_charts.core.execute import metricflow
+
+    monkeypatch.setattr(metricflow, "_LAYERS", OrderedDict())
 
 
 @pytest.fixture(autouse=True)

@@ -72,7 +72,7 @@ objects:
   s_frame:
     path: StylePatch.frame
     label: style.frame
-    keys: [width, max_width, margin, card_padding, card_gap]
+    keys: [max_width, margin, card_padding, card_gap]
   s_charts:
     path: StylePatch.charts
     label: style.charts (all charts; style.charts.<type> for one type)
@@ -181,7 +181,7 @@ objects:
   s_table_row:
     path: chart:table.style.row
     label: table style.row
-    keys: [height, stripe, role]
+    keys: [height, stripe]
   s_pagination:
     path: chart:table.style.pagination
     label: table style.pagination
@@ -274,3 +274,7 @@ helpers:
   filter_date_range: [date_range]
 
 themes: [clarity, paper, vivid, neon, stark]
+
+# Named-shape recipes shown in full, by a noun each recipe answers to; the rest
+# are one key (`stack`, `orientation`, `multiples`, `layers`, `y_start`) the pages already teach.
+recipes: [bullet, waterfall, lollipop, dumbbell, slope, bump, gantt]

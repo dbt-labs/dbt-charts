@@ -97,18 +97,18 @@ def test_resolved_charts_style_has_preferred_width():
 
 
 # ---------------------------------------------------------------------------
-# Regression: charts/meta.yml style.frame.width propagates project-wide
+# Regression: charts/meta.yml width propagates project-wide
 # (Phase 1 wired this; Phase 2 must keep it working)
 # ---------------------------------------------------------------------------
 
 
-def test_meta_yaml_style_board_width_propagates(
+def test_meta_yaml_width_propagates(
     tmp_path, local_project: Callable[..., FilesystemProject]
 ):
-    """charts/meta.yml: style.frame.width must apply to all boards."""
+    """charts/meta.yml: width must apply to all boards."""
     boards_dir = tmp_path / "charts"
     boards_dir.mkdir()
-    (boards_dir / "meta.yml").write_text("style:\n  frame:\n    width: 888\n")
+    (boards_dir / "meta.yml").write_text("width: 888\n")
     board_path = boards_dir / "test.yaml"
     board_path.write_text("title: Test\nrows:\n  - text: hello\n")
     (tmp_path / "dbt_charts.yml").write_text("")
@@ -118,4 +118,4 @@ def test_meta_yaml_style_board_width_propagates(
     project = local_project(tmp_path)
     result = compile_file(project.path("charts/test.yaml").read_board())
     assert result.board is not None, f"Compile failed: {result.errors}"
-    assert result.board.resolved_style.frame.width == 888.0
+    assert result.board.authored_width == 888.0

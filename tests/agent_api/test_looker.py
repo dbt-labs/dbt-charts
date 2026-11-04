@@ -171,11 +171,66 @@ def test_failed_endpoint_exits_naming_it_without_the_token(
     assert TOKEN not in "".join(traceback.format_exception(exc.value))
 
 
-def test_failed_render_names_the_render(http: Any, tmp_path: Path) -> None:
+def _http_400() -> bytes:
+    raise urllib.error.HTTPError(
+        "https://looker.test", 400, f"bad {TOKEN}", Message(), io.BytesIO()
+    )
+
+
+def test_failed_render_is_named_in_the_outline_and_the_rest_is_written(
+    http: Any, tmp_path: Path
+) -> None:
     http[("GET", "/render_tasks/rt1")] = lambda: b'{"status": "failure"}'
 
-    with pytest.raises(BundleError, match="render"):
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    assert "png/dashboard.png" not in _files(out)
+    assert "queries/101.sql" in _files(out)
+    assert (
+        "png/dashboard.png`: Looker render task rt1 failed"
+        in (out / "outline.md").read_text()
+    )
+
+
+def test_tile_whose_sql_cannot_be_fetched_names_the_error_in_the_outline(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", "/queries/102/run/sql")] = _http_400
+    del http[("GET", "/queries/102/run/json")]
+
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    files = _files(out)
+    assert "queries/102.sql" not in files and "kpi/total-revenue-11.csv" not in files
+    outline = (out / "outline.md").read_text()
+    assert "sql: none, Looker could not fetch it:" in outline
+    assert "/queries/102/run/sql failed: HTTP 400" in outline
+    assert TOKEN not in outline
+
+
+def test_merged_source_whose_sql_cannot_be_fetched_names_the_error(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", "/queries/104/run/sql")] = _http_400
+
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    assert "queries/104.sql" not in _files(out)
+    outline = (out / "outline.md").read_text()
+    assert "source query 104 'Second': sql: none, Looker could not fetch it:" in outline
+    assert "source query 103 'First': queries/103.sql" in outline
+
+
+def test_failed_dashboard_definition_still_fails_the_bundle(
+    http: Any, tmp_path: Path
+) -> None:
+    http[("GET", "/dashboards/3539")] = _http_400
+
+    with pytest.raises(BundleError, match="HTTP 400") as exc:
         import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    assert TOKEN not in "".join(traceback.format_exception(exc.value))
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_missing_credentials_name_the_variable(
@@ -230,14 +285,38 @@ def test_looker_error_rows_raise_naming_the_tile(http: Any, tmp_path: Path) -> N
         import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
 
 
-def test_look_backed_tile_raises_naming_the_tile(http: Any, tmp_path: Path) -> None:
+def _make_look_tile(http: Any) -> None:
     def make_look(dashboard: dict[str, Any]) -> None:
         dashboard["dashboard_elements"][0].update(query_id=None, look_id="9")
 
     _replace_fixture(http, ("GET", "/dashboards/3539"), "dashboard.json", make_look)
 
-    with pytest.raises(BundleError, match="Revenue by month.*Look 9"):
-        import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+def test_look_backed_tile_is_resolved_to_its_query(http: Any, tmp_path: Path) -> None:
+    _make_look_tile(http)
+    http[("GET", "/looks/9")] = lambda: (
+        b'{"id": "9", "title": "Rev", "query_id": "101"}'
+    )
+
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    assert "queries/101.sql" in _files(out)
+    outline = (out / "outline.md").read_text()
+    assert "look: 9 Rev" in outline
+    assert "queries/101.sql (" in outline
+
+
+def test_look_that_cannot_be_fetched_is_named_and_the_rest_is_written(
+    http: Any, tmp_path: Path
+) -> None:
+    _make_look_tile(http)
+
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (out / "outline.md").read_text()
+    assert "look 9: none, Looker could not fetch it:" in outline
+    assert "/looks/9 failed: HTTP 404" in outline
+    assert "queries/102.sql" in _files(out)
 
 
 def test_requires_an_active_layout(http: Any, tmp_path: Path) -> None:
@@ -251,7 +330,7 @@ def test_requires_an_active_layout(http: Any, tmp_path: Path) -> None:
         import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
 
 
-def test_merged_single_value_tile_raises_naming_the_tile(
+def test_merged_single_value_tile_degrades_without_values(
     http: Any, tmp_path: Path
 ) -> None:
     def single_value(merge: dict[str, Any]) -> None:
@@ -261,8 +340,29 @@ def test_merged_single_value_tile_raises_naming_the_tile(
         http, ("GET", "/merge_queries/m7"), "merge_query_m7.json", single_value
     )
 
-    with pytest.raises(BundleError, match="Joined results.*merged"):
-        import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    assert "queries/merge-m7.json" in _files(out)
+    outline = (out / "outline.md").read_text()
+    assert (
+        "values: none, Looker cannot run a merged single-value query through its API"
+        in outline
+    )
+    assert "source query 103 'First': queries/103.sql" in outline
+
+
+def test_merged_results_that_cannot_be_fetched_are_named_and_the_tile_kept(
+    http: Any, tmp_path: Path
+) -> None:
+    del http[("GET", "/merge_queries/m7")]
+
+    out = import_looker("3539", out=tmp_path / "b", base_url=BASE, force=False)
+
+    outline = (out / "outline.md").read_text()
+    assert "merged results m7: none, Looker could not fetch it:" in outline
+    assert "/merge_queries/m7 failed: HTTP 404" in outline
+    assert "Joined results" in outline
+    assert "queries/merge-m7.json" not in _files(out)
 
 
 def test_pivoted_kpi_values_are_flattened_to_columns(http: Any, tmp_path: Path) -> None:

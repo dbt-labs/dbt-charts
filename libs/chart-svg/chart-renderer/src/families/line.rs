@@ -19,17 +19,17 @@
 //! band's left/right edge and the pair draws with `curveStepAfter` in
 //! dataset order.
 //!
-//! `stack: zero`/`center` on an AREA is Vega's stack transform: each
-//! series' baseline is the running sum of every series stacked below it at
-//! that x, in production's `sorted_series_by_stack_order` order
+//! `stack: zero`/`center`/`normalize` on an AREA is `common::grammar_stack`
+//! (d3-shape's stack): each series' span is read off the stack of every series
+//! below it at that x, in production's `sorted_series_by_stack_order` order
 //! (`style.stack_order`: the default descending global sum, `data`'s first
 //! encounter, or `alphabetical` — `common::sorted_series_by_stack_order`) —
 //! a THIRD list beside `spatial_domain` and `palette_domain`, never a
-//! reordering of either). `center` additionally
-//! floats every column up by `(max_column_total - this_column_total) / 2`
+//! reordering of either). `center` is the
+//! silhouette of the magnitudes floated up by half the tallest column, so the
+//! tallest fills `[0, max_column_total]` and every column centers on half of it
 //! (Vega-Lite's own centered-offset formula, probe-pinned in
-//! `tests/test_vl_probe.py` — not a naive `-total/2` silhouette) and
-//! suppresses the zero rule outright. The stacked recipe is also a
+//! `tests/test_vl_probe.py`), and suppresses the zero rule outright. The stacked recipe is also a
 //! different PAINT than the overlap one: one combined fill+stroke layer per
 //! series (the perimeter stroke, not a separate top-edge line), no halo, no
 //! points — already baked onto this payload's `line_mark`/`point_mark`
@@ -61,12 +61,11 @@
 //! absent row reach the same wedge", `_layers.py`), so either stays in as
 //! a defined, zero-height vertex.
 //!
-//! `stack: normalize` on an area is Vega's `stackNormalize` offset
-//! (`vega-encode/src/Stack.js`): each series' (y0, y1) is the SAME running
-//! sum `stack: zero` accumulates, divided by that x column's own total —
-//! `offset_at` stays 0 (no `center`-style float), and `stacked_runs_of`
-//! divides `columns[i].bounds[idx]` by `columns[i].total` before mapping through the y scale, rather than adding an
-//! offset before mapping raw sums. The rendered y domain is always
+//! `stack: normalize` on an area is d3's expand offset, per sign as on a bar:
+//! each series' span is its share of its own sign's sum in that x column, the
+//! positives and the negatives (drawn as magnitudes) each a `[0, 1]` pile.
+//! `stacked_runs_of` maps `columns[i].bounds[idx]`, final as the stack made it,
+//! through the y scale. The rendered y domain is always
 //! `[0, 1]`, un-niced (`_stacked_y_domain`, `endpoint_labels.py`, and
 //! `_bake_normalize_domain`, `compile/resolve/chart/_domain.py:687`, agree:
 //! normalize's domain never merge-nices the way `center`'s does), read off
@@ -87,13 +86,11 @@
 //! `_apply_unity` for datum 1 when a percent format is authored,
 //! `_insert_top_rules` again for both when it is not — `baseline.py:
 //! 330-347`), but the net visual result is the same pair of rules either
-//! way, so this port draws both off one shared gate. A column whose total
-//! is `<= 0` (every series absent/zero at that x, negatives already
-//! refused above) divides 0/0, which clamps to 0, so its edges paint at the
-//! plot top rather than refusing. The endpoint
-//! rail's own per-series anchor (`_stacked_midpoints`'s `mid / col_total`
-//! branch, `endpoint_labels.py`) divides the SAME midpoint by the anchor
-//! column's own total; the group-total tooltip footer and share-of-total
+//! way, so this port draws both off one shared gate. A column with nothing
+//! but zeros divides 0/0: its spans are NaN, which clamp to 0, so its edges
+//! paint at the plot top rather than refusing. The endpoint
+//! rail's own per-series anchor (`_stacked_midpoints`, `endpoint_labels.py`)
+//! is the midpoint of the series' span in its anchor column; the group-total tooltip footer and share-of-total
 //! row (`_stack_group_total`, `structured_tooltip.py:237-253`) fire on
 //! `zero` and `normalize` alike, never `center` (no meaningful group sum on
 //! a silhouette).
@@ -168,7 +165,7 @@ use crate::families::legend::{
 use crate::families::temporal::{
     inline_label, VegaType, BareMark, BareTick, ResolvedVegaLabels, TemporalLabel, TimeUnit,
 };
-use scene::{Attrs, Node};
+use scene::{Attrs, Node, Role};
 use crate::vega_fit;
 use measure::{FontBook, Measure};
 use print::print;
@@ -213,6 +210,16 @@ pub(crate) struct LineResolved {
     /// The rows as queried, set where a wide chart folds: a support_table strip reads them.
     #[serde(skip)]
     pub prefold_rows: Vec<serde_json::Map<String, Value>>,
+    /// The series a legend click leaves shown.
+    #[serde(skip)]
+    pub legend_view: Option<crate::legend_view::LegendView>,
+    /// Every row of the chart once a legend view hides series: the series, their colors and the
+    /// legend come from these, the marks and the value axis from the rows the view leaves.
+    #[serde(skip)]
+    pub whole_rows: Option<Vec<serde_json::Map<String, Value>>>,
+    /// The chart as it draws with no view, once a view hides series: the plot box it keeps.
+    #[serde(skip)]
+    pub unviewed: Option<Box<Payload>>,
     pub id: String,
     #[serde(default, deserialize_with = "crate::common::de_nonempty_string")]
     pub title: Option<String>,
@@ -254,6 +261,10 @@ pub(crate) struct LineResolved {
     /// MIN aggregate (`common::dimension_sort_domain`).
     #[serde(default)]
     pub sort: Option<ChartSort>,
+    /// Authored `connect:` — the column whose ascending order a quantitative x's
+    /// path follows instead of left to right (a connected scatter).
+    #[serde(default)]
+    pub connect: Option<String>,
     pub color: Option<String>,
     /// How the query prints the `color` column.
     #[serde(default)]
@@ -269,6 +280,9 @@ pub(crate) struct LineResolved {
     /// The palette a series color reads: the chart's own, else the board's, else Vega's default.
     #[serde(skip)]
     pub series_palette: Vec<String>,
+    /// The tiles an area's pattern channel (or its palette's pattern slots) paints with.
+    #[serde(skip)]
+    pub patterns: crate::pattern::PatternPlan,
     /// Board-wide value→slot bindings for this chart's categorical fields
     /// (#7167) — see `common::category_scale_for`/`series_color`.
     #[serde(default)]
@@ -369,9 +383,9 @@ pub(crate) struct PointMark {
     /// back here); an area chart never reads it.
     #[serde(default)]
     pub labels: Option<MarkLabels>,
-    /// Draw markers only at each series' last datum (`labels.visible: last`).
+    /// Draw markers only at each series' anchored data (`labels.visible` anchors).
     #[serde(default)]
-    pub endpoint_only: bool,
+    pub anchored_only: bool,
 }
 
 /// The halo point layer sets no `strokeWidth` of its own
@@ -677,8 +691,8 @@ pub(crate) struct PlotRect {
     raw_openers: bool,
     x_angle: f64,
     /// How far a rotated x label column reaches below the plot bottom (`0.0`
-    /// for flat labels): a facet footer's rotated `<text>` carries no `y`
-    /// attribute the composer could measure.
+    /// for flat labels): a facet footer's rotated `<text>`'s `y` is its
+    /// baseline shift in the rotated frame, which the composer cannot measure.
     x_reach: f64,
     x_format_tu: Option<TimeUnit>,
     tick_indices: Option<Vec<usize>>,
@@ -821,7 +835,7 @@ pub(crate) struct LinePanelGeometry {
     /// the same way bar's own composer call does, off any panel.
     pub(crate) val_font_size: f64,
     pub(crate) val_weight: String,
-    pub(crate) val_style: String,
+    pub(crate) val_style: Option<String>,
     pub(crate) val_color: String,
     pub(crate) val_family: String,
     pub(crate) val_caption: AxisCaption,
@@ -936,13 +950,12 @@ impl LineXAxis {
         if self.x_tick_eff > 0.0 {
             let end_y = plot_bottom + self.x_axis_drop + sign * self.x_tick_len;
             let xs = self.tick_xs.iter().map(|&x| plot_left + x_rule_at(x));
-            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y), 3)?);
+            items.extend(crate::common::x_tick_marks(&ax_x.ticks, self.floor_rule.as_deref(), &[], xs, (floor_y, end_y))?);
         }
         if ax_x.labels.visible.unwrap_or(true) {
             let xf = &ax_x.labels.font;
             let xwt = xf.weight_str();
             let face = |anchor| LabelFace {
-                places: 3,
                 anchor,
                 family: xf.family.as_deref().unwrap_or("sans-serif"),
                 size: xf.size_or(11.0),
@@ -977,9 +990,9 @@ impl LineXAxis {
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
                         let anchor = flush_anchor_px(t.frac * plot_w, plot_w);
                         let gx = plot_left + x + self.ad + edge_nudge(anchor, edge_half);
-                        items.push(flat_label((gx, row1_y), &face(anchor), false, &clip(&t.text)?));
+                        items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&t.text)?));
                         if let Some(row2) = row2_text {
-                            items.push(flat_label((gx, row2_y), &face(anchor), false, &clip(row2)?));
+                            items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor), false, &clip(row2)?));
                         }
                     }
                 }
@@ -1002,9 +1015,9 @@ impl LineXAxis {
                         let (row1_y, row2_y) = rows_at(label_y, xsz + 2.0);
                         let flush = if flush_anchor_px(x, plot_w) == anchor { edge_nudge(anchor, edge_half) } else { 0.0 };
                         let gx = plot_left + x + if self.use_band_positions { 0.0 } else { self.ad } + flush;
-                        items.push(flat_label((gx, row1_y), &face(anchor), false, &clip(&tl.row1)?));
+                        items.push(flat_label(Role::Axis, (gx, row1_y), &face(anchor), false, &clip(&tl.row1)?));
                         if !tl.row2.is_empty() {
-                            items.push(flat_label((gx, row2_y), &face(anchor), false, &clip(&tl.row2)?));
+                            items.push(flat_label(Role::Axis, (gx, row2_y), &face(anchor), false, &clip(&tl.row2)?));
                         }
                     }
                 }
@@ -1025,7 +1038,7 @@ impl LineXAxis {
                     };
                     for (xv, &x) in labels.iter().zip(xs) {
                         let gx = plot_left + x + if self.use_band_positions { 0.0 } else { self.ad };
-                        items.push(flat_label((gx, label_y), &face(anchor), false, &clip(xv)?));
+                        items.push(flat_label(Role::Axis, (gx, label_y), &face(anchor), false, &clip(xv)?));
                     }
                 }
             }
@@ -1069,6 +1082,7 @@ impl LineResolved {
     pub(crate) fn from_payload(payload: &Payload) -> Result<Self, String> {
         let mut r: Self = Deserialize::deserialize(&payload.resolved).map_err(|e| format!("line payload: {e}"))?;
         r.series_palette = payload.series_palette(&r.palette);
+        r.patterns = crate::pattern::PatternPlan::from_resolved(&payload.resolved)?;
         r.link_context = payload.link_context.clone();
         r.link_y = r.y.clone();
         r.link_color = r.color.clone();
@@ -1105,9 +1119,9 @@ fn rail_cascade_bounds(
 
 /// A stacked chart's `(x, series)` index: `None` is a row that EXISTS with a
 /// null measure; an absent cell has no entry. The last row of a cell wins.
-type StackData = HashMap<(String, String), Option<f64>>;
+pub(crate) type StackData = HashMap<(String, String), Option<f64>>;
 
-fn stack_data(
+pub(crate) fn stack_data(
     rows: &[serde_json::Map<String, Value>],
     x_field: &str,
     color_field: Option<&str>,
@@ -1122,37 +1136,49 @@ fn stack_data(
 }
 
 /// One x column of the stack over `baseline_order`.
-struct StackColumn {
-    /// The column's net sum over `baseline_order`.
-    total: f64,
-    /// `bounds[i]` = the (start, end) a `zero` stack gives the series at
-    /// `baseline_order[i]`: positives pile up from 0, negatives down from 0;
-    /// the area's `y` edge is `end`.
-    bounds: Vec<(f64, f64)>,
-    /// The positive pile's height.
-    pos: f64,
-    /// The negative pile's depth.
-    neg: f64,
+pub(crate) struct StackColumn {
+    /// The column's sum over `baseline_order`: net under `zero`, of magnitudes under
+    /// `center` and `normalize`. The tooltip's `Σ` and the denominator of its share.
+    pub(crate) total: f64,
+    /// `bounds[i]` = the final (start, end) the stack mode gives the series at
+    /// `baseline_order[i]`; the area's `y` edge is `end`.
+    pub(crate) bounds: Vec<(f64, f64)>,
 }
 
+/// Every x of `x_domain` stacked over `baseline_order` by `mode` (`grammar_stack`).
 /// Production's `sparse_band_transforms` impute pass fills both a null-measure
 /// row and a genuinely absent row with 0 -- "a null and an absent row reach the
 /// same wedge" (`_layers.py`).
-fn stack_column(data: &StackData, x: &str, baseline_order: &[String], signed: bool) -> StackColumn {
-    let mut sums = crate::common::StackZero::new(0.0);
-    let mut total = 0.0_f64;
-    let mut bounds: Vec<(f64, f64)> = Vec::with_capacity(baseline_order.len());
-    for s in baseline_order {
-        let v = match data.get(&(x.to_string(), s.clone())) {
-            Some(Some(v)) => *v,
-            Some(None) | None => 0.0,
-        };
-        // `center` and `normalize` pile magnitudes (`vega-transforms/Stack.js`).
-        let v = if signed { v } else { v.abs() };
-        total += v;
-        bounds.push(sums.push(v));
-    }
-    StackColumn { total, bounds, pos: sums.pos_total(), neg: sums.neg_total() }
+pub(crate) fn stack_columns(data: &StackData, x_domain: &[String], baseline_order: &[String], mode: &str) -> Result<Vec<StackColumn>, String> {
+    let values: Vec<Vec<f64>> = baseline_order
+        .iter()
+        .map(|s| {
+            x_domain
+                .iter()
+                .map(|x| match data.get(&(x.clone(), s.clone())) {
+                    Some(Some(v)) => *v,
+                    Some(None) | None => 0.0,
+                })
+                .collect()
+        })
+        .collect();
+    let spans = crate::common::grammar_stack(mode, &values)?;
+    Ok((0..x_domain.len())
+        .map(|x| {
+            let column = values.iter().map(|series| if mode == "zero" { series[x] } else { series[x].abs() });
+            StackColumn {
+                total: column.fold(0.0, |sum, v| sum + v),
+                bounds: spans.iter().map(|series| (series[x][0], series[x][1])).collect(),
+            }
+        })
+        .collect())
+}
+
+/// A stack's tallest end and its lowest start, the zero rule's two sides: the
+/// domain a `zero` or `center` stack fills.
+pub(crate) fn stack_extent(columns: &[StackColumn]) -> (f64, f64) {
+    let ends = columns.iter().flat_map(|column| column.bounds.iter());
+    ends.fold((0.0, 0.0), |(top, floor), &(start, end)| (f64::max(top, end), f64::min(floor, start)))
 }
 
 /// The stacked value nearest the domain's top end, whose stroke overhang the
@@ -1345,11 +1371,12 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
         bound.r.style.axis_y.title.visible = Some(false);
     }
 
-    let render_pass = |pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<Vec<(String, facet_compose::PanelGeometry)>, Diagnostic> {
+    let render_pass = |pw: f64, ph: f64, value_axis_right_overhang: f64| -> Result<Vec<facet_compose::PanelGeometry>, Diagnostic> {
+        bound.r.patterns.reset_fallbacks();
         panels
             .iter()
             .enumerate()
-            .map(|(panel_i, panel)| -> Result<(String, facet_compose::PanelGeometry), Diagnostic> {
+            .map(|(panel_i, panel)| -> Result<facet_compose::PanelGeometry, Diagnostic> {
                 let panel_key = serde_json::to_string(&panel.key).expect("a panel key re-serializes");
                 let facet_opts = FacetPanelOpts {
                     panel_key: &panel_key,
@@ -1370,14 +1397,12 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                 if YSides::of(&bound.overlays).is_some() {
                     return Err(crate::refuse!("{fam}: multiples with a dual-axis layer not supported").into());
                 }
-                let layout::Fitted { svg: card, plot, geometry: geom, cuts, .. } =
-                    layout::fit(&bound, payload, &panel.rows, (pw, ph), None, fonts, Some(&facet_opts))?;
+                let layout::Fitted { plot, geometry: geom, cuts, .. } =
+                    layout::fit(&bound, payload, &panel.rows, (pw, ph), None, fonts, Some(&facet_opts), true)?;
                 let cuts = cuts.expect("a facet panel is fitted with its cuts");
-                Ok((
-                    print::print(&[card]),
+                Ok(
                     facet_compose::PanelGeometry {
-                        content_start: cuts.content_start,
-                        svg_end: cuts.svg_end,
+                        content: cuts.content.clone(),
                         ink: geom.ink,
                         axis_w_overhang: geom.axis_w_overhang,
                         // `plot.left` is `m.left` alone (this call passes
@@ -1411,9 +1436,9 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
                         top_axis_overhang: geom.top_axis_overhang,
                         value_title_w: geom.value_title_w,
                         legend: geom.facet_legend,
-                        value_axis: geom.value_axis_origin.map(|origin| facet_compose::ValueAxisInk { range: cuts.value_axis(), origin }),
+                        value_axis: geom.value_axis_origin.map(|origin| cuts.value_axis(origin)),
                     },
-                ))
+                )
             })
             .collect()
     };
@@ -1445,24 +1470,24 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
     let facet_legend = if (bound.r.color.is_some() || bound.r.numeric_color.is_some() || !bound.r.layers.is_empty()) && bound.r.legend.visible {
         let naive_w = multiples::panel_width(payload, panel_cols_n, has_mirror, 0.0, facet_x_scale)?;
         let naive_h = payload.height / panel_rows_n as f64;
-        render_pass(naive_w, naive_h, 0.0)?.into_iter().next().and_then(|(_, g)| g.legend)
+        render_pass(naive_w, naive_h, 0.0)?.into_iter().next().and_then(|g| g.legend)
     } else {
         None
     };
     let chrome = facet_compose::FacetChrome {
         title: title_plan.as_ref().map(|plan| facet_compose::TitleChrome {
             ink: plan.ink.clone(),
-            paint: Box::new(|svg, x, y| plan.paint(&title_src, svg, x, y)),
+            paint: Box::new(|x, y| plan.nodes(&title_src, x, y)),
         }),
         legends: facet_legend.as_ref().map(|lg| facet_compose::LegendChrome {
             edge: legend_edge,
             width: Box::new(|_, _| lg.box_w),
             height: Box::new(|_| lg.box_h),
-            paint: Box::new(|svg, x, y, _, _| svg.push_str(&print::print(&[lg.placed(x, y)]))),
+            paint: Box::new(|x, y, _, _| vec![lg.placed(x, y)]),
         }).into_iter().collect(),
     };
     let chrome = (chrome.title.is_some() || !chrome.legends.is_empty()).then_some(chrome);
-    Ok(facet_compose::compose_facet_with_chrome(payload, fonts, &spec, chrome.as_ref(), &render_pass)?)
+    facet_compose::with_pattern_defs(print::print(&[facet_compose::compose_facet_with_chrome(payload, fonts, &spec, chrome.as_ref(), &render_pass)?]), &bound.r.patterns)
 }
 
 /// d3's `count` ticks over a numeric point domain's span, each with its
@@ -1471,7 +1496,7 @@ fn render_facet(mut bound: bind::Bound, fonts: &FontBook) -> Result<String, Diag
 fn quantitative_x_ticks(domain: &[String], count: usize) -> Result<Vec<(String, f64)>, String> {
     let numbers = domain
         .iter()
-        .map(|v| v.parse::<f64>().map_err(|_| format!("quantitative x value {v:?} is not a number")))
+        .map(|v| bind::x_number(v).ok_or_else(|| format!("quantitative x value {v:?} is not a number")))
         .collect::<Result<Vec<f64>, String>>()?;
     let (Some(lo), Some(hi)) = (numbers.iter().copied().reduce(f64::min), numbers.iter().copied().reduce(f64::max))
     else {
@@ -1641,7 +1666,21 @@ fn series_fill(
     if !is_multi {
         return Ok(series.to_string()); // single_series_fill was stored as the "series" key
     }
-    crate::common::series_color(series, palette_domain, palette, scale)
+    crate::common::series_color(series, palette_domain, palette, scale, &crate::pattern::PatternPlan::default()).map(crate::pattern::Paint::into_color)
+}
+
+/// An area's fill: [`series_fill`]'s color, or the series' pattern tile.
+fn area_paint(
+    series: &str,
+    palette_domain: &[String],
+    r: &LineResolved,
+    is_multi: bool,
+    scale: Option<&crate::common::CategoryColorScale>,
+) -> Result<crate::pattern::Paint, String> {
+    if !is_multi {
+        return Ok(crate::pattern::Paint::Color(series.to_string()));
+    }
+    crate::common::series_color(series, palette_domain, &r.series_palette, scale, &r.patterns)
 }
 
 /// The color channel's title in Vega-Lite's own description of a mark: an area names the field as it is written
@@ -1701,6 +1740,33 @@ mod tests {
         assert_eq!(crate::families::line::flush_anchor_px(1.5, 400.0), "middle");
         assert_eq!(crate::families::line::flush_anchor_px(399.4, 400.0), "end");
         assert_eq!(crate::families::line::flush_anchor_px(0.0, 0.0), "end");
+    }
+
+    /// A percent strip over twenty categories has no narrower form and no room: it
+    /// hides whole, and a line or area chart is then exactly the chart authored
+    /// without it.
+    #[test]
+    fn a_hidden_strip_leaves_a_line_or_area_chart_as_if_authored_without_it() {
+        let _en = crate::time_locale::en_us_scope();
+        for chart_type in ["line", "area"] {
+            let svg = |strip: bool| {
+                let mut p = make_line_payload(true, false);
+                p["resolved"]["chart_type"] = serde_json::json!(chart_type);
+                p["rows"] = serde_json::json!((b'A'..=b'T').map(|c| (c as char).to_string()).collect::<Vec<_>>()
+                    .iter()
+                    .map(|c| serde_json::json!({"week": c, "signups": 0.1234}))
+                    .collect::<Vec<_>>());
+                if strip {
+                    p["resolved"]["support_table"] = serde_json::json!({
+                        "entries": [{"source": "signups", "format": {"spec": ".1%", "raw": "percent"}, "label": "Signups"}]
+                    });
+                    p["resolved"]["effective_support_table_style"] = support_table_style_json();
+                }
+                let payload: Payload = serde_json::from_value(p).unwrap();
+                crate::render_fitted(&payload, &test_fonts()).expect("a hidden strip renders").svg
+            };
+            assert_eq!(svg(true), svg(false), "{chart_type}");
+        }
     }
 
     #[test]
@@ -1789,8 +1855,7 @@ mod tests {
         assert!(!flat.contains("rotate(45)"), "{flat}");
         p["resolved"]["style"]["axis_x"]["labels"]["angle"] = serde_json::json!(45.0);
         let tilted = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).unwrap();
-        assert_eq!(tilted.matches("text-anchor=\"start\" transform=\"translate(").count(), 3, "{tilted}");
-        assert_eq!(tilted.matches("rotate(45) translate(0,9)").count(), 3, "{tilted}");
+        assert_eq!(tilted.matches("rotate(45)\" x=\"0\" y=\"9\" text-anchor=\"start\"").count(), 3, "{tilted}");
     }
 
     /// A nominal x axis paints each band through an authored `labels.expr`.
@@ -1935,6 +2000,39 @@ mod tests {
     fn first_line_x(svg: &str) -> f64 {
         let d = svg.split("<path d=\"M").nth(1).unwrap();
         d.split(',').next().unwrap().parse().unwrap()
+    }
+
+    fn haloed_note(dy: f64) -> Value {
+        let mut note = annotation(10, Value::Null, Value::Null);
+        note["panel"] = Value::Null;
+        note["style"]["text"]["halo_over_marks"] = true.into();
+        note["style"]["text"]["position"] = serde_json::json!({"edge": "top", "align": "center", "overlay": true, "auto_edge": false, "auto_align": false});
+        note["style"]["text"]["dy"] = serde_json::json!(dy);
+        note
+    }
+
+    fn note_x(layered: bool, dy: f64) -> f64 {
+        let mut json = make_line_payload(false, false);
+        for (row, trend) in json["rows"].as_array_mut().unwrap().iter_mut().zip([20.0, 160.0, 40.0]) {
+            row["trend"] = serde_json::json!(trend);
+        }
+        if layered {
+            json["resolved"]["layers"] = serde_json::json!([line_layer_json(None)]);
+        }
+        json["resolved"]["annotations"] = Value::Array(vec![haloed_note(dy)]);
+        let payload: Payload = serde_json::from_value(json).unwrap();
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let at = svg.find(">Dashed = forecast").unwrap();
+        let tag = &svg[svg[..at].rfind("<text").unwrap()..at];
+        tag.split("x=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap()
+    }
+
+    /// A layer's line is an obstacle like the base's: a centered note 40px down the top edge slides
+    /// further along the top with a layer in the way than without it.
+    #[test]
+    fn a_note_on_a_line_layer_slides_off_it() {
+        let (alone, layered) = (note_x(false, 40.0), note_x(true, 40.0));
+        assert!(layered < alone - 20.0, "alone {alone}, over a layer {layered}");
     }
 
     #[test]
@@ -2195,7 +2293,7 @@ mod tests {
         facet: Option<&FacetPanelOpts>,
     ) -> (String, super::PlotRect, super::LinePanelGeometry) {
         let bound = super::bind::bind(payload, false).expect("binds");
-        let fitted = super::layout::fit(&bound, payload, &payload.rows, (svg_w, svg_h), payload.padding.as_ref(), fonts, facet)
+        let fitted = super::layout::fit(&bound, payload, &payload.rows, (svg_w, svg_h), payload.padding.as_ref(), fonts, facet, true)
             .expect("renders");
         (print::print(&[fitted.svg]), fitted.plot, fitted.geometry)
     }
@@ -2479,7 +2577,7 @@ mod tests {
         // fails — `svg.contains(&painted)` alone can't catch that class,
         // since both sides would shift together.
         assert!(
-            painted.contains("<text x=\"0.500\" y=\"360.500\""),
+            painted.contains("<text x=\"0.5\" y=\"360.5\""),
             "Jan's own label sits at plot_left(0) + x(0) + ad(0.5): {painted}"
         );
     }
@@ -3460,6 +3558,24 @@ mod tests {
         assert!(svg.contains(">Trend</text>"), "{svg}");
     }
 
+    /// A layered rail names layers, not series of the base, so it names no series to preview.
+    #[test]
+    fn a_layered_rail_names_no_series() {
+        let _en = crate::time_locale::en_us_scope();
+        let svg = super::render(
+            &serde_json::from_value::<Payload>({
+                let mut p = layered_line_payload_with_cross_query_layer();
+                p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+                p["resolved"]["legend"]["visible"] = serde_json::json!(false);
+                p
+            })
+            .unwrap(),
+            &test_fonts(),
+        )
+        .expect("renders");
+        assert!(svg.contains(">Trend</text>") && !svg.contains("data-dbt-series"), "{svg}");
+    }
+
     /// The rail keys its anchors by label, so a layer repeating the base's name raises.
     #[test]
     fn a_layer_repeating_a_label_beside_the_rail_raises_the_collision_code() {
@@ -3535,7 +3651,7 @@ mod tests {
     fn a_bar_layer_row_at_a_year_below_100_is_a_bar_of_no_width_at_zero() {
         let payload: Payload = serde_json::from_value(year_below_100_bar_layer_payload(&[99, 100, 101, 102])).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
-        assert!(svg.contains("d=\"M0.00,") && svg.contains("h0v"), "{svg}");
+        assert!(svg.contains("d=\"M0,") && svg.contains("L0,"), "{svg}");
     }
 
     /// Vega stacks every bar at a NaN position into one pile.
@@ -3544,12 +3660,12 @@ mod tests {
         let payload: Payload = serde_json::from_value(year_below_100_bar_layer_payload(&[50, 51, 52, 53])).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
         let bars: Vec<(f64, f64)> = svg
-            .split("d=\"M0.00,")
+            .split("d=\"M0,")
             .skip(1)
             .map(|rest| {
-                let (top, rest) = rest.split_once('h').unwrap();
-                let height = rest.split_once("v").unwrap().1.split('h').next().unwrap();
-                (top.parse().unwrap(), height.parse().unwrap())
+                // M0,top L0,top L0,bottom L0,bottom Z
+                let ys: Vec<f64> = rest.split('"').next().unwrap().split("L0,").map(|y| y.trim_end_matches('Z').split(',').next().unwrap().parse().unwrap()).collect();
+                (ys[0], ys[2] - ys[0])
             })
             .collect();
         // Each bar paints its fill and its outline pass.
@@ -3792,17 +3908,44 @@ mod tests {
         assert!(!svg.contains("#608470"), "{svg}");
     }
 
-    /// The shared scale nices an authored pair once a layer joins it, a
-    /// descending pair around the same rounding.
+    /// An authored pair is the scale's domain exactly, beside a layer too: no `nice`
+    /// rounds it out to 4,000, and a descending pair keeps its direction.
     #[test]
-    fn an_authored_domain_beside_a_layer_is_nice_rounded() {
+    fn an_authored_domain_beside_a_layer_is_honored_exactly() {
         for domain in [[0.0, 3654.68], [3654.68, 0.0]] {
             let svg = render_layered(|p| {
                 p["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"domain": domain}});
             })
             .expect("renders");
-            assert!(svg.contains("4,000"), "{domain:?}: {svg}");
+            assert!(!svg.contains("4,000"), "{domain:?}: {svg}");
         }
+    }
+
+    /// An area chart's authored domain gains the same end ticks, each end once.
+    #[test]
+    fn an_area_with_an_authored_domain_ticks_both_ends_once() {
+        let mut p = make_line_payload(false, false);
+        p["resolved"]["style"]["axis_y"]["scale"] = serde_json::json!({"continuous": {"domain": [0.0, 175.0]}});
+        let svg = render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
+        let y_axis = svg.split("data-dct-role=\"y-axis\"").nth(1).expect("y axis");
+        let ticks: Vec<&str> = y_axis.split("</text>").filter_map(|t| t.rsplit('>').next()).take_while(|t| t.parse::<f64>().is_ok()).collect();
+        assert_eq!(ticks.iter().filter(|t| **t == "0").count(), 1, "{ticks:?}");
+        assert_eq!(ticks.iter().filter(|t| **t == "175").count(), 1, "{ticks:?}");
+    }
+
+    /// A rank axis authored `[20, 1]` beside the endpoint rail ends at 1 and 20: the
+    /// rail's shared scale does not round it out to a phantom 0 tick.
+    #[test]
+    fn a_rank_domain_beside_the_endpoint_rail_has_no_phantom_zero_tick() {
+        use serde_json::json;
+        let mut p = make_multi_series_line_payload_with_bottom_legend();
+        p["resolved"]["style"]["endpoint_labels"] = json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["axis_y"]["scale"] = json!({"continuous": {"domain": [20.0, 1.0]}});
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let y_axis = svg.split("data-dct-role=\"y-axis\"").nth(1).expect("y axis");
+        let ticks: Vec<&str> = y_axis.split("</text>").filter_map(|t| t.rsplit('>').next()).take(5).collect();
+        assert_eq!(ticks, ["20", "15", "10", "5", "1"], "both authored ends are ticks: {svg}");
+        assert!(!svg.contains(">0</text>"), "no tick below the authored end: {svg}");
     }
 
     #[test]
@@ -4213,9 +4356,9 @@ mod tests {
         .expect("renders");
         assert!(!svg.contains("#cc0000"), "the encoding outranks the mark's own color: {svg}");
         for fill in ["#779bc9", "#608470"] {
-            assert!(svg.contains(&format!("r=\"5.000\" fill=\"{fill}\"")), "{fill}: East takes palette[1], West palette[2]: {svg}");
+            assert!(svg.contains(&format!("r=\"5\" fill=\"{fill}\"")), "{fill}: East takes palette[1], West palette[2]: {svg}");
         }
-        assert!(svg.contains("r=\"5.000\" fill=\"none\""), "the null row's point has no color: {svg}");
+        assert!(svg.contains("r=\"5\" fill=\"none\""), "the null row's point has no color: {svg}");
         assert_eq!(svg.matches("d=\"M5,0A5,5,0,1,1,-5,0A5,5,0,1,1,5,0\"").count(), 2, "one circle glyph per value: {svg}");
     }
 
@@ -4492,7 +4635,7 @@ mod tests {
             svg.contains("<g class=\"mark-symbol role-mark layer_3_marks\""),
             "hover-target wraps in a role-mark group: {svg}"
         );
-        assert!(svg.contains("r=\"8.944\" fill=\"#3164a3\" opacity=\"0\""), "{svg}");
+        assert!(svg.contains("r=\"8.94\" fill=\"#3164a3\" opacity=\"0\""), "{svg}");
         assert!(svg.contains("Signups: 100"), "{svg}");
         assert!(svg.contains("Signups: 150"), "{svg}");
         assert!(svg.contains("Signups: 130"), "{svg}");
@@ -4724,7 +4867,7 @@ mod tests {
         // (`session.py:184` sets the VL spec background to
         // `chart.background`; `presentation.py:74` writes it).
         let canvas_rect = svg.split("<rect ").nth(1).expect("canvas rect present");
-        assert!(canvas_rect.starts_with("width=") && canvas_rect.contains("fill=\"transparent\"/>"), "{svg}");
+        assert!(canvas_rect.starts_with("x=\"0\" y=\"0\" width=") && canvas_rect.contains("fill=\"transparent\"/>"), "{svg}");
     }
 
     /// A single-series area's top-edge line is on the SAME stacked recipe a
@@ -5369,6 +5512,21 @@ mod tests {
     /// exactly). "X" (global sum 250) beats "A" (100) despite sorting
     /// AFTER it alphabetically — production paints "X" in `palette[0]`,
     /// never the alphabetical assignment "A" would otherwise take.
+    /// A normalized column with no share (every value 0) anchors each series' rail
+    /// label at the baseline, as `_stacked_midpoints` does, rather than at a NaN share.
+    #[test]
+    fn a_normalized_area_whose_last_column_totals_zero_still_draws_its_rail() {
+        let _en = crate::time_locale::en_us_scope();
+        let mut p = make_stacked_area_payload("normalize");
+        for series in ["A", "B"] {
+            p["rows"].as_array_mut().unwrap().push(serde_json::json!({"week": "2026-01-15", "series": series, "signups": 0.0}));
+        }
+        p["resolved"]["style"]["endpoint_labels"] = serde_json::json!({"visible": true, "label_offset": 6.0});
+        p["resolved"]["style"]["axis_y"]["position"] = serde_json::json!("left");
+        let svg = super::render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        assert!(svg.contains(">A</text>") && svg.contains(">B</text>"), "{svg}");
+    }
+
     #[test]
     fn stacked_area_palette_follows_baseline_order_not_alphabetical() {
         use serde_json::json;
@@ -5680,6 +5838,38 @@ mod tests {
         }
     }
 
+    /// A mixed-sign `normalize` column is two unit piles, as on a bar
+    /// (`grammar_stack`): week 2 holds A = 150 and B = -60, so both fill
+    /// `[0, 1]` and B paints over A. Week 1 (both positive) is one pile. The
+    /// tooltip's share is the drawn one (the span's height), not
+    /// `value / sum of magnitudes`.
+    #[test]
+    fn stacked_area_normalize_mixed_sign_column_is_two_unit_piles() {
+        use serde_json::json;
+        let mut p = make_stacked_area_payload("normalize");
+        p["rows"][3]["signups"] = json!(-60.0);
+        p["resolved"]["style"]["axis_y"]["scale"]["continuous"]["domain"] = json!([0.0, 1.0]);
+        p["resolved"]["style"]["tooltip_format"] = json!(",.2~f");
+        let svg =
+            render_inner(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts(), true).expect("renders");
+        let edges = stacked_area_edges(&svg);
+        assert_eq!(edges.len(), 2, "one combined fill+stroke path per series: {svg}");
+        let (a_top, a_bottom) = &edges[0];
+        let (b_top, b_bottom) = &edges[1];
+        let (plot_bottom, plot_top) = (a_bottom[0].1, b_top[0].1);
+        let at = |frac: f64| plot_bottom + (plot_top - plot_bottom) * frac;
+        let near = |got: f64, want: f64| (got - want).abs() < 0.5;
+        // Week 1: A [0, 100/140], B [100/140, 1].
+        assert!(near(a_top[0].1, at(100.0 / 140.0)) && near(b_bottom[0].1, at(100.0 / 140.0)), "week 1: {svg}");
+        // Week 2: both piles span the whole axis.
+        assert!(near(a_top[1].1, plot_top) && near(a_bottom[1].1, plot_bottom), "week 2, A: {svg}");
+        assert!(near(b_top[1].1, plot_top) && near(b_bottom[1].1, plot_bottom), "week 2, B: {svg}");
+        assert!(svg.contains("%: 100%; Signups: 150"), "{svg}");
+        assert!(svg.contains("%: 100%; Signups: −60"), "{svg}");
+        assert!(svg.contains("%: 71%; Signups: 100; ⁣Σ: 140"), "{svg}");
+        assert!(!svg.contains("%: -"), "{svg}");
+    }
+
     /// A stacked area's invisible hover targets sit on each series' stack top,
     /// not at the raw datum value: a raw value on a normalized `[0, 1]` axis
     /// lands thousands of pixels off-canvas, and resvg then drops the whole
@@ -5760,7 +5950,7 @@ mod tests {
         // The fit arm's own right-side plot edge — a plain gridline's `x2`
         // in local (post-translate) coordinates.
         let plot_w: f64 = svg
-            .split("<line x1=\"0.000\" y1=\"")
+            .split("<line x1=\"0\" y1=\"")
             .nth(1)
             .and_then(|s| s.split("x2=\"").nth(1))
             .and_then(|s| s.split('"').next())
@@ -5923,7 +6113,7 @@ mod tests {
         // domain ceiling pushes the plot's own top margin to 56; using
         // the raw 0.15 total instead under-reserves it to 22.
         assert!(
-            svg.contains("translate(56.000,56.000)"),
+            svg.contains("translate(56,56)"),
             "the mark's fit-ink top must reach the domain ceiling, not the raw column total: {svg}"
         );
     }
@@ -6473,7 +6663,7 @@ mod tests {
         // The legend draws each series' dash on a long stroke sample.
         p["resolved"]["legend"]["visible"] = json!(true);
         let svg = render(&Payload::deserialize(&p).unwrap(), &test_fonts()).expect("renders");
-        assert!(svg.contains("d=\"M-22.361,0L22.361,0\"") && svg.contains("stroke-linecap=\"round\" stroke-dasharray=\"12,16\""), "{svg}");
+        assert!(svg.contains("d=\"M-22.36,0L22.36,0\"") && svg.contains("stroke-linecap=\"round\" stroke-dasharray=\"12,16\""), "{svg}");
         // An area chart never binds dashes (`emitters/area.py` has no
         // strokeDash path), whatever its style carries.
         p["resolved"]["legend"]["visible"] = json!(false);
@@ -6593,10 +6783,10 @@ mod tests {
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("rotate(-90)"), "expected a -90 tilt: {svg}");
         let dy = svg
-            .split("rotate(-90) translate(0,")
+            .split("rotate(-90)\" x=\"0\" y=\"")
             .nth(1)
             .unwrap()
-            .split(')')
+            .split('"')
             .next()
             .unwrap()
             .parse::<f64>()
@@ -6617,7 +6807,7 @@ mod tests {
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("rotate(-90)"), "expected a -90 tilt: {svg}");
         assert!(
-            svg.contains("<text text-anchor=\"start\""),
+            svg.contains("rotate(-90)\" x=\"0\" y=\"3\" text-anchor=\"start\""),
             "an authored labels.align=left must anchor the rotated label at start, \
              not Vega's own -90 default (end): {svg}"
         );
@@ -6634,7 +6824,7 @@ mod tests {
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         let x_tick_count = svg.matches("stroke=\"#EDEFF2\" stroke-width=\"1\"/>").count();
         assert_eq!(x_tick_count, 5, "every one of the 5 openers keeps its tick/gridline: {svg}");
-        let visible_labels = svg.matches("<text text-anchor=").count();
+        let visible_labels = svg.matches("rotate(-90)\" x=\"0\" y=\"3\" text-anchor=").count();
         assert!(
             visible_labels < 5,
             "parity must have hidden some label text ({visible_labels} of 5): {svg}"
@@ -6789,7 +6979,8 @@ mod tests {
         }).collect();
         assert_eq!(circles.len(), 2, "one circle symbol per series: {svg}");
         // The rail pane sits after the legend box at the hconcat spacing.
-        let rail_text = svg.find("<text x=\"0\" ").expect("the rail's labels");
+        let after_axis = svg.find("<text x=\"-5.5\" ").expect("the plot's y labels");
+        let rail_text = after_axis + svg[after_axis..].find("<text x=\"0\" ").expect("the rail's labels");
         let rail_group = &svg[svg[..rail_text].rfind("<g transform=\"translate(").unwrap() + "<g transform=\"translate(".len()..];
         let rail_x: f64 = rail_group.split(',').next().unwrap().parse().unwrap();
         assert_eq!(rail_x, attr(&title, "x") + box_w + 6.0, "rail after the legend box: {svg}");
@@ -7025,7 +7216,7 @@ mod tests {
         let (gx, _, _) = plot_origin_and_line_end(&svg);
         let (box_w, _) = fixture_legend_box(&fonts);
         let widest = svg
-            .match_indices("x=\"-5.500\" ")
+            .match_indices("x=\"-5.5\" ")
             .map(|(i, _)| {
                 let text = svg[i..].split('>').nth(1).unwrap().split('<').next().unwrap();
                 fonts.measure(text, TEST_FONT, 11.0).unwrap()
@@ -7043,8 +7234,8 @@ mod tests {
         let mut json = make_line_payload(false, false);
         json["resolved"]["style"]["axis_y"]["ticks"] = serde_json::json!({"visible": true, "color": "#D0D3D9", "count": 6.0, "length": 6.0});
         let svg = render(&serde_json::from_value::<Payload>(json).unwrap(), &test_fonts()).expect("renders");
-        assert!(svg.contains("x=\"-11.500\" "), "labels at -(6 + 6) + 0.5: {svg}");
-        assert!(svg.contains("x1=\"-5.500\" "), "tick marks end at the plot edge: {svg}");
+        assert!(svg.contains("x=\"-11.5\" "), "labels at -(6 + 6) + 0.5: {svg}");
+        assert!(svg.contains("x1=\"-5.5\" "), "tick marks end at the plot edge: {svg}");
     }
 
     /// The anchor reads the marks' own left ink, not a constant: a scale
@@ -7318,15 +7509,22 @@ mod tests {
     ///   strip's own ink extent grows the view-bounds top margin under
     ///   autosize:pad; `title.offset` only cancels Vega's own title-baseline
     ///   algebra, a font-size-only term, never `strip_h` itself.
-    /// * S6 — the first cell overhangs the plot's left edge by its FULL
-    ///   shaped width and joins the canvas union, where the legacy splice
-    ///   never grows the canvas sideways at all.
+    /// * S6 — the first cell overhangs the plot's left edge by the part of
+    ///   its shaped width left of the point and joins the canvas union, where
+    ///   the legacy splice never grows the canvas sideways at all.
     /// * S2/S4 — rows at `-(13 + 18i)` painted at the middle-baseline
-    ///   shift, cells anchored on the point's own x with no band dx, stubs
-    ///   at `plot_w + axis_y.labels.padding`.
+    ///   shift, each cell centered on the point's own x (digits end half the
+    ///   strip's cell width past it), stubs at `plot_w + axis_y.labels.padding`.
     #[test]
     fn attached_support_table_takes_the_composed_autosize_pad_arm() {
         let mut payload_json = make_line_payload(true, false);
+        // Categories: their labels center on their points, so the first cell centers on its point too, at the
+        // plot's left edge.
+        payload_json["rows"] = serde_json::json!([
+            {"week": "a", "signups": 100.0},
+            {"week": "b", "signups": 150.0},
+            {"week": "c", "signups": 130.0},
+        ]);
         payload_json["resolved"]["title"] = serde_json::json!("Weekly Signups");
         payload_json["resolved"]["title_style"] = serde_json::json!({
             "font": {"family": TEST_FONT, "size": 18.0, "weight": "500", "color": "#494A4C"},
@@ -7349,10 +7547,11 @@ mod tests {
         let plot_x = plot_group_x(&svg);
         let plot_y = group_y(&svg);
 
-        // S6: the left margin is the widest cell's own overhang, not the
-        // 4px line stroke the mark ink alone would give.
-        assert!(cell_w > 4.0, "the cell must be the binding left ink for this test to mean anything");
-        assert_eq!(plot_x, 16.0 + cell_w.ceil(), "plot_left = pad_l + the first cell's full width");
+        // S6: the left margin is the widest cell's own overhang left of its
+        // point, not the 4px line stroke the mark ink alone would give.
+        let dx = cell_w / 2.0;
+        assert!(cell_w - dx > 4.0, "the cell must be the binding left ink for this test to mean anything");
+        assert_eq!(plot_x, 16.0 + (cell_w - dx).ceil(), "plot_left = pad_l + the first cell's width left of its point");
         // S3: 16 + 18 (title fs) + 10 (theme offset) + 7 (correction(18) =
         //     11 - 18 + round(0.79*18)=14) + 19 (ink extent: 13 +
         //     round(0.8*11) - 3) = 70.
@@ -7370,7 +7569,7 @@ mod tests {
         );
 
         // S2/S4: row 0 at -13 painted at the middle-baseline shift (+3),
-        // cells anchored on the point x itself (no band dx), stub past the
+        // cells centered on the point x itself, stub past the
         // plot's right edge by axis_y.labels.padding.
         // The strip paints last, so read the LAST match — "100" is also a y
         // tick label here.
@@ -7379,11 +7578,11 @@ mod tests {
             let start = svg[..idx].rfind("<text").unwrap();
             svg[start..idx].split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string()
         };
-        assert_eq!(attr("Signups", "y"), format!("{:.2}", plot_y - 10.0));
-        assert_eq!(attr("Signups", "x"), format!("{:.2}", plot_x + 600.0 + 6.0));
+        assert_eq!(attr("Signups", "y"), print::geometry(plot_y - 10.0));
+        assert_eq!(attr("Signups", "x"), print::geometry(plot_x + 600.0 + 6.0));
         assert_eq!(attr("Signups", "text-anchor"), "start");
         assert_eq!(attr("100", "text-anchor"), "end");
-        assert_eq!(attr("100", "x"), format!("{plot_x:.2}"), "no band dx on a line's point");
+        assert_eq!(attr("100", "x"), print::geometry(plot_x + dx), "centered on a line's point");
     }
 
     /// `axis_y.mirror` on a nominal x flips the composed strip's own shared
@@ -7392,7 +7591,7 @@ mod tests {
     /// `use_band_positions` law every other position call site now reads,
     /// not the point-scale positions this arm builds unconditionally.
     /// Mutations: reverting `cell_xs`'s own band branch back to
-    /// `point_scale.position_at(i)` moves every pinned x to the point-scale
+    /// `point_scale.position(i)` moves every pinned x to the point-scale
     /// formula, and re-passing `band_centered = use_band_positions` adds the
     /// bar-only `dx` to every cell — either fails this test.
     #[test]
@@ -7418,20 +7617,18 @@ mod tests {
             let start = svg[..idx].rfind("<text").unwrap();
             svg[start..idx].split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string()
         };
-        // Production writes NO `dx` on a line/area strip
-        // (`support_table_attachment.py:1176-1181`: "For line/area charts
-        // dx is None: the aligned edge sits straight on the mark's x
-        // position"), so each cell's raw `x` IS the band center
-        // `plot_x + step*(i+0.5)` (3 bands over the 600px plot, step 200) —
-        // not the point-scale positions (step 300, first cell at `plot_x`)
-        // and not band center + the bar-only `dx = max_bare_w / 2`.
+        // Each cell is centered on its band center `plot_x + step*(i+0.5)` (3
+        // bands over the 600px plot, step 200), so its digits end half the
+        // strip's cell width past it — not on the point-scale positions
+        // (step 300, first cell at `plot_x`).
+        let dx = ["100", "150", "130"].iter().map(|t| fonts.measure_shaped(t, TEST_FONT, 11.0).unwrap()).fold(0.0_f64, f64::max) / 2.0;
         let plot_x: f64 =
             svg.split("translate(").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
         for (label, i) in [("100", 0), ("150", 1), ("130", 2)] {
             assert_eq!(
                 attr(label, "x"),
-                format!("{:.2}", plot_x + 200.0 * (i as f64 + 0.5)),
-                "cell {i} sits exactly on its band center: {svg}"
+                print::geometry(plot_x + 200.0 * (i as f64 + 0.5) + dx),
+                "cell {i} is centered on its band center: {svg}"
             );
         }
     }
@@ -7510,7 +7707,7 @@ mod tests {
             for frac in [0.3333, 0.5, 0.9] {
                 let canvas_h = render_h(h + frac);
                 assert!(
-                    (canvas_h - (whole + frac)).abs() < 1e-9,
+                    (canvas_h - (whole + frac)).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
                     "titled={titled}: canvas {canvas_h} against {} at plot height {}",
                     whole + frac,
                     h + frac
@@ -7570,12 +7767,363 @@ mod tests {
             json!(["#111111", "#222222"]);
         p["resolved"]["support_table"] = json!({
             "entries": [
-                {"aggregate": "sum", "source": "signups", "format": {"spec": "$,.0f", "raw": "currency_whole"}, "label": "Total $"},
-                {"aggregate": "sum", "source": "signups", "format": ",d", "label": "Units"}
+                {"aggregate": "sum", "source": "signups", "format": {"spec": "$.3~s", "raw": "currency"}, "label": "Total $"},
+                {"aggregate": "sum", "source": "signups", "format": {"spec": ".3~s", "raw": "number"}, "label": "Units"}
             ]
         });
         p["resolved"]["effective_support_table_style"] = support_table_style_json();
         p
+    }
+
+    /// The absolute x of a text node's `x` attribute, and its anchor, for the first
+    /// `<text>` whose body is `body`; the x folds in the nearest enclosing
+    /// `translate` when `inside_group` (the rail paints inside its own group).
+    fn text_at(svg: &str, body: &str, inside_group: bool) -> (f64, String) {
+        let end = svg.find(&format!(">{body}</text>")).unwrap_or_else(|| panic!("{body:?} not drawn: {svg}"));
+        let start = svg[..end].rfind("<text").unwrap();
+        let tag = &svg[start..end];
+        let attr = |name: &str| tag.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().to_string();
+        let group_x = if inside_group {
+            let group = svg[..start].rfind("<g transform=\"translate(").expect("a translated group");
+            svg[group..].split("translate(").nth(1).unwrap().split([',', ')']).next().unwrap().parse::<f64>().unwrap()
+        } else {
+            0.0
+        };
+        (group_x + attr("x").parse::<f64>().unwrap(), attr("text-anchor"))
+    }
+
+    /// A rail chart's value axis flips left, but the strip's row labels belong
+    /// over the rail: same column, same start alignment as its series names.
+    #[test]
+    fn a_rail_charts_strip_row_labels_stand_in_the_rails_column() {
+        let svg = render(&serde_json::from_value::<Payload>(make_rail_strip_payload()).unwrap(), &test_fonts()).expect("renders");
+        let (rail_x, rail_anchor) = text_at(&svg, "150 A", true);
+        let (stub_x, stub_anchor) = text_at(&svg, "Total $", false);
+        assert_eq!((rail_anchor.as_str(), stub_anchor.as_str()), ("start", "start"));
+        assert!((stub_x - rail_x).abs() < 0.01, "label at {stub_x}, rail at {rail_x}: {svg}");
+    }
+
+    #[test]
+    fn a_left_axis_chart_with_no_rail_keeps_its_strip_row_labels_on_the_left() {
+        let mut p = make_line_payload(false, false);
+        p["resolved"]["support_table"] = serde_json::json!({"entries": [{"source": "signups", "format": ",d", "label": "Signups"}]});
+        p["resolved"]["effective_support_table_style"] = support_table_style_json();
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+        let (x, anchor) = text_at(&svg, "Signups", false);
+        assert_eq!(anchor, "end");
+        assert!(x < 60.0, "in the left gutter: {x}");
+    }
+
+    /// The left gutter reserves room for the axis alone once the labels leave it.
+    #[test]
+    fn the_plots_left_edge_no_longer_includes_a_stub_that_moved_to_the_rail() {
+        let first_cell_x = |label: &str| {
+            let mut p = make_rail_strip_payload();
+            p["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!(label);
+            let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
+            text_at(&svg, "$140", false).0
+        };
+        assert_eq!(first_cell_x("Total $"), first_cell_x("A very long strip row label"));
+    }
+
+    /// A label wider than the rail's own names widens the rail column rather than
+    /// run off the canvas.
+    #[test]
+    fn a_wide_strip_row_label_widens_the_rails_column_instead_of_clipping() {
+        let fonts = test_fonts();
+        let label = "Avg order";
+        let mut p = make_rail_strip_payload();
+        p["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!(label);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
+        let (stub_x, _) = text_at(&svg, label, false);
+        let (canvas_w, _) = canvas_dims(&svg);
+        let w = fonts.measure_shaped(label, TEST_FONT, 11.0).unwrap();
+        assert!(stub_x + w <= canvas_w, "{stub_x} + {w} past {canvas_w}");
+        let mut short = make_rail_strip_payload();
+        short["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!("N");
+        let short_svg = render(&serde_json::from_value::<Payload>(short).unwrap(), &fonts).expect("renders");
+        assert!(rail_strip_plot_w(&svg) < rail_strip_plot_w(&short_svg), "the rail column grew to hold the label, and the plot gave it room");
+    }
+
+    /// A 53-week line whose strip reads ` USD` on its anchor, the first
+    /// `first` weeks null, on a left or right value axis.
+    fn usd_strip_payload(first: usize, y_on_right: bool) -> Payload {
+        let rows: Vec<serde_json::Value> = (0..53)
+            .map(|i| {
+                let (y, m, d) = d3rs::calendar::civil_from_days(d3rs::calendar::days_from_civil(2026, 1, 1) + 7 * i as i64);
+                let value = (i >= first).then(|| serde_json::json!(1_000_000.0 + 1_000.0 * i as f64));
+                serde_json::json!({"week": format!("{y}-{m:02}-{d:02}"), "signups": value})
+            })
+            .collect();
+        let mut p = make_line_payload(y_on_right, false);
+        p["rows"] = serde_json::json!(rows);
+        p["resolved"]["support_table"] = serde_json::json!({
+            "entries": [{"source": "signups", "format": {"spec": ",.0f", "suffix": " USD", "repeat": "anchor"}, "label": "Signups"}]
+        });
+        p["resolved"]["effective_support_table_style"] = support_table_style_json();
+        serde_json::from_value(p).unwrap()
+    }
+
+    /// A skipped strip's cells stay on the canvas and clear their row label,
+    /// whether the unit lands on the first bucket or on one the stride passes.
+    #[test]
+    fn a_skipped_strip_with_a_late_or_early_anchor_stays_on_the_canvas_and_clears_its_label() {
+        let fonts = test_fonts();
+        for (first, y_on_right) in [(0, false), (20, false), (0, true), (20, true)] {
+            let svg = render(&usd_strip_payload(first, y_on_right), &fonts).expect("renders");
+            let edges = crate::families::support_table_strip::strip_edges(&svg, &fonts, TEST_FONT);
+            assert_eq!(edges.cells.len(), 1);
+            let cells = &edges.cells[0];
+            assert!(cells.len() < 53 && cells.iter().any(|_| true), "the strip skipped: {}", cells.len());
+            let (left, right) = cells.iter().fold((f64::MAX, f64::MIN), |(l, r), (cl, cr)| (l.min(*cl), r.max(*cr)));
+            assert!(left >= 0.0 && right <= edges.canvas_w, "cells {left}..{right} past the {} canvas (first {first}, right axis {y_on_right})", edges.canvas_w);
+            let (stub_left, stub_right) = edges.stubs[0];
+            assert!(stub_left >= 0.0 && stub_right <= edges.canvas_w, "label {stub_left}..{stub_right} off the canvas");
+            let clear = if y_on_right { stub_left >= right } else { stub_right <= left };
+            assert!(clear, "label {stub_left}..{stub_right} meets cells {left}..{right} (first {first}, right axis {y_on_right})");
+            assert!(svg.contains(" USD<"), "the unit survives the skip (first {first})");
+        }
+    }
+
+    /// A rail line of `buckets` weekly dates, or categories when not `temporal`,
+    /// whose strip reads the sum and the units at `width`.
+    fn rail_line_strip_at(buckets: usize, width: f64, temporal: bool, value: f64) -> String {
+        use serde_json::json;
+        let mut p = make_rail_strip_payload();
+        p["width"] = json!(width);
+        let rows: Vec<serde_json::Value> = (0..buckets)
+            .flat_map(|i| {
+                let week = if temporal {
+                    let (y, m, d) = d3rs::calendar::civil_from_days(d3rs::calendar::days_from_civil(2026, 1, 1) + 7 * i as i64);
+                    format!("{y}-{m:02}-{d:02}")
+                } else {
+                    format!("Cat {i}")
+                };
+                [
+                    json!({"week": week, "series": "A", "signups": value + i as f64}),
+                    json!({"week": week, "series": "B", "signups": value}),
+                ]
+            })
+            .collect();
+        p["rows"] = json!(rows);
+        render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders")
+    }
+
+    fn rail_line_gap_and_cells(svg: &str) -> Option<(f64, usize)> {
+        let edges = crate::families::support_table_strip::strip_edges(svg, &test_fonts(), TEST_FONT);
+        let gap = edges.cells.iter().flat_map(|row| row.windows(2).map(|pair| pair[1].0 - pair[0].1)).fold(f64::INFINITY, f64::min);
+        edges.cells.first().map(|row| (gap, row.len()))
+    }
+
+    /// Whatever the width, bucket count and value size, a rail strip's cells and
+    /// row labels stay inside the card's padding: the gutter holds the strip as
+    /// authored, and the fit at the pane it leaves only narrows it.
+    #[test]
+    fn a_rail_line_strip_stays_inside_the_padding_across_widths() {
+        let fonts = test_fonts();
+        for (value, buckets, widths) in [(1.79e6, 8, 570..=600), (3_582_245.0, 8, 494..=518), (6.5e11, 3, 440..=480), (6.5e11, 8, 960..=1000), (1.3e12, 3, 335..=404), (1.3e12, 8, 860..=929)] {
+            for width in widths {
+                let svg = rail_line_strip_at(buckets, width as f64, false, value);
+                let edges = crate::families::support_table_strip::strip_edges(&svg, &fonts, TEST_FONT);
+                assert!(!edges.cells.is_empty(), "{buckets} buckets of {value} at {width}: the strip is hidden");
+                for (cells, stub) in edges.cells.iter().zip(&edges.stubs) {
+                    let left = cells.iter().fold(f64::MAX, |l, c| l.min(c.0));
+                    assert!(left >= 16.0 - 0.01, "{buckets} buckets of {value} at {width}: cells start at {left}");
+                    assert!(stub.0 >= 16.0 - 0.01 && stub.1 <= edges.canvas_w - 16.0 + 0.01, "{buckets} buckets of {value} at {width}: label {stub:?}");
+                    assert!(cells.iter().all(|c| c.1 <= edges.canvas_w - 16.0 + 0.01), "{buckets} buckets of {value} at {width}: cells run past the padding");
+                }
+            }
+        }
+    }
+
+    /// A rail line over irregular dates, its x domain authored to January through July.
+    fn narrowed_domain_rail_svg() -> (String, Vec<crate::diagnostic::Diagnostic>) {
+        use serde_json::json;
+        let mut p = make_rail_strip_payload();
+        p["width"] = json!(700.0);
+        let dates = ["2026-01-03", "2026-01-19", "2026-02-11", "2026-03-02", "2026-03-29", "2026-04-17", "2026-05-23", "2026-06-14", "2026-07-30", "2026-09-05", "2026-10-21", "2026-12-12"];
+        let rows: Vec<serde_json::Value> = dates
+            .iter()
+            .enumerate()
+            .flat_map(|(i, d)| [json!({"week": d, "series": "A", "signups": 100.0 + 31.0 * i as f64}), json!({"week": d, "series": "B", "signups": 40.0 + 7.0 * i as f64})])
+            .collect();
+        p["rows"] = json!(rows);
+        p["resolved"]["style"]["axis_x"]["scale"] = json!({"continuous": {"domain": ["2026-01-01", "2026-07-01"]}});
+        crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders"))
+    }
+
+    /// A growth series opens small, so its first cell declares the unit and is the
+    /// widest: a date strip is never hidden for it, at any width.
+    #[test]
+    fn a_rail_line_strip_with_a_small_opener_is_painted_not_hidden() {
+        use serde_json::json;
+        let fonts = test_fonts();
+        for width in (400..=540).step_by(10) {
+            let mut p = make_rail_strip_payload();
+            p["width"] = json!(width as f64);
+            let rows: Vec<serde_json::Value> = (0..8)
+                .flat_map(|i| {
+                    let (y, m, d) = d3rs::calendar::civil_from_days(d3rs::calendar::days_from_civil(2026, 1, 5) + 7 * i as i64);
+                    let each = if i == 0 { 600.0 } else { 3_600_000.0 + 1_000.0 * i as f64 };
+                    let week = format!("{y}-{m:02}-{d:02}");
+                    [json!({"week": week, "series": "A", "signups": each}), json!({"week": week, "series": "B", "signups": each})]
+                })
+                .collect();
+            p["rows"] = json!(rows);
+            let (svg, warnings) = crate::diagnostic::collect(|| render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders"));
+            let edges = crate::families::support_table_strip::strip_edges(&svg, &fonts, TEST_FONT);
+            assert!(!edges.cells.is_empty() && edges.cells.iter().all(|row| row.len() >= 2), "width {width}: the strip is hidden: {warnings:?}");
+            assert!(warnings.iter().all(|d| d.code != "WARN-SUPPORT-TABLE-CELL-OVERFLOW"), "width {width}: {warnings:?}");
+        }
+    }
+
+    /// The line paints its points wherever the data puts them, past an authored
+    /// x domain too, so a strip whose cells would land past the plot hides with a
+    /// warning rather than paint numbers off the canvas.
+    #[test]
+    fn a_rail_line_strip_past_a_narrowed_domain_hides_with_a_warning() {
+        let (svg, warnings) = narrowed_domain_rail_svg();
+        let edges = crate::families::support_table_strip::strip_edges(&svg, &test_fonts(), TEST_FONT);
+        assert!(edges.cells.is_empty(), "no cell paints past the plot: {:?}", edges.cells);
+        let overflow: Vec<_> = warnings.iter().filter(|d| d.code == "WARN-SUPPORT-TABLE-CELL-OVERFLOW").collect();
+        assert_eq!(overflow.len(), 1, "{warnings:?}");
+        assert!(format!("{:?}", overflow[0].params).contains("past the plot's right edge"), "{overflow:?}");
+    }
+
+    /// A categorical rail strip clears its cells at the pane it paints in, or hides.
+    #[test]
+    fn a_categorical_rail_line_strip_clears_its_cells_at_the_painted_pane_or_hides() {
+        for width in (300..=600).step_by(20) {
+            let svg = rail_line_strip_at(8, width as f64, false, 3_582_245.0);
+            if let Some((gap, _)) = rail_line_gap_and_cells(&svg) {
+                assert!(gap >= 4.0, "width {width}: neighbors paint {gap}px apart");
+            }
+        }
+    }
+
+    /// A date rail strip clears the columns it paints whatever the width.
+    #[test]
+    fn a_temporal_rail_line_strip_clears_its_columns_at_every_width() {
+        for width in (300..=700).step_by(10) {
+            let svg = rail_line_strip_at(8, width as f64, true, 3_582_245.0);
+            let Some((gap, cells)) = rail_line_gap_and_cells(&svg) else { continue };
+            assert!(gap >= 4.0 || cells == 2, "width {width}: neighbors paint {gap}px apart");
+        }
+    }
+
+    /// The x of every first-row x-axis label and of the first strip row's cells.
+    fn label_and_cell_xs(svg: &str) -> (Vec<f64>, Vec<f64>) {
+        let attr = |tag: &str, name: &str| tag.split(&format!("{name}=\"")).nth(1).unwrap().split('"').next().unwrap().parse::<f64>().unwrap();
+        let axis_tags: Vec<&str> = svg.split("data-dct-role=\"x-axis\"").nth(1).unwrap().split("<text ").skip(1).collect();
+        let first_row_y = attr(axis_tags[0], "y");
+        let labels = axis_tags.iter().filter(|tag| attr(tag, "y") == first_row_y).map(|tag| attr(tag, "x")).collect();
+        let cells = svg
+            .split("<g class=\"mark-text role-mark strip\"")
+            .nth(1)
+            .unwrap()
+            .split("</g>")
+            .next()
+            .unwrap()
+            .split("<text ")
+            .skip(1)
+            .map(|tag| attr(tag, "x"))
+            .collect();
+        (labels, cells)
+    }
+
+    /// A strip on a thinned date axis keeps the buckets the axis labels: each kept
+    /// cell sits, to within a bucket, where a label sits.
+    #[test]
+    fn a_skipped_strip_keeps_the_buckets_the_axis_labels() {
+        let svg = render(&usd_strip_payload(0, false), &test_fonts()).expect("renders");
+        let (labels, cells) = label_and_cell_xs(&svg);
+        assert!(cells.len() > 2 && cells.len() < 53 && labels.len() < 20, "{} cells, {} labels", cells.len(), labels.len());
+        for cell in &cells {
+            let from_first = cell - cells[0];
+            assert!(
+                labels.iter().any(|l| (l - labels[0] - from_first).abs() <= 12.0),
+                "a kept cell {from_first}px from the first sits under no label: {cells:?} vs {labels:?}"
+            );
+        }
+    }
+
+    /// A single-series line (an area with `draw_areas`) whose strip prints each
+    /// `(date, value)` in a plain `,d`.
+    fn plain_strip_svg(points: &[(String, f64)], draw_areas: bool) -> String {
+        plain_strip_svg_with(points, draw_areas, |_| {})
+    }
+
+    fn plain_strip_svg_with(points: &[(String, f64)], draw_areas: bool, edit: impl Fn(&mut serde_json::Value)) -> String {
+        let rows: Vec<serde_json::Value> = points.iter().map(|(date, v)| serde_json::json!({"week": date, "signups": v})).collect();
+        let mut p = make_line_payload(false, false);
+        edit(&mut p);
+        p["rows"] = serde_json::json!(rows);
+        p["resolved"]["support_table"] = serde_json::json!({"entries": [{"source": "signups", "format": ",d", "label": "Signups"}]});
+        p["resolved"]["effective_support_table_style"] = support_table_style_json();
+        let payload: Payload = serde_json::from_value(p).unwrap();
+        if draw_areas { crate::families::area::render(&payload, &test_fonts()) } else { render(&payload, &test_fonts()) }.expect("renders")
+    }
+
+    /// Weekly points under month labels centered in their months, on a line and on an
+    /// area: every kept column sits in its label's cell.
+    #[test]
+    fn a_strip_column_sits_under_its_period_centered_label() {
+        let _locale = crate::time_locale::en_us_scope();
+        let weeks: Vec<(String, f64)> = (0..26)
+            .map(|i| {
+                let (y, m, d) = d3rs::calendar::civil_from_days(d3rs::calendar::days_from_civil(2024, 1, 1) + 7 * i);
+                (format!("{y}-{m:02}-{d:02}"), 200.0 + i as f64)
+            })
+            .collect();
+        for draw_areas in [false, true] {
+            crate::families::support_table_strip::assert_cells_sit_in_label_cells(&plain_strip_svg(&weeks, draw_areas), &test_fonts(), TEST_FONT);
+        }
+    }
+
+    /// Monday weeks whose month labels an authored `labels.align` keeps on their ticks: each label stands on its
+    /// opener's own (raw) Monday, a day off the Sunday-floored bucket, and every kept column follows its label.
+    #[test]
+    fn a_strip_column_follows_a_raw_opener_label() {
+        let _locale = crate::time_locale::en_us_scope();
+        let weeks: Vec<(String, f64)> = (0..26)
+            .map(|i| {
+                let (y, m, d) = d3rs::calendar::civil_from_days(d3rs::calendar::days_from_civil(2024, 1, 1) + 7 * i);
+                (format!("{y}-{m:02}-{d:02}"), 200.0 + i as f64)
+            })
+            .collect();
+        let svg = plain_strip_svg_with(&weeks, false, |p| p["resolved"]["style"]["axis_x"]["labels"]["align"] = serde_json::json!("center"));
+        crate::families::support_table_strip::assert_cells_sit_in_label_cells(&svg, &test_fonts(), TEST_FONT);
+    }
+
+    /// Fifteen years of months under year labels stepped to every fifth year: every cell
+    /// under a year label prints that year's January, never a later year's.
+    #[test]
+    fn a_strip_column_follows_a_stepped_year_label() {
+        let _locale = crate::time_locale::en_us_scope();
+        let months: Vec<(String, f64)> =
+            (0..180).map(|i| (format!("{}-{:02}-01", 1986 + i / 12, i % 12 + 1), 100.0 + i as f64)).collect();
+        let svg = plain_strip_svg_with(&months, false, |p| {
+            p["resolved"]["style"]["axis_x"]["labels"]["overlap"] = serde_json::json!({"skip": true, "tilt": false});
+        });
+        let (labels, cells) = crate::families::support_table_strip::labels_and_cells(&svg);
+        let years: Vec<i32> = labels.iter().filter_map(|(_, _, t)| t.parse().ok()).collect();
+        assert!(years.len() >= 3 && years.windows(2).all(|w| w[1] - w[0] > 1), "the year labels step: {labels:?}");
+        let cell_w = cells.iter().map(|(_, t)| test_fonts().measure(t, TEST_FONT, 11.0).unwrap()).fold(0.0_f64, f64::max);
+        for (end, text) in &cells {
+            let (_, _, year) = crate::families::support_table_strip::label_cell_of(&labels, *end, cell_w)
+                .unwrap_or_else(|| panic!("{text} at {end} sits under no label: {cells:?} vs {labels:?}"));
+            let january = 100 + (year.parse::<i32>().unwrap() - 1986) * 12;
+            assert_eq!(text, &january.to_string(), "the cell under {year} prints another month");
+        }
+    }
+
+    /// Monthly points, each labeled on its tick: the first label is flushed to the
+    /// plot's start and the last to its end, and their columns flush with them.
+    #[test]
+    fn a_strip_column_flushes_with_its_edge_label() {
+        let _locale = crate::time_locale::en_us_scope();
+        let months: Vec<(String, f64)> = [930.0, 855.0, 984.0, 912.0].iter().enumerate().map(|(i, &v)| (format!("2024-{:02}-01", i + 1), v)).collect();
+        crate::families::support_table_strip::assert_cells_sit_in_label_cells(&plain_strip_svg(&months, false), &test_fonts(), TEST_FONT);
     }
 
     /// A series pinned to a color outside the palette is labeled in that
@@ -7657,14 +8205,9 @@ mod tests {
     fn support_table_on_the_rail_concat_pins_exact_canvas_and_group_y_titled() {
         let payload: Payload = serde_json::from_value(make_titled_rail_strip_payload()).unwrap();
         let svg = render(&payload, &test_fonts()).expect("titled support_table rail concat renders");
-        // The strip's own overhang now grows the canvas honestly past the
-        // declared 600 (see `render_vertical`'s `strip_overhang` doc comment
-        // on the rail-concat arm) rather than competing for `plot_w` —
-        // `render_fitted`, not bare `render`, is what corrects it back
-        // toward the declared width in real use (`_grows_the_canvas_past_
-        // the_slot` covers that half; this test's own job — S7/S3's exact
-        // `canvas_h`/`group_y` — is unaffected by the width law).
-        assert_eq!(canvas_dims(&svg), (622.0, 545.0), "{svg}");
+        // Right-aligned cells reach left, into the gutter: nothing overhangs
+        // the declared 600.
+        assert_eq!(canvas_dims(&svg), (600.0, 545.0), "{svg}");
         assert_eq!(group_y(&svg), 92.0, "{svg}");
     }
 
@@ -7676,31 +8219,30 @@ mod tests {
     fn support_table_on_the_rail_concat_pins_exact_canvas_and_group_y_untitled() {
         let payload: Payload = serde_json::from_value(make_rail_strip_payload()).unwrap();
         let svg = render(&payload, &test_fonts()).expect("untitled support_table rail concat renders");
-        // See the titled sibling's own comment on the width half.
-        assert_eq!(canvas_dims(&svg), (622.0, 510.0), "{svg}");
+        assert_eq!(canvas_dims(&svg), (600.0, 510.0), "{svg}");
         assert_eq!(group_y(&svg), 57.0, "{svg}");
     }
 
-    /// A width correction measures its overhead off a first render wearing the
-    /// style production resolved at the slot width (`slot_resolved`); the
-    /// corrected re-render wears the payload's own resolve. A slot resolve
-    /// that hides the rail (the tiny tier) measures a different overhead.
+    /// Right-aligned cells reach left into the gutter the rail arm already holds
+    /// and never past the plot's right edge, so a rail strip's canvas has no
+    /// overhead to correct; a slot resolve that hides the rail measures the pad
+    /// arm's overhead instead, and its corrected payload drops `slot_resolved`.
     #[test]
-    fn the_width_correction_measures_its_overhead_off_the_slot_widths_resolve() {
+    fn a_right_aligned_rail_strip_needs_no_width_correction_of_its_own() {
         let _en = crate::time_locale::en_us_scope();
         let mut p = make_rail_strip_payload();
         p["width"] = serde_json::json!(300.0);
         let fonts = test_fonts();
         let own: Payload = serde::Deserialize::deserialize(&p).unwrap();
         let (_, own_corrected) = crate::render_width_fitted(&own, &fonts).expect("renders");
+        assert!(own_corrected.is_none());
         let mut slot = p["resolved"].clone();
         slot["style"]["endpoint_labels"]["visible"] = serde_json::json!(false);
         p["resolved"]["slot_resolved"] = slot;
         let with_slot: Payload = serde_json::from_value(p).unwrap();
         let (_, slot_corrected) = crate::render_width_fitted(&with_slot, &fonts).expect("renders");
-        let (own_w, slot_w) = (own_corrected.unwrap().width, slot_corrected.clone().unwrap().width);
-        assert_ne!(slot_w, own_w);
-        assert!(slot_corrected.unwrap().resolved.get("slot_resolved").is_none());
+        let slot_corrected = slot_corrected.expect("the pad arm overshoots a 300px slot");
+        assert!(slot_corrected.resolved.get("slot_resolved").is_none());
     }
 
     /// Vega's `autosize: pad` adds the plot height verbatim between two margins
@@ -7726,7 +8268,7 @@ mod tests {
             for frac in [0.3333, 0.5, 0.9] {
                 let canvas_h = render_h(h + frac);
                 assert!(
-                    (canvas_h - (whole + frac)).abs() < 1e-9,
+                    (canvas_h - (whole + frac)).abs() < print::GEOMETRY_TOLERANCE + 1e-9,
                     "titled={titled}: canvas {canvas_h} against {} at plot height {}",
                     whole + frac,
                     h + frac
@@ -7826,20 +8368,18 @@ mod tests {
         );
     }
 
-    /// S9's left-axis carve-out: a trimmed (`$,.0f`) symbol row cannot anchor
-    /// on a left-oriented value axis (`hang = "right"` in production — the
-    /// affix would be absent from every non-anchor cell), so every cell
-    /// keeps its own `$` — unlike the composed (non-concat) arm's
-    /// `weekly_line`, which anchors on its RIGHT axis. The plain (no
-    /// symbol) row still declares nothing either way (nothing to hang).
+    /// A trimmed (`$,.0f`) symbol row anchors on a left-oriented value axis
+    /// too: every cell ends at the lane's right edge, so the `$` is declared
+    /// once on the anchor and the other cells are bare.
     #[test]
-    fn support_table_on_the_rail_concat_never_anchors_a_trimmed_symbol_row() {
-        let payload_json = make_rail_strip_payload();
+    fn support_table_on_the_rail_concat_declares_a_trimmed_symbol_row_once() {
+        let mut payload_json = make_rail_strip_payload();
+        payload_json["resolved"]["support_table"]["entries"][0]["format"] = serde_json::json!({"spec": "$,.0f", "raw": "currency_whole"});
         let payload: Payload = serde_json::from_value(payload_json).unwrap();
         let svg = render(&payload, &test_fonts()).expect("support_table rail concat renders");
         // aggregate: sum over both series — week 1: 100+40=140, week 2: 150+60=210.
-        assert!(svg.contains(">$140<"), "the would-be anchor cell keeps its own $: {svg}");
-        assert!(svg.contains(">$210<"), "every OTHER cell keeps its $ too — no anchor: {svg}");
+        assert!(svg.contains(">$140<"), "the anchor cell declares the $: {svg}");
+        assert!(svg.contains(">210<") && !svg.contains(">$210<"), "every OTHER cell is bare: {svg}");
     }
 
     /// Pane 0's own plot width — the line's own path spans exactly
@@ -7877,7 +8417,7 @@ mod tests {
     /// `right_ink` narrows `plot_w` on the strip-present case (the pin below
     /// is exactly what catches that).
     #[test]
-    fn support_table_on_the_rail_concat_never_competes_for_plot_w_but_grows_the_canvas() {
+    fn support_table_on_the_rail_concat_never_competes_for_plot_w_or_grows_the_canvas() {
         let _en = crate::time_locale::en_us_scope();
         let payload: Payload = serde_json::from_value(make_rail_strip_payload()).unwrap();
         let svg = render(&payload, &test_fonts()).expect("renders");
@@ -7887,65 +8427,29 @@ mod tests {
         thick["resolved"]["style"]["line_mark"]["stroke"]["width"] = serde_json::json!(60.0);
         let payload2: Payload = serde_json::from_value(thick).unwrap();
         let svg2 = render(&payload2, &test_fonts()).expect("renders");
-        assert_eq!(rail_strip_plot_w(&svg2), 427.0, "a thick stroke's own mark reach wins: {svg2}");
+        assert_eq!(rail_strip_plot_w(&svg2), 441.0, "a thick stroke's own mark reach wins: {svg2}");
         // Pins the real value: an `assert_ne!` alone cannot tell the overhang's
         // presence from its absence.
         assert_eq!(
-            plot_w_with_strip, 483.0,
+            plot_w_with_strip, 497.0,
             "the strip's own cell reach must not narrow plot_w: {svg}"
         );
 
         let canvas_width_attr = |svg: &str| -> f64 {
-            svg.split("width=\"")
-                .nth(1)
-                .unwrap()
-                .split('"')
-                .next()
-                .unwrap()
-                .parse::<f64>()
-                .unwrap()
+            svg.split("width=\"").nth(1).unwrap().split('"').next().unwrap().parse::<f64>().unwrap()
         };
-        // Bare `render()` carries the strip's overhang BEFORE `render_
-        // fitted`'s overshoot correction — that raw number is what proves
-        // the strip really does grow the canvas past the declared slot.
-        let canvas_uncorrected = canvas_width_attr(&svg);
-        assert!(
-            canvas_uncorrected > 600.0,
-            "the strip's own overhang widens the uncorrected canvas past the declared width: \
-             {canvas_uncorrected}"
-        );
-
-        // `render_fitted` then shrinks pane 0 back toward 600 and re-folds
-        // the (unchanged) overhang into `ink_x2` before ceiling the whole
-        // sum — `ink_x2.ceil()` can still land the corrected total EXACTLY
-        // on the declared width for a specific overhang value (ceiling an
-        // already-integral sum is a no-op), so a strict `> 600.0` here
-        // would be fragile to that boundary case. What must hold is the
-        // weaker, still meaningful bound: the correction never shrinks the
-        // canvas BELOW the declared slot, i.e., it never clips the strip's
-        // own content.
-        let canvas_with_strip = canvas_width_attr(
-            &crate::render_fitted(&payload, &test_fonts()).expect("renders").svg,
-        );
-        assert!(
-            canvas_with_strip >= 600.0,
-            "render_fitted's correction must not shrink the canvas below the declared width: \
-             {canvas_with_strip}"
-        );
+        // Cells end at their points and reach left, so the strip adds nothing
+        // to the canvas on the right: it stays at the declared width, corrected
+        // or not.
+        assert_eq!(canvas_width_attr(&svg), 600.0);
+        let fitted = crate::render_fitted(&payload, &test_fonts()).expect("renders").svg;
+        assert_eq!(canvas_width_attr(&fitted), 600.0);
     }
 
-    /// S6/S8, the left-hang half: a stub label wider than the axis-only
-    /// gutter (`y_label_pad + max_y_label_w`) widens `y_extent` itself —
-    /// `left_margin` and the plot group's own x both move with it, exactly
-    /// the way the strip's right-reaching cells widen `right_ink` above.
-    /// `region_bar_grouped`'s "Top cat" stub is the corpus case; here the
-    /// label is forced past `LABEL_STUB_LIMIT_PX` (80px) so the widened
-    /// gutter is deterministic regardless of font metrics. Mutation
-    /// counterfactual: dropping the `y_extent.max(..)` term collapses
-    /// `left_margin` back to the axis-only `y_extent_ink` and both
-    /// assertions fail.
+    /// A rail chart's row labels stand in the rail's column, so a label wider
+    /// than the axis-only gutter leaves `left_margin` and the plot's x alone.
     #[test]
-    fn support_table_on_the_rail_concat_widens_y_extent_for_a_wide_stub() {
+    fn support_table_on_the_rail_concat_leaves_y_extent_alone_for_a_wide_stub() {
         let mut narrow = make_rail_strip_payload();
         narrow["resolved"]["style"]["axis_y"]["ticks"]["visible"] = serde_json::json!(true);
         narrow["resolved"]["support_table"]["entries"][0]["label"] = serde_json::json!("$");
@@ -7962,11 +8466,8 @@ mod tests {
         let svg2 = render(&payload2, &test_fonts()).expect("renders");
         let wide_group_x = plot_group_x(&svg2);
 
-        assert_eq!(narrow_group_x, 47.0, "a narrow stub stays on the axis-only gutter: {svg}");
-        assert_eq!(
-            wide_group_x, 97.0,
-            "a stub past the axis gutter widens left_margin by the capped label width: {svg2}"
-        );
+        assert_eq!(narrow_group_x, 47.0, "the gutter holds the axis alone: {svg}");
+        assert_eq!(wide_group_x, 47.0, "a wide stub no longer widens left_margin: {svg2}");
     }
 
     /// `position: bottom` keeps the pre-existing legacy splice exactly as
@@ -8140,6 +8641,141 @@ mod tests {
         // and never the far larger vertex count row-doubling would produce.
         assert_eq!(main.matches('L').count(), 5, "two centered step risers: {main}");
         assert!(!main.contains('C'), "a step curve is polylines, not cubics: {main}");
+    }
+
+    /// A quantitative-x line payload over `(week, day, signups)` rows, as listed.
+    fn connected_payload(rows: &[(Value, f64, f64)], connect: Option<&str>) -> Value {
+        let mut payload_json = make_line_payload(false, false);
+        payload_json["resolved"]["x"] = serde_json::json!("day");
+        payload_json["rows"] = rows.iter().map(|(week, day, signups)| serde_json::json!({"week": week, "day": day, "signups": signups})).collect();
+        payload_json["resolved"]["style"]["axis_x"]["is_quantitative"] = serde_json::json!(true);
+        payload_json["resolved"]["connect"] = serde_json::json!(connect);
+        payload_json
+    }
+
+    fn render_connected(payload_json: Value) -> Result<String, Diagnostic> {
+        render(&serde_json::from_value::<Payload>(payload_json).unwrap(), &test_fonts())
+    }
+
+    /// The x of every vertex of a straight-segment path, in drawing order.
+    fn path_xs(d: &str) -> Vec<f64> {
+        d.split(['M', 'L']).filter(|v| !v.is_empty()).map(|v| v.split(',').next().unwrap().parse().unwrap()).collect()
+    }
+
+    /// A trajectory over two measures doubles back on x. Week order is 1, 5, 3, 4 on day;
+    /// the rows arrive shuffled.
+    const LOOP: [(i64, f64, f64); 4] = [(3, 3.0, 30.0), (1, 1.0, 10.0), (4, 4.0, 40.0), (2, 5.0, 20.0)];
+
+    fn loop_xs(connect: Option<&str>) -> Vec<f64> {
+        let rows: Vec<(Value, f64, f64)> = LOOP.iter().map(|&(w, d, s)| (serde_json::json!(w), d, s)).collect();
+        path_xs(&main_line_d(&render_connected(connected_payload(&rows, connect)).expect("renders")))
+    }
+
+    #[test]
+    fn connect_draws_the_path_in_the_order_column_s_order() {
+        let xs = loop_xs(Some("week"));
+        assert_eq!(xs.len(), 4, "one vertex per row");
+        assert!(xs[0] < xs[2] && xs[2] < xs[3] && xs[3] < xs[1], "day 1, 5, 3, 4 in week order: {xs:?}");
+    }
+
+    #[test]
+    fn a_quantitative_x_without_connect_sorts_left_to_right() {
+        let xs = loop_xs(None);
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "ascending x: {xs:?}");
+    }
+
+    /// Rows that tie on the order column keep the order the query returned them in.
+    #[test]
+    fn connect_ties_keep_query_order() {
+        let rows = [(serde_json::json!(1), 1.0, 10.0), (serde_json::json!(2), 5.0, 20.0), (serde_json::json!(2), 3.0, 30.0)];
+        let xs = path_xs(&main_line_d(&render_connected(connected_payload(&rows, Some("week"))).expect("renders")));
+        assert!(xs[0] < xs[2] && xs[2] < xs[1], "the tied rows draw 5 then 3: {xs:?}");
+    }
+
+    /// An ISO date order column sorts as its text does, which is time order.
+    #[test]
+    fn connect_orders_by_a_date_column() {
+        let rows = [(serde_json::json!("2020-03-01"), 3.0, 30.0), (serde_json::json!("2020-01-01"), 1.0, 10.0), (serde_json::json!("2020-02-01"), 5.0, 20.0)];
+        let xs = path_xs(&main_line_d(&render_connected(connected_payload(&rows, Some("week"))).expect("renders")));
+        assert!(xs[0] < xs[2] && xs[2] < xs[1], "day 1, 5, 3: {xs:?}");
+    }
+
+    #[test]
+    fn connect_refuses_an_order_column_that_mixes_numbers_and_text() {
+        let rows = [(serde_json::json!(1), 1.0, 10.0), (serde_json::json!("2"), 5.0, 20.0)];
+        let err = render_connected(connected_payload(&rows, Some("week"))).expect_err("refuses");
+        assert!(err.to_string().contains("\"week\" mixes numbers and text"), "{err}");
+    }
+
+    #[test]
+    fn connect_refuses_an_empty_order_cell_naming_the_row() {
+        let rows = [(serde_json::json!(1), 1.0, 10.0), (Value::Null, 5.0, 20.0)];
+        let err = render_connected(connected_payload(&rows, Some("week"))).expect_err("refuses");
+        assert!(err.to_string().contains("\"week\" is empty in row 2"), "{err}");
+    }
+
+    /// A series that comes back to an x keeps every visit: one mark per row, and the line ends on
+    /// the last-ordered row, not on the newest-seen x.
+    #[test]
+    fn connect_keeps_a_revisited_x_as_its_own_point() {
+        let rows = [(serde_json::json!(4), 5.0, 40.0), (serde_json::json!(1), 1.0, 10.0), (serde_json::json!(2), 5.0, 20.0), (serde_json::json!(3), 3.0, 30.0)];
+        let mut payload_json = connected_payload(&rows, Some("week"));
+        payload_json["resolved"]["style"]["point_mark"] =
+            serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+        let svg = render_connected(payload_json).expect("renders");
+        assert!(!svg.contains('\u{1}'), "a revisit's key never reaches the SVG");
+        let xs = path_xs(&main_line_d(&svg));
+        assert_eq!(xs.len(), 4, "one vertex per row: {xs:?}");
+        assert_eq!(xs[1], xs[3], "the revisit lands on the same x");
+        let points: Vec<&str> = svg.split("<circle ").skip(1).filter(|c| c.contains("r=\"5\"")).collect();
+        assert_eq!(points.len(), 4, "one point per row: {svg}");
+        assert!(points[3].contains("translate(538,0)"), "the line ends on the last-ordered row: {svg}");
+    }
+
+    /// Each visit links and labels the x the query wrote, never its join key.
+    #[test]
+    fn connect_links_each_visit_to_its_own_x() {
+        let render_xs = |connect: Option<&str>, xs: [f64; 4]| {
+            let rows: Vec<(Value, f64, f64)> = xs.iter().zip([10.0, 20.0, 30.0, 40.0]).enumerate().map(|(i, (day, signups))| (serde_json::json!(i), *day, signups)).collect();
+            let mut payload_json = connected_payload(&rows, connect);
+            payload_json["resolved"]["link"] = serde_json::json!("/p/{{ x }}");
+            payload_json["resolved"]["link_open"] = serde_json::json!("page");
+            payload_json["resolved"]["style"]["point_mark"] =
+                serde_json::json!({"size": 100.0, "filled": true, "stroke_width": 2.0, "labels": {"visible": false}});
+            set_value_labels(&mut payload_json, ",.0f");
+            payload_json["resolved"]["style"]["line_mark"]["labels"]["field"] = serde_json::json!("day");
+            render_connected(payload_json).expect("renders")
+        };
+        let hrefs = |svg: &str| -> Vec<String> { svg.split("href=\"").skip(1).map(|h| h.split('"').next().unwrap().to_string()).collect() };
+        let revisit = render_xs(Some("week"), [1.0, 5.0, 3.0, 5.0]);
+        assert!(!revisit.contains('\u{1}'), "no join key reaches the SVG: {revisit}");
+        let plain = hrefs(&render_xs(None, [1.0, 5.0, 3.0, 4.0]));
+        let linked = hrefs(&revisit);
+        assert!(plain.contains(&"/p/1".to_string()) && plain.contains(&"/p/5".to_string()), "{plain:?}");
+        for expected in ["/p/1", "/p/5", "/p/3"] {
+            assert!(linked.iter().any(|h| h == expected), "{expected} in {linked:?}");
+        }
+        assert_eq!(linked.iter().filter(|h| *h == "/p/5").count(), 2 * plain.iter().filter(|h| *h == "/p/5").count(), "{linked:?}");
+        let texts: Vec<&str> = revisit.split("<text ").skip(1).filter_map(|t| t.split('>').nth(1)?.split('<').next()).collect();
+        for label in ["1", "5", "3", "5"] {
+            assert!(texts.contains(&label), "value label {label} in {texts:?}");
+        }
+    }
+
+    #[test]
+    fn connect_refuses_a_null_x_naming_the_row() {
+        let mut payload_json = connected_payload(&[(serde_json::json!(1), 1.0, 10.0), (serde_json::json!(2), 2.0, 20.0)], Some("week"));
+        payload_json["rows"][1]["day"] = Value::Null;
+        let err = render_connected(payload_json).expect_err("a null x refuses");
+        assert!(err.to_string().contains("row 2 has none"), "{err}");
+    }
+
+    #[test]
+    fn connect_refuses_an_x_that_is_not_quantitative() {
+        let mut payload_json = make_line_payload(false, false);
+        payload_json["resolved"]["connect"] = payload_json["resolved"]["x"].clone();
+        let err = render_connected(payload_json).expect_err("a categorical x refuses");
+        assert!(err.to_string().contains("connect needs a quantitative x"), "{err}");
     }
 
     /// `step-before`/`step-after` on a temporal x are likewise plain d3
@@ -8417,7 +9053,7 @@ mod tests {
     }
 
     /// A band scale reads `scale.padding` as the fractional inner and outer
-    /// padding (`BandGeometry`), so a padded band-step line differs from the
+    /// padding (`Band`), so a padded band-step line differs from the
     /// unpadded one instead of insetting its range in pixels.
     #[test]
     fn band_step_with_scale_padding_opens_gaps_between_bands() {
@@ -8445,10 +9081,10 @@ mod tests {
         let bandwidth = xs[1] - xs[0];
         assert!(bandwidth > 0.0, "bands run left to right: {xs:?}");
         // A width is the difference of two printed edges and `bandwidth` of two more, so four
-        // printed coordinates, each within `PATH_COORD_TOLERANCE` of its position.
+        // printed coordinates, each within `GEOMETRY_TOLERANCE` of its position.
         for w in xs.windows(2) {
             assert!(
-                (w[1] - w[0] - bandwidth).abs() <= 4.0 * d3rs::path::PATH_COORD_TOLERANCE,
+                (w[1] - w[0] - bandwidth).abs() <= 4.0 * print::GEOMETRY_TOLERANCE,
                 "every band is the same width: {xs:?}"
             );
         }
@@ -8548,13 +9184,12 @@ mod tests {
     }
 
     /// A band unit is a quotient of printed path coordinates, and each printed coordinate sits
-    /// within `PATH_COORD_TOLERANCE` of its position (d3-shape@3.2.0 `withPath` digits 3,
-    /// d3-path's `Math.round(x * k) / k`). A quotient of `printed_operands` of them (a vertex x
-    /// and the right edge it is divided by: 2) moves by at most
-    /// `printed_operands * PATH_COORD_TOLERANCE / band_px` units.
+    /// within `GEOMETRY_TOLERANCE` of its position (`print` rounds geometry to 0.01). A quotient
+    /// of `printed_operands` of them (a vertex x and the right edge it is divided by: 2) moves
+    /// by at most `printed_operands * GEOMETRY_TOLERANCE / band_px` units.
     fn assert_units(got: &[f64], want: &[f64], band_px: f64, printed_operands: f64) {
         assert_eq!(got.len(), want.len(), "vertex count: {got:?}");
-        let tolerance = printed_operands * d3rs::path::PATH_COORD_TOLERANCE / band_px;
+        let tolerance = printed_operands * print::GEOMETRY_TOLERANCE / band_px;
         for (g, w) in got.iter().zip(want) {
             assert!((g - w).abs() <= tolerance, "band units {got:?} != {want:?}");
         }
@@ -8720,7 +9355,7 @@ mod tests {
     /// Regression: line.rs's chart-title emission wrote `r.title` straight
     /// through `xml_escape` without ever consulting `title_style.font.case`,
     /// unlike every other VL family (bar/heatmap/pie/scatter all route
-    /// through `common::emit_title`, which does apply it; `table.rs` hand-rolls
+    /// through `common::plain_title_node`, which does apply it; `table.rs` hand-rolls
     /// its own title path for unrelated reasons). Production always
     /// resolves `title_style` (never `None`) and applies `apply_case` at VL
     /// emission time (`spec_builders.set_chart_title`), so a themed
@@ -9221,6 +9856,32 @@ mod tests {
         assert!(svg.contains(">105</text>"), "{svg}");
     }
 
+    /// An authored `grid.dash` paints on every populated gridline, y and x.
+    #[test]
+    fn an_authored_grid_dash_paints_the_gridlines() {
+        let payload = fit_payload(|j| {
+            for axis in ["axis_x", "axis_y"] {
+                j["resolved"]["style"][axis]["grid"]["visible"] = serde_json::json!(true);
+                j["resolved"]["style"][axis]["grid"]["dash"] = serde_json::json!([6.0, 3.0]);
+            }
+        });
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        let dashed = svg.matches("stroke-dasharray=\"6,3\"").count();
+        assert!(dashed >= 3, "{dashed} dashed rules: {svg}");
+    }
+
+    /// An authored `grid.opacity` paints on the gridlines; an opaque grid
+    /// carries no attribute.
+    #[test]
+    fn an_authored_grid_opacity_paints_the_gridlines() {
+        let payload = fit_payload(|j| {
+            j["resolved"]["style"]["axis_y"]["grid"]["visible"] = serde_json::json!(true);
+            j["resolved"]["style"]["axis_y"]["grid"]["opacity"] = serde_json::json!(0.35);
+        });
+        let svg = render(&payload, &test_fonts()).expect("renders");
+        assert!(svg.contains("opacity=\"0.35\""), "{svg}");
+    }
+
     const ZERO_RULE_COLOR: &str = "#123456";
 
     fn set_zero_style(json: &mut serde_json::Value, grid_visible: bool) {
@@ -9312,16 +9973,16 @@ mod tests {
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
         // √46.24/2 = 3.4, √92.48/2 = 4.808
-        assert_eq!(svg.matches("r=\"4.808\"").count(), 3, "one halo per datum: {svg}");
-        assert_eq!(svg.matches("r=\"3.400\"").count(), 3, "one point per datum: {svg}");
-        let halo = svg.find("r=\"4.808\"").unwrap();
+        assert_eq!(svg.matches("r=\"4.81\"").count(), 3, "one halo per datum: {svg}");
+        assert_eq!(svg.matches("r=\"3.4\"").count(), 3, "one point per datum: {svg}");
+        let halo = svg.find("r=\"4.81\"").unwrap();
         let halo_tag = svg[svg[..halo].rfind("<circle").unwrap()..].split("/>").next().unwrap();
         assert!(
             halo_tag.contains("stroke-width=\"2\""),
             "halo takes VL's default point strokeWidth: {halo_tag}"
         );
         assert!(!svg.contains("clip-path"), "point overlays stay unclipped: {svg}");
-        let point = svg.find("r=\"3.400\"").unwrap();
+        let point = svg.find("r=\"3.4\"").unwrap();
         let main_line = svg.find("stroke=\"#3164a3\" stroke-width=\"4\"").unwrap();
         assert!(halo < main_line && main_line < point, "halo under line, point over: {svg}");
     }
@@ -9347,7 +10008,7 @@ mod tests {
             j["background"] = serde_json::json!("#ffffff");
         });
         let svg = render(&payload, &test_fonts()).expect("renders");
-        let halo = svg.find("r=\"4.808\"").unwrap();
+        let halo = svg.find("r=\"4.81\"").unwrap();
         let halo_tag = svg[svg[..halo].rfind("<circle").unwrap()..].split("/>").next().unwrap();
         assert!(
             halo_tag.contains("fill=\"#d9a45b\"") && halo_tag.contains("stroke=\"#d9a45b\""),
@@ -9598,7 +10259,7 @@ mod tests {
     /// `labels.visible: "last"` prints one label per series: the value at its last
     /// datum on the drawn x axis (150 -> 130 here is the fixture's own order).
     #[test]
-    fn last_only_value_labels_print_the_final_datum_once() {
+    fn last_value_labels_print_the_final_datum_once() {
         let fonts = test_fonts();
         let svg = render(
             &fit_payload(|j| {
@@ -9612,6 +10273,42 @@ mod tests {
         for gone in ["100.0", "150.0"] {
             assert!(!svg.contains(&format!(">{gone}<")), "{gone} is not the last datum: {svg}");
         }
+    }
+
+    /// Each series answers for itself, a tie picks every tied position, and two
+    /// anchors on one point pick it once.
+    #[test]
+    fn anchored_points_pick_per_series_and_every_tie() {
+        use crate::common::{LabelAnchor as A, anchored_points};
+        let points: Vec<(String, usize, f64)> =
+            [("a", 0, 5.0), ("a", 1, 9.0), ("a", 2, 9.0), ("a", 3, 1.0), ("b", 0, 7.0), ("b", 1, 7.0)].map(|(s, at, v)| (s.to_string(), at, v)).to_vec();
+        let picked = |anchors: &[A]| {
+            let mut p: Vec<_> = anchored_points(anchors, &points).into_iter().collect();
+            p.sort_by(|l, r| l.partial_cmp(r).expect("ordered"));
+            p
+        };
+        let at = |s: &str, i: usize| (s.to_string(), i);
+        assert_eq!(picked(&[A::Max]), [at("a", 1), at("a", 2), at("b", 0), at("b", 1)]);
+        assert_eq!(picked(&[A::Min]), [at("a", 3), at("b", 0), at("b", 1)]);
+        assert_eq!(picked(&[A::First, A::Last]), [at("a", 0), at("a", 3), at("b", 0), at("b", 1)]);
+        assert_eq!(picked(&[A::Min, A::Max]), [at("a", 1), at("a", 2), at("a", 3), at("b", 0), at("b", 1)]);
+    }
+
+    /// An anchor list picks its data by value too: 150 is the fixture's peak.
+    #[test]
+    fn anchor_lists_print_each_anchored_datum_once() {
+        let fonts = test_fonts();
+        let svg = render(
+            &fit_payload(|j| {
+                set_value_labels(j, ",.1f");
+                j["resolved"]["style"]["line_mark"]["labels"]["visible"] = serde_json::json!(["max", "last"]);
+            }),
+            &fonts,
+        )
+        .expect("renders");
+        text_tag(&svg, "150.0");
+        text_tag(&svg, "130.0");
+        assert!(!svg.contains(">100.0<"), "100 is no anchor: {svg}");
     }
 
     /// The `<text>` y of every value label, in the order drawn.
@@ -9810,7 +10507,7 @@ mod tests {
         measuring.measuring = true;
         let wrapped = render(&measuring, &fonts).expect("renders");
         assert!(
-            wrapped.contains("height=\"414.0\""),
+            wrapped.contains("height=\"414\""),
             "grows by exactly one subtitle line (400 + fontSize(12) + 2) \
              on the sizing pass's own measurement call: {wrapped}"
         );
@@ -9824,7 +10521,7 @@ mod tests {
         painted.height = 414.0;
         let repainted = render(&painted, &fonts).expect("renders");
         assert!(
-            repainted.contains("height=\"414.0\""),
+            repainted.contains("height=\"414\""),
             "a board paint of the already-grown slot height is idempotent, \
              not a second measurement: {repainted}"
         );
@@ -9838,7 +10535,7 @@ mod tests {
         flat.measuring = true;
         let flat_svg = render(&flat, &fonts).expect("renders");
         assert!(
-            flat_svg.contains("height=\"400.0\""),
+            flat_svg.contains("height=\"400\""),
             "no wrap disagreement, no growth: {flat_svg}"
         );
     }
@@ -9867,7 +10564,7 @@ mod tests {
         assert_eq!(payload.height, 432.0, "the board's own requested height");
         let svg = render(&payload, &fonts).expect("renders");
         assert!(
-            svg.contains("height=\"426.0\""),
+            svg.contains("height=\"426\""),
             "the final ladder's own top_ink shrinks the canvas below the \
              requested 432, matching production: {svg}"
         );
@@ -9899,7 +10596,7 @@ mod tests {
         assert_eq!(xs.len(), 3, "three vertices: {d}");
         let frac = (xs[1] - xs[0]) / (xs[2] - xs[0]);
         assert!(
-            (frac - 31.0 / 59.0).abs() < 1e-6,
+            (frac - 31.0 / 59.0).abs() < 2.0 * print::GEOMETRY_TOLERANCE / (xs[2] - xs[0]),
             "Feb vertex at 31/59 of the span, got {frac}: {svg}"
         );
     }
@@ -10106,7 +10803,7 @@ mod tests {
     /// placement satisfies too and would not catch L9 being deleted.
     #[test]
     fn weekly_openers_sit_on_the_raw_dates_and_the_first_is_not_flushed() {
-        use crate::families::temporal::{civil_from_days, days_from_civil};
+        use d3rs::calendar::{civil_from_days, days_from_civil};
         let base = days_from_civil(2025, 9, 8); // Monday
         let rows: Vec<serde_json::Value> = (0..39)
             .map(|i| {
@@ -10150,7 +10847,7 @@ mod tests {
     /// `opener_frac_at`.
     #[test]
     fn rail_weekly_openers_sit_on_the_raw_dates_and_the_first_is_not_flushed() {
-        use crate::families::temporal::{civil_from_days, days_from_civil};
+        use d3rs::calendar::{civil_from_days, days_from_civil};
         let base = days_from_civil(2025, 9, 8); // Monday
         let rows: Vec<serde_json::Value> = (0..39)
             .map(|i| {
@@ -10332,10 +11029,10 @@ mod tests {
         assert!(discriminating > 0, "no label put its reach in a pixel's upper half");
     }
 
-    /// MEDIUM-1: RL1's last-label position is `PointScale::position_at(n-1)`,
-    /// not a hard-coded range end — with a single x category the point scale
-    /// steps 0.0 and the emission draws the only label at the LEFT edge
-    /// (`x_scale_pad`), with no right overhang at all. A range-end
+    /// MEDIUM-1: RL1's last-label position is the point scale's `position(n-1)`,
+    /// not a hard-coded range end — with a single x category d3's point scale
+    /// centers it (`align` 0.5), so the only label has no right overhang
+    /// at all. A range-end
     /// assumption would still reserve ink for a label that never draws
     /// anywhere near the right edge.
     #[test]
@@ -10357,8 +11054,8 @@ mod tests {
         let long = plot_w_for("A Moderately Long Only Category");
         assert_eq!(
             short, long,
-            "a single-category domain's only label sits at the LEFT edge \
-             (`PointScale`'s step is 0.0), so its width must not narrow pane 0 \
+            "a single-category domain's only label sits at the plot's center \
+             (d3's point scale centers one point), so its width must not narrow pane 0 \
              as if the label overhung the right edge the way a range-end \
              assumption would: short={short}, long={long}"
         );
@@ -10471,16 +11168,16 @@ mod tests {
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         assert!(svg.contains("rotate(-90)"), "expected a -90 tilt: {svg}");
         let dy = svg
-            .split("rotate(-90) translate(0,")
+            .split("rotate(-90)\" x=\"0\" y=\"")
             .nth(1)
             .unwrap()
-            .split(')')
+            .split('"')
             .next()
             .unwrap()
             .parse::<f64>()
             .unwrap();
         assert_eq!(dy, 3.0, "middle baseline (round(0.30*11)), not top's 9: {svg}");
-        let visible_labels = svg.matches("<text text-anchor=").count();
+        let visible_labels = svg.matches("rotate(-90)\" x=\"0\" y=\"3\" text-anchor=").count();
         assert!(visible_labels > 0 && visible_labels < 5, "parity must thin some labels ({visible_labels} of 5): {svg}");
     }
 
@@ -10497,7 +11194,7 @@ mod tests {
         let p = make_weekly_tilt_rail_payload(110.0, 300.0);
         let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &test_fonts()).expect("renders");
         let opened: Vec<&str> = svg
-            .match_indices("rotate(-90) translate(0,3)\"")
+            .match_indices("rotate(-90)\" x=\"0\" y=\"3\"")
             .map(|(i, _)| {
                 let tag = &svg[i..];
                 let text = &tag[tag.find('>').unwrap() + 1..];
@@ -10537,7 +11234,8 @@ mod tests {
         // extent equals the label's measured WIDTH exactly (verified via
         // the primitives directly, not asserted as a literal).
         let widest_w = narrow_svg
-            .match_indices("<text text-anchor=\"end\" transform=\"translate(")
+            .match_indices("<text transform=\"translate(")
+            .filter(|(i, _)| narrow_svg[*i..].split('>').next().unwrap().contains("text-anchor=\"end\""))
             .map(|(i, _)| narrow_svg[i..].split("</text>").next().unwrap())
             .map(|tag| tag.rsplit('>').next().unwrap())
             .map(|label| fonts.measure(label, TEST_FONT, 11.0).unwrap())
@@ -10605,7 +11303,8 @@ mod tests {
         let end = svg.find("…</tspan>").expect("an ellipsized rail label is drawn");
         let start = svg[..end].rfind('>').unwrap() + 1;
         let drawn = &svg[start..end + "…".len()];
-        assert_eq!(svg.matches(long).count(), svg.matches(&format!("{long}</title>")).count(), "the full name appears only in the hover title: {svg}");
+        let full = svg.matches(&format!("{long}</title>")).count() + svg.matches(&format!("data-dbt-series=\"{long}\"")).count();
+        assert_eq!(svg.matches(long).count(), full, "the full name appears only in the hover title and the series key: {svg}");
         let w = fonts.measure(drawn, TEST_FONT, 11.0).unwrap();
         assert!(w <= cap + 1e-6, "drawn label {drawn:?} measures {w}, past the {cap}px pane cap");
     }
@@ -10655,7 +11354,7 @@ mod tests {
     /// renderer's own `y_extent` so the assertions below pin a formula
     /// rather than echo one.
     fn rail_y_extent_ink(svg: &str, fonts: &FontBook) -> f64 {
-        let key = format!("<text x=\"{:.3}\"", 0.5 - 6.0 - 6.0);
+        let key = format!("<text x=\"{}\"", 0.5 - 6.0 - 6.0);
         let mut widest = 0.0_f64;
         for (i, _) in svg.match_indices(&key) {
             let tag = &svg[i..];
@@ -10889,9 +11588,9 @@ mod tests {
                 .parse()
                 .unwrap()
         };
-        // Both are the same scale position; the rule prints to 3 dp.
+        // Both are the same scale position; the rule prints to 3 dp, the vertex to 2.
         assert!(
-            (rule_y - vertex_y).abs() < 5e-4,
+            (rule_y - vertex_y).abs() < print::GEOMETRY_TOLERANCE + 5e-4,
             "rule at the datum's own exact y {vertex_y}, got {rule_y}: {svg}"
         );
         let grid_y = svg
@@ -11520,15 +12219,15 @@ mod tests {
         let payload: Payload = serde_json::from_value(p).unwrap();
         let svg = render(&payload, &test_fonts()).expect("nominal x + mirror renders band positions");
         assert!(
-            svg.contains("d=\"M81.167,338L243.5,0L405.833,135.2\""),
-            "vertices must land at band centers step*(i+0.5), step=487/3, printed to three \
-             decimals (81.1666.. -> 81.167, 405.8333.. -> 405.833): {svg}"
+            svg.contains("d=\"M81.17,338L243.5,0L405.83,135.2\""),
+            "vertices must land at band centers step*(i+0.5), step=487/3, printed to two \
+             decimals (81.1666.. -> 81.17, 405.8333.. -> 405.83): {svg}"
         );
         // X ticks snap to `floor(center) + 0.5` (a BAND scale's own
         // `tickRound` law, `tick_snap`'s doc comment).
-        assert!(svg.contains("x1=\"81.500\" y1=\"338.000\" x2=\"81.500\" y2=\"345.500\""), "{svg}");
-        assert!(svg.contains("x1=\"243.500\" y1=\"338.000\" x2=\"243.500\" y2=\"345.500\""), "{svg}");
-        assert!(svg.contains("x1=\"405.500\" y1=\"338.000\" x2=\"405.500\" y2=\"345.500\""), "{svg}");
+        assert!(svg.contains("x1=\"81.5\" y1=\"338\" x2=\"81.5\" y2=\"345.5\""), "{svg}");
+        assert!(svg.contains("x1=\"243.5\" y1=\"338\" x2=\"243.5\" y2=\"345.5\""), "{svg}");
+        assert!(svg.contains("x1=\"405.5\" y1=\"338\" x2=\"405.5\" y2=\"345.5\""), "{svg}");
         // Primary + ghost pair — the mirror ghost still paints (the band
         // flip changes X positions only, never the Y-axis mirror itself).
         assert!(svg.matches("text-anchor=\"end\"").count() >= 2, "primary + ghost pair: {svg}");
@@ -11603,10 +12302,7 @@ mod tests {
     /// `date` advanced by `days`, as an ISO string — the 28-day cadence
     /// `detect_time_unit` refuses.
     fn iso_plus_days(date: &str, days: i64) -> String {
-        let (y, m, d) = crate::time_axis::parse_iso_date(date).unwrap();
-        let (y2, m2, d2) = crate::families::temporal::civil_from_days(
-            crate::families::temporal::days_from_civil(y, m, d) + days,
-        );
+        let (y2, m2, d2) = d3rs::calendar::civil_from_days(crate::time_axis::testing::day(date) as i64 + days);
         format!("{y2:04}-{m2:02}-{d2:02}")
     }
 
@@ -12360,7 +13056,7 @@ mod tests {
     }
 
     fn day_of(y: i32, m: u8, d: u8) -> i64 {
-        crate::families::temporal::days_from_civil(y, m, d)
+        d3rs::calendar::days_from_civil(y, m, d)
     }
 
     /// An authored `ticks.time_unit` + `step` is production's
@@ -12439,7 +13135,7 @@ mod tests {
         // for monthly rows), each January one with its year row.
         let mut want: Vec<&str> = Vec::new();
         for &day in &sundays {
-            let (y, m, _) = crate::families::temporal::civil_from_days(day);
+            let (y, m, _) = d3rs::calendar::civil_from_days(day);
             if (m - 1) % 3 == 0 {
                 want.push(["Q1", "Q2", "Q3", "Q4"][usize::from((m - 1) / 3)]);
                 if m == 1 {
@@ -13876,8 +14572,9 @@ mod tests {
         for (i, pair) in datums.windows(2).enumerate() {
             let mid = (pair[0].0 + pair[1].0) / 2.0;
             let (before, after) = (step[1 + 2 * i], step[2 + 2 * i]);
-            assert!((before.0 - mid).abs() < 1e-3 && (after.0 - mid).abs() < 1e-3, "{step:?}");
-            assert!((before.1 - pair[0].1).abs() < 1e-3 && (after.1 - pair[1].1).abs() < 1e-3);
+            let tolerance = 2.0 * print::GEOMETRY_TOLERANCE + 1e-9;
+            assert!((before.0 - mid).abs() < tolerance && (after.0 - mid).abs() < tolerance, "{step:?}");
+            assert!((before.1 - pair[0].1).abs() < tolerance && (after.1 - pair[1].1).abs() < tolerance);
         }
     }
 
@@ -14610,9 +15307,9 @@ mod tests {
         assert_eq!(rail_plot_w(&svg), 530.0, "{svg}");
     }
 
-    /// The niced domain [1e8, 1e10] (`log_nice_domain`, floor/ceil of the
+    /// The niced domain [1e8, 1e10] (`AxisStyle::log_nice`, floor/ceil of the
     /// data extent's own log10 to base-10 powers) draws a GRIDLINE at
-    /// every one of `log_ticks`' 19 decade multiples regardless of label
+    /// every one of the log scale's 19 decade multiples regardless of label
     /// visibility (matches the linear axis's own law: only the LABEL mask
     /// is selective, never the grid), while the LABEL text only survives
     /// `greedy_visible`'s forward pass — hiding at least one candidate
@@ -14806,11 +15503,11 @@ mod tests {
             assert_eq!(svg.matches(">North<").count(), 1);
             assert_eq!(svg.matches(">South<").count(), 1);
             assert!(
-                svg.contains(r#"<g transform="translate(38.00,0.00)">"#),
+                svg.contains(r#"<g transform="translate(38,0)">"#),
                 "North's own row offset: {svg}"
             );
             assert!(
-                svg.contains(r#"<g transform="translate(38.00,200.00)">"#),
+                svg.contains(r#"<g transform="translate(38,200)">"#),
                 "South's own row offset (North's own child_height + grid padding below): {svg}"
             );
             // The shared x axis (painted once, below South) ticks at Jan/
@@ -14819,12 +15516,12 @@ mod tests {
             // panel splice above), so the footer's own ticks land on the
             // data they label rather than on the panel's own canvas edge.
             assert!(
-                svg.contains(r#"<text x="42.500" y="398.500" text-anchor="middle""#)
+                svg.contains(r#"<text x="42.5" y="398.5" text-anchor="middle""#)
                     && svg.contains(">Jan<"),
                 "Jan tick at canvas_x(0) + left_mark_overhang + 0.5: {svg}"
             );
             assert!(
-                svg.contains(r#"<text x="402.500" y="398.500" text-anchor="middle""#)
+                svg.contains(r#"<text x="402.5" y="398.5" text-anchor="middle""#)
                     && svg.contains(">Mar<"),
                 "Mar tick at canvas_x(360) + left_mark_overhang + 0.5: {svg}"
             );
@@ -14839,7 +15536,7 @@ mod tests {
             // y_gutter`, `left_mark_overhang` right of the un-shifted
             // `391.087` this rung painted before this fix.
             assert!(
-                svg.contains(r#"<text x="395.087" y="99.056" text-anchor="end""#)
+                svg.contains(r#"<text x="395.09" y="99.06" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `left_mark_overhang` past `plot_w`: {svg}"
             );
@@ -14876,7 +15573,7 @@ mod tests {
             // The mark overhang at the domain top lands in a panel's own top margin
             // whichever way the domain runs: North holds it under the descending
             // domain, South under the ascending one.
-            let margin = r#"<g transform="translate(20.000,20.000)">"#;
+            let margin = r#"<g transform="translate(20,20)">"#;
             assert!(descending.contains(margin), "{descending}");
             assert!(ascending.contains(margin), "{ascending}");
         }
@@ -14912,7 +15609,7 @@ mod tests {
             payload_json["width"] = json!(600.1);
             let svg = render_facet_payload(payload_json).expect("renders");
             assert!(
-                svg.contains(r#"<text x="518.087" y="96.556" text-anchor="end""#)
+                svg.contains(r#"<text x="518.09" y="96.56" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `ceil(plot_w + raw_right_reach)`, \
                  not `ceil(plot_w + left_mark_overhang)`: {svg}"
@@ -14922,7 +15619,7 @@ mod tests {
         /// ink (`vega_fit::FitMargins.raw_left`), never a mark-only
         /// formula. A point scale's own `axis_x.scale.padding` insets the
         /// FIRST/LAST datum that many px inside `plot_w` on both ends
-        /// (`PointScale::new`) — at `padding: 10` against this fixture's
+        /// (`Band::point`) — at `padding: 10` against this fixture's
         /// default `line_stroke_w: 4` (no point marks), a mark-only formula
         /// (`line_stroke_w.max(geom_point_reach) - x_scale_pad = 4 - 10 =
         /// -6`, UNFLOORED) anchors the value axis INSIDE the plot instead
@@ -14943,7 +15640,7 @@ mod tests {
             payload_json["width"] = json!(600.1);
             let svg = render_facet_payload(payload_json).expect("renders");
             assert!(
-                svg.contains(r#"<text x="512.087" y="99.056" text-anchor="end""#)
+                svg.contains(r#"<text x="512.09" y="99.06" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `ceil(plot_w + raw_left.max(0.0))`, \
                  never a negative mark-only term: {svg}"
@@ -14970,7 +15667,7 @@ mod tests {
             payload_json["width"] = json!(481.5);
             let svg = render_facet_payload(payload_json).expect("renders");
             assert!(
-                svg.contains(r#"<text x="397.087" y="99.056" text-anchor="end""#)
+                svg.contains(r#"<text x="397.09" y="99.06" text-anchor="end""#)
                     && svg.contains(">100<"),
                 "North's own value-axis label reaches `ceil(plot_w + raw_right_reach)`, \
                  not the un-ceiled sum: {svg}"
@@ -15012,7 +15709,7 @@ mod tests {
             let svg = render_facet_payload(payload_json).expect("renders");
             let canvas_rect = svg.split("<rect ").nth(1).expect("canvas rect present");
             assert!(
-                canvas_rect.starts_with("width=") && canvas_rect.contains("fill=\"#d9a45b\"/>"),
+                canvas_rect.starts_with("x=\"0\" y=\"0\" width=") && canvas_rect.contains("fill=\"#d9a45b\"/>"),
                 "the composite canvas paints the chart's own background, not the board's: {svg}"
             );
         }
@@ -15090,7 +15787,7 @@ mod tests {
             ]))
             .unwrap();
             let bound = crate::families::line::bind::bind(&payload, false).expect("binds");
-            let south = crate::families::line::layout::fit(&bound, &payload, &south_rows, (300.0, 179.0), None, &fonts, Some(&opts)).expect("renders");
+            let south = crate::families::line::layout::fit(&bound, &payload, &south_rows, (300.0, 179.0), None, &fonts, Some(&opts), true).expect("renders");
             let (plot_south, geom_south) = (south.plot, south.geometry);
             assert!(
                 (geom_south.ink.y1 - plot_south.top).abs() < 1e-6,
@@ -15172,7 +15869,7 @@ mod tests {
                 independent_scale: false,
             };
             let bound = crate::families::line::bind::bind(&payload, false).expect("binds");
-            let fitted = crate::families::line::layout::fit(&bound, &payload, &panel_rows, (480.0, 179.0), None, &fonts, Some(&opts))
+            let fitted = crate::families::line::layout::fit(&bound, &payload, &panel_rows, (480.0, 179.0), None, &fonts, Some(&opts), true)
                 .expect("renders");
             match &fitted.geometry.axis.body {
                 LineXAxisBody::Nominal { labels: domain, .. } => {
@@ -15474,7 +16171,7 @@ mod tests {
             }
             assert_eq!(svg.matches(">Jan<").count(), 2, "the shared footer paints once per column");
             let (col0, col1) = (first_panel_x(&svg), 302.0);
-            assert!(svg.contains(r#"<g transform="translate(302.00,24.00)">"#), "{svg}");
+            assert!(svg.contains(r#"<g transform="translate(302,24)">"#), "{svg}");
             let plot_w = 278.5 - 38.5;
             let footer_origin = col0 + 4.0 + 0.5;
             assert_eq!(first_text_x(&svg, "Jan"), footer_origin, "canvas + reach + crisp");
@@ -15536,13 +16233,13 @@ mod tests {
             };
             let mirrored = render(true);
             for fill in [
-                r#"d="M23.333,193.333L70,0L116.667,77.333L116.667,348L70,348L23.333,348Z""#,
-                r#"d="M23.333,232L70,348L116.667,116L116.667,348L70,348L23.333,348Z""#,
+                r#"d="M23.33,193.33L70,0L116.67,77.33L116.67,348L70,348L23.33,348Z""#,
+                r#"d="M23.33,232L70,348L116.67,116L116.67,348L70,348L23.33,348Z""#,
             ] {
                 assert!(mirrored.contains(fill), "band centers {fill}: {mirrored}");
             }
             let point = render(false);
-            assert!(point.contains(r#"d="M0,193.333L90,0L180,77.333L180,348L90,348L0,348Z""#), "{point}");
+            assert!(point.contains(r#"d="M0,193.33L90,0L180,77.33L180,348L90,348L0,348Z""#), "{point}");
         }
 
         /// A facet panel with an authored `axis_y.mirror: true` must never
@@ -15639,9 +16336,10 @@ mod tests {
             .unwrap();
             let data = crate::families::line::stack_data(&rows, "x", Some("s"), "y");
             let order = ["p".to_string(), "q".to_string()];
-            let (a, b) = (crate::families::line::stack_column(&data, "a", &order, true), crate::families::line::stack_column(&data, "b", &order, true));
-            assert_eq!((a.pos, a.neg, a.total), (7.0, 0.0, 7.0));
-            assert_eq!((b.pos, b.neg, b.total), (1.0, -2.0, -1.0));
+            let columns = crate::families::line::stack_columns(&data, &["a".to_string(), "b".to_string()], &order, "zero").unwrap();
+            assert_eq!(crate::families::line::stack_extent(&columns[..1]), (7.0, 0.0));
+            assert_eq!(crate::families::line::stack_extent(&columns[1..]), (1.0, -2.0));
+            assert_eq!((columns[0].total, columns[1].total), (7.0, -1.0));
         }
 
         /// A series a panel lacks keeps its palette slot: the color domain is
@@ -15929,7 +16627,7 @@ mod tests {
         /// positions (band centers, `step*(i+0.5)`, `step = 280/3`) and the
         /// shared footer axis's own tick positions (`floor(center) + 0.5`). The expected `d`
         /// strings are those band centers (46.6666.., 233.3333.. and the panel's y values)
-        /// printed through d3-path's `Math.round(v * 1e3) / 1e3`.
+        /// printed at `print`'s 0.01.
         #[test]
         fn mirror_true_on_rows_only_renders_band_positions() {
             let svg = render_facet_payload({
@@ -15939,16 +16637,16 @@ mod tests {
             })
             .expect("rows-only facet with mirror renders band positions");
             assert!(
-                svg.contains("d=\"M46.667,95.556L140,0L233.333,38.222\""),
+                svg.contains("d=\"M46.67,95.56L140,0L233.33,38.22\""),
                 "North's own vertices at band centers, step*(i+0.5), step=280/3: {svg}"
             );
             assert!(
-                svg.contains("d=\"M46.667,114.667L140,172L233.333,57.333\""),
+                svg.contains("d=\"M46.67,114.67L140,172L233.33,57.33\""),
                 "South's own vertices at the SAME band centers: {svg}"
             );
-            assert!(svg.contains("x1=\"133.500\""), "shared footer tick, floor(center)+0.5: {svg}");
-            assert!(svg.contains("x1=\"227.500\""), "{svg}");
-            assert!(svg.contains("x1=\"320.500\""), "{svg}");
+            assert!(svg.contains("x1=\"133.5\""), "shared footer tick, floor(center)+0.5: {svg}");
+            assert!(svg.contains("x1=\"227.5\""), "{svg}");
+            assert!(svg.contains("x1=\"320.5\""), "{svg}");
             assert!(svg.matches(">North<").count() == 1 && svg.matches(">South<").count() == 1);
         }
 
@@ -16653,7 +17351,7 @@ mod tests {
             assert!(!laid.diagnostics.is_empty(), "the cut title warns");
             let codes: Vec<_> = laid.diagnostics.iter().map(|d| d.code).collect();
             assert_eq!(codes, ["WARN-CHART-TITLE-TRUNCATED"]);
-            let [scene::Node::Svg { extent, .. }] = laid.nodes.as_slice() else { panic!("one root") };
+            let Some(extent) = scene::root_extent(&laid.nodes) else { panic!("one root") };
             assert_eq!((extent.width, extent.height), (420.0, 260.0));
             let data = laid.data_box;
             assert!(data.x >= 0.0 && data.y >= 0.0 && data.x + data.width <= 420.0 && data.y + data.height <= 260.0);

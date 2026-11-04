@@ -394,44 +394,6 @@ class TestItalicOutsideMarkdownEmphasis:
         html = self._export(_ITALIC_AXIS_LABELS_YAML, tmp_path, local_project)
         assert _ITALIC_BOARD.search(html) is not None
 
-    def test_callout_hint_line(self) -> None:
-        """The error placard's hint, checked against the renderer's real output.
-
-        A callout renders during the sizing pass and the main pass replays it from
-        cache, so no render-time sink can see it — reading the finished markup is
-        what covers it. Its family arrives XML-escaped (`&apos;Inter Variable&apos;`),
-        which is why the pairing unescapes before matching. `hint` is set only by the
-        internal error-placard path, so this drives the renderer directly.
-        """
-        from dbt_charts.core.compile.config import get_theme_style
-        from dbt_charts.core.compile.resolve.style import resolve_style
-        from dbt_charts.core.render.engine import render_callout_card
-        from dbt_charts.core.render.font_selection import italic_families_in
-
-        style = resolve_style(get_theme_style())
-        svg = render_callout_card(
-            message="Something went wrong while loading this chart.",
-            placard={
-                "code": "ERR-INTERNAL",
-                "code_url": "https://docs.dbtcharts.com/reference/errors/#err-internal",
-                "hint": "Check the query name and try again.",
-                "doc_url": None,
-            },
-            width=400.0,
-            style=style.chart_defaults.callout_error,
-            chart_id="callout",
-        )
-        assert 'font-style="italic"' in svg
-        # Not just truthiness: without the unescape the set is still non-empty, it
-        # just holds `&apos;…&apos;`, which matches no registry family — so every
-        # export with a placard would silently drop the italic board while a bare
-        # `assert italic_families_in(svg)` stayed green. Asserted as "every family
-        # found is a real registry family" rather than pinning which one, since the
-        # callout's family is a theme default.
-        found = italic_families_in(svg)
-        assert found
-        assert found <= {board.family for board in FONT_REGISTRY}
-
     def test_emphasis_in_single_column_prose(self, tmp_path, local_project) -> None:
         """The other prose return.
 

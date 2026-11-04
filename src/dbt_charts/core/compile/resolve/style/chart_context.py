@@ -25,6 +25,9 @@ from dbt_charts.core.compile.models.primitives import (
 )
 from dbt_charts.core.compile.models.style.authored import ChartStylePatch
 from dbt_charts.core.compile.models.style.context import ChartStyleContext
+from dbt_charts.core.compile.models.style.theme.category_colors import (
+    CategoryColorScale,
+)
 from dbt_charts.core.compile.resolve.style.board import resolve_chart_style_context
 from dbt_charts.core.compile.resolve.style.chart_style import (
     merge_chart_style,
@@ -64,9 +67,66 @@ def build_chart_style_context(
 ) -> ChartStyleContext:
     """The board context with the chart's local style merged on top.
 
-    Returns the board context itself when the chart overrides nothing.
+    Returns the board context itself when the chart overrides nothing. A context
+    that carries a memo (``with_chart_memo``) remembers its results.
     """
     base = board_context or resolve_chart_style_context(get_theme_style())
+    if board_context is None or _MEMO_KEY not in board_context.__dict__:
+        return _merged(base, chart)
+    # The chart is held and compared by identity because render paths
+    # `model_copy` charts (row truncation) and an id or equal copy can carry a
+    # different style.
+    memo: ChartMemo = board_context.__dict__[_MEMO_KEY]
+    cached = memo.get(chart.id)
+    if cached is not None and cached[0] is chart:
+        return cached[1]
+    merged = _merged(base, chart)
+    memo[chart.id] = (chart, merged)
+    return merged
+
+
+# The memo is an instance attribute, not a dataclass field: it must stay out of
+# the Pydantic schema, the dump and equality, and `dataclasses.replace` starts a
+# new context without it. It holds caller charts, so it is only ever installed on
+# a context exactly one board owns, never on one shared through the theme or
+# cascade caches (process-wide state).
+_MEMO_KEY = "_chart_memo"
+ChartMemo = dict[str, tuple[Chart, ChartStyleContext]]
+
+
+def with_chart_memo(context: ChartStyleContext) -> ChartStyleContext:
+    """A fresh copy of ``context`` with an empty memo, for one board to own."""
+    owned = dataclasses.replace(context)
+    owned.__dict__[_MEMO_KEY] = {}
+    return owned
+
+
+def context_with_category_colors(
+    context: ChartStyleContext, scales: tuple[CategoryColorScale, ...]
+) -> ChartStyleContext:
+    """``context`` with its planned category scales, and its per-chart memo.
+
+    The per-chart merge never reads ``category_colors``, so each remembered
+    result is the same context with the scales set. The memo is rebuilt, never
+    shared with ``context``.
+    """
+    updated = dataclasses.replace(context, category_colors=scales)
+    if _MEMO_KEY not in context.__dict__:
+        return updated
+    memo: ChartMemo = context.__dict__[_MEMO_KEY]
+    updated.__dict__[_MEMO_KEY] = {
+        chart_id: (
+            chart,
+            updated
+            if merged is context
+            else dataclasses.replace(merged, category_colors=scales),
+        )
+        for chart_id, (chart, merged) in memo.items()
+    }
+    return updated
+
+
+def _merged(base: ChartStyleContext, chart: Chart) -> ChartStyleContext:
     overrides = merge_chart_style(base, chart)
     return dataclasses.replace(base, **overrides) if overrides else base
 

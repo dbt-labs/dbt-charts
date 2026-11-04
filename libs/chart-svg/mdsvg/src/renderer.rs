@@ -49,24 +49,36 @@ use crate::types::{
     AnyBlock, Blockquote, CodeBlock, Document, Heading, ImageBlock, ListItem, OrderedList,
     Paragraph, RawHtmlBlock, Span, SpanType, Table, TableCell, TableRow, UnorderedList,
 };
-use crate::utils::{collapse_spaces, format_number2 as fmt};
+use crate::utils::collapse_spaces;
 use d3rs::py_float::{py_float_sum, py_sum, PyNum};
 use d3rs::py_str::is_py_space;
 use measure::fonts::{
     split_token_precise, wrap_measured_pieces, FontMeasurer, FontSlot, FontSlots, WrapPiece,
 };
-use scene::{Attrs, Chars, Child, Element, Escape, Extent, Node};
+use scene::{AttrValue, Attrs, Chars, Child, Element, Escape, Extent, Node, Role, Shape};
 use sha2::{Digest, Sha256};
 
 /// One markdown element. Attribute values and text stay raw: `print` escapes them.
-fn el(tag: &str, attrs: Vec<(&'static str, String)>, children: Vec<Child>) -> Element {
+fn el(tag: &str, attrs: Vec<(&'static str, AttrValue)>, children: Vec<Child>) -> Element {
     Element {
         tag: tag.to_string(),
-        attrs: attrs
-            .into_iter()
-            .fold(Attrs::new(), |attrs, (name, value)| attrs.set(name, value)),
+        attrs: attrs.into_iter().fold(Attrs::new(), |attrs, (name, value)| match value {
+            AttrValue::Geom(v) => attrs.geom(name, v),
+            AttrValue::Text(text) => attrs.set(name, text),
+            other => unreachable!("mdsvg writes text and coordinates only, got {other:?}"),
+        }),
         children,
     }
+}
+
+/// A coordinate or length attribute; `print` writes it rounded to a hundredth.
+fn g(v: f64) -> AttrValue {
+    AttrValue::Geom(v)
+}
+
+/// An authored text attribute.
+fn t(text: impl Into<String>) -> AttrValue {
+    AttrValue::Text(text.into())
 }
 
 /// Authored text: markdown's own, printed as mdsvg's markup prints it (quotes and whitespace
@@ -82,7 +94,7 @@ fn ws(text: &str) -> Child {
 
 /// A `<text>`-like element holding `runs`. Empty runs still print `<text ...></text>`, not a
 /// self-closing tag.
-fn text_el(attrs: Vec<(&'static str, String)>, mut runs: Vec<Child>) -> Element {
+fn text_el(attrs: Vec<(&'static str, AttrValue)>, mut runs: Vec<Child>) -> Element {
     if runs.is_empty() {
         runs.push(quoted(""));
     }
@@ -94,13 +106,13 @@ fn table_gridline(
     y1: f64,
     x2: f64,
     y2: f64,
-    stroke: &[(&'static str, String)],
+    stroke: &[(&'static str, AttrValue)],
 ) -> Element {
     let mut attrs = vec![
-        ("x1", fmt(x1)),
-        ("y1", fmt(y1)),
-        ("x2", fmt(x2)),
-        ("y2", fmt(y2)),
+        ("x1", g(x1)),
+        ("y1", g(y1)),
+        ("x2", g(x2)),
+        ("y2", g(y2)),
     ];
     attrs.extend(stroke.iter().cloned());
     el("line", attrs, vec![])
@@ -123,7 +135,7 @@ pub fn indented(elements: &[Element]) -> Vec<Child> {
 
 /// [`lines`] at the top level of a scene.
 pub fn indented_nodes(elements: &[Element]) -> Vec<Node> {
-    lines(elements, |s| Node::Chars(Chars::new(s, Escape::Attr)), Node::Element)
+    lines(elements, |s| Node::chars(Chars::new(s, Escape::Attr)), Node::element)
 }
 
 /// First 8 hex chars of the SHA-256 digest of `input`. Mirrors Python's
@@ -162,7 +174,7 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
         code_extra += &format!(" font-style: {};", style.code_font_style);
     }
     if style.code_font_size != 0.0 {
-        code_extra += &format!(" font-size: {}px;", fmt(style.code_font_size));
+        code_extra += &format!(" font-size: {}px;", print::geometry(style.code_font_size));
     }
     if !style.code_font_decoration.is_empty() {
         code_extra += &format!(" text-decoration: {};", style.code_font_decoration);
@@ -187,7 +199,7 @@ fn style_rule_bodies(style: &Style) -> HashMap<&'static str, String> {
         bq_extra += &format!(" font-style: {};", style.blockquote_font_style);
     }
     if style.blockquote_font_size != 0.0 {
-        bq_extra += &format!(" font-size: {}px;", fmt(style.blockquote_font_size));
+        bq_extra += &format!(" font-size: {}px;", print::geometry(style.blockquote_font_size));
     }
     if !style.blockquote_font_decoration.is_empty() {
         bq_extra += &format!(" text-decoration: {};", style.blockquote_font_decoration);
@@ -261,6 +273,33 @@ fn apply_case(text: &str, case: &str) -> String {
         "upper" => text.to_uppercase(),
         "lower" => text.to_lowercase(),
         _ => text.to_string(),
+    }
+}
+
+/// Items in `block` when it is a list.
+fn list_item_count(block: &AnyBlock) -> Option<usize> {
+    match block {
+        AnyBlock::UnorderedList(list) => Some(list.items.len()),
+        AnyBlock::OrderedList(list) => Some(list.items.len()),
+        _ => None,
+    }
+}
+
+/// `renderer.py::_list_window`: the `count` items of list `block` from `start`,
+/// numbered as they are in `block`.
+fn list_window(block: &AnyBlock, start: usize, count: usize) -> AnyBlock {
+    let window = |items: &[ListItem]| {
+        items[start.min(items.len())..(start + count).min(items.len())].to_vec()
+    };
+    match block {
+        AnyBlock::UnorderedList(list) => {
+            AnyBlock::UnorderedList(UnorderedList { items: window(&list.items) })
+        }
+        AnyBlock::OrderedList(list) => AnyBlock::OrderedList(OrderedList {
+            items: window(&list.items),
+            start: list.start + start as i64,
+        }),
+        _ => unreachable!("list_window is asked only of a list"),
     }
 }
 
@@ -358,39 +397,31 @@ impl RenderResult {
 
     /// The standalone `<svg>`; its extent is the size the layout reserved.
     pub fn svg(&self) -> Node {
-        let width = fmt(self.width);
-        let height = fmt(self.height);
         let mut lines = vec![self.style.clone()];
         lines.extend(self.elements.iter().cloned());
-        let mut children = vec![Node::Chars(Chars::new("\n", Escape::Attr))];
+        let newline = || Node::chars(Chars::new("\n", Escape::Attr));
+        let mut children = vec![newline()];
         children.extend(indented_nodes(&lines));
-        children.push(Node::Chars(Chars::new("\n", Escape::Attr)));
-        Node::Svg {
-            extent: Extent {
-                width: self.width,
-                height: self.height,
-            },
-            attrs: Attrs::new()
-                .set("xmlns", "http://www.w3.org/2000/svg")
-                .set("width", width.clone())
-                .set("height", height.clone())
-                .set("viewBox", format!("0 0 {width} {height}")),
-            children,
-        }
+        children.push(newline());
+        // Markdown-svg writes the root size to 0.01, unlike a chart's root, which prints in full.
+        let on_grid = |v: f64| print::geometry(v).parse::<f64>().expect("geometry prints a number");
+        let extent = Extent { width: on_grid(self.width), height: on_grid(self.height) };
+        Node::new(Role::Chrome, Attrs::new(), Shape::Svg { extent, children })
     }
 }
 
 /// Line-level measurement of one markdown block at a given width — enough
 /// for a caller to decide where to break a document across boxes of
 /// limited height (columns, pages, slides) without mdsvg knowing what a
-/// box is. `line_count`/`line_advance` describe a block that may be split;
-/// an unsplittable block reports one unit whose advance is its whole
-/// height, so a packer can treat every block the same way
+/// box is. `line_advances` is one height per line, from the same line layout
+/// render draws; a list reports one height per item, and a slice of it draws
+/// those heights plus `item_gap` between each two. An unsplittable block
+/// reports a single advance, its whole height, so a packer can treat every
+/// block the same way
 /// (`renderer.py::BlockMetrics`).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockMetrics {
-    pub line_count: usize,
-    pub line_advance: f64,
+    pub line_advances: Vec<f64>,
     pub space_before: f64,
     pub splittable: bool,
     pub keep_with_next: bool,
@@ -398,6 +429,20 @@ pub struct BlockMetrics {
     /// reported separately so a caller placing this block at the top of a
     /// box can collapse it.
     pub leading_margin: f64,
+    /// How far a heading rises when it opens a column of body text: its
+    /// `leading_margin`, plus the whole body lines that put its first baseline
+    /// below a paragraph's, so the two share a first baseline and everything
+    /// under the heading stays on the body-line grid.
+    pub column_lift: f64,
+    /// Each advance is one list item, not one line: an item stays whole and
+    /// any two may part, so the rules a caller applies between lines, widows,
+    /// orphans and a lone line under a heading among them, do not apply
+    /// between these.
+    pub whole_items: bool,
+    /// Space drawn between two items of a window, and in no advance. Reported
+    /// apart for the same reason as `leading_margin`: an item opening a box
+    /// sits at its top.
+    pub item_gap: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -457,6 +502,8 @@ pub struct TextRun {
     pub is_bold: bool,
     pub is_italic: bool,
     pub is_code: bool,
+    /// A code run painted on a background chip; tables paint code without one.
+    pub chip: bool,
     pub is_link: bool,
     pub url: Option<String>,
     pub image: Option<InlineImage>,
@@ -471,6 +518,19 @@ struct Line {
     height: f64,
 }
 
+/// `renderer.py::_separator_run`: the run a space between two runs paints
+/// in; it is measured as this run.
+fn separator_run(previous: &TextRun, run: &TextRun, separator: &str) -> TextRun {
+    if previous.same_style(run) {
+        return run.with_text(separator);
+    }
+    TextRun {
+        is_bold: previous.is_bold && run.is_bold,
+        is_italic: previous.is_italic && run.is_italic,
+        ..TextRun::plain(separator)
+    }
+}
+
 impl TextRun {
     fn plain(text: impl Into<String>) -> Self {
         TextRun {
@@ -478,6 +538,7 @@ impl TextRun {
             is_bold: false,
             is_italic: false,
             is_code: false,
+            chip: false,
             is_link: false,
             url: None,
             image: None,
@@ -1034,35 +1095,53 @@ impl SVGRenderer {
                     self.style.line_height,
                     false,
                 )?;
-                // Production reports one advance per line (`line_advances`);
-                // `BlockMetrics` carries one for the block, so a line an inline
-                // image makes taller than the rest refuses rather than packs.
-                let line_advance = match lines.first() {
-                    None => self.style.base_font_size * self.style.line_height,
-                    Some(first) if lines.iter().all(|line| line.height == first.height) => first.height,
-                    Some(_) => {
-                        return Err(
-                            "mdsvg-rs: inline image taller than its line in measure_blocks not supported".into(),
-                        )
-                    }
-                };
+                // A line an inline image makes taller than the rest refuses
+                // rather than packs.
+                if lines.iter().any(|line| line.height != lines[0].height) {
+                    return Err(
+                        "mdsvg-rs: inline image taller than its line in measure_blocks not supported".into(),
+                    );
+                }
                 metrics.push(BlockMetrics {
-                    line_count: lines.len().max(1),
-                    line_advance,
+                    // An empty paragraph still occupies one blank line.
+                    line_advances: if lines.is_empty() {
+                        vec![self.style.base_font_size * self.style.line_height]
+                    } else {
+                        lines.iter().map(|line| line.height).collect()
+                    },
                     space_before: gap,
                     splittable: true,
                     keep_with_next: false,
                     leading_margin: 0.0,
+                    column_lift: 0.0,
+                    whole_items: false,
+                    item_gap: 0.0,
+                });
+            } else if let Some(items) = list_item_count(block).filter(|&n| n > 0) {
+                let line_advances = (0..items)
+                    .map(|i| Ok(self.render_block(&list_window(block, i, 1), &ctx)?.1))
+                    .collect::<Result<Vec<_>, String>>()?;
+                metrics.push(BlockMetrics {
+                    line_advances,
+                    space_before: gap,
+                    splittable: true,
+                    keep_with_next: false,
+                    leading_margin: 0.0,
+                    column_lift: 0.0,
+                    whole_items: true,
+                    item_gap: self.style.list_item_spacing,
                 });
             } else {
                 let (_, height) = self.render_block(block, &ctx)?;
                 metrics.push(BlockMetrics {
-                    line_count: 1,
-                    line_advance: height,
+                    line_advances: vec![height],
                     space_before: gap,
                     splittable: false,
                     keep_with_next: matches!(block, AnyBlock::Heading(_)),
                     leading_margin: self.heading_margins(block).0,
+                    column_lift: self.column_lift(block, width)?,
+                    whole_items: false,
+                    item_gap: 0.0,
                 });
             }
             prev = Some(block);
@@ -1071,10 +1150,23 @@ impl SVGRenderer {
         Ok(metrics)
     }
 
+    /// `renderer.py::SVGRenderer._column_lift`.
+    fn column_lift(&self, block: &AnyBlock, width: f64) -> Result<f64, String> {
+        let margin = self.heading_margins(block).0;
+        let AnyBlock::Heading(heading) = block else {
+            return Ok(margin);
+        };
+        let line = self.style.base_font_size * self.style.line_height;
+        let drop = self.first_baseline(&vec![block.clone()], width)?
+            - self.first_baseline(&vec![AnyBlock::Paragraph(Paragraph { spans: heading.spans.clone() })], width)?;
+        Ok(margin + (drop / line).round_ties_even() * line)
+    }
+
     /// Render `count` lines of `block`, beginning at line `start` (`count:
     /// None` means "to the end"). The placement half of the pair — the
     /// window is drawn at the top of its own coordinate box, so a
     /// continuation does not inherit the offset of the lines preceding it.
+    /// A list's window counts items, and an ordered list keeps its numbering.
     /// An unsplittable block ignores the window and renders whole — asking
     /// for a slice of something indivisible is a caller error the caller
     /// can already avoid by reading `BlockMetrics::splittable`
@@ -1103,6 +1195,8 @@ impl SVGRenderer {
                 Some((start, count)),
                 false,
             )?
+        } else if let (Some(_), Some(count)) = (list_item_count(block), count) {
+            self.render_block(&list_window(block, start, count), &ctx)?
         } else {
             self.render_block(block, &ctx)?
         };
@@ -1131,6 +1225,15 @@ impl SVGRenderer {
     }
 
     /// Painted size of an inline-code run sitting in text of `host_font_size`.
+    /// `renderer.py::_chip_inset`.
+    fn chip_inset(&self, run: &TextRun) -> f64 {
+        if run.chip && !run.text.is_empty() {
+            self.style.inline_code_padding
+        } else {
+            0.0
+        }
+    }
+
     fn inline_code_size(&self, host_font_size: f64) -> f64 {
         if self.style.code_font_size != 0.0 {
             return self.style.code_font_size;
@@ -1152,7 +1255,7 @@ impl SVGRenderer {
     /// code font overlay. `font_size` is already resolved by
     /// `block_code_size`; re-resolving the override here would be a second
     /// copy of that decision.
-    fn code_text_attrs(&self, font_size: f64) -> Vec<(&'static str, String)> {
+    fn code_text_attrs(&self, font_size: f64) -> Vec<(&'static str, AttrValue)> {
         let s = &self.style;
         let family = if s.code_font_family.is_empty() {
             &s.mono_font_family
@@ -1168,15 +1271,15 @@ impl SVGRenderer {
         // (`renderer.py:1448`) does not route the family through
         // `css_font_family_stack`.
         let mut attrs = vec![
-            ("font-family", family.clone()),
-            ("font-size", fmt(font_size)),
-            ("font-weight", weight.to_string()),
+            ("font-family", t(family.clone())),
+            ("font-size", g(font_size)),
+            ("font-weight", t(weight.to_string())),
         ];
         if !s.code_font_style.is_empty() {
-            attrs.push(("font-style", s.code_font_style.clone()));
+            attrs.push(("font-style", t(s.code_font_style.clone())));
         }
         if !s.code_font_decoration.is_empty() {
-            attrs.push(("text-decoration", s.code_font_decoration.clone()));
+            attrs.push(("text-decoration", t(s.code_font_decoration.clone())));
         }
         attrs
     }
@@ -1238,7 +1341,7 @@ impl SVGRenderer {
         segments: &[CodeSegment],
         x: f64,
         y: f64,
-        code_attrs: &[(&'static str, String)],
+        code_attrs: &[(&'static str, AttrValue)],
         default_fill: &str,
         clip_path: Option<&str>,
     ) -> Option<Element> {
@@ -1247,15 +1350,15 @@ impl SVGRenderer {
             return None;
         }
 
-        let mut attrs = vec![("x", fmt(x)), ("y", fmt(y))];
+        let mut attrs = vec![("x", g(x)), ("y", g(y))];
         attrs.extend(code_attrs.iter().cloned());
-        attrs.push(("xml:space", "preserve".to_string()));
+        attrs.push(("xml:space", t("preserve".to_string())));
         let colored = segments.iter().any(|(_, color)| !color.is_empty());
         if !colored {
-            attrs.push(("fill", default_fill.to_string()));
+            attrs.push(("fill", t(default_fill.to_string())));
         }
         if let Some(clip_path) = clip_path {
-            attrs.push(("clip-path", clip_path.to_string()));
+            attrs.push(("clip-path", t(clip_path.to_string())));
         }
         if !colored {
             let shown = apply_case(&text, &self.style.code_font_case);
@@ -1274,7 +1377,7 @@ impl SVGRenderer {
                 let shown = apply_case(seg_text, &self.style.code_font_case);
                 Child::Element(el(
                     "tspan",
-                    vec![("fill", fill.to_string())],
+                    vec![("fill", t(fill.to_string()))],
                     vec![quoted(shown)],
                 ))
             })
@@ -1294,7 +1397,7 @@ impl SVGRenderer {
             format!("fill: {}", s.code_color),
             format!(
                 "font-size: {}px",
-                fmt(self.inline_code_size(host_font_size))
+                print::geometry(self.inline_code_size(host_font_size))
             ),
         ];
         if !s.code_font_weight.is_empty() {
@@ -1337,8 +1440,8 @@ impl SVGRenderer {
             _ => self.style.heading_margin_top_px,
         };
         let margin_top = top_px.unwrap_or(font_size * self.style.heading_margin_top);
-        let bottom_px = match self.style.h1_margin_bottom_px {
-            Some(h1) if level == 1 => Some(h1),
+        let bottom_px = match self.style.major_heading_margin_bottom_px {
+            Some(major) if level <= 2 => Some(major),
             _ => self.style.heading_margin_bottom_px,
         };
         let margin_bottom = bottom_px.unwrap_or(font_size * self.style.heading_margin_bottom);
@@ -1538,14 +1641,14 @@ impl SVGRenderer {
         let mut elements = vec![el(
             "image",
             vec![
-                ("x", fmt(x)),
-                ("y", fmt(y)),
-                ("width", fmt(width)),
-                ("height", fmt(height)),
-                ("href", collapse_spaces(url)),
+                ("x", g(x)),
+                ("y", g(y)),
+                ("width", g(width)),
+                ("height", g(height)),
+                ("href", t(collapse_spaces(url))),
                 (
                     "preserveAspectRatio",
-                    self.style.image_preserve_aspect_ratio.clone(),
+                    t(self.style.image_preserve_aspect_ratio.clone()),
                 ),
             ],
             vec![],
@@ -1575,11 +1678,11 @@ impl SVGRenderer {
             el(
                 "rect",
                 vec![
-                    ("x", fmt(ctx.x)),
-                    ("y", fmt(y_pos)),
-                    ("width", fmt(ctx.width)),
-                    ("height", fmt(height)),
-                    ("fill", self.style.hr_color.clone()),
+                    ("x", g(ctx.x)),
+                    ("y", g(y_pos)),
+                    ("width", g(ctx.width)),
+                    ("height", g(height)),
+                    ("fill", t(self.style.hr_color.clone())),
                 ],
                 vec![],
             )
@@ -1588,13 +1691,13 @@ impl SVGRenderer {
             el(
                 "line",
                 vec![
-                    ("x1", fmt(ctx.x)),
-                    ("y1", fmt(mid)),
-                    ("x2", fmt(ctx.x + ctx.width)),
-                    ("y2", fmt(mid)),
-                    ("stroke", self.style.hr_color.clone()),
-                    ("stroke-width", fmt(height)),
-                    ("stroke-dasharray", self.style.hr_dasharray.clone()),
+                    ("x1", g(ctx.x)),
+                    ("y1", g(mid)),
+                    ("x2", g(ctx.x + ctx.width)),
+                    ("y2", g(mid)),
+                    ("stroke", t(self.style.hr_color.clone())),
+                    ("stroke-width", g(height)),
+                    ("stroke-dasharray", t(self.style.hr_dasharray.clone())),
                 ],
                 vec![],
             )
@@ -1631,11 +1734,11 @@ impl SVGRenderer {
         elements.push(el(
             "rect",
             vec![
-                ("x", fmt(ctx.x)),
-                ("y", fmt(current_y)),
-                ("width", fmt(table_width)),
-                ("height", fmt(header_layout.row_height)),
-                ("fill", self.style.table_header_background.clone()),
+                ("x", g(ctx.x)),
+                ("y", g(current_y)),
+                ("width", g(table_width)),
+                ("height", g(header_layout.row_height)),
+                ("fill", t(self.style.table_header_background.clone())),
             ],
             vec![],
         ));
@@ -1676,11 +1779,11 @@ impl SVGRenderer {
 
         // Table border.
         let mut border = vec![
-            ("x", fmt(ctx.x)),
-            ("y", fmt(ctx.y)),
-            ("width", fmt(table_width)),
-            ("height", fmt(total_height)),
-            ("fill", "none".to_string()),
+            ("x", g(ctx.x)),
+            ("y", g(ctx.y)),
+            ("width", g(table_width)),
+            ("height", g(total_height)),
+            ("fill", t("none".to_string())),
         ];
         border.extend(stroke.iter().cloned());
         elements.push(el("rect", border, vec![]));
@@ -1714,15 +1817,15 @@ impl SVGRenderer {
 
     /// `renderer.py::_table_border_stroke`: the stroke attributes every table
     /// gridline shares. A width of 1 and a solid line add no attribute.
-    fn table_border_stroke(&self) -> Vec<(&'static str, String)> {
-        let mut stroke = vec![("stroke", self.style.table_border_color.clone())];
+    fn table_border_stroke(&self) -> Vec<(&'static str, AttrValue)> {
+        let mut stroke = vec![("stroke", t(self.style.table_border_color.clone()))];
         if self.style.table_border_width != 1.0 {
-            stroke.push(("stroke-width", fmt(self.style.table_border_width)));
+            stroke.push(("stroke-width", g(self.style.table_border_width)));
         }
         if !self.style.table_border_dasharray.is_empty() {
             stroke.push((
                 "stroke-dasharray",
-                self.style.table_border_dasharray.clone(),
+                t(self.style.table_border_dasharray.clone()),
             ));
         }
         stroke
@@ -1736,13 +1839,14 @@ impl SVGRenderer {
         if cell.spans.iter().any(|span| span.span_type == SpanType::Image) {
             return Err("mdsvg-rs: inline image in a table cell not supported".into());
         }
-        let runs = self.build_text_runs(&cell.spans, 0.0)?;
-        if !is_header {
-            return Ok(runs);
-        }
-        Ok(runs
+        Ok(self
+            .build_text_runs(&cell.spans, 0.0)?
             .into_iter()
-            .map(|run| TextRun { is_bold: true, ..run })
+            .map(|run| TextRun {
+                chip: false,
+                is_bold: run.is_bold || is_header,
+                ..run
+            })
             .collect())
     }
 
@@ -1776,17 +1880,17 @@ impl SVGRenderer {
                 style_parts.extend(self.link_text_decoration_style().into_iter().map(String::from));
             }
 
-            let style_attr: Vec<(&str, String)> = if style_parts.is_empty() {
+            let style_attr: Vec<(&'static str, AttrValue)> = if style_parts.is_empty() {
                 Vec::new()
             } else {
-                vec![("style", style_parts.join("; "))]
+                vec![("style", t(style_parts.join("; ")))]
             };
             if run.is_link && run.url.is_some() {
                 let url = run.url.as_deref().unwrap_or_default();
                 let tspan = el("tspan", style_attr, vec![text]);
                 parts.push(Child::Element(el(
                     "a",
-                    vec![("href", collapse_spaces(&safe_href(url)))],
+                    vec![("href", t(collapse_spaces(&safe_href(url))))],
                     vec![Child::Element(tspan)],
                 )));
             } else if !style_parts.is_empty() {
@@ -1888,12 +1992,12 @@ impl SVGRenderer {
                 let inner = self.table_cell_lines_to_inner_svg(runs, font_size);
                 elements.push(text_el(
                     vec![
-                        ("x", fmt(text_x)),
-                        ("y", fmt(text_y)),
-                        ("class", css_class.clone()),
-                        ("font-size", fmt(font_size)),
-                        ("font-weight", weight.to_string()),
-                        ("text-anchor", anchor.to_string()),
+                        ("x", g(text_x)),
+                        ("y", g(text_y)),
+                        ("class", t(css_class.clone())),
+                        ("font-size", g(font_size)),
+                        ("font-weight", t(weight.to_string())),
+                        ("text-anchor", t(anchor.to_string())),
                     ],
                     inner,
                 ));
@@ -1994,17 +2098,17 @@ impl SVGRenderer {
         total_height: f64,
     ) -> Element {
         let mut attrs = vec![
-            ("x", fmt(ctx.x)),
-            ("y", fmt(ctx.y)),
-            ("width", fmt(block_width)),
-            ("height", fmt(total_height)),
-            ("fill", self.style.code_background.clone()),
-            ("rx", fmt(self.style.code_block_border_radius)),
+            ("x", g(ctx.x)),
+            ("y", g(ctx.y)),
+            ("width", g(block_width)),
+            ("height", g(total_height)),
+            ("fill", t(self.style.code_background.clone())),
+            ("rx", g(self.style.code_block_border_radius)),
         ];
         let border_color = &self.style.code_block_border_color;
         if !border_color.is_empty() {
-            attrs.push(("stroke", border_color.clone()));
-            attrs.push(("stroke-width", fmt(self.style.code_block_border_width)));
+            attrs.push(("stroke", t(border_color.clone())));
+            attrs.push(("stroke-width", g(self.style.code_block_border_width)));
         }
         el("rect", attrs, vec![])
     }
@@ -2069,10 +2173,10 @@ impl SVGRenderer {
                 &[
                     code.code.as_str(),
                     code.language.as_deref().unwrap_or(""),
-                    &fmt(ctx.x),
-                    &fmt(ctx.y),
-                    &fmt(block_width),
-                    &fmt(total_height),
+                    &print::geometry(ctx.x),
+                    &print::geometry(ctx.y),
+                    &print::geometry(block_width),
+                    &print::geometry(total_height),
                 ]
                 .join("\u{0}"),
             );
@@ -2080,16 +2184,16 @@ impl SVGRenderer {
             let clip_rect = el(
                 "rect",
                 vec![
-                    ("x", fmt(ctx.x)),
-                    ("y", fmt(ctx.y)),
-                    ("width", fmt(block_width)),
-                    ("height", fmt(total_height)),
+                    ("x", g(ctx.x)),
+                    ("y", g(ctx.y)),
+                    ("width", g(block_width)),
+                    ("height", g(total_height)),
                 ],
                 vec![],
             );
             let clip_path = el(
                 "clipPath",
-                vec![("id", id.clone())],
+                vec![("id", t(id.clone()))],
                 vec![Child::Element(clip_rect)],
             );
             elements.push(el("defs", vec![], vec![Child::Element(clip_path)]));
@@ -2207,17 +2311,20 @@ impl SVGRenderer {
     /// transform applied, and the size it paints at.
     fn blockquote_text(&self, para: &Paragraph) -> (Vec<Span>, f64) {
         let bq_case = &self.style.blockquote_font_case;
-        let spans = if bq_case.is_empty() {
-            para.spans.clone()
-        } else {
-            para.spans
-                .iter()
-                .map(|s| Span {
-                    text: apply_case(&s.text, bq_case),
-                    ..s.clone()
-                })
-                .collect()
-        };
+        let italic = self.style.blockquote_font_style == "italic";
+        let spans = para
+            .spans
+            .iter()
+            .map(|s| Span {
+                text: if bq_case.is_empty() {
+                    s.text.clone()
+                } else {
+                    apply_case(&s.text, bq_case)
+                },
+                italic: s.italic || italic,
+                ..s.clone()
+            })
+            .collect();
         let size = if self.style.blockquote_font_size != 0.0 {
             self.style.blockquote_font_size
         } else {
@@ -2269,14 +2376,14 @@ impl SVGRenderer {
         if !bg_color.is_empty() {
             let rx = self.style.blockquote_border_radius;
             let mut attrs = vec![
-                ("x", fmt(ctx.x)),
-                ("y", fmt(ctx.y)),
-                ("width", fmt(ctx.width)),
-                ("height", fmt(total_height)),
-                ("fill", bg_color.clone()),
+                ("x", g(ctx.x)),
+                ("y", g(ctx.y)),
+                ("width", g(ctx.width)),
+                ("height", g(total_height)),
+                ("fill", t(bg_color.clone())),
             ];
             if rx != 0.0 {
-                attrs.push(("rx", fmt(rx)));
+                attrs.push(("rx", g(rx)));
             }
             elements.push(el("rect", attrs, vec![]));
         }
@@ -2284,11 +2391,11 @@ impl SVGRenderer {
         elements.push(el(
             "rect",
             vec![
-                ("x", fmt(ctx.x)),
-                ("y", fmt(ctx.y)),
-                ("width", fmt(self.style.blockquote_border_width)),
-                ("height", fmt(total_height)),
-                ("fill", self.style.blockquote_border_color.clone()),
+                ("x", g(ctx.x)),
+                ("y", g(ctx.y)),
+                ("width", g(self.style.blockquote_border_width)),
+                ("height", g(total_height)),
+                ("fill", t(self.style.blockquote_border_color.clone())),
             ],
             vec![],
         ));
@@ -2366,10 +2473,10 @@ impl SVGRenderer {
             elements.push(el(
                 "circle",
                 vec![
-                    ("cx", fmt(bullet_x)),
-                    ("cy", fmt(bullet_y)),
-                    ("r", fmt(bullet_radius)),
-                    ("fill", self.style.text_color.clone()),
+                    ("cx", g(bullet_x)),
+                    ("cy", g(bullet_y)),
+                    ("r", g(bullet_radius)),
+                    ("fill", t(self.style.text_color.clone())),
                 ],
                 vec![],
             ));
@@ -2427,11 +2534,11 @@ impl SVGRenderer {
             let number_class = self.scoped_class("text");
             elements.push(text_el(
                 vec![
-                    ("x", fmt(number_x)),
-                    ("y", fmt(number_y)),
-                    ("class", number_class),
-                    ("font-size", fmt(self.style.base_font_size)),
-                    ("text-anchor", "end".to_string()),
+                    ("x", g(number_x)),
+                    ("y", g(number_y)),
+                    ("class", t(number_class)),
+                    ("font-size", g(self.style.base_font_size)),
+                    ("text-anchor", t("end".to_string())),
                 ],
                 vec![quoted(number_text)],
             ));
@@ -2554,8 +2661,8 @@ impl SVGRenderer {
             crate::style::TextAlign::Left => ctx.x,
         };
         let text_attrs = vec![
-            ("font-size", fmt(font_size)),
-            ("class", css_class.to_string()),
+            ("font-size", g(font_size)),
+            ("class", t(css_class.to_string())),
         ];
         let mut elements: Vec<Element> = Vec::new();
         let mut line_top = ctx.y;
@@ -2593,7 +2700,7 @@ impl SVGRenderer {
         font_size: f64,
         font_weight: &str,
         is_heading: bool,
-        text_attrs: &[(&'static str, String)],
+        text_attrs: &[(&'static str, AttrValue)],
     ) -> Result<(), String> {
         let mut widths: Vec<f64> = Vec::with_capacity(runs.len());
         for run in runs {
@@ -2614,7 +2721,7 @@ impl SVGRenderer {
                         run.is_code,
                         Some(font_weight),
                         is_heading,
-                    )?
+                    )? + 2.0 * self.chip_inset(run)
                 }
             });
         }
@@ -2633,8 +2740,20 @@ impl SVGRenderer {
         self.emit_code_chips(elements, runs, &widths, left, baseline, font_size);
 
         if runs.iter().all(|run| run.image.is_none()) {
+            // A trailing chip's right padding has no text after it to carry a
+            // `dx`, so an end or middle anchor is pulled in by it instead.
+            let trailing = runs
+                .iter()
+                .rev()
+                .find(|run| !run.text.is_empty())
+                .map_or(0.0, |run| self.chip_inset(run));
+            let text_x = match anchor {
+                "end" => anchor_x - trailing,
+                "middle" => anchor_x - trailing / 2.0,
+                _ => anchor_x,
+            };
             elements.push(self.line_text(
-                anchor_x,
+                text_x,
                 baseline,
                 text_attrs,
                 anchor,
@@ -2698,21 +2817,21 @@ impl SVGRenderer {
         &self,
         x: f64,
         baseline: f64,
-        text_attrs: &[(&'static str, String)],
+        text_attrs: &[(&'static str, AttrValue)],
         anchor: &str,
         runs: &[TextRun],
         font_size: f64,
         font_weight: &str,
     ) -> Element {
-        let mut attrs = vec![("x", fmt(x)), ("y", fmt(baseline))];
+        let mut attrs = vec![("x", g(x)), ("y", g(baseline))];
         attrs.extend(text_attrs.iter().cloned());
-        attrs.push(("text-anchor", anchor.to_string()));
+        attrs.push(("text-anchor", t(anchor.to_string())));
         text_el(attrs, self.tspan_content(runs, font_size, font_weight))
     }
 
-    /// `renderer.py::_emit_code_chips`: background boxes behind a line's
-    /// inline-code runs, before its text. The chip spans cap height above the
-    /// baseline to the descender below, plus padding on each side.
+    /// `renderer.py::_emit_code_chips`: background boxes behind a line's chip
+    /// runs, before its text. The chip spans cap height above the baseline to
+    /// the descender below, plus padding.
     fn emit_code_chips(
         &self,
         elements: &mut Vec<Element>,
@@ -2729,19 +2848,19 @@ impl SVGRenderer {
             (CHIP_CAP_HEIGHT_RATIO + CHIP_DESCENDER_RATIO) * code_font_size + 2.0 * chip_padding;
         let mut run_x = left;
         for (run, rw) in runs.iter().zip(widths) {
-            if run.is_code && *rw > 0.0 {
+            if run.chip && !run.text.is_empty() {
                 let mut attrs = vec![
-                    ("x", fmt(run_x - chip_padding)),
+                    ("x", g(run_x)),
                     (
                         "y",
-                        fmt(baseline - CHIP_CAP_HEIGHT_RATIO * code_font_size - chip_padding),
+                        g(baseline - CHIP_CAP_HEIGHT_RATIO * code_font_size - chip_padding),
                     ),
-                    ("width", fmt(rw + 2.0 * chip_padding)),
-                    ("height", fmt(chip_height)),
-                    ("fill", self.style.code_background.clone()),
+                    ("width", g(*rw)),
+                    ("height", g(chip_height)),
+                    ("fill", t(self.style.code_background.clone())),
                 ];
                 if chip_radius != 0.0 {
-                    attrs.push(("rx", fmt(chip_radius)));
+                    attrs.push(("rx", g(chip_radius)));
                 }
                 elements.push(el("rect", attrs, vec![]));
             }
@@ -2780,13 +2899,19 @@ impl SVGRenderer {
     }
 
     /// `renderer.py::_tspan_content`: a stretch of text runs as
-    /// `<tspan>`/`<a>` inner nodes.
+    /// `<tspan>`/`<a>` inner nodes. A chip's padding is reserved in the line
+    /// by a `dx` on its text and on the text after it.
     fn tspan_content(&self, runs: &[TextRun], font_size: f64, font_weight: &str) -> Vec<Child> {
         let mut tspan_parts: Vec<Child> = Vec::new();
+        let mut shift = 0.0;
         for run in runs {
             if run.text.is_empty() {
                 continue;
             }
+            let inset = self.chip_inset(run);
+            shift += inset;
+            let dx = shift;
+            shift = inset;
             // Case transform runs on raw text, before escaping, so entities survive.
             let raw_text = if run.is_code && !self.style.code_font_case.is_empty() {
                 apply_case(&run.text, &self.style.code_font_case)
@@ -2816,22 +2941,24 @@ impl SVGRenderer {
                 );
             }
 
-            let style_attr: Vec<(&str, String)> = if style_parts.is_empty() {
-                Vec::new()
-            } else {
-                vec![("style", style_parts.join("; "))]
-            };
+            let mut style_attr: Vec<(&'static str, AttrValue)> = Vec::new();
+            if dx != 0.0 {
+                style_attr.push(("dx", g(dx)));
+            }
+            if !style_parts.is_empty() {
+                style_attr.push(("style", t(style_parts.join("; "))));
+            }
 
             match &run.url {
                 Some(url) if run.is_link => {
                     let tspan = el("tspan", style_attr, vec![text]);
                     tspan_parts.push(Child::Element(el(
                         "a",
-                        vec![("href", collapse_spaces(&safe_href(url)))],
+                        vec![("href", t(collapse_spaces(&safe_href(url))))],
                         vec![Child::Element(tspan)],
                     )));
                 }
-                _ if !style_parts.is_empty() => {
+                _ if !style_attr.is_empty() => {
                     tspan_parts.push(Child::Element(el("tspan", style_attr, vec![text])));
                 }
                 _ => tspan_parts.push(text),
@@ -2853,9 +2980,12 @@ impl SVGRenderer {
                 };
                 Ok(TextRun {
                     text: span.text.clone(),
-                    is_bold: matches!(span.span_type, SpanType::Bold | SpanType::BoldItalic),
-                    is_italic: matches!(span.span_type, SpanType::Italic | SpanType::BoldItalic),
-                    is_code: span.span_type == SpanType::Code,
+                    is_bold: span.bold
+                        || matches!(span.span_type, SpanType::Bold | SpanType::BoldItalic),
+                    is_italic: span.italic
+                        || matches!(span.span_type, SpanType::Italic | SpanType::BoldItalic),
+                    is_code: span.span_type == SpanType::Code || span.code,
+                    chip: span.span_type == SpanType::Code || span.code,
                     is_link: span.span_type == SpanType::Link,
                     url: if span.span_type == SpanType::Link {
                         span.url.clone()
@@ -2929,6 +3059,24 @@ impl SVGRenderer {
         // holds the `TextRun` itself there.
         let mut pieces: Vec<WrapPiece<usize>> = Vec::new();
         let mut separator = String::new();
+        let separator_width = |pieces: &[WrapPiece<usize>], separator: &str, run: &TextRun| {
+            let Some(previous) = pieces.last() else {
+                return Ok(0.0);
+            };
+            if separator.is_empty() {
+                return Ok(0.0);
+            }
+            let painted = separator_run(&runs[previous.meta.unwrap()], run, separator);
+            self.measure_text(
+                &painted.text,
+                font_size,
+                painted.is_bold,
+                painted.is_italic,
+                painted.is_code,
+                font_weight,
+                is_heading,
+            )
+        };
 
         for (run_index, run) in runs.iter().enumerate() {
             let measure = |text: &str| -> Result<f64, String> {
@@ -2945,11 +3093,7 @@ impl SVGRenderer {
 
             // An inline image is one unbreakable box in the line, like a long word.
             if let Some(image) = &run.image {
-                let separator_width = if separator.is_empty() {
-                    0.0
-                } else {
-                    measure(&separator)?
-                };
+                let separator_width = separator_width(&pieces, &separator, run)?;
                 pieces.push(WrapPiece {
                     text: run.text.clone(),
                     width: image.width,
@@ -2962,14 +3106,13 @@ impl SVGRenderer {
                 continue;
             }
 
-            if run.is_code && !run.text.chars().all(is_py_space) && measure(&run.text)? <= max_width
+            let inset = self.chip_inset(run);
+            if run.is_code
+                && !run.text.chars().all(is_py_space)
+                && measure(&run.text)? + 2.0 * inset <= max_width
             {
-                let width = measure(&run.text)?;
-                let separator_width = if separator.is_empty() {
-                    0.0
-                } else {
-                    measure(&separator)?
-                };
+                let width = measure(&run.text)? + 2.0 * inset;
+                let separator_width = separator_width(&pieces, &separator, run)?;
                 pieces.push(WrapPiece {
                     text: run.text.clone(),
                     width,
@@ -2983,16 +3126,14 @@ impl SVGRenderer {
                 continue;
             }
 
+            // Each piece of a split chip reserves its own padding: whichever
+            // pieces share a line, that line's chip never overflows it.
             for token in split_whitespace_tokens(&run.text) {
                 if token.chars().all(is_py_space) {
                     separator = " ".to_string();
                     continue;
                 }
-                let separator_width = if separator.is_empty() {
-                    0.0
-                } else {
-                    measure(&separator)?
-                };
+                let separator_width = separator_width(&pieces, &separator, run)?;
                 // A measurement failure (no mono font configured for an
                 // `is_code` run) is text-independent — it fails identically
                 // for the whole token and every substring of it — so
@@ -3002,13 +3143,13 @@ impl SVGRenderer {
                 measure(token)?;
                 let measure_ref =
                     |t: &str| measure(t).expect("checked above: measure(token) already succeeded");
-                for (chunk_index, chunk) in split_token_precise(token, max_width, &measure_ref)
+                for (chunk_index, chunk) in split_token_precise(token, max_width - 2.0 * inset, &measure_ref)
                     .iter()
                     .enumerate()
                 {
                     pieces.push(WrapPiece {
                         text: chunk.clone(),
-                        width: measure(chunk)?,
+                        width: measure(chunk)? + 2.0 * inset,
                         separator: if chunk_index == 0 {
                             separator.clone()
                         } else {
@@ -3055,7 +3196,7 @@ impl SVGRenderer {
                     if previous_run.same_style(run) {
                         format!("{}{}", piece.separator, piece.text)
                     } else {
-                        let separator_run = TextRun::plain(piece.separator.clone());
+                        let separator_run = separator_run(previous_run, run, &piece.separator);
                         if let Some(last) = line_runs.last_mut() {
                             if last.same_style(&separator_run) {
                                 *last = last.append(&piece.separator);

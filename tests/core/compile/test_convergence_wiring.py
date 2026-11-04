@@ -111,20 +111,20 @@ def test_merged_patch_tags_board_replaces_meta(
     assert result.tags == ["board-tag"]  # type: ignore[union-attr]
 
 
-def test_merged_patch_frame_width_survives_sibling_frame_key(
+def test_merged_patch_width_survives_sibling_frame_key(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """Regression: style.frame.width from meta must survive board setting style.frame.margin."""
+    """Regression: width from meta must survive board setting style.frame.margin."""
     from dbt_charts.core.compile.merge import merged_patch
     from dbt_charts.core.compile.models.board.patch import BoardPatch
 
-    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    width: 700\n")
+    _write(tmp_path, "charts/meta.yml", "width: 700\n")
     project = local_project(tmp_path)
     board_file = project.path("charts/board.yaml")
     board_node = BoardPatch.model_validate({"style": {"frame": {"margin": 33}}})
 
     result = merged_patch(board_node, board_file, project.directory("."))
-    assert result.style.frame.width == 700  # type: ignore[union-attr]
+    assert result.width == 700  # type: ignore[union-attr]
     assert result.style.frame.margin == 33  # type: ignore[union-attr]
 
 
@@ -236,11 +236,11 @@ def test_compile_file_board_tags_replace_meta_tags(
 def test_compile_file_board_width_survives_sibling_end_to_end(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """Regression (engine): meta frame.width survives board setting frame.margin end-to-end."""
+    """Regression (engine): meta width survives board setting frame.margin end-to-end."""
     from dbt_charts.core.compile.compiler import compile_file
 
     project = local_project(tmp_path)
-    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    width: 700\n")
+    _write(tmp_path, "charts/meta.yml", "width: 700\n")
     board_yaml = (
         "title: T\nstyle:\n  frame:\n    margin: 33\nrows:\n  - cols:\n    - text: hi\n"
     )
@@ -250,7 +250,7 @@ def test_compile_file_board_width_survives_sibling_end_to_end(
         project.path("charts/board.yaml").read_board(), apply_meta=True
     )
     assert result.success, result.errors
-    assert result.board.resolved_style.frame.width == 700
+    assert result.board.authored_width == 700
     assert result.board.resolved_style.frame.margin == 33
 
 
@@ -583,7 +583,7 @@ def test_style_null_clears_meta_provided_style(
     """
     from dbt_charts.core.compile.compiler import compile_file
 
-    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    width: 700\n")
+    _write(tmp_path, "charts/meta.yml", "style:\n  frame:\n    max_width: 700\n")
     _write(
         tmp_path,
         "charts/board.yaml",
@@ -596,9 +596,9 @@ def test_style_null_clears_meta_provided_style(
     assert result.success, f"Expected success but got errors: {result.errors}"
     # authored_style is None: the null-clear overrides the meta-provided style dict
     assert result.board.authored_style is None
-    # resolved board width falls back to theme default (1200), not meta's 700
+    # the board's max width falls back to the theme default (1200), not meta's 700
     assert result.board.resolved_style is not None
-    assert result.board.resolved_style.frame.width != 700
+    assert result.board.resolved_style.frame.max_width != 700
 
 
 def test_tags_null_clears_meta_provided_tags(

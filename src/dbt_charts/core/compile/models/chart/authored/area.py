@@ -15,12 +15,12 @@ from dbt_charts.core.compile.models.constraints import (
 from dbt_charts.core.compile.models.style.authored import AreaChartStylePatch
 
 from ._annotation import Annotation
-from ._base import _CartesianChartFields
+from ._base import _CartesianChartFields, _PatternChannelField
 from ._layer import CartesianLayer
 from ._tooltip import _TooltipFields
 
 
-class AreaChart(_CartesianChartFields, _TooltipFields):
+class AreaChart(_PatternChannelField, _CartesianChartFields, _TooltipFields):
     """Authored patch for area charts."""
 
     model_config = ConfigDict(extra="forbid")

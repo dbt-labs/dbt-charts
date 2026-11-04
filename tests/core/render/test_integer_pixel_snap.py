@@ -140,6 +140,7 @@ class TestFractionalInputProducesIntegerTranslate:
             variables_height=0.0,
             layout_content="",
             layout_content_height=0.0,
+            opens_with_text=False,
             card_padding=7.5,
             content_width=400.0,
         )

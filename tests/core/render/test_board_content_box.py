@@ -54,6 +54,7 @@ class TestComputeBoardContentBox:
                 "inline_band_height": 0.0,
                 "gap": 8.0,
                 "has_layout_items": False,
+                "opens_with_text": False,
                 "card_padding": 0.0,
                 **kwargs,
             }
@@ -80,6 +81,15 @@ class TestComputeBoardContentBox:
         """heading_margin_bottom_px is already in title_height; 0 gap prevents double-spacing."""
         box = self._call(title_height=50.0, text_height=20.0, gap=8.0)
         assert box.non_layout_height == pytest.approx(50.0 + 20.0)  # 0 gap between them
+
+    def test_title_then_leading_text_row_takes_back_the_row_inset(self):
+        box = self._call(
+            title_height=20.0,
+            has_layout_items=True,
+            opens_with_text=True,
+            card_padding=16.0,
+        )
+        assert box.gap_before_layout == -16.0
 
     def test_text_then_variables_uses_gap(self):
         box = self._call(text_height=20.0, variables_height=30.0, gap=8.0)
@@ -314,6 +324,7 @@ def test_variable_controls_translate_uses_card_padding() -> None:
         variables_height=50.0,
         layout_content="",
         layout_content_height=0.0,
+        opens_with_text=False,
         card_padding=card_padding,
         content_width=400.0,
     )

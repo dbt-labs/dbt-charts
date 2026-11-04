@@ -46,13 +46,14 @@ def test_controls_that_fit_share_one_row() -> None:
 
 
 def test_controls_wrap_when_the_row_runs_out() -> None:
-    """A width that fits one control forces every later one onto its own row."""
+    """A width that fits one control forces every later one, and the reset, onto
+    its own row."""
     specs = [_spec(f"v{i}", "text", f"Var {i}") for i in range(3)]
     one_control_wide = lay_out_variables(specs[:1], _WIDE, _style()).boxes[0].width
 
     layout = lay_out_variables(specs, one_control_wide + 1.0, _style())
 
-    assert layout.rows == 3
+    assert layout.rows == 4
     assert len({box.y for box in layout.boxes}) == 3
 
 
@@ -231,7 +232,8 @@ def test_a_row_that_fits_to_the_last_sub_pixel_stays_one_row() -> None:
     """
     specs = [_spec("a", "text", "A"), _spec("b", "text", "B")]
     exact = lay_out_variables(specs, _WIDE, _style())
-    total = exact.boxes[-1].x + exact.boxes[-1].width
+    assert exact.reset is not None
+    total = exact.reset.x + exact.reset.width
 
     layout = lay_out_variables(specs, total - 1e-9, _style())
 
@@ -432,3 +434,73 @@ def test_a_chooser_is_sized_by_what_it_displays_and_a_text_box_has_a_floor() -> 
         [_spec("r", "select", "R", long_value)], _WIDE, _style()
     ).boxes[0]
     assert grown.width > select.width, "a chooser grows with its value"
+
+
+def test_two_controls_reserve_a_reset_after_the_last_one() -> None:
+    layout = lay_out_variables(
+        [_spec("a", "text", "A"), _spec("b", "text", "B")], _WIDE, _style()
+    )
+
+    last = layout.boxes[-1]
+    assert len(layout.boxes) == 2
+    assert layout.reset is not None
+    assert layout.reset.y == last.y
+    assert layout.reset.x >= last.x + last.width
+    assert layout.reset.height == last.height
+
+
+def test_a_lone_control_reserves_no_reset() -> None:
+    assert lay_out_variables([_spec("a", "text", "A")], _WIDE, _style()).reset is None
+
+
+def test_the_reset_wraps_to_its_own_row_when_it_does_not_fit() -> None:
+    specs = [_spec("a", "text", "A"), _spec("b", "text", "B")]
+    both = lay_out_variables(specs, _WIDE, _style())
+    last = both.boxes[-1]
+
+    tight = lay_out_variables(specs, last.x + last.width + 1.0, _style())
+
+    assert tight.rows == 2
+    assert tight.reset is not None
+    assert (tight.reset.x, tight.reset.y) == (0.0, last.y + last.height + 10.0)
+    assert tight.height == pytest.approx(tight.reset.y + tight.reset.height)
+
+
+def test_a_multiselect_holds_one_width_whatever_is_selected() -> None:
+    """A tick must not move the strip: the box is the same at every selection,
+    so the controls beside it and the menu anchored under it stay put."""
+    style = _style()
+    widths = {
+        lay_out_variables([_spec("r", "multiselect", "Region", value)], _WIDE, style)
+        .boxes[0]
+        .width
+        for value in ("All", "North", "(5) Latin America and the Caribbean")
+    }
+
+    assert len(widths) == 1
+
+
+def test_a_multiselect_value_too_long_for_its_field_ends_in_an_ellipsis() -> None:
+    """The field's width is fixed, so the text gives way: a prefix of it, then
+    an ellipsis, measuring no wider than the field's text slot."""
+    from dbt_charts.core.font_measure import get_font_measurer
+
+    style = _style()
+    long = "Latin America and the Caribbean, Sub-Saharan Africa"
+    box = lay_out_variables(
+        [_spec("r", "multiselect", "Region", long)], _WIDE, style
+    ).boxes[0]
+    padding = style.input.padding
+    slot = float(style.input.widths.text) - float(padding.left) - float(padding.right)
+
+    assert box.value.endswith("…")
+    assert long.startswith(box.value[:-1])
+    assert get_font_measurer().measure(box.value, float(style.font.size)) <= slot
+
+
+def test_a_multiselect_value_that_fits_is_drawn_whole() -> None:
+    box = lay_out_variables(
+        [_spec("r", "multiselect", "Region", "(2) North")], _WIDE, _style()
+    ).boxes[0]
+
+    assert box.value == "(2) North"

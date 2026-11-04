@@ -1,0 +1,3 @@
+kind: Fixes
+body: 'Bar charts now honor `axis_y.labels.visible: false`, hiding the value-axis tick labels and releasing the space they took.'
+time: 2026-11-02T15:27:22.689941-08:00

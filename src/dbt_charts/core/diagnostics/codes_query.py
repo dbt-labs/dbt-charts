@@ -63,6 +63,30 @@ WARN_PARSE_ERROR = REGISTRY.register(
     )
 )
 
+WARN_SEMANTIC_COMPILE_FAILED = REGISTRY.register(
+    WarningCode(
+        code="WARN-SEMANTIC-COMPILE-FAILED",
+        domain="query",
+        title="Semantic SQL could not be compiled",
+        message_template=("Query {query_name!r}: {message}"),
+        fix_template=(
+            "Use the names `dct semantics SOURCE` lists: a dataset or constellation "
+            "as the table, AGG(calculation) or AGG(metric) for measures, and "
+            "relationship.attribute paths or roles to group by."
+        ),
+        doc=(
+            "Reported by `dct query --validate` when the query reads a dataset or "
+            "constellation of its source's MetricFlow bundle and MetricFlow cannot "
+            "compile it, the bundle cannot be loaded, or the source requires its "
+            "bundle and the query reads a table outside it. The message is the "
+            "engine's own, with the declared names the query's mistyped ones "
+            "nearly match. The query is compiled, never run. It is an error, and "
+            "cannot be suppressed: the same query fails when it runs."
+        ),
+        docs_topic="queries",
+    )
+)
+
 WARN_REAGGREGATION = REGISTRY.register(
     WarningCode(
         code="WARN-REAGGREGATION",

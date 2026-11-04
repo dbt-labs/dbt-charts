@@ -136,13 +136,13 @@ def test_resolve_builds_final_fk_columns_with_precedence_and_identity_protection
         {
             "id": "orders",
             "type": "table",
+            "row_role": row_role,
             "style": {
                 "columns": {
                     "status": {
                         "link": "/authored-status/{{ status }}",
                     }
                 },
-                "row": {"role": row_role},
             },
         }
     )
@@ -179,7 +179,7 @@ def test_resolve_builds_final_fk_columns_with_precedence_and_identity_protection
             {
                 "id": "inferred",
                 "type": "table",
-                "style": {"row": {"role": row_role}},
+                "row_role": row_role,
             }
         ),
         rows,

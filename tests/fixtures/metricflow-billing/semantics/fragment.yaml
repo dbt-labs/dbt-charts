@@ -1,0 +1,151 @@
+schema_version: v1
+bundle: dundersign
+generation_meta: {}
+dialect: duckdb
+
+datasets:
+- name: accounts
+  description: One row per company.
+  source:
+    location: dundersign.main.accounts
+    columns:
+    - name: id
+      datatype: VARCHAR
+    - name: name
+      datatype: VARCHAR
+    - name: industry
+      datatype: VARCHAR
+  key:
+  - id
+
+- name: invoices
+  description: One row per Stripe invoice.
+  source:
+    location: dundersign.main.invoices
+    columns:
+    - name: id
+      datatype: VARCHAR
+    - name: account_id
+      datatype: VARCHAR
+    - name: total
+      datatype: DOUBLE
+    - name: amount_paid
+      datatype: DOUBLE
+    - name: created_at
+      datatype: TIMESTAMP
+  key:
+  - id
+  calculations:
+  - name: invoice_count
+    expr: COUNT(*)
+  - name: invoiced_total
+    expr: SUM(total)
+  - name: paid_total
+    expr: SUM(amount_paid)
+  - name: collection_rate
+    expr: paid_total / invoiced_total
+  relationships:
+  - name: account
+    target: account
+    key:
+    - name: id
+      expr: account_id
+
+- name: charges
+  description: One row per Stripe charge.
+  source:
+    location: dundersign.main.charges
+    columns:
+    - name: id
+      datatype: VARCHAR
+    - name: account_id
+      datatype: VARCHAR
+    - name: amount
+      datatype: DOUBLE
+    - name: created_at
+      datatype: TIMESTAMP
+  key:
+  - id
+  calculations:
+  - name: charged_amount
+    expr: SUM(amount)
+  relationships:
+  - name: account
+    target: account
+    key:
+    - name: id
+      expr: account_id
+
+- name: sales.orders
+  description: One row per sales order, in the sales namespace.
+  source:
+    location: dundersign.main.sales_orders
+    columns:
+    - name: id
+      datatype: VARCHAR
+    - name: account_id
+      datatype: VARCHAR
+  key:
+  - id
+  calculations:
+  - name: order_count
+    expr: COUNT(*)
+  relationships:
+  - name: account
+    target: public.account
+    key:
+    - name: id
+      expr: account_id
+
+entities:
+- name: account
+  description: A customer company.
+  key:
+  - name: id
+    datatype: VARCHAR
+  sources:
+  - dataset: accounts
+    on: id = :id
+  attributes:
+  - name: name
+    expr: accounts.name
+  - name: industry
+    description: The company's sector.
+    expr: accounts.industry
+
+constellations:
+- name: billing
+  description: Billing by account and month.
+  roles:
+  - name: account
+    datatype: entity('account')
+  - name: month
+    datatype: TIMESTAMP
+  metrics:
+  - name: invoiced_total
+    expr: AGG(invoices.invoiced_total)
+  - name: charged_amount
+    expr: AGG(charges.charged_amount)
+  - name: uncharged
+    expr: AGG(invoiced_total) - AGG(charged_amount)
+  assignments:
+  - dataset: invoices
+    roles:
+    - name: account
+      expr: account
+    - name: month
+      expr: DATE_TRUNC('month', created_at)
+  - dataset: charges
+    roles:
+    - name: account
+      expr: account
+    - name: month
+      expr: DATE_TRUNC('month', created_at)
+
+- name: finance
+  description: Billing without the charges.
+  imports:
+  - constellation: billing
+    fields:
+    - '*'
+    - '!charged_amount'

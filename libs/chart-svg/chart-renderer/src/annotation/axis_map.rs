@@ -7,8 +7,8 @@ use serde_json::Value;
 use super::model::{payload_error, Anchor, Scalar};
 use crate::codes;
 use crate::diagnostic::{self, Diagnostic};
-use crate::families::cartesian::{BandGeometry, LinearScale, LogScale};
-use crate::vega_fit::Bend;
+use crate::families::cartesian::band_edge;
+use d3rs::scale::{Band, Continuous, Transform};
 
 /// The annotation a lookup is for: the `chart_id` and `index` params.
 pub struct Site<'a> {
@@ -41,16 +41,16 @@ impl Site<'_> {
 pub enum AxisMap {
     Linear { domain: (f64, f64), range: (f64, f64) },
     Log { domain: (f64, f64), range: (f64, f64) },
-    /// Pow, sqrt or symlog: the bend the family's marks draw with.
-    Bent { bend: Bend, domain: (f64, f64), range: (f64, f64) },
+    /// Pow, sqrt or symlog: the transform the family's marks draw with.
+    Bent { transform: Transform, domain: (f64, f64), range: (f64, f64) },
     /// Discrete slots. `days` is Some when the categories are dates (bars on a
     /// date column): the day-fraction of each category, same order as `domain`.
-    Band { domain: Vec<String>, geometry: BandGeometry, days: Option<Vec<f64>>, range: (f64, f64) },
+    Band { domain: Vec<String>, geometry: Band, days: Option<Vec<f64>>, range: (f64, f64) },
     /// Line's point x. `days` holds each category's day-fraction for dates,
     /// or its number on a quantitative x; a value interpolates between them.
     Point { domain: Vec<String>, positions: Vec<f64>, days: Option<Vec<f64>>, range: (f64, f64) },
     /// Temporal line x: days-since-epoch extent to a pixel range, the
-    /// `utc_fraction_at` law. `range` already includes the family's x padding.
+    /// `frac_of` law. `range` already includes the family's x padding.
     Time { extent: (f64, f64), range: (f64, f64) },
 }
 
@@ -95,7 +95,7 @@ impl AxisMap {
         let AxisMap::Band { geometry, days, .. } = self else { return self.position(v, site) };
         self.check()?;
         let days = days.as_deref().ok_or_else(|| site.payload("a value on a category axis"))?;
-        let centers: Vec<f64> = (0..days.len()).map(|i| geometry.edge(i, 0.5)).collect();
+        let centers: Vec<f64> = (0..days.len()).map(|i| band_edge(geometry, i, 0.5)).collect();
         Ok(Some(interpolate(days, &centers, date_days(v, site)?)))
     }
 
@@ -119,7 +119,7 @@ impl AxisMap {
         self.check()?;
         match (self, a) {
             (AxisMap::Band { domain, geometry, .. }, Anchor::Category { value }) => {
-                Ok(category_index(domain, value, site).map(|i| (geometry.edge(i, 0.0), geometry.edge(i, 1.0))))
+                Ok(category_index(domain, value, site).map(|i| (band_edge(geometry, i, 0.0), band_edge(geometry, i, 1.0))))
             }
             (AxisMap::Band { geometry, days, .. }, _) => {
                 let days = days.as_deref().ok_or_else(|| site.payload("a value on a category axis"))?;
@@ -182,16 +182,16 @@ impl AxisMap {
     fn continuous(&self, v: &Scalar, site: &Site) -> Result<f64, Diagnostic> {
         match (self, v) {
             (AxisMap::Linear { domain, range }, Scalar::Number(n)) => {
-                Ok(LinearScale::new(domain.0, domain.1, range.0, range.1).position(*n))
+                Ok(Continuous::linear([domain.0, domain.1], [range.0, range.1]).scale(*n))
             }
             (AxisMap::Log { domain, range }, Scalar::Number(n)) => {
                 if *n <= 0.0 {
                     return Err(site.payload(format!("{} on a log axis", v.text())));
                 }
-                Ok(LogScale::new(domain.0, domain.1, range.0, range.1).position(*n))
+                Ok(crate::common::zero_floor_position(&Continuous::log([domain.0, domain.1], [range.0, range.1]), *n))
             }
-            (AxisMap::Bent { bend, domain, range }, Scalar::Number(n)) => {
-                Ok(range.0 + bend.frac(*domain, *n) * (range.1 - range.0))
+            (AxisMap::Bent { transform, domain, range }, Scalar::Number(n)) => {
+                Ok(Continuous::new(*transform, [domain.0, domain.1], [range.0, range.1]).scale(*n))
             }
             (AxisMap::Time { extent, range }, Scalar::Date(_)) => {
                 let d = date_days(v, site)?;
@@ -295,7 +295,7 @@ fn slot_ends(days: &[f64]) -> Vec<(usize, f64, f64)> {
 }
 
 fn band_date_span(
-    geometry: BandGeometry,
+    geometry: Band,
     days: &[f64],
     a: &Anchor,
     site: &Site,
@@ -321,8 +321,8 @@ fn band_date_span(
         site.nothing_drawn("its date names no slot on the axis");
         return Ok(None);
     }
-    let lo = hits.iter().map(|&i| geometry.edge(i, 0.0)).fold(f64::INFINITY, f64::min);
-    let hi = hits.iter().map(|&i| geometry.edge(i, 1.0)).fold(f64::NEG_INFINITY, f64::max);
+    let lo = hits.iter().map(|&i| band_edge(&geometry, i, 0.0)).fold(f64::INFINITY, f64::min);
+    let hi = hits.iter().map(|&i| band_edge(&geometry, i, 1.0)).fold(f64::NEG_INFINITY, f64::max);
     Ok(Some((lo, hi)))
 }
 
@@ -330,7 +330,7 @@ fn band_date_span(
 mod tests {
     use super::*;
     use crate::diagnostic::collect;
-    use crate::time_axis::date_text_day;
+    use crate::time_axis::testing::day;
 
     const SITE: Site = Site { chart_id: "c", index: 3 };
 
@@ -350,11 +350,8 @@ mod tests {
         Anchor::Category { value: s.into() }
     }
     fn iso(d: f64) -> String {
-        let (y, m, dd) = crate::families::temporal::civil_from_days(d as i64);
+        let (y, m, dd) = d3rs::calendar::civil_from_days(d as i64);
         format!("{y:04}-{m:02}-{dd:02}")
-    }
-    fn day(s: &str) -> f64 {
-        date_text_day(s).unwrap()
     }
     fn close(a: (f64, f64), b: (f64, f64)) {
         assert!((a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9, "{a:?} != {b:?}");
@@ -380,7 +377,7 @@ mod tests {
     fn band(days: Option<Vec<f64>>) -> AxisMap {
         AxisMap::Band {
             domain: vec!["2024-01-01".into(), "2024-02-01".into(), "2024-03-01".into()],
-            geometry: BandGeometry::new(3, 0.0, 300.0, 0.0, 0.0),
+            geometry: Band::new(3, [0.0, 300.0], 0.0, 0.0, 0.5, false),
             days,
             range: (0.0, 300.0),
         }
@@ -416,16 +413,23 @@ mod tests {
 
     #[test]
     fn bent_maps_through_its_bend_on_both_signs() {
-        let sqrt = AxisMap::Bent { bend: Bend::Pow(0.5), domain: (0.0, 100.0), range: (200.0, 0.0) };
+        let sqrt = AxisMap::Bent { transform: Transform::Pow(0.5), domain: (0.0, 100.0), range: (200.0, 0.0) };
         assert!((sqrt.position(&num(25.0), &SITE).unwrap().unwrap() - 100.0).abs() < 1e-9);
-        let symlog = AxisMap::Bent { bend: Bend::Symlog(1.0), domain: (-99.0, 99.0), range: (0.0, 100.0) };
+        let symlog = AxisMap::Bent { transform: Transform::Symlog(1.0), domain: (-99.0, 99.0), range: (0.0, 100.0) };
         assert!((symlog.position(&num(0.0), &SITE).unwrap().unwrap() - 50.0).abs() < 1e-9);
         assert!((symlog.position(&num(-9.0), &SITE).unwrap().unwrap() - 25.0).abs() < 1e-9);
         close(sqrt.span(&range(Some(num(25.0)), None), &SITE).unwrap().unwrap(), (0.0, 100.0));
-        let flat = AxisMap::Bent { bend: Bend::Pow(2.0), domain: (5.0, 5.0), range: (0.0, 40.0) };
+        let flat = AxisMap::Bent { transform: Transform::Pow(2.0), domain: (5.0, 5.0), range: (0.0, 40.0) };
         assert_eq!(flat.position(&num(5.0), &SITE).unwrap(), Some(20.0));
         payload_err(sqrt.position(&date("2024-01-01"), &SITE));
         payload_err(sqrt.span(&cat("East"), &SITE));
+    }
+
+    /// An area layer's zero baseline joins a log axis's domain; Vega's SVG prints the resulting NaN as 0.
+    #[test]
+    fn a_log_axis_with_a_zero_floor_puts_every_value_at_the_origin() {
+        let log = AxisMap::Log { domain: (0.0, 100.0), range: (100.0, 0.0) };
+        assert_eq!(log.position(&num(10.0), &SITE).unwrap(), Some(0.0));
     }
 
     #[test]
@@ -494,7 +498,7 @@ mod tests {
     fn a_lone_date_slot_spans_one_day_and_the_last_slot_the_median_gap() {
         let lone = AxisMap::Band {
             domain: vec!["2024-01-01".into()],
-            geometry: BandGeometry::new(1, 0.0, 100.0, 0.0, 0.0),
+            geometry: Band::new(1, [0.0, 100.0], 0.0, 0.0, 0.5, false),
             days: Some(vec![day("2024-01-01")]),
             range: (0.0, 100.0),
         };
@@ -504,7 +508,7 @@ mod tests {
         // Gaps 1, 2 and 10 days: the median is 2, not the mean or the max.
         let b = AxisMap::Band {
             domain: vec!["a".into(), "b".into(), "c".into(), "d".into()],
-            geometry: BandGeometry::new(4, 0.0, 400.0, 0.0, 0.0),
+            geometry: Band::new(4, [0.0, 400.0], 0.0, 0.0, 0.5, false),
             days: Some(vec![0.0, 1.0, 3.0, 13.0]),
             range: (0.0, 400.0),
         };
@@ -519,7 +523,7 @@ mod tests {
         assert_eq!(flat.position(&date("2024-01-01"), &SITE).unwrap_err().code, "ERR-ENGINE-REFUSED");
         let ragged = AxisMap::Point { domain: vec!["a".into(), "b".into()], positions: vec![1.0], days: None, range: (0.0, 1.0) };
         assert_eq!(ragged.span(&cat("a"), &SITE).unwrap_err().code, "ERR-ENGINE-REFUSED");
-        let empty = AxisMap::Band { domain: vec![], geometry: BandGeometry::new(0, 0.0, 1.0, 0.0, 0.0), days: None, range: (0.0, 1.0) };
+        let empty = AxisMap::Band { domain: vec![], geometry: Band::new(0, [0.0, 1.0], 0.0, 0.0, 0.5, false), days: None, range: (0.0, 1.0) };
         assert_eq!(empty.span(&cat("a"), &SITE).unwrap_err().code, "ERR-ENGINE-REFUSED");
     }
 
@@ -538,7 +542,7 @@ mod tests {
     fn band_date_slots_follow_day_order_not_domain_order() {
         let b = AxisMap::Band {
             domain: vec!["2024-03-01".into(), "2024-01-01".into(), "2024-02-01".into()],
-            geometry: BandGeometry::new(3, 0.0, 300.0, 0.0, 0.0),
+            geometry: Band::new(3, [0.0, 300.0], 0.0, 0.0, 0.5, false),
             days: Some(vec![day("2024-03-01"), day("2024-01-01"), day("2024-02-01")]),
             range: (0.0, 300.0),
         };

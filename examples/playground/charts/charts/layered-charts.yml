@@ -1,10 +1,8 @@
 # yaml-language-server: $schema=https://docs.dbtcharts.com/schema/board.json
 title: Layered charts
+width: 1872
 source: examples_db
 theme: vivid
-style:
-  frame:
-    width: 1872
 queries:
   monthly_documents:
     source: db

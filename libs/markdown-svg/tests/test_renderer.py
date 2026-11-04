@@ -102,6 +102,16 @@ class TestBasicRendering:
         assert 'stroke="#cccccc"' not in svg
         assert "[code]" not in svg
 
+    def test_render_code_in_a_link_label_is_a_linked_chip(self) -> None:
+        """A backticked link label draws as a chip that links, with no backticks."""
+        style = Style(code_background="#eeeeee")
+        svg = render("See [`file.yml`](docs/file.yml) now", style=style, width=400)
+
+        assert "`" not in svg
+        assert "file.yml" in svg
+        assert 'fill="#eeeeee"' in svg
+        assert 'href="docs/file.yml"' in svg
+
     def test_render_inline_code_keeps_internal_spaces_styled(self) -> None:
         """Spaces inside a code span stay inside the same chip mono run."""
         svg = render("Use `line_height = 1.25` here", width=400)
@@ -1772,6 +1782,104 @@ class TestInlineCodeChip:
         assert smaller_chip[0] < larger_chip[0]
         assert smaller_chip[1] < larger_chip[1]
 
+    def test_inline_code_chip_reserves_its_padding_in_the_line(self) -> None:
+        """The chip's horizontal padding takes up space, so it never covers its
+        neighbors: the chip starts where the text before it ends, the code is
+        shifted in by the padding, and the text after it starts past the chip."""
+        style = Style(code_background="#eeeeee")
+        pad = style.inline_code_padding
+        renderer = SVGRenderer(style=style)
+        size = style.base_font_size
+        before = renderer._measure_text("Use ", size)
+        code = renderer._measure_text("code", size, is_mono=True)
+
+        svg = render("Use `code`. Done", style=style, width=400, padding=0)
+
+        rect = re.search(r'<rect x="([\d.]+)"[^>]*width="([\d.]+)"', svg)
+        assert rect is not None
+        assert float(rect.group(1)) == pytest.approx(before, abs=0.01)
+        assert float(rect.group(2)) == pytest.approx(code + 2 * pad, abs=0.01)
+        assert re.search(rf'<tspan dx="{pad:g}" style="[^"]*">code</tspan>', svg)
+        assert f'<tspan dx="{pad:g}">. Done</tspan>' in svg
+
+        plain = renderer.max_content_width(parse("Use code. Done"))
+        chipped = renderer.max_content_width(parse("Use `code`. Done"))
+        mono_extra = code - renderer._measure_text("code", size)
+        assert chipped == pytest.approx(plain + mono_extra + 2 * pad, abs=0.02)
+
+    def test_italic_blockquote_is_measured_in_the_italic_face(self) -> None:
+        """A blockquote painted italic is measured italic, so a chip after its
+        text starts where that text ends on screen."""
+        style = Style(blockquote_font_style="italic", code_background="#eeeeee")
+        renderer = SVGRenderer(style=style)
+        size = style.base_font_size
+        italic = renderer._measure_text(
+            "Quote with ", size, is_italic=True, font_weight="normal"
+        )
+
+        svg = render("> Quote with `code`", style=style, width=400, padding=0)
+
+        rect = re.search(r'<rect x="([\d.]+)"[^>]*fill="#eeeeee"', svg)
+        assert rect is not None
+        assert float(rect.group(1)) == pytest.approx(
+            style.blockquote_padding + italic, abs=0.01
+        )
+
+    @pytest.mark.parametrize(("align", "shift"), [("right", 1.0), ("center", 0.5)])
+    def test_a_trailing_chip_keeps_its_right_padding_under_any_anchor(
+        self, align: Literal["right", "center"], shift: float
+    ) -> None:
+        style = Style(text_align=align, code_background="#eeeeee")
+        pad = style.inline_code_padding
+        svg = render("End with `code`", style=style, width=300, padding=0)
+
+        rect = re.search(r'<rect x="([\d.]+)"[^>]*width="([\d.]+)"', svg)
+        text = re.search(r'<text x="([\d.]+)"', svg)
+        assert rect is not None and text is not None
+        anchor_x = 300 if align == "right" else 150
+        assert float(text.group(1)) == pytest.approx(anchor_x - shift * pad)
+        if align == "right":
+            right = float(rect.group(1)) + float(rect.group(2))
+            assert right == pytest.approx(300, abs=0.01)
+
+    def test_a_split_chip_never_overflows_its_line(self) -> None:
+        style = Style(code_background="#eeeeee")
+        svg = render(
+            "aa `one two three four five six seven eight` zz",
+            style=style,
+            width=120,
+            padding=0,
+        )
+        rects = re.findall(r'<rect x="([\d.]+)"[^>]*width="([\d.]+)"', svg)
+        assert len(rects) >= 2
+        assert all(float(x) + float(w) <= 120.01 for x, w in rects)
+
+    def test_linked_and_adjacent_chips_each_reserve_their_padding(self) -> None:
+        style = Style(code_background="#eeeeee")
+        pad = style.inline_code_padding
+        svg = render("[`a.yml`](u) `b`, `c`", style=style, width=400, padding=0)
+
+        assert re.search(rf'<a href="u"><tspan dx="{pad:g}" style=', svg)
+        rects = re.findall(r'<rect x="([\d.]+)"[^>]*width="([\d.]+)"', svg)
+        assert len(rects) == 3
+        edges = [(float(x), float(x) + float(w)) for x, w in rects]
+        assert all(left[1] < right[0] for left, right in zip(edges, edges[1:]))
+
+    def test_bold_code_is_a_bold_chip_without_backticks(self) -> None:
+        style = Style(code_background="#eeeeee")
+        svg = render("**`message`** (required)", style=style, width=400, padding=0)
+
+        assert "`" not in svg
+        assert 'fill="#eeeeee"' in svg
+        code = re.search(r"<tspan[^>]*>message</tspan>", svg)
+        assert code is not None
+        assert "font-weight" in code.group(0) and "font-family" in code.group(0)
+
+    def test_table_cell_code_reserves_no_chip_padding(self) -> None:
+        """A table cell paints no chip, so its code takes no padding either."""
+        svg = render("| a |\n| --- |\n| x `code` y |", width=400)
+        assert "dx=" not in svg
+
     def test_non_code_run_emits_no_rect(self) -> None:
         """Plain prose renders no rect background."""
         svg = render("plain text here", width=400)
@@ -2335,7 +2443,7 @@ class TestHeadingBodyLineGrid:
         heading_margin_top_px=39.2,
         minor_heading_margin_top_px=19.6,
         heading_margin_bottom_px=0.0,
-        h1_margin_bottom_px=19.6,
+        major_heading_margin_bottom_px=19.6,
         heading_line_height=1.1,
         heading_grid_px=19.6,
         paragraph_spacing=19.6,
@@ -2351,7 +2459,7 @@ class TestHeadingBodyLineGrid:
         lead = self._lead_height(self.GRID)
         h2 = measure("Body.\n\n## H", width=400, padding=0, style=self.GRID).height
         h3 = measure("Body.\n\n### H", width=400, padding=0, style=self.GRID).height
-        assert h2 - lead == pytest.approx(39.2 + 19.6)
+        assert h2 - lead == pytest.approx(39.2 + 39.2)
         assert h3 - lead == pytest.approx(19.6 + 19.6)
 
     def test_heading_block_rounds_up_to_whole_body_lines(self) -> None:
@@ -2363,12 +2471,12 @@ class TestHeadingBodyLineGrid:
         # 24px at 1.1 is 26.4px: 2 body lines. 18px at 1.1 is 19.8px: within the
         # 10% tolerance of one line.
         assert block("Body.\n\n# H") == pytest.approx(39.2 + 2 * 19.6 + 19.6)
-        assert block("Body.\n\n## H") == pytest.approx(39.2 + 19.6)
+        assert block("Body.\n\n## H") == pytest.approx(39.2 + 39.2)
         wrapped = block("Body.\n\n# " + "word " * 40, width=200) - 39.2 - 19.6
         assert wrapped / 19.6 == pytest.approx(round(wrapped / 19.6))
         assert wrapped / 19.6 > 2
 
-    @pytest.mark.parametrize(("level", "lines"), [(1, 2), (2, 1), (3, 1)])
+    @pytest.mark.parametrize(("level", "lines"), [(1, 2), (2, 2), (3, 1)])
     def test_last_heading_baseline_sits_above_the_next_by_whole_body_lines(
         self, level: int, lines: int
     ) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +33,102 @@ from dbt_charts.core.render.sizing import (
 from ._board_utils import apply_static_layout
 from ._control_utils import render_strip_for
 from ._svg_render import authored_boxes, variables_box_x
+
+_CONTROLS_BOARD = """
+{title}variables:
+  a:
+    input: text
+    default: x
+width: 900
+{style}queries:
+  q:
+    type: values
+    rows:
+      - {{month: Jan, revenue: 100}}
+charts:
+  c:
+    query: q
+    type: bar
+    x: month
+    y: revenue
+rows:
+  - {layout}
+"""
+_NESTED = """rows:
+      - c
+    variables:
+      a:
+        input: text
+        default: x"""
+
+
+def _board_svg(yaml_content: str, project: FilesystemProject) -> str:
+    result = compile(yaml_content)
+    assert result.success, result.errors
+    apply_static_layout(result.board)
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+    return render_board_svg(
+        resolve_board(result.board),
+        executor,
+        result.board.variable_defaults,
+        background=None,
+        render_cache={},
+    )
+
+
+def _box_right_edge(svg: str) -> float:
+    box = re.search(r'<rect data-dbt-variables-box="true"[^>]*\swidth="([\d.]+)"', svg)
+    assert box is not None
+    return variables_box_x(svg) + float(box[1])
+
+
+class TestUntitledBoardControls:
+    def test_end_where_a_titled_boards_controls_end(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        project = local_project(Path.cwd())
+        titled = _board_svg(
+            _CONTROLS_BOARD.format(title="title: Sales\n", style="", layout="c"),
+            project,
+        )
+        untitled = _board_svg(
+            _CONTROLS_BOARD.format(title="", style="", layout="c"), project
+        )
+
+        assert 'data-dbt-align="end"' in untitled
+        assert _box_right_edge(untitled) == _box_right_edge(titled)
+
+    def test_on_a_nested_board_pack_right(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        svg = _board_svg(
+            _CONTROLS_BOARD.format(title="", style="", layout=_NESTED).replace(
+                "variables:\n  a:\n    input: text\n    default: x\nwidth",
+                "width",
+                1,
+            ),
+            local_project(Path.cwd()),
+        )
+
+        assert 'data-dbt-align="end"' in svg
+
+    def test_stay_on_the_left_when_authored_at_top(
+        self, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        svg = _board_svg(
+            _CONTROLS_BOARD.format(
+                title="",
+                style="style:\n  variables:\n    position: top\n",
+                layout="c",
+            ),
+            local_project(Path.cwd()),
+        )
+
+        assert 'data-dbt-align="end"' not in svg
 
 
 class TestTitleInlineBand:
@@ -218,9 +315,8 @@ variables:
     label: Plan
     options:
       static: [free, pro]
+width: 1440
 style:
-  frame:
-    width: 1440
   variables:
     position: title-inline
 queries:
@@ -607,9 +703,8 @@ variables:
     label: Signup Source
     options:
       static: [a, b]
+width: 1440
 style:
-  frame:
-    width: 1440
   variables:
     position: {position}
 queries:
@@ -683,9 +778,8 @@ variables:
   date_range:
     input: daterange
     label: Date Range
+width: 1440
 style:
-  frame:
-    width: 1440
   variables:
     position: title-inline
 queries:
@@ -738,9 +832,8 @@ variables:
   date_range:
     input: daterange
     label: Date Range
+width: 1440
 style:
-  frame:
-    width: 1440
   variables:
     position: top
 queries:
@@ -851,7 +944,8 @@ class TestComputeVariableControlsHeightWrapEpsilon:
         wide = lay_out_variables(
             [c.spec for c in resolve_controls(variable_defs, {}, None, vs)], 4000.0, vs
         )
-        exact = wide.boxes[-1].x + wide.boxes[-1].width
+        assert wide.reset is not None
+        exact = wide.reset.x + wide.reset.width
         height = compute_variable_controls_height(variable_defs, exact, {}, vs)
 
         assert height == container_h, (
@@ -896,6 +990,24 @@ rows:
   - c
 """
 
+    # A select stays sized to the value it draws (a multiselect holds one
+    # width), so it is the control whose committed value can outgrow a column.
+    _LONG_VALUE = "Latin America and the Caribbean and Sub-Saharan Africa"
+    _SELECT_BOARD = _MULTISELECT_BOARD.replace(
+        """  categories:
+    input: multiselect
+    label: Categories
+    options:
+      static: [Analytics, Collaboration, Security, Support]
+    default: [Analytics, Security]""",
+        f"""  region:
+    input: select
+    label: Region
+    options:
+      static: [US, {_LONG_VALUE}]
+    default: US""",
+    )
+
     def _board(self, yaml_content: str) -> Board:
         result = compile(yaml_content)
         assert result.success, result.errors
@@ -911,7 +1023,7 @@ rows:
 
         Not `apply_static_layout`: it takes the container box from
         `get_theme_style()` rather than the board, so a board that sets its own
-        `frame.width` is laid out at the theme's — and this suite's whole
+        `width:` is laid out at the theme's — and this suite's whole
         subject is a band that only misbehaves at a width where the title and
         the controls compete.
         """
@@ -1073,9 +1185,9 @@ rows:
     def test_band_is_rejected_when_the_committed_value_outgrows_its_column(
         self,
     ) -> None:
-        """Every option selected is wider than the default two, and must not
-        be squeezed into a column measured for the default."""
-        board = self._board(self._MULTISELECT_BOARD)
+        """A long committed value is wider than the default, and must not be
+        squeezed into a column measured for the default."""
+        board = self._board(self._SELECT_BOARD)
         card_pad = float(board.resolved_style.frame.card_padding)
         content_width = 600.0 + 2 * card_pad
 
@@ -1090,20 +1202,20 @@ rows:
             base_dir=board.base_dir,
             root=True,
         )
-        fits_with_everything_selected = should_use_title_inline_band(
+        fits_with_the_long_value = should_use_title_inline_band(
             board.title,
             board.visible_variables,
             content_width,
             board.resolved_style,
             card_pad,
-            {"categories": ["Analytics", "Collaboration", "Security", "Support"]},
+            {"region": self._LONG_VALUE},
             level=board.level,
             base_dir=board.base_dir,
             root=True,
         )
 
-        assert fits_at_defaults, "the default two-member value fits its column"
-        assert not fits_with_everything_selected, (
+        assert fits_at_defaults, "the default value fits its column"
+        assert not fits_with_the_long_value, (
             "a committed value too wide for the variables column must fall back "
             "to the full-width band under the title"
         )
@@ -1196,23 +1308,17 @@ rows:
         `data-dbt-x` is strip-local, so it says nothing about where the band
         sits on the board. Which strip the render chose does.
         """
-        narrow = self._MULTISELECT_BOARD.replace(
-            "style:\n", "style:\n  frame:\n    width: 704\n", 1
-        )
+        narrow = self._SELECT_BOARD.replace("style:\n", "width: 704\nstyle:\n", 1)
 
         at_defaults = self._render(narrow, {}, local_project)
-        every_category = self._render(
-            narrow,
-            {"categories": ["Analytics", "Collaboration", "Security", "Support"]},
-            local_project,
-        )
+        long_value = self._render(narrow, {"region": self._LONG_VALUE}, local_project)
 
         assert 'data-dbt-align="end"' in at_defaults, (
-            "the two-member default fits beside the title and takes the band"
+            "the default fits beside the title and takes the band"
         )
-        assert 'data-dbt-align="start"' in every_category, (
-            "every category selected does not fit beside the title, so the "
-            "render must fall back to the full-width strip under it"
+        assert 'data-dbt-align="start"' in long_value, (
+            "the long value does not fit beside the title, so the render must "
+            "fall back to the full-width strip under it"
         )
 
 
@@ -1228,9 +1334,8 @@ class TestInlineBandTitleHeightUsesDrawWidth:
 
     _YAML = """
 title: "dbt charts quick start cheat sheet"
+width: 1200
 style:
-  frame:
-    width: 1200
   variables:
     position: title-inline
     title_inline_title_max_width: 200
@@ -1323,7 +1428,7 @@ rows:
             f"Fixture title must produce different heights at inner={inner:.1f} and "
             f"title_w={title_w:.1f} after case transform. "
             f"Got h_at_inner={h_at_inner}, h_at_title_w={h_at_title_w}. "
-            "Adjust the fixture (title, frame.width, or variable count)."
+            "Adjust the fixture (title, width, or variable count)."
         )
 
         # Expected band height using inner (the width the draw uses).

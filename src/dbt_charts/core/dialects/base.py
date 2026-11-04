@@ -327,6 +327,24 @@ class SQLDialect(ABC):
         """
         return f"CAST({column} AS DATE)"
 
+    def zoned_date_expr(self, column: str, time_zone: str) -> str:
+        """Return SQL for `column`'s calendar date in the IANA zone `time_zone`.
+
+        Only for a timestamp column: a DATE has no instant to convert. A dialect
+        without a time zone conversion we can spell raises rather than comparing
+        the UTC date under a zone the author asked for.
+
+        Args:
+            column: Validated bare timestamp column identifier.
+            time_zone: A validated IANA zone name.
+        """
+        raise ValueError(
+            f"filter_date_range(timestamp=true) cannot convert to time zone "
+            f"{time_zone!r} on {self.name}: no time zone conversion is "
+            f"implemented for this dialect; drop timestamp=true or convert "
+            f"the column in the query"
+        )
+
     # --- Bulk schema introspection ---
 
     def bulk_schema_sql(self, scope: str = "") -> str:

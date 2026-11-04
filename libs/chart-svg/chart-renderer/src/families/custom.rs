@@ -35,9 +35,7 @@ use crate::common::{format_kpi_parts, Font, FormatSlot, PartsOptions, TitleStyle
 use crate::frame::{ChartFrame, FrameTitle};
 use crate::diagnostic::Diagnostic;
 use crate::href;
-use crate::svg::num;
-use print::{print_content, vega_escape_attr, xml_escape_attr};
-use scene::{Attrs, Chars, Child, Element, Escape};
+use scene::{Attrs, Chars, Child, Element, Escape, Node, Role, Shape};
 use measure::FontBook;
 use crate::Payload;
 
@@ -991,6 +989,51 @@ fn checked_attribute<'a>(
     Ok(if lowered == "href" { "href" } else { local })
 }
 
+/// A later placement of the chart renames every id its template defines, and every `#id` the
+/// template references (`href`, `url(#id)` and its quoted forms), so the two placements' defs
+/// stay apart in the one document `url(#id)` resolves against. The first placement keeps its ids.
+fn scope_template_ids(children: Vec<Node>, suffix: &str) -> Vec<Node> {
+    if suffix.is_empty() {
+        return children;
+    }
+    fn scope_attrs(attrs: &Attrs, suffix: &str) -> Attrs {
+        static URL: OnceLock<Regex> = OnceLock::new();
+        let url = URL.get_or_init(|| {
+            Regex::new(r##"(?i)url\(\s*(['"]?)#([^)'"\s]+)(['"]?)\s*\)"##).expect("static regex")
+        });
+        attrs.iter().fold(Attrs::new(), |scoped, (name, value, _)| {
+            let text = value.as_text().expect("a template attribute is text");
+            let text = match name {
+                "id" => format!("{text}{suffix}"),
+                "href" if text.starts_with('#') => format!("{text}{suffix}"),
+                _ => url.replace_all(text, format!("url(${{1}}#${{2}}{suffix}${{3}})")).into_owned(),
+            };
+            scoped.set(name.to_string(), text)
+        })
+    }
+    fn scope_element(element: Element, suffix: &str) -> Element {
+        Element {
+            tag: element.tag,
+            attrs: scope_attrs(&element.attrs, suffix),
+            children: element
+                .children
+                .into_iter()
+                .map(|child| match child {
+                    Child::Element(inner) => Child::Element(scope_element(inner, suffix)),
+                    text => text,
+                })
+                .collect(),
+        }
+    }
+    children
+        .into_iter()
+        .map(|node| match node.shape {
+            Shape::Element(element) => Node::element(scope_element(element, suffix)),
+            _ => node,
+        })
+        .collect()
+}
+
 // ── Render ──────────────────────────────────────────────────────────────────
 
 /// Everything one template render reads beyond the resolved chart.
@@ -1074,36 +1117,47 @@ pub fn render(payload: &Payload, fonts: &FontBook) -> Result<String, Diagnostic>
     };
     let content = render_template(&r, &job, fonts)
         .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_RENDER, &r.id, reason))?;
-    let content = print_content(
-        &checked_svg_content(&content)
-            .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_SVG, &r.id, reason))?,
+    // The template's elements keep their authored attribute text; only the chrome around them is typed.
+    let content: Vec<Node> = checked_svg_content(&content)
+        .map_err(|reason| diagnostic(&codes::ERR_CUSTOM_SVG, &r.id, reason))?
+        .into_iter()
+        .map(|child| match child {
+            Child::Element(element) => Node::element(element),
+            Child::Text(text) => Node::chars(text),
+        })
+        .collect();
+    let content = scope_template_ids(content, &crate::contract::placement_suffix());
+    let clip_id = format!("custom-clip-{}", crate::contract::scoped_id(&r.id));
+    let clip = Node::new(
+        Role::Chrome,
+        Attrs::new(),
+        Shape::Defs(vec![Node::new(
+            Role::Chrome,
+            Attrs::new().set("id", clip_id.as_str()),
+            Shape::ClipPath(vec![Node::rect(Role::Chrome, (0.0, 0.0, m.plot_w, m.plot_h), Attrs::new())]),
+        )]),
     );
-    // The id is the box itself: equal ids always name equal shapes.
-    let clip_id = format!("custom-clip-{}-{}", num(m.plot_w), num(m.plot_h));
-    let mut svg = String::new();
-    frame.open(&mut svg);
-    svg.push_str(&format!(
-        "<defs><clipPath id=\"{clip_id}\"><rect width=\"{}\" height=\"{}\"/></clipPath></defs>",
-        num(m.plot_w),
-        num(m.plot_h),
-    ));
-    title.paint(&mut svg, m.title_pos, origin);
-    svg.push_str(&format!(
-        "{}<g transform=\"translate({}, {})\" clip-path=\"url(#{clip_id})\" font-family=\"{}\" font-size=\"{}\" fill=\"{}\">{content}</g>{}</svg>",
-        href::anchor_open(r.link_open.anchor(anchor.as_deref())),
-        num(origin.0),
-        num(origin.1),
-        vega_escape_attr(body_family),
-        num(body_size),
-        xml_escape_attr(body_color),
-        href::anchor_close(r.link_open.anchor(anchor.as_deref())),
-    ));
-    Ok(svg)
+    let body = Node::group(
+        Role::Chrome,
+        Attrs::new()
+            .set("clip-path", format!("url(#{clip_id})"))
+            .vega("font-family", body_family)
+            .num("font-size", body_size)
+            .set("fill", body_color),
+        content,
+    )
+    .translate(origin.0, origin.1);
+    let nodes = std::iter::once(clip)
+        .chain(title.nodes(m.title_pos, origin))
+        .chain([href::linked(r.link_open.anchor(anchor.as_deref()), body)])
+        .collect();
+    Ok(print::print(&[frame.svg(nodes)]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use print::print_content;
 
     fn test_fonts() -> FontBook {
         let manifest = env!("CARGO_MANIFEST_DIR");
@@ -1115,7 +1169,7 @@ mod tests {
     const BODY_PAINT: &str =
         "font-family=\"'Inter Variable', Inter, system-ui, sans-serif\" font-size=\"12\" fill=\"#222222\"";
 
-    const CLIP: &str = "clip-path=\"url(#custom-clip-300-176)\"";
+    const CLIP: &str = "clip-path=\"url(#custom-clip-c)\"";
 
     fn payload(svg: &str, patch: impl FnOnce(&mut Json)) -> Payload {
         let mut resolved = json!({
@@ -1195,18 +1249,18 @@ mod tests {
             "{svg}"
         );
         // Vega's title band: 14px title + the 10px default offset.
-        assert!(svg.contains(&format!("<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}><text y=\"10\">Ana: 1.5</text><text y=\"20\">Ben: 2</text></g>")), "{svg}");
+        assert!(svg.contains(&format!("<g transform=\"translate(0,24)\" {CLIP} {BODY_PAINT}><text y=\"10\">Ana: 1.5</text><text y=\"20\">Ben: 2</text></g>")), "{svg}");
     }
 
     #[test]
     fn the_wrapper_clips_the_template_to_its_drawing_box() {
         let svg = render(&payload("<rect y=\"-30\" width=\"5\" height=\"5\"/>", |_| {}), &test_fonts()).unwrap();
         assert!(
-            svg.contains("<defs><clipPath id=\"custom-clip-300-176\"><rect width=\"300\" height=\"176\"/></clipPath></defs>"),
+            svg.contains("<defs><clipPath id=\"custom-clip-c\"><rect x=\"0\" y=\"0\" width=\"300\" height=\"176\"/></clipPath></defs>"),
             "{svg}"
         );
         assert!(
-            svg.contains(&format!("<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}>")),
+            svg.contains(&format!("<g transform=\"translate(0,24)\" {CLIP} {BODY_PAINT}>")),
             "{svg}"
         );
     }
@@ -1216,7 +1270,7 @@ mod tests {
         let svg = render(&payload("<text>t</text>", |_| {}), &test_fonts()).unwrap();
         assert!(
             svg.contains(&format!(
-                "<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}><text>t</text></g>"
+                "<g transform=\"translate(0,24)\" {CLIP} {BODY_PAINT}><text>t</text></g>"
             )),
             "{svg}"
         );
@@ -1254,7 +1308,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            svg.contains(&format!("<g transform=\"translate(0, 0)\" clip-path=\"url(#custom-clip-300-200)\" {BODY_PAINT}><rect height=\"200.0\"/></g>")),
+            svg.contains(&format!("<g transform=\"translate(0,0)\" {CLIP} {BODY_PAINT}><rect height=\"200.0\"/></g>")),
             "{svg}"
         );
     }
@@ -1404,6 +1458,74 @@ mod tests {
         );
     }
 
+    // The numbers of the next five tests are d3-scale 4.0.2's own, run in node from
+    // `d3rs/tests/oracle/d3`.
+    #[test]
+    fn d3_scale_log_maps_inverts_nices_and_ticks_like_d3() {
+        let svg = template_svg(
+            "{% set x = d3.scale_log([1, 1000], [0, 100]) %}<text>{{ x(50) }} {{ x(1) }} {{ x(1000) }} {{ x.invert(50) }} {{ x.domain }} {{ x.range }}</text>\
+             <text>{{ d3.scale_log([3, 970], [0, 1]).nice().domain }} {{ d3.scale_log([970, 3], [0, 1]).nice().domain }}</text>\
+             <text>{{ d3.scale_log([1, 100], [0, 1]).ticks() }} {{ x.ticks(5) | length }} {{ d3.scale_log([1, 64], [0, 1], base=2).ticks() }}</text>\
+             <text>{{ d3.scale_log([-100, -1], [0, 1])(-10) }} {{ d3.scale_log([-100, -1], [0, 1]).ticks(3) | length }}</text>",
+        );
+        assert!(svg.contains("<text>56.63233347786729 0.0 100.0 31.62277660168379 [1.0, 1000.0] [0.0, 100.0]</text>"), "{svg}");
+        assert!(svg.contains("<text>[1.0, 1000.0] [1000.0, 1.0]</text>"), "{svg}");
+        assert!(
+            svg.contains("<text>[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0] 28 [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]</text>"),
+            "{svg}"
+        );
+        assert!(svg.contains("<text>0.5 19</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_scale_log_tick_format_thins_crowded_decades_like_d3() {
+        let svg = template_svg(
+            "{% set x = d3.scale_log([1, 100], [0, 1]) %}<text>{% for t in x.ticks() %}{{ x.tick_format()(t) }}|{% endfor %}</text>\
+             <text>{% for t in x.ticks() %}{{ x.tick_format(5)(t) }}|{% endfor %}</text>\
+             <text>{% for t in x.ticks() %}{{ x.tick_format(5, ',.0f')(t) }}|{% endfor %}</text>\
+             {% set big = d3.scale_log([1, 1000000], [0, 1]) %}<text>{% for t in big.ticks() %}{{ big.tick_format()(t) }}|{% endfor %}</text>\
+             {% set two = d3.scale_log([1, 64], [0, 1], base=2) %}<text>{% for t in two.ticks() %}{{ two.tick_format()(t) }}|{% endfor %}</text>",
+        );
+        assert!(svg.contains("<text>1|2|3|4|5|||||10|20|30|40|50|||||100|</text>"), "{svg}");
+        // An explicit `,.0f` spec keeps d3's thinning.
+        assert_eq!(svg.matches("<text>1|2||||||||10|20||||||||100|</text>").count(), 2, "{svg}");
+        assert!(
+            svg.contains("<text>1|||||||||10|||||||||100|||||||||1k|||||||||10k|||||||||100k|||||||||1M|</text>"),
+            "{svg}"
+        );
+        assert!(svg.contains("<text>1|2|4|8|16|32|64|</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_scale_pow_and_symlog_match_d3() {
+        let svg = template_svg(
+            "{% set p = d3.scale_pow([0, 10], [0, 100], exponent=2) %}<text>{{ p(5) }} {{ p.invert(25) }} {{ p.nice(3).domain }} {{ p.ticks(5) }} {{ d3.scale_pow([0, 10], [0, 100])(5) }}</text>\
+             {% set s = d3.scale_symlog([-50, 50], [0, 100], constant=2) %}<text>{{ s(10) }} {{ s(0) }} {{ s.invert(75) }} {{ s.ticks(5) }} {{ d3.scale_symlog([0, 100], [0, 1])(10) }}</text>",
+        );
+        assert!(svg.contains("<text>25.0 5.0 [0.0, 10.0] [0.0, 2.0, 4.0, 6.0, 8.0, 10.0] 50.0</text>"), "{svg}");
+        assert!(
+            svg.contains("<text>77.49702853059293 50.0 8.198039027185573 [-40.0, -20.0, 0.0, 20.0, 40.0] 0.5195737064824407</text>"),
+            "{svg}"
+        );
+    }
+
+    #[test]
+    fn d3_scale_point_matches_d3() {
+        let svg = template_svg(
+            "{% set p = d3.scale_point(['a', 'b', 'c'], [0, 100], padding=0.5) %}<text>{{ p('a') }} {{ p('b') }} {{ p('c') }} {{ p.step() }} {{ p.domain }} {{ p.range }}</text>\
+             {% set q = d3.scale_point(['a', 'b', 'c'], [0, 100]) %}<text>{{ q('a') }} {{ q('b') }} {{ q('c') }} {{ q.step() }}</text>\
+             <text>{{ d3.scale_point(['a'], [0, 100])('a') }} {{ d3.scale_point(['a'], [0, 100]).step() }}</text>\
+             <text>{{ d3.scale_point(['a', 'b'], [0, 100], padding=0.25, align=0)('b') }} {{ d3.scale_point(['a', 'b'], [100, 0])('a') }}</text>",
+        );
+        assert!(
+            svg.contains("<text>16.666666666666664 50.0 83.33333333333334 33.333333333333336 [\"a\", \"b\", \"c\"] [0.0, 100.0]</text>"),
+            "{svg}"
+        );
+        assert!(svg.contains("<text>0.0 50.0 100.0 50.0</text>"), "{svg}");
+        assert!(svg.contains("<text>50.0 100.0</text>"), "{svg}");
+        assert!(svg.contains("<text>66.66666666666667 100.0</text>"), "{svg}");
+    }
+
     #[test]
     fn d3_scale_band_matches_d3() {
         let svg = template_svg(
@@ -1434,20 +1556,21 @@ mod tests {
         );
         for d in [
             "M0,0L10,20L30,10",
-            "M0,0C3.333,10,6.667,20,10,20C16.667,20,23.333,10,30,10C33.333,10,36.667,25,40,40",
+            "M0,0C3.33,10,6.67,20,10,20C16.67,20,23.33,10,30,10C33.33,10,36.67,25,40,40",
             "M0,0L5,0L5,20L20,20L20,10L30,10",
             "M0,0L0,20L10,20L10,10L30,10L30,40L40,40",
             "M0,0L10,0L10,20L30,20L30,10L40,10L40,40",
-            "M0,0C5,6.667,10,13.333,10,20C10,16.667,30,13.333,30,10C30,20,35,30,40,40",
-            "M0,0L1.667,3.333C3.333,6.667,6.667,13.333,11.667,15C16.667,16.667,23.333,13.333,28.333,16.667C33.333,20,36.667,30,38.333,35L40,40",
-            "M0,0C2.222,10.222,4.444,20.444,10,20C15.556,19.556,24.444,8.444,30,10C35.556,11.556,37.778,25.778,40,40",
-            "M0,0C0,0,5,18.333,10,20C15,21.667,25,6.667,30,10C35,13.333,40,40,40,40",
+            "M0,0C5,6.67,10,13.33,10,20C10,16.67,30,13.33,30,10C30,20,35,30,40,40",
+            "M0,0L1.67,3.33C3.33,6.67,6.67,13.33,11.67,15C16.67,16.67,23.33,13.33,28.33,16.67C33.33,20,36.67,30,38.33,35L40,40",
+            "M0,0C2.22,10.22,4.44,20.44,10,20C15.56,19.56,24.44,8.44,30,10C35.56,11.56,37.78,25.78,40,40",
+            "M0,0C0,0,5,18.33,10,20C15,21.67,25,6.67,30,10C35,13.33,40,40,40,40",
             "M0,0L10,20L30,10L30,50L10,50L0,50Z",
         ] {
             assert!(svg.contains(&format!("<path d=\"{d}\"/>")), "{d}: {svg}");
         }
     }
 
+    /// d3-shape's outlines, each sweep recorded as arcs of at most 90 degrees.
     #[test]
     fn d3_arc_matches_d3_shape() {
         let svg = template_svg(
@@ -1457,8 +1580,8 @@ mod tests {
         );
         for d in [
             "M0,-10A10,10,0,0,1,10,0L0,0Z",
-            "M0.559,-9.984A10,10,0,0,1,0.559,9.984L0.559,4.969A5,5,0,0,0,0.559,-4.969Z",
-            "M0,-7.746A2,2,0,0,1,2.5,-9.682A10,10,0,0,1,9.682,-2.5A2,2,0,0,1,7.746,0L6.708,0A2,2,0,0,1,4.792,-1.429A5,5,0,0,0,1.429,-4.792A2,2,0,0,1,0,-6.708Z",
+            "M0.56,-9.98A10,10,0,0,1,10,0A10,10,0,0,1,0.56,9.98L0.56,4.97A5,5,0,0,0,5,0A5,5,0,0,0,0.56,-4.97Z",
+            "M0,-7.75A2,2,0,0,1,0.78,-9.33A2,2,0,0,1,2.5,-9.68A10,10,0,0,1,9.68,-2.5A2,2,0,0,1,9.33,-0.78A2,2,0,0,1,7.75,0L6.71,0A2,2,0,0,1,4.79,-1.43A5,5,0,0,0,1.43,-4.79A2,2,0,0,1,0,-6.71Z",
         ] {
             assert!(svg.contains(&format!("<path d=\"{d}\"/>")), "{d}: {svg}");
         }
@@ -1481,10 +1604,296 @@ mod tests {
         }
     }
 
+    const FC: &str = "{% set fc = {'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {}, 'geometry': {'type': 'Polygon', 'coordinates': [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]}}]} %}";
+
+    #[test]
+    fn d3_geo_projection_maps_inverts_and_reads_its_settings() {
+        let svg = template_svg(
+            "<text>{{ d3.geo_mercator()([0, 0]) }} {{ d3.geo_mercator().scale(100).translate([0, 0])([90, 45]) }}</text>\
+             <text>{{ d3.geo_equal_earth().invert([480, 250]) }} {{ d3.geo_orthographic().rotate([-10, -40]).rotate() }}</text>\
+             <text>{{ d3.geo_mercator().center([10, 50]).center() }} {{ d3.geo_mercator().clip_angle() }} {{ d3.geo_orthographic().clip_angle() }}</text>\
+             <text>{{ d3.geo_mercator().precision() }} {{ d3.geo_mercator().reflect_x() }} {{ d3.geo_mercator().reflect_x(true).reflect_x() }}</text>\
+             <text>{{ d3.geo_mercator().clip_extent() is none }} {{ d3.geo_mercator().clip_extent([[0, 0], [1, 1]]).clip_extent() }}</text>\
+             <text>{{ d3.geo_conic_equal_area().parallels([20, 60])([-100, 40]) }} {{ d3.geo_conic_equal_area().parallels() }}</text>\
+             <text>{{ d3.geo_albers_usa()([-122.4, 37.8]) }} {{ d3.geo_albers_usa()([0, 0]) is none }}</text>\
+             <text>{{ d3.geo_identity().reflect_y(true).translate([0, 100]).scale(2)([10, 20]) }} {{ d3.geo_mollweide()([10, 20]) }}</text>",
+        );
+        for t in [
+            "<text>[480.0, 250.0] [157.07963267948966, -88.13735870195431]</text>",
+            "<text>[0.0, 0.0] [-10.0, -40.0, 0.0]</text>",
+            "<text>[10.0, 50.0] 0.0 90.000001</text>",
+            "<text>0.7071067811865476 False True</text>",
+            "<text>True [[0.0, 0.0], [1.0, 1.0]]</text>",
+            "<text>[318.70896664367046, 137.883410590268] [0.0, 59.99999999999999]</text>",
+            "<text>[107.8293996861774, 213.76568215360805] True</text>",
+            "<text>[20.0, 60.0] [505.6344412022416, 184.7844110188799]</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_geo_projection_setters_read_back_and_draw_as_d3() {
+        let svg = template_svg(
+            "{% set clipped = d3.geo_orthographic().clip_angle(30) %}\
+             <text>{{ clipped.clip_angle() }} {{ d3.geo_path(clipped)({'type': 'Point', 'coordinates': [40, 0]}) is none }}</text>\
+             <path d=\"{{ d3.geo_path(clipped)({'type': 'Point', 'coordinates': [20, 0]}) }}\"/>\
+             <text>{{ d3.geo_orthographic().clip_angle(none).clip_angle() }}</text>\
+             <path d=\"{{ d3.geo_path(d3.geo_orthographic().clip_angle(none))({'type': 'Point', 'coordinates': [-170, -40]}) }}\"/>\
+             <text>{{ d3.geo_mercator().clip_extent([[0, 0], [1, 1]]).clip_extent(none).clip_extent() is none }} {{ d3.geo_path(d3.geo_mercator().clip_extent([[0, 0], [1, 1]]))({'type': 'LineString', 'coordinates': [[0, 0], [10, 10]]}) is none }}</text>\
+             <text>{{ d3.geo_mercator().angle(90).angle() }} {{ d3.geo_mercator().angle(90).translate([0, 0]).scale(100)([10, 0])[1] }} {{ d3.geo_identity().angle(90).angle() }} {{ d3.geo_identity().angle(90)([1, 0])[1] }}</text>\
+             <text>{{ d3.geo_mercator().precision(0.1).precision() }} {{ d3.geo_albers_usa().precision(0.1).precision() }}</text>\
+             <text>{{ d3.geo_mercator().rotate([10, 20, 30]).rotate() }} {{ d3.geo_mercator().rotate([10, 20, 30])([0, 0]) }}</text>\
+             <text>{{ d3.geo_identity().reflect_y(true).translate([0, 100]).scale(2).invert([20, 60]) }} {{ d3.geo_albers_usa().invert([300, 200]) }}</text>",
+        );
+        for t in [
+            "<text>29.999999999999996 True</text>",
+            "<path d=\"M565.33,250M565.33,254.5A4.5,4.5,0,1,1,565.33,245.5A4.5,4.5,0,1,1,565.33,254.5Z\"/>",
+            "<text>0.0</text>",
+            "<path d=\"M446.81,410.38M446.81,414.88A4.5,4.5,0,1,1,446.81,405.88A4.5,4.5,0,1,1,446.81,414.88Z\"/>",
+            "<text>True True</text>",
+            "<text>90.0 -17.453292519943293 90.0 -1.0</text>",
+            "<text>0.1 0.1</text>",
+            "<text>[10.0, 20.0, 29.999999999999996] [477.0207540427737, 189.07569750982532]</text>",
+            "<text>[10.0, 20.0] [-109.47420948698472, 40.64346765530727]</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_geo_path_digits_and_point_radius_round_before_the_engine_prints() {
+        let svg = template_svg(
+            "<path d=\"{{ d3.geo_path(d3.geo_identity(), digits=none)({'type': 'Point', 'coordinates': [0.123456789, 0]}) }}\"/>\
+             <path d=\"{{ d3.geo_path(d3.geo_identity(), point_radius=none)({'type': 'Point', 'coordinates': [1, 2]}) }}\"/>",
+        );
+        for t in [
+            "<path d=\"M0.12,0M0.12,4.5A4.5,4.5,0,1,1,0.12,-4.5A4.5,4.5,0,1,1,0.12,4.5Z\"/>",
+            "<path d=\"M1,2M1,2A0,0,0,1,1,1,2A0,0,0,1,1,1,2Z\"/>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_geo_projection_fits_a_geojson_mapping_or_its_text() {
+        let svg = template_svg(&format!(
+            "{FC}{{% set poly = fc.features[0].geometry %}}{{% set p = d3.geo_mercator().fit_size([200, 100], fc) %}}<text>{{{{ p.scale() }}}} {{{{ p.translate() }}}}</text>\
+             <text>{{{{ d3.geo_mercator().fit_width(200, fc).scale() }}}} {{{{ d3.geo_mercator().fit_height(100, fc).translate() }}}}</text>\
+             <text>{{{{ d3.geo_mercator().fit_extent([[10, 20], [210, 120]], fc).translate() }}}}</text>\
+             <text>{{{{ d3.geo_mercator().fit_size([200, 100], '{{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}}').scale() }}}}</text>\
+             {{% set us = {{'type': 'Polygon', 'coordinates': [[[-120, 35], [-100, 35], [-100, 45], [-120, 45], [-120, 35]]]}} %}}\
+             {{% set usa = d3.geo_albers_usa().fit_size([200, 100], us) %}}<text>{{{{ usa.scale() }}}} {{{{ usa.translate() }}}} {{{{ d3.geo_albers_usa().fit_width(200, us).scale() }}}}</text>\
+             {{% set flat = d3.geo_identity().fit_size([200, 100], poly) %}}<text>{{{{ flat.scale() }}}} {{{{ flat.translate() }}}} {{{{ d3.geo_identity().fit_height(50, poly).translate() }}}}</text>"
+        ));
+        for t in [
+            "<text>15.915494309182861 [100.0, 49.99999999997903]</text>",
+            "<text>31.83098861837907 [49.99999999997903, 49.99999999997903]</text>",
+            "<text>[110.0, 69.99999999997902]</text>",
+            "<text>15.915494309182861</text>",
+            "<text>210.0840336134454 [100.0, 50.0] 219.78021978021977</text>",
+            "<text>10.0 [50.0, 0.0] [-0.0, 0.0]</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_geo_path_draws_measures_and_clips() {
+        let svg = template_svg(&format!(
+            "{FC}<path d=\"{{{{ d3.geo_path(d3.geo_mercator().fit_size([200, 100], fc))(fc) }}}}\"/>\
+             {{% set planar = d3.geo_path() %}}{{% set poly = fc.features[0].geometry %}}\
+             <path d=\"{{{{ planar({{'type': 'LineString', 'coordinates': [[0, 0], [10, 5]]}}) }}}}\"/>\
+             <text>{{{{ planar.area(poly) }}}} {{{{ planar.bounds(poly) }}}} {{{{ planar.centroid(poly) }}}} {{{{ planar.measure(poly) }}}}</text>\
+             {{% set ortho = d3.geo_orthographic().rotate([-10, -40]) %}}{{% set globe = d3.geo_path(ortho) %}}\
+             <path d=\"{{{{ globe({{'type': 'Point', 'coordinates': [10, 40]}}) }}}}\"/>\
+             <text>{{{{ globe({{'type': 'Point', 'coordinates': [-170, -40]}}) is none }}}}</text>\
+             <path id=\"sphere\" d=\"{{{{ globe({{'type': 'Sphere'}}) }}}}\"/>\
+             <path d=\"{{{{ d3.geo_path(ortho, point_radius=2)({{'type': 'Point', 'coordinates': [10, 40]}}) }}}}\"/>\
+             <path d=\"{{{{ d3.geo_path(d3.geo_identity(), digits=1)({{'type': 'Point', 'coordinates': [0.123456, 0]}}) }}}}\"/>"
+        ));
+        for t in [
+            "<path d=\"M100,50L102.78,50L102.78,47.21L100,47.21ZM150,0L150,2.04L150,13.11",
+            "<path d=\"M0,0L10,5\"/>",
+            "<text>100.0 [[0.0, 0.0], [10.0, 10.0]] [5.0, 5.0] 40.0</text>",
+            "<path d=\"M480,250M480,254.5A4.5,4.5,0,1,1,480,245.5A4.5,4.5,0,1,1,480,254.5Z\"/>",
+            "<text>True</text>",
+            "<path id=\"sphere\" d=\"M480,499.5L471.29,499.35L462.6,498.89",
+            "<path d=\"M480,250M480,252A2,2,0,1,1,480,248A2,2,0,1,1,480,252Z\"/>",
+            "<path d=\"M0.1,0M0.1,4.5A4.5,4.5,0,1,1,0.1,-4.5A4.5,4.5,0,1,1,0.1,4.5Z\"/>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_sankey_lays_out_named_nodes_as_d3_sankey() {
+        // The oracle's two_stage graph (sankey.json) with letters for the indices.
+        let svg = template_svg(
+            "{% set g = d3.sankey([{'source': 'a', 'target': 'c', 'value': 5}, {'source': 'a', 'target': 'd', 'value': 3}, {'source': 'b', 'target': 'c', 'value': 2}, {'source': 'b', 'target': 'd', 'value': 6}, {'source': 'c', 'target': 'e', 'value': 4}, {'source': 'c', 'target': 'f', 'value': 3}, {'source': 'd', 'target': 'e', 'value': 7}, {'source': 'd', 'target': 'f', 'value': 2}, {'source': 'b', 'target': 'f', 'value': 1}], extent=[[1, 5], [599, 395]], node_width=15, node_padding=10) %}\
+             {% set a = g.nodes[0] %}<text>{{ a.name }} {{ a.index }} {{ a.value }} {{ a.depth }} {{ a.height }} {{ a.layer }} {{ a.x0 }} {{ a.x1 }} {{ a.y0 }} {{ a.y1 }} {{ a.source_links }} {{ a.target_links }}</text>\
+             {% set l = g.links[0] %}<text>{{ l.index }} {{ l.source.name }} {{ l.target.name }} {{ l.value }} {{ l.width }} {{ l.y0 }} {{ l.y1 }}</text>\
+             <path d=\"{{ d3.sankey_link_horizontal(l) }}\" stroke-width=\"{{ l.width }}\"/>\
+             <text>{{ g.nodes | map(attribute='name') | join(',') }} {{ g.nodes[5].x0 }}</text>\
+             {% set s = d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], nodes=['b', 'a'], size=[100, 50]) %}<text>{{ s.nodes[0].name }} {{ s.nodes[0].x0 }} {{ s.nodes[1].x0 }} {{ s.nodes[0].y1 }}</text>\
+             <text>{{ d3.sankey([{'source': 0, 'target': 1, 'value': 1}, {'source': 1, 'target': 2, 'value': 1}], align='left', size=[100, 50]).nodes[2].x0 }}</text>\
+             {% set three = [{'source': 'a', 'target': 'b', 'value': 3}, {'source': 'a', 'target': 'c', 'value': 1}, {'source': 'c', 'target': 'd', 'value': 1}] %}\
+             <text>{{ d3.sankey(three, align='right', size=[100, 50]).nodes[1].x0 }} {{ d3.sankey(three, align='center', size=[100, 50]).nodes[1].x0 }} {{ d3.sankey(three, align='justify', size=[100, 50]).nodes[1].x0 }}</text>\
+             {% set five = three + [{'source': 'b', 'target': 'd', 'value': 2}, {'source': 'a', 'target': 'd', 'value': 1}] %}\
+             <text>{{ d3.sankey(five, size=[100, 50], iterations=0).nodes[1].y0 }} {{ d3.sankey(five, size=[100, 50], iterations=1).nodes[1].y0 }} {{ d3.sankey(five, size=[100, 50]).nodes[1].y0 }}</text>",
+        );
+        for t in [
+            "<text>a 0 8.0 0 2 0 1.0 16.0 5.0 183.82352941176464 [0, 1] []</text>",
+            "<text>0 a c 5.0 111.76470588235293 60.882352941176464 60.882352941176464</text>",
+            "<path d=\"M16,60.88C154.25,60.88,154.25,60.88,292.5,60.88\" stroke-width=\"111.76470588235293\"/>",
+            "<text>a,c,d,b,e,f 584.0</text>",
+            "<text>b 76.0 0.0 50.0</text>",
+            "<text>76.0</text>",
+            "<text>76.0 38.0 76.0</text>",
+            "<text>0.6666666666666666 2.0 1.9999999999999947</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_stack_stacks_as_d3_shape_does() {
+        // Cases of the oracle's stack.json (d3-shape 3.2.0), with `insideOut` spelled `inside_out`.
+        let svg = template_svg(
+            "{% set plain = [[1, 2, 3], [4, 5, 6], [7, 8, 9]] %}\
+             {% set g = d3.stack(plain, order='descending', offset='diverging') %}\
+             <text>{{ g.series[0] }} {{ g.series[1][2] }} {{ g.series[2][0] }} {{ g.index }}</text>\
+             {% set g = d3.stack(plain, 'inside_out', 'silhouette') %}\
+             <text>{{ g.series[0][1] }} {{ g.series[2][0] }} {{ g.index }}</text>\
+             {% set g = d3.stack(plain, 'appearance', 'wiggle') %}\
+             <text>{{ g.series[0][1] }} {{ g.series[2][2] }} {{ g.index }}</text>\
+             {% set g = d3.stack([[1, none, 3], [none, 5, 6], [7, 8, none]], offset='expand') %}\
+             <text>{{ g.series[0][1] }} {{ g.series[1][0] }} {{ g.series[1][1] }} {{ g.series[2][2] }} {{ g.series[2][0] }}</text>\
+             {% set g = d3.stack([[1, -2, 3], [-4, 5, 0], [2, 2, -2]], offset='diverging') %}\
+             <text>{{ g.series[1][0] }} {{ g.series[0][1] }} {{ g.series[1][2] }} {{ g.series[2][2] }}</text>\
+             <text>{{ d3.stack([[2], [3], [-1]]).series | map('first') | join(' ') }} {{ d3.stack([[1, 2], [3, 4]], order='reverse').index }}</text>",
+        );
+        for t in [
+            "<text>[[11.0, 12.0], [13.0, 15.0], [15.0, 18.0]] [9.0, 15.0] [0.0, 7.0] [2, 1, 0]</text>",
+            "<text>[0.5, 2.5] [-6.0, 1.0] [1, 2, 0]</text>",
+            "<text>[-1.9, 0.10000000000000009] [5.266666666666667, 14.266666666666666] [0, 1, 2]</text>",
+            "<text>None None [0.0, 0.38461538461538464] None [0.125, 1.0]</text>",
+            "<text>[-4.0, 0.0] [-2.0, 0.0] [0.0, 0.0] [-2.0, 0.0]</text>",
+            "<text>[0.0, 2.0] [2.0, 5.0] [5.0, 4.0] [1, 0]</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    #[test]
+    fn d3_symbol_format_interpolators_and_schemes_follow_d3() {
+        let svg = template_svg(
+            "<path d=\"{{ d3.symbol() }}\"/><path d=\"{{ d3.symbol('star', 100) }}\"/><path d=\"{{ d3.symbol(type='circle', size=64) }}\"/>\
+             <text>{{ d3.format(',.1f')(1234.5) }} {{ d3.format('$,.0f')(2500) }}</text>\
+             <text>{{ d3.interpolate_rgb('#ff0000', '#0000ff')(0.5) }} {{ d3.interpolate_rgb('#808080', '#1f77b4')(0.25) }} {{ d3.interpolate_hcl('steelblue', 'orange')(0.5) }}</text>\
+             <text>{{ d3.interpolate_rgb('transparent', 'red')(0.5) }} {{ d3.interpolate_hcl('rgba(255, 0, 0, 0.5)', '#00f')(1) }}</text>\
+             <text>{{ d3.scheme_category10[0] }} {{ d3.scheme_category10 | length }} {{ d3.scheme_set3 | length }} {{ d3.scheme_paired[11] }}</text>",
+        );
+        for name in ["circle", "cross", "diamond", "square", "star", "triangle", "wye", "plus", "times", "triangle2", "asterisk", "square2", "diamond2"] {
+            let drawn = template_svg(&format!("<path d=\"{{{{ d3.symbol('{name}', 50) }}}}\"/>"));
+            let want = format!("<path d=\"{}\"/>", print::path_d(&d3rs::symbol::SymbolType::from_name(name).unwrap().draw(50.0)));
+            assert!(drawn.contains(&want), "{name}: {drawn}");
+        }
+        for (name, first, len) in [
+            ("scheme_category10", "#1f77b4", 10), ("scheme_accent", "#7fc97f", 8), ("scheme_dark2", "#1b9e77", 8),
+            ("scheme_paired", "#a6cee3", 12), ("scheme_pastel1", "#fbb4ae", 9), ("scheme_pastel2", "#b3e2cd", 8),
+            ("scheme_set1", "#e41a1c", 9), ("scheme_set2", "#66c2a5", 8), ("scheme_set3", "#8dd3c7", 12),
+        ] {
+            let svg = template_svg(&format!("<text>{{{{ d3.{name}[0] }}}} {{{{ d3.{name} | length }}}}</text>"));
+            assert!(svg.contains(&format!("<text>{first} {len}</text>")), "{name}: {svg}");
+        }
+        for t in [
+            "<path d=\"M4.51,0A4.51,4.51,0,0,1,0,4.51A4.51,4.51,0,0,1,-4.51,0A4.51,4.51,0,0,1,0,-4.51A4.51,4.51,0,0,1,4.51,0\"/>",
+            "<path d=\"M0,-9.44L2.12,-2.92L8.98,-2.92L3.43,1.11L5.55,7.64L0,3.61L-5.55,7.64L-3.43,1.11L-8.98,-2.92L-2.12,-2.92Z\"/>",
+            "<text>1,234.5 $2,500</text>",
+            "<text>rgb(128, 0, 128) rgb(104, 126, 141) rgb(236, 109, 187)</text>",
+            "<text>rgba(255, 0, 0, 0.5) rgb(0, 0, 255)</text>",
+            "<text>#1f77b4 10 12 #b15928</text>",
+        ] {
+            assert!(svg.contains(t), "{t}: {svg}");
+        }
+    }
+
+    // The numbers of the next three tests are d3-scale 4.0.2's and d3-time-format 4.1.0's own, run in node from
+    // `d3rs/tests/oracle/d3` (`scale_utc.json`, `time_format.json`).
+    #[test]
+    fn d3_scale_utc_maps_ticks_and_nices_like_d3() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = template_svg(
+            "{% set x = d3.scale_utc(['2024-02-14T05:07:00Z', 1711343220000], [10, 410]) %}<text>{{ x(1708751220000) }} {{ x('2024-02-14T05:07:00') }} {{ x.invert(210) }} {{ x.domain }} {{ x.range }}</text>\
+             {% set y = d3.scale_utc(['2024-02-14T05:07:00Z', '2024-02-26T05:07:00Z'], [0, 1]) %}<text>{{ y.ticks() }}</text><text>{{ y.ticks(5) }}</text>\
+             <text>{{ y.nice().domain }} {{ y.nice(5).domain }} {{ y.domain }}</text>",
+        );
+        assert!(svg.contains("<text>110.0 10.0 1709615220000.0 [1707887220000.0, 1711343220000.0] [10.0, 410.0]</text>"), "{svg}");
+        assert!(svg.contains("<text>[1707955200000.0, 1708041600000.0, 1708128000000.0, 1708214400000.0, 1708300800000.0, 1708387200000.0, 1708473600000.0, 1708560000000.0, 1708646400000.0, 1708732800000.0, 1708819200000.0, 1708905600000.0]</text>"), "{svg}");
+        assert!(svg.contains("<text>[1707955200000.0, 1708128000000.0, 1708300800000.0, 1708473600000.0, 1708646400000.0, 1708819200000.0]</text>"), "{svg}");
+        assert!(svg.contains("<text>[1707868800000.0, 1708992000000.0] [1707782400000.0, 1708992000000.0] [1707887220000.0, 1708924020000.0]</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_time_format_and_tick_format_print_utc_through_the_board_locale() {
+        let template = "{% set f = d3.scale_utc([0, 1], [0, 1]).tick_format() %}<text>{% for t in [1710061507089, 1710061507000, 1710061500000, 1710061200000, 1710082800000, 1710201600000, 1710028800000, 1709251200000, 1704067200000] %}{{ f(t) }}|{% endfor %}</text>\
+                        <text>{{ d3.time_format('%c')(1577977445007) }} {{ d3.time_format('%A, %d. %B %Y')('2024-02-29T23:30:00Z') }} {{ d3.scale_utc([0, 1], [0, 1]).tick_format(5, '%b')(1710061507089) }}</text>";
+        let _en = crate::time_locale::en_us_scope();
+        let svg = template_svg(template);
+        assert!(svg.contains("<text>.089|:07|09:05|09 AM|03 PM|Tue 12|Mar 10|March|2024|</text>"), "{svg}");
+        assert!(svg.contains("<text>1/2/2020, 3:04:05 PM Thursday, 29. February 2024 Mar</text>"), "{svg}");
+        let german = crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || template_svg(template));
+        assert!(german.contains("<text>.089|:07|09:05|09 AM|03 PM|Di 12|Mrz 10|März|2024|</text>"), "{german}");
+        assert!(german.contains("Donnerstag, 29. Februar 2024 Mrz</text>"), "{german}");
+    }
+
+    // `new Date(+t)`: a fraction truncates toward zero, as `time_format.json`'s `clip:` cases print.
+    #[test]
+    fn d3_instants_truncate_to_whole_milliseconds_like_a_date() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = template_svg(
+            "<text>{{ d3.time_format('%Q')(1234567.891) }} {{ d3.time_format('%Q')(-1.5) }} {{ d3.time_format('%Q')(-0.5) }} {{ d3.time_format('%Y')(-0.5) }}</text>\
+             <text>{{ d3.scale_utc([0.9, 1000.7], [0, 1000]).domain }} {{ d3.scale_utc([0, 1000], [0, 1000])(500.9) }}</text>",
+        );
+        assert!(svg.contains("<text>1234567 -1 0 1970</text>"), "{svg}");
+        assert!(svg.contains("<text>[0.0, 1000.0] 500.0</text>"), "{svg}");
+    }
+
+    #[test]
+    fn d3_time_parse_reads_utc_instants_like_d3() {
+        let _locale = crate::time_locale::en_us_scope();
+        let svg = template_svg(
+            "<text>{{ d3.time_parse('%Y-%m-%dT%H:%M:%S%Z')('2024-03-10T09:05:07+0530') }} {{ d3.time_parse('%Y-%m-%d')('2024-02-30') }} {{ d3.time_parse('%Y-%m-%d')('2024-03') }} {{ d3.time_parse('%Q')('9999999999999999') }}</text>",
+        );
+        assert!(svg.contains("<text>1710041707000.0 1709251200000.0 None None</text>"), "{svg}");
+        let german = crate::time_locale::with_time_locale(&crate::time_locale::de_de(), || template_svg("<text>{{ d3.time_parse('%d.%m.%Y')('11.03.2024') }}</text>"));
+        assert!(german.contains("<text>1710115200000.0</text>"), "{german}");
+    }
+
     #[test]
     fn d3_misuse_is_an_error_naming_the_call() {
+        let _locale = crate::time_locale::en_us_scope();
         for (template, needle) in [
             ("{{ d3.scale_linear([], [0, 1]) }}", "d3.scale_linear(): domain must be two numbers"),
+            ("{{ d3.scale_utc(['2024-01-01'], [0, 1]) }}", "d3.scale_utc(): domain must be two instants [start, stop], got 1 values"),
+            ("{{ d3.scale_utc(['2024-01-01', '2024-01-01'], [0, 1]) }}", "d3.scale_utc(): domain must not be zero-width"),
+            ("{{ d3.scale_utc(['nope', '2024-01-01'], [0, 1]) }}", "d3.scale_utc(): domain is not an ISO-8601 date or timestamp, got \"nope\""),
+            ("{{ d3.scale_utc([[1], 5], [0, 1]) }}", "d3.scale_utc(): domain must be epoch milliseconds or ISO-8601 text"),
+            ("{{ d3.scale_utc([0, 1e16], [0, 1]) }}", "d3.scale_utc(): domain 10000000000000000 is past the instants a date holds"),
+            ("{{ d3.scale_utc([0, 1000], [0, 1])(1e17) }}", "d3.scale_utc(): value 100000000000000000 is past the instants a date holds"),
+            ("{{ d3.scale_utc([0, 1], [0, 1]).invert(1e17) }}", "d3.scale_utc().invert(): 1e17 lies beyond the instants a date holds"),
+            ("{{ d3.scale_utc([0, 1], [0, 1]).tick_format(0) }}", "d3.scale_utc().tick_format(): count must be a whole number from 1 to 10000"),
+            ("{{ d3.time_format('%Y')(1e16) }}", "d3.time_format(\"%Y\")(): instant 10000000000000000 is past the instants a date holds"),
+            ("{{ d3.scale_utc([0, 1]) }}", "d3.scale_utc(): missing argument 'range'"),
+            ("{{ d3.scale_utc([0, 1], [3, 3]) }}", "d3.scale_utc(): range must not be zero-width"),
+            ("{{ d3.scale_utc([0, 1000], [0, 1])('soon') }}", "d3.scale_utc(): value is not an ISO-8601 date or timestamp"),
+            ("{{ d3.scale_utc([0, 1000], [0, 1]).ticks(0) }}", "d3.scale_utc().ticks(): count must be a whole number from 1 to 10000"),
+            ("{{ d3.scale_utc([0, 1000], [0, 1]).invert('a') }}", "d3.scale_utc().invert(): value must be a finite number"),
+            ("{{ d3.scale_utc([0, 1000], [0, 1]).wobble() }}", "d3.scale_utc(): no method \"wobble\"; it has nice, ticks, tick_format and invert"),
+            ("{{ d3.time_format(5) }}", "d3.time_format(): spec must be a string"),
+            ("{{ d3.time_format() }}", "d3.time_format(): missing argument 'spec'"),
+            ("{{ d3.time_parse('%Y')(5) }}", "d3.time_parse(\"%Y\")(): text must be a string"),
             ("{{ d3.scale_linear([1, 1], [0, 1]) }}", "d3.scale_linear(): domain must not be zero-width"),
             ("{{ d3.scale_linear([0, 1], [5, 5]) }}", "d3.scale_linear(): range must not be zero-width"),
             ("{{ d3.scale_linear([0, 1e999], [0, 1]) }}", "d3.scale_linear(): domain must be a finite number"),
@@ -1497,6 +1906,25 @@ mod tests {
             ("{{ d3.scale_linear([0, 1], [0, 1]).ticks(foo=1) }}", "unknown keyword argument 'foo'"),
             ("{{ d3.scale_linear([0, 1], [0, 1]).wobble() }}", "no method \"wobble\""),
             ("{{ d3.scale_sqrt([2, 2], [0, 1]) }}", "d3.scale_sqrt(): domain must not be zero-width"),
+            ("{{ d3.scale_log([0, 10], [0, 1]) }}", "d3.scale_log(): a log domain must not cross or touch zero, got [0.0, 10.0]"),
+            ("{{ d3.scale_log([-1, 10], [0, 1]) }}", "d3.scale_log(): a log domain must not cross or touch zero"),
+            ("{{ d3.scale_log([1, 10], [0, 1], base=1) }}", "d3.scale_log(): base must be greater than 1, got 1"),
+            ("{{ d3.scale_log([1, 10], [0, 1])(0) }}", "d3.scale_log(): 0 has no position on a scale over [1.0, 10.0]"),
+            ("{{ d3.scale_log([1, 10], [-1, 1])(0) }}", "d3.scale_log(): 0 has no position on a scale over [1.0, 10.0]"),
+            ("{{ d3.scale_pow([1, 10], [-1, 1], exponent=-1)(0) }}", "d3.scale_pow(): 0 has no position on a scale over [1.0, 10.0]"),
+            ("{{ d3.scale_log([1, 10], [0, 1]).invert(1000) }}", "d3.scale_log().invert(): 1000 has no value on a scale over [1.0, 10.0]"),
+            ("{{ d3.scale_log([1, 10], [0, 1]).tick_format(5, '?') }}", "d3.scale_log().tick_format():"),
+            ("{{ d3.scale_pow([0, 10], [0, 1], exponent=0) }}", "d3.scale_pow(): exponent must not be zero"),
+            ("{{ d3.scale_pow([0, 10], [0, 1], exponent='a') }}", "d3.scale_pow(): exponent must be a finite number"),
+            ("{{ d3.scale_symlog([0, 10], [0, 1], constant=0) }}", "d3.scale_symlog(): constant must be greater than 0, got 0"),
+            ("{{ d3.scale_symlog([0, 10], [0, 1], 1, 2) }}", "d3.scale_symlog(): takes at most 3 arguments"),
+            ("{{ d3.scale_point([], [0, 1]) }}", "d3.scale_point(): domain must not be empty"),
+            ("{{ d3.scale_point(['a'], [0, 0]) }}", "d3.scale_point(): range must not be zero-width"),
+            ("{{ d3.scale_point(['a'], [0, 1])('b') }}", "d3.scale_point(): \"b\" is not in the domain"),
+            ("{{ d3.scale_point(['a'], [0, 1], padding=-1) }}", "d3.scale_point(): padding must not be negative"),
+            ("{{ d3.scale_point(['a'], [0, 1], align=2) }}", "d3.scale_point(): align must be between 0 and 1"),
+            ("{{ d3.scale_point([[1]], [0, 1]) }}", "d3.scale_point(): domain values must be strings or numbers"),
+            ("{{ d3.scale_point(['a'], [0, 1]).bandwidth() }}", "d3.scale_point(): no method \"bandwidth\"; it has step"),
             ("{{ d3.scale_band([], [0, 1]) }}", "d3.scale_band(): domain must not be empty"),
             ("{{ d3.scale_band(['a'], [0, 0]) }}", "d3.scale_band(): range must not be zero-width"),
             ("{{ d3.scale_band(['a'], [0, 1])('b') }}", "d3.scale_band(): \"b\" is not in the domain"),
@@ -1506,6 +1934,9 @@ mod tests {
             ("{{ d3.line([[0, 0], [1]]) }}", "d3.line(): points[1] must be an [x, y] pair"),
             ("{{ d3.line([[0, 'a']]) }}", "d3.line(): points[0][1] must be a finite number"),
             ("{{ d3.line([[0, 0]], 'bumpy') }}", "d3.line(): unknown curve \"bumpy\""),
+            ("{{ d3.line([[0, 0], [1e308, 1e308], [-1e308, 0], [0, 1e308]], 'basis') }}", "d3.line(): a coordinate overflows"),
+            ("{{ d3.area([[0, 0], [1e308, 1e308], [-1e308, 0], [0, 1e308]], 0, 'basis') }}", "d3.area(): a coordinate overflows"),
+            ("{{ d3.arc(0, 1e308, 0, 1, corner_radius=1e308) }}", "d3.arc(): a coordinate overflows"),
             ("{{ d3.area([[0, 0]]) }}", "d3.area(): missing argument 'y0'"),
             ("{{ d3.arc(0, 10, 0) }}", "d3.arc(): missing argument 'end_angle'"),
             ("{{ d3.arc(-1, 10, 0, 1) }}", "d3.arc(): inner_radius must not be negative"),
@@ -1515,6 +1946,51 @@ mod tests {
             ("{{ d3.scale_band(['a'], [0, 1], padding=1.5) }}", "d3.scale_band(): padding must be between 0 and 1"),
             ("{{ d3.pie([1, -2]) }}", "d3.pie(): values[1] must not be negative"),
             ("{{ d3.pie(3) }}", "d3.pie(): values must be a list"),
+            ("{{ d3.geo_mercator(1) }}", "d3.geo_mercator(): takes at most 0 arguments"),
+            ("{{ d3.geo_mercator()([1]) }}", "d3.geo_mercator(): point must be two numbers"),
+            ("{{ d3.geo_albers_usa().rotate([1, 2]) }}", "d3.geo_albers_usa(): no method \"rotate\"; it has scale, translate, precision, invert, fit_extent, fit_size, fit_width, fit_height"),
+            ("{{ d3.geo_mercator().parallels() }}", "d3.geo_mercator(): no method \"parallels\""),
+            ("{{ d3.geo_mercator().rotate([1]) }}", "d3.geo_mercator().rotate(): value must be [lambda, phi] or [lambda, phi, gamma]"),
+            ("{{ d3.geo_mercator().reflect_x(1) }}", "d3.geo_mercator().reflect_x(): value must be true or false"),
+            ("{{ d3.geo_mercator().fit_size([1, 1], {'type': 'FeatureCollection', 'features': []}) }}", "d3.geo_mercator().fit_size(): fit: the projected extent is not finite"),
+            ("{{ d3.geo_mercator().fit_size([1, 1], {'type': 'Feature', 'geometry': none}) }}", "d3.geo_mercator().fit_size(): object is not GeoJSON"),
+            ("{{ d3.geo_mercator().fit_width('wide', {'type': 'Sphere'}) }}", "d3.geo_mercator().fit_width(): width must be a finite number"),
+            ("{{ d3.geo_mercator().fit_size([100, 100], {'type': 'Point', 'coordinates': [10, 10]}) }}", "d3.geo_mercator().fit_size(): the fit is not finite"),
+            ("{{ d3.geo_mercator().precision(1e-150) }}", "d3.geo_mercator().precision(): value must be 0 (no resampling) or at least 0.01"),
+            ("{% set ns = namespace(p=d3.geo_mercator()) %}{% for i in range(33) %}{% set ns.p = ns.p.scale(1) %}{% endfor %}", "d3.geo_mercator().scale(): a projection takes at most 32 settings"),
+            ("{{ d3.geo_path(3) }}", "d3.geo_path(): projection must be a d3.geo_* projection or none"),
+            ("{{ d3.geo_path()('nope') }}", "d3.geo_path(): object is not GeoJSON"),
+            ("{{ d3.geo_path()(5) }}", "d3.geo_path(): object must be a GeoJSON mapping or its JSON text"),
+            ("{{ d3.geo_path(digits=-1) }}", "d3.geo_path(): digits must not be negative"),
+            ("{{ d3.geo_path().wobble() }}", "d3.geo_path(): no method \"wobble\"; it has area, bounds, centroid and measure"),
+            ("{{ d3.sankey([]) }}", "d3.sankey(): links must not be empty"),
+            ("{{ d3.sankey([{'source': 'a', 'value': 1}]) }}", "d3.sankey(): links[0] has no target"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 'x'}]) }}", "d3.sankey(): links[0].value must be a finite number"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}, {'source': 'b', 'target': 'a', 'value': 1}]) }}", "d3.sankey(): circular link"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], nodes=['a']) }}", "d3.sankey(): links[0].target \"b\" is not in nodes"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], nodes=['a', 'a']) }}", "d3.sankey(): nodes[1] \"a\" is listed twice"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], align='middle') }}", "d3.sankey(): unknown align \"middle\""),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], size=[1, 1], extent=[[0, 0], [1, 1]]) }}", "d3.sankey(): size and extent both set the box"),
+            ("{{ d3.sankey_link_horizontal({'y0': 1}) }}", "d3.sankey_link_horizontal(): link has no source.x1"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], iterations=1e15) }}", "d3.sankey(): iterations must be a whole number from 0 to 1000"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 0}]) }}", "d3.sankey(): the layout is not finite"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], size=[1]) }}", "d3.sankey(): size must be two numbers"),
+            ("{{ d3.sankey([{'source': 'a', 'target': 'b', 'value': 1}], extent=[[-1e308, 0], [1e308, 1]]) }}", "d3.sankey(): the layout is not finite"),
+            ("{{ d3.stack([]) }}", "d3.stack(): series must not be empty"),
+            ("{{ d3.stack(3) }}", "d3.stack(): series must be a list"),
+            ("{{ d3.stack([3]) }}", "d3.stack(): series[0] must be a list"),
+            ("{{ d3.stack([[1, 2], [3]]) }}", "d3.stack(): series[1] has 1 points but series[0] has 2"),
+            ("{{ d3.stack([[1, 'x']]) }}", "d3.stack(): series[0][1] must be a finite number"),
+            ("{{ d3.stack([[1]], order='insideOut') }}", "d3.stack(): unknown order \"insideOut\"; use none, ascending, descending, inside_out, reverse or appearance"),
+            ("{{ d3.stack([[1]], offset='center') }}", "d3.stack(): unknown offset \"center\"; use none, expand, diverging, silhouette or wiggle"),
+            ("{{ d3.stack([[1e308], [1e308]]) }}", "d3.stack(): series[1][0] overflows"),
+            ("{{ d3.stack([[0, 1e308], [0, 1e308]], offset='wiggle') }}", "d3.stack(): series[0][1] overflows"),
+            ("{{ d3.symbol('blob') }}", "d3.symbol(): unknown type \"blob\""),
+            ("{{ d3.symbol('circle', -1) }}", "d3.symbol(): size must not be negative"),
+            ("{{ d3.format('?') }}", "d3.format():"),
+            ("{{ d3.format(',.1f')('x') }}", "d3.format(\",.1f\")(): value must be a finite number"),
+            ("{{ d3.interpolate_rgb('#fff', 'nope') }}", "d3.interpolate_rgb(): b is not a color d3 reads"),
+            ("{{ d3.interpolate_hcl('#fff', '#000')('t') }}", "d3.interpolate_hcl()(): t must be a finite number"),
         ] {
             let reason = template_error(template);
             assert!(reason.contains(needle), "{template}: {reason}");
@@ -1900,7 +2376,7 @@ mod tests {
         assert!(!svg.contains("<a href=\"https://x.test/reps/{{"), "{svg}");
         assert!(svg.contains("<a href=\"https://x.test/reps/Ana?q=1\"><rect/></a><a href=\"https://x.test/reps/Ben?q=1\">"), "{svg}");
         assert!(
-            svg.contains(&format!("<g transform=\"translate(0, 24)\" {CLIP} {BODY_PAINT}><a href")),
+            svg.contains(&format!("<g transform=\"translate(0,24)\" {CLIP} {BODY_PAINT}><a href")),
             "no whole-chart anchor for a per-row link: {svg}"
         );
     }
@@ -1928,7 +2404,7 @@ mod tests {
         let shifted = crate::title_shift::for_family(&p, "custom").unwrap();
         let svg = render(&shifted, &test_fonts()).unwrap();
         assert!(
-            svg.contains("y=\"13.00\"") && svg.contains("translate(0, 29)"),
+            svg.contains("y=\"13\"") && svg.contains("translate(0,29)"),
             "{svg}"
         );
     }

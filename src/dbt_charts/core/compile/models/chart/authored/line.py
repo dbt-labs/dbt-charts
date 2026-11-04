@@ -37,6 +37,13 @@ class LineChart(_CartesianChartFields, _TooltipFields):
         LineChartStylePatch | None,
         Field(default=None, description="Appearance overrides for this chart alone."),
     ]
+    connect: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Column whose order the line follows, instead of x.",
+        ),
+    ]
     layers: Annotated[
         list[CartesianLayer] | None,
         Field(

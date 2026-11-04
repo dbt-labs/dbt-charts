@@ -1,0 +1,3 @@
+kind: Fixes
+body: A scatter with a date, year or unrounded numeric x axis keeps its end dots a 2px gap off the plot edge, at any dot size.
+time: 2026-10-28T15:37:15.528885-07:00

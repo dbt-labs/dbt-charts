@@ -271,7 +271,7 @@ def test_theme_level_bar_scale_fails_loud(
     raw: dict[str, Any] = {
         "style": {"charts": {"bar": {"scale": {"continuous": {"zero": True}}}}}
     }
-    prepared = prepare_board_mapping(raw, model=BoardPatch)
+    prepared = prepare_board_mapping(raw, patch=True)
     with pytest.raises(ValidationError, match="extra_forbidden"):
         BoardPatch.model_validate(prepared)
 
@@ -284,7 +284,7 @@ def test_theme_level_scatter_scale_fails_loud(
     raw: dict[str, Any] = {
         "style": {"charts": {"scatter": {"scale": {"continuous": {"zero": False}}}}}
     }
-    prepared = prepare_board_mapping(raw, model=BoardPatch)
+    prepared = prepare_board_mapping(raw, patch=True)
     with pytest.raises(ValidationError, match="extra_forbidden"):
         BoardPatch.model_validate(prepared)
 

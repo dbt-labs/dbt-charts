@@ -1,7 +1,7 @@
 """Tests for cross-request adapter-registry persistence in dct serve.
 
-The per-source connection pool (``SqlAdapter._source_pools``) lives on a
-``SqlAdapter`` inside an ``AdapterRegistry``. ``dct serve`` builds one registry at
+The per-source connection pool (``DbtBackend._source_pools``) lives on a
+``DbtBackend`` inside an ``AdapterRegistry``. ``dct serve`` builds one registry at
 startup and keeps it warm on ``app.state.adapter_registry`` across requests — it is
 rebuilt only when ``dbt_charts.yml`` changes (source config edits) and closed on
 shutdown. So a repeat view reuses the already-open warehouse connections.

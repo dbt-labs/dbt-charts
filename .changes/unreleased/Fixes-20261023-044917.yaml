@@ -1,3 +1,0 @@
-kind: Fixes
-body: A pivot table with every value column hidden no longer paints blank header bands.
-time: 2026-10-23T04:49:17.589323-07:00

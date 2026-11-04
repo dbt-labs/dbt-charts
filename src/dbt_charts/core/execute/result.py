@@ -22,6 +22,7 @@ import nanoarrow as na
 from dbt_charts.core.column_types import (
     ColumnKind,
     ColumnType,
+    TypedRows,
     as_declared,
     column_type_error,
     map_to_json,
@@ -102,6 +103,43 @@ def read_bounded_table(
     if not collected:
         return na.Array.from_chunks([], schema)
     return na.Array.from_chunks(collected)
+
+
+def rows_to_query_result(
+    rows: na.Array | TypedRows,
+    limit: RowFetchLimit,
+    resolved_relations: list[ResolvedRelation] | None = None,
+) -> QueryResult:
+    """The row-dict result of whatever a backend returned."""
+    if isinstance(rows, TypedRows):
+        return typed_rows_to_query_result(rows, limit, resolved_relations)
+    return arrow_to_query_result(rows, limit, resolved_relations)
+
+
+def typed_rows_to_query_result(
+    typed: TypedRows,
+    limit: RowFetchLimit,
+    resolved_relations: list[ResolvedRelation] | None = None,
+) -> QueryResult:
+    """Convert a warehouse client's typed rows into the engine's row-dict result.
+
+    The client already bounded the fetch to ``limit.fetch_limit`` rows; this
+    slices the ceiling's one-extra-row over-fetch back down and flags truncation
+    only when the ceiling, not the author's own ``Query.limit``, was the binding
+    value.
+
+    Raises:
+        ExecutionError: ERR-RESULT-DUPLICATE-COLUMN when two columns share a name.
+    """
+    reject_duplicate_columns(typed.columns)
+    rows, truncated_reason = apply_row_limit_truncation(typed.rows, limit)
+    return QueryResult(
+        data=[dict(zip(typed.columns, row, strict=False)) for row in rows],
+        columns=typed.columns,
+        schema=dict(zip(typed.columns, typed.types, strict=True)),
+        resolved_relations=resolved_relations,
+        truncated_reason=truncated_reason,
+    )
 
 
 def arrow_to_query_result(

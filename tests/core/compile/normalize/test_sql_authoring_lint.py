@@ -91,7 +91,7 @@ class TestFindDateLiteralVariable:
     Only the bound-parameter adapters (duckdb, sqlite) bind a variable through
     a driver placeholder that `_clean_parameter_quotes` strips the quotes
     from, so only there does `date '{{ var }}'` compile to invalid `date $1`.
-    Every other adapter (SqlAdapter for postgres/snowflake/bigquery/etc.,
+    Every other adapter (the dbt backend for postgres/snowflake/bigquery/etc.,
     DbtAdapter for dbt_profile) renders variables as inline literal text, so
     `date '{{ var }}'` compiles to valid `date '2024-01-01'` there -- the
     detector must not flag it. `cast('{{ var }}' as date)` is the
@@ -133,7 +133,7 @@ class TestFindDateLiteralVariable:
         assert find_date_literal_variable(sql, dialect="duckdb") is None
 
     def test_date_literal_variable_on_inline_dialect_passes(self):
-        """A warehouse adapter (SqlAdapter) renders variables as inline literal
+        """A warehouse adapter (the dbt backend) renders variables as inline literal
         text -- `date '{{ var }}'` compiles to valid `date '2024-01-01'` there,
         so the bound-param-only detector must not flag it."""
         sql = "SELECT 1 WHERE d <= date '{{ latest_month }}'"
@@ -221,7 +221,7 @@ class TestDateLiteralVariableWiredIntoNormalizeQuery:
         assert "cast('{{ latest_month }}' as date)" in err_msg
 
     def test_normalize_query_date_literal_variable_on_warehouse_source_passes(self):
-        """Snowflake goes through SqlAdapter, which renders variables as inline
+        """Snowflake goes through the dbt backend, which renders variables as inline
         literal text -- `date '{{ var }}'` compiles to valid SQL there."""
         result = normalize_query(
             "my_query",

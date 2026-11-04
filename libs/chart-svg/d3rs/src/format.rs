@@ -110,7 +110,7 @@ struct Spec {
     fill: char,
     align: char,           // '>' (default), '<', '^', '='
     sign: char,            // '-' (default), '+', ' ', '('
-    symbol: char,          // '\0', '$'
+    symbol: char,          // '\0', '$', '#'
     symbol_at: Option<usize>,
     zero: bool,
     width: Option<usize>,
@@ -171,13 +171,14 @@ fn parse_spec(s: &str) -> Result<Spec, String> {
         i += 1;
     }
 
-    // symbol: '$' supported; '#' (alternate form) not needed
-    if i < n && bytes[i] == b'$' {
-        spec.symbol = '$';
-        spec.symbol_at = Some(i);
+    // symbol: '$' currency or '#' alternate form. '#' only prefixes b/o/x/X
+    // output, and those types are unimplemented, so it is inert here.
+    if i < n && matches!(bytes[i], b'$' | b'#') {
+        spec.symbol = bytes[i] as char;
+        if spec.symbol == '$' {
+            spec.symbol_at = Some(i);
+        }
         i += 1;
-    } else if i < n && bytes[i] == b'#' {
-        return Err(format!("unsupported alternate form '#' in d3 spec {s:?}"));
     }
 
     if i < n && bytes[i] == b'0' {
@@ -560,7 +561,7 @@ pub struct SpecParts {
     pub sign: char,
     /// `~` trim flag: insignificant trailing zeros removed.
     pub trim: bool,
-    /// A fill, an align, zero padding or a width is authored.
+    /// A fill, an align, zero padding, a width or `#` is authored.
     pub padded: bool,
 }
 
@@ -574,7 +575,7 @@ pub fn parse_parts(spec: &str) -> Result<SpecParts, String> {
         comma: s.comma,
         sign: s.sign,
         trim: s.trim,
-        padded: s.width.is_some() || s.zero || s.align != '>' || s.fill != ' ',
+        padded: s.width.is_some() || s.zero || s.symbol == '#' || s.align != '>' || s.fill != ' ',
     })
 }
 

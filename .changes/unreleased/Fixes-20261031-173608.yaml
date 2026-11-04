@@ -1,3 +1,0 @@
-kind: Fixes
-body: A board with no title keeps its variable controls on the right, where a titled board has them.
-time: 2026-10-31T17:36:08.887712-07:00

@@ -552,8 +552,8 @@ class TestOneProfileNameLadder:
     def test_env_var_wins_in_every_reader(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.cli.filesystem_project import FilesystemProject
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        from dbt_charts.core.execute.adapters.dbt_profile import resolve_target_type
+        from dbt_charts.core.execute.source_resolver import DbtContext
         from dbt_charts.core.project_roots import infer_dialect_from_dbt
 
         monkeypatch.setenv("DBT_PROFILE", "profile_b")
@@ -575,31 +575,23 @@ class TestOneProfileNameLadder:
                 }
             )
         )
-        adapter = DbtAdapter(
-            project=FilesystemProject(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
+        context = DbtContext(dbt_project_path=tmp_path, target="dev")
 
-        assert adapter.resolve_target_type() == "duckdb"
+        assert resolve_target_type(context) == "duckdb"
         assert infer_dialect_from_dbt(tmp_path) == "duckdb"
         assert _expand(None, tmp_path)["path"] == str((tmp_path / "b.db").resolve())
 
     def test_adapter_without_any_name_names_all_three_places(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from dbt_charts.cli.filesystem_project import FilesystemProject
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        from dbt_charts.core.execute.adapters.dbt_profile import resolve_target_type
+        from dbt_charts.core.execute.source_resolver import DbtContext
 
         monkeypatch.delenv("DBT_PROFILE", raising=False)
-        adapter = DbtAdapter(
-            project=FilesystemProject(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
+        context = DbtContext(dbt_project_path=tmp_path, target="dev")
 
         with pytest.raises(ValueError, match="DBT_PROFILE"):
-            adapter.resolve_target_type()
+            resolve_target_type(context)
 
 
 class TestReadDbtProjectProfile:

@@ -989,7 +989,7 @@ def create_server(
         project: The dbt charts project — resolved before this call by the CLI edge.
         dialect: SQL dialect for board rendering (duckdb, postgres, etc.).
             The /inspect/* HTML path is always DuckDB — dialect is not forwarded there.
-        target: dbt target name override for DbtAdapter
+        target: dbt target name override for the registry's dbt project
         serve_storage_prefix: Override for rendered board-link URLs in serve mode
         read_only: DuckDB read-only driver flag for board rendering (default True).
         allow_external_access_in_readonly: Allow author SQL to reach the filesystem

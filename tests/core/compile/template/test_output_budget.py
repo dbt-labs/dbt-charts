@@ -80,7 +80,7 @@ class TestDrawDownPrimitive:
 class TestBudgetCrossesThreadBoundary:
     """A ContextVar does not cross ThreadPoolExecutor.submit on its own — the
     open scope's binding stays with the thread that opened it unless the
-    submitter explicitly hands a copy across. execute/parallel.py already
+    submitter explicitly hands a copy across. execute/run.py already
     does this (`pool.submit(contextvars.copy_context().run, fn, ...)`) for
     query execution, so a budget opened around a board render still holds for
     query-template rendering that happens off the main thread. This proves

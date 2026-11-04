@@ -1167,6 +1167,35 @@ ERR_MULTIPLES_ENDPOINT_LABELS = REGISTRY.register(
     )
 )
 
+ERR_ENDPOINT_LABELS_AND_LEGEND_NAME_SERIES_TWICE = REGISTRY.register(
+    ErrorCode(
+        code="ERR-ENDPOINT-LABELS-AND-LEGEND-NAME-SERIES-TWICE",
+        domain="render",
+        title="endpoint labels and a visible legend name the same series twice",
+        message_template=(
+            "Chart {chart_id!r}: endpoint labels and a visible legend both "
+            "name this chart's series. Set style.endpoint_labels.visible: "
+            "false on this chart to use the legend, or remove the authored "
+            "legend.visible / legend.position to keep the labels."
+        ),
+        doc=(
+            "Fired when a chart's endpoint-label rail will name its series "
+            "and the chart also authors `legend.visible: true` or a "
+            "`legend.position` (at the chart or board tier). The rail "
+            "replaces the legend by default, so only an authored legend "
+            "conflicts; shown together they name every series twice and the "
+            "right-edge legend pushes the labels away from their lines. "
+            "Turn off `style.endpoint_labels.visible` to keep the legend, "
+            "or drop the authored legend keys to keep the labels."
+        ),
+        summary=(
+            "Fired when a chart authors a visible or positioned legend while "
+            "its endpoint-label rail names the same series."
+        ),
+        docs_topic="charts",
+    )
+)
+
 ERR_MIRROR_ENDPOINT_LABELS = REGISTRY.register(
     ErrorCode(
         code="ERR-MIRROR-ENDPOINT-LABELS",
@@ -2809,15 +2838,64 @@ WARN_VALUE_LABELS_CROWD_WIDTH = REGISTRY.register(
             "values in a `support_table`."
         ),
         doc=(
-            "Fires when painted value labels collide or overflow their marks. "
-            "Value labels are drawn at the mark, fixed size, with no adaptive "
-            "avoidance, so they are the label kind that genuinely overflows. "
+            "Fires when painted value labels collide or overflow their marks: "
+            "authored positions never move, and bar labels stay at their bars. "
             "The check measures the placed label boxes, on any x axis: it fires "
             "when two labels' boxes overlap, or when a label drawn inside its "
             "bar is wider than the bar. It judges the chart's own labels and "
             "each layer's labels separately; labels that sit at different "
             "heights and never touch are quiet however close their marks are."
         ),
+        docs_topic="charts",
+    )
+)
+
+WARN_VALUE_LABELS_THINNED = REGISTRY.register(
+    WarningCode(
+        code="WARN-VALUE-LABELS-THINNED",
+        domain="render",
+        title="Value labels were thinned to keep the rest readable",
+        message_template=(
+            "Chart {chart_id!r}: {dropped} of {total} value labels had no clear "
+            "spot and were not drawn; hovering a point still shows its value."
+        ),
+        fix_template=(
+            "Label fewer points (`labels.visible: last`), widen or heighten the "
+            "chart, shorten the number format, or show the values in a "
+            "`support_table`."
+        ),
+        doc=(
+            "Fired when a chart's `auto` value labels cannot all find a spot that "
+            "keeps clear of the marks, gridlines, axis labels and each other, so "
+            "more than a quarter of them are left undrawn. An authored `position` "
+            "pins a label, which is never moved or dropped. The warning replaces "
+            "the crowded-labels warning on the same chart."
+        ),
+        summary="Fired when more than a quarter of a chart's auto value labels are dropped.",
+        docs_topic="charts",
+    )
+)
+
+WARN_VALUE_LABELS_NO_MARKERS = REGISTRY.register(
+    WarningCode(
+        code="WARN-VALUE-LABELS-NO-MARKERS",
+        domain="render",
+        title="Value labels on a line or area with no point markers",
+        message_template=(
+            "Chart {chart_id!r}: value labels are shown on a line or area with no "
+            "point markers, and some sit off their points or belong to several series, "
+            "so a label cannot be traced to its point."
+        ),
+        fix_template=(
+            "Show the points with `style.marks.point.size`, or label fewer points."
+        ),
+        doc=(
+            "Fired when a line or unstacked area has `auto` value labels but draws no point markers, "
+            "and either a label moved off its default spot to clear the chart or "
+            "more than one series is labeled. Without a dot, a label away from "
+            "its vertex has nothing tying it to its point."
+        ),
+        summary="Fired when value labels sit on a line or area with no point markers and cannot be traced.",
         docs_topic="charts",
     )
 )

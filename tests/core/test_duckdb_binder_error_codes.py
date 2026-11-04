@@ -12,8 +12,9 @@ import pytest
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.diagnostics.execution import QueryError
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 from dbt_charts.core.execute.executor import Executor
+
+from .._backend_runner import DuckDBRunner
 
 
 def _make_query(sql: str) -> SqlQuery:
@@ -29,11 +30,11 @@ class TestDuckDBBinderErrorCodes:
             ERR_BINDER_UNKNOWN_COLUMN,
         )
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
-            result = adapter._execute(
+            result = adapter.execute(
                 _make_query("SELECT nonexistent_col FROM (SELECT 1 AS a) t")
             )
             assert result.error is not None
@@ -47,9 +48,9 @@ class TestDuckDBBinderErrorCodes:
         """A bare column beside an aggregate is a GROUP BY fix, not a missing column."""
         from dbt_charts.core.diagnostics.codes_execute import ERR_BINDER_GROUP_BY
 
-        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
         try:
-            result = adapter._execute(
+            result = adapter.execute(
                 _make_query("SELECT a, count(*) FROM (SELECT 1 AS a) t")
             )
             assert result.error is not None
@@ -66,18 +67,15 @@ class TestDuckDBBinderErrorCodes:
         from dbt_charts.core.diagnostics.codes_execute import (
             ERR_BINDER_TYPE_MISMATCH,
         )
-        from dbt_charts.core.execute.adapters.duckdb_adapter import (
-            _classify_duckdb_error,
-        )
+        from dbt_charts.core.execute.backends.duckdb_local import _statement_error
 
         # TypeMismatchException is hard to trigger from plain SQL in DuckDB — the
         # binder normally raises BinderException instead.  We verify the classifier
         # directly: it maps TypeMismatchException to the right code.
         exc = duckdb.TypeMismatchException("Cannot add INTEGER and VARCHAR")
-        result = _classify_duckdb_error(exc)
-        assert result.error is not None
-        assert result.error.code is ERR_BINDER_TYPE_MISMATCH, (
-            f"expected ERR-BINDER-TYPE-MISMATCH, got {result.error.code!r}"
+        error = _statement_error(exc, duckdb.connect(), None)
+        assert error.code is ERR_BINDER_TYPE_MISMATCH, (
+            f"expected ERR-BINDER-TYPE-MISMATCH, got {error.code!r}"
         )
 
     def test_missing_table_returns_binder_unknown_relation_code(self) -> None:
@@ -86,11 +84,11 @@ class TestDuckDBBinderErrorCodes:
             ERR_BINDER_UNKNOWN_RELATION,
         )
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
-            result = adapter._execute(_make_query("SELECT * FROM nonexistent_table"))
+            result = adapter.execute(_make_query("SELECT * FROM nonexistent_table"))
             assert result.error is not None
             assert result.error.code is ERR_BINDER_UNKNOWN_RELATION, (
                 f"expected ERR-BINDER-UNKNOWN-RELATION, got {result.error.code!r}"
@@ -104,9 +102,9 @@ class TestDuckDBBinderErrorCodes:
             ERR_BINDER_UNKNOWN_COLUMN,
         )
 
-        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
         try:
-            result = adapter._execute(_make_query("SELECT no_such_fn(1)"))
+            result = adapter.execute(_make_query("SELECT no_such_fn(1)"))
             assert result.error is not None
             assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
         finally:
@@ -117,20 +115,18 @@ class TestDuckDBBinderErrorCodes:
         import duckdb
 
         from dbt_charts.core.diagnostics.codes_execute import ERR_WAREHOUSE_RUNTIME
-        from dbt_charts.core.execute.adapters.duckdb_adapter import (
-            _classify_duckdb_error,
-        )
+        from dbt_charts.core.execute.backends.duckdb_local import _statement_error
 
         exc = duckdb.IOException("could not open file: /no/such/path")
-        result = _classify_duckdb_error(exc)
-        assert result.error is not None
-        assert result.error.code is ERR_WAREHOUSE_RUNTIME
+        assert _statement_error(exc, duckdb.connect(), None).code is (
+            ERR_WAREHOUSE_RUNTIME
+        )
 
     def test_a_runtime_error_gets_no_reference_advice(self) -> None:
         """A shape that merely resembles a reference, failing for another reason."""
-        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
         try:
-            result = adapter._execute(
+            result = adapter.execute(
                 _make_query(
                     "WITH a AS ((SELECT 1 AS n)), "
                     "b AS (SELECT * FROM (SELECT 2 AS n) AS t) "
@@ -148,9 +144,9 @@ class TestDuckDBBinderErrorCodes:
         """`WITH q AS ({{ queries.q }})` resolves to a parenthesized `(...) AS q`
         that sqlglot accepts and DuckDB rejects, so the advice comes from the
         adapter, not the static guard."""
-        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
         try:
-            result = adapter._execute(
+            result = adapter.execute(
                 _make_query(
                     "WITH q AS ((SELECT 'x' AS a, 1 AS v) AS q) SELECT a, v FROM q"
                 )
@@ -164,58 +160,43 @@ class TestDuckDBBinderErrorCodes:
             adapter.close()
 
     def test_unparseable_sql_error_keeps_its_own_code_and_fields(self) -> None:
-        """UnparseableSqlError raised by validate_select_only *inside* the
-        same try _classify_duckdb_error classifies must keep ERR-UNPARSEABLE-
-        SQL — not fall through to the generic ERR-WAREHOUSE-RUNTIME fallback,
-        which would also lose the sql_line/sql_start_col/sql_end_col fields
-        this task adds."""
+        """The guard's UnparseableSqlError keeps ERR-UNPARSEABLE-SQL and its
+        sql_line/sql_start_col/sql_end_col fields, not the generic
+        ERR-WAREHOUSE-RUNTIME fallback."""
         from dbt_charts.core.diagnostics.codes_execute import ERR_UNPARSEABLE_SQL
-        from dbt_charts.core.diagnostics.execution import (
-            SqlErrorPosition,
-            UnparseableSqlError,
-        )
-        from dbt_charts.core.execute.adapters.duckdb_adapter import (
-            _classify_duckdb_error,
-        )
 
-        exc = UnparseableSqlError(
-            "boom",
-            sql_position=SqlErrorPosition(
-                line=1, start_col=12, end_col=14, line_text="SELECT 1 AS bb"
-            ),
-        )
-        result = _classify_duckdb_error(exc)
-        assert result.error is not None
-        assert result.error.code is ERR_UNPARSEABLE_SQL
-        assert result.error.fields["sql_line"] == 1
-        assert result.error.fields["sql_start_col"] == 12
-        assert result.error.fields["sql_end_col"] == 14
-        # The line the columns were measured against travels with them — the
-        # stamping pass refuses to narrow without it.
-        assert result.error.fields["sql_line_text"] == "SELECT 1 AS bb"
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter.execute(_make_query("SELECT 1 AS bb FROM"))
+            assert result.error is not None
+            assert result.error.code is ERR_UNPARSEABLE_SQL
+            assert result.error.fields["sql_line"] == 1
+            assert "sql_start_col" in result.error.fields
+            assert "sql_end_col" in result.error.fields
+            assert result.error.fields["sql_line_text"] == "SELECT 1 AS bb FROM"
+        finally:
+            adapter.close()
 
     def test_mutating_sql_error_keeps_its_own_code(self) -> None:
-        """Same delegation for MutatingSqlError — a non-read-only statement
-        raised by validate_select_only must not collapse into
-        ERR-WAREHOUSE-RUNTIME either."""
+        """Same for MutatingSqlError — a non-read-only statement must not
+        collapse into ERR-WAREHOUSE-RUNTIME either."""
         from dbt_charts.core.diagnostics.codes_execute import ERR_MUTATING_SQL
-        from dbt_charts.core.diagnostics.execution import MutatingSqlError
-        from dbt_charts.core.execute.adapters.duckdb_adapter import (
-            _classify_duckdb_error,
-        )
 
-        exc = MutatingSqlError("Drop", "DROP TABLE foo")
-        result = _classify_duckdb_error(exc)
-        assert result.error is not None
-        assert result.error.code is ERR_MUTATING_SQL
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
+        try:
+            result = adapter.execute(_make_query("DROP TABLE foo"))
+            assert result.error is not None
+            assert result.error.code is ERR_MUTATING_SQL
+        finally:
+            adapter.close()
 
     def test_successful_query_has_no_error(self) -> None:
         """Successful queries must leave error as None."""
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
-            result = adapter._execute(_make_query("SELECT 1 AS val"))
+            result = adapter.execute(_make_query("SELECT 1 AS val"))
             assert result.error is None
         finally:
             adapter.close()

@@ -199,7 +199,7 @@ class SQLDialect(ABC):
         has no confirmed native SQL mechanism for this: the base default is
         deliberately conservative rather than guessing at syntax. BigQuery's
         equivalent is a job-level setting (QueryJobConfig.job_timeout_ms), not
-        SQL, so it is applied at connection setup in sql_adapter.py instead.
+        SQL, so it is applied at connection setup in backends/dbt_core.py instead.
 
         Args:
             seconds: Maximum seconds a statement may run.
@@ -221,7 +221,7 @@ class SQLDialect(ABC):
         itself harder keeps its own value. Every consumer of the cap reads the
         number this returns — the statement sent at connect, the credentials
         :meth:`connect_credentials` writes, and the seconds a
-        ``_QueryDurationExceeded`` reports — so what a timeout error claims
+        ``QueryDurationExceeded`` reports — so what a timeout error claims
         stays true by construction.
 
         The base returns `seconds`: only a profile that can spell the cap itself
@@ -264,7 +264,7 @@ class SQLDialect(ABC):
 
         Used to distinguish a server-side statement cancellation from a generic
         driver error (dropped connection, auth failure, etc.) so the adapter can
-        raise a clean _QueryDurationExceeded instead of a retryable error.
+        raise a clean QueryDurationExceeded instead of a retryable error.
 
         The base implementation always returns False — only dialects with a known
         server-side timeout mechanism override this.

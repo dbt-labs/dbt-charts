@@ -1,7 +1,7 @@
 """The execute boundary establishes attribution for each query it runs.
 
 `test_attribution.py` covers the module in isolation; this pins the seam where it
-meets the engine — the scope `AdapterRegistry.execute` opens around the adapter call,
+meets the engine — the scope `AdapterRegistry.execute` opens around the backend call,
 including the case the pool-sharing design depends on: two sources with identical
 connection identity but different `attribution:` must each get their own labels.
 """
@@ -10,48 +10,49 @@ from __future__ import annotations
 
 from typing import Any
 
+import nanoarrow as na
+import pyarrow as pa
+
 from dbt_charts.core.attribution import current_attribution
-from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.compose import ResolvedQuery
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.project import Project
 
 
-class _RecordingAdapter(BaseAdapter):
+class _RecordingBackend:
     """Captures the attribution in effect at the moment a query is dispatched."""
+
+    param_style: SQLDialect = INLINE_PLACEHOLDERS
 
     def __init__(self) -> None:
         self.seen: dict[str, str] = {}
 
-    @property
-    def supported_types(self) -> set[str]:
-        return {"sql"}
-
-    def _can_execute(self, query: Any, source_config: Any) -> bool:
-        return True
-
-    def _execute(
-        self,
-        query: Any,
-        variables: Any = None,
-        params: QueryParams = None,
-        source_config: Any = None,
-    ) -> QueryResult:
+    def execute(self, source: Any, query: ResolvedQuery) -> na.Array:
         self.seen = current_attribution()
-        return QueryResult(data=[], columns=[], schema=literal_schema([], []))
+        return na.Array(pa.table({"n": pa.array([], pa.int64())}))
+
+    def interrupt(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
 def _registry(
     project: Project, sources: dict[str, dict[str, Any]]
-) -> tuple[AdapterRegistry, _RecordingAdapter]:
-    adapter = _RecordingAdapter()
+) -> tuple[AdapterRegistry, _RecordingBackend]:
+    backend = _RecordingBackend()
     registry = AdapterRegistry(
-        project=project, project_sources=ProjectSourcesConfig(sources=sources)
+        project=project,
+        project_sources=ProjectSourcesConfig(sources=sources),
+        backends=BackendRegistry({"postgres": backend}),
     )
-    registry.register(adapter)
-    return registry, adapter
+    return registry, backend
 
 
 _PG: dict[str, Any] = {

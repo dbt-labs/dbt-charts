@@ -1,3 +1,0 @@
-kind: Fixes
-body: A missing image in a text block shows an error marker in its place and the rest of the text still renders.
-time: 2026-10-31T15:50:34.88827-07:00

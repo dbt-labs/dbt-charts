@@ -1,3 +1,0 @@
-kind: Fixes
-body: Validation now warns when a board link points at a board that does not exist.
-time: 2026-10-16T14:41:54.872491-07:00

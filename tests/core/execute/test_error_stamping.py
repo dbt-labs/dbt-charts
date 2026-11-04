@@ -36,16 +36,14 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
             "adapters/databricks_connection_manager.py",
             "_assert_vendored_methods_unchanged",
         ),
-        # adapters/dbt_adapter.py
-        ("adapters/dbt_adapter.py", "_read_lakecompute_target"),
-        ("adapters/dbt_adapter.py", "_read_profiles_yml"),
-        ("adapters/dbt_adapter.py", "_read_target_dict"),
-        ("adapters/dbt_adapter.py", "_read_trino_target"),
+        # adapters/dbt_profile.py
+        ("adapters/dbt_profile.py", "_read_lakecompute_target"),
+        ("adapters/dbt_profile.py", "_read_profiles_yml"),
+        ("adapters/dbt_profile.py", "_read_target_dict"),
+        ("adapters/dbt_profile.py", "_read_trino_target"),
         # adapters/dbt_adapter_factory.py
         ("adapters/dbt_adapter_factory.py", "build_adapter"),
         ("adapters/dbt_adapter_factory.py", "import_adapter_module"),
-        # adapters/duckdb_adapter.py
-        ("adapters/duckdb_adapter.py", "DuckDBAdapter._connect"),
         # cache_backend.py — a naive timestamp from a backend is an implementer
         # contract breach, not an authoring mistake: no board YAML, CLI flag, or
         # variable value can produce it, so there is no author-facing diagnostic
@@ -66,6 +64,8 @@ ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # classified with the warehouse's own errors by the caller.
         ("drivers/trino.py", "_set"),
         ("drivers/trino.py", "arrow_column_type"),
+        # backends/duckdb_local.py
+        ("backends/duckdb_local.py", "DuckDBBackend._connect"),
         # duckdb_config.py
         ("duckdb_config.py", "normalize_duckdb_config"),
         # arrow_ingest.py: TypeError/ValueError are the row-to-Arrow contract;

@@ -1,3 +1,0 @@
-kind: Fixes
-body: dct validate reports a bad source config once when dbt_charts.yml is validated alongside a board.
-time: 2026-11-03T16:40:09.873646-08:00

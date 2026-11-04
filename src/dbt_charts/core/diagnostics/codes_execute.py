@@ -473,7 +473,7 @@ ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD = REGISTRY.register(
         doc=(
             "Fired when a `dbt_profile` source expands to a duckdb target "
             "carrying `plugins`, `filesystems`, `remote`, or "
-            "`use_credential_provider` and the in-process DuckDBAdapter "
+            "`use_credential_provider` and the in-process DuckDB backend "
             "executes it. A directly authored duckdb source is rejected at "
             "parse time instead. These "
             "fields need dbt-duckdb's own connection lifecycle (plugin hooks, "
@@ -1036,29 +1036,6 @@ ERR_WAREHOUSE_RESULT_WARNING = REGISTRY.register(
             "right, so dbt Charts raises rather than rendering it. Change the "
             "query so the warning no longer applies, for example by selecting "
             "fewer rows."
-        ),
-        docs_topic="queries",
-    )
-)
-
-ERR_DBT_TARGET_NEEDS_SOURCE = REGISTRY.register(
-    ErrorCode(
-        code="ERR-DBT-TARGET-NEEDS-SOURCE",
-        domain="execute",
-        title="This dbt target is reachable only through a declared source",
-        message_template=(
-            "This dbt project's target {target!r} is {warehouse}, which dbt "
-            "Charts reaches only through a declared source. Add a source with "
-            "`dbt_profile: {profile}` and `target: {target}`, and set `source:` "
-            "on the query."
-        ),
-        doc=(
-            "Fired when a query uses dbt Jinja such as `{{ ref() }}` with no "
-            "`source:`, and the dbt project's own target is lake compute or "
-            "Trino. Such a query would run through dbt Core against that "
-            "target, and dbt Charts connects to those warehouses through a "
-            "driver rather than a dbt Core adapter. Declare a source that names the "
-            "profile and target, and set `source:` on the query."
         ),
         docs_topic="queries",
     )

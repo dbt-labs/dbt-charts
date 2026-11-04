@@ -1,17 +1,15 @@
-"""Registry for query adapters.
+"""Registry that executes a board's queries.
 
 Stage: EXECUTE
-Purpose: Manage and select appropriate adapters for query execution.
-
-The AdapterRegistry maintains a list of available adapters and uses
-type-based routing via the unified query interface.
+Purpose: Resolve a query's source and run it: SQL on the backend its source
+    kind routes to, ``values`` and ``schema`` queries on their own adapters.
 """
 
 from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import (
     Path,  # noqa: TID251 — names the dbt project directory and DuckDB/SQLite files on disk
@@ -30,11 +28,13 @@ from dbt_charts.core.compile.models.query.normalized import (
     SchemaQuery,
     SqlQuery,
     is_sql_query,
+    is_values_query,
 )
 from dbt_charts.core.compile.models.source import (
     FILE_SOURCE_TYPES,
     AttributedSourceConfig,
     CsvSourceConfig,
+    DbtProfileSourceConfig,
     DuckDBSourceConfig,
     JsonSourceConfig,
     ParquetSourceConfig,
@@ -57,26 +57,43 @@ from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.codes_compile import ERR_SOURCE_NOT_FOUND
 from dbt_charts.core.diagnostics.codes_execute import (
     ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+    ERR_ADAPTER_UNAVAILABLE,
+    ERR_QUERY_DURATION_EXCEEDED,
     ERR_SOURCE_NOT_FOUND_EMPTY,
     ERR_SOURCE_NOT_NAMED,
 )
+from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.dialects import DIALECTS, SQLDialect, get_dialect
 from dbt_charts.core.execute.adapters.base import (
-    BaseAdapter,
+    QueryDurationExceeded,
     QueryParams,
     QueryResult,
     adapter_unavailable,
     apply_row_limit_truncation,
+    classify_warehouse_error,
+    connection_failure,
     handle_adapter_error,
     plain_error,
     resolve_effective_row_limit,
 )
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+    ConnectionSetupFailed,
+)
 from dbt_charts.core.execute.adapters.dbt_utils import (
     DbtRefResolver,
-    source_target_path,
 )
+from dbt_charts.core.execute.adapters.schema_adapter import SchemaAdapter
+from dbt_charts.core.execute.adapters.values_adapter import ValuesAdapter
+from dbt_charts.core.execute.backends.base import Backend, BackendRegistry
+from dbt_charts.core.execute.backends.duckdb_local import default_duckdb_source
+from dbt_charts.core.execute.compose import (
+    compose,
+)
+from dbt_charts.core.execute.dbt_jinja import has_dbt_jinja
+from dbt_charts.core.execute.drivers import DRIVER_SOURCE_TYPES
 from dbt_charts.core.execute.metricflow import SemanticLayer
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
+from dbt_charts.core.execute.result import rows_to_query_result
 from dbt_charts.core.execute.source_registry import SourceRegistry
 from dbt_charts.core.execute.source_resolver import (
     AD_HOC_QUERY_NAME,
@@ -91,7 +108,6 @@ from dbt_charts.core.execute.sql_translate import (
     dialect_differs,
     dialect_unsupported,
     engine_dialect,
-    render_in_dialect,
 )
 from dbt_charts.core.project import Project
 from dbt_charts.core.project_data_files import unknown_source_advice
@@ -99,8 +115,7 @@ from dbt_charts.core.project_data_files import unknown_source_advice
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
-    from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-    from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
+    from dbt_charts.core.execute.compose import ResolvedQuery
     from dbt_charts.core.execute.file_source_materializer import (
         FileSourceMaterializer,
     )
@@ -115,7 +130,7 @@ _EMPTY_PROJECT_SOURCES: Final[ProjectSourcesConfig] = ProjectSourcesConfig(sourc
 # read_csv/read_json_auto (see m3-duckdb-concurrency-and-file-sources initiative).
 # Grep this symbol before adding allow_external_access_in_readonly=True elsewhere.
 # A DuckDB source that authors attach/extensions/secrets gets external access
-# only while those fields are applied; DuckDBAdapter._connect then locks the
+# only while those fields are applied; DuckDBBackend._connect then locks the
 # connection to the attach paths and secret scopes.
 LOCAL_AUTHORING_REGISTRY_KWARGS: dict[str, Any] = {
     "read_only": True,
@@ -139,6 +154,19 @@ def linked_dbt_path(project: Project) -> Path | None:
     )
 
 
+def warehouse_routes(max_workers: int | None) -> dict[str, Backend]:
+    """The routes of the warehouse kinds: Arrow drivers share one backend, dbt
+    adapters another."""
+    from dbt_charts.core.execute.adapters.dbt_adapter_factory import DBT_SOURCE_TYPES
+    from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+    from dbt_charts.core.execute.backends.driver import DriverBackend
+
+    return {
+        **dict.fromkeys(DRIVER_SOURCE_TYPES, DriverBackend(max_workers)),
+        **dict.fromkeys(DBT_SOURCE_TYPES, DbtBackend(max_workers)),
+    }
+
+
 def build_adapter_registry(
     project: Project,
     *,
@@ -152,7 +180,7 @@ def build_adapter_registry(
     observers: list[WarehouseObserver] | None = None,
     file_materializer: FileSourceMaterializer | None = None,
     file_materializer_factory: Callable[[], FileSourceMaterializer] | None = None,
-    extra_adapters: list[BaseAdapter] | None = None,
+    extra_routes: Mapping[str, Backend] | None = None,
 ) -> AdapterRegistry:
     """Build an AdapterRegistry with standard adapters.
 
@@ -161,7 +189,7 @@ def build_adapter_registry(
 
     Args:
         project: The dbt charts project supplying source config. When it is a
-            ``FilesystemProject``, DuckDBAdapter/SqliteAdapter also root
+            ``FilesystemProject``, DuckDBBackend/SqliteBackend also root
             relative paths against ``project.root``; any other host (Cloud's
             git-blob store, an in-memory test double) gets ``data_dir=None``
             — fine as long as no source references a relative file path.
@@ -184,11 +212,11 @@ def build_adapter_registry(
         resolver: Source resolver instance. Defaults to DefaultSourceResolver when
             None. Pass an AllowlistedSourceResolver for deployed-mode enforcement.
         allow_external_access_in_readonly: Security opt-in; passed through to
-            SqlAdapter. See SqlAdapter docstring for full semantics. Default False
+            DuckDBBackend. Default False
             preserves existing behavior. Approved callsites passing True are listed
             on LOCAL_AUTHORING_REGISTRY_KWARGS in this module (local `dct
             playground`, MCP, the embedded preview, evals).
-        max_workers: Width of the SqlAdapter per-source connection pool (warm
+        max_workers: Width of the dbt backend's per-source connection pool (warm
             warehouse worker threads). None falls back to the execution-config
             default. Serve passes its resolved max_workers so the persisted
             registry's pool matches the render-time parallelism.
@@ -198,19 +226,22 @@ def build_adapter_registry(
             materializer, built on first use. When neither argument is given,
             the registry lazily builds the local in-process materializer, so a
             fully-cached render never opens one.
-        extra_adapters: Host-supplied adapters registered before every
-            standard adapter, so each wins first-match-wins for whatever source
-            it claims. The registry owns
-            them: ``close()`` closes any that define it.
+        extra_routes: Host-supplied backends by source kind, replacing the
+            default route of any kind they name. The registry owns them:
+            ``close()`` closes each.
     """
-    from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-    from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-    from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
-    from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
-    from dbt_charts.core.execute.adapters.values_adapter import ValuesAdapter
+    from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+    from dbt_charts.core.execute.backends.sqlite import SqliteBackend
     from dbt_charts.core.execute.file_source_materializer import (
         resolve_local_file_materializer_factory,
     )
+
+    # Relative DuckDB/SQLite paths root against the project directory — only a
+    # FilesystemProject has one. Any other host (Cloud's git-blob store, an
+    # in-memory test double) passes data_dir=None; the backends tolerate that
+    # (no relative-path resolution needed until a source actually references one).
+    data_dir = project.root if isinstance(project, FilesystemProject) else None
+    resolved_dbt_path = linked_dbt_path(project)
 
     registry = AdapterRegistry(
         project=project,
@@ -223,67 +254,26 @@ def build_adapter_registry(
             if file_materializer_factory is not None
             else resolve_local_file_materializer_factory(project, file_materializer)
         ),
+        backends=BackendRegistry(
+            {
+                **warehouse_routes(max_workers),
+                "duckdb": DuckDBBackend(
+                    data_dir=data_dir,
+                    read_only=read_only,
+                    duckdb_config=duckdb_config,
+                    allow_external_access_in_readonly=allow_external_access_in_readonly,
+                ),
+                "sqlite": SqliteBackend(data_dir=data_dir),
+                **(extra_routes if extra_routes is not None else {}),
+            }
+        ),
+        profile_type=profile_type,
+        dbt_context=(
+            DbtContext(dbt_project_path=resolved_dbt_path.resolve(), target=target)
+            if resolved_dbt_path is not None
+            else None
+        ),
     )
-
-    for adapter in extra_adapters if extra_adapters is not None else []:
-        registry.register(adapter)
-
-    # Relative DuckDB/SQLite paths root against the project directory — only a
-    # FilesystemProject has one. Any other host (Cloud's git-blob store, an
-    # in-memory test double) passes data_dir=None; DuckDBAdapter/SqliteAdapter
-    # already tolerate that (no relative-path resolution needed until a source
-    # actually references one).
-    data_dir = project.root if isinstance(project, FilesystemProject) else None
-
-    resolved_dbt_path = linked_dbt_path(project)
-
-    # DbtAdapter first (handles SQL queries with dbt features, takes priority)
-    if resolved_dbt_path is not None:
-        registry.register(
-            DbtAdapter(
-                project=project,
-                dbt_project_path=resolved_dbt_path,
-                target_name=target,
-            )
-        )
-
-    # DuckDBAdapter second (handles all DuckDB execution; must precede SqlAdapter).
-    # Its own source_config is fixed to :memory: — DuckDB remains a valid *named*
-    # source type (dbt_charts.yml `sources: {name: {type: duckdb, ...}}`), but there
-    # is no build-time default connection for a sourceless query to fall back to.
-    registry.register(
-        DuckDBAdapter(
-            source_config=DuckDBSourceConfig(type="duckdb", path=":memory:"),
-            data_dir=data_dir,
-            read_only=read_only,
-            duckdb_config=duckdb_config,
-            allow_external_access_in_readonly=allow_external_access_in_readonly,
-            dbt_project_path=str(resolved_dbt_path) if resolved_dbt_path else None,
-            project=project,
-        )
-    )
-
-    # SqlAdapter (dbt-warehouse path: postgres, snowflake, bigquery, etc.)
-    registry.register(
-        SqlAdapter(
-            project=project,
-            dbt_project_path=str(resolved_dbt_path) if resolved_dbt_path else None,
-            profile_type=profile_type,
-            max_workers=max_workers,
-        )
-    )
-
-    # SqliteAdapter (filesystem-fd; local projects only)
-    registry.register(SqliteAdapter(data_dir=data_dir, project=project))
-
-    # Lazy adapters — zero cost until actually called
-    registry.register(ValuesAdapter())
-
-    from dbt_charts.core.execute.adapters.schema_adapter import (
-        SchemaAdapter,
-    )
-
-    registry.register(SchemaAdapter(registry))
 
     # When the execute path opts into external file access under read-only,
     # cold schema introspection must open DuckDB with the same config.
@@ -325,16 +315,12 @@ UNRESOLVED = Unresolved()
 
 
 class AdapterRegistry:
-    """Registry for managing and selecting query adapters.
+    """Executes queries: SQL on the backend its source kind routes to, the
+    non-SQL query types on their own adapters.
 
-    Adapters declare the query types they support (`supported_types`) and, via
-    `can_execute(query, source_config)`, whether they own a query against its
-    resolved source. The registry routes on both.
-
-    Priority order: the first registered adapter whose
-    `can_execute(query, source_config)` is True wins, so registration order
-    breaks ties between eligible adapters (e.g. DbtAdapter is registered before
-    DuckDBAdapter, so it claims source-less dbt-jinja SQL that both accept).
+    SQL never picks its route: ``resolve_query_source`` names a concrete source,
+    and ``BackendRegistry`` maps that source's kind to a backend. ``values`` and
+    ``schema`` queries have no source and dispatch on their query type.
 
     Example:
         >>> from dbt_charts.core.execute.adapters import build_adapter_registry
@@ -351,6 +337,9 @@ class AdapterRegistry:
         observers: list[WarehouseObserver] | None = None,
         file_materializer: FileSourceMaterializer | None = None,
         file_materializer_factory: Callable[[], FileSourceMaterializer] | None = None,
+        backends: BackendRegistry | None = None,
+        profile_type: str | None = None,
+        dbt_context: DbtContext | None = None,
     ) -> None:
         """Initialize adapter registry.
 
@@ -373,11 +362,22 @@ class AdapterRegistry:
                 ``file_materializer`` / ``file_materializer_factory`` is
                 normally set; both ``None`` leaves file-source queries
                 refused.
+            backends: The routes of the sources that run on a ``Backend``
+                (warehouses). None routes none, so such a source is refused by
+                kind.
+            profile_type: The warehouse dialect the host reports for this
+                registry when no dbt project names one (see
+                ``detect_database_type_from_registry``).
+            dbt_context: The linked dbt project (its path and target), None when
+                the host has none. Sources resolve against it; it routes nothing.
         """
-        self._adapters: list[BaseAdapter] = []
+        self._dbt_context = dbt_context
+        self._values = ValuesAdapter()
+        self._schema = SchemaAdapter(self)
         self._observers: list[WarehouseObserver] = list(observers) if observers else []
-        self._type_index: dict[str, list[BaseAdapter]] = {}
         self._project = project
+        self._backends = backends if backends is not None else BackendRegistry({})
+        self.profile_type = profile_type
         self._dbt_refs = DbtRefResolver(project)
         self._sources = SourceRegistry(project_sources=project_sources)
         self._resolver: SourceResolver = (
@@ -406,29 +406,17 @@ class AdapterRegistry:
     def dbt_refs(self) -> DbtRefResolver:
         return self._dbt_refs
 
-    def register(self, adapter: BaseAdapter) -> None:
-        """Register an adapter.
-
-        Adapters are indexed by their supported types for fast lookup.
-
-        Args:
-            adapter: Adapter instance to register
-        """
-        self._adapters.append(adapter)
-
-        # Update type index
-        for query_type in adapter.supported_types:
-            if query_type not in self._type_index:
-                self._type_index[query_type] = []
-            self._type_index[query_type].append(adapter)
+    @property
+    def dbt_context(self) -> DbtContext | None:
+        """The linked dbt project, or None when there is no dbt project."""
+        return self._dbt_context
 
     def interrupt(self) -> None:
         """Cancel in-flight queries and refuse new ones; one-way, for shutdown."""
-        for adapter in self._adapters:
-            adapter.interrupt()
+        self._backends.interrupt()
 
     def close(self) -> None:
-        """Close adapters that hold external resources (e.g. DuckDB file handles).
+        """Close the backends, which hold the connections.
 
         Also closes the file-source materializer the registry itself built
         via ``file_materializer_factory``, if any — its cache backend may
@@ -437,10 +425,7 @@ class AdapterRegistry:
         the caller that built and handed it in does (Cloud shares one
         materializer across the registry and the session).
         """
-        for adapter in self._adapters:
-            close = getattr(adapter, "close", None)
-            if close is not None:
-                close()
+        self._backends.close()
         if self._built_file_materializer is not None:
             self._built_file_materializer.close()
 
@@ -463,50 +448,6 @@ class AdapterRegistry:
                 self._built_file_materializer = self._file_materializer_factory()
         return self._built_file_materializer
 
-    def get_adapters_for_type(self, query_type: str) -> list[BaseAdapter]:
-        """Get all adapters that support a given query type.
-
-        Args:
-            query_type: Query type string (e.g., "sql", "csv")
-
-        Returns:
-            List of adapters supporting this type (in registration order)
-        """
-        return self._type_index.get(query_type, [])
-
-    def get_adapter(
-        self, query: AnyQuery, source_config: ResolvedSourceConfig | None
-    ) -> BaseAdapter | None:
-        """Get the adapter that owns this query against its resolved source.
-
-        Routes on query_type (fast path via the type index) then on the resolved
-        source type via each adapter's ``can_execute``. First registered match
-        wins, so registration order breaks ties between adapters eligible for the
-        same query (e.g. DbtAdapter before DuckDBAdapter for source-less dbt-jinja
-        SQL). Returns None when nothing claims it — a registry that omits an
-        adapter (Cloud omits DuckDB/SQLite) closes that source's seam here.
-
-        Args:
-            query: AnyQuery object
-            source_config: Typed source config resolved by SourceResolver, or None.
-
-        Returns:
-            Adapter instance or None if no adapter can execute the query
-        """
-        # Fast path: lookup by type
-        candidates = self.get_adapters_for_type(query.query_type)
-
-        for adapter in candidates:
-            if adapter.can_execute(query, source_config):
-                return adapter
-
-        # Fallback: check all adapters (for adapters with custom can_execute)
-        for adapter in self._adapters:
-            if adapter not in candidates and adapter.can_execute(query, source_config):
-                return adapter
-
-        return None
-
     def register_source(self, name: str, config: dict[str, Any]) -> None:
         """Register a synthetic source. Idempotent: first registration wins."""
         self._sources.register(name, config)
@@ -524,17 +465,6 @@ class AdapterRegistry:
         The one rule for SQL that names no source; None when there is neither.
         """
         return source if source is not None else self.project_sources.implicit_source
-
-    def _derive_dbt_context(self) -> DbtContext | None:
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-
-        for adapter in self._adapters:
-            if isinstance(adapter, DbtAdapter):
-                return DbtContext(
-                    dbt_project_path=adapter.dbt_project_path,
-                    target=adapter.target_name,
-                )
-        return None
 
     def execute(
         self,
@@ -561,8 +491,8 @@ class AdapterRegistry:
                 of re-processing variables. This is used by batch execution where
                 parameterization happens before adapter execution.
             board: Compiled board; used to extract board-level sources for resolution.
-            dbt_context: Explicit dbt context override. When None, derived from
-                registered adapters.
+            dbt_context: Explicit dbt context override. When None, the linked
+                dbt project.
             query_name: Author-facing name of the query, threaded to the source
                 resolver for ERR-SOURCE-NOT-FOUND / ERR-SOURCE-INLINE-FORBIDDEN
                 messages. Callers executing a synthetic query (schema
@@ -641,22 +571,26 @@ class AdapterRegistry:
             # Same composition every adapter gets: {{ queries.X }} refs expand
             # and variables render before the materializer ever sees the SQL —
             # dispatching from any point above this would hand it an
-            # unresolved template (materialize_and_run's own render step
-            # substitutes plain variables but does not expand query refs).
-            # "duckdb" is the placeholder style materialize_and_run's own
-            # internal render would have used — composition here replaces
-            # that render, not layers a second one on top of it.
-            composed = self._compose_query_refs(
-                query,
-                variables,
-                params,
-                board=board,
-                source_config=source_config,
-                render_dialect=get_dialect("duckdb"),
-            )
-            if isinstance(composed, QueryResult):
-                return composed
-            query, params = composed
+            # unresolved template. "duckdb" is the placeholder style
+            # materialize_and_run's own render would have used.
+            try:
+                file_resolved = compose(
+                    query,
+                    variables=variables,
+                    params=params,
+                    board=board,
+                    source_config=source_config,
+                    dialect_name="duckdb",
+                    render_dialect=get_dialect("duckdb"),
+                    refs=self._dbt_refs,
+                    semantic=None,
+                )
+            except DbtChartsError as exc:
+                return handle_adapter_error("File-source execution", exc)
+            if isinstance(file_resolved, QueryResult):
+                return file_resolved
+            query = query.model_copy(update={"sql": file_resolved.sql})
+            params = list(file_resolved.params)
             assert isinstance(query, SqlQuery) and query.source is not None
             return self._execute_file_source(
                 materializer,
@@ -668,76 +602,139 @@ class AdapterRegistry:
                 query_name=query_name,
             )
 
-        # Single-pass routing on (query_type, resolved source type). source_config
-        # is already resolved above, so each adapter's can_execute claims only the
-        # source it owns — no concrete-class introspection here.
-        adapter = self.get_adapter(query, source_config)
-
-        if not adapter:
-            if self._type_index.get(query.query_type):
-                # Distinguished so the author does not debug a phantom missing
-                # query type when it is the source that has no claimant.
-                detail = (
-                    f"this query's {source_config.type!r} source"
-                    if source_config is not None
-                    else "this query"
-                )
-                return adapter_unavailable(
-                    f"No adapter for query type {query.query_type!r} supports {detail}."
-                )
-            return adapter_unavailable(
-                f"No adapter registered for query type {query.query_type!r}."
-            )
-
-        # Composition: expand {{ queries.X }} references and parameterize
-        # variables before dispatch. Placeholders are rendered in the style the
-        # target adapter declares via param_render_dialect.
-        composed = self._compose_query_refs(
-            query,
-            variables,
-            params,
-            board=board,
-            source_config=source_config,
-            render_dialect=(
-                adapter.param_render_dialect(source_config)
-                if source_config is not None
-                else INLINE_PLACEHOLDERS
-            ),
+        # The board and query that caused this warehouse call. Established here
+        # rather than authored, so it cannot drift when a board or query is
+        # renamed. The surface is set further out, by whichever root opened the
+        # session.
+        scope = {"query": query_name}
+        if board is not None:
+            scope["board"] = board.id
+        # The source's own attribution rides this per-call scope, not the pooled
+        # adapter: pools are shared by connection identity, so two sources on one
+        # warehouse would otherwise both get whichever one built the pool.
+        authored = (
+            source_config.attribution
+            if isinstance(source_config, AttributedSourceConfig)
+            else {}
         )
-        if isinstance(composed, QueryResult):
-            return composed
-        query, params = composed
 
+        with attribute(scope, authored):
+            if is_sql_query(query):
+                if source_config is None:
+                    return handle_adapter_error(
+                        "Source resolution", self._source_not_named_error()
+                    )
+                return self._execute_on_backend(
+                    query, source_config, variables, params, board, None
+                )
+            return self._execute_non_sql(query, variables, params)
+
+    def _execute_non_sql(
+        self, query: AnyQuery, variables: VariableValues | None, params: QueryParams
+    ) -> QueryResult:
+        """Run a ``values`` or ``schema`` query, observed like a backend call."""
+        adapter = self._values if is_values_query(query) else self._schema
         status = "error"
         start = time.perf_counter()
         try:
-            # The board and query that caused this warehouse call. Established here
-            # rather than authored, so it cannot drift when a board or query is
-            # renamed. The surface is set further out, by whichever root opened the
-            # session.
-            scope = {"query": query_name}
-            if board is not None:
-                scope["board"] = board.id
-            # The source's own attribution rides this per-call scope, not the pooled
-            # adapter: pools are shared by connection identity, so two sources on one
-            # warehouse would otherwise both get whichever one built the pool.
-            authored = (
-                source_config.attribution
-                if isinstance(source_config, AttributedSourceConfig)
-                else {}
-            )
-            with attribute(scope, authored):
-                result = adapter.execute(
-                    query, variables, params, source_config=source_config
-                )
+            result = adapter.execute(query, variables, params)
             status = "success" if result.error is None else "error"
             return result
         finally:
+            notify_observers(self._observers, None, status, time.perf_counter() - start)
+
+    def _compose(
+        self,
+        query: SqlQuery,
+        variables: VariableValues | None,
+        params: QueryParams,
+        board: Board | None,
+        source_config: ResolvedSourceConfig,
+        render_dialect: SQLDialect,
+    ) -> ResolvedQuery | QueryResult:
+        try:
+            semantic = self.semantic_layer(source_config)
+        except DbtChartsError as exc:
+            return handle_adapter_error("MetricFlow", exc)
+        return compose(
+            query,
+            variables=variables,
+            params=params,
+            board=board,
+            source_config=source_config,
+            dialect_name=source_config.type,
+            render_dialect=render_dialect,
+            refs=self._dbt_refs,
+            semantic=semantic,
+        )
+
+    def _execute_on_backend(
+        self,
+        query: SqlQuery,
+        source_config: ResolvedSourceConfig,
+        variables: VariableValues | None,
+        params: QueryParams,
+        board: Board | None,
+        resolved: ResolvedQuery | None,
+    ) -> QueryResult:
+        """Run a SQL query on its source's backend, observed from lookup to rows.
+
+        Composes the query unless the caller already did (*resolved*). Every
+        failure becomes the query's error result, a backend's classified by
+        :func:`classify_warehouse_error`.
+        """
+        dialect_name = source_config.type
+        status = "error"
+        start = time.perf_counter()
+        try:
+            try:
+                backend = self._backends.for_source(source_config)
+            except DbtChartsError as exc:
+                return handle_adapter_error(f"{dialect_name} query setup", exc)
+            if resolved is None:
+                composed = self._compose(
+                    query,
+                    variables,
+                    params,
+                    board,
+                    source_config,
+                    backend.param_style,
+                )
+                if isinstance(composed, QueryResult):
+                    return composed
+                resolved = composed
+            try:
+                table = backend.execute(source_config, resolved)
+            except QueryDurationExceeded as exc:
+                return QueryResult(
+                    data=[],
+                    error=QueryError(
+                        ERR_QUERY_DURATION_EXCEEDED.message_template.format(
+                            seconds=exc.seconds, source=query.source or dialect_name
+                        ),
+                        code=ERR_QUERY_DURATION_EXCEEDED,
+                    ),
+                )
+            except QueryError as exc:
+                return QueryResult(data=[], error=exc)
+            except DbtChartsError as exc:
+                return handle_adapter_error(f"{dialect_name} query setup", exc)
+            except ConnectionSetupFailed as exc:
+                return connection_failure(dialect_name, exc.cause)
+            except Exception as exc:  # noqa: BLE001 — the warehouse's verdict on the statement
+                return classify_warehouse_error(
+                    f"{dialect_name} SQL execution", exc, dialect_name
+                )
+            result = rows_to_query_result(
+                table,
+                resolved.limit,
+                list(resolved.resolved_relations) or None,
+            )
+            status = "success"
+            return result
+        finally:
             notify_observers(
-                self._observers,
-                getattr(adapter, "profile_type", None),
-                status,
-                time.perf_counter() - start,
+                self._observers, dialect_name, status, time.perf_counter() - start
             )
 
     def _execute_file_source(
@@ -752,14 +749,12 @@ class AdapterRegistry:
     ) -> QueryResult:
         """Run a composed file-source SqlQuery through the materializer.
 
-        Called only after ``_compose_query_refs`` — ``query.sql`` already has
-        any ``{{ queries.X }}`` reference expanded, and *params* is set
-        whenever composition actually ran (a board with its own queries);
-        otherwise *params* is None and the materializer renders *variables*
-        itself, same as the render path.
+        Called only after :func:`compose` — ``query.sql`` already has
+        any ``{{ queries.X }}`` reference expanded, and *params* holds the
+        bindings composition rendered.
 
         Applies the same ``query.limit`` / ``execution.max_rows`` contract
-        ``SqlAdapter``/``DuckDBAdapter`` honor, but not the same mechanism:
+        ``DbtBackend`` and the other backends honor, but not the same mechanism:
         those bound the driver cursor itself, so an over-the-ceiling result
         is never fully fetched. ``materialize_and_run`` has no cursor to
         bound — it returns every row the materialized cache holds, and this
@@ -807,161 +802,6 @@ class AdapterRegistry:
                 self._observers, source_config.type, status, time.perf_counter() - start
             )
 
-    def _compose_query_refs(
-        self,
-        query: AnyQuery,
-        variables: VariableValues | None,
-        params: QueryParams,
-        *,
-        board: Board | None,
-        source_config: ResolvedSourceConfig | None,
-        render_dialect: SQLDialect,
-    ) -> tuple[AnyQuery, QueryParams] | QueryResult:
-        """Resolve dbt refs, expand ``{{ queries.X }}``, and parameterize variables.
-
-        Composition lives here — one place every adapter passes through — so no
-        individual adapter can omit it. dbt ref()/source() resolution runs
-        first, since the variable-Jinja render below is StrictUndefined and
-        doesn't know ``ref``. The adapter then receives pre-computed params and
-        skips its own render step; its own ``DbtRefResolver.resolve()`` call is
-        a no-op on *this* query's own SQL (already ref-free), but still does
-        real work when a ``{{ queries.X }}`` sub-query's raw, unresolved SQL
-        gets inlined here and reaches the adapter unresolved.
-        ``render_dialect`` is the placeholder style the adapter declared via
-        ``param_render_dialect``.
-
-        A source with a MetricFlow bundle composes every SQL query the way a
-        translated one is, so a statement that reads the bundle's datasets or
-        constellations can be compiled on the way through.
-        """
-        if is_sql_query(query) and source_config is not None and params is None:
-            try:
-                semantic = self.semantic_layer(source_config)
-            except DbtChartsError as exc:
-                return handle_adapter_error("MetricFlow", exc)
-            if semantic is not None:
-                return self._compose_translated(
-                    query,
-                    variables,
-                    params,
-                    board,
-                    source_config,
-                    render_dialect,
-                    semantic,
-                )
-
-        if is_sql_query(query) and query.dialect is not None:
-            if source_config is None:
-                return handle_adapter_error(
-                    "Dialect translation",
-                    dialect_unsupported(
-                        query.dialect,
-                        "the source's warehouse",
-                        "no source resolved for this query, so its warehouse is unknown",
-                    ),
-                )
-            try:
-                differs = dialect_differs(query.dialect, source_config)
-            except DbtChartsError as exc:
-                return handle_adapter_error("Dialect translation", exc)
-            if differs:
-                return self._compose_translated(
-                    query, variables, params, board, source_config, render_dialect
-                )
-
-        if not (
-            params is None
-            and is_sql_query(query)
-            and board is not None
-            and board.queries
-            and source_config is not None
-        ):
-            return query, params
-
-        from dbt_charts.core.compile.template.parameterized import (
-            render_parameterized_with_queries,
-        )
-
-        try:
-            resolved_sql, _resolved_relations = self._dbt_refs.resolve(
-                query.sql, source_target_path(source_config)
-            )
-        except DbtChartsError as exc:
-            return handle_adapter_error("dbt ref resolution", exc)
-
-        try:
-            # Adapters that bind through a driver render in the warehouse's own
-            # style, so that is the warehouse. The inline style is parsed by no
-            # engine; there the source's type names the warehouse — a
-            # `dbt_profile` source has already been expanded to its concrete
-            # target type by the resolver.
-            warehouse = (
-                get_dialect(source_config.type)
-                if render_dialect is INLINE_PLACEHOLDERS
-                else render_dialect
-            )
-            rendered = render_parameterized_with_queries(
-                resolved_sql,
-                variables if variables is not None else {},
-                queries=board.queries,
-                dialect=render_dialect,
-                strict=not query.lenient_variables,
-                warehouse=warehouse,
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            return plain_error(str(exc))
-        return query.model_copy(update={"sql": rendered.sql}), list(rendered.params)
-
-    def _compose_translated(
-        self,
-        query: SqlQuery,
-        variables: VariableValues | None,
-        params: QueryParams,
-        board: Board | None,
-        source_config: ResolvedSourceConfig,
-        render_dialect: SQLDialect,
-        semantic: SemanticLayer | None = None,
-    ) -> tuple[AnyQuery, QueryParams] | QueryResult:
-        """Compose a query whose `dialect:` differs from its source's, or whose
-        source has a MetricFlow bundle (`semantic`).
-
-        Always composes, even for a board with no queries, and hands the adapter
-        SQL in the source's dialect with params in `render_dialect`'s style. A
-        query without `dialect:` is read in the source's own.
-        """
-        if params is not None:
-            return handle_adapter_error(
-                "Dialect translation",
-                dialect_unsupported(
-                    query.dialect if query.dialect is not None else source_config.type,
-                    source_config.type,
-                    "its SQL arrived already rendered with bound parameters",
-                ),
-            )
-        try:
-            read = (
-                query.dialect
-                if query.dialect is not None
-                else engine_dialect(source_config.type, source_config)
-            )
-            sql, translated_params = render_in_dialect(
-                query.sql,
-                read,
-                engine_dialect(read, source_config),
-                variables if variables is not None else {},
-                board.queries if board is not None else None,
-                not query.lenient_variables,
-                self._dbt_refs,
-                source_target_path(source_config),
-                render_dialect,
-                semantic,
-            )
-        except DbtChartsError as exc:
-            return handle_adapter_error("Dialect translation", exc)
-        except (ValueError, KeyError, TypeError) as exc:
-            return plain_error(str(exc))
-        return query.model_copy(update={"sql": sql}), translated_params
-
     def translate_query(
         self,
         query: SqlQuery,
@@ -991,20 +831,21 @@ class AdapterRegistry:
             semantic = self.semantic_layer(source_config)
         except DbtChartsError as exc:
             return handle_adapter_error("MetricFlow", exc)
-        composed = self._compose_translated(
-            query, variables, None, board, source_config, INLINE_PLACEHOLDERS, semantic
+        resolved = compose(
+            query,
+            variables=variables,
+            params=None,
+            board=board,
+            source_config=source_config,
+            dialect_name=source_config.type,
+            render_dialect=INLINE_PLACEHOLDERS,
+            refs=self._dbt_refs,
+            semantic=semantic,
         )
-        if isinstance(composed, QueryResult):
-            return composed
-        translated, params = composed
-        assert is_sql_query(translated) and params is not None
-        sql = inline_params_for_dialect(
-            translated.sql,
-            params,
-            INLINE_PLACEHOLDERS,
-            get_dialect(engine_dialect(query.dialect, source_config)),
-        )
-        return translated.model_copy(update={"sql": sql, "dialect": None})
+        if isinstance(resolved, QueryResult):
+            return resolved
+        sql = resolved.inline(engine_dialect(query.dialect, source_config))
+        return query.model_copy(update={"sql": sql, "dialect": None})
 
     def semantic_layer(
         self, source_config: ResolvedSourceConfig
@@ -1026,50 +867,40 @@ class AdapterRegistry:
             return None
         return SemanticLayer.load(self._project, source_config.metricflow)
 
-    def prepare_sql(
+    def compose_query(
         self,
         query: AnyQuery,
         *,
         board: Board,
         variables: VariableValues,
         source_config: ResolvedSourceConfig,
-    ) -> PreparedSql | QueryResult:
-        """The exact SQL ``execute`` would put on the wire, without sending it.
+    ) -> ResolvedQuery | QueryResult:
+        """The query ``execute`` would send, composed but not sent.
 
-        Same ``{{ queries.X }}`` composition and adapter-side rendering — it
-        stops at the connection. This is what a caller needs when the warehouse
-        itself offers a way to inspect a query it never runs, such as a BigQuery
-        dry run. The source is resolved by the caller (via
+        Same composition ``execute`` runs, stopping at the connection, with
+        params in the inline style. This is what a caller needs when the
+        warehouse itself offers a way to inspect a query it never runs, such
+        as a BigQuery dry run. The source is resolved by the caller (via
         :meth:`resolve_query_source`), which has to know it anyway to decide
         that a dry run is the right mechanism.
         """
-        composed = self._compose_query_refs(
-            query,
-            variables,
-            None,
-            board=board,
-            source_config=source_config,
-            render_dialect=INLINE_PLACEHOLDERS,
-        )
-        if isinstance(composed, QueryResult):
-            return composed
-        query, params = composed
         if not is_sql_query(query):
             return plain_error(f"Expected SQL query, got {query.query_type}")
 
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
-
-        # Narrowed to the adapter that owns wire SQL: DuckDB and SQLite drive
-        # their own in-process client, so there is no prepared string to hand
-        # back for them, and no caller that wants one.
-        adapter = self.get_adapter(query, source_config)
-        if not isinstance(adapter, SqlAdapter):
-            return plain_error(
-                f"{type(adapter).__name__} builds no wire SQL — "
-                f"prepare_sql applies only to dbt-adapter sources."
-            )
-        return adapter.prepare_sql(
-            query, variables=variables, params=params, source_config=source_config
+        try:
+            semantic = self.semantic_layer(source_config)
+        except DbtChartsError as exc:
+            return handle_adapter_error("MetricFlow", exc)
+        return compose(
+            query,
+            variables=variables,
+            params=None,
+            board=board,
+            source_config=source_config,
+            dialect_name=source_config.type,
+            render_dialect=INLINE_PLACEHOLDERS,
+            refs=self._dbt_refs,
+            semantic=semantic,
         )
 
     def render_with_range_filters(
@@ -1078,72 +909,52 @@ class AdapterRegistry:
         """The SQL execution renders for a query, plus its ``filter_date_range()`` calls.
 
         Returns ``(sql, sqlglot dialect, filters)``, or None when there is no SQL to
-        parse here: a non-SQL query, a file or ``dbt_profile`` source, or a source
-        whose type is not declared.
+        parse here: a non-SQL query, or a source whose type is no SQL dialect.
 
         Raises:
-            DbtChartsError: dbt refs that don't resolve, or a template that
-                doesn't render.
+            DbtChartsError: the source does not resolve, dbt refs that don't
+                resolve, or a template that doesn't render.
         """
         from dbt_charts.core.compile.template.parameterized import (
             render_parameterized_with_queries,
         )
-        from dbt_charts.core.execute.adapters.dbt_adapter import render_dbt_sql
 
         if not is_sql_query(query):
             return None
-        dbt = self._dbt_deferral(query, board)
-        sql_type = query.dialect or (
-            dbt.resolve_target_type()
-            if dbt
-            else self._declared_warehouse_type(query, board)
-        )
+        sql_type = query.dialect or self._declared_warehouse_type(query, board)
+        if sql_type is None:
+            # An undeclared source: it defers to the dbt project, and
+            # ``resolve_query_source`` owns that rule.
+            resolved = self.resolve_query_source(query, board=board)
+            assert resolved is not None  # SQL always resolves to a source
+            sql_type = resolved.type
         if sql_type not in DIALECTS:
             return None
         warehouse = DIALECTS[sql_type]
         resolved_sql, _ = self._dbt_refs.resolve(query.sql)
         filters: list[DateRangeFilter] = []
-        strict = not query.lenient_variables
-        if dbt:
-            sql = render_dbt_sql(
-                resolved_sql, variables, sql_type, strict=strict, range_filters=filters
-            )
-        else:
-            rendered = render_parameterized_with_queries(
-                resolved_sql,
-                variables,
-                queries=board.queries,
-                dialect=INLINE_PLACEHOLDERS,
-                strict=strict,
-                warehouse=warehouse,
-                range_filters=filters,
-            )
-            sql = inline_params_for_dialect(
-                rendered.sql, rendered.params, INLINE_PLACEHOLDERS, escaping=warehouse
-            )
+        rendered = render_parameterized_with_queries(
+            resolved_sql,
+            variables,
+            queries=board.queries,
+            dialect=INLINE_PLACEHOLDERS,
+            strict=not query.lenient_variables,
+            warehouse=warehouse,
+            range_filters=filters,
+        )
+        sql = inline_params_for_dialect(
+            rendered.sql, rendered.params, INLINE_PLACEHOLDERS, escaping=warehouse
+        )
         return sql, sqlglot_dialect(sql_type), filters
-
-    def _dbt_deferral(self, query: SqlQuery, board: Board) -> DbtAdapter | None:
-        """The ``DbtAdapter`` execution would route a query to, or None.
-
-        A source name that resolves to nothing, with no project ``sources:`` to
-        resolve against, is the source-less case ``get_adapter`` routes.
-        """
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-
-        if query.source is None or self._sources.runtime_config().sources:
-            return None
-        if query.source in board.sources:
-            return None
-        adapter = self.get_adapter(query, None)
-        return adapter if isinstance(adapter, DbtAdapter) else None
 
     def _declared_warehouse_type(self, query: SqlQuery, board: Board) -> str | None:
         """The warehouse type the source a SQL query runs against declares.
 
         A source-less query runs against the project's implicit dbt source. A
         ``dbt_profile`` source names its warehouse only in profiles.yml, which is
-        read (never connected to); a file source has no dialect to name.
+        read (never connected to); a file source has no dialect to name. None when
+        the source is not declared, so a range proof never resolves a declared
+        source (a remote host's DNS lookup, a policy guard).
         """
         source = self.effective_source(query.source)
         if source is None:
@@ -1154,49 +965,27 @@ class AdapterRegistry:
         if declared.get("type") != "dbt_profile":
             return declared.get("type")
         expanded = self._resolver.resolve(
-            declared, board.sources, self.project_sources, self._derive_dbt_context()
+            declared, board.sources, self.project_sources, self._dbt_context
         )
         return None if expanded is None else expanded.type
 
-    def execute_prepared(
+    def execute_resolved(
         self,
-        prepared: PreparedSql,
+        resolved: ResolvedQuery,
         query: AnyQuery,
         *,
         source_config: ResolvedSourceConfig,
     ) -> QueryResult:
-        """Send wire SQL from :meth:`prepare_sql` — possibly rewritten — to the warehouse.
+        """Send a query from :meth:`compose_query` — possibly rewritten — to the warehouse.
 
-        ``query`` only routes: it names the adapter that owns the source and
-        labels a duration error. Nothing is rendered or guarded again, so the
-        caller owns what it substituted into ``prepared.sql``.
+        ``query`` only labels a duration error. Nothing is rendered or guarded again, so the
+        caller owns what it substituted into ``resolved.sql``.
         """
         if not is_sql_query(query):
             return plain_error(f"Expected SQL query, got {query.query_type}")
-
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
-
-        adapter = self.get_adapter(query, source_config)
-        if not isinstance(adapter, SqlAdapter):
-            return plain_error(
-                f"{type(adapter).__name__} builds no wire SQL — "
-                f"execute_prepared applies only to dbt-adapter sources."
-            )
-        return adapter.execute_prepared(prepared, query, source_config)
-
-    @property
-    def adapters(self) -> list[BaseAdapter]:
-        """Get all registered adapters."""
-        return list(self._adapters)
-
-    @property
-    def supported_types(self) -> set[str]:
-        """Get all query types supported by registered adapters.
-
-        Returns:
-            Set of query type strings
-        """
-        return set(self._type_index.keys())
+        return self._execute_on_backend(
+            query, source_config, None, None, None, resolved
+        )
 
     def project_file_sources(
         self,
@@ -1266,23 +1055,25 @@ class AdapterRegistry:
         the source: a host that cannot open the file never probes the disk for
         it. Raises OSError when the file cannot be stat'ed.
         """
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-        from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
+        from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 
         if source_config.path == ":memory:":
             return ""
-        if isinstance(source_config, DuckDBSourceConfig):
-            opened = any(
-                isinstance(adapter, DuckDBAdapter)
-                and adapter.reads_only_its_file(source_config)
-                for adapter in self._adapters
-            )
-        else:
-            opened = any(
-                isinstance(adapter, SqliteAdapter) for adapter in self._adapters
-            )
-        if not opened:
+        if not self._backends.serves(source_config):
             return ""
+        backend = self._backends.for_source(source_config)
+        if isinstance(source_config, DuckDBSourceConfig):
+            if not isinstance(backend, DuckDBBackend):
+                raise DbtChartsError.from_code(
+                    ERR_ADAPTER_UNAVAILABLE,
+                    reason=(
+                        f"the {source_config.type!r} route is a "
+                        f"{type(backend).__name__}, which cannot say whether the "
+                        "database file is its only input."
+                    ),
+                )
+            if not backend.reads_only_its_file(source_config):
+                return ""
         is_duckdb = source_config.type == "duckdb"
         db_path = Path(source_config.path)
         if not db_path.is_absolute():
@@ -1319,6 +1110,10 @@ class AdapterRegistry:
         SQL that names no source runs against the project's implicit dbt source
         when it has one (``implicit_dbt_source``).
 
+        SQL whose source name resolves to nothing, in a project with a dbt
+        project and no ``sources:``, runs on the default source
+        (:meth:`_default_sql_source`): never None.
+
         Raises:
             DbtChartsError: ERR-SOURCE-NOT-NAMED when SQL names no source and
                 there is no implicit one to fall back to, or
@@ -1332,15 +1127,52 @@ class AdapterRegistry:
             authored = self.effective_source(None)
             if authored is None:
                 raise self._source_not_named_error()
-        return self._resolver.resolve(
+        board_sources = board.sources if board is not None else {}
+        dbt_context = dbt_context if dbt_context is not None else self._dbt_context
+        resolved = self._resolver.resolve(
             authored=authored,
-            board_sources=board.sources if board is not None else {},
+            board_sources=board_sources,
             project_sources=project_sources,
-            dbt_context=(
-                dbt_context if dbt_context is not None else self._derive_dbt_context()
-            ),
+            dbt_context=dbt_context,
             query_name=query_name,
         )
+        if resolved is None and is_sql_query(query):
+            return self._default_sql_source(
+                query, board_sources, dbt_context, query_name
+            )
+        return resolved
+
+    def _default_sql_source(
+        self,
+        query: SqlQuery,
+        board_sources: dict[str, dict[str, Any]],  # type-state: explicit_any — raw
+        dbt_context: DbtContext | None,
+        query_name: str,
+    ) -> ResolvedSourceConfig:
+        """The source SQL runs on when its authored one defers to the dbt project.
+
+        The one rule: SQL using dbt Jinja (``ref()``/``source()``) runs on the dbt
+        target, resolved like a ``dbt_profile`` source; any other SQL runs on the
+        project's local DuckDB warehouse. Nothing after resolution re-decides it.
+
+        Raises:
+            DbtChartsError: a ``dbt_profile`` / local warehouse resolution
+                failure.
+        """
+        assert dbt_context is not None, (
+            "a resolver deferred a SQL query's source with no dbt project linked"
+        )
+        if has_dbt_jinja(query.sql):
+            resolved = self._resolver.resolve(
+                authored=DbtProfileSourceConfig(type="dbt_profile"),
+                board_sources=board_sources,
+                project_sources=self.project_sources,
+                dbt_context=dbt_context,
+                query_name=query_name,
+            )
+            assert resolved is not None  # a source config always resolves
+            return resolved
+        return default_duckdb_source(dbt_context.dbt_project_path)
 
     def resolve_source_config(self, source: str | None = None) -> dict[str, Any]:
         """Resolve a full source_config dict for use with InspectConnection.

@@ -619,14 +619,14 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
     """`cache: false` must be refused where the store is actually read.
 
     Both production callers gate on the policy before probing — `execute_query`
-    via `should_use_cache`, `_lookup_cached` before its probe — so this is
+    via `should_use_cache`, `Executor.lookup` via `use_store` — so this is
     redundant today, which is exactly why it is worth pinning. A future caller
-    of `_warm_from_cache` that forgets would load persisted rows into a disabled
+    of `lookup` that forgets would load persisted rows into a disabled
     query's memo slot and `execute_query` would serve them, reinstating the bug
     this module exists to prevent, with every end-to-end test still green.
     """
 
-    def test_warm_from_cache_refuses_a_disabled_policy(self, tmp_path) -> None:
+    def test_lookup_refuses_a_disabled_policy(self, tmp_path) -> None:
         cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
         try:
             from dbt_charts.core.execute.duckdb_cache import compute_cache_key
@@ -645,7 +645,8 @@ class TestNoStoreIsEnforcedAtTheStoreRead:
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
-            assert executor._warm_from_cache(key, query, "q") is False, (
+            found = executor._lookup([executor._probe("q", query, key, True)], True)
+            assert not found.hits, (
                 "the store read itself must refuse a disabled policy — not rely "
                 "on every caller remembering to check first"
             )

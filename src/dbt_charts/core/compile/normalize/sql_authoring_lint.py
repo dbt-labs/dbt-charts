@@ -10,13 +10,13 @@ import sqlglot.errors
 from dbt_charts.core.compile.sql_guard import sqlglot_dialect
 
 # `date '{{ var }}'`: a variable quoted as a date/time/timestamp literal.
-# Only the bound-parameter adapters -- duckdb_adapter.py and sqlite_adapter.py,
-# neither of which overrides BaseAdapter.param_render_dialect -- bind a
+# Only the bound-parameter backends -- backends/duckdb_local.py and backends/sqlite.py,
+# whose param_style is the source dialect's own placeholder -- bind a
 # variable through a real driver placeholder, which `_clean_parameter_quotes`
 # (compile/template/parameterized.py) then strips the surrounding quotes from,
 # so only there does this compile to invalid `date $1`. Every other adapter
-# (SqlAdapter for postgres/snowflake/bigquery/etc. -- see its
-# param_render_dialect override -- and DbtAdapter for dbt_profile) renders
+# (the dbt backend for postgres/snowflake/bigquery/etc. -- its
+# param_style -- and DbtBackend for dbt_profile) renders
 # variables as inline literal text, so the same SQL compiles to valid
 # `date '2024-01-01'`. `cast('{{ var }}' as date)` keeps the variable an
 # ordinary string parameter on every dialect, so it's the dialect-agnostic fix.

@@ -58,6 +58,7 @@ from dbt_charts.core.render.warnings.pie_dominant_segment import (
     detect as detect_pie_dominant_segment,
 )
 
+from ..._lookup import all_miss
 from .._svg_render import PINNED_RENDER_TIME
 
 # Bound before any test patches the module attribute, so the per-chart patch
@@ -143,13 +144,13 @@ def _executor_good_bad(good_rows, bad_exc):
     # a real (empty) list, not the default MagicMock attribute.
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
-    # An unconfigured MagicMock.is_cached() is truthy for any input, which
+    # An unconfigured MagicMock.lookup() returns a mock with no misses, which
     # would route every query through render()'s synchronous cache-hit
     # pre-pass (a plain, un-isolated `execute_query` call) instead of the
-    # mocked-out `execute_queries_parallel` — raising bad_exc there, outside
+    # mocked-out `run_misses` — raising bad_exc there, outside
     # any chart-isolation try/except, rather than where each test means it to
     # fire (the per-chart draw/data-walk calls below).
-    mock.is_cached.return_value = False
+    mock.lookup.side_effect = all_miss
     return mock
 
 
@@ -170,7 +171,7 @@ def test_render_returns_render_result():
     mock_executor.rendered_at = PINNED_RENDER_TIME
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -196,7 +197,7 @@ def test_one_runtime_failure_other_charts_render():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -219,7 +220,7 @@ def test_missing_csv_file_code_reaches_chart_error():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -266,7 +267,7 @@ def test_chart_render_error_isolated():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -286,7 +287,7 @@ def test_chart_jinja_error_isolated():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -306,7 +307,7 @@ def test_chart_internal_exception_isolated():
     executor = _executor_good_bad([{"value": 42}], bad_exc)
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -745,7 +746,7 @@ def test_build_resolved_board_chart_data_error_degrades_to_board_error() -> None
     mock_executor._query_errors = {}
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -768,7 +769,7 @@ def test_build_resolved_board_unexpected_exception_degrades_to_board_error() -> 
     mock_executor._query_errors = {}
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -805,7 +806,7 @@ def test_render_dashboard_survives_build_resolved_board_chart_data_error(
 
     with (
         patch("dbt_charts.core.board.Executor", return_value=mock_executor),
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -961,7 +962,7 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
     # the synchronous cache-hit branch, so a failing query surfaces where it
     # does in production: inside the sizing pass and the render walk, not in
     # render()'s unguarded pre-execution loop.
-    mock.is_cached.return_value = False
+    mock.lookup.side_effect = all_miss
     mock._query_errors = {}
     mock.query_data_ages = {}
     mock.cache_hit_ats = []
@@ -971,7 +972,7 @@ def _resolve_stage_executor(rows_by_query: dict[str, list[dict[str, object]]]):
 
 def _render_real_resolve(board, executor, format: str = "svg") -> RenderResult:
     """Render through the REAL build_resolved_board — no patched board resolver."""
-    with patch.object(_renderer_mod, "execute_queries_parallel"):
+    with patch.object(Executor, "run_misses"):
         return render(board, executor, format=format)
 
 
@@ -1385,7 +1386,7 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
 
     Runs the real parallel pre-pass so ``executor._query_errors['q_bad']``
     holds the failure (both queries are cache misses, submitted together via
-    ``execute_queries_parallel``, as production does), then calls
+    ``run_misses``, as production does), then calls
     ``build_resolved_board`` directly — the same call
     ``agent_api.board_artifact.emit_board_artifact`` makes, with no render
     walk downstream to redundantly re-execute the query.
@@ -1393,15 +1394,14 @@ def test_query_execution_failure_is_recorded_at_resolve_not_swallowed(
     from dbt_charts.core.compile.models.board.resolved import ChartResolveFailure
     from dbt_charts.core.execute import executor as _executor_mod
     from dbt_charts.core.execute.collect import collect_all_query_names
-    from dbt_charts.core.execute.parallel import execute_queries_parallel
 
     board, executor, _boom = _real_executor_with_failing_query(
         tmp_path, lambda: JinjaError("simulated bad template", "{{ boom }}")
     )
 
-    query_names = collect_all_query_names(board)
+    found = executor.lookup(collect_all_query_names(board), {})
     with patch.object(_executor_mod, "resolve_query_references", side_effect=_boom):
-        execute_queries_parallel(executor, query_names, {}, 8)
+        executor.run_misses(found, {}, 8)
 
     assert "q_bad" in executor._query_errors
     assert isinstance(executor._query_errors["q_bad"], JinjaError)
@@ -1572,7 +1572,7 @@ def test_missing_required_variables_stays_board_fatal(
 
     with (
         patch("dbt_charts.core.board.Executor", return_value=executor),
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
     ):
         result = render_dashboard(
             board=InMemoryBoard(
@@ -1629,7 +1629,7 @@ def test_board_level_draw_failure_still_returns_data_format_payload() -> None:
     )
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -1662,7 +1662,7 @@ def test_data_format_walk_exception_becomes_board_error_not_raise() -> None:
         raise TypeError("Object of type X is not JSON serializable")
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -1691,7 +1691,7 @@ def test_draw_board_error_takes_priority_over_walk_board_error() -> None:
         raise TypeError("walk exploded")
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",

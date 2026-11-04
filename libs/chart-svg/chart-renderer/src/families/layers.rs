@@ -1249,7 +1249,7 @@ pub(crate) fn line_layer_marks(
     let mut labels: Vec<Option<String>> = Vec::with_capacity(rows.len());
     let label_style = l
         .visible_labels()
-        .map(|ml| LayerLabelStyle::new(ml, l.label_is_house, rows, board_style))
+        .map(|ml| LayerLabelStyle::painted(ml, l.label_is_house, LayerInks { field: l.color.as_deref(), ink: l.ink.as_deref(), by_value: &l.series_inks }, rows, board_style))
         .transpose()?;
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
     let mut label_points: Vec<(f64, f64)> = Vec::new();
@@ -1495,14 +1495,16 @@ pub(crate) fn line_layer_marks(
         let (plot_w, plot_h) = frame.plot;
         let leaves_plot = frame.clip
             && area_runs.iter().flatten().any(|&(_, top, bottom)| [top, bottom].iter().any(|v| *v < 0.0 || *v > if horizontal { plot_w } else { plot_h }));
-        let clip_id = format!("dbt-area-clip-{plot_w}-{plot_h}");
         let mut fill = Attrs::new()
             .set("fill", series_color)
             .num("fill-opacity", area.opacity)
             .num("stroke-opacity", 0.0)
             .num("opacity", 1.0);
         if leaves_plot {
-            marks.push(plot_clip(&clip_id, (plot_w, plot_h)));
+            let (clip_id, defines) = frame.clips.id_for((plot_w, plot_h));
+            if defines {
+                marks.push(plot_clip(&clip_id, (plot_w, plot_h)));
+            }
             fill = fill.set("clip-path", format!("url(#{clip_id})"));
         }
         let first = run_hrefs.first().cloned().flatten();
@@ -1605,7 +1607,7 @@ pub(crate) fn line_layer_marks(
         });
     }
     // An area clips itself; a line's own marks clip as a group, its value labels do not.
-    let mut out = if frame.clip && l.area_mark.is_none() { clip_marks(marks, frame.plot) } else { marks };
+    let mut out = if frame.clip && l.area_mark.is_none() { frame.clips.wrap(frame.plot, marks) } else { marks };
     if let Some(style) = &label_style {
         let marks = layer_label_marks(label_points.iter().zip(captions).zip(caption_hrefs), step_band, horizontal);
         style.warn_if_crowded(&crowd, &marks)?;
@@ -1642,6 +1644,7 @@ pub(crate) struct AreaFrame<'a> {
     pub free_y: &'a dyn Fn(f64) -> f64,
     pub plot: (f64, f64),
     pub clip: bool,
+    pub clips: &'a PlotClips<'a>,
 }
 
 /// The painted marks of a layer's captions at their datum `points`: a caption
@@ -1670,7 +1673,17 @@ pub(crate) struct LayerLabelStyle<'a> {
     field_is_text: bool,
     pub font: crate::families::bar::labels::LabelFont,
     pub font_style: Option<String>,
-    pub color: &'a str,
+    color: &'a str,
+    /// The inks an authored `series` color reads.
+    series_of: Option<LayerInks<'a>>,
+}
+
+/// What a layer paints its rows: `by_value[row[field]]`, else `ink`.
+#[derive(Clone, Copy)]
+struct LayerInks<'a> {
+    field: Option<&'a str>,
+    ink: Option<&'a str>,
+    by_value: &'a HashMap<String, String>,
 }
 
 /// What `WARN-VALUE-LABELS-CROWD-WIDTH` needs of a layer's painted labels.
@@ -1684,6 +1697,7 @@ pub(crate) struct LabelCrowd<'a> {
 pub(crate) struct LayerCaption {
     pub text: String,
     pub spot: crate::common::CaptionSpot,
+    pub color: String,
 }
 
 impl<'a> LayerLabelStyle<'a> {
@@ -1697,15 +1711,36 @@ impl<'a> LayerLabelStyle<'a> {
     ) -> Result<Self, String> {
         ml.refuse_anchors("layered chart")?;
         let font = crate::families::bar::labels::label_font(ml, board_style)?;
-        let color = ml.font.as_ref().and_then(|f| f.color.as_deref()).unwrap_or("#313233");
+        let authored = ml.font.as_ref().and_then(|f| f.color.as_deref());
         Ok(LayerLabelStyle {
             ml,
             is_house,
             field_is_text: ml.field_is_text(rows),
             font,
             font_style: ml.font.as_ref().and_then(|f| f.style.clone()),
-            color,
+            color: authored.unwrap_or("#313233"),
+            series_of: None,
         })
+    }
+
+    /// [`Self::new`] for the painter, which alone reads a color: `inks` answer `series`.
+    fn painted(
+        ml: &'a MarkLabels,
+        is_house: bool,
+        inks: LayerInks<'a>,
+        rows: &[serde_json::Map<String, Value>],
+        board_style: Option<&crate::BoardStyle>,
+    ) -> Result<Self, String> {
+        let style = Self::new(ml, is_house, rows, board_style)?;
+        let series_of = (style.color == crate::common::SERIES_INK).then_some(inks);
+        Ok(LayerLabelStyle { series_of, ..style })
+    }
+
+    /// The label color of `row`: a `series` label takes the ink its row's marks paint.
+    fn color_of(&self, row: &serde_json::Map<String, Value>) -> &str {
+        let Some(inks) = self.series_of else { return self.color };
+        let by_row = inks.field.and_then(|field| layer_color_of(row, field)).and_then(|value| inks.by_value.get(&value));
+        by_row.map(String::as_str).or(inks.ink).unwrap_or("#313233")
     }
 
     /// The caption of `row`, whose measure is `val`. `band` is `Some((leading,
@@ -1717,7 +1752,7 @@ impl<'a> LayerLabelStyle<'a> {
         band: Option<(bool, bool)>,
     ) -> Result<LayerCaption, String> {
         let (text, _) = self.ml.field_text(self.is_house, self.field_is_text, Some(row), val)?;
-        Ok(LayerCaption { text, spot: crate::common::CaptionSpot::of(self.ml, band)? })
+        Ok(LayerCaption { text, spot: crate::common::CaptionSpot::of(self.ml, band)?, color: self.color_of(row).to_string() })
     }
 
     /// The shaped width of one label's text.
@@ -1773,7 +1808,7 @@ pub(crate) fn layer_value_labels(
             style.font.size,
             &style.font.weight,
             style.font_style.as_deref(),
-            style.color,
+            &m.caption.color,
             crate::contract::aria_attrs(m.aria.as_deref(), crate::contract::ItemRole::TextMark)?,
             &m.caption.text,
         );
@@ -1919,13 +1954,13 @@ pub(crate) fn scatter_layer_marks(
     board_style: Option<&crate::BoardStyle>,
     mut describe_label: impl FnMut(&serde_json::Map<String, Value>, f64) -> Result<Option<String>, String>,
     link: Option<&crate::href::DatumLink>,
-    clip: Option<(f64, f64)>,
+    clip: Option<((f64, f64), &PlotClips)>,
     crowd: LabelCrowd,
 ) -> Result<Vec<Node>, String> {
     let r_pt = crate::common::symbol_radius(size);
     let mut points = Vec::new();
     let ml = l.point_mark.labels.visible.then_some(&l.point_mark.labels);
-    let label_style = ml.map(|ml| LayerLabelStyle::new(ml, l.label_is_house, rows, board_style)).transpose()?;
+    let label_style = ml.map(|ml| LayerLabelStyle::painted(ml, l.label_is_house, LayerInks { field: l.color.as_deref(), ink: l.ink.as_deref(), by_value: &l.series_inks }, rows, board_style)).transpose()?;
     let mut label_points: Vec<(f64, f64)> = Vec::new();
     let mut captions: Vec<(LayerCaption, Option<String>)> = Vec::new();
     let mut caption_hrefs: Vec<Option<String>> = Vec::new();
@@ -1953,7 +1988,7 @@ pub(crate) fn scatter_layer_marks(
     }
     let group = crate::contract::mark_group("symbol", &format!("layer_{layer_index}_marks"), points)?;
     let mut out = match clip {
-        Some(plot) => clip_marks(vec![group], plot),
+        Some((plot, clips)) => clips.wrap(plot, vec![group]),
         None => vec![group],
     };
     if let Some(style) = &label_style {
@@ -2400,10 +2435,38 @@ pub(crate) fn clamp_unless_clipped(position: f64, extent: f64, clipped: bool) ->
     if clipped { position } else { position.clamp(0.0, extent) }
 }
 
-/// `marks` in the plot clip (`clip: true` on a line or scatter layer).
-pub(crate) fn clip_marks(marks: Vec<Node>, (plot_w, plot_h): (f64, f64)) -> Vec<Node> {
-    let id = format!("dbt-area-clip-{plot_w}-{plot_h}");
-    vec![plot_clip(&id, (plot_w, plot_h)), Node::group(Role::Chrome, Attrs::new().set("clip-path", format!("url(#{id})")), marks)]
+/// The plot-sized clips one chart defines, shared by every layer that paints under one. A clip
+/// is named by the chart's scope (`scoped_id`, so a chart placed twice keeps its ids apart) and
+/// the paint order of its plot size among the chart's clips, never by the size itself; a panel of
+/// another size gets its own clip, a panel of the same size reuses the definition.
+pub(crate) struct PlotClips<'a> {
+    chart_id: &'a str,
+    defined: std::cell::RefCell<Vec<(f64, f64)>>,
+}
+
+impl<'a> PlotClips<'a> {
+    pub(crate) fn new(chart_id: &'a str) -> Self {
+        Self { chart_id, defined: std::cell::RefCell::new(Vec::new()) }
+    }
+
+    /// `children` under the clip of a `plot`-sized panel, defining the clip the first time the
+    /// chart asks for that plot.
+    pub(crate) fn wrap(&self, plot: (f64, f64), children: Vec<Node>) -> Vec<Node> {
+        let (id, defines) = self.id_for(plot);
+        let group = Node::group(Role::Chrome, Attrs::new().set("clip-path", format!("url(#{id})")), children);
+        if defines { vec![plot_clip(&id, plot), group] } else { vec![group] }
+    }
+
+    /// The id of the clip for `plot` and whether this call defines it.
+    fn id_for(&self, plot: (f64, f64)) -> (String, bool) {
+        let mut defined = self.defined.borrow_mut();
+        let known = defined.iter().position(|&seen| seen == plot);
+        let ordinal = known.unwrap_or(defined.len());
+        if known.is_none() {
+            defined.push(plot);
+        }
+        (format!("dbt-layer-clip-{}-{ordinal}", crate::contract::scoped_id(self.chart_id)), known.is_none())
+    }
 }
 
 fn plot_clip(id: &str, (plot_w, plot_h): (f64, f64)) -> Node {
@@ -2412,31 +2475,6 @@ fn plot_clip(id: &str, (plot_w, plot_h): (f64, f64)) -> Node {
         Attrs::new().set("id", id),
         Shape::ClipPath(vec![Node::rect(Role::Chrome, (0.0, 0.0, plot_w, plot_h), Attrs::new())]),
     )
-}
-
-/// The id of the plot-sized clip a layer's marks paint under (`clip: true`): it names the
-/// plot box and carries the chart's namespace suffix, as every id production mints does
-/// (`_namespace_svg_ids`).
-pub(crate) fn layer_clip_id((plot_w, plot_h): (f64, f64), chart_id: &str) -> String {
-    format!("dbt-layer-clip-{plot_w}-{plot_h}-{}", crate::contract::scoped_id(chart_id))
-}
-
-/// `children` under the layer clip `id`, defining it first unless `defined`: a second
-/// clipped layer of the same plot reuses the definition.
-pub(crate) fn layer_clip_group(id: &str, plot: (f64, f64), defined: bool, children: Vec<Node>) -> Vec<Node> {
-    let group = Node::group(Role::Chrome, Attrs::new().set("clip-path", format!("url(#{id})")), children);
-    if defined {
-        return vec![group];
-    }
-    vec![plot_clip(id, plot), group]
-}
-
-/// `children` under the layer clip of a `plot`-sized chart, defining the clip the first time the
-/// chart asks for it (`defined` holds the ids already written).
-pub(crate) fn clipped_layer(defined: &mut HashSet<String>, plot: (f64, f64), chart_id: &str, children: Vec<Node>) -> Vec<Node> {
-    let id = layer_clip_id(plot, chart_id);
-    let seen = !defined.insert(id.clone());
-    layer_clip_group(&id, plot, seen, children)
 }
 
 /// One rect of a bar layer: spanning `from..to` on the value scale at its row's x.

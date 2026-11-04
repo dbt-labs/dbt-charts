@@ -172,8 +172,9 @@ class _Omni:
                     return response.read()
             except urllib.error.HTTPError as exc:
                 if exc.code != 429:
+                    detail = exc.read().decode(errors="replace")[:300]
                     raise BundleError(
-                        f"Omni {method} {path} failed: HTTP {exc.code}"
+                        f"Omni {method} {path} failed: HTTP {exc.code} {detail}"
                     ) from None
                 time.sleep(RATE_LIMIT_SECONDS)
             except urllib.error.URLError as exc:
@@ -337,10 +338,17 @@ def _fill_bundle(
     pages: list[tuple[str | None, str | None, list[tuple[str, str]]]]
     # Absent (not empty) on dashboards that use the plain grid layout.
     if metadata.get("containers"):
-        pages = [
-            (p["name"], p["container"]["instanceKey"], list(_walk(p["container"], [])))
-            for p in metadata["containers"]
-        ]
+        pages = []
+        for p in metadata["containers"]:
+            if p["containerType"] == "page":
+                pages.append(
+                    (p["name"], p["instanceKey"], list(_walk(p["container"], [])))
+                )
+            elif any(_walk(p, [])):
+                raise BundleError(
+                    f"tiles in a top-level {p['containerType']!r} container "
+                    "outside any page are not supported"
+                )
     else:
         grid = sorted(metadata["layouts"]["lg"], key=lambda t: (t["y"], t["x"]))
         placed = [

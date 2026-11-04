@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # `extra` is the dbt-charts optional-dependency group that installs the adapter;
 # None for dbt-duckdb, a core dependency.
 # Add entries here when new warehouse adapters are needed.
-# This is the single source of truth — dbt_adapter.py imports from here.
+# This is the single source of truth — dbt_profile.py imports from here.
 _ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str, str | None]] = {
     "duckdb": ("dbt.adapters.duckdb", "DuckDBAdapter", "DuckDBCredentials", None),
     "postgres": (
@@ -93,6 +93,10 @@ _ADAPTER_TYPE_MAP: dict[str, tuple[str, str, str, str | None]] = {
     ),
     "fabric": ("dbt.adapters.fabric", "FabricAdapter", "FabricCredentials", "fabric"),
 }
+
+# The kinds that run on a dbt adapter package here. DuckDB is in the map for dbt's
+# own use but runs in-process.
+DBT_SOURCE_TYPES: frozenset[str] = frozenset(_ADAPTER_TYPE_MAP) - {"duckdb"}
 
 SUPPORTED_ADAPTER_TYPES = frozenset(_ADAPTER_TYPE_MAP)
 
@@ -277,7 +281,7 @@ def build_adapter(
             # the patched read-only initialize_db path, which reads
             # `creds.config_options`. Without this, separate build_adapter() callers
             # (LayeredSchemaResolver, dbt-charts-super-schema) open the same DuckDB
-            # file with different config than the playground's SqlAdapter and DuckDB
+            # file with different config than the playground's dbt backend and DuckDB
             # rejects the second connection.
             creds_kwargs["config_options"] = creds_kwargs.pop("duckdb_config")
         # dbt-duckdb defaults keep_open=True, which parks the warehouse handle on
@@ -285,7 +289,7 @@ def build_adapter(
         # the registry that opened it. DuckDB then rejects every later connection
         # to that file whose config differs, so an authoring session (external
         # access on) poisoned the next strict read-only one. Same posture
-        # DuckDBAdapter already takes for read-only file sources: hold the file
+        # DuckDBBackend already takes for read-only file sources: hold the file
         # only while a connection is live. dbt-duckdb keeps :memory: open
         # regardless — closing an in-memory database would destroy it.
         creds_kwargs.setdefault("keep_open", False)

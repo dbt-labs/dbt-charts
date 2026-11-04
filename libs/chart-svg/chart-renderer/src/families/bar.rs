@@ -525,6 +525,7 @@ impl TotalLabel {
             dy: self.dy,
             font: Some(font),
             position: Some("above".into()),
+            auto: false,
             stacked: None,
         })
     }
@@ -909,7 +910,7 @@ mod tests {
     }
 
     fn painted_rules(positions: &[f64]) -> String {
-        print::print(&baseline_rule_layers(1, positions, |pos, aria| Node::line(Role::Grid, (0.0, pos), (0.0, pos), aria)).unwrap())
+        print::print(&baseline_rule_layers(1, positions, |pos, aria| Node::line(Role::Rule, (0.0, pos), (0.0, pos), aria)).unwrap())
     }
 
     #[test]

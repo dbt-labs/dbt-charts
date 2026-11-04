@@ -271,7 +271,7 @@ def test_a_query_written_in_another_dialect_renders_and_parses_in_it(
     )
 
 
-def test_a_raw_sql_variable_on_the_dbt_path_is_rendered_as_execution_renders_it(
+def test_a_raw_sql_variable_on_the_dbt_path_is_bound_as_execution_binds_it(
     tmp_path: Path,
     local_project: Callable[..., FilesystemProject],
     monkeypatch: pytest.MonkeyPatch,
@@ -295,8 +295,9 @@ def test_a_raw_sql_variable_on_the_dbt_path_is_rendered_as_execution_renders_it(
     )
     assert rendered is not None
     sql, dialect, filters = rendered
-    assert "WHERE status = 'paid' OR 1 = 1 AND" in sql
-    assert proven_range(sql, dialect, "week", filters) is None
+    # Bound as one value, as execution binds it: never spliced into the SQL.
+    assert "WHERE 'status = ''paid'' OR 1 = 1' AND" in sql
+    assert proven_range(sql, dialect, "week", filters) is not None
 
 
 def test_an_unknown_source_without_dbt_jinja_is_not_deferred_to_dbt(

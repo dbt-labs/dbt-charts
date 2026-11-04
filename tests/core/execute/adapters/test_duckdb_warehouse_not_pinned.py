@@ -92,10 +92,10 @@ def test_ref_query_does_not_pin_warehouse_past_registry_close(
     local_project: Callable[..., FilesystemProject],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ``{{ ref() }}`` route runs on DbtAdapter, whose dbt connection pool is
+    """The ``{{ ref() }}`` route runs on the dbt backend, whose dbt connection pool is
     what pinned the file. The release happens at ``connection_named`` exit, not
-    at ``registry.close()`` — DbtAdapter has no ``close()``; the close call below
-    only marks where a caller is done with the session."""
+    at ``registry.close()``; the close call below only marks where a caller is
+    done with the session."""
     monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
 
     db_path = tmp_path / "warehouse.duckdb"
@@ -153,7 +153,7 @@ def test_ref_query_does_not_pin_warehouse_past_registry_close(
         local_project(tmp_path), **LOCAL_AUTHORING_REGISTRY_KWARGS
     )
     # A name no dbt_charts.yml source claims falls through to the dbt project,
-    # which is what puts this query on DbtAdapter rather than DuckDBAdapter.
+    # which is what puts this query on the dbt target rather than the local DuckDB default.
     result = registry.execute(
         SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="test_project")
     )

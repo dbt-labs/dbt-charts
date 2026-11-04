@@ -2126,7 +2126,7 @@ charts:
         This is the regression from #4320: dct serve creates a fresh Executor per
         request with an empty per-request cursor description cache. When the DuckDB
         file cache has a cached result, execute_query() returns early from
-        _lookup_cached without re-executing the query, so that cache stays empty →
+        the cache lookup without re-executing the query, so that cache stays empty →
         column_rows empty → plan_link_keys returns [] → link dropped.
 
         The fix: source column types from LayeredSchemaResolver (stable across

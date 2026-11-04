@@ -81,7 +81,9 @@ def test_named_query_sql_syntax_error_keeps_execute_code_and_query_name(
     # Query attribution must still reach the *rendered* placard body — not
     # just error.fields — so a multi-chart dashboard's errors are still
     # distinguishable by which query produced them.
-    assert "(query: broken_query)" in data
+    # (the placard wraps its text, so the suffix may split across lines)
+    assert "(query:" in data
+    assert "broken_query)" in data
 
     # ERR-BINDER-UNKNOWN-RELATION carries no sqlglot position at all — it must
     # keep highlighting the whole query block (columns=None), never a

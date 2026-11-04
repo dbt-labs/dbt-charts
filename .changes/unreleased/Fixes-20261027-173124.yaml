@@ -1,3 +1,0 @@
-kind: Fixes
-body: A scatter whose points stack in columns now warns and suggests a strip plot or beeswarm.
-time: 2026-10-27T17:31:24.536165-07:00

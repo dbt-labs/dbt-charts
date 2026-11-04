@@ -2,7 +2,7 @@
 
 Kept in execute/ (not inspect/) so inspect/sources/sqlite.py can import
 from here without triggering a circular import through inspect/__init__.py
-(which imports renderer.py which imports SqlAdapter from execute/).
+(which imports renderer.py which imports the dbt backend from execute/).
 """
 
 from urllib.request import pathname2url

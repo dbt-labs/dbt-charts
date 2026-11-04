@@ -15,13 +15,14 @@ import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     ResolvedSourceConfig,
     TrinoSourceConfig,
 )
-from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_TARGET_NEEDS_SOURCE
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.adapters.dbt_profile import resolve_target_type
 from dbt_charts.core.execute.drivers import is_driver_source
 from dbt_charts.core.execute.source_resolver import DbtContext, DefaultSourceResolver
 
@@ -123,36 +124,18 @@ def test_target_path_is_refused_rather_than_dropped(
         _resolve(tmp_path, _TARGET, monkeypatch, target_path="target-prod")
 
 
-def test_a_project_whose_own_target_is_trino_needs_a_declared_source(
+def test_a_project_whose_own_target_is_trino_resolves_to_the_driver_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
     _write_profile(tmp_path, _TARGET)
     (tmp_path / "dbt_project.yml").write_text("name: analytics\nprofile: analytics\n")
-    adapter = DbtAdapter(
-        project=FilesystemProject(tmp_path),
-        dbt_project_path=tmp_path,
-        target_name="dev",
-    )
-    assert adapter.resolve_target_type() == "trino"
-    with pytest.raises(ExecutionError) as excinfo:
-        adapter._get_dbt_adapter()
-    assert excinfo.value.code is ERR_DBT_TARGET_NEEDS_SOURCE
+    context = DbtContext(dbt_project_path=tmp_path, target="dev")
+    assert resolve_target_type(context) == "trino"
+    registry = AdapterRegistry(project=FilesystemProject(tmp_path), dbt_context=context)
 
-
-def test_needs_source_error_names_the_profile_default_target(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
-    monkeypatch.delenv("DBT_TARGET", raising=False)
-    _write_profile(tmp_path, _TARGET)
-    (tmp_path / "dbt_project.yml").write_text("name: analytics\nprofile: analytics\n")
-    adapter = DbtAdapter(
-        project=FilesystemProject(tmp_path),
-        dbt_project_path=tmp_path,
-        target_name=None,
+    resolved = registry.resolve_query_source(
+        SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown")
     )
-    with pytest.raises(ExecutionError) as excinfo:
-        adapter._get_dbt_adapter()
-    assert "target: dev" in str(excinfo.value)
-    assert "None" not in str(excinfo.value)
+
+    assert isinstance(resolved, TrinoSourceConfig)

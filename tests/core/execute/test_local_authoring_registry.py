@@ -16,13 +16,15 @@ from dbt_charts.core.execute.adapters.adapter_registry import (
     LOCAL_AUTHORING_REGISTRY_KWARGS,
     build_adapter_registry,
 )
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+
+from ..._backend_runner import DuckDBRunner
 
 
 class TestLocalAuthoringRegistryKwargs:
     def test_resolve_kwargs_use_shared_lock(self, tmp_path: Path) -> None:
         db_path = str(tmp_path / "test.duckdb")
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             db_path,
             LOCAL_AUTHORING_REGISTRY_KWARGS["read_only"],
             LOCAL_AUTHORING_REGISTRY_KWARGS["duckdb_config"],
@@ -37,17 +39,15 @@ class TestLocalAuthoringRegistryKwargs:
         registry = build_adapter_registry(
             local_project(tmp_path), **LOCAL_AUTHORING_REGISTRY_KWARGS
         )
-        duckdb_adapter = next(
-            a
-            for a in registry.get_adapters_for_type("sql")
-            if isinstance(a, DuckDBAdapter)
+        backend = registry._backends.for_source(  # noqa: SLF001
+            DuckDBSourceConfig(type="duckdb")
         )
         try:
-            assert duckdb_adapter.read_only is True
-            assert duckdb_adapter.allow_external_access_in_readonly is True
-            assert duckdb_adapter._duckdb_config == {"enable_external_access": True}
+            assert backend.read_only is True
+            assert backend.allow_external_access_in_readonly is True
+            assert backend._duckdb_config == {"enable_external_access": True}
         finally:
-            duckdb_adapter.close()
+            registry.close()
 
     def test_external_read_works_and_db_write_blocked_on_file_db(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
@@ -61,13 +61,13 @@ class TestLocalAuthoringRegistryKwargs:
         json_path = tmp_path / "rows.jsonl"
         json_path.write_text('{"x":2}\n{"x":3}\n', encoding="utf-8")
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             data_dir=local_project(tmp_path).data_path("."),
             source_config=DuckDBSourceConfig(type="duckdb", path=db_path),
             **LOCAL_AUTHORING_REGISTRY_KWARGS,
         )
         try:
-            result = adapter._execute(
+            result = adapter.execute(
                 SqlQuery(
                     sql=f"SELECT SUM(x) AS total FROM read_json_auto('{json_path.as_posix()}')",
                     source="test_db",
@@ -76,7 +76,7 @@ class TestLocalAuthoringRegistryKwargs:
             assert result.error is None, result.error
             assert result.data[0]["total"] == 5
 
-            result = adapter._execute(
+            result = adapter.execute(
                 SqlQuery(sql="INSERT INTO t VALUES (99)", source="test_db")
             )
             assert result.error is not None

@@ -1,3 +1,0 @@
-kind: Fixes
-body: Pivot table headers print each value as the query returns it (`2026-07`, `AE`), and row numbers, the pager and spark bars skip total rows.
-time: 2026-11-03T19:21:02.702221467Z

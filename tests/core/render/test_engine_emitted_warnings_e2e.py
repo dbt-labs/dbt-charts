@@ -68,9 +68,45 @@ def test_crowded_value_labels_warn_on_line_and_area(family: str) -> None:
     rows = [f"{{c: cat{i:02d}, v: 7.46761}}" for i in range(40)]
     chart = (
         f"    type: {family}\n    x: c\n    y: v\n"
-        "    style:\n      marks:\n        line:\n          labels:\n            visible: true"
+        "    style:\n      marks:\n        line:\n          labels:\n"
+        "            visible: true\n            position: top"
     )
     assert "WARN-VALUE-LABELS-CROWD-WIDTH" in _warning_codes(chart, rows)
+
+
+def test_auto_value_labels_with_no_room_are_thinned_and_the_crowd_warning_steps_aside() -> (
+    None
+):
+    rows = [f"{{c: cat{i:02d}, v: 7.46761}}" for i in range(40)]
+    chart = (
+        "    type: line\n    x: c\n    y: v\n"
+        "    style:\n      marks:\n        line:\n          labels:\n            visible: true"
+    )
+    codes = _warning_codes(chart, rows)
+    assert "WARN-VALUE-LABELS-THINNED" in codes
+    assert "WARN-VALUE-LABELS-CROWD-WIDTH" not in codes
+
+
+def test_a_markerless_line_with_several_labeled_series_warns_to_show_points() -> None:
+    rows = [
+        f"{{c: c{i:02d}, s: s{s}, v: {10 + i + s}}}" for i in range(6) for s in range(2)
+    ]
+    chart = (
+        "    type: line\n    x: c\n    y: v\n    color: s\n    style:\n      marks:\n"
+        "        point:\n          size: 0\n        line:\n          labels:\n            visible: true"
+    )
+    assert "WARN-VALUE-LABELS-NO-MARKERS" in _warning_codes(chart, rows)
+
+
+def test_a_markerless_area_with_several_labeled_series_warns_to_show_points() -> None:
+    rows = [
+        f"{{c: c{i:02d}, s: s{s}, v: {10 + i + s}}}" for i in range(6) for s in range(2)
+    ]
+    chart = (
+        "    type: area\n    x: c\n    y: v\n    color: s\n    style:\n      marks:\n"
+        "        line:\n          labels:\n            visible: true"
+    )
+    assert "WARN-VALUE-LABELS-NO-MARKERS" in _warning_codes(chart, rows)
 
 
 def test_a_line_layers_colliding_labels_warn_at_the_layer() -> None:
@@ -133,3 +169,12 @@ def test_a_single_color_patterned_bar_too_narrow_for_its_tile_is_an_error() -> N
     board += f"charts:\n  c:\n    query: q\n{chart}\nrows:\n  - c\n"
     result = render_board_svg_result(board)
     assert [e.code for e in result.chart_errors] == ["ERR-PATTERN-FALLBACK-FLAT"]
+
+
+def test_a_thinned_scatter_warns_on_its_point_labels() -> None:
+    rows = [f"{{x: {i % 3}, y: {i % 3}, v: {1000000 + i}}}" for i in range(40)]
+    chart = (
+        "    type: scatter\n    x: x\n    y: y\n    style:\n      marks:\n"
+        "        point:\n          labels:\n            visible: true"
+    )
+    assert "WARN-VALUE-LABELS-THINNED" in _warning_codes(chart, rows)

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.project import Project, ProjectDirectory, ProjectPath
 
@@ -195,30 +196,29 @@ class TestBuildAdapterRegistryNonFilesystemProject:
     A non-filesystem host (Cloud's git-blob store; this test's seam-purity
     stub) has no `.root` to resolve relative DuckDB/SQLite paths against, and
     no real dbt_project.yml sibling check to make. build_adapter_registry must
-    degrade to data_dir=None / no DbtAdapter instead of crashing on `.root`.
+    degrade to data_dir=None / no dbt project instead of crashing on `.root`.
     """
 
-    def test_registers_duckdb_adapter_with_no_data_dir(self) -> None:
+    def test_routes_duckdb_with_no_data_dir(self) -> None:
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 
         registry = build_adapter_registry(_NoFilesystemProject())
 
-        duckdb_adapters = [a for a in registry.adapters if isinstance(a, DuckDBAdapter)]
-        assert len(duckdb_adapters) == 1
-        assert duckdb_adapters[0]._data_dir is None  # noqa: SLF001
+        backend = registry._backends.for_source(  # noqa: SLF001
+            DuckDBSourceConfig(type="duckdb")
+        )
+        assert backend._data_dir is None  # noqa: SLF001
 
-    def test_registers_no_dbt_adapter(self) -> None:
+    def test_links_no_dbt_project(self) -> None:
         """_NoFilesystemProject.exists() always returns False, so there is no
-        dbt_project.yml sibling to detect — no DbtAdapter should register,
+        dbt_project.yml sibling to detect — no dbt project should link,
         and detecting that must never touch `.root`."""
         from dbt_charts.core.execute.adapters.adapter_registry import (
             build_adapter_registry,
         )
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
 
         registry = build_adapter_registry(_NoFilesystemProject())
 
-        assert not any(isinstance(a, DbtAdapter) for a in registry.adapters)
+        assert registry.dbt_context is None

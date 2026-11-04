@@ -33,12 +33,12 @@ from dbt_charts.core.compile.models.source import (
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_COLUMN_TYPE
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.base import QueryResult, RowFetchLimit
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
 from dbt_charts.core.execute.adapters.values_adapter import ValuesAdapter
 from dbt_charts.core.execute.duckdb_types import duckdb_column_type
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.result import arrow_to_query_result
+
+from ..._backend_runner import DuckDBRunner, SqliteRunner
 
 FLOAT = ColumnType(kind="float")
 LIST_FLOAT = ColumnType(kind="list", element=FLOAT)
@@ -108,7 +108,7 @@ def test_values_column_mixing_kinds_is_rejected() -> None:
 
 
 def test_duckdb_declares_nested_types_even_for_zero_rows() -> None:
-    adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+    adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
     result = adapter.execute(
         SqlQuery(sql="select [1.5::double] as xs, 1::hugeint as n where false")
     )
@@ -121,7 +121,7 @@ def test_successful_result_without_schema_is_rejected() -> None:
 
 
 def _duckdb(sql: str) -> QueryResult:
-    adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+    adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
     return adapter.execute(SqlQuery(sql=sql))
 
 
@@ -201,16 +201,16 @@ def test_sqlite_schema_is_read_from_values_and_empty_columns_are_string(
         conn.execute("create table t (a integer, b text)")
         conn.execute("insert into t values (1, null)")
         conn.commit()
-    adapter = SqliteAdapter()
+    adapter = SqliteRunner()
     source = SQLiteSourceConfig(type="sqlite", path=str(db))
-    result = adapter._execute(
+    result = adapter.execute(
         SqlQuery(sql="select a, b from t", source="db"), source_config=source
     )
     assert result.schema == {
         "a": ColumnType(kind="integer"),
         "b": ColumnType(kind="string"),
     }
-    empty = adapter._execute(
+    empty = adapter.execute(
         SqlQuery(sql="select a from t where a > 9", source="db"), source_config=source
     )
     assert empty.schema == {"a": ColumnType(kind="string")}

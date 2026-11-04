@@ -1,5 +1,0 @@
-kind: Fixes
-body: A `line`, `scatter` or `area` layer on a bar over more than 60 `year`/`yearquarter`/`yearmonth` buckets now sits on its bars' centers.
-time: 2026-10-29T21:58:55.14896-05:00
-custom:
-    DbtChartsIssue: "80"

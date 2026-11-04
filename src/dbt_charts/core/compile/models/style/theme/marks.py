@@ -257,6 +257,21 @@ class BasemapStyle(BaseModel):
     )
 
 
+SERIES = "series"
+
+
+class ValueLabelFontStyle(FontStyle):
+    """The value label font. ``color`` also takes ``series``."""
+
+    color: Annotated[str | None, Color(keywords=(SERIES,))] = Field(
+        default=None,
+        description=(
+            "Text color as a CSS color string; `series` takes each label's "
+            "series color."
+        ),
+    )
+
+
 LabelAnchor = Literal["first", "last", "min", "max"]
 
 
@@ -416,11 +431,19 @@ class BarLabelsStyle(MarkLabelsStyle):
 class PointLabelsStyle(MarkLabelsStyle):
     """Point/line mark value-label config. Used by both LineMarkStyle and PointMarkStyle."""
 
+    font: Annotated[ValueLabelFontStyle | None, SkipInheritSlots(cascade=True)] = Field(
+        default=None,
+        description="Value label font style (color, size, family, etc.).",
+    )
     # Cascade tier sentinel: None means "not specified at this tier".
-    position: Literal["top", "bottom", "left", "right", "middle"] | None = Field(
+    position: Annotated[
+        Literal["top", "bottom", "left", "right", "middle"] | None, AutoUnset()
+    ] = Field(
         default=None,
         description=(
             "Label position relative to the point. "
+            "'auto' leaves the spot to the renderer; any authored position, "
+            "dx or dy keeps the label where you put it. "
             "'top' places labels above the point. "
             "'bottom' places labels below. "
             "'left' to the left. "

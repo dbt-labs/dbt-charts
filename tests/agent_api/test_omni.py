@@ -86,7 +86,11 @@ def _install(
         handler = routes.get((request.get_method(), path))
         if handler is None:
             raise urllib.error.HTTPError(
-                request.full_url, 404, "Not Found", Message(), io.BytesIO()
+                request.full_url,
+                404,
+                "Not Found",
+                Message(),
+                io.BytesIO(b'{"detail": "No document"}'),
             )
         return _Response(handler(request))
 
@@ -167,8 +171,10 @@ def test_pages_layout_renders_one_png_per_page(
     export["dashboard"]["metadata"]["containers"] = [
         {
             "name": "Overview",
+            "containerType": "page",
+            "instanceKey": "page-a",
             "container": {
-                "instanceKey": "page-a",
+                "instanceKey": "page-a-root",
                 "children": [
                     {
                         "name": "Row",
@@ -180,13 +186,21 @@ def test_pages_layout_renders_one_png_per_page(
         },
         {
             "name": "Trends",
+            "containerType": "page",
+            "instanceKey": "page-b",
             "container": {
-                "instanceKey": "page-b",
+                "instanceKey": "page-b-root",
                 "children": [
                     {"id": "2", "type": "query", "as": "metadata", "format": "name"},
                     {"id": "2", "type": "query", "as": "chart"},
                 ],
             },
+        },
+        {
+            "children": [],
+            "direction": "row",
+            "instanceKey": "filter-bar",
+            "containerType": "stack",
         },
     ]
     sent: list[dict[str, Any]] = []
@@ -233,7 +247,7 @@ def test_non_dashboard_url_is_rejected(http: Any, tmp_path: Path) -> None:
         import_omni(f"{BASE}/w/{DOC}", out=tmp_path, base_url=None, force=False)
 
 
-def test_failed_request_names_the_endpoint_and_never_the_key(
+def test_failed_request_names_the_endpoint_and_omnis_reason_never_the_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     routes = _routes(_fixture("export.json"))
@@ -241,7 +255,7 @@ def test_failed_request_names_the_endpoint_and_never_the_key(
     _install(monkeypatch, routes)
 
     with pytest.raises(
-        BundleError, match=r"GET /v1/documents/abc12345/queries.*404"
+        BundleError, match=r"GET /v1/documents/abc12345/queries.*404.*No document"
     ) as exc:
         import_omni(DOC, out=tmp_path, base_url=BASE, force=False)
 
@@ -438,8 +452,10 @@ def test_unsupported_container_tile_fails_naming_it(
     export["dashboard"]["metadata"]["containers"] = [
         {
             "name": "Page",
+            "containerType": "page",
+            "instanceKey": "page-a",
             "container": {
-                "instanceKey": "page-a",
+                "instanceKey": "page-a-root",
                 "children": [{"type": "inline-map", "instanceKey": "k1"}],
             },
         }
@@ -447,6 +463,29 @@ def test_unsupported_container_tile_fails_naming_it(
     _install(monkeypatch, _routes(json.dumps(export).encode()))
 
     with pytest.raises(BundleError, match="inline-map"):
+        import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
+
+
+def test_tiles_outside_a_page_container_fail_naming_the_container_type(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    export = json.loads(_fixture("export.json"))
+    export["dashboard"]["metadata"]["containers"] = [
+        {
+            "name": "Page",
+            "containerType": "page",
+            "instanceKey": "page-a",
+            "container": {"instanceKey": "page-a-root", "children": []},
+        },
+        {
+            "instanceKey": "side",
+            "containerType": "stack",
+            "children": [{"id": "1", "type": "query", "as": "chart"}],
+        },
+    ]
+    _install(monkeypatch, _routes(json.dumps(export).encode()))
+
+    with pytest.raises(BundleError, match="stack"):
         import_omni(DOC, out=tmp_path / "b", base_url=BASE, force=False)
 
 
@@ -467,7 +506,12 @@ def test_pages_whose_names_collide_as_file_names_fail_before_any_fetch(
     export = json.loads(_fixture("export.json"))
     export["dashboard"]["metadata"]["layouts"] = {"lg": []}
     export["dashboard"]["metadata"]["containers"] = [
-        {"name": name, "container": {"instanceKey": key, "children": []}}
+        {
+            "name": name,
+            "containerType": "page",
+            "instanceKey": key,
+            "container": {"instanceKey": f"{key}-root", "children": []},
+        }
         for name, key in (("A B", "page-a"), ("A-B", "page-b"))
     ]
     routes = _routes(json.dumps(export).encode())

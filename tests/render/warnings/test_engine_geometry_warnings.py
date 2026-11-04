@@ -19,6 +19,8 @@ from dbt_charts.core.diagnostics import (
     WARN_FACET_PANEL_WIDTH_BELOW_MINIMUM,
     WARN_LAYOUT_MIN_EXCEEDS_HEIGHT,
     WARN_VALUE_LABELS_CROWD_WIDTH,
+    WARN_VALUE_LABELS_NO_MARKERS,
+    WARN_VALUE_LABELS_THINNED,
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.registry import WarningCode
@@ -30,6 +32,8 @@ from dbt_charts.core.render.warnings import (
     facet_panel_width_below_minimum,
     layout_min_exceeds_height,
     value_labels_crowd_width,
+    value_labels_no_markers,
+    value_labels_thinned,
 )
 from dbt_charts.core.render.warnings.base import engine_warnings
 
@@ -237,3 +241,20 @@ def test_a_moved_note_anchors_on_its_annotation() -> None:
     )
     assert diagnostic.path == "charts.c1.annotations[2]"
     assert "annotation 2" in diagnostic.message
+
+
+def test_thinned_value_labels_say_how_many_were_dropped() -> None:
+    diagnostic = _only(
+        value_labels_thinned.detect(
+            _ctx(WARN_VALUE_LABELS_THINNED, {"dropped": 12, "total": 40})
+        )
+    )
+    assert diagnostic.path == "charts.c1.style.marks.bar.labels"
+    assert "12 of 40 value labels" in diagnostic.message
+
+
+def test_markerless_value_labels_anchor_on_the_label_style() -> None:
+    diagnostic = _only(
+        value_labels_no_markers.detect(_ctx(WARN_VALUE_LABELS_NO_MARKERS, {}))
+    )
+    assert diagnostic.path == "charts.c1.style.marks.bar.labels"

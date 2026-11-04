@@ -1,3 +1,0 @@
-kind: Fixes
-body: filter_date_range takes a timestamp= option that dates a timestamp column in the board's regional.time_zone instead of UTC.
-time: 2026-10-28T12:28:30.205958-07:00

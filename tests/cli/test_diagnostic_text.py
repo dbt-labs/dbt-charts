@@ -24,7 +24,8 @@ from dbt_charts.core.diagnostics import (
     Diagnostic,
 )
 from dbt_charts.core.diagnostics.diagnostic import SourceRange
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+
+from .._backend_runner import DuckDBRunner
 
 _DOCS = docs_site_url()
 
@@ -52,10 +53,10 @@ def _union_order_by_error() -> Diagnostic:
     db = Path(tempfile.mkdtemp()) / "t.duckdb"
     with duckdb.connect(str(db)) as con:
         con.execute("CREATE TABLE t AS SELECT 'a' AS sector, 1 AS n")
-    adapter = DuckDBAdapter(
+    adapter = DuckDBRunner(
         source_config=DuckDBSourceConfig(type="duckdb", path=str(db))
     )
-    result = adapter._execute(
+    result = adapter.execute(
         SqlQuery(
             sql="SELECT sector, n FROM t UNION SELECT sector, 2 FROM t "
             "ORDER BY CASE WHEN sector = 'x' THEN 1 ELSE 2 END",

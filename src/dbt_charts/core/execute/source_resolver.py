@@ -63,19 +63,18 @@ class DbtContext:
 
     When present and no `sources:` are configured at all, an unknown string
     source name defers (returns None) rather than raising — the query then
-    falls through to whichever adapter claims a source-less SQL query:
-    DbtAdapter for dbt-jinja (`ref()`/`source()`, resolved via the manifest),
-    or DuckDBAdapter otherwise, which auto-discovers the dbt project's own
-    local dev warehouse file under its `data/` directory (see
-    ``DuckDBAdapter.__init__``'s `dbt_project_path` parameter), raising
-    ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE when discovery finds nothing. When any
-    `sources:` are configured, or when this is absent entirely, unknown names
-    always raise instead.
+    falls to the registry's default source for SQL: the dbt target for dbt-jinja
+    (`ref()`/`source()`, resolved via the manifest), or the default DuckDB source
+    otherwise, which auto-discovers the dbt
+    project's own local dev warehouse file under its `data/` directory (see
+    ``default_duckdb_source``), raising ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE
+    when discovery finds nothing. When any `sources:` are configured, or when
+    this is absent entirely, unknown names always raise instead.
 
-    dbt_project_path is populated by AdapterRegistry._derive_dbt_context() from
-    the registered DbtAdapter. It is used by DefaultSourceResolver to expand
+    dbt_project_path is populated from
+    the linked dbt project. It is used by DefaultSourceResolver to expand
     dbt_profile sources into their concrete warehouse SourceConfig before routing,
-    so the registry re-route sees the real type (e.g. "duckdb" → DuckDBAdapter).
+    so the registry re-route sees the real type (e.g. "duckdb" → the DuckDB backend).
     """
 
     dbt_project_path: Path | None = None
@@ -144,10 +143,10 @@ class DefaultSourceResolver:
       3. raise ERR-SOURCE-NOT-FOUND when any project sources are configured
          (`project_sources.sources`) but the name matches neither lookup above
       4. dbt fallback: return None when dbt_context is set (no project sources
-         configured at all) — the query then falls through to whichever
-         adapter claims a source-less query (DbtAdapter for dbt-jinja SQL,
-         DuckDBAdapter otherwise, which auto-discovers the dbt project's own
-         local dev warehouse file under `data/`, else raises)
+         configured at all) — the registry then picks the default source for
+         the SQL (the dbt target for dbt-jinja SQL, the default DuckDB source
+         otherwise, which auto-discovers the dbt project's own local dev warehouse
+         file under `data/`, else raises)
       5. raise ERR-SOURCE-NOT-FOUND-EMPTY otherwise
 
     For None authored: return None (sourceless query types — values, http, schema).
@@ -265,7 +264,7 @@ class DefaultSourceResolver:
                 validation fails (FileNotFoundError / ValueError from
                 _read_target_dict).
         """
-        from dbt_charts.core.execute.adapters.dbt_adapter import _read_target_dict
+        from dbt_charts.core.execute.adapters.dbt_profile import _read_target_dict
 
         project_path = dbt_context.dbt_project_path if dbt_context is not None else None
         profiles_dir = None

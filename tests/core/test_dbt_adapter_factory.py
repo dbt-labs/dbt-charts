@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+from dbt_charts.core.execute.adapters.base import QueryDurationExceeded
 
 
 class TestBuildAdapter:
@@ -690,7 +691,7 @@ class TestReadOnlyDuckDB:
         the rename, the value is dropped and the patched read-only initialize_db
         opens with the default `enable_external_access=False` — which conflicts
         with a sibling read-only connection opened with `enable_external_access=True`
-        on the same file (the playground SqlAdapter posture).
+        on the same file (the playground the dbt backend posture).
         """
         import duckdb
 
@@ -1261,7 +1262,7 @@ class TestSQLServerAdapter:
             SQLServerConnectionManager,
         )
 
-        from dbt_charts.core.execute.adapters.sql_adapter import _SourcePool
+        from dbt_charts.core.execute.backends.dbt_core import _SourcePool
 
         sent: list[str] = []
 
@@ -1291,8 +1292,7 @@ class TestSQLServerAdapter:
             SQLServerConnectionManager,
         )
 
-        from dbt_charts.core.execute.adapters.sql_adapter import (
-            _QueryDurationExceeded,
+        from dbt_charts.core.execute.backends.dbt_core import (
             _SourcePool,
         )
 
@@ -1305,7 +1305,7 @@ class TestSQLServerAdapter:
 
         with patch.object(SQLServerConnectionManager, "open", classmethod(_open)):
             pool = _SourcePool(self._SOURCE, max_workers=1, timeout_seconds=2)
-            with pytest.raises(_QueryDurationExceeded):
+            with pytest.raises(QueryDurationExceeded):
                 pool.execute("SELECT * FROM slow_table", setup_sql=None)
             table = pool.execute("SELECT 1", setup_sql=None)
             pool.close()

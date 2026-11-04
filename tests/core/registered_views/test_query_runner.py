@@ -420,15 +420,12 @@ class TestSchemaQueryAsRegistryQuery:
             return_value=MagicMock(profile_table=MagicMock(return_value=envelope)),
         ):
             from dbt_charts.core.execute.adapters import build_adapter_registry
-            from dbt_charts.core.execute.adapters.schema_adapter import SchemaAdapter
 
             registry = build_adapter_registry(local_project(tmp_path))
             # Call SchemaAdapter._execute directly to bypass source-resolution;
             # source resolution raises for unknown source names without a dbt project.
             # The SchemaAdapter does not use source_config — it calls build_resolver.
-            schema_adapter = next(
-                a for a in registry.adapters if isinstance(a, SchemaAdapter)
-            )
+            schema_adapter = registry._schema  # noqa: SLF001
             from dbt_charts.core.compile.models.query.normalized import SchemaQuery
 
             query = SchemaQuery(source="warehouse", schema="analytics", table="orders")

@@ -77,6 +77,7 @@ from dbt_charts.core.diagnostics.codes_compile import (
     ERR_TICKS_INTERVAL_MEASURE_AXIS,
 )
 from dbt_charts.core.diagnostics.codes_render import (
+    ERR_ENDPOINT_LABELS_AND_LEGEND_NAME_SERIES_TWICE,
     ERR_LAYER_AXIS_POSITION_ENDPOINT_LABELS,
     ERR_MULTIPLES_INDEPENDENT_SCALE_MIRROR,
 )
@@ -1245,17 +1246,18 @@ def cartesian_series_naming(
         or placed_align(authored_position.align) is not None
         or placed_overlay(authored_position.overlay) is not None
     ) and not author_hid_legend
-    suppress_legend = (
-        authored_visible == "auto"
-        and not author_placed_legend
-        and _suppress_legend_for_endpoint_labels(
-            channels,
-            endpoint_labels.visible and rail_eligible_for_suppression,
-            endpoint_label_has_layers,
-            wide_measure_series=suppress_wide_measure_series,
-            has_layers=has_layers,
-        )
+    rail_names_series = _suppress_legend_for_endpoint_labels(
+        channels,
+        endpoint_labels.visible and rail_eligible_for_suppression,
+        endpoint_label_has_layers,
+        wide_measure_series=suppress_wide_measure_series,
+        has_layers=has_layers,
     )
+    if rail_names_series and (authored_visible is True or author_placed_legend):
+        raise ChartDataError.from_code(
+            ERR_ENDPOINT_LABELS_AND_LEGEND_NAME_SERIES_TWICE, chart_id=normalized.id
+        )
+    suppress_legend = authored_visible == "auto" and rail_names_series
     # An authored `edge: top` agrees with the automatic top strip -- only an
     # edge that moves the legend off the top is a conflict to resolve. Short-
     # circuiting on agreement would drop the horizontal/columns-0/titleless

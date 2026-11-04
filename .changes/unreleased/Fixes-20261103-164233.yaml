@@ -1,3 +1,0 @@
-kind: Fixes
-body: dct render --format text lists a range for every measure of a wide chart.
-time: 2026-11-03T16:42:33.42508-08:00

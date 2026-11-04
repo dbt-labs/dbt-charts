@@ -17,9 +17,9 @@ from pathlib import Path
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 from dbt_charts.core.execute.observability import WarehouseObserver, notify_observers
 
 _TEST_DB_SOURCES = ProjectSourcesConfig(
@@ -81,11 +81,7 @@ def test_execute_invokes_observer_with_profile_type_status_and_duration(
         project=local_project(tmp_path),
         project_sources=_TEST_DB_SOURCES,
         observers=[capture],
-    )
-    registry.register(
-        DuckDBAdapter(
-            source_config=DuckDBSourceConfig(type="duckdb"),
-        )
+        backends=BackendRegistry({"duckdb": DuckDBBackend()}),
     )
     result = registry.execute(_duckdb_select_one_query())
 
@@ -120,11 +116,7 @@ def test_observer_status_is_error_on_failed_result(
         project=local_project(tmp_path),
         project_sources=_TEST_DB_SOURCES,
         observers=[lambda wt, s, d: calls.append((wt, s, d))],
-    )
-    registry.register(
-        DuckDBAdapter(
-            source_config=DuckDBSourceConfig(type="duckdb"),
-        )
+        backends=BackendRegistry({"duckdb": DuckDBBackend()}),
     )
     # A query that will fail at execution time
     bad_query = SqlQuery(sql="SELECT * FROM nonexistent_table_xyz", source="test_db")
@@ -140,3 +132,20 @@ def test_observer_type_alias_is_callable() -> None:
     """WarehouseObserver type alias is importable and usable as annotation."""
     obs: WarehouseObserver = lambda wt, s, d: None  # noqa: E731
     assert callable(obs)
+
+
+def test_preparation_failure_is_reported_to_observers(
+    tmp_path, local_project: Callable[..., FilesystemProject]
+) -> None:
+    calls: list[tuple[str, str, float]] = []
+    registry = AdapterRegistry(
+        project=local_project(tmp_path),
+        project_sources=_TEST_DB_SOURCES,
+        observers=[lambda wt, s, d: calls.append((wt, s, d))],
+        backends=BackendRegistry({"duckdb": DuckDBBackend()}),
+    )
+
+    result = registry.execute(SqlQuery(sql="DROP TABLE t", source="test_db"))
+
+    assert result.error is not None
+    assert [status for _, status, _ in calls] == ["error"]

@@ -21,8 +21,8 @@ use measure::FontBook;
 use scene::{Attrs, Node, PathData, Role};
 use serde_json::{Value, json};
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
+use std::collections::HashMap;
 
 use super::axes::{BandInterval, BandXAxis, band_tick_snap, bar_temporal_labels, bucket_x, cadence_ratio, format_tick_labels, rotated_rows_reach};
 use super::bind::zero_label;
@@ -3710,7 +3710,7 @@ pub(crate) fn render_vertical_panel(
     }
 
     let mut plot: Vec<Node> = Vec::new();
-    let defined_clips: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    let clips = crate::families::layers::PlotClips::new(&r.id);
 
     // Gridlines: horizontal lines at value ticks. Under the vega-fit path
     // the grid axis group carries Vega's +0.5 crispness translate in both
@@ -4195,6 +4195,7 @@ pub(crate) fn render_vertical_panel(
                 // A layer on its own scale clips as a whole group (`paint_layer`'s own-scale wrap).
                 clip: !independent_y
                     && (v_domain_min > 0.0 || (normalize && l.leaves_domain(line_layer_rows[line], ax_y.authored_continuous_domain().unwrap_or((0.0, 1.0))))),
+                clips: &clips,
             },
             false,
             series_color,
@@ -4381,7 +4382,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 let href = bl_link.map(|link| link.href(row)).transpose()?;
                 bars.extend(bar_passes(layer_mark(1 + bar_layer_at[bl_index], bl, row, datum), false, col_x, top, mark_w, h, &fill, None, bl.bar_mark.opacity, bl_stroke_color, bl_stroke_w, bl_corner_r, ends, true, None, aria.as_deref(), crate::href::anchor_for(bl_link, &href))?);
             }
-            out.extend(clipped_if(layer_clip, &defined_clips, (plot_w, plot_h), &r.id, bars));
+            out.extend(clipped_if(layer_clip, &clips, (plot_w, plot_h), bars));
             out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
             return Ok(());
         }
@@ -4455,7 +4456,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                     }
                 }
             }
-            out.extend(clipped_if(layer_clip, &defined_clips, (plot_w, plot_h), &r.id, bars));
+            out.extend(clipped_if(layer_clip, &clips, (plot_w, plot_h), bars));
             out.extend(paint_layer_labels((bar_layer_at[bl_index], bl), bl_x, bar_layer_rows, linear, &|cat| bar_extent(band.position(cat).expect("a labeled category is on the band scale"), cat).1)?);
         } else {
             let bl_corner_r = layer_radius(bl);
@@ -4479,7 +4480,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 let href = bl_link.map(|link| link.href(row)).transpose()?;
                 bars.extend(bar_passes(layer_mark(1 + bar_layer_at[bl_index], bl, row, index), false, col_x, bar_top, mark_w, bar_h, bl_fill, None, bl.bar_mark.opacity, bl_stroke_color, bl_stroke_w, bl_corner_r, Rounded::by_sign(val), true, None, aria.as_deref(), crate::href::anchor_for(bl_link, &href))?);
             }
-            out.extend(clipped_if(layer_clip, &defined_clips, (plot_w, plot_h), &r.id, bars));
+            out.extend(clipped_if(layer_clip, &clips, (plot_w, plot_h), bars));
             // The layer's OWN value labels (`_build_layer_label_specs` →
             // `_build_bar_text_layer`) paint right after its own bars, before
             // the zero rule — the base's own labels paint last (see below).
@@ -4545,7 +4546,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                     ])
                 }))
             },
-            crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), scatter_clip(sl, sl_rows).then_some((plot_w, plot_h)),
+            crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), scatter_clip(sl, sl_rows).then_some(((plot_w, plot_h), &clips)),
             crate::families::layers::LabelCrowd { chart_id: &r.id, layer: scatter_layer_at[scatter], fonts },
         )
         .map_err(|e| format!("bar: {e}"))
@@ -4646,7 +4647,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
                 .collect();
             painted_layers += rule_ys.len();
             plot.extend(baseline_rule_layers(bar_layers_painted, &rule_ys, |y, aria| {
-                Node::line(Role::Grid, (rx1, y), (rx2, y), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
+                Node::line(Role::Rule, (rx1, y), (rx2, y), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
             })?);
         }
     }
@@ -4671,13 +4672,13 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: line_layer_at[line
         let clipped = layer_axes[position].cut == DomainCut::Clip && !matches!(layers[position], OverlayLayer::Bar(_));
         let mut painted: Vec<Node> = Vec::new();
         paint_layer(&mut painted, position, ll)?;
-        plot.extend(clipped_if(clipped, &defined_clips, (plot_w, plot_h), &r.id, painted));
+        plot.extend(clipped_if(clipped, &clips, (plot_w, plot_h), painted));
         if let (Some(rule_width), Some(zl)) = (zero_rule, &grid.threshold) {
             let zc = zl.stroke();
             let layer_edge = if layer_axes[position].side == LayerSide::Right { plot_right + ax_off_y + 0.5 } else { plot_left - ax_off_y + 0.5 } - plot_left;
             let (lx1, lx2) = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
             plot.extend(baseline_rule_layers(painted_layers + 1 + position, &[ll.scale(0.0)], |y, aria| {
-                Node::line(Role::Grid, (lx1, y), (lx2, y), Attrs::new().set("stroke", zc).num("stroke-width", *rule_width).extend(aria))
+                Node::line(Role::Rule, (lx1, y), (lx2, y), Attrs::new().set("stroke", zc).num("stroke-width", *rule_width).extend(aria))
             })?);
         }
     }

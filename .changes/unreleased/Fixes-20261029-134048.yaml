@@ -1,3 +1,0 @@
-kind: Fixes
-body: dct validate --warehouse now checks queries written in another dialect after translating them, instead of skipping them.
-time: 2026-10-29T13:40:48.20086-07:00

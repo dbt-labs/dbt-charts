@@ -59,6 +59,7 @@ has to be read for whose fault it was.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -90,7 +91,7 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_UNPARSEABLE_SQL,
     ERR_WAREHOUSE_RUNTIME,
 )
-from dbt_charts.core.diagnostics.execution import UnparseableSqlError
+from dbt_charts.core.diagnostics.execution import ExecutionError, UnparseableSqlError
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.board.normalized import Board, VariableValues
@@ -205,41 +206,42 @@ def warehouse_check(
             ),
         )
 
-    source_config = adapter_registry.resolve_query_source(
-        query, board=board, query_name=query_name
+    # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
+    # the chain, resolved exactly as the executor resolves it, and before the
+    # source is: the source is chosen on the SQL that executes. AdapterRegistry's
+    # own composition is a single non-recursive pass, so a two-hop chain would
+    # otherwise reach the warehouse with `{{ queries.X }}` still in the SQL.
+    resolved = resolve_query_references(
+        query,
+        all_queries={**board.queries, **query_registry},
+        query_name=query_name,
     )
+    # Resolution only ever rewrites `sql`/`setup_sql` on a copy of what it got.
+    assert is_sql_query(resolved)
+    query = resolved
+
+    try:
+        source_config = adapter_registry.resolve_query_source(
+            query, board=board, query_name=query_name
+        )
+    except ExecutionError as exc:
+        # A dbt target that cannot be read is this query's problem, not the
+        # board's: the other queries still get their check.
+        return WarehouseCheck(
+            status="unchecked",
+            adapter_type="none",
+            mechanism="no-source",
+            columns_checked=False,
+            reason=str(exc),
+        )
+    assert source_config is not None  # SQL always resolves to a source
     clock = board.clock(utc_now())
     with board_clock(clock):
         variables = merge_board_variables(board, {}, clock)
 
-        if query.dialect is not None and source_config is None:
-            return WarehouseCheck(
-                status="unchecked",
-                adapter_type="none",
-                mechanism="no-source",
-                columns_checked=False,
-                reason=(
-                    f"its SQL is written in {query.dialect} and no source resolved "
-                    "to say which warehouse to translate it for"
-                ),
-            )
-
-        # Multi-hop {{ queries.X }} composition and the setup_sql of everything in
-        # the chain, resolved exactly as the executor resolves it. AdapterRegistry's
-        # own composition is a single non-recursive pass, so a two-hop chain would
-        # otherwise reach the warehouse with `{{ queries.X }}` still in the SQL.
-        resolved = resolve_query_references(
-            query,
-            all_queries={**board.queries, **query_registry},
-            query_name=query_name,
-        )
-        # Resolution only ever rewrites `sql`/`setup_sql` on a copy of what it got.
-        assert is_sql_query(resolved)
-        query = resolved
-
         # A `dialect:` query is translated when it runs. The mechanisms below wrap
         # or dry-run the SQL as given, so they must be handed the translated text.
-        if query.dialect is not None and source_config is not None:
+        if query.dialect is not None:
             translated = adapter_registry.translate_query(
                 query, board=board, variables=variables, source_config=source_config
             )
@@ -253,54 +255,9 @@ def warehouse_check(
                 )
             query = translated
 
-        # None usually means a source-less *non*-SQL query (source-less SQL raises
-        # ERR-SOURCE-NOT-NAMED) — but a SqlQuery can land here too: an authored
-        # `source:` that names no board/project source falls through to
-        # DefaultSourceResolver's dbt fallback whenever a dbt project is in scope,
-        # with no ResolvedSourceConfig to read a type off. Must run against the
-        # *composed* `query` above, never the authored one: Executor.execute_query
-        # composes `{{ queries.X }}` before ever calling AdapterRegistry.execute,
-        # so a ref() reachable only through a composed `{{ queries.X }}` still has
-        # to route to DbtAdapter.
-        if source_config is None:
-            fallback_type, fallback_detail = _resolve_dbt_fallback_type(
-                query, adapter_registry
-            )
-            if fallback_type is None:
-                return WarehouseCheck(
-                    status="unchecked",
-                    adapter_type="none",
-                    mechanism="no-source",
-                    columns_checked=False,
-                    reason=(
-                        fallback_detail  # type-state: silent_fallback — empty string means no adapter claimed it, not a suppressed error
-                        or (
-                            "its source names no board or project source, and dbt "
-                            "charts could not resolve a warehouse type for it "
-                            "ahead of execution"
-                        )
-                    ),
-                )
-            adapter_type = fallback_type
-        else:
-            adapter_type = source_config.type
+        adapter_type = source_config.type
 
         if adapter_type == "bigquery":
-            if source_config is None:
-                # The dbt-fallback branch above only learns the target's `type`
-                # from profiles.yml — a BigQuery dry run needs the full resolved
-                # config (project, keyfile, …), which nothing built here.
-                return WarehouseCheck(
-                    status="unchecked",
-                    adapter_type="bigquery",
-                    mechanism=_BIGQUERY_DRY_RUN,
-                    columns_checked=False,
-                    reason=(
-                        "its source falls through to dbt's own profile "
-                        "resolution, which this tier cannot dry-run without a "
-                        "resolved BigQuery source config"
-                    ),
-                )
             # The dry run is sent on a bare client, not the dbt connection that labels
             # execution, so it establishes the same scope the registry does and
             # `_check_bigquery` reads it back.
@@ -319,18 +276,6 @@ def warehouse_check(
                     source_config=source_config,
                 )
         if adapter_type == "sqlserver":
-            if source_config is None:
-                return WarehouseCheck(
-                    status="unchecked",
-                    adapter_type="sqlserver",
-                    mechanism=_SQLSERVER_DESCRIBE,
-                    columns_checked=False,
-                    reason=(
-                        "its source falls through to dbt's own profile "
-                        "resolution, which this tier cannot describe without a "
-                        "resolved SQL Server source config"
-                    ),
-                )
             return _check_sqlserver(
                 query,
                 board=board,
@@ -340,11 +285,7 @@ def warehouse_check(
             )
         prefix_check = _PREFIX_CHECKS.get(adapter_type)
         parse_dialect = adapter_type
-        if (
-            prefix_check is None
-            and source_config is not None
-            and is_file_source(source_config)
-        ):
+        if prefix_check is None and is_file_source(source_config):
             # A csv/json/parquet source executes by materializing its files onto
             # an in-process DuckDB (file_source_materializer.py), so DuckDB's own
             # DESCRIBE mechanism answers it too — reusing the duckdb entry rather
@@ -405,31 +346,6 @@ def warehouse_check(
             columns_checked=False,
             reason=reason,
         )
-
-
-def _resolve_dbt_fallback_type(
-    query: SqlQuery, adapter_registry: AdapterRegistry
-) -> tuple[str | None, str]:
-    """The warehouse type this query's *composed* SQL routes to, read off disk.
-
-    Caller must pass the post-composition query — see the call site.
-
-    Returns ``(None, "")`` when no adapter would actually claim the query, and
-    ``(None, <detail>)`` when a claiming ``DbtAdapter``'s profile could not be
-    resolved — the failure detail carries into the caller's ``reason``.
-    """
-    from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-    from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-
-    adapter = adapter_registry.get_adapter(query, None)
-    if isinstance(adapter, DuckDBAdapter):
-        return "duckdb", ""
-    if not isinstance(adapter, DbtAdapter):
-        return None, ""
-    try:
-        return adapter.resolve_target_type(), ""
-    except Exception as exc:  # noqa: BLE001 — any profile fault means unresolvable, not a crash
-        return None, str(exc)
 
 
 # The statement types a ``DESCRIBE`` prefix can lead. Everything else —
@@ -690,9 +606,9 @@ def _check_sqlserver(
 
     The query goes in as a string literal, so it is wrapped *after* rendering
     (a rendered value's quotes would otherwise close the literal): the wire SQL
-    from :meth:`~AdapterRegistry.prepare_sql`, whose select-only guard has
+    from :meth:`~AdapterRegistry.compose_query`, whose select-only guard has
     already run, is wrapped and sent through
-    :meth:`~AdapterRegistry.execute_prepared`.
+    :meth:`~AdapterRegistry.execute_resolved`.
     """
     from dbt_charts.core.dialects import get_dialect
     from dbt_charts.core.execute.adapters.base import QueryResult
@@ -711,17 +627,17 @@ def _check_sqlserver(
         )
     # The authored limit bounds the rows of the query; the describe's rows are
     # its columns, so a limit here would truncate the schema.
-    prepared = adapter_registry.prepare_sql(
+    composed = adapter_registry.compose_query(
         query.model_copy(update={"limit": None}),
         board=board,
         variables=variables,
         source_config=source_config,
     )
-    if isinstance(prepared, QueryResult):
-        if prepared.error:
+    if isinstance(composed, QueryResult):
+        if composed.error:
             return _failure(
-                str(prepared.error),
-                rejected=_is_query_defect(prepared.error.code),
+                str(composed.error),
+                rejected=_is_query_defect(composed.error.code),
                 adapter_type="sqlserver",
                 mechanism=_SQLSERVER_DESCRIBE,
             )
@@ -732,7 +648,7 @@ def _check_sqlserver(
             columns_checked=False,
             reason="the query could not be prepared for a describe",
         )
-    if prepared.setup_sql:
+    if composed.setup_sql:
         # The function binds the statement in a scope of its own, so it cannot
         # see the temp objects a setup_sql created in the batch around it.
         return WarehouseCheck(
@@ -745,17 +661,19 @@ def _check_sqlserver(
                 "without the temp objects that setup creates"
             ),
         )
-    literal = "N" + sql_string_literal(prepared.sql, get_dialect("sqlserver"))
-    wrapped = prepared.model_copy(
-        update={
-            "sql": (
-                "SELECT name, system_type_name, error_number, error_type, "
-                f"error_message FROM sys.dm_exec_describe_first_result_set({literal}, "
-                "NULL, 0) ORDER BY column_ordinal"
-            )
-        }
+    literal = "N" + sql_string_literal(
+        composed.inline("sqlserver"), get_dialect("sqlserver")
     )
-    result = adapter_registry.execute_prepared(
+    wrapped = dataclasses.replace(
+        composed,
+        sql=(
+            "SELECT name, system_type_name, error_number, error_type, "
+            f"error_message FROM sys.dm_exec_describe_first_result_set({literal}, "
+            "NULL, 0) ORDER BY column_ordinal"
+        ),
+        params=(),
+    )
+    result = adapter_registry.execute_resolved(
         wrapped, query, source_config=source_config
     )
     if result.error:
@@ -779,7 +697,7 @@ def _check_sqlserver(
         adapter_type="sqlserver",
         mechanism=_SQLSERVER_DESCRIBE,
         columns_checked=True,
-        # Lowercased to match `SqlAdapter`, which lowercases every result
+        # Lowercased to match `DbtBackend`, which lowercases every result
         # column before a chart sees it. An expression with no alias has no name
         # (NULL), and the empty string is how the driver spells that.
         columns=[
@@ -809,7 +727,7 @@ def _check_bigquery(
 
     BigQuery has no SQL-level check (no EXPLAIN, and an outer ``WHERE FALSE``
     still scans), so this is the one mechanism that cannot ride the execute
-    path. It takes its SQL from ``prepare_sql`` — the same preparation execute
+    path. It takes its SQL from ``compose_query`` — the same composition execute
     runs — rather than re-rendering, so refs, variables, and cross-query
     composition match the real run exactly.
 
@@ -825,21 +743,21 @@ def _check_bigquery(
         BIGQUERY_UNKNOWN_REF_SUBSTRINGS,
         QueryResult,
     )
-    from dbt_charts.core.execute.adapters.sql_adapter import bigquery_default_dataset
+    from dbt_charts.core.execute.backends.dbt_core import bigquery_default_dataset
 
     # Through the same helper the rest of the BigQuery surface uses, so a
     # missing extra names itself instead of surfacing a bare ModuleNotFoundError.
     QueryJobConfig = import_bigquery("google.cloud.bigquery").QueryJobConfig
     BadRequest = import_bigquery("google.api_core.exceptions").BadRequest
 
-    prepared = adapter_registry.prepare_sql(
+    composed = adapter_registry.compose_query(
         query, board=board, variables=variables, source_config=source_config
     )
-    if isinstance(prepared, QueryResult):
-        if prepared.error:
+    if isinstance(composed, QueryResult):
+        if composed.error:
             return _failure(
-                str(prepared.error),
-                rejected=_is_query_defect(prepared.error.code),
+                str(composed.error),
+                rejected=_is_query_defect(composed.error.code),
                 adapter_type="bigquery",
                 mechanism=_BIGQUERY_DRY_RUN,
             )
@@ -855,10 +773,11 @@ def _check_bigquery(
     # A dry run gets no session to hold `setup_sql` across two statements, but
     # it does validate a whole multi-statement script in one call — so send both
     # together rather than dropping the definitions the query calls into.
+    sql = composed.inline(source_config.type)
     wire_sql = (
-        f"{_strip_trailing_semicolon_for_script_join(prepared.setup_sql)};\n{prepared.sql}"
-        if prepared.setup_sql
-        else prepared.sql
+        f"{_strip_trailing_semicolon_for_script_join(composed.setup_sql[0])};\n{sql}"
+        if composed.setup_sql
+        else sql
     )
     config = source_config.model_dump()
     # Read the same key `bigquery_default_dataset` reads, and read it outside
@@ -936,7 +855,7 @@ def _check_bigquery(
         adapter_type="bigquery",
         mechanism=_BIGQUERY_DRY_RUN,
         columns_checked=True,
-        # Lowercased to match `SqlAdapter`, which lowercases every result column
+        # Lowercased to match `DbtBackend`, which lowercases every result column
         # before a chart ever sees it — so lowercase is the only spelling that
         # renders, and reporting the dry run's verbatim casing would reject the
         # working board and pass the broken one.

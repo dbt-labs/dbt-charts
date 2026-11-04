@@ -21,7 +21,7 @@ use measure::FontBook;
 use scene::{Attrs, Node, Role};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::axes::{HorizontalValueAxis, flush_edge, flush_threshold, format_tick_labels};
 use super::BarResolved;
@@ -1606,7 +1606,7 @@ pub(super) fn render_horizontal_panel(
     }
 
     let mut plot: Vec<Node> = Vec::new();
-    let mut defined_clips: HashSet<String> = HashSet::new();
+    let clips = crate::families::layers::PlotClips::new(&r.id);
 
     // Gridlines: vertical lines at value ticks. The grid axis group carries
     // Vega's +0.5 crispness translate in both coordinates.
@@ -1968,7 +1968,7 @@ pub(super) fn render_horizontal_panel(
                     )?);
                 }
                 if layer_clip {
-                    plot.extend(crate::families::layers::clipped_layer(&mut defined_clips, (plot_w, plot_h), &r.id, layer_bars));
+                    plot.extend(clips.wrap((plot_w, plot_h), layer_bars));
                 } else {
                     plot.extend(layer_bars);
                 }
@@ -2025,7 +2025,7 @@ pub(super) fn render_horizontal_panel(
                     r.canvas.as_str(),
                     board_style,
                     |_, _| Ok(None),
-crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clips[position].then_some((plot_w, plot_h)),
+crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clips[position].then_some(((plot_w, plot_h), &clips)),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },)
                 .map_err(|e| format!("bar: {e}"))?);
             }
@@ -2046,7 +2046,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
                         |row| band.position(&row_str(row, l.x.as_deref().unwrap_or(cat_field))).map(|by| by + band.bandwidth() / 2.0),
                         None,
                         |val| crate::families::layers::clamp_unless_clipped(linear.scale(val), plot_w, layer_clips[position]),
-                        &AreaFrame { free_y: &|val| linear.scale(val), plot: (plot_w, plot_h), clip: layer_clips[position] },
+                        &AreaFrame { free_y: &|val| linear.scale(val), plot: (plot_w, plot_h), clip: layer_clips[position], clips: &clips },
                         true,
                         fill,
                         r.canvas.as_str(),
@@ -2109,7 +2109,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: position, fonts },
             let rule_xs: Vec<f64> = [zero_x, unity_x].into_iter().flatten().collect();
             painted_layers += rule_xs.len();
             plot.extend(baseline_rule_layers(bar_layers_painted, &rule_xs, |x, aria| {
-                Node::line(Role::Grid, (x, 0.0), (x, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
+                Node::line(Role::Rule, (x, 0.0), (x, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
             })?);
         }
     }

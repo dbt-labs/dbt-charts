@@ -1,3 +1,0 @@
-kind: Fixes
-body: Rendering a board no longer crashes when a tab that is not shown contains a nested board with its own queries.
-time: 2026-10-29T14:49:37.680445-07:00

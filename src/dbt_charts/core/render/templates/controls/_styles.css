@@ -855,10 +855,14 @@
    (one with something to say) and an open one stay visible. No hover means
    no way to reveal, so a touch device sees every button. Ink and tint are
    the board theme's tooltip colors, set by the runtime on the toolbar. #}
+{# The runtime's svgNode() stamps pointer-events="none" on the hit rect too. #}
+.dbt-chart-button,
+.dbt-chart-button > rect {
+  pointer-events: all;
+}
 .dbt-chart-button {
   cursor: pointer;
   outline: none;
-  pointer-events: all;
   color: var(--dbt-toolbar-ink);
   opacity: 0;
   transition: opacity 0.15s;

@@ -12,7 +12,8 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_BINDER_QUERY_SHAPE,
     ERR_BINDER_UNKNOWN_COLUMN,
 )
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+
+from ..._backend_runner import DuckDBRunner
 
 
 @pytest.fixture
@@ -27,11 +28,11 @@ def db_path(tmp_path: Path) -> Path:
 
 
 def _error_message(db_path: Path, sql: str) -> str:
-    adapter = DuckDBAdapter(
+    adapter = DuckDBRunner(
         source_config=DuckDBSourceConfig(type="duckdb", path=str(db_path))
     )
     try:
-        result = adapter._execute(SqlQuery(sql=sql, source="test_db"))
+        result = adapter.execute(SqlQuery(sql=sql, source="test_db"))
     finally:
         adapter.close()
     assert result.error is not None
@@ -78,11 +79,11 @@ def test_join_cte_and_subquery_get_no_advice(db_path: Path, sql: str) -> None:
 
 
 def _error(db_path: Path, sql: str):  # noqa: ANN202
-    adapter = DuckDBAdapter(
+    adapter = DuckDBRunner(
         source_config=DuckDBSourceConfig(type="duckdb", path=str(db_path))
     )
     try:
-        result = adapter._execute(SqlQuery(sql=sql, source="test_db"))
+        result = adapter.execute(SqlQuery(sql=sql, source="test_db"))
     finally:
         adapter.close()
     assert result.error is not None

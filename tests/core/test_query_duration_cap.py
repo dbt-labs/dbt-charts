@@ -1,7 +1,7 @@
 """Tests for the per-source query-duration cap (server-side statement timeout).
 
 Covers: the config field + its per-source override resolution, the SQL each
-dialect emits, and the end-to-end SqlAdapter path — including a live-Postgres
+dialect emits, and the end-to-end the dbt backend path — including a live-Postgres
 test that proves the cancellation happens in the warehouse, not the client.
 """
 
@@ -25,19 +25,21 @@ from dbt_charts.core.compile.config import (
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_DURATION_EXCEEDED
 from dbt_charts.core.execute.adapters.base import resolve_effective_row_limit
-from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql, SqlAdapter
+from dbt_charts.core.execute.compose import ResolvedQuery
+
+from .conftest import DbtHarness
 
 _BUILD_ADAPTER = "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter"
 
 
-def _prepared(sql: str, dialect: str) -> PreparedSql:
-    """What prepare_sql hands back for a param-free query — these tests drive
-    the send half, which takes the already-prepared SQL."""
-    return PreparedSql(
+def _prepared(sql: str) -> ResolvedQuery:
+    """What compose hands back for a param-free query — these tests drive the
+    send half, which takes the composed query."""
+    return ResolvedQuery(
         sql=sql,
-        setup_sql=None,
-        dialect_name=dialect,
-        row_fetch_limit=resolve_effective_row_limit(None),
+        params=(),
+        setup_sql=(),
+        limit=resolve_effective_row_limit(None),
     )
 
 
@@ -45,12 +47,8 @@ def _sql_adapter(
     tmp_path: Path,
     local_project: Callable[..., FilesystemProject],
     profile_type: str = "postgres",
-) -> SqlAdapter:
-    return SqlAdapter(
-        project=local_project(tmp_path),
-        dbt_project_path=None,
-        profile_type=profile_type,
-    )
+) -> DbtHarness:
+    return DbtHarness(local_project(tmp_path), profile_type=profile_type)
 
 
 def _mock_dbt_adapter(execute_side_effect: Any) -> MagicMock:
@@ -170,9 +168,7 @@ class TestStatementTimeoutInjection:
         query = SqlQuery(sql="SELECT 1 AS x", source=source_config["type"])
 
         with patch(_BUILD_ADAPTER, return_value=adapter):
-            sql_adapter._execute_via_dbt_adapter(
-                _prepared("SELECT 1 AS x", source_config["type"]), query, source_config
-            )
+            sql_adapter.run_resolved(_prepared("SELECT 1 AS x"), query, source_config)
 
         assert captured, "no SQL reached the driver"
         # captured[0] is the connection-setup timeout statement;
@@ -272,8 +268,8 @@ class TestQueryDurationExceeded:
         query = SqlQuery(sql="SELECT pg_sleep(5)", source="mypg")
 
         with patch(_BUILD_ADAPTER, return_value=adapter):
-            result = sql_adapter._execute_via_dbt_adapter(
-                _prepared("SELECT pg_sleep(5)", "postgres"), query, source_config
+            result = sql_adapter.run_resolved(
+                _prepared("SELECT pg_sleep(5)"), query, source_config
             )
 
         assert result.error is not None
@@ -307,8 +303,8 @@ class TestQueryDurationExceeded:
         query = SqlQuery(sql="SELECT pg_sleep(5)", source="mypg")
 
         with patch(_BUILD_ADAPTER, return_value=adapter):
-            sql_adapter._execute_via_dbt_adapter(
-                _prepared("SELECT pg_sleep(5)", "postgres"), query, source_config
+            sql_adapter.run_resolved(
+                _prepared("SELECT pg_sleep(5)"), query, source_config
             )
 
         assert len(data_calls) == 1
@@ -350,8 +346,8 @@ class TestQueryDurationExceeded:
         query = SqlQuery(sql="SELECT 1", source="mypg")
 
         with patch(_BUILD_ADAPTER, return_value=adapter):
-            result = sql_adapter._execute_via_dbt_adapter(
-                _prepared("SELECT 1", "postgres"), query, source_config
+            result = sql_adapter.run_resolved(
+                _prepared("SELECT 1"), query, source_config
             )
 
         assert result.error is None
@@ -384,8 +380,8 @@ class TestQueryDurationExceeded:
         query = SqlQuery(sql="SELECT 1", source="mypg")
 
         with patch(_BUILD_ADAPTER, return_value=adapter):
-            result = sql_adapter._execute_via_dbt_adapter(
-                _prepared("SELECT 1", "postgres"), query, source_config
+            result = sql_adapter.run_resolved(
+                _prepared("SELECT 1"), query, source_config
             )
 
         assert (
@@ -398,8 +394,8 @@ class TestQueryDurationExceeded:
 
 class TestDuckDBAndSqliteNoOp:
     """DuckDB and SQLite are local file databases with no server to enforce a
-    timeout against — SqlAdapter never even routes them through the
-    statement-timeout-emitting pool (DuckDB uses DuckDBAdapter; SQLite uses
+    timeout against — the dbt backend never even routes them through the
+    statement-timeout-emitting pool (DuckDB uses DuckDBBackend; SQLite uses
     the stdlib sqlite3 path in _execute_sqlite), so no timeout SQL is ever
     built for either."""
 
@@ -449,8 +445,8 @@ class TestLivePostgresStatementTimeout:
         query = SqlQuery(sql="SELECT pg_sleep(5)", source="warehouse")
 
         start = time.monotonic()
-        result = sql_adapter._execute_via_dbt_adapter(
-            _prepared("SELECT pg_sleep(5)", "postgres"), query, source_config
+        result = sql_adapter.run_resolved(
+            _prepared("SELECT pg_sleep(5)"), query, source_config
         )
         elapsed = time.monotonic() - start
 

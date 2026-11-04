@@ -29,6 +29,7 @@ from dbt_charts.core.compile.models.chart.resolved import (
     ResolvedTableStyle,
 )
 from dbt_charts.core.compile.models.primitives import ResolvedFormat, resolved_as
+from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 from dbt_charts.core.compile.models.style.resolved import (
     ResolvedPointLabels,
     ResolvedPointMarkStyle,
@@ -36,7 +37,12 @@ from dbt_charts.core.compile.models.style.resolved import (
     ResolvedTotalValueSlot,
 )
 from dbt_charts.core.compile.resolve.style.typography import concrete_title_style
+from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
 
 # Ink palette slot 0 from the default resolved theme.
 # This is rcs.single_series_palette[0] for the built-in theme.
@@ -416,7 +422,48 @@ def typed_via_execute(monkeypatch: pytest.MonkeyPatch) -> None:
             columns, list(table.rows), [ColumnType(kind="string") for _ in columns]
         )
 
-    for module in ("sql_adapter", "dbt_adapter"):
-        monkeypatch.setattr(
-            f"dbt_charts.core.execute.adapters.{module}.fetch_typed", fetch
+    monkeypatch.setattr("dbt_charts.core.execute.backends.dbt_core.fetch_typed", fetch)
+
+
+class DbtHarness:
+    """A registry that routes every dbt warehouse kind to one ``DbtBackend``."""
+
+    def __init__(
+        self, project: Any, *, max_workers: int | None = None, profile_type: str
+    ) -> None:  # type-state: explicit_any — test project double
+        from dbt_charts.core.execute.adapters.dbt_adapter_factory import (
+            DBT_SOURCE_TYPES,
         )
+
+        self.backend = DbtBackend(max_workers)
+        self.registry = AdapterRegistry(
+            project=project,
+            backends=BackendRegistry(dict.fromkeys(DBT_SOURCE_TYPES, self.backend)),
+            profile_type=profile_type,
+        )
+
+    def execute(
+        self,
+        query: Any,  # type-state: explicit_any — test query double
+        variables: dict[str, Any] | None = None,  # type-state: explicit_any — test vars
+        params: list[Any] | None = None,  # type-state: explicit_any — test params
+        source_config: Any = None,  # type-state: explicit_any — test source
+    ) -> QueryResult:
+        return self.registry.execute(
+            query, variables, params, source_config=source_config
+        )
+
+    def run_resolved(
+        self,
+        resolved: ResolvedQuery,
+        query: Any,  # type-state: explicit_any — test query double
+        source: dict[str, Any],  # type-state: explicit_any — raw source fields
+    ) -> QueryResult:
+        """Send *resolved* to the backend for *source*, as a check that wraps the
+        rendered statement does."""
+        return self.registry.execute_resolved(
+            resolved, query, source_config=DbtTargetSourceConfig(**source)
+        )
+
+    def close(self) -> None:
+        self.registry.close()

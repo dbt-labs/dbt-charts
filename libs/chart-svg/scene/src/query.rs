@@ -29,6 +29,58 @@ pub fn walk(nodes: &[Node]) -> Walk<'_> {
     Walk { stack: nodes.iter().rev().map(|node| (node, node.affine())).collect() }
 }
 
+/// A node that draws something and the box it covers in the frame of the slice [`drawn`] was given.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Drawn<'a> {
+    pub node: &'a Node,
+    pub bounds: Bounds,
+    /// The attributes of every node it is drawn inside, outermost first.
+    ancestors: Vec<&'a Attrs>,
+    /// The map from the node's own frame to the frame of the slice given.
+    pub map: Affine,
+}
+
+impl<'a> Drawn<'a> {
+    fn nearest<T>(&self, get: impl Fn(&'a Attrs) -> Option<T>) -> Option<T> {
+        std::iter::once(&self.node.attrs).chain(self.ancestors.iter().rev().copied()).find_map(get)
+    }
+
+    /// The text of presentation attribute `name`: the node's own, else the nearest ancestor's
+    /// (SVG inherits `fill` and `stroke`); `None` where none is set.
+    pub fn paint(&self, name: &str) -> Option<&'a str> {
+        self.nearest(|attrs| attrs.get(name))
+    }
+
+    /// The number of presentation attribute `name`, inherited like [`Drawn::paint`].
+    pub fn paint_num(&self, name: &str) -> Option<f64> {
+        self.nearest(|attrs| attrs.get_num(name))
+    }
+}
+
+/// Every node under `nodes` whose role `keep` accepts and that draws something, in paint order.
+pub fn drawn(nodes: &[Node], keep: impl Fn(&Role) -> bool) -> Vec<Drawn<'_>> {
+    fn visit<'a>(node: &'a Node, map: Affine, ancestors: &mut Vec<&'a Attrs>, keep: &impl Fn(&Role) -> bool, out: &mut Vec<Drawn<'a>>) {
+        if keep(&node.role) {
+            if let Some(bounds) = node.bounds() {
+                out.push(Drawn { node, bounds: bounds.transformed(&map), ancestors: ancestors.clone(), map });
+            }
+        }
+        // Definitions and clip shapes are not drawn where they sit.
+        if !matches!(node.shape, Shape::Defs(_) | Shape::ClipPath(_) | Shape::Pattern { .. }) {
+            ancestors.push(&node.attrs);
+            for child in node.children() {
+                visit(child, map.then_inner(&child.affine()), ancestors, keep, out);
+            }
+            ancestors.pop();
+        }
+    }
+    let mut out = Vec::new();
+    for node in nodes {
+        visit(node, node.affine(), &mut Vec::new(), &keep, &mut out);
+    }
+    out
+}
+
 /// A mark and the box it covers in the frame of the slice [`marks`] was given.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MarkBox<'a> {
@@ -38,8 +90,7 @@ pub struct MarkBox<'a> {
     pub bounds: Bounds,
     /// The mark node's own presentation attributes.
     pub attrs: &'a Attrs,
-    /// The attributes of every node it is drawn inside, outermost first.
-    ancestors: Vec<&'a Attrs>,
+    drawn: Drawn<'a>,
     /// The mark node's own geometry, in its own frame.
     pub shape: &'a Shape,
     /// The map from that frame to the frame of the slice given.
@@ -47,53 +98,27 @@ pub struct MarkBox<'a> {
 }
 
 impl<'a> MarkBox<'a> {
-    fn nearest<T>(&self, get: impl Fn(&'a Attrs) -> Option<T>) -> Option<T> {
-        std::iter::once(self.attrs).chain(self.ancestors.iter().rev().copied()).find_map(get)
-    }
-
     /// The text of presentation attribute `name`: the mark's own, else the nearest ancestor's
     /// (SVG inherits `fill` and `stroke`); `None` where none is set.
     pub fn paint(&self, name: &str) -> Option<&'a str> {
-        self.nearest(|attrs| attrs.get(name))
+        self.drawn.paint(name)
     }
 
     /// The number of presentation attribute `name`, inherited like [`MarkBox::paint`].
     pub fn paint_num(&self, name: &str) -> Option<f64> {
-        self.nearest(|attrs| attrs.get_num(name))
+        self.drawn.paint_num(name)
     }
 }
 
 /// Every `Role::Mark` under `nodes` that draws something, in paint order.
 pub fn marks(nodes: &[Node]) -> Vec<MarkBox<'_>> {
-    fn visit<'a>(node: &'a Node, map: Affine, ancestors: &mut Vec<&'a Attrs>, out: &mut Vec<MarkBox<'a>>) {
-        if let Role::Mark { layer, series, datum } = &node.role {
-            if let Some(bounds) = node.bounds() {
-                out.push(MarkBox {
-                    layer: *layer,
-                    series: series.as_deref(),
-                    datum: *datum,
-                    bounds: bounds.transformed(&map),
-                    attrs: &node.attrs,
-                    ancestors: ancestors.clone(),
-                    shape: &node.shape,
-                    map,
-                });
-            }
-        }
-        // Definitions and clip shapes are not drawn where they sit.
-        if !matches!(node.shape, Shape::Defs(_) | Shape::ClipPath(_) | Shape::Pattern { .. }) {
-            ancestors.push(&node.attrs);
-            for child in node.children() {
-                visit(child, map.then_inner(&child.affine()), ancestors, out);
-            }
-            ancestors.pop();
-        }
-    }
-    let mut out = Vec::new();
-    for node in nodes {
-        visit(node, node.affine(), &mut Vec::new(), &mut out);
-    }
-    out
+    drawn(nodes, |role| matches!(role, Role::Mark { .. }))
+        .into_iter()
+        .map(|drawn| {
+            let Role::Mark { layer, series, datum } = &drawn.node.role else { unreachable!("drawn kept marks only") };
+            MarkBox { layer: *layer, series: series.as_deref(), datum: *datum, bounds: drawn.bounds, attrs: &drawn.node.attrs, shape: &drawn.node.shape, map: drawn.map, drawn }
+        })
+        .collect()
 }
 
 /// The measured box of every `Role::Label` text under `nodes` that has one, in the frame of the

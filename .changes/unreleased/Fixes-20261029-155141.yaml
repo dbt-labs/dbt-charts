@@ -1,3 +1,0 @@
-kind: Fixes
-body: A table on a dark card inside a light board now resolves a pinned palette to its dark twin, matching the card it sits on.
-time: 2026-10-29T15:51:41.749634-07:00

@@ -103,11 +103,8 @@ class DbtRefResolver:
     Call `resolve()` before rendering variable Jinja over raw SQL: the variable
     renderer runs under StrictUndefined, so a `ref()` that survives to it dies
     as an undefined Jinja global — an error that names neither dbt nor the
-    manifest. Every adapter (`DbtAdapter`, `SqlAdapter`, `DuckDBAdapter`,
-    `SqliteAdapter`) owns one for its own `_execute`/`prepare_sql`;
-    `AdapterRegistry` owns one too, for the board-render composition step in
-    `_compose_query_refs` that runs ahead of (and independently from) any
-    adapter's own resolve-then-render.
+    manifest. The registry and `DbtBackend` each own one;
+    `AdapterRegistry` owns one too, which it hands to `compose`.
 
     ``resolve(sql, target_path)`` selects the manifest: a source's authored
     ``target_path`` picks the manifest its target built, none picks dbt's

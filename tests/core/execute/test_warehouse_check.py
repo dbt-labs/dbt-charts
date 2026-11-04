@@ -31,7 +31,7 @@ from dbt_charts.core.execute.adapters.base import (
     QueryResult,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.warehouse_check import (
     WarehouseCheckColumn,
     _strip_trailing_semicolon_for_script_join,
@@ -433,8 +433,8 @@ class TestWarehouseCheckDuckDB:
     def test_a_rejected_setup_sql_is_invalid_not_unchecked(self, tmp_path):
         """The warehouse refused the setup_sql — that is a verdict, not silence.
 
-        setup_sql runs through DuckDBAdapter._execute_setup_sql_duckdb, which
-        catches the raw duckdb exception and (before this fix) routed it through
+        setup_sql runs through the DuckDB backend, which catches the raw duckdb
+        exception and (before this fix) routed it through
         handle_adapter_error — leaving error_code=None for anything that isn't
         already a DbtChartsError. _is_query_defect(None) is False, so a query the
         warehouse just rejected reported "unchecked" (exit 0 without --strict).
@@ -472,11 +472,11 @@ def _bigquery_registry(prepared_sql: str = "SELECT revenue FROM orders"):
     registry.resolve_query_source.return_value = BigQuerySourceConfig(
         type="bigquery", project="my-proj", dataset="my-ds"
     )
-    registry.prepare_sql.return_value = PreparedSql(
+    registry.compose_query.return_value = ResolvedQuery(
         sql=prepared_sql,
-        setup_sql=None,
-        dialect_name="bigquery",
-        row_fetch_limit=resolve_effective_row_limit(None),
+        params=(),
+        setup_sql=(),
+        limit=resolve_effective_row_limit(None),
     )
     return registry
 
@@ -506,7 +506,7 @@ class TestWarehouseCheckBigQuery:
 
         _check_sql("SELECT 1 FROM {{ ref('orders') }}", registry)
 
-        assert registry.prepare_sql.called
+        assert registry.compose_query.called
         assert fake_bigquery_client.query.call_args.args[0] == (
             "SELECT 1 FROM `p.d.orders`"
         )
@@ -643,7 +643,7 @@ class TestWarehouseCheckBigQuery:
     def test_columns_are_lowercased_to_match_what_execution_returns(
         self, fake_bigquery_client
     ):
-        """`SqlAdapter` lowercases every result column, so lowercase is the only
+        """the dbt backend lowercases every result column, so lowercase is the only
         spelling that renders. Reporting the dry run's verbatim casing would
         reject `y: Revenue`'s working sibling `y: revenue` and accept the one
         that fails at render.
@@ -701,11 +701,11 @@ class TestWarehouseCheckBigQuery:
         """
         fake_bigquery_client.query.return_value = SimpleNamespace(schema=None)
         registry = _bigquery_registry(prepared_sql="SELECT f(1)")
-        registry.prepare_sql.return_value = PreparedSql(
+        registry.compose_query.return_value = ResolvedQuery(
             sql="SELECT f(1)",
-            setup_sql=f"CREATE TEMP FUNCTION f(x INT64) AS (x + 1){trailing}",
-            dialect_name="bigquery",
-            row_fetch_limit=resolve_effective_row_limit(None),
+            params=(),
+            setup_sql=(f"CREATE TEMP FUNCTION f(x INT64) AS (x + 1){trailing}",),
+            limit=resolve_effective_row_limit(None),
         )
 
         result = _check_sql("SELECT f(1)", registry)
@@ -815,18 +815,18 @@ class TestWarehouseCheckBigQuery:
     def test_a_prepare_failure_with_a_defect_code_is_invalid(
         self, fake_bigquery_client
     ):
-        """prepare_sql can fail before any SQL exists to dry-run — e.g. an
-        unresolved dbt ref. AdapterRegistry.prepare_sql then hands back a
-        QueryResult carrying that failure instead of a PreparedSql, and this
+        """compose_query can fail before any SQL exists to dry-run — e.g. an
+        unresolved dbt ref. AdapterRegistry.compose_query then hands back a
+        QueryResult carrying that failure instead of a ResolvedQuery, and this
         branch was previously untested: every other BigQuery test hard-sets
-        ``prepare_sql.return_value = PreparedSql(...)``, so
+        ``compose_query.return_value = ResolvedQuery(...)``, so
         ``isinstance(prepared, QueryResult)`` was never True in any test.
         """
         registry = MagicMock()
         registry.resolve_query_source.return_value = BigQuerySourceConfig(
             type="bigquery", project="my-proj", dataset="my-ds"
         )
-        registry.prepare_sql.return_value = QueryResult(
+        registry.compose_query.return_value = QueryResult(
             data=[], error=QueryError("unresolved dbt ref", code=ERR_WAREHOUSE_RUNTIME)
         )
 
@@ -844,7 +844,9 @@ class TestWarehouseCheckBigQuery:
         registry.resolve_query_source.return_value = BigQuerySourceConfig(
             type="bigquery", project="my-proj", dataset="my-ds"
         )
-        registry.prepare_sql.return_value = QueryResult(data=[], error=None, schema={})
+        registry.compose_query.return_value = QueryResult(
+            data=[], error=None, schema={}
+        )
 
         result = _check_sql("SELECT 1", registry)
 
@@ -1119,13 +1121,13 @@ def _sqlserver_registry(
     registry.resolve_query_source.return_value = DbtTargetSourceConfig(
         type="sqlserver", host="h", database="analytics", schema="dbo"
     )
-    registry.prepare_sql.return_value = PreparedSql(
+    registry.compose_query.return_value = ResolvedQuery(
         sql=prepared_sql,
-        setup_sql=None,
-        dialect_name="sqlserver",
-        row_fetch_limit=resolve_effective_row_limit(None),
+        params=(),
+        setup_sql=(),
+        limit=resolve_effective_row_limit(None),
     )
-    registry.execute_prepared.return_value = result
+    registry.execute_resolved.return_value = result
     return registry
 
 
@@ -1163,7 +1165,7 @@ class TestWarehouseCheckSqlServer:
         assert result.mechanism == "sys.dm_exec_describe_first_result_set"
         assert result.adapter_type == "sqlserver"
         assert result.columns_checked is True
-        # Lowercased like SqlAdapter's results.
+        # Lowercased like the dbt backend's results.
         assert result.columns == [
             WarehouseCheckColumn(name="month", type="date"),
             WarehouseCheckColumn(name="revenue", type="decimal(18,2)"),
@@ -1177,7 +1179,7 @@ class TestWarehouseCheckSqlServer:
             prepared_sql="SELECT 1 WHERE n = 'O''Brien'",
         )
         _check_sql("SELECT 1 FROM orders WHERE n = 'x'", registry)
-        wrapped = registry.execute_prepared.call_args.args[0]
+        wrapped = registry.execute_resolved.call_args.args[0]
         assert wrapped.sql.startswith("SELECT name, system_type_name")
         assert (
             "sys.dm_exec_describe_first_result_set("
@@ -1252,7 +1254,7 @@ class TestWarehouseCheckSqlServer:
             query_name="q",
             query_registry=compiled.query_registry,
         )
-        sent = registry.prepare_sql.call_args.args[0]
+        sent = registry.compose_query.call_args.args[0]
         assert sent.limit is None
 
     def test_a_connection_failure_is_unchecked(self):
@@ -1274,22 +1276,22 @@ class TestWarehouseCheckSqlServer:
         """The DMV binds in a scope of its own and cannot see temp objects that
         a setup_sql created in the batch around it."""
         registry = _sqlserver_registry(_result([]))
-        registry.prepare_sql.return_value = PreparedSql(
+        registry.compose_query.return_value = ResolvedQuery(
             sql="SELECT * FROM #t",
-            setup_sql="SELECT 1 AS x INTO #t",
-            dialect_name="sqlserver",
-            row_fetch_limit=resolve_effective_row_limit(None),
+            params=(),
+            setup_sql=("SELECT 1 AS x INTO #t",),
+            limit=resolve_effective_row_limit(None),
         )
         result = _check_sql("SELECT * FROM #t", registry)
         assert result.status == "unchecked"
         assert "setup_sql" in result.reason
-        registry.execute_prepared.assert_not_called()
+        registry.execute_resolved.assert_not_called()
 
     def test_a_multi_statement_query_is_unchecked(self):
         registry = _sqlserver_registry(_result([]))
         result = _check_sql("SELECT 1; SELECT 2", registry)
         assert result.status == "unchecked"
-        registry.execute_prepared.assert_not_called()
+        registry.execute_resolved.assert_not_called()
 
 
 class TestWarehouseCheckCacheRef:
@@ -1422,7 +1424,7 @@ class TestWarehouseCheckDbtManifestFallback:
     def test_plain_sql_query_is_checked_via_the_duckdb_adapter(
         self, tmp_path, monkeypatch
     ):
-        """No `ref()`, so `DbtAdapter` declines and `DuckDBAdapter` claims it
+        """No `ref()`, so the local DuckDB default is chosen
         instead, finding the project's own warehouse file by the dbt-project
         auto-discovery convention (`data/dev.duckdb`)."""
         (tmp_path / "data").mkdir()
@@ -1441,74 +1443,17 @@ class TestWarehouseCheckDbtManifestFallback:
         assert {c.name for c in result.columns} == {"company_name", "country"}
 
 
-class TestWarehouseCheckDbtFallbackTypeResolution:
-    """`_resolve_dbt_fallback_type` in isolation: adapter routing and
-    profile-failure reporting, with the registry mocked."""
+class TestWarehouseCheckResolvesTheComposedQuery:
+    """The source is chosen on the SQL that executes, with the registry mocked."""
 
-    def _registry(self, claiming_adapter):
-        registry = MagicMock()
-        registry.resolve_query_source.return_value = None
-        registry.get_adapter.return_value = claiming_adapter
-        return registry
-
-    def test_no_claiming_adapter_is_unchecked_with_no_source_mechanism(self):
-        registry = self._registry(None)
-        result = _check_sql("SELECT 1", registry)
-        assert result.status == "unchecked"
-        assert result.mechanism == "no-source"
-        assert result.reason
-        registry.execute.assert_not_called()
-
-    def test_unresolvable_dbt_profile_reports_the_real_failure_in_the_reason(self):
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-
-        adapter = MagicMock(spec=DbtAdapter)
-        adapter.resolve_target_type.side_effect = ValueError("Profile 'x' not found")
-        result = _check_sql("SELECT {{ ref('x') }}", self._registry(adapter))
-        assert result.status == "unchecked"
-        assert result.mechanism == "no-source"
-        assert "Profile 'x' not found" in result.reason
-        adapter.resolve_target_type.assert_called_once()
-
-    def test_bigquery_fallback_type_without_a_resolved_config_is_unchecked(self):
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-        from dbt_charts.core.execute.warehouse_check import _BIGQUERY_DRY_RUN
-
-        adapter = MagicMock(spec=DbtAdapter)
-        adapter.resolve_target_type.return_value = "bigquery"
-        registry = self._registry(adapter)
-        result = _check_sql("SELECT {{ ref('x') }}", registry)
-        assert result.status == "unchecked"
-        assert result.adapter_type == "bigquery"
-        assert result.mechanism == _BIGQUERY_DRY_RUN
-        registry.execute.assert_not_called()
-
-    def test_databricks_fallback_type_is_unchecked_not_a_crash(self):
-        """A dbt-fallback type outside `_PREFIX_CHECKS ∪ {bigquery}` still
-        reaches the `is_file_source(source_config)` guard with
-        `source_config=None` — the guard's `source_config is not None` clause
-        is the only thing standing between this and an `AttributeError`."""
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-
-        adapter = MagicMock(spec=DbtAdapter)
-        adapter.resolve_target_type.return_value = "databricks"
-        registry = self._registry(adapter)
-        result = _check_sql("SELECT {{ ref('x') }}", registry)
-        assert result.status == "unchecked"
-        assert result.adapter_type == "databricks"
-        assert result.mechanism == "no-validity-primitive"
-        assert "plan text" in result.reason
-        registry.execute.assert_not_called()
-
-    def test_routes_on_the_composed_query_not_the_authored_one(self):
-        """A `ref()` reachable only through `{{ queries.base }}` must still
-        route to `DbtAdapter`: routing has to run after composition, or a
-        query whose own SQL carries no jinja gets handed to `DuckDBAdapter`
-        instead of the warehouse that will actually run it."""
+    def test_resolves_the_source_on_the_composed_query_not_the_authored_one(self):
+        """A `ref()` reachable only through `{{ queries.base }}` must reach source
+        resolution: resolving before composition would hand a query whose own SQL
+        carries no jinja to the local DuckDB instead of the dbt target."""
         import yaml
 
         from dbt_charts.core.compile import compile as compile_board
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
 
         compiled = compile_board(
             yaml.dump(
@@ -1524,9 +1469,10 @@ class TestWarehouseCheckDbtFallbackTypeResolution:
         )
         assert compiled.board is not None, compiled.errors
 
-        adapter = MagicMock(spec=DbtAdapter)
-        adapter.resolve_target_type.return_value = "postgres"
-        registry = self._registry(adapter)
+        registry = MagicMock()
+        registry.resolve_query_source.return_value = DbtTargetSourceConfig(
+            type="postgres"
+        )
         registry.execute.return_value = _result([])
 
         result = warehouse_check(
@@ -1537,18 +1483,57 @@ class TestWarehouseCheckDbtFallbackTypeResolution:
             query_registry=compiled.query_registry,
         )
 
-        routed_sql = registry.get_adapter.call_args.args[0].sql
-        assert "{{ queries" not in routed_sql
-        assert "dim_makers" in routed_sql
+        resolved_sql = registry.resolve_query_source.call_args.args[0].sql
+        assert "{{ queries" not in resolved_sql
+        assert "dim_makers" in resolved_sql
         assert result.adapter_type == "postgres"
         assert result.mechanism == "EXPLAIN"
 
 
-class TestPrepareSqlThroughARealRegistry:
+class TestWarehouseCheckOnABrokenDbtProfile:
+    """A deferring source whose dbt target cannot be resolved is that query's
+    ``unchecked`` result with the reason, not an abort of the whole board."""
+
+    def test_a_missing_profile_is_unchecked_with_the_reason(
+        self, tmp_path, monkeypatch
+    ):
+        import yaml
+
+        from dbt_charts.core.compile import compile as compile_board
+        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+        from dbt_charts.core.execute.source_resolver import DbtContext
+
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        for var in ("DBT_PROFILES_DIR", "DBT_PROFILE", "DBT_TARGET"):
+            monkeypatch.delenv(var, raising=False)
+        (tmp_path / "dbt_project.yml").write_text("name: shop\nprofile: shop\n")
+        registry = AdapterRegistry(
+            project=FilesystemProject(tmp_path),
+            dbt_context=DbtContext(dbt_project_path=tmp_path, target=None),
+        )
+        compiled = compile_board(
+            yaml.dump(
+                {
+                    "source": "unknown",
+                    "queries": {"q": "select * from {{ ref('orders') }}"},
+                    "charts": {"c": {"query": "q", "type": "table"}},
+                }
+            )
+        )
+        assert compiled.board is not None, compiled.errors
+
+        result = _check(compiled, registry, query_name="q")
+
+        assert result.status == "unchecked"
+        assert result.mechanism == "no-source"
+        assert result.reason
+
+
+class TestComposeQueryThroughARealRegistry:
     """The dry run's SQL comes from a real AdapterRegistry, not a canned string.
 
     Every other BigQuery test injects a MagicMock registry, which cannot catch a
-    divergence between what `prepare_sql` composes and what execution sends —
+    divergence between what `compose_query` composes and what execution sends —
     and that divergence is where the dry run's defects have actually lived.
     """
 

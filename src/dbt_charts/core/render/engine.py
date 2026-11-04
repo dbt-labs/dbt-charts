@@ -606,6 +606,8 @@ _GEOMETRY_WARNINGS = (
     "WARN-TABLE-CONTENT-TALLER-THAN-WIDE",
     "WARN-TABLE-HEADER-EXTRA-WRAP",
     "WARN-VALUE-LABELS-CROWD-WIDTH",
+    "WARN-VALUE-LABELS-NO-MARKERS",
+    "WARN-VALUE-LABELS-THINNED",
 )
 
 # Cuts that every painted placement records anew, so only the claiming render's

@@ -91,6 +91,11 @@ fn with_lo(x: f64, l: u32) -> f64 {
 /// V8's `Math.pow`: fdlibm's `e_pow.c` as V8 12.4 ports it (`src/base/ieee754.cc`), the pow
 /// node 22 and vl-convert's Vega run. It is not correctly rounded (`Math.pow(10, 26)` is
 /// `9.999999999999999e25`), so d3 code that calls `Math.pow` needs this, not `f64::powf`.
+#[allow(
+    clippy::approx_constant,
+    clippy::eq_op,
+    reason = "bit-exact fdlibm constants (std consts can differ in the last bit) and the fdlibm `y - y` NaN idiom"
+)]
 pub fn pow(x: f64, y: f64) -> f64 {
     const BP: [f64; 2] = [1.0, 1.5];
     const DP_H: [f64; 2] = [0.0, 5.84962487220764160156e-01];
@@ -354,6 +359,10 @@ pub fn js_number_string(v: f64) -> String {
 /// V8's `Math.exp`: fdlibm's `e_exp.c` as `src/base/ieee754.cc` ports it. Its last bit
 /// differs from a correctly rounded exp (`Math.exp(1)` is `Math.E` exactly), so d3 code
 /// that calls `Math.exp` needs this, not `f64::exp`.
+#[allow(
+    clippy::approx_constant,
+    reason = "bit-exact fdlibm constant, not std's LOG2_E"
+)]
 pub fn exp(x: f64) -> f64 {
     const HALF: [f64; 2] = [0.5, -0.5];
     const HUGE: f64 = 1.0e300;

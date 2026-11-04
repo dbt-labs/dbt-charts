@@ -334,7 +334,7 @@ def lookup_board_query_sql(
                 strict=not query.lenient_variables,
                 warehouse=spelling,
             )
-            # Same second resolve pass execution's own SqlAdapter.prepare_sql runs:
+            # Same second resolve pass execution's own `compose` runs:
             # `resolve_query_references`'s dependency-graph short-circuit only
             # recognizes the spaced `{{ queries.` spelling, so a `{{queries.X}}`
             # reference reaches `render_parameterized_with_queries` unexpanded and
@@ -705,7 +705,7 @@ def query_board(
     # below — one dispatch point, not a second copy here.
     try:
         if isinstance(query, SqlQuery):
-            # AdapterRegistry._compose_query_refs inlines {{ queries.X }} in a
+            # `compose` inlines {{ queries.X }} in a
             # single non-recursive Jinja pass — don't remove this call as
             # redundant with it. Expand refs to text first, exactly as the
             # render/serve path does (Executor.execute_query Step 4), so

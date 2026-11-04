@@ -282,12 +282,12 @@ class TestCacheRefComposition:
         executor = _executor_with_cache(board, cache, local_project)
 
         # upstream has NOT been run yet
-        assert not executor.is_cached("upstream")
+        assert "upstream" not in executor.lookup(["upstream"]).hits
 
         rows = executor.execute_query("reader")
 
         # upstream is now cached (side-effect of demand execution)
-        assert executor.is_cached("upstream")
+        assert "upstream" in executor.lookup(["upstream"]).hits
         assert rows == [{"n": 99}]
 
     def test_cache_ref_aliased_to_query_name(
@@ -647,7 +647,7 @@ class TestCacheRefPersistentWriteThrough:
         # A second executor on the same persistent cache should serve the
         # composing result from persistent store without re-executing.
         exec2 = _executor_with_cache(board, cache, local_project)
-        assert exec2.is_cached("composed"), (
+        assert "composed" in exec2.lookup(["composed"]).hits, (
             "Composing query result must be persisted so a new executor can serve it."
         )
 

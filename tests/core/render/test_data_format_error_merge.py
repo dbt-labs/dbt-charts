@@ -22,10 +22,10 @@ from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.render import (
     board_resolve as _board_resolve_mod,
     render,
-    renderer as _renderer_mod,
 )
 from dbt_charts.core.render.board_resolve import build_resolved_board_static
 
+from ..._lookup import all_miss
 from .._board_utils import make_test_board
 from .._svg_render import PINNED_RENDER_TIME
 from .test_partial_success import _compile_two_chart_board
@@ -38,9 +38,9 @@ def _render(mock):
     mock._query_errors = {}
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
-    mock.is_cached.return_value = False
+    mock.lookup.side_effect = all_miss
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",
@@ -143,7 +143,7 @@ def test_same_id_different_chart_walk_only_failure_is_not_suppressed(
     mock._query_errors = {}
     mock.cache_hit_ats = []
     mock.rendered_at = PINNED_RENDER_TIME
-    mock.is_cached.return_value = False
+    mock.lookup.side_effect = all_miss
 
     draw_exc = QueryError("file missing", "q_a")
     draw_exc.code = ERR_FILE_NOT_FOUND
@@ -162,7 +162,7 @@ def test_same_id_different_chart_walk_only_failure_is_not_suppressed(
     mock.execute_chart.side_effect = _chart
 
     with (
-        patch.object(_renderer_mod, "execute_queries_parallel"),
+        patch.object(Executor, "run_misses"),
         patch.object(
             _board_resolve_mod,
             "build_resolved_board",

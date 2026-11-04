@@ -14,7 +14,7 @@ mod query;
 
 pub use geom::{compose, Affine, Bounds, Transform};
 pub use path::{PathCommand, PathData};
-pub use query::{labels, marks, walk, MarkBox, Walk};
+pub use query::{drawn, labels, marks, walk, Drawn, MarkBox, Walk};
 
 /// A width and height in user units.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -193,6 +193,8 @@ pub enum Role {
     Label,
     Axis,
     Grid,
+    /// A reference rule across the plot: a zero or unity baseline, drawn heavier than a gridline.
+    Rule,
     Legend,
     Annotation,
     Title,
@@ -336,6 +338,12 @@ impl Node {
     /// `<text/>`: a label with no content that still stands for its datum.
     pub fn empty_text(role: Role, at: (f64, f64), attrs: Attrs) -> Self {
         Self::new(role, attrs, Shape::Text { at, bounds: None, runs: Vec::new() })
+    }
+
+    /// The characters of a text node's top-level runs; `None` for any other shape.
+    pub fn text_content(&self) -> Option<String> {
+        let Shape::Text { runs, .. } = &self.shape else { return None };
+        Some(runs.iter().filter_map(|run| if let Run::Chars(chars) = run { Some(chars.text.as_str()) } else { None }).collect())
     }
 
     /// The box layout measured for this text.

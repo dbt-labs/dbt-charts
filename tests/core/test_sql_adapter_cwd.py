@@ -1,4 +1,4 @@
-"""Regression tests for DuckDBAdapter cwd handling."""
+"""Regression tests for DuckDB backend cwd handling."""
 
 import os
 import threading
@@ -10,33 +10,41 @@ import duckdb
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+
+from .._backend_runner import DuckDBRunner
 
 
-class _BlockingCursor:
+class _BlockingConnection:
+    """A real in-memory connection whose statement blocks until released."""
+
     def __init__(
         self,
         entered: threading.Event,
         release: threading.Event | None = None,
     ) -> None:
-        self.description = [
-            ("answer", duckdb.sqltype("INTEGER"), None, None, None, None, None)
-        ]
+        self._conn = duckdb.connect()
         self._entered = entered
         self._release = release
 
-    def execute(self, sql, params):  # noqa: ANN001
+    def execute(self, sql: str, params: list[object]) -> duckdb.DuckDBPyConnection:
         self._entered.set()
         if self._release is not None:
             released = self._release.wait(timeout=5)
             assert released, "Timed out waiting for paired query execution"
-        return self
+        return self._conn.execute(sql, params)
 
-    def fetchall(self):
-        return [(42,)]
+    @property
+    def description(self) -> list[tuple[object, ...]]:
+        return self._conn.description
 
-    def fetchmany(self, n):  # noqa: ANN001
-        return [(42,)]
+    def fetchmany(self, size: int) -> list[tuple[object, ...]]:
+        return self._conn.fetchmany(size)
+
+    def interrupt(self) -> None:
+        self._conn.interrupt()
+
+    def close(self) -> None:
+        self._conn.close()
 
 
 class CloudProject(FilesystemProject):
@@ -63,7 +71,7 @@ def test_duckdb_file_search_path_uses_project_data_path_override(
     (scratch / "data").mkdir(parents=True)
     (scratch / "data" / "t.csv").write_text("x\n5\n")
 
-    adapter = DuckDBAdapter(
+    adapter = DuckDBRunner(
         data_dir=CloudProject(tmp_path, scratch).data_path("."),
         source_config=DuckDBSourceConfig(type="duckdb"),
         read_only=False,
@@ -71,9 +79,7 @@ def test_duckdb_file_search_path_uses_project_data_path_override(
     query = SqlQuery(sql="SELECT x FROM read_csv('data/t.csv')", source="test_db")
 
     try:
-        result = adapter._execute_duckdb(
-            query.sql, [], query, adapter._get_duckdb_connection_for_query()
-        )
+        result = adapter.execute(query)
         assert result.error is None
         assert result.data == [{"x": 5}]
     finally:
@@ -94,7 +100,7 @@ def test_duckdb_file_search_path_set_in_read_only_authoring(tmp_path: Path) -> N
     (scratch / "data").mkdir(parents=True)
     (scratch / "data" / "t.csv").write_text("x\n9\n")
 
-    adapter = DuckDBAdapter(
+    adapter = DuckDBRunner(
         data_dir=CloudProject(tmp_path, scratch).data_path("."),
         source_config=DuckDBSourceConfig(type="duckdb"),
         **LOCAL_AUTHORING_REGISTRY_KWARGS,
@@ -102,9 +108,7 @@ def test_duckdb_file_search_path_set_in_read_only_authoring(tmp_path: Path) -> N
     query = SqlQuery(sql="SELECT x FROM read_csv('data/t.csv')", source="test_db")
 
     try:
-        result = adapter._execute_duckdb(
-            query.sql, [], query, adapter._get_duckdb_connection_for_query()
-        )
+        result = adapter.execute(query)
         assert result.error is None, result.error
         assert result.data == [{"x": 9}]
     finally:
@@ -122,7 +126,7 @@ def test_duckdb_relative_paths_resolve_against_project_not_cwd(
     (root / "data" / "t.csv").write_text("x\n7\n")
     monkeypatch.chdir(tmp_path)  # cwd deliberately NOT the project root
 
-    adapter = DuckDBAdapter(
+    adapter = DuckDBRunner(
         data_dir=local_project(root).data_path("."),
         source_config=DuckDBSourceConfig(type="duckdb"),
         read_only=False,
@@ -130,9 +134,7 @@ def test_duckdb_relative_paths_resolve_against_project_not_cwd(
     query = SqlQuery(sql="SELECT x FROM read_csv('data/t.csv')", source="test_db")
 
     try:
-        result = adapter._execute_duckdb(
-            query.sql, [], query, adapter._get_duckdb_connection_for_query()
-        )
+        result = adapter.execute(query)
         assert result.error is None
         assert result.data == [{"x": 7}]
         assert Path.cwd() == tmp_path
@@ -150,11 +152,11 @@ def test_duckdb_execution_does_not_leak_process_cwd_under_concurrency(
     root_a.mkdir()
     root_b.mkdir()
 
-    adapter_a = DuckDBAdapter(
+    adapter_a = DuckDBRunner(
         data_dir=local_project(root_a).data_path("."),
         source_config=DuckDBSourceConfig(type="duckdb"),
     )
-    adapter_b = DuckDBAdapter(
+    adapter_b = DuckDBRunner(
         data_dir=local_project(root_b).data_path("."),
         source_config=DuckDBSourceConfig(type="duckdb"),
     )
@@ -164,16 +166,14 @@ def test_duckdb_execution_does_not_leak_process_cwd_under_concurrency(
     b_entered = threading.Event()
     release_a = threading.Event()
 
-    cursor_a = _BlockingCursor(a_entered, release=release_a)
-    cursor_b = _BlockingCursor(b_entered)
+    conn_a = _BlockingConnection(a_entered, release=release_a)
+    conn_b = _BlockingConnection(b_entered)
 
-    adapter_a._get_duckdb_connection_for_query = lambda _sc=None: cursor_a  # type: ignore[method-assign]
-    adapter_b._get_duckdb_connection_for_query = lambda _sc=None: cursor_b  # type: ignore[method-assign]
+    adapter_a.backend._pooled_connection = lambda _raw, _path: conn_a  # type: ignore[method-assign, assignment]
+    adapter_b.backend._pooled_connection = lambda _raw, _path: conn_b  # type: ignore[method-assign, assignment]
 
-    def run_query(adapter: DuckDBAdapter) -> None:
-        result = adapter._execute_duckdb(
-            "SELECT 42 AS answer", [], query, adapter._get_duckdb_connection_for_query()
-        )
+    def run_query(adapter: DuckDBRunner) -> None:
+        result = adapter.execute(query)
         assert result.error is None
 
     thread_a = threading.Thread(target=run_query, args=(adapter_a,))

@@ -32,8 +32,8 @@ from dbt_charts.core.board import raise_on_dashboard_failure
 from dbt_charts.core.compile import compile, compile_file
 from dbt_charts.core.compile.config import get_project_markdown_metadata_table
 from dbt_charts.core.compile.template.variables import variables_from_query_pairs
-from dbt_charts.core.execute.adapters.snowpark_adapter import (
-    SnowparkAdapter,
+from dbt_charts.core.execute.backends.snowpark import (
+    SnowparkBackend,
     SnowparkSession,
 )
 from dbt_charts.core.project import (
@@ -142,8 +142,8 @@ def _session(
 ) -> ProjectSession:
     return ProjectSession.from_project(
         project,
-        extra_adapters_factory=(
-            (lambda: [SnowparkAdapter(session=session, project=project)])
+        extra_routes_factory=(
+            (lambda: {"snowflake": SnowparkBackend(session=session)})
             if session is not None
             else None
         ),

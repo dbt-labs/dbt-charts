@@ -77,11 +77,9 @@ rows:
     assert "no single plot to align in" in caplog.text
 
 
-def test_a_centered_legend_beside_an_endpoint_label_rail_is_rejected(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Endpoint labels (the default on a multi-series line) put the chart in a
-    concat spec, which has no single plot to center the legend in."""
+def test_a_placed_legend_beside_an_endpoint_label_rail_is_an_error() -> None:
+    """Endpoint labels (the default on a multi-series line) already name the
+    series, so an authored legend position is refused outright."""
     board = """
 title: t
 queries:
@@ -107,5 +105,5 @@ charts:
 rows:
   - c
 """
-    render_board_to_svg(board)
-    assert "no single plot to align in" in caplog.text
+    svg = render_board_to_svg(board)
+    assert "ERR-ENDPOINT-LABELS-AND-LEGEND-NAME-SERIES-TWICE" in svg

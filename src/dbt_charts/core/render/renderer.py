@@ -67,7 +67,6 @@ from dbt_charts.core.execute.collect import (
     collect_layout_chart_query_names,
 )
 from dbt_charts.core.execute.executor import Executor
-from dbt_charts.core.execute.parallel import execute_queries_parallel
 from dbt_charts.core.render.board_to_dict import NO_ROW_CAP
 from dbt_charts.core.render.board_variables import (
     board_variables,
@@ -357,7 +356,7 @@ def _collect_render_warnings(
         return []
 
     # Restrict to charts the layout actually renders — same set that
-    # execute_queries_parallel pre-executed.
+    # the pre-render pass executed.
     # Base-chart queries only: this walk never sees a layer's own `query:`, so
     # it is not a usable gate for one (see the layer_results loop below).
     pre_executed_query_names = collect_layout_chart_query_names(board)
@@ -589,7 +588,7 @@ def prefetch_tab_queries(
     finds its rows in the result cache. Pass the variables and builtins the render
     got — the queries must render to the same SQL to land on the same cache
     keys. Cached queries are skipped, misses run in parallel through
-    ``execute_queries_parallel`` with the executor's own per-query guards, and
+    ``Executor.run_misses`` with the executor's own per-query guards, and
     a failure is returned in the per-query outcome rather than raised: the
     click re-runs that query and reports it.
     """
@@ -599,14 +598,8 @@ def prefetch_tab_queries(
         builtin_variables,
         board.clock(executor.rendered_at),
     )
-    misses = {
-        name
-        for name in _prefetch_query_names(board, executor, merged)
-        if not executor.is_cached(name, merged)
-    }
-    outcomes = execute_queries_parallel(
-        executor, misses, merged, resolve_max_workers(max_workers)
-    )
+    found = executor.lookup(_prefetch_query_names(board, executor, merged), merged)
+    outcomes = executor.run_misses(found, merged, resolve_max_workers(max_workers))
     for name, exc in outcomes.items():
         if exc is not None:
             _logger.warning("prefetch of query %r failed: %s", name, exc)
@@ -763,7 +756,7 @@ def _render(
     # Cache-hit pre-pass: queries already in cache are resolved synchronously
     # so they never occupy a worker thread or wait behind slow warehouse misses.
     # Only misses go to the ThreadPoolExecutor.
-    # Errors are stored on the executor (executor._query_errors) so that
+    # Errors are stored on the executor (by run_misses) so that
     # execute_chart() during the render walk raises the stored error
     # instead of re-executing.  The render walk never retries a failed query.
     #
@@ -789,19 +782,14 @@ def _render(
     query_started = time.perf_counter()
 
     # Partition: resolve hits synchronously, submit only misses to pool.
-    # The probe runs twice for a hit (once here, once inside execute_query) but the
-    # probe cost — dict lookup + optional duckdb sub-ms read — is negligible vs
-    # the worker-slot wait it avoids on a saturated pool with slow warehouse queries.
-    cache_miss_names: set[str] = set()
-    for name in query_names:
-        if executor.is_cached(name, merged_variables):
-            executor.execute_query(name, merged_variables)
-        else:
-            cache_miss_names.add(name)
-
-    execute_queries_parallel(
-        executor, cache_miss_names, merged_variables, resolved_max_workers
-    )
+    # The lookup warms the memo, so a hit costs one memo read inside
+    # execute_query — negligible vs the worker-slot wait it avoids on a saturated
+    # pool with slow warehouse queries. A cached failure is not a hit: the pool
+    # re-raises it per chart.
+    found = executor.lookup(query_names, merged_variables)
+    for name in found.hits:
+        executor.execute_query(name, merged_variables)
+    executor.run_misses(found, merged_variables, resolved_max_workers)
     query_ms = (time.perf_counter() - query_started) * 1000
     # Option queries have run for the board's own controls, so their rows cost
     # nothing more to check a query-backed select against. A tab

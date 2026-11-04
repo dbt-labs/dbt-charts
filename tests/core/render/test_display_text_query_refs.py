@@ -642,6 +642,44 @@ def test_imported_chart_unknown_text_query_names_the_surface(
     )
 
 
+def test_imported_kpi_support_label_unknown_query_names_the_surface(
+    tmp_path: Path, local_project: Callable[..., Project]
+) -> None:
+    board = _source_project(
+        tmp_path,
+        "  c:\n    type: kpi\n    query: src_q\n    value: n\n"
+        '    support:\n      label: "{{ queries.nope.one.label }}"\n',
+    )
+    result = compile(board, base_dir=local_project(root=tmp_path).directory())
+    assert [e.code for e in result.errors] == ["ERR-TEXT-UNKNOWN-QUERY"]
+    assert "Chart 'c' support.label references unknown query 'nope'" in (
+        result.errors[0].message
+    )
+
+
+def test_imported_kpi_support_label_reads_the_source_files_query(
+    tmp_path: Path, local_project: Callable[..., Project]
+) -> None:
+    board = _source_project(
+        tmp_path,
+        "  c:\n    type: kpi\n    query: src_q\n    value: n\n"
+        '    support:\n      label: "{{ queries.src_q.one.label }}"\n',
+    )
+    project = local_project(root=tmp_path)
+    result = compile(board, base_dir=project.directory())
+    assert result.success, result.errors
+    assert result.board is not None
+    executor = Executor(
+        result.board,
+        adapter_registry=build_adapter_registry(project),
+        query_registry=result.query_registry,
+    )
+    resolved, _ = build_resolved_board(result.board, executor, {}, render_first=False)
+    support = resolved.charts["c"].support
+    assert support is not None
+    assert support.label == "from source"
+
+
 def test_imported_chart_title_reads_the_source_files_query(
     tmp_path: Path, local_project: Callable[..., Project]
 ) -> None:
@@ -776,3 +814,66 @@ def test_a_hidden_nested_board_title_is_never_resolved(
     empty = "  empty_q:\n    columns: [x]\n    values: []\n"
     result = _render(_QUERIES + empty + layout, local_project)
     assert result.board_error is None, result.board_error
+
+
+def test_kpi_support_label_reads_query_results(
+    local_project: Callable[..., Project],
+) -> None:
+    text = _text(
+        _QUERIES
+        + """
+charts:
+  headline:
+    query: summary
+    type: kpi
+    value: net_revenue
+    label: Net revenue
+    support:
+      value: vs_plan
+      label: "{{ queries.summary.one.vs_plan | format('percent') }} against plan"
+rows:
+  - headline
+""",
+        local_project,
+    )
+    assert "4.2% against plan" in text
+    assert "{{" not in text
+
+
+def test_unknown_query_in_kpi_support_label_names_the_surface() -> None:
+    result = compile(
+        f"""{_QUERIES}
+charts:
+  c:
+    query: summary
+    type: kpi
+    value: net_revenue
+    label: Net revenue
+    support:
+      label: '{{{{ queries.nope.one.x }}}}'
+rows:
+  - c
+"""
+    )
+    assert [e.code for e in result.errors] == ["ERR-TEXT-UNKNOWN-QUERY"]
+    assert (
+        "Chart 'c' support.label references unknown query 'nope'"
+        in result.errors[0].message
+    )
+
+
+def test_inline_chart_unknown_support_label_query_is_a_compile_error() -> None:
+    result = compile(
+        _INLINE
+        + """
+rows:
+  - type: kpi
+    query: summary
+    value: net_revenue
+    label: Net revenue
+    support:
+      label: "{{ queries.nope.one.x }}"
+"""
+    )
+    assert [e.code for e in result.errors] == ["ERR-TEXT-UNKNOWN-QUERY"]
+    assert "Chart 'rows.0' support.label" in result.errors[0].message

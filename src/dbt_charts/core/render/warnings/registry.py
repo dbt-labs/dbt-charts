@@ -93,6 +93,8 @@ import dbt_charts.core.render.warnings.too_many_color_categories as too_many_col
 import dbt_charts.core.render.warnings.too_many_x_categories as too_many_x_categories
 import dbt_charts.core.render.warnings.trend_on_bars as trend_on_bars
 import dbt_charts.core.render.warnings.value_labels_crowd_width as value_labels_crowd_width
+import dbt_charts.core.render.warnings.value_labels_no_markers as value_labels_no_markers
+import dbt_charts.core.render.warnings.value_labels_thinned as value_labels_thinned
 import dbt_charts.core.render.warnings.wide_measure_label_collision as wide_measure_label_collision
 import dbt_charts.core.render.warnings.y_encoding_mostly_null as y_encoding_mostly_null
 from dbt_charts.core.diagnostics import Diagnostic
@@ -139,6 +141,8 @@ _GEOMETRY_DETECTORS: list[ModuleType] = [
     table_page_squeezed,
     table_text_truncated,
     value_labels_crowd_width,
+    value_labels_no_markers,
+    value_labels_thinned,
 ]
 
 # Reads only ctx.chart_results and/or resolved chart config; runs for every

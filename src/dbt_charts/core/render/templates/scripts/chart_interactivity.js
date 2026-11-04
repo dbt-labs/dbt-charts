@@ -760,13 +760,26 @@
         return RECEDABLE_PAINT.some(function (prop) { return el.hasAttribute('data-dbt-rest-' + prop); });
     }
 
+    /*{# Detached canvas, not a probe under <body>: a body insert restyles the whole page. #}*/
+    const rgbCache = new Map();
+    let colorContext = null;
     function rgbOf(color) {
-        const probe = document.createElement('span');
-        probe.style.color = color;
-        document.body.appendChild(probe);
-        const channels = getComputedStyle(probe).color.match(/[\d.]+/g).slice(0, 3).map(Number);
-        document.body.removeChild(probe);
-        return channels;
+        let rgb = rgbCache.get(color);
+        if (rgb) return rgb;
+        colorContext = colorContext || document.createElement('canvas').getContext('2d');
+        /*{# A color the canvas cannot parse leaves fillStyle as it was, so it reads back differently over two grounds. #}*/
+        const over = function (ground) {
+            colorContext.fillStyle = ground;
+            colorContext.fillStyle = color;
+            return colorContext.fillStyle;
+        };
+        const normalized = over('#000');
+        if (normalized !== over('#fff')) throw new Error('dbt charts: hover cannot read the color "' + color + '"');
+        rgb = normalized[0] === '#'
+            ? [1, 3, 5].map(function (i) { return parseInt(normalized.slice(i, i + 2), 16); })
+            : normalized.match(/[\d.]+/g).slice(0, 3).map(Number);
+        rgbCache.set(color, rgb);
+        return rgb;
     }
 
     function restPaint(el, prop) {
@@ -1632,8 +1645,9 @@
     /*{# edge already sits at x = padding.left from the tooltip box's border, so #}*/
     /*{# left:-padding.left lands the wedge flush on the border line, pointing #}*/
     /*{# inward. Row content never shifts: this is an overlay, not a layout change. #}*/
-    function triangleMarker(ts) {
-        return '<span style="position:absolute;left:-' + ts.padding.left + 'px;top:50%;' +
+    /*{# Rendered on every row, hidden when inactive, so the hover never adds a node. #}*/
+    function triangleMarker(ts, isActive) {
+        return '<span style="' + (isActive ? '' : 'display:none;') + 'position:absolute;left:-' + ts.padding.left + 'px;top:50%;' +
             'transform:translateY(-50%);width:0;height:0;' +
             'border-top:5px solid transparent;border-bottom:5px solid transparent;' +
             'border-left:6px solid ' + ts.value.font.color + ';"></span>';
@@ -1768,7 +1782,7 @@
         /*{# anchored to the row's first (swatch) cell instead -- see triangleMarker(). #}*/
         const useTriangle = ts.activeMarker === 'triangle';
         const activeBg = (isActive && !useTriangle) ? 'background:rgba(127,127,127,0.16);' : '';
-        const marker = (isActive && useTriangle) ? triangleMarker(ts) : '';
+        const marker = useTriangle ? triangleMarker(ts, isActive) : '';
 
         const swatchCell = xUnifiedCell(marker + swatch, 'position:relative;', activeBg, true, false);
         const nameCell = xUnifiedCell(label, 'color:' + ts.label.font.color + ';', activeBg, false, false);
@@ -1951,6 +1965,44 @@
         return html;
     }
 
+    /*{# Never insert or remove nodes under <body> here (restyles the page); stale nodes are hidden instead. #}*/
+    const tooltipTemplate = document.createElement('template');
+    function syncChildren(target, source) {
+        const current = Array.from(target.childNodes);
+        let cursor = 0;
+        Array.from(source.childNodes).forEach(function (node) {
+            let match = cursor;
+            while (match < current.length && current[match].nodeName !== node.nodeName) match++;
+            if (match === current.length) {
+                target.insertBefore(node, current[cursor] || null);
+                return;
+            }
+            for (; cursor < match; cursor++) hideTooltipNode(current[cursor]);
+            const existing = current[cursor++];
+            if (node.nodeType === 1) {
+                syncAttributes(existing, node);
+                syncChildren(existing, node);
+            } else if (existing.nodeValue !== node.nodeValue) {
+                existing.nodeValue = node.nodeValue;
+            }
+        });
+        for (; cursor < current.length; cursor++) hideTooltipNode(current[cursor]);
+    }
+
+    function hideTooltipNode(node) {
+        if (node.nodeType === 1) {
+            node.setAttribute('style', 'display:none');
+        } else {
+            node.nodeValue = '';
+        }
+    }
+
+    function syncAttributes(existing, node) {
+        Array.from(node.attributes).forEach(function (a) {
+            if (existing.getAttribute(a.name) !== a.value) existing.setAttribute(a.name, a.value);
+        });
+    }
+
     function showTooltip(state, mark, event, svg) {
         const entries = parseAriaLabel(mark.getAttribute('aria-label'));
         if (!entries.length) {
@@ -1970,9 +2022,10 @@
             return;
         }
 
-        state.tooltip.innerHTML = useXUnified
+        tooltipTemplate.innerHTML = useXUnified
             ? xUnifiedHtml(mark, entries, matches, ts)
             : singleMarkHtml(lone.entries, markSeriesColor(lone.mark), ts);
+        syncChildren(state.tooltip, tooltipTemplate.content);
         state.tooltip.style.display = 'block';
         positionTooltip(state, event.clientX, event.clientY);
 

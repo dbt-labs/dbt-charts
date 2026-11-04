@@ -8,7 +8,7 @@ costs nothing: it travels with the connect/login request, so a warehouse-native 
 to "is this dbt charts" lands in its own column instead of requiring a regex over the
 query text.
 
-What we may write there is bounded by pooling. ``_source_config_hash`` deliberately
+What we may write there is bounded by pooling. ``source_config_hash`` deliberately
 ignores ``attribution`` so a per-team label does not cost a connection handshake per
 source — which means one connection serves several sources, and a worker holds it
 across renders. Only :func:`~dbt_charts.core.attribution.connection_identity` is true

@@ -5,8 +5,8 @@ the driver, and the rows the executor returns. Refactors of source resolution,
 query composition, and the backend seam diff against these files; only an
 intended change (a binding replacing an inlined literal) may move them.
 
-Capture is a test-only monkeypatch at the driver call: ``DuckDBAdapter.
-_execute_duckdb``, ``sqlite3.connect`` (a recording connection), the cache-ref
+Capture is a test-only monkeypatch at the driver call: ``DuckDBBackend.
+execute``, ``sqlite3.connect`` (a recording connection), the cache-ref
 composition call ``compose_over_named_rows``, and the file
 materializer's private DuckDB connection (only its SELECT/WITH statements; the
 CREATE VIEW / SET plumbing carries machine-specific names).
@@ -29,10 +29,11 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.compile.models.source import ResolvedSourceConfig
 from dbt_charts.core.execute import cache_composition
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
-from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
@@ -167,23 +168,15 @@ def _scrub(value: Any, root: Path) -> Any:  # type-state: explicit_any — JSON 
 @pytest.fixture
 def calls(monkeypatch: pytest.MonkeyPatch) -> list[Call]:
     recorded: list[Call] = []
-    real_execute_duckdb: Callable[..., QueryResult] = DuckDBAdapter._execute_duckdb  # pyright: ignore[reportPrivateUsage] — wrapping the driver seam
+    real_execute: Callable[..., Any] = DuckDBBackend.execute
 
-    def execute_duckdb(
-        self: DuckDBAdapter, sql: str, params: list[Any], *args: Any
-    ) -> QueryResult:
-        recorded.append({"sql": sql, "params": list(params)})
-        return real_execute_duckdb(self, sql, params, *args)
-
-    real_setup_sql: Callable[..., QueryResult | None] = (
-        DuckDBAdapter._execute_setup_sql_duckdb
-    )
-
-    def setup_sql(
-        self: DuckDBAdapter, resolved_setup_sql: str, *args: Any
-    ) -> QueryResult | None:
-        recorded.append({"sql": resolved_setup_sql, "params": []})
-        return real_setup_sql(self, resolved_setup_sql, *args)
+    def execute(
+        self: DuckDBBackend, source: ResolvedSourceConfig, query: ResolvedQuery
+    ) -> Any:
+        for statement in query.setup_sql:
+            recorded.append({"sql": statement, "params": []})
+        recorded.append({"sql": query.sql, "params": list(query.params)})
+        return real_execute(self, source, query)
 
     real_connection = FileSourceMaterializer._connection  # pyright: ignore[reportPrivateUsage] — wrapping the driver seam
 
@@ -209,8 +202,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[Call]:
     def connect(*args: Any, **kwargs: Any) -> _RecordingConnection:
         return _RecordingConnection(real_connect(*args, **kwargs), recorded)
 
-    monkeypatch.setattr(DuckDBAdapter, "_execute_duckdb", execute_duckdb)
-    monkeypatch.setattr(DuckDBAdapter, "_execute_setup_sql_duckdb", setup_sql)
+    monkeypatch.setattr(DuckDBBackend, "execute", execute)
     monkeypatch.setattr(FileSourceMaterializer, "_connection", connection)
     monkeypatch.setattr(sqlite3, "connect", connect)
     monkeypatch.setattr(cache_composition, "compose_over_named_rows", compose)

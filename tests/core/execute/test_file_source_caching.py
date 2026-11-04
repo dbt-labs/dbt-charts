@@ -12,6 +12,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile import compile as compile_board
 from dbt_charts.core.execute.executor import Executor
@@ -342,3 +344,31 @@ class TestConcurrentMaterialize:
 
         # Eight concurrent runs, one physical load of the file.
         assert reads == ["data/sales.csv"]
+
+
+class TestRenderPathComposesFileSourceQueries:
+    def test_a_rendered_file_source_query_goes_through_compose(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dbt_charts.core.execute.adapters import adapter_registry
+        from dbt_charts.core.execute.compose import compose
+
+        composed: list[str] = []
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            composed.append(args[0].sql)
+            return compose(*args, **kwargs)
+
+        monkeypatch.setattr(adapter_registry, "compose", spy)
+        project = _project(tmp_path, {"data/sales.csv": "region,amount\nNorth,100\n"})
+        board = _board("SELECT * FROM sales")
+        executor = Executor(
+            board,
+            adapter_registry=_registry(project),
+            query_registry={"q": board.queries["q"]},
+        )
+
+        rows = executor.execute_query("q")
+
+        assert [r["amount"] for r in rows] == [100]
+        assert composed == ["SELECT * FROM sales"]

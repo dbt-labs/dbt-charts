@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct import sigma` imports a workbook with elements that no longer compile, deleted elements Sigma still lists, or no layout, naming each gap in the outline instead of failing.'
-time: 2026-11-02T14:18:15.155068-08:00

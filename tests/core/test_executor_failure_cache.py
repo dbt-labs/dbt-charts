@@ -21,7 +21,7 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_REF_UNKNOWN_NODE
 from dbt_charts.core.execute import Executor, QueryError
 from dbt_charts.core.execute.cache_backend import CachedQueryFailure
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-from dbt_charts.core.execute.executor import _memo_key
+from dbt_charts.core.execute.lookup import memo_key
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 from .._results import rows_result, rows_schema
@@ -357,7 +357,7 @@ class TestInMemoryErrorShortCircuitsResultCache:
         # The memo is keyed by content *plus* the asking query's policy, so seed
         # it through the production key builder — a raw content key would land in
         # a slot execute_query never reads.
-        executor._cache[_memo_key(query, cache_key)] = rows_result(valid_rows)
+        executor._cache[memo_key(query, cache_key)] = rows_result(valid_rows)
 
         # …but the persistent write-through failed and stored an error.
         executor._query_errors["good_query"] = RuntimeError("FK constraint violation")

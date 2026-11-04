@@ -37,7 +37,7 @@ _FUSION_MANIFEST_JSON = (_FUSION_FIXTURES / "manifest.json").read_text()
 # `"main"."customers"` — no database segment. Both are still present (the
 # highest-risk field from the inventory), just quoted/segmented differently.
 # dbt charts' own DuckDB adapter always connects directly to one resolved
-# file/`:memory:` context (`_resolved_path` in duckdb_adapter.py) rather than
+# file/`:memory:` context (`_resolved_path` in backends/duckdb_local.py) rather than
 # ATTACHing multiple databases by name, so a schema-qualified 2-part
 # reference is unambiguous and correct here — not a bug to fix.
 _FUSION_MANIFEST_DUCKDB_JSON = (_FUSION_FIXTURES / "manifest_duckdb.json").read_text()

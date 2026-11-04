@@ -19,6 +19,7 @@ from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 
 from ._board_utils import make_test_board
+from .conftest import DbtHarness
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -170,9 +171,9 @@ class TestSetupSqlExecution:
 
     def test_duckdb_executes_setup_sql_before_main_query(self):
         """setup_sql statements run before the main query on DuckDB."""
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+        from .._backend_runner import DuckDBRunner
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         query = SqlQuery(
@@ -186,9 +187,9 @@ class TestSetupSqlExecution:
 
     def test_duckdb_setup_sql_with_variables(self):
         """setup_sql can contain Jinja variables that get resolved."""
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+        from .._backend_runner import DuckDBRunner
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         query = SqlQuery(
@@ -246,7 +247,6 @@ class TestSetupSqlConnectionSharing:
         from unittest.mock import MagicMock, patch
 
         from dbt_charts.core.compile.models.source import PostgresSourceConfig
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 
         source_config = PostgresSourceConfig(
             type="postgres", host="localhost", dbname="db", user="u", password="p"
@@ -273,12 +273,8 @@ class TestSetupSqlConnectionSharing:
             "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
             return_value=mock_adapter,
         ):
-            adapter = SqlAdapter(
-                project=local_project(Path("/tmp")),
-                dbt_project_path=None,
-                profile_type="postgres",
-            )
-            adapter._execute(query, {}, source_config=source_config)
+            adapter = DbtHarness(local_project(Path("/tmp")), profile_type="postgres")
+            adapter.execute(query, {}, source_config=source_config)
 
         assert mock_adapter.connection_named.call_count == 1
         # Pool names the connection by thread id; assert it starts with the pool prefix.
@@ -390,24 +386,22 @@ class TestSetupSqlMutatingGuard:
     """
 
     def test_setup_sql_drop_rejected_duckdb(self) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 
-        adapter = DuckDBAdapter(
+        from .._backend_runner import DuckDBRunner
+
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         query = SqlQuery(sql="SELECT 1 AS a", setup_sql="DROP TABLE x", source="db")
-        mock_conn = MagicMock()
-        with patch.object(
-            adapter, "_get_duckdb_connection_for_query", return_value=mock_conn
-        ):
-            result = adapter._execute(query)
+        with patch.object(adapter.backend, "execute") as backend_execute:
+            result = adapter.execute(query)
         assert result.error is not None
         assert "outside the setup_sql allowlist" in str(result.error)
-        # Setup driver never sees mutating SQL.
-        mock_conn.execute.assert_not_called()
+        # The backend never sees mutating SQL.
+        backend_execute.assert_not_called()
 
     def test_setup_sql_drop_rejected_dbt_adapter(
         self, local_project: Callable[..., FilesystemProject]
@@ -418,13 +412,8 @@ class TestSetupSqlMutatingGuard:
 
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.source import PostgresSourceConfig
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 
-        adapter = SqlAdapter(
-            project=local_project(Path("/tmp")),
-            dbt_project_path=None,
-            profile_type="postgres",
-        )
+        adapter = DbtHarness(local_project(Path("/tmp")), profile_type="postgres")
         query = SqlQuery(sql="SELECT 1 AS a", setup_sql="DROP TABLE x", source="db")
         source_config = PostgresSourceConfig(
             type="postgres", host="h", dbname="d", user="u", password="p"
@@ -434,7 +423,7 @@ class TestSetupSqlMutatingGuard:
             "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
             return_value=mock_dbt_adapter,
         ):
-            result = adapter._execute(query, source_config=source_config)
+            result = adapter.execute(query, source_config=source_config)
         assert result.error is not None
         assert "setup_sql" in str(result.error)
         mock_dbt_adapter.execute.assert_not_called()
@@ -442,9 +431,10 @@ class TestSetupSqlMutatingGuard:
     def test_setup_sql_valid_temp_function_still_works(self) -> None:
         """CREATE [OR REPLACE] MACRO is allowed for DuckDB end-to-end."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 
-        adapter = DuckDBAdapter(
+        from .._backend_runner import DuckDBRunner
+
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         query = SqlQuery(
@@ -452,6 +442,6 @@ class TestSetupSqlMutatingGuard:
             setup_sql="CREATE OR REPLACE MACRO add_ten(x) AS x + 10;",
             source="db",
         )
-        result = adapter._execute(query)
+        result = adapter.execute(query)
         assert result.error is None, result.error
         assert result.data[0]["result"] == 15

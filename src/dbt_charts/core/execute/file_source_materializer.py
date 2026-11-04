@@ -41,8 +41,8 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.base import QueryParams
-from dbt_charts.core.execute.adapters.duckdb_adapter import duckdb_error_code
 from dbt_charts.core.execute.arrow_ingest import RelationStream, ingest, insert_rows
+from dbt_charts.core.execute.backends.duckdb_local import duckdb_error_code
 from dbt_charts.core.execute.cache_composition import quote_identifier
 from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
 from dbt_charts.core.execute.duckdb_cache import compute_source_hash

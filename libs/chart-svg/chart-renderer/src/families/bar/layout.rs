@@ -11,8 +11,6 @@ use measure::{FontBook, Measure};
 use scene::Node;
 use serde_json::{Value, json};
 use std::borrow::Cow;
-use std::cell::RefCell;
-use std::collections::HashSet;
 
 use super::bind::Bound;
 use super::continuous::{XLayers, render_vertical_continuous_x};
@@ -237,13 +235,12 @@ pub(crate) struct Drawn {
 /// chart asks for it.
 pub(super) fn clipped_if(
     clipped: bool,
-    defined: &RefCell<HashSet<String>>,
+    clips: &crate::families::layers::PlotClips,
     plot: (f64, f64),
-    chart_id: &str,
     nodes: Vec<Node>,
 ) -> Vec<Node> {
     if clipped {
-        crate::families::layers::clipped_layer(&mut defined.borrow_mut(), plot, chart_id, nodes)
+        clips.wrap(plot, nodes)
     } else {
         nodes
     }

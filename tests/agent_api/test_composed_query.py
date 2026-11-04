@@ -7,7 +7,7 @@ Root causes fixed here:
    producing false WARN-PARSE-ERROR on working SQL.
 3. `dct query BOARD NAME` failed when the *referenced* query's own SQL still
    carried a template (a plain variable, `filter()`, or a literal) —
-   `AdapterRegistry._compose_query_refs` inlines `{{ queries.X }}` in one
+   ``compose`` inlines `{{ queries.X }}` in one
    non-recursive Jinja pass, so a template inside X's SQL was never rendered
    (dbt-labs/dbt-charts#12).
 4. Fixing (3) via `resolve_query_references` also means `query_board` now

@@ -92,7 +92,7 @@ def test_editing_database_file_busts_cache(
 def test_missing_database_file_is_a_cache_miss_not_a_crash(tmp_path: Path) -> None:
     project = _declare(tmp_path, "sqlite", "missing.db")
 
-    assert _executor(project, TrivialDuckDBCache()).is_cached("q") is False
+    assert "q" not in _executor(project, TrivialDuckDBCache()).lookup(["q"]).hits
 
 
 @pytest.mark.parametrize(
@@ -107,7 +107,7 @@ def test_unchanged_database_file_hits_and_is_not_a_warehouse_hit(
     _render(project, cache)
 
     executor = _executor(project, cache)
-    assert executor.is_cached("q") is True
+    assert "q" in executor.lookup(["q"]).hits
     assert executor.cache_hit_ats
     assert executor.warehouse_cache_hit_ats == []
 
@@ -168,7 +168,7 @@ def test_cache_key_never_resolves_a_warehouse_source() -> None:
         result_cache=TrivialDuckDBCache(),
     )
 
-    assert executor.is_cached("q") is False
+    assert "q" not in executor.lookup(["q"]).hits
     registry.resolve_query_source.assert_not_called()
 
 

@@ -151,6 +151,26 @@ class TestTailQueryWatermarkFilter:
         assert "2" in call_query.sql  # watermark = MAX(ts) = 2
 
 
+class TestRenderServesStoredIncrementalRowsAsStored:
+    """Only a direct execute_query runs the tail; render()'s cache pre-pass
+    serves a stored incremental query's rows without calling the backend."""
+
+    def test_render_does_not_run_the_tail(self, tmp_path) -> None:
+        from dbt_charts.core.render import render
+
+        cache = TrivialDuckDBCache(db_path=tmp_path / "c.duckdb")
+        result = df_compile(_BOARD_INC)
+        initial = [{"ts": 1, "val": 10}, {"ts": 2, "val": 20}]
+        _executor(result, _adapter(initial), cache).execute_query("q")
+
+        adapter = _adapter([{"ts": 3, "val": 30}])
+        executor = _executor(result, adapter, cache)
+        render(result.board, executor, format="json")
+
+        adapter.execute.assert_not_called()
+        assert executor.execute_query("q") == initial
+
+
 # ─── Test 2: merged result equals a full refresh ─────────────────────────────
 
 
@@ -671,8 +691,13 @@ rows:
         _executor(result, _adapter(rows), cache).execute_query("q")
 
         ad2 = _adapter([{"ts": 3, "val": 30}])
-        with pytest.raises(QueryError, match="wrong_col"):
-            _executor(result, ad2, cache).execute_query("q")
+        executor = _executor(result, ad2, cache)
+        # Every direct call fails afresh: the failure is not recorded, so the
+        # unusable watermark is reported each time and the warehouse never runs.
+        for _ in range(2):
+            with pytest.raises(QueryError, match="wrong_col"):
+                executor.execute_query("q")
+        assert ad2.execute.call_count == 0
 
 
 # ─── HIGH-3a: Nested board explicit incremental: false overrides parent ───────

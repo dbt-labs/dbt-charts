@@ -40,7 +40,7 @@ ALLOWED_OPEN: dict[str, str] = {
         "reads a dbt project's profiles.yml/dbt_project.yml off local disk "
         "during dbt source-type detection; not yet routed through Project"
     ),
-    "core/execute/adapters/dbt_adapter.py": (
+    "core/execute/adapters/dbt_profile.py": (
         "reads dbt's profiles.yml/dbt_project.yml off local disk to resolve "
         "the warehouse adapter at query-execution time; not yet routed "
         "through Project"

@@ -173,18 +173,12 @@ def schema_query_result(
 class SchemaAdapter(BaseAdapter):
     """Adapter for in-process schema resolver queries.
 
-    Supported query types: schema
-
     Dispatches to list_schemas / list_tables / profile_table / profile_column
     on the LayeredSchemaResolver based on which fields are populated.
     """
 
     def __init__(self, adapter_registry: AdapterRegistry) -> None:
         self._registry = adapter_registry
-
-    @property
-    def supported_types(self) -> set[str]:
-        return {"schema"}
 
     def _execute(
         self,

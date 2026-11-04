@@ -10,7 +10,7 @@ dialect and per input kind, so the next dialect-specific spelling is caught
 here rather than on a warehouse.
 
 Layer 1 — every registered dialect, no engine. Each case is rendered the way
-`SqlAdapter` renders for a dbt warehouse (internal placeholders, then literals
+the dbt backend renders for a dbt warehouse (internal placeholders, then literals
 inlined for the warehouse), parsed by sqlglot in that dialect's grammar, and
 type-annotated against a declared column schema. Every comparison the query
 makes must compare like with like: DATE with DATE, number with number. That is
@@ -75,12 +75,13 @@ from dbt_charts.core.compile.template.variables import (
     parse_variable_json_strings,
 )
 from dbt_charts.core.dialects import DIALECTS, SQLDialect, get_dialect
-from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
 from dbt_charts.core.execute.sql_literals import (
     INLINE_PLACEHOLDERS,
     inline_params_for_dialect,
     sql_string_literal,
 )
+
+from .._backend_runner import SqliteRunner
 
 # One entry per dialect class, not per alias ("postgresql", "mssql", "trino"
 # resolve to the same objects and would only repeat rows).
@@ -491,7 +492,7 @@ class TestSQLite:
 
     @pytest.mark.parametrize(("case", "column"), _case_params())
     def test_rows(self, sqlite_db: Path, case: Case, column: str) -> None:
-        result = SqliteAdapter().execute(
+        result = SqliteRunner().execute(
             SqlQuery(sql=case.template(column), source="db"),
             variables={"v": case.bound_value()},
             source_config=SQLiteSourceConfig(type="sqlite", path=str(sqlite_db)),
@@ -520,7 +521,7 @@ def postgres(pg_cluster: PostgreSQLExecutor) -> Iterator[Any]:
 @pytest.mark.xdist_group("postgres_cluster")
 @pytest.mark.timeout(120)
 class TestPostgres:
-    """Inlined literals, as `SqlAdapter` sends them to a dbt warehouse."""
+    """Inlined literals, as the dbt backend sends them to a dbt warehouse."""
 
     @pytest.mark.parametrize(("case", "column"), _case_params())
     def test_rows(self, postgres: Any, case: Case, column: str) -> None:

@@ -89,6 +89,7 @@ from dbt_charts.core.compile.models.variable.authored import (
 from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles_tree
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
+    display_text_at,
     display_text_fields,
 )
 from dbt_charts.core.compile.normalize.dispatch import (
@@ -2123,8 +2124,8 @@ def _load_chart_ref_with_lexical_queries(
 
     text_refs: set[str] = set()
     for text_field in display_text_fields(str(chart_raw.get("type"))):
-        text = chart_raw.get(text_field)
-        if not isinstance(text, str):
+        text = display_text_at(chart_raw, text_field)
+        if text is None:
             continue
         for ref in sorted(text_query_references([text])):
             if "#" not in ref and ref not in queries_section:

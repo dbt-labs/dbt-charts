@@ -1,3 +1,0 @@
-kind: Fixes
-body: Large boards no longer freeze for seconds while their charts show the loading spinner.
-time: 2026-10-28T15:21:19.006239-07:00

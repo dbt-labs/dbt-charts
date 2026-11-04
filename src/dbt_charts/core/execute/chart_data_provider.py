@@ -22,7 +22,7 @@ boundary ``core/AGENTS.md`` commits to — render as a pure function of
   provider to own a live warehouse connection, defeating the point.
 - ``board`` — the one read (``executor.board.variables`` in
   ``execute/chart_resolution.py``) is resolve-path only.
-- ``execute_chart`` / ``is_cached`` — the resolve path, the terminal and
+- ``execute_chart`` / ``lookup`` — the resolve path, the terminal and
   data-format renderers, and the ``render()`` orchestrator's cache pre-pass.
 
 Keep this Protocol minimal. Widening it to accommodate a new render-time reach

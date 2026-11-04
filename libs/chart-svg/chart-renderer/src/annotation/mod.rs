@@ -16,6 +16,7 @@ pub use axis_map::{AxisMap, Site};
 pub use model::{Annotation, YAxis};
 
 use crate::diagnostic::Diagnostic;
+use crate::labels_expr::colors::{contrast, Color};
 use measure::FontBook;
 use crate::vega_fit::Bounds;
 use place::{Mark, Placed};
@@ -210,7 +211,7 @@ impl DataMark {
 
     /// The mark as boxes text placement scores against: a fill or line in
     /// `COLUMN`-wide slices, each spanning what the mark covers there.
-    fn boxes(&self) -> Vec<Bounds> {
+    pub(crate) fn boxes(&self) -> Vec<Bounds> {
         let columns = |points: &[(f64, f64)], span: &dyn Fn(f64, f64) -> (f64, f64)| -> Vec<Bounds> {
             let (Some(a), Some(z)) = (points.first(), points.last()) else { return Vec::new() };
             let (x0, x1) = (a.0.min(z.0), a.0.max(z.0));
@@ -235,6 +236,22 @@ impl DataMark {
             }),
         }
     }
+}
+
+/// The color a value label's text takes over fills: `default`, or `canvas` when the
+/// label sits wholly on fills and canvas holds more contrast against them.
+pub(crate) fn text_over_fills<'a>(marks: &[DataMark], canvas: &'a str, ink: &Bounds, default: &'a str) -> Result<&'a str, Diagnostic> {
+    let (cx, cy) = ((ink.x1 + ink.x2) / 2.0, (ink.y1 + ink.y2) / 2.0);
+    let points = [(ink.x1, ink.y1), (ink.x2, ink.y1), (ink.x1, ink.y2), (ink.x2, ink.y2), (cx, cy)];
+    let on_fill = |x: f64, y: f64| marks.iter().any(|m| matches!(m, DataMark::Tinted(..)) && m.covers(x, y, 0.0));
+    if !points.iter().all(|&(x, y)| on_fill(x, y)) {
+        return Ok(default);
+    }
+    let parse = |c: &str| Color::parse(c).ok_or_else(|| Diagnostic::refused(format!("value label color: `{c}` is not a color")));
+    let (canvas_color, default_color) = (parse(canvas)?, parse(default)?);
+    let beneath = rule_gray::crossed(marks, canvas_color, (ink.x1, cy), (ink.x2, cy), ink.y2 - ink.y1)?;
+    let worst = |c: Color| beneath.iter().map(|under| contrast(c, *under)).fold(f64::INFINITY, f64::min);
+    Ok(if worst(canvas_color) > worst(default_color) { canvas } else { default })
 }
 
 impl DataMark {

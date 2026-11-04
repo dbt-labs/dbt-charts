@@ -180,12 +180,10 @@ def test_required_variable_fires_before_any_query_executes(
 ):
     """Required variable check fires before any query is dispatched.
 
-    Spies on ``execute_queries_parallel`` and asserts it is not called when a
+    Spies on ``Executor.run_misses`` and asserts it is not called when a
     required variable is unset — pinning the "validate then execute" ordering
     as a real invariant rather than coincidence.
     """
-    from dbt_charts.core.render import renderer as renderer_module
-
     result = compile(_BOARD_REQUIRED)
     assert result.success and result.board is not None
     executor = _make_executor(result.board, result.query_registry, local_project)
@@ -195,7 +193,7 @@ def test_required_variable_fires_before_any_query_executes(
     def _boom_parallel(*args, **kwargs):
         calls.append("parallel")
 
-    monkeypatch.setattr(renderer_module, "execute_queries_parallel", _boom_parallel)
+    monkeypatch.setattr(Executor, "run_misses", _boom_parallel)
 
     with pytest.raises(MissingRequiredVariablesError):
         render(result.board, executor, format="text")

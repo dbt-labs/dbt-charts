@@ -1,3 +1,0 @@
-kind: Fixes
-body: last_N weeks, months, quarters and years presets now cover the current period plus the N-1 before it, as in Looker and Sigma, instead of a rolling window.
-time: 2026-10-29T19:57:37.343967-07:00

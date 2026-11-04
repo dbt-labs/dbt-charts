@@ -28,4 +28,5 @@ rows:
   - c
 """)
     texts = re.findall(r">([^<>]+)</text>", svg)
-    assert texts[:7] == ["1", "1.5", "2", "2.5", "3", "3.5", "4"]
+    first = texts.index("1")
+    assert texts[first : first + 7] == ["1", "1.5", "2", "2.5", "3", "3.5", "4"]

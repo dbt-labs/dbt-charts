@@ -3,13 +3,8 @@
 Stage: EXECUTE
 Purpose: Define the base interface and types for query adapters.
 
-All adapters inherit from BaseAdapter and implement the unified query interface.
-QueryResult is the standard return type for all adapter executions.
-
-The unified interface uses:
-- `supported_types` property: Set of query types this adapter handles
-- `can_execute()`: Uses supported_types for type-based routing
-- `execute()`: Executes the query using type guards for type safety
+Adapters inherit from BaseAdapter and implement `execute()` using type guards for
+type safety. QueryResult is the standard return type for all adapter executions.
 
 Security:
 - Adapters support parameterized queries via the optional `params` argument
@@ -45,7 +40,6 @@ from dbt_charts.core.diagnostics.codes_execute import (
 )
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.diagnostics.registry import ErrorCode
-from dbt_charts.core.dialects import SQLDialect, get_dialect
 
 if TYPE_CHECKING:
     from dbt_charts.core.compile.models.source import ResolvedSourceConfig
@@ -300,6 +294,20 @@ def redact_values(text: str, secrets: Iterable[str]) -> str:
     return text
 
 
+class QueryDurationExceeded(Exception):
+    """A query was aborted by the source's server-side statement timeout.
+
+    Raised instead of a generic driver exception so the caller can build a
+    clear error without retrying — the connection is healthy (the warehouse
+    cancelled the statement, not the session), so a retry would just burn
+    the same timeout window twice.
+    """
+
+    def __init__(self, seconds: int) -> None:
+        self.seconds = seconds
+        super().__init__(f"query exceeded max_query_duration_seconds={seconds}s")
+
+
 class WarehouseStatementError(Exception):
     """A statement the warehouse read and rejected, carrying its SQLSTATE.
 
@@ -334,7 +342,7 @@ _SQLSTATE_ERROR_CODES: dict[str, ErrorCode] = {
 }
 
 # Message forms of a column that is neither grouped nor aggregated. DuckDB's
-# binder text is matched in duckdb_adapter through the same pattern; Snowflake
+# binder text is matched in backends/duckdb_local through the same pattern; Snowflake
 # carries no SQLSTATE through dbt's exception wrapper.
 GROUP_BY_MESSAGE = re.compile(
     r"must appear in the GROUP BY clause"
@@ -469,102 +477,15 @@ def classify_warehouse_error(
 
 
 class BaseAdapter(ABC):
-    """Base interface for query adapters.
+    """Base interface for the in-process query adapters.
 
-    All adapters must implement this interface to execute queries
-    against different backends (warehouses, files, etc.).
+    SQL never reaches an adapter: it runs on a ``Backend`` the registry routes by
+    source kind. An adapter answers a non-SQL query type (``values``, ``schema``)
+    that the registry dispatches to it by type.
 
-    The unified interface pattern uses:
-    - `supported_types`: Property returning set of query types this adapter handles
-    - Type guards for type-safe field access in execute methods
-
-    Subclasses must implement:
-        - supported_types: Property returning Set[str] of supported query types
-        - _execute(): Perform the actual query execution
-
-    Optional override:
-        - _can_execute(): Override for custom eligibility logic beyond type matching
-
-    Example:
-        >>> class MyAdapter(BaseAdapter):
-        ...     @property
-        ...     def supported_types(self) -> Set[str]:
-        ...         return {"sql"}
-        ...
-        ...     def _execute(self, query, variables):
-        ...         if is_sql_query(query):
-        ...             # Type checker knows query.sql exists
-        ...             return self._run_sql(query.sql)
+    Subclasses implement ``_execute()``, using the type guards for type-safe
+    field access.
     """
-
-    @property
-    @abstractmethod
-    def supported_types(self) -> set[str]:
-        """Query types this adapter can execute.
-
-        Returns:
-            Set of query type strings (e.g., {"sql"}, {"csv", "values"})
-
-        Example:
-            >>> adapter.supported_types
-            {"sql"}
-        """
-        pass
-
-    def can_execute(
-        self, query: AnyQuery, source_config: ResolvedSourceConfig | None
-    ) -> bool:
-        """Check if this adapter can execute the given query against a source.
-
-        Gates on supported_types, then defers to _can_execute() for source-aware
-        eligibility. source_config is the resolved source (or None), so a SQL
-        adapter claims only queries whose resolved warehouse type it owns.
-
-        Args:
-            query: AnyQuery object (guaranteed by compiler)
-            source_config: Typed source config resolved by SourceResolver, or None.
-
-        Returns:
-            True if this adapter can execute the query, False otherwise
-        """
-        # First check if type is supported
-        if query.query_type not in self.supported_types:
-            return False
-        # Then check any additional conditions
-        return self._can_execute(query, source_config)
-
-    def param_render_dialect(self, source_config: ResolvedSourceConfig) -> SQLDialect:
-        """The placeholder style pre-rendered SQL handed to this adapter must use.
-
-        The registry's composition point renders {{ queries.* }} references and
-        variables before dispatch and passes the adapter SQL plus params.
-        Adapters that bind params through a driver need the warehouse's real
-        placeholder syntax (the default here). Adapters that flatten params to
-        literals instead override this with a collision-free internal style —
-        a warehouse's own syntax ($1, ?) can occur in authored string literals,
-        where the flattening step would corrupt it.
-        """
-        return get_dialect(source_config.type)
-
-    def _can_execute(
-        self, query: AnyQuery, source_config: ResolvedSourceConfig | None
-    ) -> bool:
-        """Source-aware eligibility check beyond query-type matching.
-
-        Override to claim only the resolved source types this adapter owns.
-        The base implementation always returns True (query-type match suffices).
-
-        Args:
-            query: AnyQuery object (guaranteed)
-            source_config: Typed source config resolved by SourceResolver, or None.
-
-        Returns:
-            True if this adapter can execute the query, False otherwise
-        """
-        return True
-
-    def interrupt(self) -> None:  # noqa: B027 — optional hook, no-op by default
-        """Cancel in-flight queries and refuse new ones; one-way, for shutdown."""
 
     def execute(
         self,
@@ -583,7 +504,7 @@ class BaseAdapter(ABC):
                 of re-processing variables. This is used by batch execution where
                 parameterization happens before adapter execution.
             source_config: Typed source config resolved by SourceResolver before
-                adapter dispatch. SqlAdapter consumes this; other adapters ignore it.
+                adapter dispatch.
 
         Returns:
             QueryResult containing data or error information
@@ -609,8 +530,7 @@ class BaseAdapter(ABC):
             variables: Optional dictionary of variable values for query resolution
             params: Optional pre-computed parameter values. When provided, skip
                 internal parameterization and use these params directly.
-            source_config: Typed source config from SourceResolver; SqlAdapter
-                reads it, other adapters accept and ignore.
+            source_config: Typed source config from SourceResolver.
 
         Returns:
             QueryResult containing data or error information

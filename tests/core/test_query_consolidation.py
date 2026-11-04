@@ -185,7 +185,6 @@ rows:
 class TestPreExecutionCacheHits:
     def test_option_queries_are_cache_hits_after_parallel_pre_execution(self) -> None:
         """After pre-execution, variable_controls gets cache hits for options queries."""
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
         from dbt_charts.core.render.variables_resolve import resolve_query_options
 
         result = _compile(FILTERED_DASHBOARD_YAML)
@@ -197,7 +196,7 @@ class TestPreExecutionCacheHits:
 
         # Pre-execution: run all queries including options queries
         all_names = collect_all_query_names(result.board)
-        execute_queries_parallel(executor, all_names)
+        executor.run_misses(executor.lookup(all_names), None, 8)
 
         calls_after_pre_exec = registry.execute.call_count
         assert calls_after_pre_exec >= 1  # at least one query was pre-executed
@@ -210,7 +209,6 @@ class TestPreExecutionCacheHits:
 
     def test_column_option_queries_are_cache_hits_after_pre_execution(self) -> None:
         """Promoted column-option queries are cache hits on second pre-execution."""
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
 
         result = _compile(COLUMN_BOUND_YAML)
         executor, registry = _mock_executor(result)
@@ -220,12 +218,12 @@ class TestPreExecutionCacheHits:
         )
 
         all_names = collect_all_query_names(result.board)
-        execute_queries_parallel(executor, all_names)
+        executor.run_misses(executor.lookup(all_names), None, 8)
 
         calls_after_first = registry.execute.call_count
 
         # Second pre-execution: column-option queries must be cache hits
-        execute_queries_parallel(executor, all_names)
+        executor.run_misses(executor.lookup(all_names), None, 8)
 
         assert registry.execute.call_count == calls_after_first
 

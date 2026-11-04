@@ -1,3 +1,0 @@
-kind: Performance
-body: '`dct validate` and `dct describe` start faster, most of all on boards that set `theme:`.'
-time: 2026-11-01T16:02:22.953153-08:00

@@ -7,7 +7,6 @@ and detect_dbt_connection_string — all in dbt_charts.core.compile.sources.dete
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -93,12 +92,12 @@ class TestDetectDatabaseTypeFromRegistry:
     def test_dbt_adapter_with_profiles(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Detects database type from DbtAdapter with profiles.yml."""
+        """Detects database type from the linked dbt project's profiles.yml."""
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
         from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        from dbt_charts.core.execute.source_resolver import DbtContext
 
         # Create profiles.yml
         profiles = tmp_path / "profiles.yml"
@@ -106,42 +105,15 @@ class TestDetectDatabaseTypeFromRegistry:
             "my_project:\n  target: dev\n  outputs:\n    dev:\n      type: postgresql\n"
         )
 
-        adapter = MagicMock(spec=DbtAdapter)
-        adapter.dbt_project_path = tmp_path
-        adapter.profile_name = "my_project"
-        adapter.target_name = "dev"
-        adapter.supported_types = {"sql"}
+        registry = AdapterRegistry(
+            project=local_project(tmp_path),
+            dbt_context=DbtContext(dbt_project_path=tmp_path, target="dev"),
+        )
 
-        registry = AdapterRegistry(project=local_project(tmp_path))
-        registry.register(adapter)
-
-        result = detect_database_type_from_registry(registry)
+        result = detect_database_type_from_registry(
+            registry, default_profile_name="my_project"
+        )
         assert result["type"] == "postgresql"
-
-    def test_sql_adapter_with_dbt_path(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """Detects database type from SqlAdapter with dbt_project_path."""
-        from dbt_charts.core.compile.sources.detection import (
-            detect_database_type_from_registry,
-        )
-        from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
-
-        profiles = tmp_path / "profiles.yml"
-        profiles.write_text(
-            "default:\n  target: dev\n  outputs:\n    dev:\n      type: duckdb\n"
-        )
-
-        adapter = MagicMock(spec=SqlAdapter)
-        adapter.dbt_project_path = tmp_path
-        adapter.supported_types = {"sql"}
-
-        registry = AdapterRegistry(project=local_project(tmp_path))
-        registry.register(adapter)
-
-        result = detect_database_type_from_registry(registry)
-        assert result["type"] == "duckdb"
 
     def test_no_sql_adapters(
         self, local_project: Callable[..., FilesystemProject]
@@ -156,49 +128,37 @@ class TestDetectDatabaseTypeFromRegistry:
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "none"
 
-    def test_sql_adapter_without_dbt_path_unrecognized_profile_type(
+    def test_unrecognized_profile_type(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Returns 'unknown' type for SqlAdapter with an unrecognized profile_type."""
+        """Returns 'unknown' type for a registry with an unrecognized profile_type."""
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
         from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 
-        adapter = MagicMock(spec=SqlAdapter)
-        adapter.dbt_project_path = None
-        adapter.profile_type = "not_a_real_engine"
-        adapter.supported_types = {"sql"}
-
-        registry = AdapterRegistry(project=local_project(Path()))
-        registry.register(adapter)
+        registry = AdapterRegistry(
+            project=local_project(Path()), profile_type="not_a_real_engine"
+        )
 
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "unknown"
 
-    def test_sql_adapter_without_dbt_path_falls_back_to_profile_type(
+    def test_falls_back_to_profile_type(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """Reports the real engine from adapter.profile_type when there's no dbt project."""
+        """Reports the real engine from the registry's profile_type when there's no dbt project."""
         from dbt_charts.core.compile.sources.detection import (
             detect_database_type_from_registry,
         )
         from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 
-        adapter = MagicMock(spec=SqlAdapter)
-        adapter.dbt_project_path = None
-        adapter.profile_type = "duckdb"
-        adapter.supported_types = {"sql"}
-
-        registry = AdapterRegistry(project=local_project(Path()))
-        registry.register(adapter)
+        registry = AdapterRegistry(project=local_project(Path()), profile_type="duckdb")
 
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "duckdb"
 
-    def test_sql_adapter_without_dbt_path_resolves_profile_type_alias(
+    def test_resolves_profile_type_alias(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Resolves profile_type aliases (e.g. 'postgres' -> 'postgresql') via get_database_info."""
@@ -206,15 +166,10 @@ class TestDetectDatabaseTypeFromRegistry:
             detect_database_type_from_registry,
         )
         from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-        from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 
-        adapter = MagicMock(spec=SqlAdapter)
-        adapter.dbt_project_path = None
-        adapter.profile_type = "postgres"
-        adapter.supported_types = {"sql"}
-
-        registry = AdapterRegistry(project=local_project(Path()))
-        registry.register(adapter)
+        registry = AdapterRegistry(
+            project=local_project(Path()), profile_type="postgres"
+        )
 
         result = detect_database_type_from_registry(registry)
         assert result["type"] == "postgresql"

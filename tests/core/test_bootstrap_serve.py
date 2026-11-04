@@ -3,7 +3,6 @@ DBT_TARGET support, and dct init dbt_charts.yml creation."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,6 @@ import yaml
 
 from dbt_charts.agent_api.init import init_project as init_command
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
 from dbt_charts.core.project_roots import find_dct_root
 
 # ---------------------------------------------------------------------------
@@ -103,37 +101,6 @@ class TestFindDctRoot:
         empty = tmp_path / "empty"
         empty.mkdir()
         assert find_dct_root(empty) is None
-
-
-# ---------------------------------------------------------------------------
-# DbtAdapter — DBT_TARGET env var
-# ---------------------------------------------------------------------------
-
-
-class TestDbtAdapterTarget:
-    def test_explicit_target_wins(
-        self, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = DbtAdapter(
-            project=local_project(Path("/tmp/fake")),
-            dbt_project_path=Path("/tmp/fake"),
-            target_name="prod",
-        )
-        assert adapter.target_name == "prod"
-
-    def test_explicit_target_overrides_env(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        local_project: Callable[..., FilesystemProject],
-    ) -> None:
-        """Explicit target_name is always used; DBT_TARGET is not read."""
-        monkeypatch.setenv("DBT_TARGET", "staging")
-        adapter = DbtAdapter(
-            project=local_project(Path("/tmp/fake")),
-            dbt_project_path=Path("/tmp/fake"),
-            target_name="prod",
-        )
-        assert adapter.target_name == "prod"
 
 
 # ---------------------------------------------------------------------------
@@ -265,18 +232,14 @@ class TestServeProjectRootDiscovery:
         with TestClient(app):
             assert app.state.project.root == dbt_repo.resolve()
 
-    def test_server_threads_target_to_dbt_adapter(self, dbt_repo: Path) -> None:
-        """When target is provided, the built DbtAdapter receives it."""
+    def test_server_threads_target_to_dbt_context(self, dbt_repo: Path) -> None:
+        """When target is provided, the built registry's dbt context carries it."""
         from fastapi.testclient import TestClient
 
         from dbt_charts.core.serve.server import create_server
 
         app = create_server(FilesystemProject(dbt_repo), target="prod")
         with TestClient(app):
-            dbt_adapters = [
-                a
-                for a in app.state.adapter_registry._adapters
-                if isinstance(a, DbtAdapter)
-            ]
-        assert dbt_adapters, "expected a DbtAdapter in the serve registry"
-        assert all(a.target_name == "prod" for a in dbt_adapters)
+            dbt_context = app.state.adapter_registry.dbt_context
+        assert dbt_context is not None, "expected a linked dbt project"
+        assert dbt_context.target == "prod"

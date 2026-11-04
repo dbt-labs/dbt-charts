@@ -1,3 +1,0 @@
-kind: Fixes
-body: Board tabs sit a card's padding below the filters and title instead of touching them.
-time: 2026-10-29T11:03:35.77605-07:00

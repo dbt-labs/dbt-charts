@@ -1,3 +1,0 @@
-kind: Fixes
-body: '`dct query --validate` shows a board query''s declared variable defaults as literals instead of parameter placeholders.'
-time: 2026-10-29T20:39:37.33882-07:00

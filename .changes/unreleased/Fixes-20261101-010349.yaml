@@ -1,3 +1,0 @@
-kind: Fixes
-body: A support table on a date axis keeps one column per axis label, set under that label, and every support table compacts its numbers like the value axis.
-time: 2026-11-01T01:03:49.027607-07:00

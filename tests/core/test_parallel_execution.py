@@ -10,13 +10,16 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.adapters.base import QueryResult
 from dbt_charts.core.execute.duckdb_cache import compute_cache_key
+from dbt_charts.core.execute.lookup import Miss
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 from dbt_charts.core.render import render
 
+from .._results import rows_result
 from ._board_utils import make_test_board
 
 
@@ -32,6 +35,12 @@ def _project_with_duckdb_source(
         sources={"duckdb": {"type": "duckdb", "path": ":memory:"}}
     )
     return project
+
+
+def _run_parallel(
+    executor: Executor, names: set[str], max_workers: int = 8
+) -> dict[str, Exception | None]:
+    return executor.run_misses(executor.lookup(names), None, max_workers)
 
 
 def _slow_adapter_execute(delay: float = 0.1):
@@ -157,13 +166,11 @@ class TestCollectChartQueries:
         assert names == set()
 
 
-class TestExecuteQueriesParallel:
+class TestRunMisses:
     """Test parallel query execution."""
 
     def test_independent_queries_run_concurrently(self):
         """Verify independent queries actually run in parallel via thread IDs."""
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
-
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_execute, call_log = _slow_adapter_execute(delay=0.1)
@@ -175,7 +182,7 @@ class TestExecuteQueriesParallel:
         executor = Executor(result.board, adapter_registry=mock_registry)
 
         start = time.monotonic()
-        execute_queries_parallel(executor, {"sales", "users", "orders"})
+        _run_parallel(executor, {"sales", "users", "orders"})
         elapsed = time.monotonic() - start
 
         assert len(call_log) == 3
@@ -190,8 +197,6 @@ class TestExecuteQueriesParallel:
 
     def test_results_cached_after_parallel_execution(self):
         """After parallel execution, all execute_chart() calls should be cache hits."""
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
-
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
@@ -203,7 +208,7 @@ class TestExecuteQueriesParallel:
 
         executor = Executor(result.board, adapter_registry=mock_registry)
 
-        execute_queries_parallel(executor, {"sales", "users", "orders"})
+        _run_parallel(executor, {"sales", "users", "orders"})
 
         # Now execute_chart should be cache hits (no new adapter calls)
         call_count_before = mock_registry.execute.call_count
@@ -217,8 +222,6 @@ class TestExecuteQueriesParallel:
 
     def test_error_in_one_query_doesnt_block_others(self):
         """If one query errors, others should still complete."""
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
-
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
 
@@ -235,13 +238,44 @@ class TestExecuteQueriesParallel:
 
         executor = Executor(result.board, adapter_registry=mock_registry)
 
-        errors = execute_queries_parallel(executor, {"sales", "users", "orders"})
+        errors = _run_parallel(executor, {"sales", "users", "orders"})
 
         # sales should have an error
         assert errors["sales"] is not None
         # users and orders should succeed
         assert errors["users"] is None
         assert errors["orders"] is None
+
+    def test_cache_write_failure_fails_only_that_query(self):
+        """A store write that raises is that query's error, not the render's."""
+        from dbt_charts.core.execute.cache_backend import QueryResultCache
+
+        result = compile(SIMPLE_BOARD_YAML)
+        assert result.success, result.errors
+
+        mock_registry = Mock()
+        mock_registry.project_file_sources.return_value = {}
+        mock_registry.execute.return_value = QueryResult(
+            data=[{"x": 1, "y": 2}], schema=literal_schema([{"x": 1, "y": 2}])
+        )
+        cache = Mock(spec=QueryResultCache)
+        cache.get.return_value = None
+
+        def put(*args, query_name, **kwargs):
+            if query_name == "sales":
+                raise OSError("store down")
+
+        cache.put.side_effect = put
+        executor = Executor(
+            result.board, adapter_registry=mock_registry, result_cache=cache
+        )
+
+        errors = _run_parallel(executor, {"sales", "users", "orders"})
+
+        assert isinstance(errors["sales"], OSError)
+        assert errors["users"] is None
+        assert errors["orders"] is None
+        assert executor._query_errors["sales"] is errors["sales"]
 
     def test_empty_query_set(self):
         """Empty query set should be a no-op."""
@@ -257,9 +291,7 @@ class TestExecuteQueriesParallel:
         mock_registry.project_file_sources.return_value = {}
         executor = Executor(board, adapter_registry=mock_registry)
 
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
-
-        errors = execute_queries_parallel(executor, set())
+        errors = _run_parallel(executor, set())
         assert errors == {}
         assert mock_registry.execute.call_count == 0
 
@@ -311,7 +343,6 @@ class TestDuckDBIntegration:
         serializes DuckDB access, so concurrent submit is safe.
         """
         from dbt_charts.core.execute.collect import collect_layout_chart_query_names
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
 
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
@@ -324,7 +355,7 @@ class TestDuckDBIntegration:
         )  # real adapter registry
 
         query_names = collect_layout_chart_query_names(result.board)
-        errors = execute_queries_parallel(executor, query_names)
+        errors = _run_parallel(executor, query_names)
 
         # All queries should succeed
         for name, err in errors.items():
@@ -397,11 +428,10 @@ class TestStoredPreExecutionErrors:
         executor = Executor(result.board, adapter_registry=mock_registry)
 
         from dbt_charts.core.execute.collect import collect_layout_chart_query_names
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
 
         # Pre-execution — sales fails once
         query_names = collect_layout_chart_query_names(result.board)
-        errors = execute_queries_parallel(executor, query_names)
+        errors = _run_parallel(executor, query_names)
         assert errors["sales"] is not None
         assert call_count == 1
 
@@ -417,7 +447,7 @@ class TestCacheHitPartitioning:
     """The pre-render stage must not submit cached queries to the thread pool.
 
     Pins the scheduling property: when some queries are already cached,
-    only the uncached names reach execute_queries_parallel. Cache hits
+    only the uncached names reach run_misses. Cache hits
     are resolved synchronously on the calling thread.
     """
 
@@ -425,7 +455,7 @@ class TestCacheHitPartitioning:
         """Pre-render submits only uncached queries to the pool.
 
         Setup: three queries on the board; two pre-warmed in the in-memory cache.
-        Assert: execute_queries_parallel receives only the one cache miss.
+        Assert: run_misses receives only the one cache miss.
         The two hits are resolved synchronously before the pool submit.
         """
         import importlib
@@ -450,32 +480,28 @@ class TestCacheHitPartitioning:
 
         submitted_names: list[set] = []
 
-        def capturing_parallel(_exec, names, variables=None, max_workers=8):
-            submitted_names.append(set(names))
-            return dict.fromkeys(names)
+        def capturing_parallel(_exec, found, variables, max_workers):
+            submitted_names.append({miss.name for miss in found.misses})
+            return {}
 
         with (
-            patch.object(renderer_mod, "execute_queries_parallel", capturing_parallel),
+            patch.object(Executor, "run_misses", capturing_parallel),
             patch.object(
                 yaml_format_mod, "render_board_yaml", return_value="yaml: true\n"
             ),
         ):
             renderer_mod.render(result.board, executor, format="yaml")
 
-        assert len(submitted_names) == 1, (
-            "execute_queries_parallel not called exactly once"
-        )
+        assert len(submitted_names) == 1, "run_misses not called exactly once"
         # Only the uncached query should be in the pool submit set.
         assert submitted_names[0] == {"orders"}, (
             f"Expected only {{'orders'}} in parallel submit; got {submitted_names[0]}"
         )
 
     def test_all_cached_means_empty_pool_submit(self):
-        """When every parallel query is cached, execute_queries_parallel gets an empty set.
+        """When every parallel query is cached, run_misses gets no misses.
 
-        The empty-set fast path in execute_queries_parallel returns {} with no
-        thread pool created — verified by the existing test_empty_query_set test.
-        This test only asserts that the renderer passes an empty set.
+        This test asserts that the renderer hands run_misses no misses.
         """
         import importlib
 
@@ -499,12 +525,12 @@ class TestCacheHitPartitioning:
 
         submitted_names: list[set] = []
 
-        def capturing_parallel(_exec, names, variables=None, max_workers=8):
-            submitted_names.append(set(names))
+        def capturing_parallel(_exec, found, variables, max_workers):
+            submitted_names.append({miss.name for miss in found.misses})
             return {}
 
         with (
-            patch.object(renderer_mod, "execute_queries_parallel", capturing_parallel),
+            patch.object(Executor, "run_misses", capturing_parallel),
             patch.object(
                 yaml_format_mod, "render_board_yaml", return_value="yaml: true\n"
             ),
@@ -517,8 +543,8 @@ class TestCacheHitPartitioning:
         )
 
 
-class TestIsCached:
-    """Direct contract for Executor.is_cached — the success-cache peek used by
+class TestLookupHits:
+    """Direct contract for Executor.lookup — the success-cache peek used by
     the pre-render partition. True only for a warmed success cache."""
 
     def _executor(self) -> Executor:
@@ -533,27 +559,27 @@ class TestIsCached:
 
     def test_false_before_execution(self):
         executor = self._executor()
-        assert executor.is_cached("sales") is False
+        assert "sales" not in executor.lookup(["sales"]).hits
 
     def test_true_after_execution(self):
         executor = self._executor()
         executor.execute_query("sales")
-        assert executor.is_cached("sales") is True
+        assert "sales" in executor.lookup(["sales"]).hits
 
     def test_strips_queries_prefix(self):
         executor = self._executor()
         executor.execute_query("sales")
-        assert executor.is_cached("queries.sales") is True
+        assert "sales" in executor.lookup(["queries.sales"]).hits
 
     def test_unknown_query_is_not_cached(self):
         """An unknown name returns False, not a raise — the partition treats it
         as a miss and execute_query surfaces the error on the real call."""
         executor = self._executor()
-        assert executor.is_cached("does_not_exist") is False
+        assert "does_not_exist" not in executor.lookup(["does_not_exist"]).hits
 
     def test_memo_hit_reports_true_even_with_use_cache_off(self):
         """`use_cache=False` disables the persistent store, not the memo —
-        is_cached must keep predicting execute_query, which serves memo rows."""
+        lookup must keep predicting execute_query, which serves memo rows."""
         result = compile(SIMPLE_BOARD_YAML)
         assert result.success, result.errors
         mock_registry = Mock()
@@ -564,63 +590,33 @@ class TestIsCached:
         executor = Executor(
             result.board, adapter_registry=mock_registry, use_cache=False
         )
-        assert executor.is_cached("sales") is False
+        assert "sales" not in executor.lookup(["sales"]).hits
         executor.execute_query("sales")
-        assert executor.is_cached("sales") is True
+        assert "sales" in executor.lookup(["sales"]).hits
 
 
-def test_execute_queries_parallel_propagates_attribution_to_every_worker() -> None:
+def test_run_propagates_attribution_to_every_worker() -> None:
     """A fan-out render must label EVERY query with the calling actor.
 
     `attribute()`'s ContextVar does not cross `ThreadPoolExecutor.submit` on
-    its own (its own docstring warns of exactly this) — this is a regression
-    test through the real `execute_queries_parallel` + a real thread pool
-    with `max_workers > 1`, not a unit test of the ContextVar in isolation.
-    A dropped propagation would silently omit the actor label on every query
-    that fans out, which is the multi-query path that matters most.
+    its own — a regression test through the real `run` + a real thread pool
+    with `max_workers > 1`. A dropped propagation would silently omit the actor
+    label on every query that fans out.
     """
     from dbt_charts.core.attribution import attribute, current_attribution
-    from dbt_charts.core.execute.parallel import execute_queries_parallel
+    from dbt_charts.core.execute.run import Outcome, Rows, run
 
     seen: dict[str, str | None] = {}
 
-    def _record(name: str, variables: object = None) -> list[dict[str, object]]:
-        seen[name] = current_attribution().get("dbt_charts_actor")
-        return []
-
-    stub = Mock()
-    stub.execute_query.side_effect = _record
+    def execute(miss: Miss) -> Outcome:
+        seen[miss.name] = current_attribution().get("dbt_charts_actor")
+        return Rows(rows_result([]), None)
 
     with attribute({"actor": "tenant-a"}, {}):
-        execute_queries_parallel(stub, {"a", "b", "c"}, max_workers=3)
+        run([_miss("a"), _miss("b"), _miss("c")], execute, lambda m, o: None, 3)
 
     assert seen == {"a": "tenant-a", "b": "tenant-a", "c": "tenant-a"}
 
 
-def test_execute_queries_parallel_names_pool_threads_with_render_prefix() -> None:
-    """The pool threads must carry RENDER_POOL_THREAD_PREFIX.
-
-    A host keys per-query thread-local cleanup on this prefix (Cloud reaps the
-    result-cache connection only on pool workers), so dropping the stamp would
-    silently disable that cleanup with no other test failing. Pin it here.
-    """
-    from dbt_charts.core.execute.parallel import (
-        RENDER_POOL_THREAD_PREFIX,
-        execute_queries_parallel,
-    )
-
-    seen: dict[str, str] = {}
-
-    def _record(name: str, variables: object = None) -> list[dict[str, object]]:
-        seen[name] = threading.current_thread().name
-        return []
-
-    stub = Mock()
-    stub.execute_query.side_effect = _record
-
-    execute_queries_parallel(stub, {"a", "b"}, max_workers=2)
-
-    assert set(seen) == {"a", "b"}
-    assert all(name.startswith(RENDER_POOL_THREAD_PREFIX) for name in seen.values()), (
-        f"pool threads not named with {RENDER_POOL_THREAD_PREFIX!r}: {seen}"
-    )
+def _miss(name: str) -> Miss:
+    return Miss(name, SqlQuery(sql="SELECT 1", source="db"), ("s", name, "v"))

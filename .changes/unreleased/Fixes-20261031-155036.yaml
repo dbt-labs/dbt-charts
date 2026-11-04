@@ -1,3 +1,0 @@
-kind: Fixes
-body: Code in link text, such as [`file.yml`](path), renders as a linked code chip instead of showing backticks.
-time: 2026-10-31T15:50:36.046917-07:00

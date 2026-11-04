@@ -11,21 +11,17 @@ ERR-WAREHOUSE-RUNTIME. A DbtChartsError raised inside the classified
 scope (e.g. MutatingSqlError from the SQL guard) keeps its own registered
 code instead of being overwritten by that fallback.
 
-Two adapters share this classifier: DbtAdapter (source-less dbt-jinja
-queries) and SqlAdapter (`source:`-declaring queries — the production path
-for named warehouse sources, and the one the original bug report exercised).
+The dbt backend runs every dbt-Core warehouse source, source-less dbt-jinja
+queries included, and is the path the original bug report exercised.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import yaml
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
@@ -40,24 +36,24 @@ from dbt_charts.core.diagnostics.codes_execute import (
     ERR_WAREHOUSE_CONNECTION,
     ERR_WAREHOUSE_RUNTIME,
 )
-from dbt_charts.core.diagnostics.codes_unknown import ERR_INTERNAL
 from dbt_charts.core.diagnostics.execution import MutatingSqlError, UnparseableSqlError
 from dbt_charts.core.execute.adapters.base import (
     WarehouseStatementError,
     classify_warehouse_error,
     resolve_effective_row_limit,
 )
-from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql, SqlAdapter
+from dbt_charts.core.execute.compose import ResolvedQuery
+
+from ...conftest import DbtHarness
 
 
-def _prepared(sql: str, dialect_name: str) -> PreparedSql:
-    """What prepare_sql would hand back — these tests exercise the send half."""
-    return PreparedSql(
+def _prepared(sql: str) -> ResolvedQuery:
+    """What compose would hand back — these tests exercise the send half."""
+    return ResolvedQuery(
         sql=sql,
-        setup_sql=None,
-        dialect_name=dialect_name,
-        row_fetch_limit=resolve_effective_row_limit(None),
+        params=(),
+        setup_sql=(),
+        limit=resolve_effective_row_limit(None),
     )
 
 
@@ -178,267 +174,8 @@ class TestClassifyWarehouseErrorPreservesDbtChartsErrorCode:
 
 
 @pytest.mark.usefixtures("typed_via_execute")
-class TestDbtAdapterSurfacesClassifiedErrorCode:
-    """End-to-end through DbtAdapter._execute: a warehouse failure gets a
-    typed code, not the ERR-INTERNAL fallback."""
-
-    def test_bigquery_unrecognized_column_sets_binder_code(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        adapter._adapter = MagicMock()
-        adapter._adapter.execute.side_effect = Exception(
-            "Unrecognized name: 'goals_goal_dollars' at [3:42]"
-        )
-        adapter._dialect = "bigquery"
-        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
-            query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
-            result = adapter._execute(query)
-        assert result.error is not None
-        assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in str(result.error)
-        assert result.error.code is ERR_BINDER_UNKNOWN_COLUMN
-
-    def test_generic_failure_still_gets_warehouse_runtime_not_none(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """Any warehouse execution failure gets classified — never left at the
-        ERR-INTERNAL fallback."""
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        adapter._adapter = MagicMock()
-        adapter._adapter.execute.side_effect = Exception("connection reset")
-        adapter._dialect = "snowflake"
-        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
-            query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
-            result = adapter._execute(query)
-        assert result.error is not None
-        assert result.error.code is ERR_WAREHOUSE_RUNTIME
-
-    def test_setup_failure_is_not_mislabeled_as_warehouse_rejection(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """A profile/manifest/target setup failure never reaches the warehouse
-        — it must not be classified ERR-WAREHOUSE-RUNTIME, which would
-        assert a false cause ("warehouse rejected the query") for a query
-        that was never sent.
-
-        This is resolving `_get_dbt_adapter()` — reading profiles.yml,
-        picking a target, validating the credentials shape — not opening a
-        connection to the warehouse, so it stays out of scope for
-        ERR-WAREHOUSE-CONNECTION (which is reserved for opening the
-        connection itself, see test_connect_failure_returns_warehouse_connection_code
-        below). It stays at the ERR-INTERNAL fallback code by deliberate
-        choice, not oversight.
-        """
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        with patch.object(
-            adapter,
-            "_get_dbt_adapter",
-            side_effect=ValueError("Profile 'x' not found in profiles.yml"),
-        ):
-            query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
-            result = adapter._execute(query)
-        assert result.error is not None
-        assert "Profile 'x' not found in profiles.yml" in str(result.error)
-        assert result.error.code is ERR_INTERNAL
-
-    def test_connect_failure_returns_warehouse_connection_code(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """A credentials/host failure while opening the actual warehouse
-        connection (adapter.connection_named(...) forcing the lazy handle
-        open) must not be classified ERR-WAREHOUSE-RUNTIME — nothing read
-        the SQL yet. Distinct from test_setup_failure_is_not_mislabeled_as_
-        warehouse_rejection above, which covers profile/target resolution
-        before any connection is attempted.
-        """
-
-        class _FailingHandleConnection:
-            @property
-            def handle(self) -> object:
-                raise RuntimeError("Invalid access token")
-
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        adapter._adapter = MagicMock()
-        adapter._adapter.connections.get_thread_connection.return_value = (
-            _FailingHandleConnection()
-        )
-        adapter._dialect = "databricks"
-        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
-            query = SqlQuery(sql="SELECT {{ ref('x') }}", source="my_named_source")
-            result = adapter._execute(query)
-        assert result.error is not None
-        # databricks has no classifier rules, so the driver text is not
-        # matched into a specific bucket — it must still never reach the
-        # authored message, only .detail.
-        assert "Invalid access token" not in str(result.error)
-        assert result.error.detail is not None
-        assert "Invalid access token" in result.error.detail
-        assert result.error.code is ERR_WAREHOUSE_CONNECTION
-        # The connect failure must short-circuit before the query is sent.
-        adapter._adapter.execute.assert_not_called()
-
-
-# --- dct query: the cleanup crash must not replace the real cause -------------
-
-_PEM_FAILURE = (
-    "Database Error\n  Unable to load PEM file. See "
-    "https://cryptography.io/en/latest/faq/ for more details. "
-    "InvalidData(InvalidPadding)"
-)
-
-# A private key that fails PEM parsing before any network call is attempted.
-_UNPARSEABLE_KEYFILE_JSON = {
-    "type": "service_account",
-    "project_id": "my-project",
-    "private_key_id": "abc123",
-    "private_key": "-----BEGIN PRIVATE KEY-----\nNOTAREALKEY\n-----END PRIVATE KEY-----\n",
-    "client_email": "svc@my-project.iam.gserviceaccount.com",
-    "client_id": "1",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-}
-
-
-class _UnopenableConnection:
-    """dbt's Connection after a failed open: no handle, and asking for one raises."""
-
-    def __init__(self, open_error: Exception) -> None:
-        self._open_error = open_error
-
-    @property
-    def handle(self) -> Any:
-        raise self._open_error
-
-
-class _CleanupCrashingAdapter:
-    """dbt-bigquery's release: a bare handle.close(), whatever the open did."""
-
-    def __init__(self, connection: object) -> None:
-        self.connections = MagicMock()
-        self.connections.get_thread_connection.return_value = connection
-        self.execute = MagicMock(
-            return_value=(None, MagicMock(column_names=[], rows=[]))
-        )
-
-    @contextmanager
-    def connection_named(self, name: str) -> Generator[None]:
-        try:
-            yield
-        finally:
-            # BigQueryConnectionManager.close, verbatim in effect.
-            raise AttributeError("'NoneType' object has no attribute 'close'")
-
-
-@pytest.mark.usefixtures("typed_via_execute")
-class TestDbtAdapterConnectFailureSurvivesCleanupCrash:
-    def test_reports_the_credential_error_not_the_cleanup_crash(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        adapter._adapter = _CleanupCrashingAdapter(
-            _UnopenableConnection(RuntimeError(_PEM_FAILURE))
-        )
-        adapter._dialect = "bigquery"
-        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
-            result = adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
-
-        assert result.error is not None
-        assert "'NoneType' object has no attribute 'close'" not in str(result.error)
-        assert "Unable to load PEM file" not in str(result.error)
-        assert result.error.detail is not None
-        assert "Unable to load PEM file" in result.error.detail
-        assert result.error.code is ERR_WAREHOUSE_CONNECTION
-        adapter._adapter.execute.assert_not_called()
-
-    def test_a_release_crash_after_a_clean_open_still_raises(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        """Only an open failure may outrank the release's own error: a crash
-        after the query ran is neither a connect failure nor a rejection."""
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        adapter._adapter = _CleanupCrashingAdapter(MagicMock(handle=object()))
-        adapter._dialect = "bigquery"
-        with (
-            patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"),
-            pytest.raises(AttributeError, match="has no attribute 'close'"),
-        ):
-            adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
-        adapter._adapter.execute.assert_called_once()
-
-    def test_names_an_unparseable_bigquery_key(
-        self,
-        tmp_path: Path,
-        local_project: Callable[..., FilesystemProject],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The whole path, against the real dbt-bigquery adapter.
-
-        Offline: PEM parsing fails while the credential is being built, long
-        before anything would reach Google.
-        """
-        monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
-        (tmp_path / "profiles.yml").write_text(
-            yaml.safe_dump(
-                {
-                    "bq": {
-                        "target": "dev",
-                        "outputs": {
-                            "dev": {
-                                "type": "bigquery",
-                                "method": "service-account-json",
-                                "project": "my-project",
-                                "dataset": "analytics",
-                                "keyfile_json": _UNPARSEABLE_KEYFILE_JSON,
-                            }
-                        },
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-            profile_name="bq",
-        )
-        with patch.object(adapter, "_resolve_dbt_sql", return_value="SELECT 1"):
-            result = adapter._execute(SqlQuery(sql="SELECT 1", source="bq"))
-
-        assert result.error is not None
-        assert "'NoneType' object has no attribute 'close'" not in str(result.error)
-        assert "PEM" not in str(result.error)
-        assert result.error.detail is not None
-        assert "PEM" in result.error.detail
-        assert result.error.code is ERR_WAREHOUSE_CONNECTION
-
-
-class TestSqlAdapterSurfacesClassifiedErrorCode:
-    """End-to-end through SqlAdapter._execute_via_dbt_adapter — the
+class TestDbtBackendSurfacesClassifiedErrorCode:
+    """End-to-end through the dbt backend — the
     production path for `source:`-declaring queries, i.e. the path the
     original bug report (BigQuery `Unrecognized name` surfaced as
     ERR-INTERNAL) actually exercised."""
@@ -446,21 +183,15 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
     def test_bigquery_unrecognized_column_sets_binder_code(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        adapter = SqlAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=None,
-            profile_type="bigquery",
-        )
+        adapter = DbtHarness(local_project(tmp_path), profile_type="bigquery")
         query = SqlQuery(sql="SELECT goals_goal_dollars FROM t", source="analytics_bq")
         source_config = {"type": "bigquery", "project": "p", "dataset": "d"}
-        with patch.object(adapter, "_get_source_pool") as get_pool:
+        with patch.object(adapter.backend, "_get_source_pool") as get_pool:
             get_pool.return_value.execute.side_effect = Exception(
                 "Unrecognized name: 'goals_goal_dollars' at [3:42]"
             )
-            result = adapter._execute_via_dbt_adapter(
-                _prepared("SELECT goals_goal_dollars FROM t", "bigquery"),
-                query,
-                source_config,
+            result = adapter.run_resolved(
+                _prepared("SELECT goals_goal_dollars FROM t"), query, source_config
             )
         assert result.error is not None
         assert "Unrecognized name: 'goals_goal_dollars' at [3:42]" in str(result.error)
@@ -469,18 +200,12 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
     def test_generic_failure_still_gets_warehouse_runtime_not_none(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        adapter = SqlAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=None,
-            profile_type="snowflake",
-        )
+        adapter = DbtHarness(local_project(tmp_path), profile_type="snowflake")
         query = SqlQuery(sql="SELECT 1", source="my_snowflake")
         source_config = {"type": "snowflake"}
-        with patch.object(adapter, "_get_source_pool") as get_pool:
+        with patch.object(adapter.backend, "_get_source_pool") as get_pool:
             get_pool.return_value.execute.side_effect = Exception("connection reset")
-            result = adapter._execute_via_dbt_adapter(
-                _prepared("SELECT 1", "snowflake"), query, source_config
-            )
+            result = adapter.run_resolved(_prepared("SELECT 1"), query, source_config)
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_RUNTIME
 
@@ -496,11 +221,7 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
         ConnectionSetupFailed and routed to connection_failure (typed
         ERR-WAREHOUSE-CONNECTION) instead of classify_warehouse_error.
         """
-        adapter = SqlAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=None,
-            profile_type="bigquery",
-        )
+        adapter = DbtHarness(local_project(tmp_path), profile_type="bigquery")
         query = SqlQuery(sql="SELECT 1", source="analytics_bq")
         source_config = {"type": "bigquery", "project": "p", "dataset": "d"}
         try:
@@ -508,8 +229,8 @@ class TestSqlAdapterSurfacesClassifiedErrorCode:
                 "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
                 side_effect=ValueError("Could not automatically determine credentials"),
             ):
-                result = adapter._execute_via_dbt_adapter(
-                    _prepared("SELECT 1", "bigquery"), query, source_config
+                result = adapter.run_resolved(
+                    _prepared("SELECT 1"), query, source_config
                 )
         finally:
             adapter.close()  # real _SourcePool spun up a ThreadPoolExecutor

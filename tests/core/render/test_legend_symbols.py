@@ -26,6 +26,8 @@ charts:
     y: v
     color: s
     style:
+      endpoint_labels:
+        visible: false
       legend:
 {legend_style}
 rows:

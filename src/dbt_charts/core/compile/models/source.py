@@ -17,14 +17,14 @@ Dependencies:
     - pydantic (BaseModel, Field, field_validator)
 
 Read-only posture per warehouse:
-    DuckDB opens connections with read_only=True in-process (see DuckDBAdapter.read_only).
+    DuckDB opens connections with read_only=True in-process (see DuckDBBackend.read_only).
     Every other warehouse lacks a native read-only driver flag. For those, the operator
     must bind SELECT-only credentials at the database/IAM layer:
 
     | Warehouse       | In-process flag | Operator posture                                      |
     |-----------------|-----------------|-------------------------------------------------------|
-    | DuckDB          | read_only=True  | Handled in-process by DuckDBAdapter                   |
-    | SQLite          | URI ?mode=ro    | Handled in-process by SqliteAdapter and InspectConnection|
+    | DuckDB          | read_only=True  | Handled in-process by DuckDBBackend                   |
+    | SQLite          | URI ?mode=ro    | Handled in-process by SqliteBackend and InspectConnection|
     | Postgres        | none            | Bind a SELECT-only role to the dbt profile credential |
     | Snowflake       | none            | Bind a SELECT-only role to the Snowflake user/key-pair|
     | BigQuery        | none            | Bind credentials to roles/bigquery.dataViewer         |
@@ -1424,7 +1424,7 @@ _RawInput = TypeVar("_RawInput")
 class DuckDBSourceConfig(DatabaseSourceConfig):
     """DuckDB source configuration.
 
-    Read-only posture: handled in-process. DuckDBAdapter opens file-based DuckDB
+    Read-only posture: handled in-process. DuckDBBackend opens file-based DuckDB
     connections with read_only=True and forces enable_external_access=False.
     Callers that need external access (e.g. the playground for local dev) can
     pass allow_external_access_in_readonly=True on
@@ -1570,7 +1570,7 @@ class DuckDBSourceConfig(DatabaseSourceConfig):
 class SQLiteSourceConfig(BaseSourceConfig):
     """SQLite source configuration.
 
-    Read-only posture: handled in-process. SqliteAdapter opens SQLite connections
+    Read-only posture: handled in-process. SqliteBackend opens SQLite connections
     in read-only URI mode (``?mode=ro``) so the driver refuses all writes.
 
     Example:

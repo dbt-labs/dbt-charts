@@ -94,6 +94,7 @@ from dbt_charts.core.compile.normalize.chart_styles import attach_chart_styles
 from dbt_charts.core.compile.normalize.charts import (
     RegisteredChart,
     _collect_charts_from_layout,
+    display_text_at,
     display_text_fields,
     normalize_chart,
 )
@@ -1348,8 +1349,9 @@ def _pull_chart_text_queries(
     for chart in charts.values():
         label = (chart.source_path or chart.id) if inline else chart.id
         for field in display_text_fields(chart.type):
-            reject_listing_calls(getattr(chart, field), f"chart '{label}' {field}")
-            for name in sorted(text_query_references([getattr(chart, field)])):
+            text = display_text_at(chart, field)
+            reject_listing_calls(text, f"chart '{label}' {field}")
+            for name in sorted(text_query_references([text])):
                 key = chart.text_queries[name]
                 if key not in query_registry:
                     raise CompilationError.from_code(

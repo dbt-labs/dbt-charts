@@ -4,39 +4,42 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
+import nanoarrow as na
+import pyarrow as pa
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile import compile as compile_board
-from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SourceConfig
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.diagnostics import ERR_SOURCE_NOT_NAMED
 from dbt_charts.core.diagnostics.base import DbtChartsError
 from dbt_charts.core.diagnostics.execution import ExecutionError, QueryError
+from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.source_resolver import SourceResolver
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 from dbt_charts.core.execute.trivial_local_cache import TrivialDuckDBCache
 
 
-class _RowsAdapter(BaseAdapter):
-    supported_types = {"sql"}
+class _RowsBackend:
+    param_style: SQLDialect = INLINE_PLACEHOLDERS
 
-    def _execute(
-        self,
-        query: Any,
-        variables: Any = None,
-        params: QueryParams = None,
-        source_config: SourceConfig | None = None,
-    ) -> QueryResult:
-        rows = [{"ts": 1, "val": 10}]
-        return QueryResult(
-            data=rows, columns=["ts", "val"], schema=literal_schema(rows, ["ts", "val"])
-        )
+    def execute(self, source: ResolvedSourceConfig, query: ResolvedQuery) -> na.Array:
+        return na.Array(pa.table({"ts": [1], "val": [10]}))
+
+    def interrupt(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
 def _registry(
@@ -44,8 +47,11 @@ def _registry(
 ) -> tuple[AdapterRegistry, MagicMock]:
     resolver = MagicMock(spec=SourceResolver)
     resolver.resolve.return_value = DuckDBSourceConfig(type="duckdb", path=":memory:")
-    registry = AdapterRegistry(project=local_project(Path()), resolver=resolver)
-    registry.register(_RowsAdapter())
+    registry = AdapterRegistry(
+        project=local_project(Path()),
+        resolver=resolver,
+        backends=BackendRegistry({"duckdb": _RowsBackend()}),
+    )
     return registry, resolver
 
 
@@ -207,7 +213,7 @@ def test_a_dbt_jinja_query_with_an_unresolvable_source_fails_as_that_query(
         executor.execute_query("plain")
 
     assert [name for name, *_ in executor._query_data_ages] == ["plain"]
-    assert executor.is_cached("plain") is False
+    assert "plain" not in executor.lookup(["plain"]).hits
     assert key == executor.cache_key("plain")
 
 
@@ -227,4 +233,4 @@ def test_an_unreadable_manifest_does_not_escape_the_cache_key(
     )
 
     assert executor.cache_key("plain") == executor.cache_key("plain")
-    assert executor.is_cached("plain") is False
+    assert "plain" not in executor.lookup(["plain"]).hits

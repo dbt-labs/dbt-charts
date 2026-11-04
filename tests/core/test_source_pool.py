@@ -30,12 +30,18 @@ import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import get_execution_config
-from dbt_charts.core.execute.adapters.base import RowFetchLimit
-from dbt_charts.core.execute.adapters.sql_adapter import (
-    PreparedSql,
-    SqlAdapter,
-    _source_config_hash,
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
+from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
+from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.adapters.base import (
+    QueryDurationExceeded,
+    QueryResult,
+    RowFetchLimit,
 )
+from dbt_charts.core.execute.backends.base import BackendRegistry, source_config_hash
+from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -63,11 +69,26 @@ def _make_adapter_mock() -> MagicMock:
 
 def _make_sql_adapter(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> SqlAdapter:
-    return SqlAdapter(
+) -> DbtBackend:
+    del tmp_path, local_project
+    return DbtBackend(None)
+
+
+def _execute_resolved(
+    sa: DbtBackend,
+    tmp_path: Path,
+    local_project: Callable[..., FilesystemProject],
+    source: dict[str, Any],
+) -> QueryResult:
+    """Send ``_prepared()`` to *source* through a registry routed to *sa*."""
+    registry = AdapterRegistry(
         project=local_project(tmp_path),
-        dbt_project_path=None,
-        profile_type="duckdb",
+        backends=BackendRegistry({source["type"]: sa}),
+    )
+    return registry.execute_resolved(
+        _prepared(),
+        SqlQuery(sql="SELECT 1"),
+        source_config=DbtTargetSourceConfig(**source),
     )
 
 
@@ -106,35 +127,35 @@ _BUILD_ADAPTER = "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_ada
 
 
 # ---------------------------------------------------------------------------
-# _source_config_hash
+# source_config_hash
 # ---------------------------------------------------------------------------
 
 
 class TestSourceConfigHash:
     def test_same_config_same_hash(self) -> None:
-        assert _source_config_hash(_POSTGRES_SOURCE) == _source_config_hash(
+        assert source_config_hash(_POSTGRES_SOURCE) == source_config_hash(
             dict(_POSTGRES_SOURCE)
         )
 
     def test_different_config_different_hash(self) -> None:
-        assert _source_config_hash(_POSTGRES_SOURCE) != _source_config_hash(
+        assert source_config_hash(_POSTGRES_SOURCE) != source_config_hash(
             _SNOWFLAKE_SOURCE
         )
 
     def test_key_order_independent(self) -> None:
         a = {"type": "postgres", "host": "h", "dbname": "db"}
         b = {"dbname": "db", "host": "h", "type": "postgres"}
-        assert _source_config_hash(a) == _source_config_hash(b)
+        assert source_config_hash(a) == source_config_hash(b)
 
     def test_attribution_does_not_change_hash(self) -> None:
         """Attribution is cost metadata, not connection identity."""
         labeled = {**_POSTGRES_SOURCE, "attribution": {"team": "analytics"}}
-        assert _source_config_hash(labeled) == _source_config_hash(_POSTGRES_SOURCE)
+        assert source_config_hash(labeled) == source_config_hash(_POSTGRES_SOURCE)
 
     def test_editing_attribution_does_not_change_hash(self) -> None:
         a = {**_POSTGRES_SOURCE, "attribution": {"team": "analytics"}}
         b = {**_POSTGRES_SOURCE, "attribution": {"team": "platform"}}
-        assert _source_config_hash(a) == _source_config_hash(b)
+        assert source_config_hash(a) == source_config_hash(b)
 
 
 # ---------------------------------------------------------------------------
@@ -223,15 +244,31 @@ class TestConnectFailureDetection:
             pool.close()
 
 
-def _prepared(dialect: str) -> PreparedSql:
-    return PreparedSql(
+def _prepared() -> ResolvedQuery:
+    return ResolvedQuery(
         sql="SELECT 1",
-        setup_sql=None,
-        dialect_name=dialect,
-        row_fetch_limit=RowFetchLimit(
-            fetch_limit=10, effective_limit=10, ceiling_binding=False
-        ),
+        params=(),
+        setup_sql=(),
+        limit=RowFetchLimit(fetch_limit=10, effective_limit=10, ceiling_binding=False),
     )
+
+
+class TestPoolSetupFailure:
+    """A pool that cannot be built is a client-side refusal, not a warehouse
+    rejection."""
+
+    def test_invalid_duration_cap_is_not_a_warehouse_error(
+        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
+    ) -> None:
+        from dbt_charts.core.diagnostics import ERR_WAREHOUSE_RUNTIME
+
+        sa = _make_sql_adapter(tmp_path, local_project)
+        source = {**_POSTGRES_SOURCE, "max_query_duration_seconds": "soon"}
+        result = _execute_resolved(sa, tmp_path, local_project, source)
+
+        assert result.error is not None
+        assert result.error.code is not ERR_WAREHOUSE_RUNTIME
+        assert "query setup failed" in str(result.error)
 
 
 class TestAdapterNotInstalled:
@@ -245,14 +282,11 @@ class TestAdapterNotInstalled:
     ) -> None:
         import sys
 
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.diagnostics import ERR_ADAPTER_NOT_INSTALLED
 
         monkeypatch.setitem(sys.modules, "dbt.adapters.snowflake", None)
         sa = _make_sql_adapter(tmp_path, local_project)
-        result = sa._execute_via_dbt_adapter(
-            _prepared("snowflake"), SqlQuery(sql="SELECT 1"), _SNOWFLAKE_SOURCE
-        )
+        result = _execute_resolved(sa, tmp_path, local_project, _SNOWFLAKE_SOURCE)
 
         assert result.error is not None
         assert result.error.code is ERR_ADAPTER_NOT_INSTALLED
@@ -263,14 +297,11 @@ class TestAdapterNotInstalled:
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.diagnostics import ERR_WAREHOUSE_CONNECTION
 
         sa = _make_sql_adapter(tmp_path, local_project)
         with patch(_BUILD_ADAPTER, side_effect=ValueError("bad credentials")):
-            result = sa._execute_via_dbt_adapter(
-                _prepared("snowflake"), SqlQuery(sql="SELECT 1"), _SNOWFLAKE_SOURCE
-            )
+            result = _execute_resolved(sa, tmp_path, local_project, _SNOWFLAKE_SOURCE)
 
         assert result.error is not None
         assert result.error.code is ERR_WAREHOUSE_CONNECTION
@@ -489,7 +520,7 @@ class TestSourcePoolConcurrency:
     ) -> None:
         """Re-sending a query the warehouse rejected just fails twice, and the
         reconnect throws away a warm connection to do it."""
-        from dbt_charts.core.execute.adapters.sql_adapter import _LIVENESS_SQL
+        from dbt_charts.core.execute.backends.base import LIVENESS_SQL
 
         sa = _make_sql_adapter(tmp_path, local_project)
         adapter = _make_adapter_mock()
@@ -497,7 +528,7 @@ class TestSourcePoolConcurrency:
 
         def _rejects_the_query(sql: str, **kwargs: object) -> tuple | None:
             sent.append(sql)
-            if sql == _LIVENESS_SQL or not kwargs.get("fetch"):
+            if sql == LIVENESS_SQL or not kwargs.get("fetch"):
                 return (
                     None,
                     MagicMock(
@@ -722,7 +753,7 @@ class TestBigQueryDefaultDataset:
             assert handle.default_query_job_config is mock_qjc.return_value
 
     def test_uses_authored_project_and_dataset(self) -> None:
-        from dbt_charts.core.execute.adapters.sql_adapter import (
+        from dbt_charts.core.execute.backends.dbt_core import (
             bigquery_default_dataset,
         )
 
@@ -736,14 +767,14 @@ class TestBigQueryDefaultDataset:
         into the credentials). Borrowing the client's project would be wrong: that
         is dbt's *execution* project, which can differ from the data project, so
         unqualified names would resolve somewhere dbt would not look."""
-        from dbt_charts.core.execute.adapters.sql_adapter import (
+        from dbt_charts.core.execute.backends.dbt_core import (
             bigquery_default_dataset,
         )
 
         assert bigquery_default_dataset({"dataset": "ds"}) is None
 
     def test_no_dataset_means_no_default(self) -> None:
-        from dbt_charts.core.execute.adapters.sql_adapter import (
+        from dbt_charts.core.execute.backends.dbt_core import (
             bigquery_default_dataset,
         )
 
@@ -751,7 +782,7 @@ class TestBigQueryDefaultDataset:
 
     def test_execution_project_is_never_used_as_the_data_project(self) -> None:
         """execution_project is where queries bill, not where relations live."""
-        from dbt_charts.core.execute.adapters.sql_adapter import (
+        from dbt_charts.core.execute.backends.dbt_core import (
             bigquery_default_dataset,
         )
 
@@ -870,8 +901,7 @@ class TestClickHouseQueryTimeout:
     ) -> None:
         """A stricter profile narrows the cap, so the pool must report 5s — not
         the 120s ceiling, whose remediation ("raise the limit") cannot help."""
-        from dbt_charts.core.execute.adapters.sql_adapter import (
-            _QueryDurationExceeded,
+        from dbt_charts.core.execute.backends.dbt_core import (
             _SourcePool,
         )
 
@@ -883,7 +913,7 @@ class TestClickHouseQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=mock_adapter):
             pool = _SourcePool(source, max_workers=1, timeout_seconds=120)
-            with pytest.raises(_QueryDurationExceeded) as excinfo:
+            with pytest.raises(QueryDurationExceeded) as excinfo:
                 pool.execute("SELECT 1", setup_sql=None)
             pool.close()
 
@@ -900,13 +930,13 @@ class TestClickHouseQueryTimeout:
             "custom_settings": {"max_execution_time": "soon"},
         }
 
-        with pytest.raises(ValueError, match="max_execution_time"):
+        with pytest.raises(DbtChartsError, match="max_execution_time"):
             sa._get_source_pool(source)
 
     def test_the_cap_follows_the_source_override(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        from dbt_charts.core.execute.adapters.sql_adapter import _SourcePool
+        from dbt_charts.core.execute.backends.dbt_core import _SourcePool
 
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
             pool = _SourcePool(_CLICKHOUSE_SOURCE, max_workers=1, timeout_seconds=7)
@@ -919,8 +949,8 @@ class TestClickHouseQueryTimeout:
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """Error 159 is the warehouse canceling the statement, not the session."""
-        from dbt_charts.core.execute.adapters.sql_adapter import (
-            _QueryDurationExceeded,
+        from dbt_charts.core.execute.backends.dbt_core import (
+            QueryDurationExceeded,
         )
 
         sa = _make_sql_adapter(tmp_path, local_project)
@@ -932,7 +962,7 @@ class TestClickHouseQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
             pool = sa._get_source_pool(_CLICKHOUSE_SOURCE)
-            with pytest.raises(_QueryDurationExceeded):
+            with pytest.raises(QueryDurationExceeded):
                 pool.execute("SELECT 1", setup_sql=None)
             pool.close()
 
@@ -980,7 +1010,7 @@ class TestSQLServerQueryTimeout:
     def test_the_stricter_of_profile_and_ceiling_wins(
         self, authored: object, expected: int
     ) -> None:
-        from dbt_charts.core.execute.adapters.sql_adapter import _SourcePool
+        from dbt_charts.core.execute.backends.dbt_core import _SourcePool
 
         source = {**_SQLSERVER_SOURCE, "query_timeout": authored}
         with patch(_BUILD_ADAPTER, return_value=_make_adapter_mock()) as build:
@@ -993,8 +1023,7 @@ class TestSQLServerQueryTimeout:
     def test_a_timeout_is_classified_and_not_retried(self) -> None:
         """HYT00 "Query timeout expired" is the driver cancelling the statement,
         not the session: the failed query must not run a second time."""
-        from dbt_charts.core.execute.adapters.sql_adapter import (
-            _QueryDurationExceeded,
+        from dbt_charts.core.execute.backends.dbt_core import (
             _SourcePool,
         )
 
@@ -1006,7 +1035,7 @@ class TestSQLServerQueryTimeout:
 
         with patch(_BUILD_ADAPTER, return_value=mock_adapter) as build:
             pool = _SourcePool(_SQLSERVER_SOURCE, max_workers=1, timeout_seconds=2)
-            with pytest.raises(_QueryDurationExceeded) as excinfo:
+            with pytest.raises(QueryDurationExceeded) as excinfo:
                 pool.execute("SELECT 1", setup_sql=None)
             pool.close()
 

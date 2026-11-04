@@ -3056,6 +3056,10 @@ pub struct MarkLabels {
     pub dy: Option<f64>,
     pub font: Option<Font>,
     pub position: Option<String>,
+    /// Compile resolved no `position`, `dx` or `dy`: the label starts at `top`
+    /// and may step to a clearer spot. Anything authored pins it. Only line,
+    /// area and scatter point labels read it.
+    pub auto: bool,
     /// `false` leaves the segments of a stacked bar unlabeled (the total
     /// label is its own layer); see `families/bar/bind.rs`.
     pub stacked: Option<bool>,
@@ -3077,6 +3081,8 @@ struct MarkLabelsWire {
     font: Option<Font>,
     #[serde(default)]
     position: Option<String>,
+    #[serde(default)]
+    auto: bool,
     #[serde(default)]
     stacked: Option<bool>,
 }
@@ -3167,6 +3173,7 @@ impl From<MarkLabelsWire> for MarkLabels {
             dy: w.dy,
             font: w.font,
             position: w.position,
+            auto: w.auto,
             stacked: w.stacked,
         }
     }
@@ -3474,6 +3481,9 @@ pub fn count_horizontal_bar_categories(rows: &[serde_json::Map<String, Value>], 
         .collect::<std::collections::HashSet<_>>()
         .len()
 }
+
+/// A value label's `font.color` that stands for its mark's series color.
+pub const SERIES_INK: &str = "series";
 
 /// The face a value label paints in: its own font, else the theme's text-mark
 /// font, per field. Errors when the payload carries neither, rather than

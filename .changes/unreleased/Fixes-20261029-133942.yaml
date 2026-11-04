@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'Boards in a local: dbt package (symlinked into dbt_packages) now render and show up in dct serve.'
-time: 2026-10-29T13:39:42.124086-07:00

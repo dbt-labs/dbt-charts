@@ -1,9 +1,8 @@
 """The filter helpers spell SQL for the warehouse on each adapter path that renders.
 
-`SqlAdapter` renders in an internal placeholder style that no engine parses,
+The dbt backend renders in an internal placeholder style that no engine parses,
 so the warehouse has to be handed to the helpers separately — on the registry's
-composition path and on the adapter's own render. `DbtAdapter` renders through
-its own template pass. Each is pinned here with a date variable through
+composition path. Each is pinned here with a date variable through
 `filter()`: the cast only appears if the warehouse reached the helper, and the
 internal style raises if it did not.
 """
@@ -13,21 +12,24 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.column_types import literal_schema
+from dbt_charts.core.column_types import TypedRows
 from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.source import PostgresSourceConfig
+from dbt_charts.core.compile.models.source import (
+    PostgresSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
-from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql, SqlAdapter
+from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.executor import Executor
+
+from ..conftest import DbtHarness
 
 PG_SOURCE = {
     "type": "postgres",
@@ -70,22 +72,19 @@ def wire_sql(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     seen: dict[str, str] = {}
 
     def _fake(
-        self: SqlAdapter,
-        prepared: PreparedSql,
-        query: SqlQuery,
-        source_config: dict[str, Any] | None,
-    ) -> QueryResult:
-        seen["sql"] = prepared.sql
-        return QueryResult(data=[], columns=[], schema=literal_schema([], []))
+        self: DbtBackend, source: ResolvedSourceConfig, query: ResolvedQuery
+    ) -> TypedRows:
+        seen["sql"] = query.inline(source.type)
+        return TypedRows([], [], [])
 
-    monkeypatch.setattr(SqlAdapter, "_execute_via_dbt_adapter", _fake)
+    monkeypatch.setattr(DbtBackend, "execute", _fake)
     return seen
 
 
 def test_registry_composition_path(
     wire_sql: dict[str, str], local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """Executor → registry composition → SqlAdapter with pre-rendered params."""
+    """Executor → registry composition → backend with pre-rendered params."""
     result = compile(BOARD)
     assert result.success, [str(e) for e in result.errors]
     assert result.board is not None
@@ -101,33 +100,13 @@ def test_registry_composition_path(
 def test_adapter_render_path(
     wire_sql: dict[str, str], local_project: Callable[..., FilesystemProject]
 ) -> None:
-    """SqlAdapter rendering for itself, over values the executor already coerced."""
-    adapter = SqlAdapter(
-        project=local_project(Path.cwd()),
-        dbt_project_path=None,
-        profile_type="postgres",
-    )
+    """The registry composing directly, over values the executor already coerced."""
+    adapter = DbtHarness(local_project(Path.cwd()), profile_type="postgres")
 
-    adapter._execute(
+    adapter.execute(
         SqlQuery(sql="SELECT * FROM t WHERE {{ filter('ts', d, '>=') }}", source="db"),
         {"d": date(2024, 1, 15)},
         source_config=PostgresSourceConfig(**PG_SOURCE),
     )
 
     assert EXPECTED in wire_sql["sql"]
-
-
-def test_dbt_adapter_render_path(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> None:
-    """DbtAdapter's own template pass, for the warehouse its target names."""
-    adapter = DbtAdapter(
-        project=local_project(tmp_path), dbt_project_path=tmp_path, target_name="dev"
-    )
-    adapter._dialect = "sqlite"
-
-    sql = adapter._resolve_dbt_sql(
-        "SELECT * FROM t WHERE {{ filter('ts', d, '>=') }}", {"d": date(2024, 1, 15)}
-    )
-
-    assert "DATE(ts) >= DATE '2024-01-15'" in sql

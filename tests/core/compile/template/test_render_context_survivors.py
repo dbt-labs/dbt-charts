@@ -206,7 +206,7 @@ class TestResolveJinjaTemplateContext:
         """filter_helpers is not a general mechanism for adding a new context
         callable — only RESERVED_FILTER_HELPER_NAMES may be bound. Without
         this guard, a future caller widening the mapping (today's one
-        production caller is execute/adapters/dbt_adapter.py) would pass
+        production caller is execute/adapters/dbt_profile.py) would pass
         every helper it names into every board-SQL render silently."""
         assert {"filter", "filter_date_range"} == RESERVED_FILTER_HELPER_NAMES
         with pytest.raises(CompilationError, match="filter_helpers"):

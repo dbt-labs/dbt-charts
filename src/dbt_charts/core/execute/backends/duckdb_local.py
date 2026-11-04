@@ -1,0 +1,945 @@
+"""DuckDB backend: runs composed SQL on in-process DuckDB connections.
+
+Stage: EXECUTE
+Purpose: Execute a ``ResolvedQuery`` via the raw duckdb driver, binding params
+    natively, and return typed rows (JSON decoded, maps as JSON objects, bignum
+    as int). Every DuckDB source, file-based or ``:memory:``, runs here, driven
+    by a typed ``DuckDBSourceConfig``.
+
+Security: DuckDB uses parameterized queries ($1, $2 placeholders). The
+read-only flag and enable_external_access config are enforced here. A source
+authoring `attach`, `extensions`, or `secrets` needs external access to set
+up (ATTACH, INSTALL, CREATE SECRET all require it), so a read-only backend
+opens that connection with external access on, applies those fields, then
+locks it down: external access off, only the attach paths and secret scopes
+allowlisted, configuration locked so SQL cannot undo it. Caller SQL on that
+connection reads nothing else, absolute paths and URLs included. read_only
+itself is never relaxed: when the backend is read_only, every ATTACH gets
+READ_ONLY forced onto it regardless of the authored `attach.read_only` flag,
+closing the gap where a `:memory:` main database (always opened read-write;
+there is no other way to populate it) would otherwise leave an attached
+database writable. `settings` applies unconditionally (plain SET, no
+external-access requirement).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import threading
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from pathlib import Path  # noqa: TID251 — resolves the DuckDB database file on disk
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    import duckdb
+
+    from dbt_charts.core.compile.models.source import ResolvedSourceConfig
+    from dbt_charts.core.execute.compose import ResolvedQuery
+
+from dbt_charts.core.column_types import TypedRows
+from dbt_charts.core.compile.models.source import (
+    UNSUPPORTED_DUCKDB_FIELDS,
+    DuckDBSourceConfig,
+    SourceOptionScalar,
+)
+from dbt_charts.core.compile.sql_guard import reference_alias_advice
+from dbt_charts.core.diagnostics.base import DbtChartsError
+from dbt_charts.core.diagnostics.codes_execute import (
+    ERR_ADAPTER_DUCKDB_CONFIG_APPLY_FAILED,
+    ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+    ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+    ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD,
+    ERR_BINDER_GROUP_BY,
+    ERR_BINDER_QUERY_SHAPE,
+    ERR_BINDER_TYPE_MISMATCH,
+    ERR_BINDER_UNKNOWN_COLUMN,
+    ERR_BINDER_UNKNOWN_RELATION,
+    ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE,
+    ERR_QUERY_INTERRUPTED,
+    ERR_WAREHOUSE_RUNTIME,
+)
+from dbt_charts.core.diagnostics.execution import QueryError
+from dbt_charts.core.diagnostics.registry import ErrorCode
+from dbt_charts.core.dialects import SQLDialect, get_dialect
+from dbt_charts.core.execute.adapters.base import GROUP_BY_MESSAGE
+from dbt_charts.core.execute.adapters.dbt_adapter_factory import ConnectionSetupFailed
+from dbt_charts.core.execute.column_advice import duckdb_unknown_column_advice
+from dbt_charts.core.execute.duckdb_config import normalize_duckdb_config
+from dbt_charts.core.execute.duckdb_types import duckdb_schema, typed_rows
+
+# Relative read_csv()/read_parquet() paths resolve against data_dir via a
+# per-connection `SET file_search_path` applied at connection creation. This lock
+# serializes execute and fetch across all backends because `interrupt()` targets
+# the one running connection; removing it needs a per-connection interrupt
+# registry and a close()-vs-in-flight-query contract.
+_DUCKDB_EXECUTE_LOCK = threading.RLock()
+
+# Identifiers we splice directly into SQL text (SET/ATTACH/CREATE SECRET keys,
+# extension names, attach aliases). DuckDB has no way to bind them as
+# parameters, so they are validated against this pattern instead of quoted.
+_DUCKDB_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Value shapes for one CREATE SECRET field (DuckDBSecretConfig's declared
+# fields plus its extra="allow" provider fields) and one ATTACH option
+# (DuckDBAttachmentConfig's declared fields plus its `options` dict).
+DuckDBSecretValue = (
+    SourceOptionScalar | list[SourceOptionScalar] | dict[str, SourceOptionScalar]
+)
+DuckDBAttachValue = SourceOptionScalar | dict[str, SourceOptionScalar]
+
+# model_dump() of any resolved source config (postgres, snowflake, duckdb,
+# ...) routed to this adapter, before the duckdb-specific fields are read out
+# of it. Heterogeneous by construction across warehouse types.
+RawSourceConfig = dict[str, Any]  # type-state: explicit_any — warehouse dump
+
+# Every source field _connect applies to a pooled connection, beyond path and
+# schema. The connection-pool cache key must cover all of them: two sources
+# sharing a path but differing in any of these must never share a session.
+_CONNECTION_IDENTITY_FIELDS = (
+    "duckdb_config",
+    "extensions",
+    "settings",
+    "secrets",
+    "attach",
+)
+
+
+def _duckdb_session_cache_key(
+    source_config: RawSourceConfig,
+    path: str,
+    schema: str,
+) -> str:
+    """Stable cache key for the pooled connection this source config produces.
+
+    A hash, not the raw config, so the key stays a short string regardless of
+    how large `attach`/`secrets` is.
+    """
+    identity = {
+        field: source_config.get(field) for field in _CONNECTION_IDENTITY_FIELDS
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return f"{path}\0{schema}\0{digest}"
+
+
+def _duckdb_ident(value: str, what: str) -> str:
+    """Validate `value` is a safe bare SQL identifier before splicing it in."""
+    if not _DUCKDB_IDENT_RE.match(value):
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field=what,
+            reason=f"{value!r} must match ^[A-Za-z_][A-Za-z0-9_]*$",
+        )
+    return value
+
+
+def _duckdb_literal(value: str) -> str:
+    """Escape a string for embedding as a single-quoted SQL literal."""
+    return value.replace("'", "''")
+
+
+def _statement_error(
+    exc: Exception,
+    conn: duckdb.DuckDBPyConnection,
+    sql: str | None,  # type-state: optional — setup_sql gets no advice
+) -> QueryError:
+    """Map a DuckDB exception to a typed ERR-* QueryError.
+
+    DuckDB's exception hierarchy:
+    - BinderException (ProgrammingError) — unknown column, ambiguous ref
+    - CatalogException (ProgrammingError) — unknown table / schema
+    - TypeMismatchException (DataError) — operator type mismatch
+    Everything else → ERR-WAREHOUSE-RUNTIME (warehouse rejected the query
+    but no fine-grained category applies).
+
+    The error is built via ``from_code`` so its message is exactly the
+    registered template. An unknown column or a parse error carries advice
+    computed against the live connection, which is why this runs in the backend
+    rather than in the registry's generic classifier.
+    """
+    import duckdb
+
+    if isinstance(exc, duckdb.InterruptException):
+        return QueryError.from_code(ERR_QUERY_INTERRUPTED)
+    code = duckdb_error_code(exc)
+    detail = str(exc)
+    advice = None
+    if sql is None:
+        pass
+    elif code is ERR_BINDER_UNKNOWN_COLUMN:
+        advice = duckdb_unknown_column_advice(conn, sql, detail)
+    elif isinstance(exc, duckdb.ParserException):
+        advice = reference_alias_advice(sql)
+    if advice is not None:
+        detail = f"{detail}\n{advice.rstrip('.')}"
+    return QueryError.from_code(code, detail=detail)
+
+
+# "Catalog Error: Table with name x does not exist!" (also View and Schema); a
+# missing function is a catalog error too but not a missing relation.
+_DUCKDB_MISSING_RELATION = re.compile(
+    r"(Table|View|Schema) with name .* does not exist"
+)
+
+
+# Binder rejections of how a UNION or ORDER BY is assembled, not of a name in
+# it. GROUP BY is ERR-BINDER-GROUP-BY, checked first. "Could not ORDER BY
+# column" counts only for an expression (a bare name there is a typo).
+_BINDER_SHAPE_RE = re.compile(
+    r"Set operations can only apply|ORDER term out of range"
+    r'|Could not ORDER BY column "\w*[^\w"][^"]*"'
+)
+
+
+def duckdb_error_code(exc: Exception) -> ErrorCode:
+    """The registered code for a DuckDB exception: the one mapping every DuckDB
+    execution path (warehouse adapter, file-source engine) classifies through."""
+    import duckdb
+
+    if isinstance(exc, duckdb.CatalogException) and _DUCKDB_MISSING_RELATION.search(
+        str(exc)
+    ):
+        return ERR_BINDER_UNKNOWN_RELATION
+    if isinstance(exc, duckdb.BinderException) and GROUP_BY_MESSAGE.search(str(exc)):
+        return ERR_BINDER_GROUP_BY
+    if isinstance(exc, duckdb.BinderException) and _BINDER_SHAPE_RE.search(str(exc)):
+        return ERR_BINDER_QUERY_SHAPE
+    if isinstance(exc, (duckdb.BinderException, duckdb.CatalogException)):
+        return ERR_BINDER_UNKNOWN_COLUMN
+    if isinstance(exc, duckdb.TypeMismatchException):
+        return ERR_BINDER_TYPE_MISMATCH
+    return ERR_WAREHOUSE_RUNTIME
+
+
+def _reject_unsupported_duckdb_fields(source_config: RawSourceConfig) -> None:
+    """Fail loud on unsupported DuckDB fields a dbt_profile target carries.
+
+    Directly authored sources are rejected at parse time.
+    """
+    for field in sorted(UNSUPPORTED_DUCKDB_FIELDS):
+        if source_config.get(field):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_UNSUPPORTED_DUCKDB_FIELD, field=field
+            )
+
+
+def _apply_duckdb_extensions(
+    conn: duckdb.DuckDBPyConnection, extensions: list[str | dict[str, str]]
+) -> None:
+    """INSTALL + LOAD each extension. Mirrors dbt-duckdb's Environment.initialize_db:
+    a bare string, or a {name} mapping with no repo, uses the driver's
+    install_extension/load_extension API (DuckDB's default repository); a
+    {name, repo} mapping installs from a custom repository via SQL first.
+
+    DuckDBExtensionConfig (extra="forbid", `name` required) makes a
+    malformed dict-form entry unrepresentable for a directly-authored
+    DuckDBSourceConfig, rejected at parse time. A dbt_profile-expanded
+    target (DbtTargetSourceConfig, extra="allow") is not validated against
+    that model, so `name` is re-checked here for that path.
+    """
+    for extension in extensions:
+        if isinstance(extension, str):
+            conn.install_extension(extension)
+            conn.load_extension(extension)
+            continue
+        name = extension.get("name")
+        if not name:
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+                field="extensions",
+                reason=f"entry {extension!r} needs a 'name'",
+            )
+        repo = extension.get("repo")
+        if repo:
+            ident_name = _duckdb_ident(name, "extension name")
+            conn.execute(f"INSTALL {ident_name} FROM '{_duckdb_literal(repo)}'")
+            conn.load_extension(ident_name)
+        else:
+            conn.install_extension(name)
+            conn.load_extension(name)
+
+
+def _apply_duckdb_settings(
+    conn: duckdb.DuckDBPyConnection, settings: dict[str, SourceOptionScalar]
+) -> None:
+    """SET each session setting/pragma. Values are bound as parameters (DuckDB
+    casts the bound value to the setting's real type); only the key, which
+    DuckDB has no way to bind, is identifier-validated."""
+    for key, value in settings.items():
+        _duckdb_ident(key, "setting key")
+        conn.execute(f"SET {key} = ?", [value])
+
+
+def _secret_field_to_sql(key: str, value: DuckDBSecretValue) -> str:
+    """Format one CREATE SECRET field. The key is always spliced as a bare
+    identifier (DuckDB has no way to bind it), so it is always
+    identifier-validated; the value is always quoted and escaped, never
+    spliced raw. A dict becomes a DuckDB map: its keys sit inside the quoted
+    literal (`'key': 'value'`), not as bare identifiers, so they are only
+    escaped, not identifier-restricted, the same as any other value; real
+    map keys are HTTP header names like `x-api-key`, which is not a valid
+    identifier. A list becomes a DuckDB array, anything else a quoted
+    scalar. DuckDB accepts a quoted string for every field DuckDB's own
+    to_sql() would otherwise leave bare (e.g. `type 's3'`)."""
+    _duckdb_ident(key, "secret field")
+    if isinstance(value, dict):
+        items = ", ".join(
+            f"'{_duckdb_literal(str(k))}': '{_duckdb_literal(str(v))}'"
+            for k, v in value.items()
+        )
+        return f"{key} map {{{items}}}"
+    if isinstance(value, list):
+        items = ", ".join(f"'{_duckdb_literal(str(v))}'" for v in value)
+        return f"{key} array [{items}]"
+    return f"{key} '{_duckdb_literal(str(value))}'"
+
+
+def _secret_to_sql(secret: dict[str, DuckDBSecretValue]) -> str:
+    """Build a CREATE SECRET statement, matching dbt-duckdb's Secret.to_sql.
+
+    DuckDBSecretConfig (extra="allow", required `type`) makes a missing
+    `type` unrepresentable for a directly-authored DuckDBSourceConfig,
+    rejected at parse time. A dbt_profile-expanded target
+    (DbtTargetSourceConfig, extra="allow") is not validated against that
+    model, so `type` is re-checked here for that path. Provider-specific
+    fields (key_id, region, ...) are flat on `secret`, matching both models.
+    """
+    fields = dict(secret)
+    secret_type = fields.pop("type", None)
+    if not secret_type or not isinstance(secret_type, str):
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field="secrets",
+            reason="secret config requires a 'type' field",
+        )
+    _duckdb_ident(secret_type, "secret type")
+    name = fields.pop("name", None)
+    if name is not None and not isinstance(name, str):
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field="secrets",
+            reason=f"'name' must be a string, got {type(name).__name__}",
+        )
+    persistent = fields.pop("persistent", False)
+    scope = fields.pop("scope", None)
+    if name is not None:
+        _duckdb_ident(name, "secret name")
+
+    name_sql = f" {name}" if name else ""
+    or_replace = " OR REPLACE" if name else ""
+    persistent_sql = " PERSISTENT" if persistent is True else ""
+
+    params: dict[str, DuckDBSecretValue] = {"type": secret_type, **fields}
+    parts = [
+        _secret_field_to_sql(key, value)
+        for key, value in params.items()
+        if value is not None
+    ]
+    if scope is not None:
+        if not isinstance(scope, (str, list)):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+                field="secrets",
+                reason=f"'scope' must be a string or list of strings, got {type(scope).__name__}",
+            )
+        scope_values = scope if isinstance(scope, list) else [scope]
+        parts.extend(f"scope '{_duckdb_literal(str(s))}'" for s in scope_values)
+
+    body = ",\n    ".join(parts)
+    return f"CREATE{or_replace}{persistent_sql} SECRET{name_sql} (\n    {body}\n)"
+
+
+def _apply_duckdb_secrets(
+    conn: duckdb.DuckDBPyConnection, secrets: list[dict[str, DuckDBSecretValue]]
+) -> None:
+    for secret in secrets:
+        conn.execute(_secret_to_sql(secret))
+
+
+def _attachment_path(attachment: dict[str, DuckDBAttachValue]) -> str:
+    path = attachment["path"]
+    if not isinstance(path, str):
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field="attach",
+            reason=f"'path' must be a string, got {type(path).__name__}",
+        )
+    # Query parameters are not supported in ATTACH; upstream strips them the
+    # same way (dbt-duckdb's Attachment.to_sql).
+    parsed = urlparse(path)
+    if parsed.query:
+        path = path.replace(f"?{parsed.query}", "")
+    return path
+
+
+def _attachment_to_sql(
+    attachment: dict[str, DuckDBAttachValue], *, adapter_read_only: bool
+) -> str:
+    """Build an ATTACH statement, matching dbt-duckdb's Attachment.to_sql.
+
+    ``is_ducklake`` is carried on the config for parity with dbt-duckdb's
+    schema; like upstream, it does not change the ATTACH statement itself.
+    It is a hint dbt-duckdb's own relation resolution reads, which this
+    adapter (no dbt-duckdb materializations) has no use for.
+
+    ``adapter_read_only`` is this adapter's own read_only posture, not the
+    attachment's authored ``read_only`` field: see the module docstring for
+    why the two differ.
+    """
+    base = f"ATTACH IF NOT EXISTS '{_duckdb_literal(_attachment_path(attachment))}'"
+    alias = attachment.get("alias")
+    if alias:
+        if not isinstance(alias, str):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+                field="attach",
+                reason=f"'alias' must be a string, got {type(alias).__name__}",
+            )
+        base += f" AS {_duckdb_ident(alias, 'attach alias')}"
+
+    raw_options = attachment.get("options")
+    if raw_options is not None and not isinstance(raw_options, dict):
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field="attach",
+            reason=f"'options' must be a mapping, got {type(raw_options).__name__}",
+        )
+    options: dict[str, object] = {}  # type-state: object_annotation — untyped profile
+    if raw_options:
+        options.update(raw_options)
+    atype = attachment.get("type")
+    secret = attachment.get("secret")
+    read_only = attachment.get("read_only")
+    conflicts = [
+        key
+        for key, direct in (
+            ("type", atype),
+            ("secret", secret),
+            ("read_only", read_only),
+        )
+        if direct and key in options
+    ]
+    if conflicts:
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+            field="attach",
+            reason=(
+                f"option(s) {conflicts} set in both direct fields and options; "
+                "set each option in only one location"
+            ),
+        )
+
+    all_options: list[str] = []
+    options_type = options.get("type")
+    if atype:
+        all_options.append(f"TYPE {_duckdb_ident(str(atype), 'attach type')}")
+    elif options_type:
+        all_options.append(
+            f"TYPE {_duckdb_ident(str(options.pop('type')), 'attach type')}"
+        )
+    options_secret = options.get("secret")
+    if secret:
+        all_options.append(f"SECRET {_duckdb_ident(str(secret), 'attach secret')}")
+    elif options_secret:
+        all_options.append(
+            f"SECRET {_duckdb_ident(str(options.pop('secret')), 'attach secret')}"
+        )
+    authored_read_only = bool(read_only or options.pop("read_only", None))
+    if adapter_read_only or authored_read_only:
+        all_options.append("READ_ONLY")
+
+    for key, value in options.items():
+        if key in ("type", "secret"):
+            continue
+        _duckdb_ident(key, "attach option key")
+        if isinstance(value, bool):
+            if value:
+                all_options.append(key.upper())
+        elif value is not None:
+            if not isinstance(value, (str, int, float)):
+                raise DbtChartsError.from_code(
+                    ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+                    field="attach",
+                    reason=(
+                        f"option {key!r} must be a string, number, or bool; "
+                        f"got {type(value).__name__}"
+                    ),
+                )
+            all_options.append(f"{key.upper()} '{_duckdb_literal(str(value))}'")
+
+    if all_options:
+        base += f" ({', '.join(all_options)})"
+    return base
+
+
+def _apply_duckdb_attach(
+    conn: duckdb.DuckDBPyConnection,
+    attachments: list[dict[str, DuckDBAttachValue]],
+    *,
+    adapter_read_only: bool,
+) -> None:
+    for attachment in attachments:
+        conn.execute(
+            _attachment_to_sql(attachment, adapter_read_only=adapter_read_only)
+        )
+
+
+def _lock_to_authored_reach(
+    conn: duckdb.DuckDBPyConnection,
+    secrets: list[dict[str, DuckDBSecretValue]] | None,
+    attachments: list[dict[str, DuckDBAttachValue]] | None,
+) -> None:
+    """Close external access on a set-up connection, keeping only what the
+    source authored readable: attach paths (a remote database is read lazily)
+    and secret scopes. A secret without a scope reaches nothing. The lock
+    stops caller SQL from re-enabling access or widening the allowlist."""
+    scopes: set[str] = set()
+    for secret in secrets if secrets is not None else ():
+        scope = secret.get("scope")
+        if scope is None:
+            continue
+        entries = [scope] if isinstance(scope, str) else scope
+        if not isinstance(entries, list) or not all(
+            isinstance(e, str) for e in entries
+        ):
+            raise DbtChartsError.from_code(
+                ERR_ADAPTER_DUCKDB_CONFIG_INVALID,
+                field="secrets",
+                reason=f"'scope' must be a string or list of strings, got {scope!r}",
+            )
+        scopes.update(str(e) for e in entries)
+    attached = attachments if attachments is not None else ()
+    paths = sorted({_attachment_path(a) for a in attached})
+    conn.execute("SET allowed_directories = ?", [sorted(scopes)])
+    conn.execute("SET allowed_paths = ?", [paths])
+    conn.execute("SET enable_external_access = false")
+    conn.execute("SET lock_configuration = true")
+
+
+def _apply_duckdb_config_section(field: str, apply: Callable[[], None]) -> None:
+    """Run one config-application step, naming its field on any failure.
+
+    ``apply`` takes no arguments (the caller closes over the connection and
+    the section's own values), so this stays a plain ``Callable[[], None]``
+    across all four sections instead of a shape that varies per section.
+
+    A DbtChartsError from the SQL builders (bad identifier, missing secret
+    type, conflicting attach options) already names its field and is not
+    re-classified. Anything else, a live duckdb exception from actually
+    running the generated SQL (missing extension, unreachable attach
+    target, ...), is a driver failure on an already-open connection, not a
+    failed connect, so it gets its own code instead of
+    ERR-WAREHOUSE-CONNECTION's "before any SQL is sent" framing.
+    """
+    try:
+        apply()
+    except DbtChartsError:
+        raise
+    except Exception as e:  # noqa: BLE001 — surface the driver's own config-apply error
+        raise DbtChartsError.from_code(
+            ERR_ADAPTER_DUCKDB_CONFIG_APPLY_FAILED,
+            field=field,
+            reason=str(e),
+        ) from e
+
+
+def default_duckdb_source(dbt_project_path: Path | None) -> DuckDBSourceConfig:
+    """The source a query with none runs on.
+
+    ``:memory:``, unless the host has a dbt project: then the first of its
+    ``data/`` warehouse files, so a source-less query reads the project's own
+    database.
+
+    Raises:
+        DbtChartsError: ERR-DBT-PROJECT-NO-LOCAL-WAREHOUSE, the project has none.
+    """
+    if dbt_project_path is None:
+        return DuckDBSourceConfig(type="duckdb", path=":memory:")
+    from dbt_charts.core.execute.adapters.dbt_utils import DBT_PROJECT_DB_NAMES
+
+    for db_name in DBT_PROJECT_DB_NAMES:
+        candidate = dbt_project_path / "data" / db_name
+        if candidate.exists():
+            return DuckDBSourceConfig(type="duckdb", path=str(candidate))
+    raise DbtChartsError.from_code(
+        ERR_DBT_PROJECT_NO_LOCAL_WAREHOUSE,
+        dbt_project_path=str(dbt_project_path),
+        candidates=list(DBT_PROJECT_DB_NAMES),
+    )
+
+
+class DuckDBBackend:
+    """Runs DuckDB sources on in-process connections.
+
+    Read-only file connections are opened per query and closed after, so an
+    idle server does not hold the DB file locked (a held read-only connection
+    still denies a writer its exclusive lock — that is what blocked `refresh`
+    while `serve` was up). ``:memory:`` is opened read-write and destroyed on
+    close, so it cannot be reopened: it is pooled per thread. One connection
+    spans a query's ``setup_sql`` and its main statement.
+    """
+
+    param_style: SQLDialect = get_dialect("duckdb")
+
+    def __init__(
+        self,
+        *,
+        data_dir: Path | None = None,
+        read_only: bool = True,
+        duckdb_config: dict[str, Any] | None = None,
+        allow_external_access_in_readonly: bool = False,
+    ) -> None:
+        """Initialize the backend.
+
+        Args:
+            data_dir: Directory relative DuckDB paths (named-source `path:` values,
+                and read_csv()/read_parquet() when external access is on) resolve
+                against. None for hosts with no local filesystem to root against
+                (e.g. Cloud) — resolving a relative path or enabling external
+                access without one raises ValueError.
+            read_only: If True (default), open DuckDB connections in read-only mode.
+                File-based DuckDB: opened with read_only=True — the driver refuses all writes.
+                In-memory DuckDB (:memory:): always opened read-write regardless of this flag
+                because there is no other way to populate an in-memory database; this is a
+                known exception. enable_external_access=False is still forced for :memory:
+                when read_only=True unless allow_external_access_in_readonly=True.
+
+                When read_only=True (and allow_external_access_in_readonly=False),
+                enable_external_access=False is forced on the DuckDB config regardless of
+                any user-supplied duckdb_config. A source authoring
+                attach/extensions/secrets gets external access only while those fields
+                are applied; the connection then ends locked to the attach paths and
+                secret scopes (see the module docstring).
+            duckdb_config: Optional DuckDB config dict, used when a source authors none.
+            allow_external_access_in_readonly: Security opt-in. When True AND
+                read_only=True AND duckdb_config contains enable_external_access=True,
+                the backend passes enable_external_access=True through to DuckDB for every
+                connection. Default False preserves the existing defense: read_only=True
+                always implies enable_external_access=False for caller SQL.
+        """
+        self._data_dir = data_dir
+        self.read_only = read_only
+        self.allow_external_access_in_readonly = allow_external_access_in_readonly
+        self._duckdb_config = duckdb_config
+        self._tls = threading.local()
+        self._all_conns: list[duckdb.DuckDBPyConnection] = []
+        self._all_conns_lock = threading.Lock()
+        self._interrupt_lock = threading.Lock()
+        self._interrupted = False
+        self._running: duckdb.DuckDBPyConnection | None = None
+
+    def execute(self, source: ResolvedSourceConfig, query: ResolvedQuery) -> TypedRows:
+        """Run ``setup_sql`` then the statement on one connection.
+
+        Raises:
+            ConnectionSetupFailed: The connection could not be opened.
+            DbtChartsError: The source's config is invalid or unsupported.
+            QueryError: The statement failed or was interrupted.
+        """
+        raw_config = source.model_dump(by_alias=True)
+        try:
+            path = self._resolved_path(raw_config)
+            ephemeral = self.read_only and path != ":memory:"
+            conn = (
+                self._connect(raw_config, path)
+                if ephemeral
+                else self._pooled_connection(raw_config, path)
+            )
+        except DbtChartsError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — reclassified by the caller as a connection failure
+            raise ConnectionSetupFailed(exc) from exc
+        try:
+            with self._executing(conn):
+                for statement in query.setup_sql:
+                    try:
+                        conn.execute(statement)
+                    except Exception as exc:  # noqa: BLE001 — classified into a typed QueryError
+                        raise _statement_error(exc, conn, None) from exc
+                try:
+                    cursor = conn.execute(query.sql, list(query.params))
+                    # Snapshot description INSIDE the lock: ``execute`` returns
+                    # the connection itself, so it reflects whichever query last
+                    # ran on it.
+                    description = cursor.description
+                    fetched = cursor.fetchmany(query.limit.fetch_limit)
+                except Exception as exc:  # noqa: BLE001 — classified into a typed QueryError
+                    raise _statement_error(exc, conn, query.sql) from exc
+        finally:
+            if ephemeral:
+                conn.close()
+        types = duckdb_schema(description) if description else {}
+        rows = typed_rows(description, fetched) if description else []
+        return TypedRows(
+            list(types), [tuple(row.values()) for row in rows], list(types.values())
+        )
+
+    def reads_only_its_file(self, source: DuckDBSourceConfig) -> bool:
+        """Whether a connection for *source* reads nothing but its file.
+
+        False when SQL can read other inputs (an opted-in
+        ``enable_external_access``, ``attach`` databases, ``secrets`` scopes), so
+        the database file's version does not cover every input.
+        """
+        raw = source.model_dump(by_alias=True, exclude_none=True)
+        return not (
+            source.attach
+            or source.secrets
+            or self._external_access_enabled(
+                self.read_only,
+                self._resolve_duckdb_config(raw) or None,
+                self.allow_external_access_in_readonly,
+            )
+        )
+
+    def _pooled_connection(
+        self, source_config: RawSourceConfig, path: str
+    ) -> duckdb.DuckDBPyConnection:
+        """This thread's connection for *source_config*, opened on first use.
+
+        Keyed by path, schema, and a hash of every other field _connect applies
+        (duckdb_config/extensions/settings/secrets/attach): two named DuckDB
+        sources only share a connection when all of that agrees.
+        """
+        schema = (
+            source_config.get("schema")
+            or ""  # type-state: silent_fallback — no schema is the empty cache-key part
+        )
+        cache_key = _duckdb_session_cache_key(source_config, path, schema)
+        sources = getattr(
+            self._tls,
+            "sources",
+            None,  # type-state: silent_fallback — unset until this thread first connects
+        )
+        if sources is None:
+            sources = self._tls.sources = {}
+        if cache_key not in sources:
+            conn = self._connect(source_config, path)
+            sources[cache_key] = conn
+            with self._all_conns_lock:
+                self._all_conns.append(conn)
+        return sources[cache_key]
+
+    def _resolve_duckdb_config(
+        self, source_config: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Resolve DuckDB config: source-level overrides backend-level default."""
+        return normalize_duckdb_config(source_config) or self._duckdb_config
+
+    def _resolved_path(self, source_config: RawSourceConfig) -> str:
+        """Resolve the DuckDB target path for a source (':memory:' or a file path).
+
+        A relative path resolves against the project data dir. Used both to open
+        a connection and to decide whether it is file-backed (ephemeral) or
+        in-memory (pooled).
+        """
+        db_path = str(
+            source_config.get("path")
+            or ":memory:"  # type-state: silent_fallback — an unset path is the in-memory database
+        )
+        if db_path != ":memory:" and not Path(db_path).is_absolute():
+            if self._data_dir is None:
+                raise DbtChartsError.from_code(
+                    ERR_ADAPTER_RELATIVE_PATH_NO_DATA_DIR,
+                    adapter="DuckDB",
+                    path=db_path,
+                )
+            return str((self._data_dir / db_path).resolve())
+        return db_path
+
+    def _connect(
+        self, source_config: RawSourceConfig, path: str
+    ) -> duckdb.DuckDBPyConnection:
+        """Open a NEW DuckDB connection at ``path`` for a source (no caching).
+
+        ``path`` is the caller's already-resolved ``_resolved_path(source_config)``,
+        passed in so it is resolved once (the decision) rather than twice. Shared
+        by the pooled getter and the per-query ephemeral path so both apply the
+        same security posture and session SETs regardless of who owns the
+        connection's lifetime.
+        """
+        import duckdb
+
+        if "database" in source_config and "path" not in source_config:
+            raise ValueError(
+                "DuckDB source_config uses the unsupported 'database' key. "
+                'Use \'path\' instead (e.g. {"type": "duckdb", "path": "db.duckdb"}).'
+            )
+        _reject_unsupported_duckdb_fields(source_config)
+        duckdb_config = self._resolve_duckdb_config(source_config) or None
+        schema = source_config.get("schema")
+        extensions = source_config.get("extensions")
+        settings = source_config.get("settings")
+        secrets = source_config.get("secrets")
+        attach = source_config.get("attach")
+        needs_external_access = bool(extensions or secrets or attach)
+
+        conn = duckdb.connect(
+            path,
+            **self._resolve_duckdb_connect_kwargs(
+                path,
+                self.read_only,
+                duckdb_config,
+                self.allow_external_access_in_readonly,
+                needs_external_access,
+            ),
+        )
+        caller_external_access = self._external_access_enabled(
+            self.read_only, duckdb_config, self.allow_external_access_in_readonly
+        )
+        # A post-connect SET (or the schema guard) that raises must not orphan the
+        # just-opened connection — close it before propagating so the file lock is
+        # released.
+        try:
+            # Session-local: relative read_csv()/read_parquet() paths in queries
+            # resolve against the project root instead of the process cwd. Only
+            # meaningful when caller SQL keeps external file access (DuckDB rejects
+            # relative reads otherwise), so skip it — and its data_dir — when off.
+            if caller_external_access:
+                if self._data_dir is None:
+                    raise ValueError(
+                        "External file access (read_csv()/read_parquet()) "
+                        "requires a data_dir to resolve relative paths "
+                        "against; none was configured for this adapter."
+                    )
+                conn.execute("SET file_search_path = ?", [str(self._data_dir)])
+            if schema:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+                    raise ValueError(
+                        f"Invalid schema name {schema!r}: must match "
+                        r"^[A-Za-z_][A-Za-z0-9_]*$"
+                    )
+                conn.execute("SET search_path = ?", [f"{schema},main"])
+            if extensions:
+                _apply_duckdb_config_section(
+                    "extensions", lambda: _apply_duckdb_extensions(conn, extensions)
+                )
+            if settings:
+                _apply_duckdb_config_section(
+                    "settings", lambda: _apply_duckdb_settings(conn, settings)
+                )
+            if secrets:
+                _apply_duckdb_config_section(
+                    "secrets", lambda: _apply_duckdb_secrets(conn, secrets)
+                )
+            if attach:
+                adapter_read_only = self.read_only
+                _apply_duckdb_config_section(
+                    "attach",
+                    lambda: _apply_duckdb_attach(
+                        conn, attach, adapter_read_only=adapter_read_only
+                    ),
+                )
+            if needs_external_access and not caller_external_access:
+                _lock_to_authored_reach(conn, secrets, attach)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
+    @staticmethod
+    def _external_access_enabled(
+        read_only: bool,
+        duckdb_config: dict[str, Any] | None,
+        allow_external_access_in_readonly: bool = False,
+        source_needs_external_access: bool = False,
+    ) -> bool:
+        """Whether a connection opens with external access on.
+
+        Read-only forces external access off unless the caller opted in
+        (allow_external_access_in_readonly AND enable_external_access=True), OR
+        the source authors `attach`/`extensions`/`secrets`
+        (source_needs_external_access), which need it during setup only;
+        ``_connect`` locks that connection down afterwards. An explicit
+        enable_external_access=False in duckdb_config always wins.
+        """
+        config = duckdb_config or {}
+        if config.get("enable_external_access") is False:
+            return False
+        if (
+            read_only
+            and not source_needs_external_access
+            and not (
+                allow_external_access_in_readonly
+                and config.get("enable_external_access") is True
+            )
+        ):
+            return False
+        return config.get("enable_external_access", True) is True
+
+    @staticmethod
+    def _resolve_duckdb_connect_kwargs(
+        path: str,
+        read_only: bool,
+        duckdb_config: dict[str, Any] | None,
+        allow_external_access_in_readonly: bool = False,
+        source_needs_external_access: bool = False,
+    ) -> dict[str, Any]:
+        """Build duckdb.connect() kwargs for the given path and security posture.
+
+        When read_only=True and allow_external_access_in_readonly=False (default):
+        - Adds read_only=True for file-based paths (not :memory: — in-memory DuckDB
+          must always be opened read-write; this is a known exception).
+        - Forces enable_external_access=False in the config, overriding any
+          user-supplied duckdb_config value.
+
+        When read_only=True and allow_external_access_in_readonly=True, or the
+        source authors attach/extensions/secrets (source_needs_external_access,
+        locked down by ``_connect`` after setup):
+        - Same read_only=True driver flag for file-based paths.
+        - enable_external_access is NOT forced to False; caller's duckdb_config
+          passes through. Approved callsites: LOCAL_AUTHORING_REGISTRY_KWARGS.
+
+        When read_only=False:
+        - No read_only driver flag.
+        - duckdb_config is passed through as-is.
+        """
+        kwargs: dict[str, Any] = {}
+        if read_only and path != ":memory:":
+            kwargs["read_only"] = True
+        if duckdb_config is not None or read_only:
+            config = dict(duckdb_config or {})
+            if not DuckDBBackend._external_access_enabled(
+                read_only,
+                config,
+                allow_external_access_in_readonly,
+                source_needs_external_access,
+            ):
+                config["enable_external_access"] = False
+            if config:
+                kwargs["config"] = config
+        return kwargs
+
+    @contextmanager
+    def _executing(self, conn: duckdb.DuckDBPyConnection) -> Generator[None]:
+        """Hold the execute lock with `conn` visible to `interrupt()`."""
+        with _DUCKDB_EXECUTE_LOCK:
+            with self._interrupt_lock:
+                if self._interrupted:
+                    raise QueryError.from_code(ERR_QUERY_INTERRUPTED)
+                self._running = conn
+            try:
+                yield
+            finally:
+                with self._interrupt_lock:
+                    self._running = None
+
+    def interrupt(self) -> None:
+        with self._interrupt_lock:
+            self._interrupted = True
+            if self._running is not None:
+                self._running.interrupt()
+
+    def close(self) -> None:
+        """Close all DuckDB connections."""
+        with self._all_conns_lock:
+            conns, self._all_conns = self._all_conns, []
+        for conn in conns:
+            conn.close()
+
+        self._tls.sources = {}

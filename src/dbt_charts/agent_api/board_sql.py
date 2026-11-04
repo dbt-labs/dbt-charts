@@ -29,7 +29,8 @@ from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters import AdapterRegistry
 from dbt_charts.core.execute.cache_backend import QueryResultCache
 from dbt_charts.core.execute.cache_composition import CompositionError
-from dbt_charts.core.execute.executor import CACHE_REF_JINJA_RE, Executor
+from dbt_charts.core.execute.executor import Executor
+from dbt_charts.core.execute.run import CACHE_REF_JINJA_RE
 from dbt_charts.core.project import Project, board_identity
 from dbt_charts.core.validate import normalize_data_for_json
 

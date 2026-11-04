@@ -17,9 +17,9 @@ import duckdb
 from dbt_charts.agent_api.validate import validate_paths
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.compile.config import ProjectSourcesConfig, load_project_sources
-from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
 from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
 
 _HEALTHY_BOARD = (
@@ -46,15 +46,16 @@ def _write_dbt_charts_yml(project_root: Path, db_path: Path) -> None:
 def _make_registry(project_root: Path, db_path: Path) -> AdapterRegistry:
     """Build an AdapterRegistry with a real read-only DuckDB adapter."""
     project = FilesystemProject(project_root)
-    source_cfg = DuckDBSourceConfig(type="duckdb", path=str(db_path))
     project_sources = ProjectSourcesConfig(
         sources={"testdb": {"type": "duckdb", "path": str(db_path)}}
     )
-    registry = AdapterRegistry(project=project, project_sources=project_sources)
-    registry.register(
-        DuckDBAdapter(source_config=source_cfg, data_dir=project_root, read_only=True)
+    return AdapterRegistry(
+        project=project,
+        project_sources=project_sources,
+        backends=BackendRegistry(
+            {"duckdb": DuckDBBackend(data_dir=project_root, read_only=True)}
+        ),
     )
-    return registry
 
 
 def _setup_duckdb_project(

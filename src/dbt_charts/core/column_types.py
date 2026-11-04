@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Any, Literal, Self
+from typing import Any, Literal, NamedTuple, Self
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -66,6 +66,15 @@ class ColumnType(BaseModel, frozen=True):
         if self.fields is not None:
             return "struct<{" + ", ".join(f"{n}: {t}" for n, t in self.fields) + "}>"
         return self.kind
+
+
+class TypedRows(NamedTuple):
+    """A warehouse client's result: cells already in declared form, each column
+    with the type its source declared."""
+
+    columns: list[str]
+    rows: list[tuple[Any, ...]]  # type-state: explicit_any — warehouse cell values
+    types: list[ColumnType]
 
 
 def column_type_error(column: str, reason: str) -> ExecutionError:

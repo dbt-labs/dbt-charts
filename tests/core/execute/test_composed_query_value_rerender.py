@@ -24,15 +24,20 @@ from typing import Any
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.column_types import literal_schema
+from dbt_charts.core.column_types import TypedRows
 from dbt_charts.core.compile.compiler import compile
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.compile.models.source import PostgresSourceConfig
+from dbt_charts.core.compile.models.source import (
+    PostgresSourceConfig,
+    ResolvedSourceConfig,
+)
 from dbt_charts.core.execute.adapters.adapter_registry import build_adapter_registry
-from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.sql_adapter import PreparedSql, SqlAdapter
+from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.executor import Executor
+
+from ..conftest import DbtHarness
 
 # Reaches the Jinja interpreter's globals from an ordinary expression. Inert as a
 # value; remote code execution the moment something renders it as a template.
@@ -184,9 +189,9 @@ class TestComposedQueryValuesAreNeverRendered:
         assert executor.execute_query("composed", {"s": SQLI_PAYLOAD}) == []
 
 
-class TestSqlAdapterReceivesBoundValues:
-    """The two ways SQL reaches SqlAdapter — with params pre-computed by the
-    registry, and with the adapter rendering for itself — must both bind values."""
+class TestDbtBackendReceivesBoundValues:
+    """SQL reaching the dbt backend — through an executor and straight through
+    a registry — must bind values."""
 
     @staticmethod
     def _capture(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -194,15 +199,12 @@ class TestSqlAdapterReceivesBoundValues:
         seen: dict[str, Any] = {}
 
         def _fake(
-            self: SqlAdapter,
-            prepared: PreparedSql,
-            query: SqlQuery,
-            source_config: dict[str, Any] | None,
-        ) -> QueryResult:
-            seen["sql"] = prepared.sql
-            return QueryResult(data=[], columns=[], schema=literal_schema([], []))
+            self: DbtBackend, source: ResolvedSourceConfig, query: ResolvedQuery
+        ) -> TypedRows:
+            seen["sql"] = query.inline(source.type)
+            return TypedRows([], [], [])
 
-        monkeypatch.setattr(SqlAdapter, "_execute_via_dbt_adapter", _fake)
+        monkeypatch.setattr(DbtBackend, "execute", _fake)
         return seen
 
     _PG_SOURCE = {
@@ -218,7 +220,7 @@ class TestSqlAdapterReceivesBoundValues:
         monkeypatch: pytest.MonkeyPatch,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        """Executor → registry → SqlAdapter, the path a rendered board takes."""
+        """Executor → registry → backend, the path a rendered board takes."""
         seen = self._capture(monkeypatch)
         executor = _executor(
             _board_yaml(
@@ -240,23 +242,19 @@ class TestSqlAdapterReceivesBoundValues:
         monkeypatch: pytest.MonkeyPatch,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        """SqlAdapter rendering for itself, over already-expanded composed SQL.
+        """The registry composing directly, over already-expanded composed SQL.
 
         The SQL written here is what reference expansion now emits: the reference
         replaced by its subquery, every variable still author-written.
         """
         seen = self._capture(monkeypatch)
-        adapter = SqlAdapter(
-            project=local_project(Path.cwd()),
-            dbt_project_path=None,
-            profile_type="postgres",
-        )
+        adapter = DbtHarness(local_project(Path.cwd()), profile_type="postgres")
         query = SqlQuery(
             sql="SELECT * FROM (SELECT 1 AS id) AS base WHERE base.id = '{{ s }}'",
             source="db",
         )
 
-        adapter._execute(
+        adapter.execute(
             query,
             {"s": ARITH_PAYLOAD},
             source_config=PostgresSourceConfig(**self._PG_SOURCE),

@@ -1,7 +1,7 @@
-"""Integration tests: typed SourceConfig flows to adapter via AdapterRegistry.
+"""Integration tests: typed SourceConfig flows to the backend via AdapterRegistry.
 
 Pins that AdapterRegistry.execute() invokes the resolver exactly once per query
-and passes the typed SourceConfig to the adapter.
+and passes the typed SourceConfig to the backend.
 """
 
 from __future__ import annotations
@@ -11,48 +11,53 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import nanoarrow as na
+import pyarrow as pa
+import pytest
+
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.column_types import literal_schema
-from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SourceConfig
+from dbt_charts.core.compile.models.source import (
+    DuckDBSourceConfig,
+    ResolvedSourceConfig,
+)
+from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.source_resolver import SourceResolver
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 
-class _CapturingAdapter(BaseAdapter):
-    """Adapter that records source_config on each _execute call."""
+class _CapturingBackend:
+    """Backend that records the source it is handed on each execute."""
 
-    supported_types = {"sql", "csv", "values"}
+    param_style: SQLDialect = INLINE_PLACEHOLDERS
 
     def __init__(self) -> None:
-        self.received: list[SourceConfig | None] = []
+        self.received: list[ResolvedSourceConfig] = []
 
-    def can_execute(
-        self, query: Any, source_config: SourceConfig | None = None
-    ) -> bool:
-        return True
+    def execute(self, source: ResolvedSourceConfig, query: ResolvedQuery) -> na.Array:
+        self.received.append(source)
+        return na.Array(pa.table({"x": [1]}))
 
-    def _execute(
-        self,
-        query: Any,
-        variables: Any = None,
-        params: QueryParams = None,
-        source_config: SourceConfig | None = None,
-    ) -> QueryResult:
-        self.received.append(source_config)
-        return QueryResult(
-            data=[{"x": 1}], columns=["x"], schema=literal_schema([{"x": 1}], ["x"])
-        )
+    def interrupt(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
 def _make_registry(
     local_project: Callable[..., FilesystemProject],
     resolver: SourceResolver | None = None,
-) -> tuple[AdapterRegistry, _CapturingAdapter]:
-    registry = AdapterRegistry(project=local_project(Path()), resolver=resolver)
-    adapter = _CapturingAdapter()
-    registry.register(adapter)
-    return registry, adapter
+) -> tuple[AdapterRegistry, _CapturingBackend]:
+    backend = _CapturingBackend()
+    registry = AdapterRegistry(
+        project=local_project(Path()),
+        resolver=resolver,
+        backends=BackendRegistry({"duckdb": backend}),
+    )
+    return registry, backend
 
 
 def _sql_query(source: Any = "db") -> Any:
@@ -93,45 +98,47 @@ class TestAdapterReceivesTypedSourceConfig:
             type="duckdb", path=":memory:"
         )
 
-        registry, adapter = _make_registry(local_project, resolver=mock_resolver)
+        registry, backend = _make_registry(local_project, resolver=mock_resolver)
         query = _sql_query(source="db")
         registry.execute(query)
 
         assert mock_resolver.resolve.call_count == 1
 
-    def test_adapter_receives_typed_source_config(
+    def test_backend_receives_typed_source_config(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """Adapter's _execute receives the SourceConfig returned by the resolver."""
+        """The backend receives the SourceConfig returned by the resolver."""
         duckdb_config = DuckDBSourceConfig(type="duckdb", path=":memory:")
 
         mock_resolver = MagicMock(spec=SourceResolver)
         mock_resolver.resolve.return_value = duckdb_config
 
-        registry, adapter = _make_registry(local_project, resolver=mock_resolver)
+        registry, backend = _make_registry(local_project, resolver=mock_resolver)
         registry.execute(_sql_query(source="db"))
 
-        assert len(adapter.received) == 1
-        assert adapter.received[0] is duckdb_config
+        assert len(backend.received) == 1
+        assert backend.received[0] is duckdb_config
 
-    def test_adapter_receives_none_when_resolver_returns_none(
+    def test_a_resolver_deferring_with_no_dbt_project_is_an_invariant_failure(
         self, local_project: Callable[..., FilesystemProject]
     ):
-        """Adapter receives source_config=None when resolver returns None."""
+        """Only a resolver given a dbt project defers a SQL source; no backend is
+        guessed when one defers without it."""
         mock_resolver = MagicMock(spec=SourceResolver)
         mock_resolver.resolve.return_value = None
 
-        registry, adapter = _make_registry(local_project, resolver=mock_resolver)
-        registry.execute(_sql_query(source="db"))
+        registry, backend = _make_registry(local_project, resolver=mock_resolver)
+        with pytest.raises(AssertionError, match="no dbt project"):
+            registry.execute(_sql_query(source="db"))
 
-        assert adapter.received == [None]
+        assert backend.received == []
 
     def test_board_sources_passed_to_resolver(
         self, local_project: Callable[..., FilesystemProject]
     ):
         """AdapterRegistry passes board.sources to the resolver."""
         mock_resolver = MagicMock(spec=SourceResolver)
-        mock_resolver.resolve.return_value = None
+        mock_resolver.resolve.return_value = DuckDBSourceConfig(type="duckdb")
 
         board_sources = {"my_db": {"type": "duckdb", "path": ":memory:"}}
         board = _compiled_board(sources=board_sources)
@@ -161,47 +168,43 @@ class TestAdapterReceivesTypedSourceConfig:
             advice="",
         )
 
-        registry, adapter = _make_registry(local_project, resolver=mock_resolver)
+        registry, backend = _make_registry(local_project, resolver=mock_resolver)
         result = registry.execute(_sql_query(source="bad_db"))
 
         assert not result.is_success
         assert result.error is not None
-        assert len(adapter.received) == 0
+        assert len(backend.received) == 0
 
 
 class TestDbtContextWireUp:
-    """When a DbtAdapter is registered, AdapterRegistry threads a DbtContext
-    into the resolver — letting unknown string source names fall through
+    """When a dbt project is linked, AdapterRegistry threads a DbtContext into the
+    resolver, letting unknown string source names defer to the dbt project
     instead of raising ERR-SOURCE-NOT-FOUND.
     """
 
-    def test_dbt_adapter_presence_threads_dbt_context_to_resolver(
+    def test_dbt_project_presence_threads_dbt_context_to_resolver(
         self, local_project: Callable[..., FilesystemProject]
     ):
         from dbt_charts.core.execute.source_resolver import DbtContext
 
         mock_resolver = MagicMock(spec=SourceResolver)
-        mock_resolver.resolve.return_value = None
+        mock_resolver.resolve.return_value = DuckDBSourceConfig(type="duckdb")
 
         registry = AdapterRegistry(
             project=local_project(Path()), resolver=mock_resolver
         )
-        registry.register(_CapturingAdapter())
 
-        # Without a DbtAdapter registered the resolver sees dbt_context=None.
+        # Without a dbt project the resolver sees dbt_context=None.
         registry.execute(_sql_query(source="some_name"))
         assert mock_resolver.resolve.call_args.kwargs["dbt_context"] is None
 
-        # Add a fake adapter that looks like a DbtAdapter to _derive_dbt_context.
-        from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
+        linked = AdapterRegistry(
+            project=local_project(Path()),
+            resolver=mock_resolver,
+            dbt_context=DbtContext(dbt_project_path=Path(), target=None),
+        )
 
-        fake_dbt = MagicMock(spec=DbtAdapter)
-        fake_dbt.supported_types = {"sql"}
-        fake_dbt.dbt_project_path = Path()
-        fake_dbt.target_name = None
-        registry._adapters.insert(0, fake_dbt)
-
-        registry.execute(_sql_query(source="some_name"))
+        linked.execute(_sql_query(source="some_name"))
         assert isinstance(
             mock_resolver.resolve.call_args.kwargs["dbt_context"], DbtContext
         )

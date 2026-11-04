@@ -458,7 +458,10 @@ def test_every_cartesian_family_wraps_a_legend_too_wide_for_one_row(
     from dbt_charts.core.compile.models.style import authored as a
 
     style = getattr(a, f"{family.capitalize()}ChartStylePatch").model_validate(
-        {"legend": {"visible": True, "position": {"edge": edge}}}
+        {
+            "legend": {"visible": True, "position": {"edge": edge}},
+            **({} if family == "scatter" else {"endpoint_labels": {"visible": False}}),
+        }
     )
     chart = getattr(n, f"{family.capitalize()}Chart")(
         id="c1",

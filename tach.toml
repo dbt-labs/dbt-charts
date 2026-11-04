@@ -281,7 +281,7 @@ depends_on = ["dbt_charts.core.diagnostics"]
 path = "dbt_charts.core.compile"
 layer = "core"
 # Remaining compile -> {project, project_roots, inspect} edges (and the
-# DbtAdapter/SqlAdapter/_read_target_dict compile->execute edges in
+# DbtAdapter/DbtBackend/_read_target_dict compile->execute edges in
 # sources/detection.py, which are real adapter-class usage, not relocatable
 # leaf behavior) are real, pre-existing accepted debt — not addressed here.
 # (normalize/queries.py's edge left with the MetricFlow lowering removal.)

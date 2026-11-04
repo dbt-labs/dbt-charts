@@ -7,9 +7,9 @@ Imported by line.py and area.py.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from dbt_charts.core.compile.models.primitives import Curve, LineCap, ResolvedFormat
 from dbt_charts.core.compile.models.style.theme import (
@@ -31,6 +31,23 @@ class ResolvedPointLabels(PointLabelsStyle):
     format: ResolvedFormat | None = Field(
         default=None, description="Resolved value-label format."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_stored_auto(
+        cls,
+        data: Any,  # type-state: explicit_any — validator input
+    ) -> Any:  # type-state: explicit_any — validator input
+        # A dumped board carries `auto`, which is derived and may not be read back.
+        if isinstance(data, dict):
+            return {key: value for key, value in data.items() if key != "auto"}
+        return data
+
+    @computed_field
+    @property
+    def auto(self) -> bool:
+        """Nothing positioned the labels, so the renderer may place them."""
+        return self.position is None and self.dx is None and self.dy is None
 
 
 ResolvedMarkLabels = ResolvedBarLabels | ResolvedPointLabels

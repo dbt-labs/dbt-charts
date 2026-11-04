@@ -16,8 +16,8 @@ use crate::{Padding, Payload, vega_fit};
 use measure::FontBook;
 use scene::{Attrs, Node, Role};
 use serde_json::Value;
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::cell::Cell;
+use std::collections::HashMap;
 
 use super::axes::ContinuousXAxis;
 use super::bind::zero_label;
@@ -922,7 +922,7 @@ pub(super) fn render_vertical_continuous_x_panel(
         }
     }
     let mut plot: Vec<Node> = Vec::new();
-    let defined_clips: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    let clips = crate::families::layers::PlotClips::new(&r.id);
 
     let (x_lo, x_hi) = x_domain_at(plot_w);
     let x_span = x_hi - x_lo;
@@ -1104,7 +1104,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                     layer_rects.extend(layer_bar(1 + i, &|v| scale.scale(v), plot_h, clip, bl, mark, (cx - bw / 2.0, bw), &fill, aria.as_deref(), crate::families::layers::layer_link(link.as_ref(), (bl.query_name.as_deref(), r.query_name.as_deref())))?);
                 }
                 if clip {
-                    out.extend(crate::families::layers::clipped_layer(&mut defined_clips.borrow_mut(), (plot_w, plot_h), &r.id, layer_rects));
+                    out.extend(clips.wrap((plot_w, plot_h), layer_rects));
                 } else {
                     out.extend(layer_rects);
                 }
@@ -1134,7 +1134,7 @@ pub(super) fn render_vertical_continuous_x_panel(
                         |row| row_num(row, x_field).map(x_pos),
                         None,
                         |val| crate::families::layers::clamp_unless_clipped(scale.scale(val), plot_h, layer_clipped),
-                        &AreaFrame { free_y: &|val| scale.scale(val), plot: (plot_w, plot_h), clip: crate::families::layers::layer_clip(layer.layer_type(), layer.y(), layer_rows, ax_y, false, independent_y) },
+                        &AreaFrame { free_y: &|val| scale.scale(val), plot: (plot_w, plot_h), clip: crate::families::layers::layer_clip(layer.layer_type(), layer.y(), layer_rows, ax_y, false, independent_y), clips: &clips },
                         false,
                         series_color,
                         r.canvas.as_str(),
@@ -1198,7 +1198,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
                     r.canvas.as_str(),
                     board_style,
                     |row, val| Ok(layer_caption(x_title, &name, row, val)),
-crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clipped.then_some((plot_w, plot_h)),
+crate::families::layers::layer_link(link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())), layer_clipped.then_some(((plot_w, plot_h), &clips)),
 crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
 )
                 .map_err(|e| format!("bar: {e}"))?);
@@ -1222,7 +1222,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
         let rule_ys: Vec<f64> = [rules.zero.then_some(y_rule), rules.unity.then(|| y_pos(1.0))].into_iter().flatten().collect();
         painted_layers += rule_ys.len();
         plot.extend(baseline_rule_layers(1, &rule_ys, |y, aria| {
-            Node::line(Role::Grid, (rx1, y), (rx2, y), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
+            Node::line(Role::Rule, (rx1, y), (rx2, y), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
         })?);
     }
     // Each layer on its own scale paints after the base's zero rule, and its own
@@ -1235,7 +1235,7 @@ crate::families::layers::LabelCrowd { chart_id: &r.id, layer: i, fonts },
             let layer_edge = if la.side == LayerSide::Right { plot_w + 0.5 } else { 0.5 };
             let (lx1, lx2) = crate::common::join_rule_to_edges(floor_span, &[layer_edge]);
             plot.extend(baseline_rule_layers(painted_layers + 1 + i, &[scale.scale(0.0)], |y, aria| {
-                Node::line(Role::Grid, (lx1, y), (lx2, y), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
+                Node::line(Role::Rule, (lx1, y), (lx2, y), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
             })?);
         }
     }

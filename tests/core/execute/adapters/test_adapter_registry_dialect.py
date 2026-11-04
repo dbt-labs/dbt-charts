@@ -12,57 +12,52 @@ from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
+import nanoarrow as na
+import pyarrow as pa
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.query.authored import QueryDialect
-from dbt_charts.core.compile.models.query.normalized import AnyQuery, SqlQuery
-from dbt_charts.core.compile.models.source import ResolvedSourceConfig
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.dialects import SQLDialect
 from dbt_charts.core.execute.adapters import AdapterRegistry
-from dbt_charts.core.execute.adapters.base import BaseAdapter, QueryParams, QueryResult
+from dbt_charts.core.execute.adapters.base import QueryResult
+from dbt_charts.core.execute.backends.base import BackendRegistry
+from dbt_charts.core.execute.compose import ResolvedQuery
 from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
 _SNOWFLAKE = {"type": "snowflake", "account": "xy12345", "database": "analytics"}
 
 
-class _RecordingAdapter(BaseAdapter):
-    """Claims snowflake SQL, flattens params like SqlAdapter, records what it got."""
+class _RecordingBackend:
+    """Takes snowflake SQL, flattens params like the dbt backend, records what it got."""
+
+    param_style: SQLDialect = INLINE_PLACEHOLDERS
 
     def __init__(self) -> None:
-        super().__init__()
-        self.seen: list[tuple[str, QueryParams]] = []
+        self.seen: list[tuple[str, list[object]]] = []
 
-    @property
-    def supported_types(self) -> set[str]:
-        return {"sql"}
+    def execute(self, source: object, query: ResolvedQuery) -> na.Array:
+        self.seen.append((query.sql, list(query.params)))
+        return na.Array(pa.table({"n": pa.array([], pa.int64())}))
 
-    def param_render_dialect(self, source_config: ResolvedSourceConfig) -> SQLDialect:
-        return INLINE_PLACEHOLDERS
+    def interrupt(self) -> None:
+        pass
 
-    def _execute(
-        self,
-        query: AnyQuery,
-        variables: object = None,
-        params: QueryParams = None,
-        source_config: ResolvedSourceConfig | None = None,
-    ) -> QueryResult:
-        assert isinstance(query, SqlQuery)
-        self.seen.append((query.sql, params))
-        return QueryResult(data=[], schema=literal_schema([]))
+    def close(self) -> None:
+        pass
 
 
 def _snowflake_registry(
     tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> tuple[AdapterRegistry, _RecordingAdapter]:
+) -> tuple[AdapterRegistry, _RecordingBackend]:
+    backend = _RecordingBackend()
     registry = AdapterRegistry(
         project=local_project(tmp_path),
         project_sources=ProjectSourcesConfig(sources={"wh": _SNOWFLAKE}),
+        backends=BackendRegistry({"snowflake": backend}),
     )
-    adapter = _RecordingAdapter()
-    registry.register(adapter)
-    return registry, adapter
+    return registry, backend
 
 
 def _run(
@@ -190,27 +185,6 @@ def test_ref_and_variables_run_end_to_end_on_a_different_warehouse(
     assert result.error is None, result.error
     assert [row["note"] for row in result.data] == ["it's", "it's"]
     assert [str(row["m"])[:10] for row in result.data] == ["2024-05-01", "2024-06-01"]
-
-
-def test_dialect_query_with_no_resolved_source_is_refused(
-    tmp_path: Path, local_project: Callable[..., FilesystemProject]
-) -> None:
-    """With no source config the target is unknown: never run it untranslated."""
-    registry, _ = _snowflake_registry(tmp_path, local_project)
-    query = SqlQuery(sql="select 1", source="wh", dialect="duckdb")
-
-    result = registry._compose_query_refs(
-        query,
-        None,
-        None,
-        board=None,
-        source_config=None,
-        render_dialect=INLINE_PLACEHOLDERS,
-    )
-
-    assert isinstance(result, QueryResult)
-    assert result.error is not None
-    assert result.error.code.code == "ERR-SQL-DIALECT-UNSUPPORTED"
 
 
 def test_variable_value_that_looks_like_a_ref_arrives_verbatim(

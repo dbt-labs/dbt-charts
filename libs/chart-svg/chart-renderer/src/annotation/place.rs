@@ -7,6 +7,7 @@ use super::model::{Align, Anchor, Annotation, Connector as ConnectorKind, Curve,
 use super::text::{self, Block};
 use super::{AnnotationCtx, Orientation, Plane};
 use crate::diagnostic::Diagnostic;
+use crate::placement::{best_spot, overlap, EPS};
 use crate::vega_fit::Bounds;
 
 /// Text-to-geometry gap, px.
@@ -548,10 +549,6 @@ const COMPASS: [(Edge, Align); 8] = [
     (Edge::Top, Align::Start),
 ];
 
-fn intersection(a: &Bounds, b: &Bounds) -> f64 {
-    (a.x2.min(b.x2) - a.x1.max(b.x1)).max(0.0) * (a.y2.min(b.y2) - a.y1.max(b.y1)).max(0.0)
-}
-
 /// Moves each text, in list order, off `occupied` (the chart's ink as boxes)
 /// and every other text. Candidates: where it is; the compass spots at `GAP`
 /// and `2 * GAP` off its geometry that its `auto` edge and align allow; then
@@ -561,7 +558,6 @@ fn intersection(a: &Bounds, b: &Bounds) -> f64 {
 /// than it was, so the fit's reserve still holds. A mark under a note's
 /// anchor is what it annotates and never pushes it.
 pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bounds]) {
-    const EPS: f64 = 1e-6;
     for i in 0..items.len() {
         let Some((x0, y0, x1, y1)) = text_box(&items[i]) else { continue };
         let start = Bounds::new(x0, y0, x1, y1);
@@ -587,8 +583,7 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
         let obstacles: Vec<Bounds> = marks.iter().copied().chain(texts.iter().map(|(b, g)| grow(b, *g))).collect();
         let clearances: Vec<Bounds> =
             marks.iter().map(|m| grow(m, CLEAR)).chain(texts.iter().map(|(b, g)| grow(b, g.max(CLEAR)))).collect();
-        let overlap = |b: &Bounds| obstacles.iter().map(|o| intersection(b, o)).sum::<f64>();
-        if overlap(&start) < EPS {
+        if overlap(&start, &obstacles) < EPS {
             continue;
         }
         let (w, h) = (start.x2 - start.x1, start.y2 - start.y1);
@@ -598,7 +593,6 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
             _ => ((0.0, 0.0), (ctx.plot.w, ctx.plot.h)),
         };
         let room = Bounds::new(start.x1.min(r0.0), start.y1.min(r0.1), start.x2.max(r1.0), start.y2.max(r1.1));
-        let inside = |b: &Bounds| b.x1 >= room.x1 - EPS && b.y1 >= room.y1 - EPS && b.x2 <= room.x2 + EPS && b.y2 <= room.y2 + EPS;
         let at = |x: f64, y: f64| Bounds::new(x, y, x + w, y + h);
         // (group, box, anchor and edge) per candidate; `None` keeps the text's own.
         let mut candidates: Vec<(u8, Bounds, Option<(TextAnchor, Edge)>)> = vec![(0, start, None)];
@@ -639,23 +633,11 @@ pub(crate) fn arrange(items: &mut [Placed], ctx: &AnnotationCtx, occupied: &[Bou
             };
             candidates.push((3, b, None));
         }
-        let center = |b: &Bounds| ((b.x1 + b.x2) / 2.0, (b.y1 + b.y2) / 2.0);
-        let (sx, sy) = center(&start);
-        let mut best: Option<(f64, u8, f64, usize)> = None;
-        for (k, (group, b, _)) in candidates.iter().enumerate() {
-            if !inside(b) {
-                continue;
-            }
-            let (cx, cy) = center(b);
-            let (o, d) = (overlap(b), (cx - sx).hypot(cy - sy));
-            let better = |(bo, bg, bd, _): (f64, u8, f64, usize)| {
-                o < bo - EPS || (o < bo + EPS && (*group < bg || (*group == bg && d < bd - EPS)))
-            };
-            if best.is_none_or(better) {
-                best = Some((o, *group, d, k));
-            }
+        let scored: Vec<(u8, Bounds)> = candidates.iter().map(|&(group, b, _)| (group, b)).collect();
+        let k = best_spot(&scored, &room, &obstacles);
+        if k == 0 {
+            continue;
         }
-        let Some((_, _, _, k)) = best.filter(|&(_, _, _, k)| k != 0) else { continue };
         let (_, b, side) = candidates[k];
         let p = &mut items[i];
         let t = p.text.as_mut().expect("text_box found a text");

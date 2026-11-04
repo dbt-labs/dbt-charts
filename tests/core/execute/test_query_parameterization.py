@@ -1,20 +1,27 @@
 """Tests for SQL injection safety on the executor + adapter path.
 
 Coverage:
-    - DuckDB adapter end-to-end: bound params reach _execute_duckdb unchanged
+    - DuckDB adapter end-to-end: bound params reach the DuckDB backend unchanged
     - AdapterRegistry params passthrough
     - execute_query: malicious variable value is bound, never interpolated into SQL
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from unittest.mock import Mock, patch
+from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 from dbt_charts.cli.filesystem_project import FilesystemProject
-from dbt_charts.core.column_types import literal_schema
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
-from dbt_charts.core.execute.adapters.base import QueryResult
+from dbt_charts.core.compile.models.source import DuckDBSourceConfig
+from dbt_charts.core.execute.arrow_ingest import rows_to_arrow
+from dbt_charts.core.execute.compose import ResolvedQuery
+
+if TYPE_CHECKING:
+    import nanoarrow as na
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -22,69 +29,68 @@ pytestmark = pytest.mark.usefixtures("typed_via_execute")
 class TestAdapterParamsPassthrough:
     """Adapter and registry correctly forward pre-computed params."""
 
-    def test_duckdb_adapter_uses_provided_params(
-        self, local_project: "FilesystemProject"
+    def test_duckdb_backend_receives_provided_params(
+        self, local_project: FilesystemProject
     ):
-        """DuckDB adapter passes pre-computed params to _execute_duckdb unchanged."""
+        """Pre-computed params reach the DuckDB backend unchanged."""
         from dbt_charts.core.compile.models.source import DuckDBSourceConfig
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 
-        adapter = DuckDBAdapter(
+        from ..._backend_runner import DuckDBRunner
+
+        adapter = DuckDBRunner(
             data_dir=local_project(Path("/tmp")).data_path("."),
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
 
         query = SqlQuery(sql="SELECT * FROM orders WHERE region = $1", source="test_db")
 
-        with patch.object(adapter, "_execute_duckdb") as mock_duckdb:
-            mock_duckdb.return_value = QueryResult(data=[], schema=literal_schema([]))
-
+        with patch.object(
+            adapter.backend, "execute", return_value=rows_to_arrow([])
+        ) as mock_execute:
             adapter.execute(query, variables={}, params=["North"])
 
-            call_args = mock_duckdb.call_args
-            assert call_args[0][1] == ["North"]
+        assert mock_execute.call_args[0][1].params == ("North",)
 
     def test_adapter_registry_passes_params_through(
-        self, local_project: "FilesystemProject"
+        self, local_project: FilesystemProject
     ):
-        """AdapterRegistry forwards the params kwarg to the adapter's execute."""
+        """AdapterRegistry hands pre-rendered params to the backend as bindings."""
         from unittest.mock import MagicMock
 
+        import nanoarrow as na
+        import pyarrow as pa
+
+        from dbt_charts.core.compile.models.source import DuckDBSourceConfig
         from dbt_charts.core.execute.adapters import AdapterRegistry
-        from dbt_charts.core.execute.source_resolver import SourceResolver
+        from dbt_charts.core.execute.backends.base import BackendRegistry
+        from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
-        mock_resolver = MagicMock(spec=SourceResolver)
-        mock_resolver.resolve.return_value = None
+        backend = MagicMock()
+        backend.param_style = INLINE_PLACEHOLDERS
+        backend.execute.return_value = na.Array(pa.table({"n": [1]}))
         registry = AdapterRegistry(
-            project=local_project(Path()), resolver=mock_resolver
+            project=local_project(Path()),
+            backends=BackendRegistry({"duckdb": backend}),
         )
 
-        mock_adapter = Mock()
-        mock_adapter.supported_types = {"sql"}
-        mock_adapter.can_execute.return_value = True
-        mock_adapter.execute.return_value = QueryResult(
-            data=[], schema=literal_schema([])
+        registry.execute(
+            SqlQuery(sql="SELECT 1", source="db"),
+            variables={},
+            params=["test"],
+            source_config=DuckDBSourceConfig(type="duckdb"),
         )
 
-        registry._adapters = [mock_adapter]
-        registry._type_index = {"sql": [mock_adapter]}
-
-        query = SqlQuery(sql="SELECT 1", source="db")
-
-        registry.execute(query, variables={}, params=["test"])
-
-        mock_adapter.execute.assert_called_once()
-        call_args = mock_adapter.execute.call_args
-        assert call_args[0][2] == ["test"]
+        backend.execute.assert_called_once()
+        assert backend.execute.call_args[0][1].params == ("test",)
 
 
 class TestExecuteQueryParameterization:
     """execute_query routes injection-safe params through the DuckDB adapter."""
 
     def test_injection_prevented_via_duckdb_adapter(
-        self, local_project: "FilesystemProject"
+        self, local_project: FilesystemProject
     ):
-        """Malicious variable value arrives at _execute_duckdb as a bound param.
+        """Malicious variable value arrives at the DuckDB backend as a bound param.
 
         If render_parameterized were broken to do string interpolation instead,
         the injected SQL fragment would appear in the sql argument and this test
@@ -92,7 +98,6 @@ class TestExecuteQueryParameterization:
         """
         from dbt_charts.core.compile import compile
         from dbt_charts.core.execute import Executor
-        from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 
         yaml_content = """\
 title: Test
@@ -125,24 +130,19 @@ rows:
 
         registry = build_adapter_registry(project)
 
-        # Find the DuckDB adapter to patch _execute_duckdb
-        duckdb_adapter = next(
-            (a for a in registry._adapters if isinstance(a, DuckDBAdapter)),
-            None,
+        backend = registry._backends.for_source(  # noqa: SLF001
+            DuckDBSourceConfig(type="duckdb")
         )
-        assert duckdb_adapter is not None
 
         captured_calls: list[tuple[str, list]] = []
 
-        def capture_duckdb(sql: str, params: list, *args, **kwargs) -> QueryResult:
-            captured_calls.append((sql, list(params or [])))
-            return QueryResult(data=[], schema=literal_schema([]))
+        def capture_duckdb(source: object, resolved: ResolvedQuery) -> na.Array:
+            captured_calls.append((resolved.sql, list(resolved.params)))
+            return rows_to_arrow([])
 
         malicious = "'; DROP TABLE users; --"
 
-        with patch.object(
-            duckdb_adapter, "_execute_duckdb", side_effect=capture_duckdb
-        ):
+        with patch.object(backend, "execute", side_effect=capture_duckdb):
             executor = Executor(
                 result.board,
                 adapter_registry=registry,
@@ -151,7 +151,7 @@ rows:
             )
             executor.execute_query("users", {"name": malicious})
 
-        assert len(captured_calls) == 1, "Expected exactly one _execute_duckdb call"
+        assert len(captured_calls) == 1, "Expected exactly one DuckDB backend call"
         sql_sent, params_sent = captured_calls[0]
 
         # Injection must NOT appear in the SQL text
@@ -190,7 +190,7 @@ class TestPlaceholderShapedLiteralsThroughExecutor:
         assert result.success, result.errors
 
         # tmp_path, not CWD: a dbt_project.yml in the CWD would silently
-        # reroute these queries to DbtAdapter, which ignores params.
+        # reroute these queries to the dbt target.
         project = local_project(tmp_path)
         project.__dict__["sources"] = ProjectSourcesConfig(
             sources={

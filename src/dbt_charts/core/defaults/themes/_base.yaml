@@ -745,7 +745,7 @@ style:
         halo_multiplier: 2.0
         labels:
           visible: false
-          position: top
+          position: auto
           dx: auto
           dy: auto
       area:
@@ -796,9 +796,13 @@ style:
         fill: theme.background
         labels:
           visible: false
-          position: top
+          position: auto
           dx: auto
           dy: auto
+          # One gray for every label, so the points carry the pattern.
+          font:
+            extends: label
+            color: chrome[7]
       slice:
         # gap 0 lets the stroke (canvas-color knockout) be the only
         # visible separator between slices.

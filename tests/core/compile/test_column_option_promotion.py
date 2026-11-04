@@ -291,13 +291,12 @@ rows:
 class TestColumnOptionUsesNamedQueryCache:
     def test_second_render_does_not_re_execute_column_option_query(self) -> None:
         """Column-option query hits the executor cache on second render, not the adapter."""
-        from dbt_charts.core.execute.parallel import execute_queries_parallel
-
         result = compile_with_board_sources(_RENDER_CACHE_YAML)
         assert result.success
 
         registry = Mock()
         registry.project_file_sources.return_value = {}
+        registry.database_file_version.return_value = ""
         registry.execute.return_value = QueryResult(
             data=[{"name": "East"}], schema=literal_schema([{"name": "East"}])
         )
@@ -305,12 +304,12 @@ class TestColumnOptionUsesNamedQueryCache:
 
         # First render: pre-execute all queries (what renderer.py does)
         all_names = collect_all_query_names(result.board)
-        execute_queries_parallel(executor, all_names)
+        executor.run_misses(executor.lookup(all_names), None, 8)
 
         calls_after_first_render = registry.execute.call_count
 
         # Second render: same pre-execute — the column-option query is cached
-        execute_queries_parallel(executor, all_names)
+        executor.run_misses(executor.lookup(all_names), None, 8)
 
         # The adapter must not have been called again for the column option query
         assert registry.execute.call_count == calls_after_first_render

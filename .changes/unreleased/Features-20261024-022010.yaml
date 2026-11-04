@@ -1,3 +1,0 @@
-kind: Features
-body: dct init skills writes one versionless `dct` skill that sends agents to `dct skills chart` once a session, replacing the seven per-skill copies that went stale on every upgrade.
-time: 2026-10-24T02:20:10.004054-07:00

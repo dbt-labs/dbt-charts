@@ -158,11 +158,12 @@ def test_top_horizontal_legend_title_defaults_hidden_with_explicit_opt_in(
         y="value",
         color="series",
         style={
+            "endpoint_labels": {"visible": False},
             "legend": {
                 "position": {"edge": "top"},
                 "direction": "horizontal",
                 "title": title,
-            }
+            },
         },
     )
     resolved = resolve(
@@ -193,7 +194,13 @@ def test_top_horizontal_legend_preserves_board_level_title_opt_in(
         }
     )
     board_style = resolve_chart_style_context(get_theme_style(), board_style)
-    chart = make_chart("line", x="date", y="value", color="series")
+    chart = make_chart(
+        "line",
+        x="date",
+        y="value",
+        color="series",
+        style={"endpoint_labels": {"visible": False}},
+    )
 
     resolved = resolve(chart, _multi_series_data(), board_style, width=700.0)
 

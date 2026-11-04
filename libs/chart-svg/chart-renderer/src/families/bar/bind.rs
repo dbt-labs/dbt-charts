@@ -385,6 +385,7 @@ pub(super) fn zero_label(
         dy: None,
         font: slot.font.clone(),
         position: Some("above".into()),
+        auto: false,
         stacked: None,
     }))
 }

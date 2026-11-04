@@ -4216,7 +4216,7 @@ mod tests {
         // The payload's plot is 300 tall; zero sits below the domain's floor, so the
         // fill is clipped at the plot rect rather than squeezed onto its edge.
         assert!(ys[ys.len() - 3..].iter().all(|y| *y > 300.0), "{ys:?}: {svg}");
-        assert!(svg.contains("<clipPath id=\"dbt-area-clip-") && svg.contains("height=\"300\"/></clipPath>"), "{svg}");
+        assert!(svg.contains("<clipPath id=\"dbt-layer-clip-") && svg.contains("height=\"300\"/></clipPath>"), "{svg}");
     }
 
     /// A scatter layer over a color-grouped base renders beside the base's circle glyphs.
@@ -5064,7 +5064,7 @@ mod tests {
     /// (`["zeta", "alpha"]`) precisely so a first-appearance-order base
     /// would rank `zeta` first and this goes red without the fix.
     #[test]
-    fn wide_line_rail_ties_break_alphabetically_over_the_sorted_domain() {
+    fn wide_line_rail_ties_stack_with_the_top_painted_series_on_top() {
         use serde_json::json;
         let mut p = make_wide_line_payload();
         p["resolved"]["wide_measures"] = json!(["zeta", "alpha"]);
@@ -5089,8 +5089,8 @@ mod tests {
                 .unwrap()
         };
         assert!(
-            y_of("100 Alpha") < y_of("100 Zeta"),
-            "tied last values break alphabetically (alpha before zeta), not authored order: {svg}"
+            y_of("100 Zeta") < y_of("100 Alpha"),
+            "wide series paint alphabetically, so zeta is on top and takes the top label: {svg}"
         );
     }
 
@@ -6979,8 +6979,7 @@ mod tests {
         }).collect();
         assert_eq!(circles.len(), 2, "one circle symbol per series: {svg}");
         // The rail pane sits after the legend box at the hconcat spacing.
-        let after_axis = svg.find("<text x=\"-5.5\" ").expect("the plot's y labels");
-        let rail_text = after_axis + svg[after_axis..].find("<text x=\"0\" ").expect("the rail's labels");
+        let rail_text = svg.rfind("<text x=\"0\" ").expect("the rail's labels");
         let rail_group = &svg[svg[..rail_text].rfind("<g transform=\"translate(").unwrap() + "<g transform=\"translate(".len()..];
         let rail_x: f64 = rail_group.split(',').next().unwrap().parse().unwrap();
         assert_eq!(rail_x, attr(&title, "x") + box_w + 6.0, "rail after the legend box: {svg}");
@@ -7129,6 +7128,44 @@ mod tests {
             assert_eq!(attr(&tag, "x"), gx + grid.col_x[col] + grid.label_x, "{label} label x: {tag}");
             assert_eq!(attr(&tag, "y"), legend_top + grid.row_y[row] + c + mid, "{label} label y: {tag}");
         }
+    }
+
+    /// The rail arm anchors the title above the plot's whole top reservation, the top legend's
+    /// strip included: the legend's entries sit below the title's baseline, not on it.
+    #[test]
+    fn rail_top_legend_sits_below_the_title() {
+        use serde_json::json;
+        let fonts = test_fonts();
+        let mut p = make_multi_series_line_payload_with_bottom_legend();
+        p["resolved"]["title"] = json!("Weekly Signups");
+        p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
+        p["resolved"]["legend"]["position"] = json!({"edge": "top", "align": "start", "overlay": false});
+        p["resolved"]["legend"]["direction"] = json!("horizontal");
+        p["resolved"]["legend"]["title"]["visible"] = json!(false);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
+        let title_y = attr(&text_tag(&svg, "Weekly Signups"), "y");
+        let entry_y = attr(&text_tag(&svg, "A"), "y");
+        assert!(entry_y > title_y + 11.0, "legend entry baseline {entry_y} clears the title baseline {title_y}: {svg}");
+    }
+
+    /// With the x axis on top and no legend, the title still anchors above the axis band: the
+    /// tick labels sit below the title, not on it.
+    #[test]
+    fn rail_top_x_axis_sits_below_the_title() {
+        use serde_json::json;
+        let fonts = test_fonts();
+        let mut p = make_multi_series_line_payload_with_bottom_legend();
+        p["resolved"]["title"] = json!("Weekly Signups");
+        p["resolved"]["style"]["endpoint_labels"]["visible"] = json!(true);
+        p["resolved"]["legend"]["visible"] = json!(false);
+        p["resolved"]["style"]["axis_x"]["position"] = json!("top");
+        p["resolved"]["style"]["axis_x"]["title"]["visible"] = json!(true);
+        let svg = render(&serde_json::from_value::<Payload>(p).unwrap(), &fonts).expect("renders");
+        let title_y = attr(&text_tag(&svg, "Weekly Signups"), "y");
+        let plot_origin_y: f64 = svg.split("<g transform=\"translate(").nth(1).unwrap().split(',').nth(1).unwrap().split(')').next().unwrap().parse().unwrap();
+        // "1" is the topmost tick row (the day of month, above the month row); its glyph top is one font size above its baseline.
+        let tick_top = plot_origin_y + attr(&text_tag(&svg, "1"), "y") - 11.0;
+        assert!(tick_top > title_y + 4.0, "top x tick label top {tick_top} clears the title baseline {title_y}: {svg}");
     }
 
     /// Area takes the same top-legend law — `render_inner` is shared, so
@@ -9543,6 +9580,25 @@ mod tests {
         assert!(!hidden_svg.contains(">week<"));
         assert!(!hidden_svg.contains(">signups<"));
         assert!(plot_group_x(&visible_svg) > plot_group_x(&hidden_svg));
+    }
+
+    #[test]
+    fn tied_rail_labels_stack_in_paint_order_with_the_top_painted_on_top() {
+        for level in [80.0, 20.0] {
+            let anchors = vec![("under".to_string(), level), ("over".to_string(), level)];
+            let placed = cascade_rail_anchors(&anchors, 10.0, &crate::families::cartesian::one_line_extras(&anchors), 0.0, 100.0).0;
+            let at = |name: &str| placed.iter().find(|(s, _)| s == name).expect("placed").1;
+            assert!(at("over") > at("under"), "{placed:?}");
+        }
+    }
+
+    #[test]
+    fn a_lone_label_keeps_its_mark_and_the_tied_pair_moves() {
+        let anchors = vec![("d".to_string(), 113.0), ("e".to_string(), 115.0), ("f".to_string(), 115.0)];
+        let placed = cascade_rail_anchors(&anchors, 5.0, &crate::families::cartesian::one_line_extras(&anchors), 0.0, 140.0).0;
+        let at = |name: &str| placed.iter().find(|(s, _)| s == name).expect("placed").1;
+        assert_eq!(at("d"), 113.0, "{placed:?}");
+        assert!(at("f") > at("e") && at("e") > at("d"), "{placed:?}");
     }
 
     #[test]
@@ -12770,7 +12826,7 @@ mod tests {
         let plot = svg.find("stroke-width=\"4\"").unwrap();
         let path = &svg[svg[..plot].rfind("<path").unwrap()..plot];
         let line_end: f64 = path.rsplit('L').next().unwrap().split(',').next().unwrap().parse().unwrap();
-        let origin: f64 = svg[..svg.find(&path[..40]).unwrap()].rsplit("translate(").next().unwrap().split(',').next().unwrap().parse().unwrap();
+        let origin: f64 = svg[..svg.find("role-axis").unwrap()].rsplit("translate(").next().unwrap().split(',').next().unwrap().parse().unwrap();
         assert!(
             (rail_x - (origin + line_end)).abs() <= 12.0,
             "labels start at the line end plus the gap: rail {rail_x}, line end {}: {svg}",

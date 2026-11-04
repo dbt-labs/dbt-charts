@@ -779,14 +779,23 @@ pub(crate) fn cascade_rail_anchors(
     // Two neighbors stand `min_gap` apart plus half of what each is taller than one line.
     let gap = |a: &str, b: &str| min_gap + (extra[a] + extra[b]) / 2.0;
 
-    let mut items = clamped;
-    if mean >= domain_mid {
-        items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        pack_against_bound(items, |anchor, prev, prev_name, name| anchor.min(prev - gap(prev_name, name)), |y| y < y_domain_min)
-    } else {
-        items.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        pack_against_bound(items, |anchor, prev, prev_name, name| anchor.max(prev + gap(prev_name, name)), |y| y > y_domain_max)
-    }
+    // Anchors arrive in paint order: among equals the top-painted series takes the top label.
+    let mut ascending = clamped.clone();
+    ascending.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    let mut descending = clamped.clone();
+    descending.reverse();
+    descending.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    let down = pack_against_bound(descending, |anchor, prev, prev_name, name| anchor.min(prev - gap(prev_name, name)), |y| y < y_domain_min);
+    let up = pack_against_bound(ascending, |anchor, prev, prev_name, name| anchor.max(prev + gap(prev_name, name)), |y| y > y_domain_max);
+    // The side that keeps the most names nearest their marks; the emptier half of the domain breaks a tie.
+    let cost = |(placed, dropped): &(Vec<(String, f64)>, Vec<String>)| {
+        let moved: f64 = placed.iter().map(|(name, y)| (y - clamped.iter().find(|(n, _)| n == name).expect("a placed anchor").1).abs()).sum();
+        (dropped.len(), moved)
+    };
+    let (down_cost, up_cost) = (cost(&down), cost(&up));
+    let up_wins = up_cost.0 < down_cost.0 || (up_cost.0 == down_cost.0 && up_cost.1 < down_cost.1 - 1e-9);
+    let down_wins = down_cost.0 < up_cost.0 || (up_cost.0 == down_cost.0 && down_cost.1 < up_cost.1 - 1e-9);
+    if up_wins || (!down_wins && mean < domain_mid) { up } else { down }
 }
 
 /// `_pack_against_bound`: greedy-pack extremity-first `items` against a bound.

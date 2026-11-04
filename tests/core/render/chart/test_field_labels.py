@@ -126,7 +126,12 @@ def test_legend_values_resolve_against_field_labels(
     def codes(legend_values: list[str]) -> set[str]:
         legend = {"visible": True, "values": legend_values}
         result = _render(
-            {**chart, "field_labels": labels, "style": {"legend": legend}}, rows
+            {
+                **chart,
+                "field_labels": labels,
+                "style": {"endpoint_labels": {"visible": False}, "legend": legend},
+            },
+            rows,
         )
         return {w.code for w in result.warnings}
 

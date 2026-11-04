@@ -182,6 +182,17 @@ def _resolve_kpi(
             else resolved_as(
                 ResolvedKpiSupportConfig,
                 normalized.support,
+                label=(
+                    None
+                    if normalized.support.label is None
+                    else _resolve_text(
+                        normalized.support.label,
+                        display_text,
+                        formats,
+                        normalized.id,
+                        "support.label",
+                    )
+                ),
                 format=(
                     None
                     if support_format is None

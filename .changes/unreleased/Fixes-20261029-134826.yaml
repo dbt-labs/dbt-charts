@@ -1,3 +1,0 @@
-kind: Fixes
-body: dct --var now takes a multiselect as a JSON list or a repeated key and rejects a malformed list instead of returning no rows.
-time: 2026-10-29T13:48:26.4882-07:00

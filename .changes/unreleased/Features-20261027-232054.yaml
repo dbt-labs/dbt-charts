@@ -1,3 +1,0 @@
-kind: Features
-body: Hovering a legend entry or series name previews that series, and clicking one shows only it and zooms the value axis to it, with each further click adding or removing a series while the plot stays the same size.
-time: 2026-10-27T23:20:54.149166-07:00

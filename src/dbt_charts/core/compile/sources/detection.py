@@ -406,9 +406,8 @@ def detect_database_type_from_registry(
 ) -> dict[str, str]:
     """Detect database type information from an adapter registry.
 
-    Inspects registered SQL adapters (DbtAdapter, SqlAdapter; DuckDBAdapter has
-    no dbt profile and reports "unknown") to determine the database type by
-    reading their dbt profiles.yml configuration.
+    Reads the dbt profiles.yml of the linked dbt project, or else the registry's
+    ``profile_type`` (the DuckDB backend has no dbt profile).
 
     Args:
         registry: AdapterRegistry instance to inspect.
@@ -419,72 +418,45 @@ def detect_database_type_from_registry(
         Dict with database type information. Always returns a dict — never None.
         Keys: type, engine, dialect, notes (and optionally profile_name, target_name).
     """
-    # tach-ignore(pre-existing compile->execute coupling — accepted debt)
-    from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-
-    # tach-ignore(pre-existing compile->execute coupling — accepted debt)
-    from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
-
     # tach-ignore(pre-existing compile->project_roots coupling — accepted debt)
     from dbt_charts.core.project_roots import resolve_profiles_path
 
-    sql_adapters = registry.get_adapters_for_type("sql")
+    dbt_context = registry.dbt_context
+    if dbt_context is not None and dbt_context.dbt_project_path is not None:
+        dbt_path = dbt_context.dbt_project_path
+        profile_name = default_profile_name
+        target_name = dbt_context.target or default_target_name
 
-    for adapter in sql_adapters:
-        if isinstance(adapter, DbtAdapter):
-            dbt_path = Path(adapter.dbt_project_path)
-            profile_name = adapter.profile_name or default_profile_name
-            target_name = adapter.target_name or default_target_name
+        try:
+            profiles_path = resolve_profiles_path(dbt_path, profiles_dir=None)
+            db_info = detect_dbt_database_type(
+                profiles_path, profile_name, target_name, fallback_type="duckdb"
+            )
+        except FileNotFoundError:
+            db_info = None
 
-            try:
-                profiles_path = resolve_profiles_path(dbt_path, profiles_dir=None)
-                db_info = detect_dbt_database_type(
-                    profiles_path, profile_name, target_name, fallback_type="duckdb"
-                )
-            except FileNotFoundError:
-                db_info = None
+        if db_info:
+            db_info["profile_name"] = profile_name
+            db_info["target_name"] = target_name
+            return db_info
 
-            if db_info:
-                db_info["profile_name"] = profile_name
-                db_info["target_name"] = target_name
-                return db_info
+        # A dbt project whose type can't be determined — default to DuckDB
+        info = DB_INFO_MAP["duckdb"].copy()
+        info["description"] = "SQL queries execute via DuckDB (default)"
+        return info
 
-            # DbtAdapter but can't determine type — default to DuckDB
-            info = DB_INFO_MAP["duckdb"].copy()
-            info["description"] = "SQL queries execute via DuckDB (default)"
-            return info
-
-        elif isinstance(adapter, SqlAdapter):
-            if adapter.dbt_project_path:
-                dbt_path = Path(adapter.dbt_project_path)
-                try:
-                    profiles_path = resolve_profiles_path(dbt_path, profiles_dir=None)
-                    db_info = detect_dbt_database_type(
-                        profiles_path,
-                        default_profile_name,
-                        default_target_name,
-                        fallback_type="duckdb",
-                    )
-                except FileNotFoundError:
-                    db_info = None
-
-                if db_info:
-                    return db_info
-
-            # SqlAdapter without dbt project — fall back to the profile_type
-            # the executor already trusts (sql_adapter.py) before giving up.
-            if adapter.profile_type:
-                profile_type_info = get_database_info(adapter.profile_type)
-                if profile_type_info:
-                    return profile_type_info.copy()
-
-            return {
-                "type": "unknown",
-                "engine": "Unknown",
-                "description": "SQL adapter configured but database type unknown",
-                "dialect": "SQL",
-                "notes": "Database type could not be determined. Use generic SQL syntax.",
-            }
+    # No dbt project: the dialect the registry's host declared.
+    if registry.profile_type:
+        profile_type_info = get_database_info(registry.profile_type)
+        if profile_type_info:
+            return profile_type_info.copy()
+        return {
+            "type": "unknown",
+            "engine": "Unknown",
+            "description": "SQL adapter configured but database type unknown",
+            "dialect": "SQL",
+            "notes": "Database type could not be determined. Use generic SQL syntax.",
+        }
 
     return {
         "type": "none",

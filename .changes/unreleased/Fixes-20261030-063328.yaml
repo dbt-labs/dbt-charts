@@ -1,3 +1,0 @@
-kind: Fixes
-body: dct query now finds queries defined in a nested board, such as inside a tab.
-time: 2026-10-30T06:33:28.629985-07:00

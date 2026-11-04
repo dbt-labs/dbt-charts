@@ -3,7 +3,6 @@
 //! annotations are placed in the plot it settles on and returned as nodes.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 use measure::Measure;
 use scene::{Attrs, Node, PathData, Role};
@@ -1790,7 +1789,9 @@ pub(super) fn fit(
     let x_rule_w = ax_x.grid.threshold.as_ref().map_or(0.0, |zx| zx.width.unwrap_or(2.0));
     let floor_span = xf.rules.iter().flatten().fold((rx1, rx2), |(lo, hi), &frac| (lo.min(x_pos(frac) - x_rule_w / 2.0), hi.max(x_pos(frac) + x_rule_w / 2.0)));
     let paint_value_axis = panel.is_none_or(|o| o.paint_value_axis);
-    let value_axis_dx = panel.filter(|o| !o.embedded_y).map_or(0.0, |o| o.value_axis_right_overhang);
+    // A point on a right axis' edge overhangs the plot by its radius; the axis stands off it.
+    let edge_reach = points_data.iter().filter(|_| !y_left && !x_nominal && !y_nominal).map(|p| x_pos(p.0) + p.3 - plot_w).fold(0.0, f64::max);
+    let value_axis_dx = panel.filter(|o| !o.embedded_y).map_or(0.0, |o| o.value_axis_right_overhang) + edge_reach;
     // The value axis edges the ticks start from: a baseline rule reaches them so its continued tick meets it.
     let y_edge_x = if y_left { 0.5 } else { plot_w + value_axis_dx + 0.5 };
     let y_edges: Vec<f64> = if y_tick_eff > 0.0 && paint_value_axis {
@@ -1941,7 +1942,7 @@ pub(super) fn fit(
                 crate::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
-                    Node::line(Role::Grid, (rx1, gy), (rx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
+                    Node::line(Role::Rule, (rx1, gy), (rx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
                 },
             )?);
             if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
@@ -1971,7 +1972,7 @@ pub(super) fn fit(
                 crate::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
-                    Node::line(Role::Grid, (gx, 0.0), (gx, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
+                    Node::line(Role::Rule, (gx, 0.0), (gx, plot_h), Attrs::new().set("stroke", zc).num("stroke-width", zw).extend(aria))
                 },
             )?);
             if let Some(shape_field) = r.shape.as_deref().filter(|_| rule_shape) {
@@ -2002,7 +2003,7 @@ pub(super) fn fit(
     // With a shape channel the ghost rule layer carries a small point per datum beside its rule.
     let mut ghost_symbols: Vec<(PathData, f64, f64, String, String, Option<String>)> = Vec::new();
     let value_label_ink = value_label_font.and_then(|f| f.color.as_deref()).unwrap_or("#313233");
-    let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>)> = Vec::new();
+    let mut value_label_marks: Vec<(f64, f64, Option<String>, String, Option<String>, f64)> = Vec::new();
     for (datum, (x_frac, y_frac, series, mark_r, row)) in points_data.iter().enumerate() {
         let (cx, cy) = (x_pos(*x_frac), y_pos(*y_frac));
         let channel_ink = match &color_scale {
@@ -2141,9 +2142,13 @@ pub(super) fn fit(
         let mark = crate::href::linked(anchor, Node::path(role, d, glyph.num("opacity", mark_opacity).extend(label_attrs)).translate(cx, cy));
         plot.push(if aria.is_some() { crate::contract::mark_group("symbol", &points_layer_name, vec![mark])? } else { mark });
         if value_labels.is_some() && !y_nominal {
-            // The text layer inherits the color channel as its fill.
-            let ink = if r.color.is_some() { channel_ink.clone() } else { value_label_ink.to_string() };
-            value_label_marks.push((cx, cy, aria.clone(), ink, href.clone()));
+            let ink = match value_label_font.and_then(|f| f.color.as_deref()) {
+                Some(crate::common::SERIES_INK) => channel_ink.clone(),
+                Some(authored) => authored.to_string(),
+                None if r.color.is_some() => channel_ink.clone(),
+                None => value_label_ink.to_string(),
+            };
+            value_label_marks.push((cx, cy, aria.clone(), ink, href.clone(), *mark_r));
         }
         if let (true, Some(label)) = (ghosts_on, &aria) {
             let stroke = if r.color.is_some() { channel_ink.clone() } else { ghost_ink.clone() };
@@ -2154,19 +2159,118 @@ pub(super) fn fit(
             }
         }
     }
+    // A tick at a painted baseline rule's value is that rule continued.
+    let y_rules = ax_y.grid.threshold.as_ref().filter(|_| crate::common::rule_reaches(floor_span, y_edge_x)).map_or_else(Vec::new, |zl| {
+        crate::common::value_axis_rules(0.0, baseline_rule_fracs.iter().flatten().map(|&frac| y_pos(frac)), zl.stroke(), zl.width.unwrap_or(2.0))
+    });
+    let y_threshold_rules: Vec<_> = crate::common::thresholds(&y_rules);
+    // The value axis: drawn by the panel that owns it (a facet's last
+    // column), anchored `value_axis_dx` past the plot edge.
+    // The axis group's origin and the direction its ticks, labels and title run.
+    let (y_axis_x, y_outward) = if y_left { (0.5, -1.0) } else { (plot_w + value_axis_dx + 0.5, 1.0) };
+    let y_caption = AxisCaption::new(&y_title_text, val_title_style, y_scale_caption).bare_if_undrawn(ax_y);
+    let y_label_color = ax_y.labels.font.color.as_deref().unwrap_or("#626366");
+    let y_label_weight = ax_y.labels.font.weight_str();
+    let log_visible = Some(y_thinned(plot_w + value_axis_dx, plot_h));
+    let value_axis_nodes: Vec<Node> = if paint_value_axis {
+        let mut items = Vec::new();
+        // Y tick marks: 6px lines between the plot edge and the label gutter.
+        if y_tick_eff > 0.0 {
+            let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
+            let tw = ax_y.ticks.width.unwrap_or(1.0);
+            for &frac in &y_ticks {
+                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), tc, tw);
+                items.push(Node::line(
+                    Role::Axis,
+                    (y_axis_x, gy),
+                    (y_axis_x + y_outward * y_tick_eff, gy),
+                    Attrs::new().set("stroke", tc).num("stroke-width", tw),
+                ));
+            }
+        }
+        // Y labels: right-aligned at the gutter's outer edge, middle baseline.
+        let y_label_x = y_axis_x + y_outward * y_label_off;
+        for (i, (&frac, lbl)) in y_ticks.iter().zip(y_labels.iter()).enumerate() {
+            if log_visible.as_ref().is_some_and(|v| !v[i]) {
+                continue;
+            }
+            let gy = y_pos(frac) + 0.5 + measure::baseline_shift("middle", y_font_size);
+            items.push(crate::text::label(
+                Role::Axis,
+                (y_label_x, gy),
+                Attrs::new()
+                    .set("text-anchor", y_label_anchor)
+                    .vega("font-family", y_family)
+                    .num("font-size", y_font_size)
+                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
+                    .set("font-weight", y_label_weight.as_str())
+                    .set("fill", y_label_color),
+                ax_y.labels.clip(lbl, fonts)?,
+            )
+            .with_text_bounds(y_label_ink(plot_w + value_axis_dx, plot_h, i).into()));
+        }
+        items.extend(crate::common::axis_title_rotated(
+            &y_title_text,
+            val_title_style,
+            y_axis_x + y_outward * y_edge_at(plot_w, plot_h),
+            plot_h / 2.0,
+            y_outward,
+            panel.is_none().then_some(crate::contract::LabelKey::Y),
+        ));
+        crate::contract::axis_group(crate::contract::AxisChannel::Y, &y_caption, (y_axis_x, 0.0), items)?
+    } else {
+        Vec::new()
+    };
     if !value_label_marks.is_empty() {
         let weight = value_label_font.map(|f| f.weight_str()).unwrap_or_else(|| "400".into());
         let font_style = value_label_font.and_then(|f| f.style.as_deref());
-        let baseline = value_label_dy + measure::baseline_shift(value_label_baseline, value_label_size);
         let mut labels = Vec::new();
-        for ((cx, cy, aria, color, href), (text, w)) in value_label_marks.iter().zip(&value_label_texts) {
-            let ink = vega_fit::text_ink(cx + value_label_dx, cy + value_label_dy, *w, value_label_size, value_label_align, value_label_baseline);
+        let movable = value_labels.is_some_and(|ml| ml.auto);
+        // An auto label of a point on the y axis that reads its tick's text only repeats the axis.
+        let (value_label_marks, value_label_texts): (Vec<_>, Vec<_>) = if movable && paint_value_axis {
+            let ticks = crate::placement::tick_labels(&[(&value_axis_nodes, (0.0, 0.0))]);
+            let edge_x = if y_left { 0.0 } else { plot_w };
+            value_label_marks
+                .iter()
+                .cloned()
+                .zip(value_label_texts.iter().cloned())
+                .filter(|((cx, cy, ..), (text, _))| !crate::placement::repeats_axis((*cx, *cy), text, edge_x, &ticks))
+                .unzip()
+        } else {
+            (value_label_marks.clone(), value_label_texts.clone())
+        };
+        let preferred = crate::common::CaptionSpot { edge: None, align: value_label_align, baseline: value_label_baseline, dx: value_label_dx, dy: value_label_dy };
+        let anchors: Vec<(f64, f64)> = value_label_marks.iter().map(|m| (m.0, m.1)).collect();
+        let sides = crate::placement::pair_sides(&anchors);
+        let grid_rows = crate::placement::grid_rows(&plot);
+        let reqs: Vec<crate::placement::LabelReq> = value_label_marks
+            .iter()
+            .zip(&value_label_texts)
+            .enumerate()
+            .map(|(owner, ((cx, cy, _, _, _, mark_r), (_, w)))| crate::placement::LabelReq {
+                anchor: (*cx, *cy),
+                width: *w,
+                preferred: sides[owner].filter(|_| movable).map_or(preferred, |side| crate::placement::pair_spot(side, (*cx, *cy), *w, value_label_size, plot_w, &grid_rows)),
+                movable,
+                owner,
+                group: 0,
+                own_radius: *mark_r,
+                channel: false,
+            })
+            .collect();
+        let obstacles = crate::placement::obstacles(&plot, &[(&value_axis_nodes, (0.0, 0.0))]);
+        let mut field = crate::placement::Field { plot: (plot_w, plot_h), obstacles, paths: reqs.iter().map(|req| vec![req.anchor]).collect() };
+        let order: Vec<usize> = (0..reqs.len()).collect();
+        let spots = crate::placement::place_value_labels(&reqs, &order, value_label_size, &mut field);
+        for ((cx, cy, aria, color, href, _), ((text, w), spot)) in value_label_marks.iter().zip(value_label_texts.iter().zip(&spots)) {
+            let Some(spot) = spot else { continue };
+            let ink = vega_fit::text_ink(cx + spot.dx, cy + spot.dy, *w, value_label_size, spot.align, spot.baseline);
             let label_attrs = crate::contract::aria_attrs(aria.as_deref(), crate::contract::ItemRole::TextMark)?;
             let anchor = r.link_open.anchor(href.as_deref());
             let label = crate::common::value_label(
-                cx + value_label_dx,
-                cy + baseline,
-                value_label_align,
+                cx + spot.dx,
+                cy + spot.dy + measure::baseline_shift(spot.baseline, value_label_size),
+                spot.align,
                 value_label_family,
                 value_label_size,
                 &weight,
@@ -2177,6 +2281,10 @@ pub(super) fn fit(
             )
             .with_text_bounds(ink.into());
             labels.push(crate::href::linked(anchor, label));
+        }
+        let dropped = spots.iter().filter(|spot| spot.is_none()).count();
+        if movable {
+            crate::placement::warn_value_labels_thinned(&r.id, dropped, spots.len());
         }
         if tooltip_labels {
             plot.push(crate::contract::value_label_group(&format!("layer_{}_marks", fired_rule_count + 1), labels)?);
@@ -2189,7 +2297,7 @@ pub(super) fn fit(
         || overlays.iter().any(|o| o.axis_y().tooltip_format_or(&r.style.tooltip_format).has_affix());
     // Overlay layers paint after the base's marks, on its x scale and the
     // shared value scale.
-    let mut defined_clips: HashSet<String> = HashSet::new();
+    let clips = crate::families::layers::PlotClips::new(&r.id);
     for (index, (overlay, claim)) in overlays.iter().zip(&layered_legend.plan).enumerate() {
         let label = &claim.label;
         let claimed_fill = &claim.fill.clone().unwrap_or_default();
@@ -2248,6 +2356,7 @@ pub(super) fn fit(
                             free_y: &y_of,
                             plot: (plot_w, plot_h),
                             clip: crate::families::layers::layer_clip(overlay.layer_type(), overlay.y(), rows, ax_y, false, independent),
+                            clips: &clips,
                         },
                         false,
                         series_color,
@@ -2296,7 +2405,7 @@ pub(super) fn fit(
                         payload.board_style.as_ref(),
                         label_caption,
                         crate::families::layers::layer_link(datum_link.as_ref(), (sl.query_name.as_deref(), r.query_name.as_deref())),
-                        crate::families::layers::layer_clip(overlay.layer_type(), overlay.y(), rows, ax_y, false, independent).then_some((plot_w, plot_h)),
+                        crate::families::layers::layer_clip(overlay.layer_type(), overlay.y(), rows, ax_y, false, independent).then_some(((plot_w, plot_h), &clips)),
                         crate::families::layers::LabelCrowd { chart_id: &r.id, layer: index, fonts },
                     )
                     .map_err(|e| format!("scatter: {e}"))?,
@@ -2347,7 +2456,7 @@ pub(super) fn fit(
                     ),
                 )?);
                 if clip {
-                    plot.extend(crate::families::layers::clipped_layer(&mut defined_clips, (plot_w, plot_h), &r.id, bars));
+                    plot.extend(clips.wrap((plot_w, plot_h), bars));
                 } else {
                     plot.extend(bars);
                 }
@@ -2367,7 +2476,7 @@ pub(super) fn fit(
                 crate::contract::ItemRole::RuleMark,
                 crate::contract::Reads::Hidden,
                 |aria| {
-                    Node::line(Role::Grid, (lx1, gy), (lx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
+                    Node::line(Role::Rule, (lx1, gy), (lx2, gy), Attrs::new().set("stroke", zc).num("stroke-width", *width).extend(aria))
                 },
             )?);
         }
@@ -2453,66 +2562,8 @@ pub(super) fn fit(
         )?);
     }
 
-    // A tick at a painted baseline rule's value is that rule continued.
-    let y_rules = ax_y.grid.threshold.as_ref().filter(|_| crate::common::rule_reaches(floor_span, y_edge_x)).map_or_else(Vec::new, |zl| {
-        crate::common::value_axis_rules(0.0, baseline_rule_fracs.iter().flatten().map(|&frac| y_pos(frac)), zl.stroke(), zl.width.unwrap_or(2.0))
-    });
-    let y_threshold_rules: Vec<_> = crate::common::thresholds(&y_rules);
-    // The value axis: drawn by the panel that owns it (a facet's last
-    // column), anchored `value_axis_dx` past the plot edge.
-    // The axis group's origin and the direction its ticks, labels and title run.
-    let (y_axis_x, y_outward) = if y_left { (0.5, -1.0) } else { (plot_w + value_axis_dx + 0.5, 1.0) };
     let value_axis_from = plot.len();
-    let y_caption = AxisCaption::new(&y_title_text, val_title_style, y_scale_caption).bare_if_undrawn(ax_y);
-    let y_label_color = ax_y.labels.font.color.as_deref().unwrap_or("#626366");
-    let y_label_weight = ax_y.labels.font.weight_str();
-    let log_visible = Some(y_thinned(plot_w + value_axis_dx, plot_h));
-    if paint_value_axis {
-        let mut items = Vec::new();
-        // Y tick marks: 6px lines between the plot edge and the label gutter.
-        if y_tick_eff > 0.0 {
-            let tc = crate::common::required_ink(ax_y.ticks.color.as_deref(), "scatter", "axis_y.ticks.color")?;
-            let tw = ax_y.ticks.width.unwrap_or(1.0);
-            for &frac in &y_ticks {
-                let (gy, tc, tw) = crate::common::tick_look(&y_threshold_rules, crate::common::tick_round(y_pos(frac)), tc, tw);
-                items.push(Node::line(
-                    Role::Axis,
-                    (y_axis_x, gy),
-                    (y_axis_x + y_outward * y_tick_eff, gy),
-                    Attrs::new().set("stroke", tc).num("stroke-width", tw),
-                ));
-            }
-        }
-        // Y labels: right-aligned at the gutter's outer edge, middle baseline.
-        let y_label_x = y_axis_x + y_outward * y_label_off;
-        for (i, (&frac, lbl)) in y_ticks.iter().zip(y_labels.iter()).enumerate() {
-            if log_visible.as_ref().is_some_and(|v| !v[i]) {
-                continue;
-            }
-            let gy = y_pos(frac) + 0.5 + measure::baseline_shift("middle", y_font_size);
-            items.push(crate::text::label(
-                Role::Axis,
-                (y_label_x, gy),
-                Attrs::new()
-                    .set("text-anchor", y_label_anchor)
-                    .vega("font-family", y_family)
-                    .num("font-size", y_font_size)
-                    .quick_some("font-style", ax_y.labels.font.style.as_deref())
-                    .set("font-weight", y_label_weight.as_str())
-                    .set("fill", y_label_color),
-                ax_y.labels.clip(lbl, fonts)?,
-            ));
-        }
-        items.extend(crate::common::axis_title_rotated(
-            &y_title_text,
-            val_title_style,
-            y_axis_x + y_outward * y_edge_at(plot_w, plot_h),
-            plot_h / 2.0,
-            y_outward,
-            panel.is_none().then_some(crate::contract::LabelKey::Y),
-        ));
-        plot.extend(crate::contract::axis_group(crate::contract::AxisChannel::Y, &y_caption, (y_axis_x, 0.0), items)?);
-    }
+    plot.extend(value_axis_nodes);
     let value_axis = value_axis_from..plot.len();
     // Each layer's own axis, on the side it sits; only the first y title
     // of the chart edits its label, so the first layer's stands in for a base title

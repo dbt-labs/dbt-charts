@@ -1,3 +1,0 @@
-kind: Performance
-body: '`dct serve` answers a board''s first request about three times faster and warm requests about a third faster, and `dct render` finishes sooner.'
-time: 2026-10-29T01:40:13.514437-07:00

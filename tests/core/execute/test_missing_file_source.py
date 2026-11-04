@@ -1,6 +1,6 @@
 """Regression: a missing `type: csv` source file must not crash the render pipeline.
 
-Before this fix, `Executor.is_cached()` (called synchronously in the render loop,
+Before this fix, `Executor.lookup()` (called synchronously in the render loop,
 outside any per-chart error boundary) let a bare `FileNotFoundError` escape from
 `FilesystemProject.file_version`'s unguarded `.stat()` call — a `dct serve` request
 for such a board 500ed with a raw Python traceback in the response body instead of
@@ -18,6 +18,7 @@ import yaml
 from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.board import render_dashboard
 from dbt_charts.core.compile import compile as compile_board
+from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters import build_adapter_registry
 from dbt_charts.core.execute.executor import Executor
 from dbt_charts.core.project import InMemoryBoard
@@ -86,8 +87,8 @@ def _project_with_file_blocking_nested_path(tmp_path: Path) -> FilesystemProject
 
 
 class TestMissingCsvSourceFile:
-    def test_is_cached_does_not_raise_on_missing_file(self, tmp_path: Path) -> None:
-        """is_cached must report a miss, not crash, when the backing file is absent."""
+    def test_lookup_does_not_raise_on_missing_file(self, tmp_path: Path) -> None:
+        """lookup must report a failure, not crash, when the backing file is absent."""
         project = _project_with_missing_csv(tmp_path)
         result = compile_board(_BOARD_YAML)
         assert result.success, result.errors
@@ -99,7 +100,10 @@ class TestMissingCsvSourceFile:
             query_registry=dict(board.queries),
         )
 
-        assert executor.is_cached("q_bad") is False
+        found = executor.lookup(["q_bad"])
+        assert not found.hits and not found.misses
+        assert isinstance(found.failures["q_bad"].error, ExecutionError)
+        assert "sales.csv" in str(found.failures["q_bad"].error)
 
     def test_render_dashboard_degrades_to_chart_error_not_a_crash(
         self, tmp_path: Path
@@ -150,7 +154,7 @@ class TestMissingCsvSourceFile:
     ) -> None:
         """A `files:` path traversing through an existing file raises
         `NotADirectoryError`, not `FileNotFoundError` — a sibling OSError that
-        must degrade the same way, not escape `is_cached` as an unhandled 500."""
+        must degrade the same way, not escape `lookup` as an unhandled 500."""
         project = _project_with_file_blocking_nested_path(tmp_path)
 
         result = render_dashboard(

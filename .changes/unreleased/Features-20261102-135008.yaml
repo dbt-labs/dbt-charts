@@ -1,3 +1,0 @@
-kind: Features
-body: '`dct describe` text output prints each query''s SQL and accepts a board''s title in place of its path, and `dct search` takes several unquoted words as one query.'
-time: 2026-11-02T13:50:08.843061-08:00

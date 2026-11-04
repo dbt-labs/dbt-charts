@@ -1,3 +1,0 @@
-kind: Fixes
-body: 'A query''s `target:` is removed because it never chose a connection; set `target:` on a `type: dbt_profile` source instead.'
-time: 2026-10-30T00:32:20.146119-07:00

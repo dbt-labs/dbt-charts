@@ -7,6 +7,7 @@ typed authored fields to the per-family normalized model.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal
@@ -120,12 +121,31 @@ class RegisteredChart:
 
 
 def display_text_fields(chart_type: str) -> tuple[str, ...]:
-    """The fields of a chart type that render Jinja for display."""
+    """The fields of a chart type that render Jinja for display, as dotted paths."""
     if chart_type == "kpi":
-        return ("label",)
+        return ("label", "support.label")
     if chart_type == "callout":
         return ("title", "message")
     return ("title", "subtitle")
+
+
+def display_text_at(
+    chart: BaseModel | Mapping[str, YamlValue], field: str
+) -> str | None:
+    """The text at dotted ``field`` on a chart model or its raw mapping.
+
+    None if an optional block on the path is absent or the value is not a
+    string; a raw mapping is unvalidated, so a wrong-shaped block yields None.
+    """
+    value: BaseModel | Mapping[str, YamlValue] | YamlValue = chart
+    for part in field.split("."):
+        if isinstance(value, Mapping):
+            value = value.get(part)
+        elif isinstance(value, BaseModel):
+            value = getattr(value, part)
+        else:
+            return None
+    return value if isinstance(value, str) else None
 
 
 def normalize_chart(
@@ -188,7 +208,7 @@ def normalize_chart(
 
     # --- Display text: the variables and queries it reads ---
     display_texts = [
-        getattr(authored, name) for name in display_text_fields(chart_type)
+        display_text_at(authored, name) for name in display_text_fields(chart_type)
     ]
     text_deps: set[str] = set()
     for display_text in display_texts:

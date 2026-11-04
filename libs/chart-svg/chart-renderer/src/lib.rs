@@ -13,6 +13,7 @@ pub mod diagnostic;
 pub mod embed_fonts;
 pub mod families;
 pub mod layout;
+pub(crate) mod placement;
 pub mod font_normalize;
 pub mod frame;
 pub mod href;

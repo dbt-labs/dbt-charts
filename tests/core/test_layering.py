@@ -82,7 +82,7 @@ def test_compile_dialect_and_sql_guard_edges_are_relocated() -> None:
     dbt_charts.core.diagnostics.execution). No compile file should import the old
     dbt_charts.core.execute.{dialects,sql_guard,errors} module paths anymore.
 
-    The remaining compile->execute edges (DbtAdapter/SqlAdapter/
+    The remaining compile->execute edges (DbtBackend/
     _read_target_dict in sources.py) are real adapter-class usage, not
     relocatable leaf behavior — still accepted debt, each carrying its own
     `# tach-ignore(...)`. normalize/queries.py's edge left with the

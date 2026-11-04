@@ -31,15 +31,8 @@ from dbt_charts.core.execute.adapters.base import (
 class ValuesAdapter(BaseAdapter):
     """Adapter for inline values queries.
 
-    Supported query types: values
-
     Simply returns the rows embedded in the query definition.
     """
-
-    @property
-    def supported_types(self) -> set[str]:
-        """Return supported query types."""
-        return {"values"}
 
     def _execute(
         self,

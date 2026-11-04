@@ -12,8 +12,9 @@ from dbt_charts.core.compile.config import ProjectSourcesConfig
 from dbt_charts.core.compile.models.source import DuckDBSourceConfig
 from dbt_charts.core.execute import Executor
 from dbt_charts.core.execute.adapters import build_adapter_registry
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
 from dbt_charts.core.render import render
+
+from .._backend_runner import DuckDBRunner
 
 _MEMORY_DUCKDB_SOURCES = ProjectSourcesConfig(
     sources={"test_profile": {"type": "duckdb", "path": ":memory:"}}
@@ -148,7 +149,7 @@ rows:
 
     def test_sql_adapter_connection_string(self):
         """Test DuckDB adapter with custom connection string."""
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
 

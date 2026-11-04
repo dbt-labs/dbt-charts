@@ -18,7 +18,7 @@ _ROWS = "\n".join(
 
 
 def _strip_cells(chart_style: str = "", board_style: str = "") -> list[str]:
-    """The strip's sums, in order: the numerals after the y axis ticks."""
+    """The strip's sums, in order: the short numerals after the y axis ticks."""
     svg = render_board_to_svg(f"""
 title: T
 {board_style}
@@ -42,7 +42,8 @@ rows:
   - c
 """)
     texts = re.findall(r">([^<>]+)</text>", svg)
-    return texts[texts.index("20") + 1 : texts.index("Value")]
+    cells = texts[texts.index("20") + 1 : texts.index("Value")]
+    return [text for text in cells if text.isdigit() and len(text) <= 2]
 
 
 _EVERY_QUARTER = [str(i) for i in range(1, 25, 3)]

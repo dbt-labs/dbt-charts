@@ -1,5 +1,6 @@
-"""Tests for SqlAdapter generic execute path."""
+"""Tests for the dbt backend's execute path."""
 
+import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 
@@ -11,14 +12,19 @@ from dbt_charts.cli.filesystem_project import FilesystemProject
 from dbt_charts.core.column_types import ColumnType
 from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
+    DbtTargetSourceConfig,
     DuckDBSourceConfig,
     ResolvedSourceConfig,
 )
 from dbt_charts.core.diagnostics.codes_execute import ERR_UNPARSEABLE_SQL
 from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-from dbt_charts.core.execute.adapters.sql_adapter import SqlAdapter
 from dbt_charts.core.execute.adapters.typed_fetch import TypedRows
+from dbt_charts.core.execute.backends.duckdb_local import DuckDBBackend
+from dbt_charts.core.execute.compose import ResolvedQuery, compose
+from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
+
+from .._backend_runner import DuckDBRunner
+from .conftest import DbtHarness
 
 pytestmark = pytest.mark.usefixtures("typed_via_execute")
 
@@ -29,22 +35,61 @@ def _make_query(sql: str, source: str = "db") -> SqlQuery:
 
 
 def _sql(
-    local_project: Callable[..., FilesystemProject], **kwargs: object
-) -> SqlAdapter:
-    """Create a SqlAdapter with required args defaulted to in-memory stubs."""
-    kwargs.setdefault("project", local_project(Path("/tmp")))
-    kwargs.setdefault("dbt_project_path", None)
-    kwargs.setdefault("profile_type", "postgres")
-    return SqlAdapter(**kwargs)  # type: ignore[arg-type]
+    local_project: Callable[..., FilesystemProject], *, profile_type: str = "postgres"
+) -> DbtHarness:
+    """A registry routing the dbt warehouse kinds to a fresh ``DbtBackend``."""
+    return DbtHarness(local_project(Path("/tmp")), profile_type=profile_type)
+
+
+def _compose(
+    adapter: DbtHarness,
+    query: SqlQuery,
+    *,
+    variables: dict | None = None,
+    params: list | None = None,
+    source_config: ResolvedSourceConfig | None = None,
+) -> ResolvedQuery:
+    resolved = _compose_result(
+        adapter,
+        query,
+        variables=variables,
+        params=params,
+        source_config=source_config,
+    )
+    assert not isinstance(resolved, QueryResult), resolved.error
+    return resolved
+
+
+def _compose_result(
+    adapter: DbtHarness,
+    query: SqlQuery,
+    *,
+    variables: dict | None = None,
+    params: list | None = None,
+    source_config: ResolvedSourceConfig | None = None,
+) -> ResolvedQuery | QueryResult:
+    if source_config is None:
+        source_config = DbtTargetSourceConfig(type=adapter.registry.profile_type)
+    return compose(
+        query,
+        variables=variables,
+        params=params,
+        board=None,
+        source_config=source_config,
+        dialect_name=source_config.type,
+        render_dialect=INLINE_PLACEHOLDERS,
+        refs=adapter.registry.dbt_refs,
+        semantic=None,
+    )
 
 
 def _ddb(
     local_project: Callable[..., FilesystemProject], **kwargs: object
-) -> DuckDBAdapter:
-    """Create a DuckDBAdapter with required args defaulted to in-memory stubs."""
+) -> DuckDBRunner:
+    """Create a DuckDBRunner with required args defaulted to in-memory stubs."""
     kwargs.setdefault("data_dir", local_project(Path("/tmp")).data_path("."))
     kwargs.setdefault("source_config", DuckDBSourceConfig(type="duckdb"))
-    return DuckDBAdapter(**kwargs)  # type: ignore[arg-type]
+    return DuckDBRunner(**kwargs)  # type: ignore[arg-type]
 
 
 # Minimum valid source configs per dialect (for tests that only need dialect detection).
@@ -83,20 +128,22 @@ _MIN_SOURCE: dict[str, dict] = {
 
 
 class TestGenericExecutePath:
-    """Test that SqlAdapter executes queries correctly."""
+    """Test that the dbt backend executes queries correctly."""
 
     def test_static_sql_validation_error_keeps_execute_code(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         query_adapter = _sql(local_project, profile_type="duckdb")
 
-        result = query_adapter._execute(
+        result = _compose_result(
+            query_adapter,
             _make_query(
                 "SELECT COUNT(*) FILTER (WasdfHERE status NOT IN ('solved')) "
                 "AS open_tickets FROM tickets"
             ),
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
+        assert isinstance(result, QueryResult)
 
         assert result.error is not None
         assert result.error.code == ERR_UNPARSEABLE_SQL
@@ -112,22 +159,24 @@ class TestGenericExecutePath:
         """
         query_adapter = _sql(local_project, profile_type="duckdb")
 
-        result = query_adapter._execute(
+        result = _compose_result(
+            query_adapter,
             _make_query("SELECT 'abc"),
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
+        assert isinstance(result, QueryResult)
 
         assert result.error is not None
         assert result.error.code == ERR_UNPARSEABLE_SQL
 
     def test_duckdb_executes(self) -> None:
         """DuckDB adapter executes queries."""
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
             query = _make_query("SELECT 42 AS answer")
-            result = adapter._execute(query)
+            result = adapter.execute(query)
             assert result.error is None
             assert result.data[0]["answer"] == 42
         finally:
@@ -143,32 +192,18 @@ class TestGenericExecutePath:
         conn.execute("INSERT INTO adoption VALUES (7)")
         conn.close()
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
             query = _make_query("SELECT answer FROM adoption")
-            result = adapter._execute(
+            result = adapter.execute(
                 query,
                 source_config=DuckDBSourceConfig(type="duckdb", path=str(db_path)),
             )
             assert result.error is None
             assert result.data == [{"answer": 7}]
         finally:
-            adapter.close()
-
-    def test_close_propagates_unexpected_exception(self) -> None:
-        """close() propagates exceptions from the underlying connection (no suppression)."""
-        from unittest.mock import MagicMock
-
-        adapter = DuckDBAdapter(
-            source_config=DuckDBSourceConfig(type="duckdb"),
-        )
-        mock_conn = MagicMock()
-        mock_conn.close.side_effect = RuntimeError("unexpected close failure")
-        adapter._connection = mock_conn
-
-        with pytest.raises(RuntimeError, match="unexpected close failure"):
             adapter.close()
 
     def test_execute_returns_columns(
@@ -178,7 +213,7 @@ class TestGenericExecutePath:
         adapter = _ddb(local_project)
         try:
             query = _make_query("SELECT 1 AS a, 2 AS b")
-            result = adapter._execute(query)
+            result = adapter.execute(query)
             assert result.columns == ["a", "b"]
         finally:
             adapter.close()
@@ -191,7 +226,7 @@ class TestGenericExecutePath:
         try:
             query = _make_query("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")
             query.limit = 2
-            result = adapter._execute(query)
+            result = adapter.execute(query)
             assert len(result.data) == 2
         finally:
             adapter.close()
@@ -202,7 +237,7 @@ class TestGenericExecutePath:
         """close() drains connections created via _create_connection_from_config (DuckDB source)."""
         adapter = _ddb(local_project)
         query = _make_query("SELECT 1 AS value")
-        adapter._execute(
+        adapter.execute(
             query, source_config=DuckDBSourceConfig(type="duckdb", path=":memory:")
         )
         # close() must not raise even when source connections were opened
@@ -231,12 +266,12 @@ class TestSourcelessQueryPath:
 
 
 class TestReadOnlyAdapter:
-    """Tests for DuckDBAdapter read_only flag."""
+    """Tests for DuckDBBackend read_only flag."""
 
     def test_default_file_based_opens_read_only_and_blocks_writes(
         self, tmp_path
     ) -> None:
-        """DuckDBAdapter with no read_only arg and a file DB opens read-only and refuses writes."""
+        """DuckDBBackend with no read_only arg and a file DB opens read-only and refuses writes."""
         import duckdb
 
         db_path = str(tmp_path / "test.duckdb")
@@ -245,15 +280,15 @@ class TestReadOnlyAdapter:
         conn.execute("INSERT INTO t VALUES (1)")
         conn.close()
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb", path=db_path),
         )
         try:
-            result = adapter._execute(_make_query("SELECT x FROM t"))
+            result = adapter.execute(_make_query("SELECT x FROM t"))
             assert result.error is None
             assert result.data[0]["x"] == 1
 
-            result = adapter._execute(_make_query("INSERT INTO t VALUES (2)"))
+            result = adapter.execute(_make_query("INSERT INTO t VALUES (2)"))
             assert result.error is not None
         finally:
             adapter.close()
@@ -263,16 +298,16 @@ class TestReadOnlyAdapter:
     ) -> None:
         """:memory: DuckDB connections are always opened read-write at the
         driver level — there's no other way to populate an in-memory database.
-        DuckDBAdapter._execute() now refuses all writes via the read-only SQL
+        DuckDBBackend._execute() now refuses all writes via the read-only SQL
         guard regardless, but the underlying driver still permits internal
         bootstrap on :memory:.
         """
         adapter = _ddb(local_project)
         try:
-            conn = adapter._get_duckdb_connection()
+            conn = adapter.pooled_connection()
             conn.execute("CREATE TABLE t (x INT)")
             conn.execute("INSERT INTO t VALUES (7)")
-            result = adapter._execute(_make_query("SELECT x FROM t"))
+            result = adapter.execute(_make_query("SELECT x FROM t"))
             assert result.error is None
             assert result.data[0]["x"] == 7
         finally:
@@ -280,7 +315,7 @@ class TestReadOnlyAdapter:
 
     def test_read_only_false_opens_writable_file_driver(self, tmp_path) -> None:
         """Explicit read_only=False opens the file in read-write mode at the
-        driver level — the DuckDBAdapter's read-only SQL guard still refuses
+        driver level — the DuckDBBackend's read-only SQL guard still refuses
         write SQL via _execute(), but the driver itself permits internal
         writes (cache backends, fixture setup).
         """
@@ -291,15 +326,15 @@ class TestReadOnlyAdapter:
         conn.execute("CREATE TABLE t (x INT)")
         conn.close()
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             data_dir=tmp_path,
             source_config=DuckDBSourceConfig(type="duckdb", path=db_path),
             read_only=False,
         )
         try:
-            driver_conn = adapter._get_duckdb_connection()
+            driver_conn = adapter.pooled_connection()
             driver_conn.execute("INSERT INTO t VALUES (42)")
-            result = adapter._execute(_make_query("SELECT x FROM t WHERE x = 42"))
+            result = adapter.execute(_make_query("SELECT x FROM t WHERE x = 42"))
             assert result.error is None
             assert result.data == [{"x": 42}]
         finally:
@@ -319,7 +354,7 @@ class TestReadOnlyDuckDB:
             query = _make_query(
                 f"SELECT SUM(x) AS total FROM read_json_auto('{json_path.as_posix()}')"
             )
-            result = adapter._execute(query)
+            result = adapter.execute(query)
             assert result.error is not None
         finally:
             adapter.close()
@@ -341,7 +376,7 @@ class TestReadOnlyDuckDB:
                 path=":memory:",
                 duckdb_config={"enable_external_access": True},
             )
-            result = adapter._execute(query, source_config=source_config)
+            result = adapter.execute(query, source_config=source_config)
             assert result.error is not None, "Expected external access to be blocked"
         finally:
             adapter.close()
@@ -396,9 +431,8 @@ class TestLimitFetchDialects:
             "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
             return_value=mock_adapter,
         ):
-            prepared = sql_adapter.prepare_sql(q, params=[])
-            assert not isinstance(prepared, QueryResult), prepared.error
-            sql_adapter._execute_via_dbt_adapter(prepared, q, src)
+            resolved = _compose(sql_adapter, q, params=[])
+            sql_adapter.run_resolved(resolved, q, src)
 
         assert captured, f"No call captured for dialect {dialect!r}"
         # captured[0] is the connection-setup timeout SQL; captured[-1] is
@@ -575,46 +609,46 @@ class TestSqlTextNeverRewrittenByRowLimit:
 
 
 class TestResolveDuckdbConnectKwargs:
-    """Unit tests for the DuckDBAdapter._resolve_duckdb_connect_kwargs helper."""
+    """Unit tests for the DuckDBBackend._resolve_duckdb_connect_kwargs helper."""
 
     def test_file_read_only_sets_driver_flag(self) -> None:
         """File-based read_only=True sets the DuckDB driver read_only kwarg."""
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             "/tmp/test.duckdb", read_only=True, duckdb_config=None
         )
         assert kwargs.get("read_only") is True
 
     def test_memory_read_only_no_driver_flag(self) -> None:
         """:memory: with read_only=True omits the driver read_only flag (in-memory exception)."""
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             ":memory:", read_only=True, duckdb_config=None
         )
         assert "read_only" not in kwargs
 
     def test_read_only_forces_external_access_false_over_user_config(self) -> None:
         """read_only=True forces enable_external_access=False, ignoring user-supplied config."""
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             ":memory:", read_only=True, duckdb_config={"enable_external_access": True}
         )
         assert kwargs["config"]["enable_external_access"] is False
 
     def test_read_only_no_config_disables_external_access(self) -> None:
         """read_only=True with no config still sets enable_external_access=False."""
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             ":memory:", read_only=True, duckdb_config=None
         )
         assert kwargs["config"]["enable_external_access"] is False
 
     def test_read_write_respects_user_external_access(self) -> None:
         """read_only=False lets user-supplied duckdb_config set enable_external_access."""
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             ":memory:", read_only=False, duckdb_config={"enable_external_access": True}
         )
         assert kwargs["config"]["enable_external_access"] is True
 
     def test_read_write_no_config_produces_empty_kwargs(self) -> None:
         """read_only=False with no config produces empty kwargs (no driver changes)."""
-        kwargs = DuckDBAdapter._resolve_duckdb_connect_kwargs(
+        kwargs = DuckDBBackend._resolve_duckdb_connect_kwargs(
             ":memory:", read_only=False, duckdb_config=None
         )
         assert kwargs == {}
@@ -636,7 +670,7 @@ class TestDuckDBSchemaSearchPath:
         adapter = _ddb(local_project)
         try:
             query = _make_query("SELECT id FROM widgets")
-            result = adapter._execute(
+            result = adapter.execute(
                 query,
                 source_config=DuckDBSourceConfig(
                     type="duckdb", path=str(db_path), schema="myschema"
@@ -659,7 +693,7 @@ class TestDuckDBSchemaSearchPath:
         adapter = _ddb(local_project)
         try:
             query = _make_query("SELECT val FROM things")
-            result = adapter._execute(
+            result = adapter.execute(
                 query,
                 source_config=DuckDBSourceConfig(type="duckdb", path=str(db_path)),
             )
@@ -690,7 +724,7 @@ class TestDuckDBSchemaSearchPath:
         adapter = _ddb(local_project)
         try:
             query = _make_query("SELECT val FROM things")
-            result = adapter._execute(
+            result = adapter.execute(
                 query,
                 source_config=DuckDBSourceConfig(
                     type="duckdb", path=str(db_path), schema="nonexistent"
@@ -713,19 +747,19 @@ class TestDuckDBSchemaSearchPath:
         db_path = tmp_path / "safe.duckdb"
         duckdb.connect(str(db_path)).close()
 
-        adapter = DuckDBAdapter(
+        adapter = DuckDBRunner(
             source_config=DuckDBSourceConfig(type="duckdb"),
         )
         try:
             malicious = "myschema'; DROP TABLE x; --"
             with pytest.raises(ValueError, match="Invalid schema name"):
-                adapter._create_duckdb_connection_from_config(
+                adapter.backend._connect(
                     {
                         "type": "duckdb",
                         "path": str(db_path),
                         "schema": malicious,
                     },
-                    cache_key=f"{db_path}\x00{malicious}",
+                    str(db_path),
                 )
         finally:
             adapter.close()
@@ -742,11 +776,10 @@ class TestRuntimeMutatingSqlGuard:
     def test_duckdb_path_never_calls_driver_for_mutating(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        """The driver `.execute()` must never see a mutating statement —
-        the guard refuses DROP / DELETE / INSERT / UPDATE before the connection
-        is touched, regardless of whether the warehouse would have errored too.
+        """The backend must never see a mutating statement —
+        the guard refuses DROP / DELETE / INSERT / UPDATE before it is called, regardless of whether the warehouse would have errored too.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         for sql in (
             "DROP TABLE users",
@@ -756,16 +789,13 @@ class TestRuntimeMutatingSqlGuard:
         ):
             adapter = _ddb(local_project)
             try:
-                mock_conn = MagicMock()
-                with patch.object(
-                    adapter, "_get_duckdb_connection_for_query", return_value=mock_conn
-                ):
-                    result = adapter._execute(_make_query(sql))
+                with patch.object(adapter.backend, "execute") as backend_execute:
+                    result = adapter.execute(_make_query(sql))
                 assert result.error is not None, f"expected error for {sql!r}"
                 assert "outside the read-only SQL allowlist" in str(result.error), (
                     f"expected guard message for {sql!r}, got {result.error!r}"
                 )
-                mock_conn.execute.assert_not_called()
+                backend_execute.assert_not_called()
             finally:
                 adapter.close()
 
@@ -790,7 +820,7 @@ class TestRuntimeMutatingSqlGuard:
                 "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
                 return_value=mock_dbt_adapter,
             ):
-                result = adapter._execute(query, source_config=source_config)
+                result = adapter.execute(query, source_config=source_config)
             assert result.error is not None
             assert "outside the read-only SQL allowlist" in str(result.error)
             mock_dbt_adapter.execute.assert_not_called()
@@ -805,23 +835,20 @@ class TestRuntimeMutatingSqlGuard:
         at runtime when the real branch resolves to DROP. The runtime closes
         the compile-time variable-branch gap.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         adapter = _ddb(local_project)
         try:
             query = _make_query(
                 "{% if kill %}DROP TABLE x{% else %}SELECT 1 AS a{% endif %}"
             )
-            mock_conn = MagicMock()
-            with patch.object(
-                adapter, "_get_duckdb_connection_for_query", return_value=mock_conn
-            ):
-                result = adapter._execute(query, variables={"kill": True})
+            with patch.object(adapter.backend, "execute") as backend_execute:
+                result = adapter.execute(query, variables={"kill": True})
             assert result.error is not None
             assert "outside the read-only SQL allowlist" in str(result.error)
-            mock_conn.execute.assert_not_called()
+            backend_execute.assert_not_called()
             # In the safe path the query still works end-to-end.
-            result2 = adapter._execute(query, variables={"kill": False})
+            result2 = adapter.execute(query, variables={"kill": False})
             assert result2.error is None
             assert result2.data == [{"a": 1}]
         finally:
@@ -832,7 +859,7 @@ class TestSnowflakeQmarkInlining:
     """Regression: Snowflake uses ? placeholders; _execute_via_dbt_adapter must
     inline Jinja variables as SQL literals with correct warehouse escaping.
 
-    Native ?/$N/@paramN params no longer reach SqlAdapter — production params
+    Native ?/$N/@paramN params no longer reach the dbt backend — production params
     always arrive via Jinja {{ variable }} composition, so these tests use that
     path rather than the removed native-placeholder fallback.
     """
@@ -844,12 +871,10 @@ class TestSnowflakeQmarkInlining:
         variables: dict,
         dialect: str = "snowflake",
     ) -> str:
-        """Render a Jinja SQL template through prepare_sql; return the inlined SQL."""
+        """Render a Jinja SQL template through compose; return the inlined SQL."""
         q = SqlQuery(sql=sql, source=dialect)
         adapter = _sql(local_project, profile_type=dialect)
-        prepared = adapter.prepare_sql(q, variables=variables)
-        assert not isinstance(prepared, QueryResult), prepared.error
-        return prepared.sql
+        return _compose(adapter, q, variables=variables).inline(dialect)
 
     def test_qmark_string_param_inlined(
         self, local_project: Callable[..., FilesystemProject]
@@ -973,7 +998,7 @@ class TestPlaceholderShapedLiterals:
         variables: dict | None = None,
         params: list | None = None,
     ) -> tuple:
-        """Run SqlAdapter._execute with a mock warehouse; return (result, sent SQL)."""
+        """Run a query on the dbt backend with a mock warehouse; return (result, sent SQL)."""
         from unittest.mock import MagicMock, patch
 
         captured: list[str] = []
@@ -1000,7 +1025,7 @@ class TestPlaceholderShapedLiterals:
                 "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
                 return_value=mock_adapter,
             ):
-                result = adapter._execute(
+                result = adapter.execute(
                     query,
                     variables=variables,
                     params=params,
@@ -1082,7 +1107,7 @@ class TestPlaceholderShapedLiterals:
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         # Callers that pass params (the adapter-registry composition point)
-        # pre-render with param_render_dialect — the internal inline style —
+        # pre-render with the backend's param_style — the internal inline style —
         # so a warehouse-shaped $1 in the SQL is an authored literal and
         # survives untouched.
         from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
@@ -1183,9 +1208,8 @@ class TestDbtAdapterColumnNameNormalization:
             "dbt_charts.core.execute.adapters.dbt_adapter_factory.build_adapter",
             return_value=mock_adapter,
         ):
-            prepared = adapter.prepare_sql(q, params=[])
-            assert not isinstance(prepared, QueryResult), prepared.error
-            return adapter._execute_via_dbt_adapter(prepared, q, src)
+            resolved = _compose(adapter, q, params=[])
+            return adapter.run_resolved(resolved, q, src)
 
     def test_snowflake_uppercase_columns_normalized(
         self, local_project: Callable[..., FilesystemProject]
@@ -1219,7 +1243,7 @@ class TestDbtProfileSourceCallsiteUsesDbpProjectPath:
     to _read_target_dict. When the dbt project root differs from the dbt-charts project
     root, profiles.yml is only found under the dbt root, so the wrong path produces
     a FileNotFoundError. Expansion now lives in the resolver and is called with the
-    DbtContext.dbt_project_path from _derive_dbt_context (set to DbtAdapter.dbt_project_path).
+    DbtContext.dbt_project_path from the registry's dbt context.
     """
 
     def test_profiles_resolved_from_dbt_project_path_not_project_root(
@@ -1271,12 +1295,12 @@ class TestDbtProfileSourceCallsiteUsesDbpProjectPath:
         assert result.type == "duckdb"
 
 
-class TestExecutePrepared:
+class TestExecuteResolved:
     def test_sends_the_substituted_wire_sql(
         self, local_project: Callable[..., FilesystemProject]
     ) -> None:
         """A check that wraps rendered SQL (SQL Server's describe) swaps
-        ``prepared.sql`` and still runs on the real execute path: nothing is
+        ``resolved.sql`` and still runs on the real execute path: nothing is
         rendered or guarded a second time."""
         from unittest.mock import MagicMock, patch
 
@@ -1285,17 +1309,18 @@ class TestExecutePrepared:
         adapter = _sql(local_project, profile_type="sqlserver")
         source = DbtTargetSourceConfig(type="sqlserver", host="h")
         query = SqlQuery(sql="SELECT 1 AS n", source="sqlserver")
-        prepared = adapter.prepare_sql(query, source_config=source)
-        assert not isinstance(prepared, QueryResult)
+        resolved = _compose(adapter, query, source_config=source)
 
         pool = MagicMock()
         pool.execute.return_value = TypedRows(
             ["N"], [(1,)], [ColumnType(kind="integer")]
         )
         # A placeholder-shaped literal that a second render would corrupt.
-        wrapped = prepared.model_copy(update={"sql": "SELECT '{{ x }}' AS wrapped"})
-        with patch.object(adapter, "_get_source_pool", return_value=pool):
-            result = adapter.execute_prepared(wrapped, query, source)
+        wrapped = dataclasses.replace(resolved, sql="SELECT '{{ x }}' AS wrapped")
+        with patch.object(adapter.backend, "_get_source_pool", return_value=pool):
+            result = adapter.registry.execute_resolved(
+                wrapped, query, source_config=source
+            )
 
         assert pool.execute.call_args.args[0] == "SELECT '{{ x }}' AS wrapped"
         assert result.data == [{"n": 1}]

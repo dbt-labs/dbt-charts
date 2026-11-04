@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
     from dbt_charts.cli.filesystem_project import FilesystemProject
     from dbt_charts.core.board import BoardRenderResult
-    from dbt_charts.core.execute.adapters.base import BaseAdapter
+    from dbt_charts.core.execute.backends.base import Backend
     from dbt_charts.core.execute.file_source_materializer import FileSourceMaterializer
     from dbt_charts.core.execute.source_resolver import SourceResolver
     from dbt_charts.core.render_format import RenderFormat
@@ -76,7 +76,7 @@ class ProjectSession:
     _allow_external_access_in_readonly: bool
     _resolver: SourceResolver | None
     _file_materializer: FileSourceMaterializer | None
-    _extra_adapters_factory: Callable[[], list[BaseAdapter]] | None
+    _extra_routes_factory: Callable[[], dict[str, Backend]] | None
 
     def __init__(
         self,
@@ -101,7 +101,7 @@ class ProjectSession:
         self._allow_external_access_in_readonly = False
         self._resolver = None
         self._file_materializer = file_materializer
-        self._extra_adapters_factory = None
+        self._extra_routes_factory = None
 
     @classmethod
     def open(
@@ -153,7 +153,7 @@ class ProjectSession:
         duckdb_config: dict[str, Any] | None = None,
         allow_external_access_in_readonly: bool = False,
         file_materializer: FileSourceMaterializer | None = None,
-        extra_adapters_factory: Callable[[], list[BaseAdapter]] | None = None,
+        extra_routes_factory: Callable[[], dict[str, Backend]] | None = None,
     ) -> Self:
         """Construct a ProjectSession from a pre-built Project.
 
@@ -171,16 +171,16 @@ class ProjectSession:
         this for a registry the caller (or another session) reuses afterward —
         e.g. a warm registry shared across requests must stay caller-owned.
 
-        ``extra_adapters_factory`` builds the adapters registered ahead of the
+        ``extra_routes_factory`` builds the backends routed in place of the
         standard ones (see ``build_adapter_registry``). It is a factory because
-        the registry closes its adapters and ``refresh()`` builds a new registry:
-        each build gets adapters of its own. Passing it alongside an injected
+        the registry closes its backends and ``refresh()`` builds a new registry:
+        each build gets backends of its own. Passing it alongside an injected
         ``adapter_registry`` raises: that registry is already composed.
         """
-        if adapter_registry is not None and extra_adapters_factory is not None:
+        if adapter_registry is not None and extra_routes_factory is not None:
             raise ValueError(
-                "extra_adapters_factory cannot be combined with an injected "
-                "adapter_registry; register the adapters on that registry instead."
+                "extra_routes_factory cannot be combined with an injected "
+                "adapter_registry; route the backends on that registry instead."
             )
         session = cls(
             project=project,
@@ -192,7 +192,7 @@ class ProjectSession:
         )
         session._duckdb_config = duckdb_config
         session._allow_external_access_in_readonly = allow_external_access_in_readonly
-        session._extra_adapters_factory = extra_adapters_factory
+        session._extra_routes_factory = extra_routes_factory
         return session
 
     @classmethod
@@ -245,10 +245,10 @@ class ProjectSession:
             allow_external_access_in_readonly=self._allow_external_access_in_readonly,
             resolver=self._resolver,
             file_materializer=self._file_materializer,
-            extra_adapters=(
+            extra_routes=(
                 None
-                if self._extra_adapters_factory is None
-                else self._extra_adapters_factory()
+                if self._extra_routes_factory is None
+                else self._extra_routes_factory()
             ),
         )
 

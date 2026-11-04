@@ -25,6 +25,7 @@ import nanoarrow as na
 from dbt_charts.core.column_types import (
     ColumnKind,
     ColumnType,
+    TypedRows,
     column_type_error,
     map_to_json,
 )
@@ -32,13 +33,6 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_NO_TYPE_READER
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.duckdb_types import duckdb_column_type, typed_rows
 from dbt_charts.core.execute.result import arrow_columns
-
-
-class TypedRows(NamedTuple):
-    columns: list[str]
-    rows: list[tuple[Cell, ...]]
-    types: list[ColumnType]
-
 
 Cell = Any  # type-state: explicit_any — warehouse cell values and type codes
 Description = Sequence[Cell]

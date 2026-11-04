@@ -1,3 +1,0 @@
-kind: Features
-body: Boards can query a source's MetricFlow semantic bundle with `AGG()` and relationship paths; `dct semantics` lists what a bundle declares, `dct query --validate` compiles semantic SQL and suggests the declared names a mistyped one nearly matches, `dct skills semantic-query` teaches the grammar, and a source can mark its bundle required so every query on it goes through the bundle.
-time: 2026-10-27T13:22:19.94538-07:00

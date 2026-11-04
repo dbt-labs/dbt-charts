@@ -279,7 +279,7 @@ rows:
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
-            assert executor2.is_cached("q")
+            assert "q" in executor2.lookup(["q"]).hits
             warm_render = render(result.board, executor2, format="svg")
             warm_codes = {w.code for w in warm_render.warnings}
             assert _CODE in warm_codes, (
@@ -344,7 +344,7 @@ rows:
                 query_registry=result.query_registry,
                 result_cache=cache,
             )
-            assert executor2.is_cached("q")
+            assert "q" in executor2.lookup(["q"]).hits
             warm_rows = executor2.execute_query("q")
             assert len(warm_rows) == 3, (
                 "warm read must re-enforce the current ceiling, not serve "

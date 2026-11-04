@@ -201,7 +201,7 @@ class ExecutionConfig(ConfigNode):
     )
     # Safety ceiling on how long a single query may run, enforced as a server-side
     # statement timeout on network warehouses (never a client-side abandon — see
-    # execute/adapters/sql_adapter.py). DuckDB and SQLite are local file databases
+    # execute/backends/dbt_core.py). DuckDB and SQLite are local file databases
     # with no server to enforce a timeout, so this has no effect on them.
     # Overridable per source via sources.<name>.max_query_duration_seconds.
     max_query_duration_seconds: int = Field(

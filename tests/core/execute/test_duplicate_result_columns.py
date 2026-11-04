@@ -15,10 +15,10 @@ from dbt_charts.core.compile.models.source import DuckDBSourceConfig, SQLiteSour
 from dbt_charts.core.diagnostics.codes_execute import ERR_RESULT_DUPLICATE_COLUMN
 from dbt_charts.core.diagnostics.execution import ExecutionError
 from dbt_charts.core.execute.adapters.base import RowFetchLimit
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-from dbt_charts.core.execute.adapters.sqlite_adapter import SqliteAdapter
 from dbt_charts.core.execute.cache_composition import rows_from_result
 from dbt_charts.core.execute.result import arrow_to_query_result
+
+from ..._backend_runner import DuckDBRunner, SqliteRunner
 
 _DUPLICATE_SQL = "select 1 as a, 2 as a, 3 as b, 4 as b, 5 as c"
 
@@ -44,8 +44,8 @@ def test_arrow_result_raises() -> None:
     assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN
 
 
-def test_duckdb_adapter_returns_the_registered_error() -> None:
-    adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+def test_duckdb_backend_returns_the_registered_error() -> None:
+    adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
     result = adapter.execute(SqlQuery(sql=_DUPLICATE_SQL))
     assert result.error is not None
     assert result.error.code is ERR_RESULT_DUPLICATE_COLUMN
@@ -59,12 +59,12 @@ def test_duckdb_cache_read_raises() -> None:
     assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN
 
 
-def test_sqlite_adapter_raises(tmp_path: Path) -> None:
+def test_sqlite_backend_returns_the_registered_error(tmp_path: Path) -> None:
     db_path = tmp_path / "t.db"
     sqlite3.connect(str(db_path)).close()
-    with pytest.raises(ExecutionError) as excinfo:
-        SqliteAdapter()._execute(
-            SqlQuery(sql=_DUPLICATE_SQL, source="db"),
-            source_config=SQLiteSourceConfig(type="sqlite", path=str(db_path)),
-        )
-    assert excinfo.value.code is ERR_RESULT_DUPLICATE_COLUMN
+    result = SqliteRunner().execute(
+        SqlQuery(sql=_DUPLICATE_SQL, source="db"),
+        source_config=SQLiteSourceConfig(type="sqlite", path=str(db_path)),
+    )
+    assert result.error is not None
+    assert result.error.code is ERR_RESULT_DUPLICATE_COLUMN

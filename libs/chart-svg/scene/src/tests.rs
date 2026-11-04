@@ -186,6 +186,19 @@ fn walk_does_not_descend_into_what_is_not_drawn() {
 }
 
 #[test]
+fn drawn_reads_a_stroke_width_from_the_nearest_ancestor_and_a_text_from_its_runs() {
+    let rule = Node::line(Role::Rule, (0.0, 4.0), (10.0, 4.0), Attrs::new());
+    let own = Node::line(Role::Rule, (0.0, 6.0), (10.0, 6.0), Attrs::new().num("stroke-width", 3.0));
+    let group = Node::group(Role::Chrome, Attrs::new().num("stroke-width", 2.0), vec![rule, own]).translate(1.0, 1.0);
+    let found = drawn(std::slice::from_ref(&group), |role| *role == Role::Rule);
+    assert_eq!(found.iter().map(|d| d.paint_num("stroke-width")).collect::<Vec<_>>(), vec![Some(2.0), Some(3.0)]);
+    assert_box(found[0].bounds, (1.0, 5.0, 11.0, 5.0));
+    let label = Node::text(Role::Axis, (0.0, 0.0), Attrs::new(), "12%");
+    assert_eq!(label.text_content().as_deref(), Some("12%"));
+    assert_eq!(group.text_content(), None);
+}
+
+#[test]
 fn a_scale_composes_with_a_translate_and_a_pattern_draws_no_marks() {
     let moved = Transform::Translate { x: 10.0, y: 20.0 };
     let map = compose(&[moved, Transform::Scale(2.0)]);

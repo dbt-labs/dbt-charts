@@ -1,3 +1,0 @@
-kind: Fixes
-body: Horizontal value axes now use proportional digits; vertical axes keep tabular digits.
-time: 2026-10-23T00:17:14.678842-07:00

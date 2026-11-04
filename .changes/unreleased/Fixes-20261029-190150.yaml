@@ -1,3 +1,0 @@
-kind: Fixes
-body: Every chart in a `cols:` row, including one inside a nested board, now grows to the height of the row's tallest item instead of leaving blank space under it.
-time: 2026-10-29T19:01:50.428523-07:00

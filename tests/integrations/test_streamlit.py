@@ -2,7 +2,7 @@
 
 Covers:
 - A fake Snowpark session receives the board's rendered SQL when passed
-- No session registers no Snowpark adapter
+- No session routes no Snowpark backend
 - The board is mounted with its live control runtime and its own size
 - A value the viewer picks in the board is rendered on the next run
 - Values the app passes win over the viewer's
@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from dbt_charts.core.execute.adapters.snowpark_adapter import (
+from dbt_charts.core.execute.backends.snowpark import (
     SnowparkField,
     SnowparkSchema,
 )
@@ -255,7 +255,7 @@ class TestStBoardWithSession:
         st_integration.st_board("charts/board.yml", project_dir=project_dir)
 
         assert len(html_recorder.calls) == 1
-        assert from_project_kwargs[0]["extra_adapters_factory"] is None
+        assert from_project_kwargs[0]["extra_routes_factory"] is None
 
 
 class TestLiveControls:

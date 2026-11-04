@@ -1,3 +1,0 @@
-kind: Features
-body: Table column menus name each sort by the column's type (A → Z, 1 → 9, oldest → newest), add Select all and Clear to the value list, and filter date columns by a range picked on the calendar the date controls use.
-time: 2026-10-29T16:27:36.817347-07:00

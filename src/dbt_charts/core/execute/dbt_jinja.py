@@ -1,8 +1,8 @@
 """Shared dbt Jinja patterns.
 
 Single source of truth for both *detecting* dbt-specific Jinja calls (ref(),
-source()) and *rewriting* them into relation names. Detection routes queries
-between DbtAdapter and SqlAdapter and gates the manifest requirement;
+source()) and *rewriting* them into relation names. Detection picks a source-less
+query's default source and gates the manifest requirement;
 substitution is what DbtRefResolver runs once a manifest is in hand.
 
 Detection accepts strictly more than substitution rewrites, and always will:

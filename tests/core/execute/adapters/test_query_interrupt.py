@@ -18,9 +18,10 @@ from dbt_charts.core.diagnostics.codes_execute import ERR_QUERY_INTERRUPTED
 from dbt_charts.core.diagnostics.execution import QueryError
 from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
 from dbt_charts.core.execute.adapters.base import QueryResult
-from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter
-from dbt_charts.core.execute.adapters.duckdb_adapter import DuckDBAdapter
-from dbt_charts.core.execute.adapters.sql_adapter import _LIVENESS_SQL, SqlAdapter
+from dbt_charts.core.execute.backends.base import LIVENESS_SQL, BackendRegistry
+from dbt_charts.core.execute.backends.dbt_core import DbtBackend
+
+from ...._backend_runner import DuckDBRunner
 
 _SLOW_SQL = (
     "SELECT count(*) AS n FROM range(100000000000) t(i) "
@@ -57,9 +58,9 @@ def _dbt_adapter_mock() -> MagicMock:
 
 class TestDuckDBInterrupt:
     def test_interrupt_stops_a_running_query(self) -> None:
-        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
         try:
-            thread, out = _in_thread(lambda: adapter._execute(_query(_SLOW_SQL)))
+            thread, out = _in_thread(lambda: adapter.execute(_query(_SLOW_SQL)))
             time.sleep(0.5)  # let the query reach DuckDB
             adapter.interrupt()
             thread.join(10)
@@ -71,10 +72,10 @@ class TestDuckDBInterrupt:
             adapter.close()
 
     def test_interrupted_adapter_refuses_new_queries(self) -> None:
-        adapter = DuckDBAdapter(source_config=DuckDBSourceConfig(type="duckdb"))
+        adapter = DuckDBRunner(source_config=DuckDBSourceConfig(type="duckdb"))
         try:
             adapter.interrupt()
-            error = adapter._execute(_query("SELECT 1 AS n")).error
+            error = adapter.execute(_query("SELECT 1 AS n")).error
             assert error is not None
             assert error.code is ERR_QUERY_INTERRUPTED
         finally:
@@ -82,20 +83,17 @@ class TestDuckDBInterrupt:
 
 
 @pytest.mark.usefixtures("typed_via_execute")
-class TestSqlAdapterInterrupt:
+class TestDbtBackendInterrupt:
     def test_interrupt_cancels_the_running_warehouse_query(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        sa = SqlAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=None,
-            profile_type="postgres",
-        )
+        del tmp_path, local_project
+        sa = DbtBackend(None)
         started, release = threading.Event(), threading.Event()
         built = _dbt_adapter_mock()
 
         def _blocking_execute(sql: str, *_a: Any, **_k: Any) -> Any:
-            if sql == _LIVENESS_SQL:
+            if sql == LIVENESS_SQL:
                 raise RuntimeError("session terminated")  # the cancel killed it
             if sql != _USER_SQL:
                 return (None, MagicMock())  # connection setup
@@ -137,80 +135,19 @@ class TestSqlAdapterInterrupt:
 
 
 @pytest.mark.usefixtures("typed_via_execute")
-class TestDbtAdapterInterrupt:
-    def test_interrupt_cancels_open_connections_and_refuses_new_queries(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        built = _dbt_adapter_mock()
-        adapter._adapter = built
-
-        adapter.interrupt()
-
-        built.cancel_open_connections.assert_called_once()
-        error = adapter._execute(_query("SELECT 1")).error
-        assert error is not None
-        assert error.code is ERR_QUERY_INTERRUPTED
-        built.execute.assert_not_called()
-
-    def test_a_cancelled_query_reports_the_interrupt(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        built = _dbt_adapter_mock()
-        adapter._adapter = built
-        adapter._dialect = "postgres"
-
-        def _cancelled(*_a: Any, **_k: Any) -> Any:
-            adapter.interrupt()
-            raise RuntimeError("canceling statement due to user request")
-
-        built.execute.side_effect = _cancelled
-        with patch(
-            "dbt_charts.core.execute.adapters.dbt_adapter.open_connection"
-        ) as conn:
-            conn.return_value.__enter__.return_value = None
-            conn.return_value.__exit__.return_value = False
-            error = adapter._execute(_query("SELECT 1")).error
-
-        assert error is not None
-        assert error.code is ERR_QUERY_INTERRUPTED
-
-    def test_interrupt_before_first_query_has_nothing_to_cancel(
-        self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
-    ) -> None:
-        adapter = DbtAdapter(
-            project=local_project(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="dev",
-        )
-        adapter.interrupt()
-        error = adapter._execute(_query("SELECT 1")).error
-        assert error is not None
-        assert error.code is ERR_QUERY_INTERRUPTED
-
-
 class TestRegistryInterrupt:
-    def test_interrupt_reaches_every_adapter_that_supports_it(
+    def test_interrupt_reaches_every_backend(
         self, tmp_path: Path, local_project: Callable[..., FilesystemProject]
     ) -> None:
-        registry = AdapterRegistry(project=local_project(tmp_path))
-        adapters = [MagicMock(supported_types={"sql"}) for _ in range(2)]
-        for adapter in adapters:
-            registry.register(adapter)
+        backends = {kind: MagicMock() for kind in ("duckdb", "sqlite")}
+        registry = AdapterRegistry(
+            project=local_project(tmp_path), backends=BackendRegistry(backends)
+        )
 
         registry.interrupt()
 
-        for adapter in adapters:
-            adapter.interrupt.assert_called_once()
+        for backend in backends.values():
+            backend.interrupt.assert_called_once()
 
 
 def test_an_interrupted_query_is_not_cached_as_a_failure() -> None:

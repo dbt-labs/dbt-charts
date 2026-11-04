@@ -1,3 +1,0 @@
-kind: Features
-body: The MCP server's find_queries tool finds the boards and queries that answer a question with their cached rows, and execute_sql with a board reads them with no warehouse call
-time: 2026-10-31T17:15:01.559267-07:00

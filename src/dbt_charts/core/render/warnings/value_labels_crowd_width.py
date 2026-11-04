@@ -22,7 +22,7 @@ from dbt_charts.core.render.chart.geometry_warnings import EngineParams
 from dbt_charts.core.render.warnings.base import WarningContext, engine_warnings
 
 
-def _painted_labels(
+def painted_labels(
     chart: ResolvedChart, layer: int | None
 ) -> tuple[str, ResolvedMarkLabels, str | None]:
     """The `marks.<key>` the judged labels were switched on under, their style, and the
@@ -84,7 +84,7 @@ def detect(ctx: WarningContext) -> list[Diagnostic]:
     warnings: list[Diagnostic] = []
     for (chart_id, layer), params in worst.items():
         chart = ctx.board_spec.charts[chart_id]
-        mark_key, labels, measure = _painted_labels(chart, layer)
+        mark_key, labels, measure = painted_labels(chart, layer)
         # Chart-local style takes no family segment — `style.bar.…` is the
         # board-level spelling and does not compile on a chart.
         owner = f"charts.{chart_id}" + ("" if layer is None else f".layers.{layer}")

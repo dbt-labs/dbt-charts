@@ -72,11 +72,11 @@ class TestMaxWorkersResolution:
         board, executor = board_and_executor
         captured = []
 
-        def fake_parallel(_, names, variables=None, max_workers=8):
+        def fake_parallel(_, found, variables, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(_renderer_mod, "execute_queries_parallel", fake_parallel):
+        with patch.object(Executor, "run_misses", fake_parallel):
             render(board, executor, max_workers=3)
 
         assert captured == [3]
@@ -86,11 +86,11 @@ class TestMaxWorkersResolution:
         monkeypatch.setenv("DCT_MAX_WORKERS", "12")
         captured = []
 
-        def fake_parallel(_, names, variables=None, max_workers=8):
+        def fake_parallel(_, found, variables, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(_renderer_mod, "execute_queries_parallel", fake_parallel):
+        with patch.object(Executor, "run_misses", fake_parallel):
             render(board, executor)
 
         assert captured == [12]
@@ -102,11 +102,11 @@ class TestMaxWorkersResolution:
         monkeypatch.delenv("DCT_MAX_WORKERS", raising=False)
         captured = []
 
-        def fake_parallel(_, names, variables=None, max_workers=8):
+        def fake_parallel(_, found, variables, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(_renderer_mod, "execute_queries_parallel", fake_parallel):
+        with patch.object(Executor, "run_misses", fake_parallel):
             render(board, executor)
 
         assert captured == [get_execution_config().max_workers]
@@ -117,11 +117,11 @@ class TestMaxWorkersResolution:
         monkeypatch.setenv("DCT_MAX_WORKERS", "12")
         captured = []
 
-        def fake_parallel(_, names, variables=None, max_workers=8):
+        def fake_parallel(_, found, variables, max_workers):
             captured.append(max_workers)
             return {}
 
-        with patch.object(_renderer_mod, "execute_queries_parallel", fake_parallel):
+        with patch.object(Executor, "run_misses", fake_parallel):
             render(board, executor, max_workers=5)
 
         assert captured == [5]

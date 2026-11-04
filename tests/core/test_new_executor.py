@@ -65,6 +65,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"id": 1}]
         mock_result.truncated_reason = None
@@ -103,6 +104,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"id": 1}]
         mock_result.truncated_reason = None
@@ -148,6 +150,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
         mock_result.truncated_reason = None
@@ -189,6 +192,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"date": "2024-01", "amount": 100}]
         mock_result.truncated_reason = None
@@ -232,6 +236,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"value": 1}]
         mock_result.truncated_reason = None
@@ -276,6 +281,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"value": 1}]
         mock_result.truncated_reason = None
@@ -347,6 +353,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.is_success = False
         mock_result.error = QueryError("Table not found")
         mock_registry.execute.return_value = mock_result
@@ -390,6 +397,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = []
         mock_result.truncated_reason = None
@@ -423,7 +431,7 @@ class TestCacheKeyGeneration:
         """The in-memory _cache must be keyed by compute_cache_key's own output
         scoped to the query's policy — not a separately derived key."""
         from dbt_charts.core.execute.duckdb_cache import compute_cache_key
-        from dbt_charts.core.execute.executor import _memo_key
+        from dbt_charts.core.execute.lookup import memo_key
 
         yaml_content = """
 title: Test
@@ -445,6 +453,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.is_success = True
         mock_result.data = [{"id": 1}]
         mock_result.truncated_reason = None
@@ -463,8 +472,8 @@ rows:
         # policy: freshness is per-reader, and the slot is warmed from the
         # shared persistent entry, so keying it on content alone would let one
         # query's policy answer a same-SQL sibling's read.
-        assert list(executor._cache) == [_memo_key(query, content_key)]
-        assert executor._cache[_memo_key(query, content_key)].rows == [{"id": 1}]
+        assert list(executor._cache) == [memo_key(query, content_key)]
+        assert executor._cache[memo_key(query, content_key)].rows == [{"id": 1}]
         # The persistent key stays content-only — a ttl edit must not
         # cold-start the stored entry.
         assert len(content_key) == 3
@@ -505,6 +514,7 @@ rows:
 
         def execute_side_effect(query, *args, **kwargs):
             mock_result = Mock()
+            mock_result.resolved_relations = None
             mock_result.is_success = True
             mock_result.data = rows_by_source[query.source]
             mock_result.truncated_reason = None
@@ -557,6 +567,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"id": 1}]
         mock_result.truncated_reason = None
@@ -610,6 +621,7 @@ rows:
         mock_registry = Mock()
         mock_registry.project_file_sources.return_value = {}
         mock_result = Mock()
+        mock_result.resolved_relations = None
         mock_result.success = True
         mock_result.data = [{"id": 1}]
         mock_result.truncated_reason = None

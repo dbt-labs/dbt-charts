@@ -1,10 +1,10 @@
 """Regression tests for dbt_profile source routing through the adapter registry.
 
-The bug: dbt_profile sources expand LATE (inside SqlAdapter._execute) after
-routing already committed. A dbt_profile→duckdb query stays on SqlAdapter and
+The bug: dbt_profile sources expand LATE (inside the dbt backend) after
+routing already committed. A dbt_profile→duckdb query stays on the dbt backend and
 falls through to _execute_via_dbt_adapter (requires dbt.adapters.duckdb, opens
 file writable). The fix expands dbt_profile EARLY in the source resolver so the
-registry sees the concrete "duckdb" type and routes to DuckDBAdapter (read-only).
+registry sees the concrete "duckdb" type and routes to DuckDBBackend (read-only).
 
 Tests:
 - test_dbt_profile_duckdb_resolver_resolves_concrete_duckdb_type:
@@ -16,9 +16,9 @@ Tests:
 - test_dbt_profile_missing_raises_query_error:
   error path - missing profile name surfaces as QueryResult error
 - TestDbtProfileDuckdbRefResolution:
-  the follow-on gap - routing to DuckDBAdapter must not lose ref() resolution
+  the follow-on gap - routing to DuckDBBackend must not lose ref() resolution
 - TestDbtProfileBoardRenderRefResolution:
-  the render-path gap - AdapterRegistry._compose_query_refs must resolve ref()
+  the render-path gap - `compose` must resolve ref()
   before its own strict-Jinja variable render, on the dct render/dct serve path
 - TestDbtOwnsTheProfileSchema:
   profiles.yml is dbt's file - the installed dbt adapter validates the target, so
@@ -108,7 +108,7 @@ def _make_project(project_dir: Path, db_path: Path) -> None:
 
 class TestDbtProfileDuckdbRouting:
     """A dbt_profile source that resolves to DuckDB must expand inside the resolver
-    so the registry re-routes to DuckDBAdapter (read-only)."""
+    so the registry re-routes to DuckDBBackend (read-only)."""
 
     def test_dbt_profile_duckdb_resolver_resolves_concrete_duckdb_type(
         self,
@@ -121,7 +121,7 @@ class TestDbtProfileDuckdbRouting:
         FAILS without early expansion: resolver returns DbtProfileSourceConfig
         (type="dbt_profile"), causing the re-route check
         (source_config.type == "duckdb") to be False, leaving the query on
-        SqlAdapter → _execute_via_dbt_adapter (writable).
+        the dbt backend (writable).
 
         The contract is the resolved `type`, not the concrete class: a dbt target
         expands to DbtTargetSourceConfig (dbt owns the profiles.yml schema), so
@@ -222,7 +222,7 @@ class TestDbtProfileDuckdbRouting:
         assert result.error is None, f"SELECT failed: {result.error}"
         assert result.data == [{"n": 42}]
 
-        # The whole point of routing dbt_profile→duckdb to DuckDBAdapter (not the
+        # The whole point of routing dbt_profile→duckdb to DuckDBBackend (not the
         # dbt-adapters pool) is that the file is opened READ-ONLY. A write must be
         # rejected — the old _execute_via_dbt_adapter path opened it writable.
         write = SqlQuery(
@@ -298,7 +298,7 @@ def _write_manifest(
 class TestDbtProfileDuckdbRefResolution:
     """`{{ ref() }}` in a board query must resolve for a dbt_profile→duckdb source.
 
-    Expanding dbt_profile early routes the query to DuckDBAdapter, which never
+    Expanding dbt_profile early routes the query to DuckDBBackend, which never
     consulted the dbt manifest — so the documented `sql: SELECT ... FROM
     {{ ref('model') }}` pattern (apps/docs/docs/queries.md) died at the Jinja
     variable renderer with "Undefined variable: 'ref' is undefined".
@@ -466,7 +466,7 @@ class TestDbtProfileBoardRenderRefResolution:
     `TestDbtProfileDuckdbRefResolution` above only exercises the ad-hoc `dct
     query` path (``registry.execute(query)``, no ``board=``). Passing a compiled
     board with populated ``board.queries`` takes a different branch inside
-    ``AdapterRegistry._compose_query_refs``: with ``source_config`` resolved
+    ```compose```: with ``source_config`` resolved
     (non-None, since 'prod' is a named dbt_profile source) that guard used to
     render the raw, unresolved SQL through `render_parameterized_with_queries`
     (StrictUndefined) before any `ref()`/`source()` resolution — so `ref()`
@@ -577,7 +577,7 @@ class TestDbtProfileBoardRenderRefResolution:
         This SQL has no dbt Jinja at all, so ``DbtRefResolver.resolve()``
         short-circuits cleanly (``has_dbt_jinja`` is False) and cannot itself
         raise; only ``render_parameterized_with_queries`` can fail here. If
-        ``_compose_query_refs`` ever again wraps that render call inside the
+        ``compose`` ever again wraps that render call inside the
         same ``except DbtChartsError`` as the resolve step, this
         ``JinjaError`` (a ``DbtChartsError``) would be caught and returned as
         a mislabeled ``QueryResult`` instead of propagating — this test pins
@@ -806,7 +806,7 @@ class TestDbtTargetReachesDbtChartsReaders:
         monkeypatch: pytest.MonkeyPatch,
         spelling: dict[str, str],
     ) -> None:
-        """SqlAdapter's pool builds BigQuery's default_dataset from
+        """the dbt backend's pool builds BigQuery's default_dataset from
         source_config['project'] / ['dataset']. Both dbt spellings must land there,
         or a resolvable profile dies with KeyError: 'project' at connect time.
         """
@@ -1070,7 +1070,7 @@ class TestBoardPrepareSqlTargetPath:
         assert compiled.board is not None, compiled.errors
         registry = build_adapter_registry(local_project(tmp_path), read_only=True)
 
-        prepared = registry.prepare_sql(
+        prepared = registry.compose_query(
             compiled.query_registry["q"],
             board=compiled.board,
             variables={},
@@ -1082,15 +1082,17 @@ class TestBoardPrepareSqlTargetPath:
         assert not hasattr(prepared, "error"), prepared
         assert "prod_main.orders" in prepared.sql
 
-    def test_sql_adapter_resolves_against_target_path(
+    def test_dbt_backend_resolves_against_target_path(
         self,
         tmp_path: Path,
         local_project: Callable[..., FilesystemProject],
     ) -> None:
-        """The adapter's own ref() pass, which sees SQL composition left raw."""
+        """compose's ref() pass, which sees SQL composition left raw."""
         from dbt_charts.core.compile.models.query.normalized import SqlQuery
         from dbt_charts.core.compile.models.source import DbtTargetSourceConfig
         from dbt_charts.core.execute.adapters import build_adapter_registry
+        from dbt_charts.core.execute.compose import compose
+        from dbt_charts.core.execute.sql_literals import INLINE_PLACEHOLDERS
 
         _write_manifest(tmp_path)
         _write_manifest(tmp_path, "target/prod/manifest.json", schema="prod_main")
@@ -1100,10 +1102,18 @@ class TestBoardPrepareSqlTargetPath:
         )
         query = SqlQuery(sql="SELECT revenue FROM {{ ref('orders') }}", source="prod")
         registry = build_adapter_registry(local_project(tmp_path), read_only=True)
-        adapter = registry.get_adapter(query, config)
-        assert adapter is not None
 
-        prepared = adapter.prepare_sql(query, variables={}, source_config=config)
+        prepared = compose(
+            query,
+            variables={},
+            params=None,
+            board=None,
+            source_config=config,
+            dialect_name=config.type,
+            render_dialect=INLINE_PLACEHOLDERS,
+            refs=registry.dbt_refs,
+            semantic=None,
+        )
 
         assert not hasattr(prepared, "error"), prepared
         assert "prod_main.orders" in prepared.sql

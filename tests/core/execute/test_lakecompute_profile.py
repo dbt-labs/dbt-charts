@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from dbt_charts.core.compile.config import ProjectSourcesConfig
+from dbt_charts.core.compile.models.query.normalized import SqlQuery
 from dbt_charts.core.compile.models.source import (
     LakeComputeApiKeySource,
     LakeComputeFivetranSource,
@@ -23,9 +24,12 @@ from dbt_charts.core.compile.models.source import (
     LakeComputeTokenSource,
     ResolvedSourceConfig,
 )
-from dbt_charts.core.diagnostics.codes_execute import ERR_DBT_TARGET_NEEDS_SOURCE
 from dbt_charts.core.diagnostics.execution import ExecutionError
-from dbt_charts.core.execute.adapters.dbt_adapter import DbtAdapter, _read_target_dict
+from dbt_charts.core.execute.adapters.adapter_registry import AdapterRegistry
+from dbt_charts.core.execute.adapters.dbt_profile import (
+    _read_target_dict,
+    resolve_target_type,
+)
 from dbt_charts.core.execute.source_resolver import DbtContext, DefaultSourceResolver
 
 _MULTI_CONNECTION = (
@@ -280,10 +284,11 @@ class TestReadTargetDictKeepsItsContract:
 
 
 class TestSourceLessQueriesOnALakeComputeTarget:
-    """A source-less `{{ ref() }}` query runs through dbt Core against the
-    project's own target, and dbt Core cannot reach lake compute."""
+    """A source-less `{{ ref() }}` query resolves to the project's own target."""
 
-    def _adapter(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DbtAdapter:
+    def _registry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[AdapterRegistry, DbtContext]:
         from dbt_charts.cli.filesystem_project import FilesystemProject
 
         monkeypatch.delenv("DBT_PROFILES_DIR", raising=False)
@@ -291,30 +296,27 @@ class TestSourceLessQueriesOnALakeComputeTarget:
         (tmp_path / "dbt_project.yml").write_text(
             "name: analytics\nprofile: analytics\n"
         )
-        return DbtAdapter(
-            project=FilesystemProject(tmp_path),
-            dbt_project_path=tmp_path,
-            target_name="lake",
-        )
+        context = DbtContext(dbt_project_path=tmp_path, target="lake")
+        return AdapterRegistry(
+            project=FilesystemProject(tmp_path), dbt_context=context
+        ), context
 
-    def test_the_type_is_still_readable_without_a_connection(
+    def test_the_type_is_readable_without_a_connection(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """`dct doctor` names the type from this."""
-        assert (
-            self._adapter(tmp_path, monkeypatch).resolve_target_type() == "lakecompute"
-        )
+        _, context = self._registry(tmp_path, monkeypatch)
+        assert resolve_target_type(context) == "lakecompute"
 
-    def test_building_the_dbt_adapter_raises_the_coded_error(
+    def test_the_query_resolves_to_the_lakecompute_source(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        adapter = self._adapter(tmp_path, monkeypatch)
-        with pytest.raises(ExecutionError) as excinfo:
-            adapter._get_dbt_adapter()
-        assert excinfo.value.code is ERR_DBT_TARGET_NEEDS_SOURCE
-        message = str(excinfo.value)
-        assert "'lake'" in message
-        assert "dbt_profile: analytics" in message
+        registry, _ = self._registry(tmp_path, monkeypatch)
+        resolved = registry.resolve_query_source(
+            SqlQuery(sql="SELECT * FROM {{ ref('orders') }}", source="unknown")
+        )
+        assert resolved is not None
+        assert resolved.type == "lakecompute"
 
 
 def test_a_templated_method_is_rendered_before_the_variant_is_chosen(
@@ -341,7 +343,7 @@ def test_a_rendered_value_that_turns_invalid_is_an_execution_error_without_the_c
     secret = "fake-credential-value-for-redaction"
     with (
         patch(
-            "dbt_charts.core.execute.adapters.dbt_adapter._read_target_dict",
+            "dbt_charts.core.execute.adapters.dbt_profile._read_target_dict",
             return_value={"type": "lakecompute", "token": secret, "warehouse": "w"},
         ),
         pytest.raises(ExecutionError) as excinfo,

@@ -1,3 +1,0 @@
-kind: Fixes
-body: A table pivot on a column with a NULL value now heads that column with the null display instead of "None".
-time: 2026-10-28T12:39:58.61986-07:00

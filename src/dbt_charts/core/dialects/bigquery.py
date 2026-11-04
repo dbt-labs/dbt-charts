@@ -15,7 +15,7 @@ class BigQueryDialect(SQLDialect):
     BigQuery uses named parameters with @ prefix.
 
     max_query_duration_seconds is enforced here via the job's job_timeout_ms
-    (set on QueryJobConfig at connection setup in sql_adapter.py), not SQL —
+    (set on QueryJobConfig at connection setup in backends/dbt_core.py), not SQL —
     BigQuery has no session-level statement_timeout syntax. This dialect does
     not override statement_timeout_sql(); the base no-op is correct.
 
